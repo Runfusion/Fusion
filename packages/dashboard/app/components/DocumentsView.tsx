@@ -1,12 +1,13 @@
 import "./DocumentsView.css";
 import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, FileText, Pencil, RefreshCw, Search, X, Eye, EyeOff } from "lucide-react";
+import type { TFunction } from "i18next";
+import { ArrowLeft, AudioLines, Download, ExternalLink, FileText, FileType, Image as ImageIcon, Package, Pencil, RefreshCw, Search, Video, X, Eye, EyeOff } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ColumnId, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
+import type { Artifact, ArtifactWithTask, ColumnId, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
+import { artifactMediaUrl, fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, putTaskDocument, saveWorkspaceFileContent, type MarkdownFileEntry } from "../api";
 import { useArtifacts } from "../hooks/useArtifacts";
 import { useDocuments } from "../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../hooks/useProjectMarkdownFiles";
@@ -14,13 +15,32 @@ import { useSelectionComment } from "../hooks/useSelectionComment";
 import { SelectionCommentPopover } from "./SelectionCommentPopover";
 import { FileEditor } from "./FileEditor";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { ArtifactsGallery } from "./ArtifactsGallery";
+import { ArtifactsGallery, getArtifactCategory, type ArtifactCategory } from "./ArtifactsGallery";
 import { ViewHeader } from "./ViewHeader";
 import { useColumnLabel } from "../i18n/labels";
 
 const MOBILE_BREAKPOINT = 768;
 
 type DocumentsTab = "project" | "tasks" | "artifacts";
+type SelectedTaskItem = { kind: "document" | "artifact"; id: string };
+
+type GroupedTaskItems = {
+  taskId: string;
+  taskTitle?: string;
+  taskColumn?: string;
+  documents: TaskDocumentWithTask[];
+  artifacts: ArtifactWithTask[];
+  latestUpdated: string;
+};
+
+const TASK_ARTIFACT_CATEGORY_ICONS: Record<ArtifactCategory, typeof ImageIcon> = {
+  image: ImageIcon,
+  doc: FileText,
+  pdf: FileType,
+  video: Video,
+  audio: AudioLines,
+  other: Package,
+};
 
 export interface DocumentsViewProps {
   projectId?: string;
@@ -54,6 +74,145 @@ function getTaskColumnStatusDotClass(taskColumn: string): string {
   return "status-dot status-dot--connecting";
 }
 
+function getTaskArtifactCategoryLabel(t: TFunction<"app">, category: ArtifactCategory): string {
+  switch (category) {
+    case "image": return t("documents.artifactCategoryImage", "Image");
+    case "doc": return t("documents.artifactCategoryDoc", "Document");
+    case "pdf": return t("documents.artifactCategoryPdf", "PDF");
+    case "video": return t("documents.artifactCategoryVideo", "Video");
+    case "audio": return t("documents.artifactCategoryAudioSingle", "Audio");
+    case "other": return t("documents.artifactCategoryOtherSingle", "Other");
+  }
+}
+
+function artifactMatchesTaskSearch(artifact: ArtifactWithTask, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return [artifact.title, artifact.description, artifact.taskId, artifact.taskTitle, artifact.mimeType, artifact.authorId]
+    .some((value) => value?.toLowerCase().includes(normalizedQuery));
+}
+
+function artifactHasInlineText(artifact: Pick<ArtifactWithTask | Artifact, "content" | "mimeType" | "type">): boolean {
+  const mime = artifact.mimeType?.toLowerCase().split(";", 1)[0] ?? "";
+  return Boolean(artifact.content) || artifact.type === "document" || mime.startsWith("text/") || mime === "application/json" || mime === "application/xml";
+}
+
+interface TaskArtifactInlineViewerProps {
+  artifact: ArtifactWithTask;
+  projectId?: string;
+  content: string | null;
+  loading: boolean;
+  error: string | null;
+  renderMarkdown: boolean;
+  onToggleMarkdown: () => void;
+  onOpenTask: (taskId: string) => void;
+  t: TFunction<"app">;
+}
+
+function TaskArtifactInlineViewer({ artifact, projectId, content, loading, error, renderMarkdown, onToggleMarkdown, onOpenTask, t }: TaskArtifactInlineViewerProps) {
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const category = getArtifactCategory(artifact);
+  const categoryLabel = getTaskArtifactCategoryLabel(t, category);
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const hasInlineText = category === "doc" && artifactHasInlineText(artifact);
+
+  useEffect(() => {
+    setMediaError(null);
+  }, [artifact.id]);
+
+  const mediaErrorNode = mediaError ? <p className="documents-content-state documents-content-state--error">{mediaError}</p> : null;
+
+  const body = (() => {
+    if (category === "image") {
+      return <>{mediaErrorNode}<img className="documents-task-artifact-media" src={mediaUrl} alt={title} onError={() => setMediaError(t("documents.artifactMediaFailed", "Failed to load artifact preview."))} /></>;
+    }
+    if (category === "video") {
+      return <>{mediaErrorNode}<video className="documents-task-artifact-media" controls src={mediaUrl} aria-label={t("documents.videoArtifactLabel", "Video artifact: {{title}}", { title })} onError={() => setMediaError(t("documents.artifactMediaFailed", "Failed to load artifact preview."))} /></>;
+    }
+    if (category === "audio") {
+      return <>{mediaErrorNode}<audio className="documents-task-artifact-audio" controls src={mediaUrl} aria-label={t("documents.audioArtifactLabel", "Audio artifact: {{title}}", { title })} onError={() => setMediaError(t("documents.artifactMediaFailed", "Failed to load artifact preview."))} /></>;
+    }
+    if (category === "pdf") {
+      return (
+        <div className="documents-task-artifact-pdf">
+          <iframe title={t("documents.pdfArtifactTitle", "PDF artifact: {{title}}", { title })} src={mediaUrl} />
+          <a className="btn btn-sm" href={mediaUrl} target="_blank" rel="noreferrer">
+            <ExternalLink size={14} aria-hidden="true" />
+            {t("documents.openInNewTab", "Open in new tab")}
+          </a>
+        </div>
+      );
+    }
+    if (category === "doc" && hasInlineText) {
+      if (loading) {
+        return <p className="documents-content-state"><LoadingSpinner label={t("documents.loadingArtifactContent", "Loading artifact content…")} /></p>;
+      }
+      if (error) {
+        return <p className="documents-content-state documents-content-state--error">{error}</p>;
+      }
+      if (renderMarkdown) {
+        return (
+          <div className="documents-content-markdown documents-task-artifact-doc-content">
+            <div className="markdown-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content ?? artifact.content ?? ""}</ReactMarkdown>
+            </div>
+          </div>
+        );
+      }
+      return <pre className="document-card-content-text documents-content-viewer-text documents-task-artifact-doc-content">{content ?? artifact.content ?? ""}</pre>;
+    }
+
+    return (
+      <div className="documents-task-artifact-download">
+        <Package size={24} aria-hidden="true" />
+        <p>{artifact.description || t("documents.binaryArtifactFallback", "This artifact cannot be previewed inline.")}</p>
+        <a className="btn btn-sm" href={mediaUrl} target="_blank" rel="noreferrer" data-testid="task-artifact-open-link">
+          <Download size={14} aria-hidden="true" />
+          {t("documents.openArtifact", "Open artifact")}
+        </a>
+      </div>
+    );
+  })();
+
+  return (
+    <div className="documents-content-viewer documents-task-artifact-viewer">
+      <div className="documents-content-header documents-task-document-header">
+        <p className="documents-file-path-header">{artifact.taskId} / {title}</p>
+        {category === "doc" && hasInlineText ? (
+          <button
+            className="btn btn-sm document-mode-toggle"
+            onClick={onToggleMarkdown}
+            aria-label={renderMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
+            aria-pressed={renderMarkdown}
+            title={renderMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
+          >
+            {renderMarkdown ? t("documents.markdown", "Markdown") : t("documents.plain", "Plain")}
+          </button>
+        ) : null}
+      </div>
+      <div className="document-card-meta documents-task-document-meta documents-task-artifact-meta">
+        <span>{categoryLabel}</span>
+        <span className="document-card-separator">·</span>
+        <span>{artifact.authorId || t("documents.unknownAuthor", "unknown")}</span>
+        <span className="document-card-separator">·</span>
+        <span>{formatTimestamp(artifact.updatedAt)}</span>
+        {artifact.taskId ? (
+          <>
+            <span className="document-card-separator">·</span>
+            <button className="documents-task-artifact-open-task" onClick={() => void onOpenTask(artifact.taskId!)}>
+              {t("documents.openTask", "Open task")}
+            </button>
+          </>
+        ) : null}
+      </div>
+      {artifact.description ? <p className="documents-task-artifact-description">{artifact.description}</p> : null}
+      <div className={`documents-task-artifact-preview documents-task-artifact-preview--${category}`}>
+        {body}
+      </div>
+    </div>
+  );
+}
+
 export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifactTaskDetail, onSendSelectionToTask }: DocumentsViewProps) {
   const { t } = useTranslation("app");
   // FNXC:ArtifactsView 2026-07-11-11:30: Artifacts is the first tab and the landing tab — the view is the artifact gallery first, with project files and task documents as secondary tabs.
@@ -61,7 +220,11 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   const columnLabel = useColumnLabel();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<MarkdownFileEntry | null>(null);
-  const [selectedTaskDocumentId, setSelectedTaskDocumentId] = useState<string | null>(null);
+  /*
+  FNXC:DocumentsView 2026-07-11-22:04:
+  FN-7845 makes the Task Documents sidebar a mixed task-output list, so selection must be discriminated by document vs artifact. Keep this state separate from Project Files' selectedFile to preserve tab isolation and prevent artifact previews from enabling document editing or select-to-comment.
+  */
+  const [selectedTaskItem, setSelectedTaskItem] = useState<SelectedTaskItem | null>(null);
   const [showHiddenProjectFiles, setShowHiddenProjectFiles] = useState(false);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
@@ -86,6 +249,11 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   const [editingTaskDocumentId, setEditingTaskDocumentId] = useState<string | null>(null);
   const [taskDocDraft, setTaskDocDraft] = useState("");
   const [taskDocSaving, setTaskDocSaving] = useState(false);
+  const [artifactDocContent, setArtifactDocContent] = useState<string | null>(null);
+  const [artifactDocLoading, setArtifactDocLoading] = useState(false);
+  const [artifactDocError, setArtifactDocError] = useState<string | null>(null);
+  const [renderArtifactMarkdown, setRenderArtifactMarkdown] = useState(true);
+  const artifactDocRequestIdRef = useRef(0);
   /*
   FNXC:DocumentsView 2026-07-11-14:45:
   Operator requirement: Project Files must be editable in place too (same CodeMirror FileEditor), replacing the former Read-only badge contract. Saves go through the workspace file API for the "project" workspace and update the local preview content on success.
@@ -147,7 +315,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   useEffect(() => {
     setActiveTab("artifacts");
     setSelectedFile(null);
-    setSelectedTaskDocumentId(null);
+    setSelectedTaskItem(null);
     setShowHiddenProjectFiles(false);
     setFileContent(null);
     setFileError(null);
@@ -157,36 +325,61 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
     setTaskDocSaving(false);
+    setArtifactDocContent(null);
+    setArtifactDocLoading(false);
+    setArtifactDocError(null);
+    setRenderArtifactMarkdown(true);
     setEditingProjectFile(false);
     setProjectFileDraft("");
     setProjectFileSaving(false);
   }, [projectId]);
 
-  const groupedDocuments = useMemo(() => {
-    const groups = new Map<string, TaskDocumentWithTask[]>();
+  const groupedTaskItems = useMemo<GroupedTaskItems[]>(() => {
+    const normalizedQuery = taskSearchQuery.toLowerCase();
+    const groups = new Map<string, { documents: TaskDocumentWithTask[]; artifacts: ArtifactWithTask[] }>();
+
     for (const doc of documents) {
-      const existing = groups.get(doc.taskId) || [];
-      groups.set(doc.taskId, [...existing, doc]);
+      const existing = groups.get(doc.taskId) ?? { documents: [], artifacts: [] };
+      existing.documents.push(doc);
+      groups.set(doc.taskId, existing);
+    }
+
+    /*
+    FNXC:DocumentsView 2026-07-11-22:04:
+    FN-7845 requires the Task Documents list to be a union of task documents and task-scoped registered artifacts, so operators see all outputs for a task in one grouped sidebar. Registry artifacts without taskId remain exclusive to the standalone Artifacts tab because they cannot be safely attached to a task group.
+    */
+    for (const artifact of artifacts) {
+      if (!artifact.taskId || !artifactMatchesTaskSearch(artifact, normalizedQuery)) {
+        continue;
+      }
+      const existing = groups.get(artifact.taskId) ?? { documents: [], artifacts: [] };
+      existing.artifacts.push(artifact);
+      groups.set(artifact.taskId, existing);
     }
 
     return Array.from(groups.entries())
-      .map(([taskId, docs]) => {
-        const sortedDocs = [...docs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      .map(([taskId, group]) => {
+        const sortedDocs = [...group.documents].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        const sortedArtifacts = [...group.artifacts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        const latestUpdated = [sortedDocs[0]?.updatedAt, sortedArtifacts[0]?.updatedAt].filter(Boolean).sort().at(-1) ?? "";
+        const titleSource = sortedDocs.find((doc) => doc.taskTitle)?.taskTitle ?? sortedArtifacts.find((artifact) => artifact.taskTitle)?.taskTitle;
 
         return {
           taskId,
-          taskTitle: sortedDocs[0]?.taskTitle,
+          taskTitle: titleSource,
           /*
           FNXC:DocumentsView 2026-07-02-00:00:
-          Task document groups must surface the parent task completion state in the header so operators can identify done work without expanding documents or opening task details. Use the first available column from the grouped task documents because legacy rows may omit taskColumn.
+          Task document groups must surface the parent task completion state in the header so operators can identify done work without expanding documents or opening task details. Use the first available column from grouped documents or artifacts because legacy rows may omit taskColumn.
           */
-          taskColumn: sortedDocs.find((doc) => doc.taskColumn)?.taskColumn,
+          taskColumn: sortedDocs.find((doc) => doc.taskColumn)?.taskColumn ?? sortedArtifacts.find((artifact) => artifact.taskColumn)?.taskColumn,
           documents: sortedDocs,
-          latestUpdated: sortedDocs[0]?.updatedAt ?? "",
+          artifacts: sortedArtifacts,
+          latestUpdated,
         };
       })
+      .filter((group) => group.documents.length > 0 || group.artifacts.length > 0)
       .sort((a, b) => b.latestUpdated.localeCompare(a.latestUpdated));
-  }, [documents]);
+  }, [artifacts, documents, taskSearchQuery]);
 
 
   /*
@@ -197,18 +390,42 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   FN-7812 extends the existing select-to-comment affordance to the Task Documents right pane without a new comment model. The active task-document selection ref follows the same Plain/Markdown toggle, and the composed source path uses taskId/key so operators can identify the originating task document. Keep Task Documents gated by selectedTaskDocument and Project Files gated by selectedFile so tab switches cannot cross-render popovers; the shared composer-open lock is safe because only one tab pane is mounted at a time.
   */
   const selectedTaskDocument = useMemo(() => {
-    if (!selectedTaskDocumentId) {
+    if (selectedTaskItem?.kind !== "document") {
       return null;
     }
 
-    return documents.find((doc) => doc.id === selectedTaskDocumentId) ?? null;
-  }, [documents, selectedTaskDocumentId]);
+    return documents.find((doc) => doc.id === selectedTaskItem.id) ?? null;
+  }, [documents, selectedTaskItem]);
+
+  const selectedTaskArtifact = useMemo(() => {
+    if (selectedTaskItem?.kind !== "artifact") {
+      return null;
+    }
+
+    return artifacts.find((artifact) => artifact.id === selectedTaskItem.id) ?? null;
+  }, [artifacts, selectedTaskItem]);
+
+  const selectedTaskOutput = selectedTaskDocument ?? selectedTaskArtifact;
 
   useEffect(() => {
-    if (selectedTaskDocumentId && !selectedTaskDocument) {
-      setSelectedTaskDocumentId(null);
+    if (!selectedTaskItem) {
+      return;
     }
-  }, [selectedTaskDocument, selectedTaskDocumentId]);
+
+    const selectionStillVisible = groupedTaskItems.some((group) => (
+      selectedTaskItem.kind === "document"
+        ? group.documents.some((doc) => doc.id === selectedTaskItem.id)
+        : group.artifacts.some((artifact) => artifact.id === selectedTaskItem.id)
+    ));
+    if (!selectionStillVisible) {
+      setSelectedTaskItem(null);
+      setEditingTaskDocumentId(null);
+      setTaskDocDraft("");
+      setArtifactDocContent(null);
+      setArtifactDocLoading(false);
+      setArtifactDocError(null);
+    }
+  }, [groupedTaskItems, selectedTaskItem]);
 
   const filteredProjectFiles = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -248,9 +465,12 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   const handleTabChange = useCallback((tab: DocumentsTab) => {
     setActiveTab(tab);
     if (tab !== "tasks") {
-      setSelectedTaskDocumentId(null);
+      setSelectedTaskItem(null);
       setEditingTaskDocumentId(null);
       setTaskDocDraft("");
+      setArtifactDocContent(null);
+      setArtifactDocLoading(false);
+      setArtifactDocError(null);
     }
     if (tab !== "project") {
       setEditingProjectFile(false);
@@ -352,15 +572,30 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   }, [selectedFile, projectFileDraft, projectId, addToast, t]);
 
   const handleSelectTaskDocument = useCallback((docId: string) => {
-    setSelectedTaskDocumentId(docId);
+    setSelectedTaskItem({ kind: "document", id: docId });
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setArtifactDocContent(null);
+    setArtifactDocLoading(false);
+    setArtifactDocError(null);
+  }, []);
+
+  const handleSelectTaskArtifact = useCallback((artifactId: string) => {
+    setSelectedTaskItem({ kind: "artifact", id: artifactId });
+    setEditingTaskDocumentId(null);
+    setTaskDocDraft("");
+    setArtifactDocContent(null);
+    setArtifactDocError(null);
+    setRenderArtifactMarkdown(true);
   }, []);
 
   const handleBackToTaskDocumentList = useCallback(() => {
-    setSelectedTaskDocumentId(null);
+    setSelectedTaskItem(null);
     setEditingTaskDocumentId(null);
     setTaskDocDraft("");
+    setArtifactDocContent(null);
+    setArtifactDocLoading(false);
+    setArtifactDocError(null);
   }, []);
 
   const handleToggleTaskDocMarkdown = useCallback((docId: string) => {
@@ -399,6 +634,36 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     }
   }, [selectedTaskDocument, taskDocDraft, projectId, refreshDocuments, addToast, t]);
 
+  useEffect(() => {
+    if (!selectedTaskArtifact || getArtifactCategory(selectedTaskArtifact) !== "doc") {
+      setArtifactDocContent(null);
+      setArtifactDocLoading(false);
+      setArtifactDocError(null);
+      return;
+    }
+
+    const requestId = artifactDocRequestIdRef.current + 1;
+    artifactDocRequestIdRef.current = requestId;
+    setArtifactDocLoading(true);
+    setArtifactDocError(null);
+    setArtifactDocContent(null);
+
+    void fetchArtifact(selectedTaskArtifact.id, projectId)
+      .then((artifact) => {
+        if (artifactDocRequestIdRef.current !== requestId) return;
+        setArtifactDocContent(artifact.content ?? selectedTaskArtifact.content ?? "");
+      })
+      .catch((err) => {
+        if (artifactDocRequestIdRef.current !== requestId) return;
+        setArtifactDocError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (artifactDocRequestIdRef.current === requestId) {
+          setArtifactDocLoading(false);
+        }
+      });
+  }, [projectId, selectedTaskArtifact]);
+
   const activeError = activeTab === "project" ? projectFilesError : activeTab === "tasks" ? documentsError : artifactsError;
 
   const handleRetry = useCallback(async () => {
@@ -413,7 +678,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     await refreshArtifacts();
   }, [activeTab, refreshArtifacts, refreshProjectFiles, refreshDocuments]);
 
-  const activeCount = activeTab === "project" ? filteredProjectFiles.length : activeTab === "tasks" ? documents.length : artifacts.length;
+  const activeCount = activeTab === "project" ? filteredProjectFiles.length : activeTab === "tasks" ? groupedTaskItems.length : artifacts.length;
   const selectedTaskDocumentRendersMarkdown = selectedTaskDocument ? (taskDocMarkdownStates.get(selectedTaskDocument.id) ?? true) : false;
   const activeTaskDocumentSelection = selectedTaskDocumentRendersMarkdown ? taskDocMarkdownSelection : taskDocPlainSelection;
   const editingSelectedTaskDocument = selectedTaskDocument !== null && editingTaskDocumentId === selectedTaskDocument.id;
@@ -494,7 +759,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
               onClick={() => handleTabChange("tasks")}
             >
               {t("documents.taskDocumentsTab", "Task Documents")}
-              <span className="documents-tab-count">{groupedDocuments.length}</span>
+              <span className="documents-tab-count">{groupedTaskItems.length}</span>
             </button>
           </div>
 
@@ -712,7 +977,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
           <div className="documents-view-loading">
             <p><LoadingSpinner label={t("documents.loadingTaskDocuments", "Loading task documents…")} /></p>
           </div>
-        ) : groupedDocuments.length === 0 ? (
+        ) : groupedTaskItems.length === 0 ? (
           <div className="documents-view-empty">
             {searchQuery.trim() ? (
               <p>{t("documents.noMatchTask", "No task documents match \"{{query}}\".", { query: searchQuery.trim() })}</p>
@@ -729,12 +994,12 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
         ) : (
           /*
           FNXC:DocumentsView 2026-07-10-17:30:
-          FN-7811 requires Task Documents to use the same desktop two-pane and mobile list→detail→back gating as Project Files: show the grouped sidebar when desktop or no document is selected, and show the right-pane viewer when desktop or a document is selected.
+          FN-7811 requires Task Documents to use the same desktop two-pane and mobile list→detail→back gating as Project Files; FN-7845 extends the selected detail to document OR artifact outputs while keeping the list-first mobile flow.
           */
           <div className={`documents-project-layout documents-task-documents-layout${isMobile ? " documents-project-layout--mobile" : ""}`}>
-            {(!isMobile || !selectedTaskDocument) && (
+            {(!isMobile || !selectedTaskOutput) && (
               <aside className="documents-view-sidebar documents-task-documents-sidebar" aria-label={t("documents.taskDocumentsListLabel", "Task documents")}>
-                {groupedDocuments.map(({ taskId, taskTitle, taskColumn, documents: taskDocs }) => {
+                {groupedTaskItems.map(({ taskId, taskTitle, taskColumn, documents: taskDocs, artifacts: taskArtifacts }) => {
                   const taskStatusLabel = taskColumn ? columnLabel(taskColumn as ColumnId) : null;
                   const taskStatusDotClass = taskColumn ? getTaskColumnStatusDotClass(taskColumn) : "status-dot";
 
@@ -754,7 +1019,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                           ) : null}
                         </div>
                         <div className="documents-task-sidebar-actions">
-                          <span className="documents-group-count">{t("documents.docCount", "{{count}} doc{{plural}}", { count: taskDocs.length, plural: taskDocs.length !== 1 ? "s" : "" })}</span>
+                          <span className="documents-group-count">{t("documents.taskOutputCount", "{{docCount}} doc{{docPlural}} · {{artifactCount}} artifact{{artifactPlural}}", { docCount: taskDocs.length, docPlural: taskDocs.length !== 1 ? "s" : "", artifactCount: taskArtifacts.length, artifactPlural: taskArtifacts.length !== 1 ? "s" : "" })}</span>
                           <button
                             className="documents-group-task-link"
                             onClick={() => void handleOpenTask(taskId)}
@@ -768,7 +1033,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                         {taskDocs.map((doc) => {
                           const isSelected = selectedTaskDocument?.id === doc.id;
                           return (
-                            <li key={doc.id} className="markdown-file-list-item">
+                            <li key={`document-${doc.id}`} className="markdown-file-list-item">
                               <button
                                 className={`markdown-file-item documents-task-document-item${isSelected ? " markdown-file-item--selected" : ""}`}
                                 onClick={() => handleSelectTaskDocument(doc.id)}
@@ -784,6 +1049,38 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                             </li>
                           );
                         })}
+                        {taskArtifacts.length > 0 ? (
+                          <li className="documents-task-artifacts-subsection" aria-label={t("documents.taskArtifactsSubsection", "Task artifacts")}>
+                            <div className="documents-task-artifacts-label">{t("documents.taskArtifactsLabel", "Artifacts")}</div>
+                            <ul className="markdown-file-list documents-task-artifact-list">
+                              {taskArtifacts.map((artifact) => {
+                                const category = getArtifactCategory(artifact);
+                                const Icon = TASK_ARTIFACT_CATEGORY_ICONS[category];
+                                const categoryLabel = getTaskArtifactCategoryLabel(t, category);
+                                const isSelected = selectedTaskArtifact?.id === artifact.id;
+                                return (
+                                  <li key={`artifact-${artifact.id}`} className="markdown-file-list-item">
+                                    <button
+                                      className={`markdown-file-item documents-task-document-item documents-task-artifact-item${isSelected ? " markdown-file-item--selected" : ""}`}
+                                      onClick={() => handleSelectTaskArtifact(artifact.id)}
+                                      aria-label={t("documents.openTaskArtifact", "Open {{taskId}} artifact {{title}}", { taskId, title: artifact.title || t("documents.untitledArtifact", "Untitled artifact") })}
+                                      aria-current={isSelected ? "true" : undefined}
+                                    >
+                                      <span className="documents-task-artifact-title-row">
+                                        <Icon size={14} aria-hidden="true" />
+                                        <span className="markdown-file-item-name">{artifact.title || t("documents.untitledArtifact", "Untitled artifact")}</span>
+                                      </span>
+                                      <span className="markdown-file-item-path">{categoryLabel} · {artifact.mimeType || artifact.type}</span>
+                                      <span className="markdown-file-item-meta">
+                                        {artifact.authorId || t("documents.unknownAuthor", "unknown")} · {formatTimestamp(artifact.updatedAt)}
+                                      </span>
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </li>
+                        ) : null}
                       </ul>
                     </section>
                   );
@@ -791,9 +1088,9 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
               </aside>
             )}
 
-            {(!isMobile || selectedTaskDocument) && (
+            {(!isMobile || selectedTaskOutput) && (
               <section className="documents-view-main" aria-label={t("documents.taskDocumentPreviewLabel", "Task document content preview")}>
-                {isMobile && selectedTaskDocument && (
+                {isMobile && selectedTaskOutput && (
                   <button
                     className="btn btn-sm documents-mobile-back"
                     onClick={handleBackToTaskDocumentList}
@@ -804,11 +1101,23 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                   </button>
                 )}
 
-                {!selectedTaskDocument ? (
+                {!selectedTaskOutput ? (
                   <div className="documents-view-empty">
-                    <p>{t("documents.selectTaskDocument", "Select a task document to view its content.")}</p>
+                    <p>{t("documents.selectTaskDocument", "Select a task document or artifact to view its content.")}</p>
                   </div>
-                ) : (
+                ) : selectedTaskArtifact ? (
+                  <TaskArtifactInlineViewer
+                    artifact={selectedTaskArtifact}
+                    projectId={projectId}
+                    content={artifactDocContent}
+                    loading={artifactDocLoading}
+                    error={artifactDocError}
+                    renderMarkdown={renderArtifactMarkdown}
+                    onToggleMarkdown={() => setRenderArtifactMarkdown((prev) => !prev)}
+                    onOpenTask={handleOpenArtifactTask}
+                    t={t}
+                  />
+                ) : selectedTaskDocument ? (
                   <div className="documents-content-viewer documents-task-document-viewer">
                     {/*
                     FNXC:DocumentsView 2026-07-11-14:30:
@@ -876,7 +1185,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                     )}
                     {taskDocumentSelectionPopover}
                   </div>
-                )}
+                ) : null}
               </section>
             )}
           </div>

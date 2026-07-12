@@ -259,6 +259,120 @@ const mockArtifacts: ArtifactWithTask[] = [
   },
 ];
 
+const taskScopedArtifacts: ArtifactWithTask[] = [
+  {
+    id: "task-artifact-image",
+    type: "image",
+    title: "Task screenshot",
+    description: "Screenshot output",
+    mimeType: "image/png",
+    uri: "artifacts/task-screenshot.png",
+    authorId: "agent-image",
+    authorType: "agent",
+    taskId: "KB-001",
+    taskTitle: "Alpha task",
+    taskColumn: "in-progress",
+    createdAt: "2026-04-19T13:00:00.000Z",
+    updatedAt: "2026-04-19T13:00:00.000Z",
+  },
+  {
+    id: "task-artifact-doc",
+    type: "document",
+    title: "Task artifact notes",
+    content: "Inline list fallback",
+    mimeType: "text/markdown",
+    authorId: "agent-doc",
+    authorType: "agent",
+    taskId: "KB-001",
+    taskTitle: "Alpha task",
+    taskColumn: "in-progress",
+    createdAt: "2026-04-19T12:30:00.000Z",
+    updatedAt: "2026-04-19T12:30:00.000Z",
+  },
+  {
+    id: "task-artifact-pdf",
+    type: "document",
+    title: "Task report PDF",
+    mimeType: "application/pdf",
+    uri: "artifacts/report.pdf",
+    authorId: "agent-pdf",
+    authorType: "agent",
+    taskId: "KB-ARTIFACTS",
+    taskTitle: "Artifacts only task",
+    taskColumn: "todo",
+    createdAt: "2026-04-19T14:00:00.000Z",
+    updatedAt: "2026-04-19T14:00:00.000Z",
+  },
+  {
+    id: "task-artifact-other",
+    type: "other",
+    title: "Task binary bundle",
+    description: "Binary output",
+    mimeType: "application/octet-stream",
+    uri: "artifacts/output.bin",
+    authorId: "agent-other",
+    authorType: "agent",
+    taskId: "KB-ARTIFACTS",
+    taskTitle: "Artifacts only task",
+    taskColumn: "todo",
+    createdAt: "2026-04-19T13:30:00.000Z",
+    updatedAt: "2026-04-19T13:30:00.000Z",
+  },
+  {
+    id: "task-artifact-video",
+    type: "video",
+    title: "Task walkthrough",
+    mimeType: "video/mp4",
+    uri: "artifacts/walkthrough.mp4",
+    authorId: "agent-video",
+    authorType: "agent",
+    taskId: "KB-VIDEO",
+    taskTitle: "Video task",
+    taskColumn: "done",
+    createdAt: "2026-04-19T12:15:00.000Z",
+    updatedAt: "2026-04-19T12:15:00.000Z",
+  },
+  {
+    id: "task-artifact-audio",
+    type: "audio",
+    title: "Task narration",
+    mimeType: "audio/mpeg",
+    uri: "artifacts/narration.mp3",
+    authorId: "agent-audio",
+    authorType: "agent",
+    taskId: "KB-AUDIO",
+    taskTitle: "Audio task",
+    taskColumn: "done",
+    createdAt: "2026-04-19T12:10:00.000Z",
+    updatedAt: "2026-04-19T12:10:00.000Z",
+  },
+  {
+    id: "task-artifact-html",
+    type: "document",
+    title: "HTML mockup artifact",
+    content: "<h1>Inline HTML source</h1>",
+    mimeType: "text/html",
+    authorId: "agent-html",
+    authorType: "agent",
+    taskId: "KB-HTML",
+    taskTitle: "HTML task",
+    taskColumn: "todo",
+    createdAt: "2026-04-19T12:05:00.000Z",
+    updatedAt: "2026-04-19T12:05:00.000Z",
+  },
+  {
+    id: "taskless-artifact",
+    type: "image",
+    title: "Taskless artifact",
+    mimeType: "image/png",
+    uri: "artifacts/taskless.png",
+    authorId: "agent-floating",
+    authorType: "agent",
+    createdAt: "2026-04-19T12:00:00.000Z",
+    updatedAt: "2026-04-19T12:00:00.000Z",
+  },
+];
+
 function setupHookDefaults(): void {
   mockUseDocuments.mockReturnValue({
     documents: mockTaskDocuments,
@@ -385,7 +499,7 @@ describe("DocumentsView", () => {
     expect(screen.getByLabelText("Task documents")).toBeInTheDocument();
     expect(screen.getByLabelText("Task document content preview")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open KB-001 plan" })).toBeInTheDocument();
-    expect(screen.getByText("Select a task document to view its content.")).toBeInTheDocument();
+    expect(screen.getByText("Select a task document or artifact to view its content.")).toBeInTheDocument();
     expect(screen.queryByText("Alpha document content")).not.toBeInTheDocument();
   });
 
@@ -494,7 +608,7 @@ describe("DocumentsView", () => {
     expect(groups).toHaveLength(54);
     expect(screen.queryByText("Loading task documents…")).not.toBeInTheDocument();
     expect(screen.queryByText("No task documents yet.")).not.toBeInTheDocument();
-    expect(screen.getByText("Select a task document to view its content.")).toBeInTheDocument();
+    expect(screen.getByText("Select a task document or artifact to view its content.")).toBeInTheDocument();
 
     const firstGroup = screen.getByRole("heading", { name: /FN-MANY-001.*Loaded task 001/i }).closest(".documents-task-sidebar-group") as HTMLElement;
     expect(getComputedStyle(firstGroup).flexShrink).toBe("0");
@@ -522,6 +636,170 @@ describe("DocumentsView", () => {
     expect(screen.getByText("KB-001 / plan")).toBeInTheDocument();
   });
 
+  /*
+  FNXC:DocumentsView 2026-07-11-22:04:
+  Surface enumeration for FN-7845: the Task Documents sidebar is the only grouped list that gains artifact click targets, and the invariant covers doc+artifact groups, artifact-only groups, taskless exclusion, category viewers, search filtering, mobile back flow, and tab isolation.
+  */
+  it("lists task-scoped artifacts beside documents and includes artifact-only task groups", () => {
+    mockUseArtifacts.mockReturnValue({
+      artifacts: taskScopedArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+
+    const alphaGroup = screen.getByRole("heading", { name: /KB-001.*Alpha task/i }).closest(".documents-task-sidebar-group") as HTMLElement;
+    expect(within(alphaGroup).getByRole("button", { name: "Open KB-001 plan" })).toBeInTheDocument();
+    expect(within(alphaGroup).getByRole("button", { name: "Open KB-001 artifact Task screenshot" })).toBeInTheDocument();
+    expect(within(alphaGroup).getByText("1 doc · 2 artifacts")).toBeInTheDocument();
+
+    const artifactOnlyGroup = screen.getByRole("heading", { name: /KB-ARTIFACTS.*Artifacts only task/i }).closest(".documents-task-sidebar-group") as HTMLElement;
+    expect(within(artifactOnlyGroup).queryByRole("button", { name: /Open KB-ARTIFACTS plan/ })).not.toBeInTheDocument();
+    expect(within(artifactOnlyGroup).getByRole("button", { name: "Open KB-ARTIFACTS artifact Task report PDF" })).toBeInTheDocument();
+    expect(within(artifactOnlyGroup).getByRole("button", { name: "Open KB-ARTIFACTS artifact Task binary bundle" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open undefined artifact Taskless artifact" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Taskless artifact")).not.toBeInTheDocument();
+  });
+
+  it("renders task artifact viewers for image inline-doc pdf and other categories", async () => {
+    mockUseArtifacts.mockReturnValue({
+      artifacts: taskScopedArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockFetchArtifact.mockResolvedValue({ ...taskScopedArtifacts.find((artifact) => artifact.id === "task-artifact-doc")!, content: "Fetched artifact **markdown**" });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+
+    const imageEntry = screen.getByRole("button", { name: "Open KB-001 artifact Task screenshot" });
+    fireEvent.click(imageEntry);
+    expect(imageEntry).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("img", { name: "Task screenshot" })).toHaveAttribute("src", "/api/artifacts/task-artifact-image/media");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    expect(screen.getByText("Alpha document content")).toBeInTheDocument();
+    expect(imageEntry).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 artifact Task artifact notes" }));
+    await waitFor(() => expect(mockFetchArtifact).toHaveBeenCalledWith("task-artifact-doc", undefined));
+    expect((await screen.findAllByText((_, element) => element?.textContent === "Fetched artifact markdown")).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-ARTIFACTS artifact Task report PDF" }));
+    expect(screen.getByTitle("PDF artifact: Task report PDF")).toHaveAttribute("src", "/api/artifacts/task-artifact-pdf/media");
+    expect(screen.getByRole("link", { name: /open in new tab/i })).toHaveAttribute("href", "/api/artifacts/task-artifact-pdf/media");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-ARTIFACTS artifact Task binary bundle" }));
+    expect(screen.getByTestId("task-artifact-open-link")).toHaveAttribute("href", "/api/artifacts/task-artifact-other/media");
+  });
+
+  it("renders video audio and html task artifact selections in the right pane", async () => {
+    mockUseDocuments.mockReturnValue({
+      documents: [],
+      projectFiles: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockUseArtifacts.mockReturnValue({
+      artifacts: taskScopedArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockFetchArtifact.mockResolvedValue({ ...taskScopedArtifacts.find((artifact) => artifact.id === "task-artifact-html")!, content: "<h1>Fetched HTML source</h1>" });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-VIDEO artifact Task walkthrough" }));
+    expect(screen.getByLabelText("Video artifact: Task walkthrough").tagName).toBe("VIDEO");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-AUDIO artifact Task narration" }));
+    expect(screen.getByLabelText("Audio artifact: Task narration").tagName).toBe("AUDIO");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-HTML artifact HTML mockup artifact" }));
+    await waitFor(() => expect(mockFetchArtifact).toHaveBeenCalledWith("task-artifact-html", undefined));
+    expect(await screen.findByText(/Fetched HTML source/)).toBeInTheDocument();
+  });
+
+  it("filters task documents and task artifacts with the task search query", async () => {
+    mockUseDocuments.mockImplementation((options) => ({
+      documents: options.searchQuery ? [] : mockTaskDocuments,
+      projectFiles: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    }));
+    mockUseArtifacts.mockReturnValue({
+      artifacts: taskScopedArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /search task documents/i }), { target: { value: "screenshot" } });
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: /KB-001.*Alpha task/i })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Open KB-001 artifact Task screenshot" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /KB-002.*Beta task/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /KB-ARTIFACTS.*Artifacts only task/i })).not.toBeInTheDocument();
+  });
+
+  it("uses the mobile list-detail-back flow for task artifact selections", () => {
+    window.innerWidth = 600;
+    window.dispatchEvent(new Event("resize"));
+    mockUseArtifacts.mockReturnValue({
+      artifacts: taskScopedArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByLabelText("Task documents")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Task document content preview")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 artifact Task screenshot" }));
+    expect(screen.queryByLabelText("Task documents")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Task screenshot" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /back to task documents list/i }));
+    expect(screen.getByLabelText("Task documents")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Task screenshot" })).not.toBeInTheDocument();
+  });
+
+  it("keeps project file task artifact and standalone artifacts tab selections isolated", async () => {
+    mockUseArtifacts.mockReturnValue({
+      artifacts: taskScopedArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    expect(await screen.findByText(/Hello docs/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.queryByText(/Hello docs/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 artifact Task screenshot" }));
+    expect(screen.getByRole("img", { name: "Task screenshot" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
+    expect(screen.queryByText("KB-001 / Task screenshot")).not.toBeInTheDocument();
+    expect(document.querySelector(".documents-task-artifact-viewer")).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Artifact Task screenshot" })).toBeInTheDocument();
+  });
+
   it("keeps project file and task document selections isolated across tab switches", async () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
@@ -531,7 +809,7 @@ describe("DocumentsView", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
 
-    expect(screen.getByText("Select a task document to view its content.")).toBeInTheDocument();
+    expect(screen.getByText("Select a task document or artifact to view its content.")).toBeInTheDocument();
     expect(screen.queryByText(/Hello docs/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
     expect(screen.getByText("Alpha document content")).toBeInTheDocument();
@@ -574,7 +852,7 @@ describe("DocumentsView", () => {
     expect(missingGroup).not.toBeNull();
 
     expect(within(doneGroup as HTMLElement).getByLabelText("Task status: Done")).toHaveTextContent("Done");
-    expect(within(doneGroup as HTMLElement).getByText("2 docs")).toBeInTheDocument();
+    expect(within(doneGroup as HTMLElement).getByText("2 docs · 0 artifacts")).toBeInTheDocument();
     expect(within(doneGroup as HTMLElement).getByLabelText("Task status: Done").querySelector(".status-dot--online")).toBeInTheDocument();
     expect(within(todoGroup as HTMLElement).getByLabelText("Task status: Todo")).toHaveTextContent("Todo");
     expect(within(archivedGroup as HTMLElement).getByLabelText("Task status: Archived")).toHaveTextContent("Archived");
@@ -1037,7 +1315,7 @@ describe("DocumentsView", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
 
-    expect(screen.getByText("Select a task document to view its content.")).toBeInTheDocument();
+    expect(screen.getByText("Select a task document or artifact to view its content.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add a comment/i })).not.toBeInTheDocument();
   });
 
@@ -1168,7 +1446,7 @@ describe("DocumentsView", () => {
       expect(screen.getByText("KB-002")).toBeInTheDocument();
       expect(screen.queryByText("KB-001")).not.toBeInTheDocument();
       expect(screen.queryByText("Alpha document content")).not.toBeInTheDocument();
-      expect(screen.getByText("Select a task document to view its content.")).toBeInTheDocument();
+      expect(screen.getByText("Select a task document or artifact to view its content.")).toBeInTheDocument();
     });
   });
 

@@ -77,7 +77,7 @@ Artifacts controls are the first page content below the shared header, so add a 
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 10%, transparent);
   color: inherit;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-family: var(--font-mono);
 }
 
@@ -181,7 +181,7 @@ Artifacts controls are the first page content below the shared header, so add a 
 }
 
 .documents-view-empty-hint {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-dim);
   margin-top: var(--space-xs);
 }
@@ -263,7 +263,7 @@ Artifacts controls are the first page content below the shared header, so add a 
 }
 
 .markdown-file-item-name {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text);
 }
@@ -449,6 +449,138 @@ FN-7836 requires loaded Task Documents to render visible task-card groups even w
 }
 
 /*
+FNXC:DocumentsView 2026-07-11-22:04:
+FN-7845 places registered task artifacts under the same task group as documents, as peer outputs with a small subsection label and icon-bearing rows. Keep these rules scoped to the Task Documents sidebar/right pane so Project Files' shared .markdown-file-item base and the standalone Artifacts gallery remain unchanged.
+*/
+.documents-task-artifacts-subsection {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: thin solid var(--border);
+  background: color-mix(in srgb, var(--surface) 38%, transparent);
+}
+
+.documents-task-artifacts-label {
+  padding: var(--space-sm) var(--space-lg) var(--space-xs);
+  color: var(--text-dim);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.documents-task-artifact-list {
+  background: transparent;
+}
+
+.documents-task-artifact-item {
+  background: transparent;
+}
+
+.documents-task-artifact-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--text);
+}
+
+.documents-task-artifact-title-row .markdown-file-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.documents-task-artifact-viewer {
+  min-height: 0;
+}
+
+.documents-task-artifact-meta {
+  align-items: center;
+}
+
+.documents-task-artifact-open-task {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--todo);
+  cursor: pointer;
+  font: inherit;
+}
+
+.documents-task-artifact-open-task:hover {
+  text-decoration: underline;
+}
+
+.documents-task-artifact-open-task:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.documents-task-artifact-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.documents-task-artifact-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.documents-task-artifact-media {
+  display: block;
+  width: 100%;
+  max-height: min(60dvh, 42rem);
+  object-fit: contain;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.documents-task-artifact-audio {
+  width: 100%;
+}
+
+.documents-task-artifact-pdf {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.documents-task-artifact-pdf iframe {
+  width: 100%;
+  min-height: 60dvh;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.documents-task-artifact-doc-content {
+  min-height: 45dvh;
+}
+
+.documents-task-artifact-download {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.documents-task-artifact-download p {
+  margin: 0;
+}
+
+/*
 FNXC:DocumentsView 2026-07-11-14:30:
 The meta line (author · revision · date) renders as its own row directly under the path+actions header row; the viewer column's gap is too tall between two related header rows, so the meta pulls itself closer to the path box it annotates.
 */
@@ -536,7 +668,7 @@ The meta line (author · revision · date) renders as its own row directly under
 
 .document-mode-toggle {
   padding: var(--space-xs) var(--space-sm);
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 500;
   color: var(--text-muted);
   background: var(--card);
@@ -583,7 +715,7 @@ The meta line (author · revision · date) renders as its own row directly under
 
 .document-card-content-text {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text);
   line-height: 1.5;
   white-space: pre-wrap;

@@ -831,9 +831,9 @@ Artifacts view aggregates registered artifacts, project markdown files, and task
 
 Features:
 
-- Browse **Task Documents** in the same left-sidebar/right-pane pattern as **Project Files**: the sidebar groups document entries by task ID in distinct task cards with clear spacing between tasks, revision metadata, and parent task status badges when available, while the right pane loads the selected document content
-- Search documents across tasks
-- Open project markdown files and task documents with inline preview
+- Browse **Task Documents** in the same left-sidebar/right-pane pattern as **Project Files**: the sidebar groups task documents and task-scoped registered artifacts by task ID in distinct task cards with clear spacing between tasks, revision/artifact metadata, and parent task status badges when available, while the right pane loads the selected document or artifact preview
+- Search task documents and task-scoped artifacts across tasks
+- Open project markdown files, task documents, and task-scoped artifacts with inline preview
 - Browse the **Artifacts** tab for registry media registered by any agent, dashboard chat/user action, or system tool across tasks
 - Already-open global and task-detail artifact lists refresh live from the artifact registry event when an agent, dashboard chat session, user action, or system tool registers a new artifact, while preserving active search filters and task scoping
 - Use the tab-count badges to see the current counts for Project Files, Task Documents, and Artifacts; the Artifacts badge reflects the loaded `GET /api/artifacts` result set, including active search filters
