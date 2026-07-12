@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import {
   CHAT_TEXT_INLINE_LIMIT,
   formatChatAttachmentContents,
+  formatChatImageAttachmentHints,
   readChatAttachmentContents,
 } from "../chat-attachment-content.js";
 
@@ -57,6 +58,7 @@ describe("readChatAttachmentContents", () => {
     const root = await makeRoot();
     await mkdir(join(root, ".fusion", "chat-attachments", "session-1"), { recursive: true });
     await writeFile(join(root, ".fusion", "chat-attachments", "session-1", "image.png"), PNG_BYTES);
+    const expectedPath = join(root, ".fusion", "chat-attachments", "session-1", "image.png");
 
     const result = await readChatAttachmentContents(root, { kind: "session", sessionId: "session-1" }, [
       attachment({ filename: "image.png", originalName: "image.png", mimeType: "image/png", size: PNG_BYTES.length }),
@@ -66,9 +68,17 @@ describe("readChatAttachmentContents", () => {
       { originalName: "image.png", mimeType: "image/png", text: null },
     ]);
     expect(result.imageContents).toEqual([
-      { type: "image", data: PNG_BYTES.toString("base64"), mimeType: "image/png" },
+      {
+        type: "image",
+        data: PNG_BYTES.toString("base64"),
+        mimeType: "image/png",
+        path: expectedPath,
+        originalName: "image.png",
+      },
     ]);
     expect(formatChatAttachmentContents(result.attachmentContents)).toBe("");
+    expect(formatChatImageAttachmentHints(result.imageContents)).toContain(expectedPath);
+    expect(formatChatImageAttachmentHints(result.imageContents)).toContain("vision/file tools");
   });
 
   it("corrects session webp-labeled PNG image blocks to image/png", async () => {
@@ -82,7 +92,15 @@ describe("readChatAttachmentContents", () => {
     ], diagnostics);
 
     expect(result.attachmentContents).toEqual([{ originalName: "mismatch.webp", mimeType: "image/webp", text: null }]);
-    expect(result.imageContents).toEqual([{ type: "image", data: PNG_BYTES.toString("base64"), mimeType: "image/png" }]);
+    expect(result.imageContents).toEqual([
+      {
+        type: "image",
+        data: PNG_BYTES.toString("base64"),
+        mimeType: "image/png",
+        path: join(root, ".fusion", "chat-attachments", "session-1", "mismatch.webp"),
+        originalName: "mismatch.webp",
+      },
+    ]);
     expect(diagnostics.warn).toHaveBeenCalledWith(expect.stringContaining("from image/webp to image/png"));
   });
 
@@ -97,7 +115,15 @@ describe("readChatAttachmentContents", () => {
     ], diagnostics);
 
     expect(result.attachmentContents).toEqual([{ originalName: "mismatch.png", mimeType: "image/png", text: null }]);
-    expect(result.imageContents).toEqual([{ type: "image", data: WEBP_BYTES.toString("base64"), mimeType: "image/webp" }]);
+    expect(result.imageContents).toEqual([
+      {
+        type: "image",
+        data: WEBP_BYTES.toString("base64"),
+        mimeType: "image/webp",
+        path: join(root, ".fusion", "chat-room-attachments", "room-1", "mismatch.png"),
+        originalName: "mismatch.png",
+      },
+    ]);
     expect(diagnostics.warn).toHaveBeenCalledWith(expect.stringContaining("room room-1 from image/png to image/webp"));
   });
 
@@ -111,7 +137,15 @@ describe("readChatAttachmentContents", () => {
     ]);
 
     expect(result.attachmentContents).toEqual([{ originalName: "unknown.webp", mimeType: "image/webp", text: null }]);
-    expect(result.imageContents).toEqual([{ type: "image", data: UNKNOWN_IMAGE_BYTES.toString("base64"), mimeType: "image/webp" }]);
+    expect(result.imageContents).toEqual([
+      {
+        type: "image",
+        data: UNKNOWN_IMAGE_BYTES.toString("base64"),
+        mimeType: "image/webp",
+        path: join(root, ".fusion", "chat-attachments", "session-1", "unknown.webp"),
+        originalName: "unknown.webp",
+      },
+    ]);
   });
 
   it("returns mixed text and image contents together", async () => {
@@ -127,7 +161,13 @@ describe("readChatAttachmentContents", () => {
 
     expect(formatChatAttachmentContents(result.attachmentContents)).toContain("```json\n{\"ok\":true}\n```");
     expect(result.imageContents).toEqual([
-      { type: "image", data: Buffer.from("webp").toString("base64"), mimeType: "image/webp" },
+      {
+        type: "image",
+        data: Buffer.from("webp").toString("base64"),
+        mimeType: "image/webp",
+        path: join(root, ".fusion", "chat-room-attachments", "room-1", "photo.webp"),
+        originalName: "photo.webp",
+      },
     ]);
   });
 

@@ -35,7 +35,11 @@ import { existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionEventBuffer } from "./sse-buffer.js";
-import { formatChatAttachmentContents, readChatAttachmentContents } from "./chat-attachment-content.js";
+import {
+  formatChatAttachmentContents,
+  formatChatImageAttachmentHints,
+  readChatAttachmentContents,
+} from "./chat-attachment-content.js";
 import { buildTaskPlannerChatContext, TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE } from "./task-planner-chat-context.js";
 import { formatTaskPlannerChatMetrics } from "./task-planner-chat-metrics.js";
 import { emitWorkflowSseEvent, type WorkflowSseEventType } from "./sse.js";
@@ -1707,6 +1711,7 @@ export class ChatManager {
       diagnostics,
     );
     const attachmentContentBlock = formatChatAttachmentContents(attachmentContents);
+    const imagePathHints = formatChatImageAttachmentHints(imageContents);
     const parsedSkillCommands = parseSkillCommands(input.content);
     const roomPromptParts = [
       `You are replying as ${input.responder.name} in room #${input.roomName}.`,
@@ -1721,6 +1726,9 @@ export class ChatManager {
     ];
     if (attachmentContentBlock) {
       roomPromptParts.push(attachmentContentBlock);
+    }
+    if (imagePathHints) {
+      roomPromptParts.push(imagePathHints);
     }
     const roomPrompt = roomPromptParts.join("\n\n");
 
@@ -2170,12 +2178,20 @@ export class ChatManager {
         diagnostics,
       );
       const attachmentContentBlock = formatChatAttachmentContents(attachmentContents);
+      /*
+      FNXC:GrokAcp 2026-07-12-07:30:
+      Name/size-only attachmentSummary is not enough for Grok ACP (image ContentBlocks
+      are unsupported). Include absolute filesystem paths so the agent can open pixels.
+      */
+      const imagePathHints = formatChatImageAttachmentHints(imageContents);
 
       // Send only the new user content. Prior turns are reloaded by the
       // pi/Claude CLI session via SessionManager.open() below — stuffing the
       // transcript back into the user message would balloon the on-disk
       // session every turn (and previously did, see chat-store.ts:setCliSessionFile).
-      const promptContent = [attachmentSummary, attachmentContentBlock, resolvedContent].filter(Boolean).join("\n\n");
+      const promptContent = [attachmentSummary, imagePathHints, attachmentContentBlock, resolvedContent]
+        .filter(Boolean)
+        .join("\n\n");
 
       // Per-chat session continuity: the pi SessionManager (and, transitively,
       // the Claude CLI --resume session it owns) is keyed off the chat. On the

@@ -7,6 +7,16 @@ export interface ChatImageContent {
   type: "image";
   data: string;
   mimeType: string;
+  /**
+   * FNXC:GrokAcp 2026-07-12-07:30:
+   * Absolute path to the on-disk attachment. Grok ACP advertises
+   * `promptCapabilities.image: false` and ignores ACP image ContentBlocks;
+   * agents must open this path with vision/file tools to see pixels. Pi still
+   * uses `data`/`mimeType` as ImageContent.
+   */
+  path: string;
+  /** User-facing filename for prompt hints. */
+  originalName: string;
 }
 
 export interface ChatAttachmentContent {
@@ -81,6 +91,11 @@ function escapeFence(text: string): string {
  *
  * FNXC:ChatAttachments 2026-06-16-19:55:
  * Text attachments are prompt-inlined with the triage-compatible 50KB ceiling while image attachments are forwarded as pi image content blocks through promptWithFallback options.
+ *
+ * FNXC:GrokAcp 2026-07-12-07:30:
+ * Image attachments also carry absolute `path` and prompt path-hints. Grok ACP
+ * sets promptCapabilities.image=false so ContentBlocks alone are invisible;
+ * path hints let the agent open pixels via filesystem vision tools.
  */
 export async function readChatAttachmentContents(
   rootDir: string,
@@ -118,6 +133,8 @@ export async function readChatAttachmentContents(
           type: "image",
           data: data.toString("base64"),
           mimeType: imageMimeType,
+          path: filePath,
+          originalName: attachment.originalName,
         });
         attachmentContents.push({
           originalName: attachment.originalName,
@@ -165,4 +182,26 @@ export function formatChatAttachmentContents(attachmentContents: ChatAttachmentC
       "```",
     ].join("\n")),
   ].join("\n\n");
+}
+
+/**
+ * FNXC:GrokAcp 2026-07-12-07:30:
+ * Build explicit absolute-path hints for image attachments. Name/size-only
+ * summaries look like "text placeholders" to CLI agents that cannot ingest ACP
+ * image ContentBlocks (Grok promptCapabilities.image=false). Paths point at
+ * files already stored under .fusion/chat-attachments or chat-room-attachments.
+ */
+export function formatChatImageAttachmentHints(imageContents: ChatImageContent[]): string {
+  if (imageContents.length === 0) {
+    return "";
+  }
+
+  return [
+    "## Image attachments (filesystem paths)",
+    "The user attached image file(s). Open each absolute path with vision/file tools to inspect the actual pixels — do not invent contents from the filename alone:",
+    ...imageContents.map(
+      (image) =>
+        `- ${image.originalName} (${image.mimeType}): ${image.path}`,
+    ),
+  ].join("\n");
 }
