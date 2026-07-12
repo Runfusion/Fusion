@@ -2892,8 +2892,20 @@ export class TaskExecutor {
   }
 
   private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
+    /*
+    FNXC:ApprovalResume 2026-07-12-18:35:
+    MAIN-008 review: this runs from execute()'s outer finally. A getTask throw
+    (hard-deleted task between deferral and consume) must not escape finally and
+    mask the original execute outcome — treat unreadable tasks as no deferred resume.
+    */
     if (!this.approvalResumeAfterUnwind.delete(taskId)) return false;
-    const latestTask = await this.store.getTask(taskId);
+    let latestTask;
+    try {
+      latestTask = await this.store.getTask(taskId);
+    } catch (error) {
+      executorLog.warn(`${taskId}: failed to read latest task state for deferred approval resume: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
     if (latestTask.paused || latestTask.userPaused || latestTask.column !== "in-progress") return false;
     return this.dispatchUnpauseResume(latestTask);
   }

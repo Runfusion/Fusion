@@ -135,8 +135,19 @@ describe("agent-action-gate", () => {
       category: "network_api",
       disposition: "require-approval",
       operation: "mcp__postiz__integrationlist",
-      resourceType: "research",
+      resourceType: "mcp",
     });
+  });
+
+  it("keeps built-in research network tools as research resource type", () => {
+    const decision = evaluateAgentActionGate({
+      agentId: "agent-1",
+      toolName: "fn_research_run",
+      args: {},
+      permissionPolicy: approvalPolicy,
+    });
+    expect(decision.category).toBe("network_api");
+    expect(decision.resourceType).toBe("research");
   });
 
   it("executes an approved namespaced MCP operation once and never executes a denied one", async () => {
