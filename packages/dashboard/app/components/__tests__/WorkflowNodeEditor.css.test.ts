@@ -206,6 +206,28 @@ describe("WorkflowNodeEditor sidebar overflow CSS contract", () => {
 });
 
 describe("WorkflowNodeEditor mobile CSS contract", () => {
+  it("FN-7827 keeps workflow editor shell unclamped across floating, embedded, and mobile hosts", () => {
+    const baseCss = loadAllAppCssBaseOnly();
+    const editorCss = readComponentCss("WorkflowNodeEditor.css");
+    const mobileBlocks = extractMediaBlocks(editorCss, "(max-width: 768px)");
+
+    // FNXC:WorkflowEditorFloatingModal 2026-07-11-00:00: Surface Enumeration for FN-7827 covers the desktop FloatingWindow base shell, embedded main-content pane, and mobile full-screen sheet so the fix encodes the invariant instead of only the reported 80vh repro.
+    const desktopModalRule = findRule([baseCss], /\.wf-editor-modal\s*\{[^}]*\}/);
+    expect(desktopModalRule).toMatch(/max-height\s*:\s*none\s*;/);
+    expect(desktopModalRule).toMatch(/max-width\s*:\s*none\s*;/);
+    expect(desktopModalRule).not.toMatch(/max-height\s*:\s*80vh\s*;/);
+
+    const embeddedModalRule = findRule([baseCss], /\.wf-editor-modal--embedded\s*\{[^}]*\}/);
+    expect(embeddedModalRule).toMatch(/max-height\s*:\s*none\s*;/);
+
+    const mobileModalRule = findRule(
+      mobileBlocks,
+      /\.wf-editor-modal:not\(\.wf-editor-modal--embedded\),\s*\.wf-create-modal\s*\{[^}]*\}/,
+    );
+    expect(mobileModalRule).toMatch(/height\s*:\s*100dvh\s*;/);
+    expect(mobileModalRule).toMatch(/max-height\s*:\s*100dvh\s*;/);
+  });
+
   it("FN-5992 lets FloatingWindow own desktop minimum while keeping mobile overrides", () => {
     const editorCss = readComponentCss("WorkflowNodeEditor.css");
     const mobileBlocks = extractMediaBlocks(editorCss, "(max-width: 768px)");
