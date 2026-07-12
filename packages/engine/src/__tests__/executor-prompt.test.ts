@@ -776,7 +776,8 @@ describe("TaskExecutor pause behavior", () => {
     // Should move to todo, NOT mark as failed. This path (agent threw mid-
     // execution while paused) explicitly nukes worktree+branch — work is
     // discarded — so it must NOT flag preserveResumeState.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined);
+    // FNXC:ExecutorMoveTaskOptions 2026-07-12: executor.ts:11622-11625 now always passes a moveTask options object built from conditional spreads; with no resumable progress and no preserved pause it collapses to {} (previously undefined). The intent (no preserveResumeState) is unchanged.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {});
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
@@ -2117,7 +2118,8 @@ describe("TaskExecutor global pause behavior", () => {
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined);
+    // FNXC:ExecutorMoveTaskOptions 2026-07-12: executor.ts:11622-11625 now always passes a moveTask options object (conditional spreads collapse to {} when nothing to preserve); previously undefined. Intent (not marked failed) unchanged.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {});
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
