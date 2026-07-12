@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { X, Save, RotateCcw, Folder, FileType, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { useWorkspaceFileEditor } from "../hooks/useWorkspaceFileEditor";
+import { useAutoSavePreference } from "../hooks/useAutoSavePreference";
 import { useWorkspaces } from "../hooks/useWorkspaces";
 import { downloadFileUrl } from "../api";
 import { FileBrowser } from "./FileBrowser";
@@ -88,6 +89,7 @@ export function FileBrowserModal({
   const [showLineNumbers, setShowLineNumbers] = useState(false);
   const [toolbarActionsExpanded, setToolbarActionsExpanded] = useState(false);
   const toolbarActionsId = useId();
+  const { autoSaveEnabled, toggleAutoSave } = useAutoSavePreference();
 
   const {
     entries,
@@ -100,6 +102,7 @@ export function FileBrowserModal({
 
   const selectedPreviewKind = useMemo(() => getFilePreviewKind(selectedFile), [selectedFile]);
   const isPreviewOnlyFile = selectedPreviewKind !== null;
+  const selectedIsBinaryFile = selectedFile ? isBinaryFile(selectedFile) : false;
 
   const {
     content,
@@ -111,7 +114,7 @@ export function FileBrowserModal({
     save,
     hasChanges,
     mtime,
-  } = useWorkspaceFileEditor(currentWorkspace, selectedFile, !isPreviewOnlyFile, projectId);
+  } = useWorkspaceFileEditor(currentWorkspace, selectedFile, !isPreviewOnlyFile, projectId, autoSaveEnabled && !selectedIsBinaryFile);
 
   useEffect(() => {
     setCurrentWorkspace(initialWorkspace);
@@ -341,7 +344,7 @@ export function FileBrowserModal({
   }, [currentWorkspace, workspaces, t]);
 
   const modalTitle = t("fileBrowser.modalTitle", "Files — {{workspace}}", { workspace: workspaceLabel });
-  const isNarrowEditorView = Boolean(isMobile && selectedFile && mobileView === "editor" && !isBinaryFile(selectedFile));
+  const isNarrowEditorView = Boolean(isMobile && selectedFile && mobileView === "editor" && !selectedIsBinaryFile);
 
   /*
   FNXC:FileBrowser 2026-06-25-00:00:
@@ -455,7 +458,7 @@ export function FileBrowserModal({
                         <span>{t("actions.back", "Back")}</span>
                       </button>
                     )}
-                    {!isBinaryFile(selectedFile) && !isNarrowEditorView && (
+                    {!selectedIsBinaryFile && !isNarrowEditorView && (
                       <button
                         className="btn btn-sm btn-icon file-editor-toolbar-button"
                         onClick={() => setToolbarActionsExpanded((prev) => !prev)}
@@ -473,7 +476,7 @@ export function FileBrowserModal({
                         <FileType size={12} />
                         {selectedPreviewLabel}
                       </span>
-                    ) : isBinaryFile(selectedFile) ? (
+                    ) : selectedIsBinaryFile ? (
                       <span className="file-browser-binary-indicator">
                         <FileType size={12} />
                         {t("fileBrowser.binaryReadOnly", "Binary file — read only")}
@@ -555,10 +558,13 @@ export function FileBrowserModal({
                       content={content}
                       onChange={setContent}
                       filePath={selectedFile}
-                      readOnly={isBinaryFile(selectedFile)}
-                      showLineNumbers={showLineNumbers && !isBinaryFile(selectedFile)}
+                      readOnly={selectedIsBinaryFile}
+                      showLineNumbers={showLineNumbers && !selectedIsBinaryFile}
                       onToggleLineNumbers={handleToggleLineNumbers}
-                      canToggleLineNumbers={!isBinaryFile(selectedFile)}
+                      canToggleLineNumbers={!selectedIsBinaryFile}
+                      autoSaveEnabled={autoSaveEnabled}
+                      onToggleAutoSave={toggleAutoSave}
+                      canToggleAutoSave={!selectedIsBinaryFile}
                       toolbarExpanded={isNarrowEditorView ? true : toolbarActionsExpanded}
                       forceToolbarActionsVisible={isNarrowEditorView}
                       toolbarActionsId={toolbarActionsId}

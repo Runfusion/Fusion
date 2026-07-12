@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getErrorMessage } from "@fusion/core";
 import type { FileContentResponse, SaveFileResponse } from "../api";
 import { fetchWorkspaceFileContent, saveWorkspaceFileContent } from "../api";
+
+export const AUTO_SAVE_DEBOUNCE_MS = 800;
 
 interface UseWorkspaceFileEditorReturn {
   content: string;
@@ -29,6 +31,7 @@ export function useWorkspaceFileEditor(
   filePath: string | null,
   enabled: boolean,
   projectId?: string,
+  autoSave = false,
 ): UseWorkspaceFileEditorReturn {
   const { t } = useTranslation("app");
   const [content, setContentState] = useState<string>("");
@@ -37,6 +40,8 @@ export function useWorkspaceFileEditor(
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoSaveAttemptRef = useRef<string | null>(null);
 
   const setContent = useCallback((newContent: string) => {
     setContentState(newContent);
@@ -65,6 +70,7 @@ export function useWorkspaceFileEditor(
           setContentState(response.content);
           setOriginalContent(response.content);
           setMtime(response.mtime);
+          lastAutoSaveAttemptRef.current = null;
         }
       } catch (err) {
         if (!cancelled) {
@@ -72,6 +78,7 @@ export function useWorkspaceFileEditor(
           setContentState("");
           setOriginalContent("");
           setMtime(null);
+          lastAutoSaveAttemptRef.current = null;
         }
       } finally {
         if (!cancelled) {
@@ -84,6 +91,11 @@ export function useWorkspaceFileEditor(
 
     return () => {
       cancelled = true;
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+        autoSaveTimeoutRef.current = null;
+      }
+      lastAutoSaveAttemptRef.current = null;
     };
   }, [workspace, filePath, enabled, projectId]);
 
@@ -108,6 +120,39 @@ export function useWorkspaceFileEditor(
       setSaving(false);
     }
   }, [workspace, filePath, content, hasChanges, projectId]);
+
+  /*
+  FNXC:FileEditor 2026-07-12-00:00:
+  Debounced workspace auto-save may only run for a loaded editable file with real user changes. Clear the pending timer whenever the workspace/file/effective content changes, key attempts by workspace+file+content so a failed write surfaces once without spinning, and rely on hasChanges becoming false after save to prevent originalContent/mtime updates from scheduling a loop.
+  */
+  useEffect(() => {
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+      autoSaveTimeoutRef.current = null;
+    }
+
+    if (!autoSave || !enabled || !workspace || !filePath || !hasChanges || saving || loading) {
+      return;
+    }
+
+    const attemptKey = JSON.stringify([workspace, filePath, projectId ?? "", content]);
+    if (lastAutoSaveAttemptRef.current === attemptKey) {
+      return;
+    }
+
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      autoSaveTimeoutRef.current = null;
+      lastAutoSaveAttemptRef.current = attemptKey;
+      void save().catch(() => undefined);
+    }, AUTO_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+        autoSaveTimeoutRef.current = null;
+      }
+    };
+  }, [autoSave, enabled, workspace, filePath, projectId, content, hasChanges, saving, loading, save]);
 
   return {
     content,

@@ -666,6 +666,62 @@ describe("FileEditor", () => {
     });
   });
 
+  describe("auto-save toggle", () => {
+    it.each([
+      ["markdown", "notes.md", "# Heading\n\nBody"],
+      ["non-markdown", "src/app.ts", "const value = 1;"],
+    ])("renders for editable %s files when toggle support is provided", (_label, filePath, content) => {
+      const onToggleAutoSave = vi.fn();
+      render(
+        <FileEditor
+          content={content}
+          onChange={vi.fn()}
+          filePath={filePath}
+          autoSaveEnabled
+          onToggleAutoSave={onToggleAutoSave}
+        />,
+      );
+
+      expandEditorOptions();
+      const toggle = screen.getByTestId("file-editor-auto-save-toggle");
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      expect(toggle).toHaveAttribute("title", "Toggle auto-save");
+      fireEvent.click(toggle);
+      expect(onToggleAutoSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("reflects the disabled state", () => {
+      render(<FileEditor content="text" onChange={vi.fn()} filePath="notes.txt" autoSaveEnabled={false} onToggleAutoSave={vi.fn()} />);
+
+      expandEditorOptions();
+      const toggle = screen.getByTestId("file-editor-auto-save-toggle");
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      expect(toggle.classList.contains("btn-primary")).toBe(false);
+    });
+
+    it("is absent when the host does not wire auto-save", () => {
+      render(<FileEditor content="text" onChange={vi.fn()} filePath="notes.txt" />);
+
+      expandEditorOptions();
+      expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    });
+
+    it("is absent for readOnly files", () => {
+      render(<FileEditor content="text" onChange={vi.fn()} filePath="notes.txt" readOnly autoSaveEnabled onToggleAutoSave={vi.fn()} />);
+
+      expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    });
+
+    it("is absent in markdown Preview mode", () => {
+      render(<FileEditor content="# Heading" onChange={vi.fn()} filePath="notes.md" autoSaveEnabled onToggleAutoSave={vi.fn()} />);
+
+      expandEditorOptions();
+      expect(screen.getByTestId("file-editor-auto-save-toggle")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+      expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    });
+  });
+
   describe("editor toolbar options collapse", () => {
     it("hides edit, preview, line numbers, and wrap while collapsed", () => {
       render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
 import { DockFilesView } from "../DockFilesView";
+import { FILE_EDITOR_AUTO_SAVE_STORAGE_KEY } from "../../hooks/useAutoSavePreference";
 import { getScopedItem, scopedKey } from "../../utils/projectStorage";
 import type { FileNode } from "../../api";
 
@@ -64,13 +65,14 @@ const capturedEditorHookCalls: Array<{
   filePath: string | null;
   enabled: boolean;
   projectId?: string;
+  autoSave?: boolean;
 }> = [];
 const mockSetContent = vi.fn();
 const mockSave = vi.fn(() => Promise.resolve());
 
 vi.mock("../../hooks/useWorkspaceFileEditor", () => ({
-  useWorkspaceFileEditor: (workspace: string, filePath: string | null, enabled: boolean, projectId?: string) => {
-    capturedEditorHookCalls.push({ workspace, filePath, enabled, projectId });
+  useWorkspaceFileEditor: (workspace: string, filePath: string | null, enabled: boolean, projectId?: string, autoSave?: boolean) => {
+    capturedEditorHookCalls.push({ workspace, filePath, enabled, projectId, autoSave });
     const hasChanges = filePath === "changed.txt";
     return {
       content: filePath ? `content for ${filePath}` : "",
@@ -93,6 +95,8 @@ const capturedFileEditorProps: Array<{
   showLineNumbers?: boolean;
   onToggleLineNumbers?: () => void;
   readOnly?: boolean;
+  autoSaveEnabled?: boolean;
+  onToggleAutoSave?: () => void;
 }> = [];
 
 // Keep the viewer simple: surface the file path it was asked to render and capture toolbar props.
@@ -104,9 +108,19 @@ vi.mock("../FileEditor", () => ({
     showLineNumbers?: boolean;
     onToggleLineNumbers?: () => void;
     readOnly?: boolean;
+    autoSaveEnabled?: boolean;
+    onToggleAutoSave?: () => void;
   }) => {
     capturedFileEditorProps.push(props);
-    return <div data-testid="mock-file-editor" data-file-path={props.filePath} />;
+    return (
+      <div data-testid="mock-file-editor" data-file-path={props.filePath}>
+        {props.onToggleAutoSave ? (
+          <button type="button" data-testid="file-editor-auto-save-toggle" aria-pressed={props.autoSaveEnabled ? "true" : "false"} onClick={props.onToggleAutoSave}>
+            Auto-save
+          </button>
+        ) : null}
+      </div>
+    );
   },
 }));
 
@@ -232,6 +246,23 @@ describe("DockFilesView shared current-file state", () => {
     expect(latest?.readOnly).toBeFalsy();
     expect(latest?.onToggleLineNumbers).toEqual(expect.any(Function));
     expect(screen.getByTestId("right-dock-files-save")).toBeDisabled();
+  });
+
+  it.each(["auto", "two-pane"] as const)("wires the auto-save toggle in %s layout and persists the preference", async (layout) => {
+    render(<DockFilesView projectId={PROJECT_ID} layout={layout} />);
+    fireEvent.click(screen.getByText("readme.md"));
+
+    await waitFor(() => expect(screen.getByTestId("mock-file-editor")).toHaveAttribute("data-file-path", "readme.md"));
+    const toggle = screen.getByTestId("file-editor-auto-save-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(capturedFileEditorProps.at(-1)).toMatchObject({ autoSaveEnabled: true, onToggleAutoSave: expect.any(Function) });
+    expect(capturedEditorHookCalls.at(-1)).toMatchObject({ workspace: "project", filePath: "readme.md", enabled: true, projectId: PROJECT_ID, autoSave: true });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(window.localStorage.getItem(FILE_EDITOR_AUTO_SAVE_STORAGE_KEY)).toBe("false"));
+    await waitFor(() => expect(screen.getByTestId("file-editor-auto-save-toggle")).toHaveAttribute("aria-pressed", "false"));
+    expect(capturedEditorHookCalls.at(-1)).toMatchObject({ workspace: "project", filePath: "readme.md", enabled: true, projectId: PROJECT_ID, autoSave: false });
   });
 
   it.each([

@@ -186,7 +186,67 @@ describe("FileBrowserModal", () => {
       expect(screen.getByLabelText("Editor for file1.ts")).toBeInTheDocument();
     });
 
-    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined);
+    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined, true);
+  });
+
+  it("shows the auto-save toggle for desktop text editor files", async () => {
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("file1.ts"));
+    await waitFor(() => expect(screen.getByLabelText("Editor for file1.ts")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /toggle editor options/i }));
+
+    expect(screen.getByTestId("file-editor-auto-save-toggle")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the auto-save toggle in the narrow mobile editor view", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      writable: true,
+      configurable: true,
+      value: 375,
+    });
+    window.dispatchEvent(new Event("resize"));
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("file1.ts"));
+
+    await waitFor(() => {
+      expect(document.querySelector(".file-browser-modal--narrow")).toBeInTheDocument();
+      expect(screen.getByTestId("file-editor-auto-save-toggle")).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+
+  it("does not show the auto-save toggle for preview-only files", async () => {
+    mockUseWorkspaceFileBrowser.mockReturnValue({
+      ...defaultBrowserState,
+      entries: [{ name: "preview.png", type: "file", size: 1024, mtime: "2024-01-01" }],
+    });
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("preview.png"));
+
+    await waitFor(() => expect(document.querySelector("img.file-browser-preview-media--image")).toBeInTheDocument());
+    expect(screen.queryByTestId("file-editor-auto-save-toggle")).not.toBeInTheDocument();
+    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "preview.png", false, undefined, false);
   });
 
   it("sends selected code text from the embedded editor to a new task description", async () => {
@@ -262,7 +322,7 @@ describe("FileBrowserModal", () => {
     });
 
     expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
-    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "packages/dashboard/app/App.tsx", true, undefined);
+    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "packages/dashboard/app/App.tsx", true, undefined, true);
   });
 
   it("opens root-level absolute initial files at filesystem root", async () => {
@@ -280,7 +340,7 @@ describe("FileBrowserModal", () => {
     });
 
     expect(mockSetPath).toHaveBeenCalledWith("/");
-    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "/README.md", true, undefined);
+    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "/README.md", true, undefined, true);
   });
 
   it("switches workspace and notifies parent", async () => {
@@ -326,7 +386,7 @@ describe("FileBrowserModal", () => {
     await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
 
     await waitFor(() => {
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined, true);
     });
     expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
     expect(screen.getByText("Could not load App.tsx")).toBeInTheDocument();
@@ -377,7 +437,7 @@ describe("FileBrowserModal", () => {
     await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
 
     await waitFor(() => {
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined, true);
     });
     expect(screen.queryByText("Could not load App.tsx")).not.toBeInTheDocument();
     expect(document.querySelector(".cm-content")?.textContent).toContain("console.log('loaded from task worktree');");
@@ -416,7 +476,7 @@ describe("FileBrowserModal", () => {
     await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
 
     await waitFor(() => {
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined, true);
     });
     expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
     expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
@@ -445,7 +505,7 @@ describe("FileBrowserModal", () => {
     await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
 
     await waitFor(() => {
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", null, true, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", null, true, undefined, true);
     });
     expect(screen.getByText("Select a file to edit")).toBeInTheDocument();
     expect(screen.queryByLabelText(/Editor for /)).not.toBeInTheDocument();
@@ -1065,7 +1125,7 @@ describe("FileBrowserModal", () => {
       expect(screen.queryByRole("button", { name: /Save/ })).not.toBeInTheDocument();
       expect(document.querySelector(".file-editor-wrapper")).not.toBeInTheDocument();
       expect(document.querySelector(".file-browser-footer")).not.toBeInTheDocument();
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", name, false, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", name, false, undefined, false);
     });
 
     it("renders task-workspace preview URLs with project scoping", async () => {
@@ -1084,7 +1144,7 @@ describe("FileBrowserModal", () => {
       expect(video).toHaveAttribute("src", expect.stringContaining("projectId=proj-1"));
       expect(video).toHaveAttribute("src", expect.stringContaining("inline=1"));
       expect(video).toHaveAttribute("src", expect.stringContaining("movie.mov"));
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-001", "movie.mov", false, "proj-1");
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-001", "movie.mov", false, "proj-1", false);
     });
 
     it("previews uppercase and nested PDF paths without loading editor content", async () => {
@@ -1103,7 +1163,7 @@ describe("FileBrowserModal", () => {
       expect(pdf).toHaveAttribute("src", expect.stringContaining("inline=1"));
       expect(pdf).toHaveAttribute("title", "Preview for docs/MANUAL.PDF");
       expect(mockSetPath).toHaveBeenCalledWith("docs");
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "docs/MANUAL.PDF", false, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "docs/MANUAL.PDF", false, undefined, false);
     });
 
     it("keeps text files editable with save and discard controls", async () => {
@@ -1121,7 +1181,7 @@ describe("FileBrowserModal", () => {
       expect(screen.getByLabelText("Editor for file1.ts")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Discard/ })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Save/ })).toBeInTheDocument();
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined, true);
     });
 
     it("keeps unknown binary files in the read-only editor fallback", async () => {
@@ -1134,7 +1194,7 @@ describe("FileBrowserModal", () => {
       expect(screen.getByText(/Binary file — read only/)).toBeInTheDocument();
       expect(screen.getByLabelText("Editor for archive.zip")).toBeInTheDocument();
       expect(document.querySelector(".file-browser-preview")).not.toBeInTheDocument();
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "archive.zip", true, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "archive.zip", true, undefined, false);
     });
 
     it("keeps the no-selected-file placeholder until a previewable file is selected", async () => {
@@ -1166,7 +1226,7 @@ describe("FileBrowserModal", () => {
       expect(video).toBeInTheDocument();
       expect(video).toHaveAttribute("src", expect.stringContaining("clip.mp4"));
       expect(video).toHaveAttribute("src", expect.stringContaining("inline=1"));
-      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "clip.mp4", false, undefined);
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "clip.mp4", false, undefined, false);
     });
 
     it("renders preview-only files in the mobile editor pane with back navigation", async () => {

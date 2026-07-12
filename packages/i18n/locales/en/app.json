@@ -2456,6 +2456,7 @@
     "previewTitle": "Preview for {{file}}"
   },
   "fileEditor": {
+    "autoSave": "Auto-save",
     "edit": "Edit",
     "editMode": "Edit mode",
     "editorFor": "Editor for {{filePath}}",
@@ -2463,6 +2464,7 @@
     "lineNumber": "Line #",
     "preview": "Preview",
     "previewMode": "Preview mode",
+    "toggleAutoSave": "Toggle auto-save",
     "toggleLineNumbers": "Toggle line numbers",
     "toggleOptions": "Toggle editor options",
     "toggleWordWrap": "Toggle word wrap",

@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef, useId, useEffect } from "react"
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileEdit, Eye, ListOrdered, WrapText, ChevronDown, ChevronUp } from "lucide-react";
+import { FileEdit, Eye, ListOrdered, WrapText, ChevronDown, ChevronUp, Save } from "lucide-react";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
@@ -19,6 +19,9 @@ interface FileEditorProps {
   showLineNumbers?: boolean;
   onToggleLineNumbers?: () => void;
   canToggleLineNumbers?: boolean;
+  autoSaveEnabled?: boolean;
+  onToggleAutoSave?: () => void;
+  canToggleAutoSave?: boolean;
   toolbarExpanded?: boolean;
   forceToolbarActionsVisible?: boolean;
   toolbarActionsId?: string;
@@ -69,6 +72,9 @@ export function FileEditor({
   showLineNumbers = false,
   onToggleLineNumbers,
   canToggleLineNumbers = true,
+  autoSaveEnabled = false,
+  onToggleAutoSave,
+  canToggleAutoSave = true,
   toolbarExpanded,
   forceToolbarActionsVisible = false,
   toolbarActionsId: externalToolbarActionsId,
@@ -114,7 +120,8 @@ export function FileEditor({
   const effectiveShowPreview = isMarkdown && (readOnly ? true : showPreview);
   const shouldRenderLineNumbers = showLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowLineNumbersToggle = Boolean(onToggleLineNumbers) && canToggleLineNumbers && !readOnly && !effectiveShowPreview;
-  const hasToolbarActions = isMarkdown || !readOnly || shouldShowLineNumbersToggle;
+  const shouldShowAutoSaveToggle = Boolean(onToggleAutoSave) && canToggleAutoSave && !readOnly && !effectiveShowPreview;
+  const hasToolbarActions = isMarkdown || !readOnly || shouldShowLineNumbersToggle || shouldShowAutoSaveToggle;
   const languageExtension = useMemo(() => resolveCodeMirrorLanguage(filePath), [filePath]);
 
   const handleEditClick = useCallback(() => setShowPreview(false), []);
@@ -312,6 +319,12 @@ export function FileEditor({
                 </button>
               </>
             ) : null}
+            {shouldShowAutoSaveToggle && (
+              <button className={`btn btn-sm file-editor-toolbar-button ${autoSaveEnabled ? "btn-primary" : ""}`} onClick={onToggleAutoSave} aria-label={t("fileEditor.toggleAutoSave", "Toggle auto-save")} aria-pressed={autoSaveEnabled} title={t("fileEditor.toggleAutoSave", "Toggle auto-save")} data-testid="file-editor-auto-save-toggle">
+                <Save size={14} />
+                <span>{t("fileEditor.autoSave", "Auto-save")}</span>
+              </button>
+            )}
             {shouldShowLineNumbersToggle && (
               <button className={`btn btn-sm file-editor-toolbar-button ${showLineNumbers ? "btn-primary" : ""}`} onClick={onToggleLineNumbers} aria-label={t("fileEditor.toggleLineNumbers", "Toggle line numbers")} aria-pressed={showLineNumbers} title={t("fileEditor.toggleLineNumbers", "Toggle line numbers")}>
                 <ListOrdered size={14} />

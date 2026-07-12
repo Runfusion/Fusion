@@ -5,6 +5,7 @@ import type { PluginDashboardViewContext } from "../plugins/types";
 import { downloadFileUrl } from "../api";
 import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { useWorkspaceFileEditor } from "../hooks/useWorkspaceFileEditor";
+import { useAutoSavePreference } from "../hooks/useAutoSavePreference";
 import { getScopedItem, removeScopedItem, scopedKey, setScopedItem } from "../utils/projectStorage";
 import { getFilePreviewKind, IMAGE_PREVIEW_EXTENSIONS, VIDEO_PREVIEW_EXTENSIONS, AUDIO_PREVIEW_EXTENSIONS, PDF_PREVIEW_EXTENSIONS } from "../utils/file-preview-kind";
 import { FileBrowser } from "./FileBrowser";
@@ -76,6 +77,7 @@ export function DockFilesView({ projectId, openFile, layout = "auto" }: DockFile
   // FNXC:RightDockFiles 2026-06-22-23:30: initialize from the shared scoped-storage key so the expand pop-out opens the same file the dock is showing.
   const [selectedFile, setSelectedFile] = useState<string | null>(() => getScopedItem(DOCK_FILES_CURRENT_KEY, projectId) || null);
   const [showLineNumbers, setShowLineNumbers] = useState(true);
+  const { autoSaveEnabled, toggleAutoSave } = useAutoSavePreference();
 
   /*
   FNXC:RightDockFiles 2026-06-22-23:30:
@@ -129,7 +131,7 @@ export function DockFilesView({ projectId, openFile, layout = "auto" }: DockFile
     error: contentError,
     save,
     hasChanges,
-  } = useWorkspaceFileEditor("project", selectedFile, Boolean(selectedFile) && !isPreviewOnlyFile && !isReadOnlyBinaryFile, projectId);
+  } = useWorkspaceFileEditor("project", selectedFile, Boolean(selectedFile) && !isPreviewOnlyFile && !isReadOnlyBinaryFile, projectId, autoSaveEnabled);
 
   const handleBack = useCallback(() => selectFile(null), [selectFile]);
   const handlePopOut = useCallback(() => {
@@ -264,6 +266,8 @@ export function DockFilesView({ projectId, openFile, layout = "auto" }: DockFile
               filePath={selectedFile}
               showLineNumbers={showLineNumbers}
               onToggleLineNumbers={handleToggleLineNumbers}
+              autoSaveEnabled={autoSaveEnabled}
+              onToggleAutoSave={toggleAutoSave}
               toolbarExpanded
               forceToolbarActionsVisible
             />

@@ -171,6 +171,9 @@ Use deep links to open a specific task directly from notifications, chat, or ext
 
 File paths in dashboard text are automatically rendered as inline links. Clicking a linked path opens the Files browser modal at that path (including line/column targets when available) so you can inspect the file and use editor actions where supported.
 
+<!-- FNXC:FileEditor 2026-07-12-00:00: Workspace file editing now auto-saves by default in the Files modal and right-dock Files view, with a shared persisted toolbar toggle so operators can return to manual Save/Discard behavior when needed. -->
+Editable workspace text files auto-save after a short pause by default in both the Files modal and the right-dock Files view. Use the editor toolbar's **Auto-save** toggle to turn that shared preference off or on; when it is off, the existing **Save**, **Discard**, and Cmd/Ctrl+S manual flow applies.
+
 Current surfaces include:
 - Task detail modal content (description markdown, **Review** tab, and **Workflow Results** tab output plus workflow overview/graph/model settings)
 - Chat view messages/tool output
