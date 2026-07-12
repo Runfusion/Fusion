@@ -58,6 +58,37 @@ pgTest("TaskStore.listTasks facade (PostgreSQL)", () => {
     expect(tasks.map((t) => t.id)).toEqual(["FN-100", "FN-005", "FN-010"]);
   });
 
+  it("limit/offset paginate in SQL with the same (createdAt, numeric id suffix) order as the full list", async () => {
+    /*
+    FNXC:TaskStoreReadsPerf 2026-07-11 (PR #1793 review):
+    Pagination moved from a client-side slice over the WHOLE table to SQL
+    LIMIT/OFFSET with an ORDER BY matching the JS comparator. This pins that
+    the SQL page equals the old client-side page — including the numeric id
+    tiebreak ("FN-5" before "FN-10" despite string order) and composition
+    with the column filter.
+    */
+    const store = h.store();
+    const seed = async (taskId: string, createdAt: string, column: string) =>
+      store.createTaskWithReservedId(
+        { description: `seed ${taskId}`, column: column as "todo" },
+        { taskId, createdAt, updatedAt: createdAt, applyDefaultWorkflowSteps: false },
+      );
+    await seed("FN-100", "2026-01-01T00:00:00.000Z", "todo");
+    await seed("FN-005", "2026-01-01T00:00:00.001Z", "todo");
+    await seed("FN-010", "2026-01-01T00:00:00.001Z", "todo");
+    await seed("FN-020", "2026-01-01T00:00:00.002Z", "in-review");
+    await seed("FN-030", "2026-01-01T00:00:00.003Z", "todo");
+
+    // Full order: FN-100, FN-005, FN-010, FN-020, FN-030.
+    expect((await store.listTasks({ limit: 2 })).map((t) => t.id)).toEqual(["FN-100", "FN-005"]);
+    expect((await store.listTasks({ offset: 1, limit: 2 })).map((t) => t.id)).toEqual(["FN-005", "FN-010"]);
+    expect((await store.listTasks({ offset: 3 })).map((t) => t.id)).toEqual(["FN-020", "FN-030"]);
+    expect((await store.listTasks({ offset: 99 })).length).toBe(0);
+    expect((await store.listTasks({ limit: 0 })).length).toBe(0);
+    // Pagination composes with the SQL column filter.
+    expect((await store.listTasks({ column: "todo", offset: 2, limit: 2 })).map((t) => t.id)).toEqual(["FN-010", "FN-030"]);
+  });
+
   it("column filter returns only tasks in that column", async () => {
     const store = h.store();
     await store.createTask({ description: "in todo", column: "todo" });

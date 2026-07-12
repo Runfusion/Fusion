@@ -315,11 +315,13 @@ export async function readTaskRowInTransaction(
  *
  * @param layer The async data layer.
  * @param options Optional: excludeLog drops the `log` jsonb column;
- *   includeDeleted surfaces soft-deleted rows for forensic reads (VAL-DATA-006).
+ *   includeDeleted surfaces soft-deleted rows for forensic reads (VAL-DATA-006);
+ *   column/excludeColumn filter by board column in SQL; limit/offset paginate
+ *   in SQL (ordered by createdAt then numeric id suffix).
  */
 export async function readLiveTaskRows(
   layer: AsyncDataLayer,
-  options?: { excludeLog?: boolean; includeDeleted?: boolean },
+  options?: { excludeLog?: boolean; includeDeleted?: boolean; column?: string; excludeColumn?: string; limit?: number; offset?: number },
 ): Promise<Record<string, unknown>[]> {
   // FNXC:TaskStoreForensicRead 2026-06-26-15:20:
   // VAL-DATA-006 — Forensic reads surface soft-deleted rows when explicitly
@@ -327,7 +329,39 @@ export async function readLiveTaskRows(
   // applied so soft-deleted tasks never appear on the board (VAL-DATA-005).
   // When includeDeleted is true the filter is dropped entirely, exposing
   // tombstoned rows for admin/forensic surfaces (e.g. GET /api/tasks?includeDeleted=true).
-  const liveFilter = options?.includeDeleted ? undefined : ACTIVE_TASK_FILTER;
+  /*
+  FNXC:TaskStoreReadsPerf 2026-07-11 (PR #1793 review):
+  Push the board filters and pagination into SQL. The previous shape read the
+  ENTIRE live task table on every listTasks call and filtered/sorted/sliced in
+  JS — every out-of-page row still paid wire transfer plus per-task hydration.
+  `column`/`excludeColumn` become WHERE operands, and when the caller paginates
+  (limit/offset) the query orders by (created_at, numeric id suffix) — the same
+  comparator the JS sort uses — so the SQL page is exactly the JS page.
+  */
+  const columnScope = options?.column !== undefined
+    ? eq(schema.project.tasks.column, options.column)
+    : options?.excludeColumn !== undefined
+      ? sql`${schema.project.tasks.column} IS DISTINCT FROM ${options.excludeColumn}`
+      : undefined;
+  const liveFilter = options?.includeDeleted
+    ? columnScope
+    : (columnScope ? and(ACTIVE_TASK_FILTER, columnScope) : ACTIVE_TASK_FILTER);
+  const paginate = options?.limit !== undefined || (options?.offset ?? 0) > 0;
+  // Mirrors the JS comparator: createdAt ASC, then the numeric suffix of the
+  // task id ("FN-12" → 12; no trailing digits → 0). substring() returns NULL
+  // (→ 0) instead of throwing on ids without a numeric suffix.
+  const createdAtIdOrder = [
+    sql`${schema.project.tasks.createdAt} ASC`,
+    sql`COALESCE(substring(${schema.project.tasks.id} from '-([0-9]+)$')::int, 0) ASC`,
+  ];
+  const applyPagination = <Q extends { orderBy: (...o: SQL[]) => Q; limit: (n: number) => Q; offset: (n: number) => Q }>(query: Q): Q => {
+    if (!paginate) return query;
+    let q = query.orderBy(...createdAtIdOrder);
+    if (options?.limit !== undefined) q = q.limit(Math.max(0, options.limit));
+    const offset = options?.offset ?? 0;
+    if (offset > 0) q = q.offset(offset);
+    return q;
+  };
   if (options?.excludeLog) {
     // FNXC:TaskStoreReads 2026-06-26-11:45:
     // Select every column except `log` via a Drizzle `.select({...projection})`
@@ -336,12 +370,14 @@ export async function readLiveTaskRows(
     // keyed by the TS property name so the downstream `pgRowToTaskRow` /
     // `rowToTask` deserializers work unchanged. `log` is restored to `[]` when
     // a single task is fetched in full via `readTaskRow`.
-    const baseQuery = layer.db.select(TASK_SLIM_PROJECTION).from(schema.project.tasks);
-    const rows = liveFilter ? await baseQuery.where(liveFilter) : await baseQuery;
+    let query = layer.db.select(TASK_SLIM_PROJECTION).from(schema.project.tasks).$dynamic();
+    if (liveFilter) query = query.where(liveFilter);
+    const rows = await applyPagination(query);
     return rows as unknown as Record<string, unknown>[];
   }
-  const baseQuery = layer.db.select().from(schema.project.tasks);
-  return liveFilter ? baseQuery.where(liveFilter) : baseQuery;
+  let query = layer.db.select().from(schema.project.tasks).$dynamic();
+  if (liveFilter) query = query.where(liveFilter);
+  return applyPagination(query);
 }
 
 /**

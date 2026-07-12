@@ -161,6 +161,20 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
     const convo = await getConversation(ctx.layer.db, { id: "agent-a", type: "agent" }, { id: "agent-b", type: "agent" });
     expect(convo).toHaveLength(2);
 
+    /*
+    FNXC:MessageStorePerf 2026-07-11 (PR #1793 review):
+    getConversation is capped to the most recent `limit` messages (default 200)
+    and must keep oldest-first ordering. Pin the cap window: with limit 1 only
+    the NEWEST message survives, and the default read stays ascending.
+    */
+    const later = new Date(Date.now() + 1000).toISOString();
+    await sendMessage(ctx.layer.db, { id: "msg-3", fromId: "agent-a", fromType: "agent", toId: "agent-b", toType: "agent", content: "Newest", type: "agent-to-agent", read: false, metadata: null, createdAt: later, updatedAt: later });
+    const capped = await getConversation(ctx.layer.db, { id: "agent-a", type: "agent" }, { id: "agent-b", type: "agent" }, { limit: 1 });
+    expect(capped.map((m) => m.id)).toEqual(["msg-3"]);
+    const full = await getConversation(ctx.layer.db, { id: "agent-a", type: "agent" }, { id: "agent-b", type: "agent" });
+    expect(full[full.length - 1]!.id).toBe("msg-3");
+    expect(full).toHaveLength(3);
+
     // Mailbox
     const mailbox = await getMailbox(ctx.layer.db, "agent-a", "agent");
     expect(mailbox.unreadCount).toBeGreaterThanOrEqual(0);

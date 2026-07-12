@@ -466,17 +466,25 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
   }
 
   /**
-   * Get all messages between two participants (conversation view).
+   * Get messages between two participants (conversation view).
+   *
+   * FNXC:MessageStorePerf 2026-07-11 (PR #1793 review):
+   * Capped to the most recent `options.limit` messages (default 200) — the
+   * unbounded read fed the CLI chat's AI context with the FULL history on
+   * every exchange. Results stay oldest-first.
+   *
    * @param participantA - First participant
    * @param participantB - Second participant
+   * @param options - Optional `limit` override for the most-recent-N cap
    * @returns Array of messages (oldest first for conversation ordering)
    */
   async getConversation(
     participantA: { id: string; type: ParticipantType },
     participantB: { id: string; type: ParticipantType },
+    options?: { limit?: number },
   ): Promise<Message[]> {
     if (this.asyncLayer) {
-      return asyncMessageStore.getConversation(this.asyncLayer.db, participantA, participantB);
+      return asyncMessageStore.getConversation(this.asyncLayer.db, participantA, participantB, options);
     }
     const participantAIds = this.getParticipantIdsForLookup(participantA.id, participantA.type);
     const participantBIds = this.getParticipantIdsForLookup(participantB.id, participantB.type);
@@ -501,7 +509,8 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
         OR
         (${participantBFromPredicate} AND fromType = ? AND ${participantAToPredicate} AND toType = ?)
       )
-      ORDER BY createdAt ASC
+      ORDER BY createdAt DESC
+      LIMIT ?
     `).all(
       ...participantAIds,
       participantA.type,
@@ -511,9 +520,10 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       participantB.type,
       ...participantAIds,
       participantA.type,
+      Math.max(1, options?.limit ?? asyncMessageStore.DEFAULT_CONVERSATION_LIMIT),
     );
 
-    return (rows as unknown as MessageRow[]).map((row) => this.rowToMessage(row));
+    return (rows as unknown as MessageRow[]).reverse().map((row) => this.rowToMessage(row));
   }
 
   /**

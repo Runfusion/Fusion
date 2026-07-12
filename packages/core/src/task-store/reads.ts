@@ -287,14 +287,24 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       also selected `log` for this reason). The earlier `excludeLog: slim`
       optimization silently disabled both signals on board listings.
       Pass `includeDeleted` through for forensic reads (VAL-DATA-006).
+
+      FNXC:TaskStoreReadsPerf 2026-07-11 (PR #1793 review):
+      The column filter and pagination are pushed into SQL (readLiveTaskRows
+      WHERE + ORDER BY + LIMIT/OFFSET) instead of fetching the whole table and
+      filtering/slicing here — out-of-page rows no longer pay wire transfer or
+      per-task hydration (stall signals, PROMPT.md step sync). The SQL order
+      (created_at, numeric id suffix) matches the JS comparator below, so the
+      page content is identical to the old client-side slice.
       */
-      const pgRows = await readLiveTaskRows(layer, { includeDeleted: options?.includeDeleted });
-      let filteredRows = pgRows;
-      if (columnFilter) {
-        filteredRows = pgRows.filter((row) => row.column === columnFilter);
-      } else if (!includeArchived) {
-        filteredRows = pgRows.filter((row) => row.column !== "archived");
-      }
+      const paginationOffset = Math.max(0, options?.offset ?? 0);
+      const paginationLimit = options?.limit !== undefined ? Math.max(0, options.limit) : undefined;
+      const sqlPaginated = paginationLimit !== undefined || paginationOffset > 0;
+      const filteredRows = await readLiveTaskRows(layer, {
+        includeDeleted: options?.includeDeleted,
+        column: columnFilter ?? undefined,
+        excludeColumn: !columnFilter && !includeArchived ? "archived" : undefined,
+        ...(sqlPaginated ? { limit: paginationLimit, offset: paginationOffset } : {}),
+      });
       const now = Date.now();
       const settings = await store.getSettingsFast();
       const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
@@ -387,18 +397,10 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         const bNum = parseInt(b.id.slice(b.id.lastIndexOf("-") + 1), 10) || 0;
         return aNum - bNum;
       });
-      /*
-       * FNXC:SqliteFinalRemoval 2026-06-25-11:05:
-       * Apply offset/limit pagination client-side, mirroring the SQLite path
-       * (lines ~354-358). The async readLiveTaskRows helper reads all live
-       * rows; for large boards this should move to SQL-level LIMIT/OFFSET,
-       * but for parity with the existing SQLite behavior (which also hydrates
-       * all rows then slices) this is correct and behavior-preserving.
-       */
-      const offset = Math.max(0, options?.offset ?? 0);
-      const limit = options?.limit;
-      if (limit === undefined) return sorted.slice(offset);
-      return sorted.slice(offset, offset + Math.max(0, limit));
+      // FNXC:TaskStoreReadsPerf 2026-07-11 (PR #1793 review): pagination was
+      // already applied in SQL above (readLiveTaskRows LIMIT/OFFSET with the
+      // matching order); the JS sort is a stable no-op over the fetched page.
+      return sorted;
     }
     // Slim mode drops ONLY the agent log column. On busy boards `log` accounts
     // for ~99% of the row payload (60+ MB across 1200 tasks); every other JSON

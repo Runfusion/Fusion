@@ -18,7 +18,7 @@
  *   flip. These helpers are the async target the PostgreSQL integration tests
  *   consume.
  */
-import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import {
@@ -255,14 +255,26 @@ export async function cleanupOldMessages(
 
 /**
  * FNXC:MessageStore 2026-06-24-07:20:
- * Get all messages between two participants (conversation view). Finds
+ * Get messages between two participants (conversation view). Finds
  * messages where either participant is sender or receiver.
+ *
+ * FNXC:MessageStorePerf 2026-07-11 (PR #1793 review):
+ * The unbounded read loaded the FULL conversation history on every exchange —
+ * the CLI chat feeds this straight into AI context, so long-lived agent pairs
+ * paid an ever-growing query + token cost. The read is now capped to the most
+ * recent `limit` messages (default 200) via ORDER BY createdAt DESC + LIMIT in
+ * SQL, then re-sorted ascending so callers still receive oldest-first order.
+ * Pass a larger `options.limit` explicitly for full-history exports.
  */
+export const DEFAULT_CONVERSATION_LIMIT = 200;
+
 export async function getConversation(
   handle: QueryHandle,
   participantA: { id: string; type: ParticipantType },
   participantB: { id: string; type: ParticipantType },
+  options?: { limit?: number },
 ): Promise<Message[]> {
+  const limit = Math.max(1, options?.limit ?? DEFAULT_CONVERSATION_LIMIT);
   const aIds = participantIdsForLookup(participantA.id, participantA.type);
   const bIds = participantIdsForLookup(participantB.id, participantB.type);
   const rows = await handle
@@ -284,8 +296,9 @@ export async function getConversation(
         ),
       ),
     )
-    .orderBy(asc(schema.project.messages.createdAt));
-  return rows.map((row) => rowToMessage(row as MessageRow));
+    .orderBy(desc(schema.project.messages.createdAt))
+    .limit(limit);
+  return rows.reverse().map((row) => rowToMessage(row as MessageRow));
 }
 
 /**
