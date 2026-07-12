@@ -74,7 +74,7 @@ mcpServers through createResolvedAgentSession. Grok ACP must not drop them.
 ### Session lifecycle
 
 1. `createSession` — spawn `grok agent stdio`, ACP `initialize`, `session/new` over the task cwd.
-2. `promptWithFallback` — ACP `session/prompt`; stream `session/update` notifications until terminal `stopReason`.
+2. `promptWithFallback` — ACP `session/prompt` with text + optional chat image ContentBlocks from prompt options; stream `session/update` notifications until terminal `stopReason`.
 3. `dispose` — best-effort `session/cancel` + process-registry SIGKILL (authoritative no-orphan guarantee).
 
 ### Streamed update mapping
