@@ -1683,6 +1683,41 @@ native marker and rotate the chevron on open.
   margin-top: var(--space-xs);
 }
 
+/*
+FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
+One-click fix affordances: a quiet pill per fixable warning row plus a
+"Fix all" pill inline in the collapsed summary line.
+*/
+.wf-lifecycle-fix {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, var(--ws-warning) 55%, var(--border));
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ws-warning);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.wf-lifecycle-fix:hover {
+  background: color-mix(in srgb, var(--ws-warning) 15%, transparent);
+}
+
+.wf-lifecycle-fix:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.wf-lifecycle-fix--all {
+  margin-left: var(--space-xs);
+}
+
 .wf-lifecycle-warnings ul {
   display: grid;
   gap: 4px;

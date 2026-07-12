@@ -550,38 +550,71 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getAllByRole("button", { name: "QA" })[0]).toHaveClass("active");
   });
 
-  it("renders workflow lifecycle warnings returned by the store", async () => {
-    vi.mocked(fetchWorkflows).mockResolvedValue([
-      {
-        ...v2Def(),
-        lifecycleWarnings: [
-          {
-            code: "missing-merge-region",
-            message: "Full task workflows should include a merge region so done is backed by merge proof.",
-          },
-          {
-            code: "optional-group-after-execution",
-            nodeId: "plan-review",
-            message: "Plan Review should be ordered before parse/execution.",
-          },
-        ],
-      },
-    ]);
+  it("analyzes lifecycle warnings live and fixes a missing completion summary in one click", async () => {
+    // FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00: warnings recompute from
+    // the LIVE graph (not the server snapshot) for editable workflows, and
+    // deterministically fixable codes carry a one-click Fix button.
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
-    // FNXC:WorkflowEditor 2026-07-12-10:30: banner is a collapsed-by-default
-    // disclosure: a count summary line, with details revealed on expand.
+    // def() has a merge seam but no completion-summary node → exactly one
+    // live warning, collapsed to a count line by default.
     const banner = await screen.findByTestId("wf-lifecycle-warnings");
-    expect(banner).toHaveTextContent("2 lifecycle warnings");
+    expect(banner).toHaveTextContent("1 lifecycle warning");
     expect(banner).not.toHaveAttribute("open");
     fireEvent.click(screen.getByTestId("wf-lifecycle-warnings-toggle"));
-    expect(banner).toHaveAttribute("open");
-    expect(banner).toHaveTextContent("missing-merge-region");
-    expect(banner).toHaveTextContent("optional-group-after-execution");
-    expect(banner).toHaveTextContent("plan-review");
+    expect(banner).toHaveTextContent("missing-completion-summary");
+
+    fireEvent.click(screen.getByTestId("wf-lifecycle-fix-missing-completion-summary"));
+
+    // The canonical summary node is inserted (selected → inspector opens) and
+    // the live re-analysis clears the banner without a save round-trip.
+    await waitFor(() => expect(screen.queryByTestId("wf-lifecycle-warnings")).not.toBeInTheDocument());
+    expect(screen.getAllByText("Completion summary").length).toBeGreaterThan(0);
   });
 
+  it("fixes all lifecycle warnings on a fresh start→end graph and wires summary→merge→end", async () => {
+    const blank: WorkflowDefinition = {
+      ...def(),
+      id: "WF-BLANK",
+      name: "Blank",
+      ir: {
+        version: "v1",
+        name: "Blank",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "end", kind: "end" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+      },
+      layout: { start: { x: 0, y: 0 }, end: { x: 360, y: 0 } },
+    };
+    vi.mocked(fetchWorkflows).mockResolvedValue([blank]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...blank, ...(updates as object) }));
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    const banner = await screen.findByTestId("wf-lifecycle-warnings");
+    expect(banner).toHaveTextContent("2 lifecycle warnings");
+
+    // "Fix all" sits on the collapsed summary line — no expand needed.
+    fireEvent.click(screen.getByTestId("wf-lifecycle-fix-all"));
+    await waitFor(() => expect(screen.queryByTestId("wf-lifecycle-warnings")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: Array<{ id: string; kind: string; config?: Record<string, unknown> }>; edges: Array<{ from: string; to: string }> } }).ir;
+    const summary = ir.nodes.find((n) => n.config?.summaryTarget === "task");
+    const merge = ir.nodes.find((n) => n.config?.seam === "merge");
+    expect(summary).toBeDefined();
+    expect(merge).toBeDefined();
+    expect(ir.edges.some((e) => e.from === "start" && e.to === summary!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === summary!.id && e.to === merge!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === merge!.id && e.to === "end")).toBe(true);
+    expect(ir.edges.some((e) => e.from === "start" && e.to === "end")).toBe(false);
+  });
   it("lets desktop users collapse and restore the workflow sidebar", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
 

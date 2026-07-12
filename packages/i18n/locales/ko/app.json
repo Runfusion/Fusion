@@ -8794,6 +8794,8 @@
     "importInvalidJson": "이 파일은 유효한 JSON이 아닙니다.",
     "importStripped": "가져온 노드에서 자동 승인 플래그가 제거되었습니다",
     "importTooltip": "JSON 파일에서 워크플로 가져오기",
+    "lifecycleFix": "",
+    "lifecycleFixAll": "",
     "lifecycleWarningsCount_one": "",
     "lifecycleWarningsCount_other": "",
     "loadFailed": "",

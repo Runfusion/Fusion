@@ -8794,6 +8794,8 @@
     "importInvalidJson": "Ese archivo no es JSON válido.",
     "importStripped": "Se eliminaron los indicadores de aprobación automática de los nodos importados",
     "importTooltip": "Importar un flujo de trabajo desde un archivo JSON",
+    "lifecycleFix": "",
+    "lifecycleFixAll": "",
     "lifecycleWarningsCount_one": "",
     "lifecycleWarningsCount_other": "",
     "loadFailed": "",

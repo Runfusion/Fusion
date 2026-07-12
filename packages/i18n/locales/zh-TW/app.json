@@ -8794,6 +8794,8 @@
     "importInvalidJson": "該檔案不是有效的 JSON。",
     "importStripped": "已從匯入的節點移除自動核准旗標",
     "importTooltip": "從 JSON 檔案匯入工作流程",
+    "lifecycleFix": "",
+    "lifecycleFixAll": "",
     "lifecycleWarningsCount_one": "",
     "lifecycleWarningsCount_other": "",
     "loadFailed": "",

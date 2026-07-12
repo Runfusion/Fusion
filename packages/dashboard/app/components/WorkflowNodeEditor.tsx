@@ -20,7 +20,8 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
-import { getErrorMessage } from "@fusion/core";
+import { getErrorMessage, analyzeWorkflowLifecycle } from "@fusion/core";
+import type { WorkflowLifecycleWarning, WorkflowLifecycleWarningCode } from "@fusion/core";
 import {
   fetchWorkflows,
   createWorkflow,
@@ -92,6 +93,12 @@ import {
 } from "./workflow-flow-mapping";
 import { autoLayout, applyAutoLayout } from "./workflow-auto-layout";
 import { insertNodeOnEdge, findAppendEdgeId, spliceInsertedSubgraphOnEdge } from "./workflow-simple-layout";
+import {
+  LIFECYCLE_AUTOFIXABLE_CODES,
+  lifecycleFixNodeSpec,
+  applyLifecycleWarningFix,
+  applyAllLifecycleWarningFixes,
+} from "./workflow-lifecycle-autofix";
 import { WorkflowSimpleCanvas } from "./WorkflowSimpleCanvas";
 import { WorkflowAddStepModal, type AddStepPaletteEntry } from "./WorkflowAddStepModal";
 import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
@@ -1035,7 +1042,25 @@ function InnerEditor({
 
   const activeWorkflow = useMemo(() => workflows.find((w) => w.id === activeId), [workflows, activeId]);
   const isBuiltin = !!activeWorkflow && isBuiltinWorkflowId(activeWorkflow.id);
-  const lifecycleWarnings = activeWorkflow?.lifecycleWarnings ?? [];
+  /*
+  FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
+  Lifecycle warnings recompute client-side from the LIVE graph for editable
+  workflows, so the banner reflects edits (including one-click fixes)
+  immediately instead of waiting for the save round-trip. Built-ins are
+  read-only, and an unmaterialized canvas has nothing to analyze — both keep
+  the server-computed warnings.
+  */
+  const lifecycleWarnings: WorkflowLifecycleWarning[] = useMemo(() => {
+    if (!activeWorkflow) return [];
+    const serverWarnings = activeWorkflow.lifecycleWarnings ?? [];
+    if (isBuiltin || nodes.length === 0) return serverWarnings;
+    try {
+      const { ir } = flowToIr(name || activeWorkflow.name, nodes, edges, columns, fields, settings);
+      return analyzeWorkflowLifecycle(ir, { kind: activeWorkflow.kind });
+    } catch {
+      return serverWarnings;
+    }
+  }, [activeWorkflow, isBuiltin, nodes, edges, columns, fields, settings, name]);
 
   // Live mirror of the active workflow id, readable inside async callbacks that
   // captured an earlier value before an await (e.g. the AI-design round-trip).
@@ -1759,6 +1784,45 @@ function InnerEditor({
     },
     [insertFromAddStep],
   );
+
+  /*
+  FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
+  One-click lifecycle fixes: splice the canonical node into the unambiguous
+  wiring point when one exists, else fall back to a free-floating node with
+  the same config (advanced-canvas users can wire it manually). The live
+  warning recompute clears the banner row immediately; Save persists it.
+  */
+  const handleLifecycleFix = useCallback(
+    (code: WorkflowLifecycleWarningCode) => {
+      if (isBuiltin) return;
+      const result = applyLifecycleWarningFix(nodes, edges, code);
+      if (result) {
+        setNodes(result.nodes);
+        setEdges(result.edges);
+        setSelectedNodeId(result.newNodeId);
+        setSelectedEdgeId(null);
+        return;
+      }
+      const spec = lifecycleFixNodeSpec(code);
+      if (spec) addNode(spec.kind, spec.label, spec.presetConfig);
+    },
+    [isBuiltin, nodes, edges, setNodes, setEdges, addNode],
+  );
+
+  const fixableLifecycleCodes = useMemo(
+    () => lifecycleWarnings.map((w) => w.code).filter((code) => LIFECYCLE_AUTOFIXABLE_CODES.has(code)),
+    [lifecycleWarnings],
+  );
+
+  const handleLifecycleFixAll = useCallback(() => {
+    if (isBuiltin || fixableLifecycleCodes.length === 0) return;
+    const result = applyAllLifecycleWarningFixes(nodes, edges, fixableLifecycleCodes);
+    if (!result) return;
+    setNodes(result.nodes);
+    setEdges(result.edges);
+    setSelectedNodeId(result.newNodeId);
+    setSelectedEdgeId(null);
+  }, [isBuiltin, fixableLifecycleCodes, nodes, edges, setNodes, setEdges]);
 
   // Auto-layout: one-click left-to-right tidy (U5, R8). Recomputes positions
   // only; bands and foreach template children are left in place. Marks the
@@ -3104,6 +3168,24 @@ function InnerEditor({
                         })}
                       </span>
                       <ChevronDown size={12} className="wf-lifecycle-warnings-chevron" aria-hidden />
+                      {/* FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00: one
+                          click inserts every deterministically fixable node
+                          (merge boundary, then completion summary upstream of
+                          it) without expanding the disclosure. */}
+                      {!isBuiltin && fixableLifecycleCodes.length > 0 && (
+                        <button
+                          type="button"
+                          className="wf-lifecycle-fix wf-lifecycle-fix--all"
+                          data-testid="wf-lifecycle-fix-all"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleLifecycleFixAll();
+                          }}
+                        >
+                          {t("workflows.lifecycleFixAll", "Fix all")}
+                        </button>
+                      )}
                     </summary>
                     <ul>
                       {lifecycleWarnings.map((warning, index) => (
@@ -3111,6 +3193,16 @@ function InnerEditor({
                           <span className="wf-lifecycle-warning-code">{warning.code}</span>
                           {warning.nodeId && <span className="wf-lifecycle-warning-node">{warning.nodeId}</span>}
                           <span>{warning.message}</span>
+                          {!isBuiltin && LIFECYCLE_AUTOFIXABLE_CODES.has(warning.code) && (
+                            <button
+                              type="button"
+                              className="wf-lifecycle-fix"
+                              data-testid={`wf-lifecycle-fix-${warning.code}`}
+                              onClick={() => handleLifecycleFix(warning.code)}
+                            >
+                              {t("workflows.lifecycleFix", "Fix")}
+                            </button>
+                          )}
                         </li>
                       ))}
                     </ul>
