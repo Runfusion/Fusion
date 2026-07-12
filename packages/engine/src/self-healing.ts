@@ -10555,6 +10555,11 @@ export class SelfHealingManager {
       }
 
       let recovered = 0;
+      /*
+      FNXC:AgentHeartbeat 2026-07-12-21:05:
+      PR #2027 review: unrecoverable-error parks are a handled outcome of the sweep (the return value counts actions taken, preserving the existing caller contract), but they are NOT recoveries to active — the summary log must say "parked for operator action", never fold them into "→ active", or maintenance logs misreport agents that still need manual repair.
+      */
+      let parkedUnrecoverable = 0;
       for (const agent of orphaned) {
         const updatedAt = Date.parse(agent.updatedAt ?? "");
         const stuckForMs = Math.max(0, now - updatedAt);
@@ -10595,7 +10600,7 @@ export class SelfHealingManager {
                 source: "self-healing",
               });
               log.warn(`Suppressed durable-agent auto-restart for ${agent.id}: unrecoverable heartbeat error; paused for operator action`);
-              recovered++;
+              parkedUnrecoverable++;
               continue;
             }
             if (isStaleMissingModule) {
@@ -10707,7 +10712,10 @@ export class SelfHealingManager {
       if (recovered > 0) {
         log.log(`Recovered ${recovered} orphaned agent(s) → active`);
       }
-      return recovered;
+      if (parkedUnrecoverable > 0) {
+        log.warn(`Parked ${parkedUnrecoverable} durable agent(s) with unrecoverable errors for operator action (not recovered)`);
+      }
+      return recovered + parkedUnrecoverable;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Orphaned agent recovery failed: ${errorMessage}`);

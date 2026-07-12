@@ -111,8 +111,12 @@ Genuinely operator-actionable auth failures are excluded first: OAuth scope/perm
 */
 const TRANSIENT_AUTH_CREDENTIAL_ROTATION_PATTERN =
   /"type":\s*"authentication_error"|invalid authentication credentials|token[_\s]?expired/i;
+/*
+FNXC:Reliability-ErrorClassification 2026-07-12-21:05:
+PR #2027 review: the `"type":"authentication_error"` envelope is intentionally broad (providers put rotation failures behind it with varying messages), so the exclusion list must carry the operator-actionable load. Beyond scope grants and invalid/missing API keys, exclude account/credential states no retry can fix: revoked/suspended/disabled/deactivated keys or accounts and inactive subscriptions. A message matching any of these stays permanent/operator-actionable even inside an authentication_error envelope; retries are pointless and would un-park agents a human must repair. Unmatched novel auth messages still classify transient, but the bounded heartbeat error-recovery budget re-parks them as `error-retry-exhausted` after a few attempts, so the failure mode is a handful of visible retries, not an unpark loop.
+*/
 const OPERATOR_ACTIONABLE_AUTH_EXCLUSION_PATTERN =
-  /oauth token does not meet scope|insufficient[_\s-]?scope|invalid[_\s-]?scope|invalid (?:api[_\s-]?key|x-api-key)|missing\s+(?:\S+\s+)?(?:api[_\s-]?)?key/i;
+  /oauth token does not meet scope|insufficient[_\s-]?scope|invalid[_\s-]?scope|invalid (?:api[_\s-]?key|x-api-key)|missing\s+(?:\S+\s+)?(?:api[_\s-]?)?key|revoked|suspend(?:ed)?|disabled|deactivated|subscription|account (?:is )?(?:locked|closed|inactive)|access denied/i;
 
 /**
  * Detect a transient authentication failure caused by credential rotation

@@ -3425,6 +3425,9 @@ export class HeartbeatMonitor {
           /*
           FNXC:AgentHeartbeat 2026-07-12-20:10:
           Heartbeat prompts must run under the same rate-limit + transient-auth retry wrapper as executor/triage/merger work. Claude Max OAuth tokens rotate mid-run (~8 h); the in-flight call 401s ("authentication_error: Invalid authentication credentials") even though refreshed credentials already exist, and the next attempt succeeds. Without this wrapper a routine token rotation failed the run, pushed every durable agent to `error`, and (via FN-7859 unrecoverable classification) parked them paused for operator action. Retrying in-run prevents the error state at the source; the durable-agent error-recovery budget stays the backstop for errors that escape.
+
+          FNXC:AgentHeartbeat 2026-07-12-21:05:
+          PR #2027 review (side-effect replay): the retry re-prompts the SAME session, whose transcript already contains any tool calls completed before the failure, so the model continues from its partial work rather than blindly re-executing it — the same continuation semantics executor/triage/merger rely on under this wrapper. A rotation 401 additionally fails on the turn's FIRST provider call (the stale token never reaches a tool call), so the dominant retry case has no partial work to duplicate.
           */
           await withRateLimitRetry(() => promptWithFallback(session, executionPrompt), {
             onRetry: (attempt, delayMs, retryError) => {

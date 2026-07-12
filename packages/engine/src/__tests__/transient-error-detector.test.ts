@@ -461,6 +461,21 @@ describe("Transient Error Detector", () => {
       expect(isOperatorActionableAgentError("missing OPENAI_API_KEY")).toBe(true);
     });
 
+    it("keeps revoked/suspended/subscription credential states operator-actionable inside an authentication_error envelope (PR #2027 review)", () => {
+      const shapes = [
+        '401 {"type":"error","error":{"type":"authentication_error","message":"Access denied: API key revoked"}}',
+        '401 {"type":"error","error":{"type":"authentication_error","message":"account suspended"}}',
+        '401 {"type":"error","error":{"type":"authentication_error","message":"subscription inactive"}}',
+        '401 {"type":"error","error":{"type":"authentication_error","message":"this API key has been disabled"}}',
+        '401 {"type":"error","error":{"type":"authentication_error","message":"credentials deactivated"}}',
+        '401 {"type":"error","error":{"type":"authentication_error","message":"account is locked"}}',
+      ];
+      for (const shape of shapes) {
+        expect(isTransientAuthCredentialError(shape)).toBe(false);
+        expect(classifyError(shape)).toBe("permanent");
+      }
+    });
+
     it("does not match unrelated auth failures or empty input", () => {
       expect(isTransientAuthCredentialError("Authentication failed for provider")).toBe(false);
       expect(isOperatorActionableAgentError("Authentication failed for provider")).toBe(true);
