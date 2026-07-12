@@ -1055,7 +1055,7 @@ export class ChatManager {
       FNXC:ChatSkills 2026-06-16-19:10:
       Agent chat receives the project plugin runner through this narrow structural type, so expose enabled plugin skill contributions here without requiring dashboard code to depend on the full engine runner class.
       */
-      getPluginSkills?(): Array<{ pluginId: string; skill: { name: string; enabled?: boolean } }>;
+      getPluginSkills?(): Array<{ pluginId: string; pluginRoot?: string; skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] } }>;
     },
     private getSettings?: () => Promise<Pick<Settings,
       | "fallbackProvider"

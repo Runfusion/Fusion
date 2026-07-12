@@ -1496,14 +1496,14 @@ const skills: PluginSkillContribution[] = [
     skillId: "web-research",
     name: "Web Research",
     description: "Finds and summarizes web sources for a task",
-    skillFiles: ["skills/web-research/SKILL.md"],
+    skillFiles: ["skills/research/web-research/SKILL.md"],
     enabled: true,
     triggerPatterns: ["research", "search the web", "find sources"],
   },
 ];
 ```
 
-`skillFiles` are relative to the plugin root. `skillId` must be kebab-case.
+`skillFiles` are relative to the plugin root. The first entry, `skillFiles[0]`, is the authoritative body file that Fusion resolves for the skill, so plugins can organize skill bodies in category subdirectories such as `skills/research/web-research/SKILL.md` while keeping a short `skillId`. When `skillFiles` is omitted or empty, Fusion falls back to the compatibility path `skills/<name>/SKILL.md`. `skillId` must be kebab-case.
 
 Plugin skills are discovered per requesting project: the Skills view and workflow editor surface `plugin:<id>` skills only when that plugin is enabled for that project's plugin state, even if the daemon was started from a different directory.
 

@@ -12,6 +12,7 @@ import {
   getSkillSettingState,
   normalizeStoredSkillPath,
   parseSkillId,
+  resolvePluginSkillBodyPath,
   resolvePluginSkillEnabled,
   superviseSpawn,
 } from "@fusion/core";
@@ -284,11 +285,13 @@ export function createSkillsAdapter(options: {
   getPluginSkills?: (rootDir: string) =>
     | Array<{
       pluginId: string;
-      skill: { name: string; description?: string; enabled?: boolean };
+      pluginRoot?: string;
+      skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] };
     }>
     | Promise<Array<{
       pluginId: string;
-      skill: { name: string; description?: string; enabled?: boolean };
+      pluginRoot?: string;
+      skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] };
     }>>;
   /** Optional superviseSpawn seam for tests */
   superviseSpawn?: typeof superviseSpawn;
@@ -347,17 +350,23 @@ export function createSkillsAdapter(options: {
       /*
        * FNXC:PluginSkills 2026-07-10-00:00:
        * Skill discovery is project-scoped: plugin contributions must be resolved for the requesting rootDir's project_plugin_states, not the daemon startup directory. This keeps /api/skills/discovered from leaking daemon-root plugin skills into unrelated projects while still surfacing skills enabled only for the requested managed project.
+       *
+       * FNXC:PluginSkills 2026-07-12-00:00:
+       * Plugin skill body paths now come from skillFiles (GitHub #2018) through @fusion/core's traversal-guarded resolver when pluginRoot is available. Discovered plugin skill path is the absolute on-disk SKILL.md location for FN-7857 consumers, while missing pluginRoot keeps the old name-derived relative path for compatibility.
        */
       const pluginSkills = await (options.getPluginSkills?.(rootDir) ?? []);
       if (pluginSkills.length > 0) {
         const seenBareNames = new Set(discoveredSkills.map((s) => bareSkillName(s.name)));
-        for (const { pluginId, skill } of pluginSkills) {
+        for (const { pluginId, pluginRoot, skill } of pluginSkills) {
           const name = skill.name?.trim();
           if (!name) continue;
           const bare = bareSkillName(name);
           if (seenBareNames.has(bare)) continue;
           seenBareNames.add(bare);
-          const relativePath = `skills/${name}/SKILL.md`;
+          const resolvedBodyPath = pluginRoot
+            ? resolvePluginSkillBodyPath({ name, skillFiles: skill.skillFiles ?? [] }, pluginRoot)
+            : null;
+          const relativePath = resolvedBodyPath?.relativePath ?? `skills/${name}/SKILL.md`;
           const id = computeSkillId(`plugin:${pluginId}`, relativePath);
           const enabled = resolvePluginSkillEnabled(
             settings as Parameters<typeof resolvePluginSkillEnabled>[0],
@@ -368,7 +377,7 @@ export function createSkillsAdapter(options: {
           discoveredSkills.push({
             id,
             name,
-            path: relativePath,
+            path: resolvedBodyPath?.absolutePath ?? relativePath,
             relativePath,
             enabled,
             description: skill.description,

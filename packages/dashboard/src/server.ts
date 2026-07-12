@@ -352,7 +352,7 @@ export interface ServerOptions {
     FNXC:ChatSkills 2026-06-16-19:10:
     The dashboard passes this structural runner into ChatManager, which needs optional plugin skill discovery so chat can load enabled plugin skills such as ce-debug.
     */
-    getPluginSkills?(): Array<{ pluginId: string; skill: { name: string; enabled?: boolean } }>;
+    getPluginSkills?(): Array<{ pluginId: string; pluginRoot?: string; skill: { skillId?: string; name: string; description?: string; enabled?: boolean; skillFiles?: string[] } }>;
     reloadPlugin?(pluginId: string): Promise<unknown>;
     checkPluginSetup?(pluginId: string): Promise<import("@fusion/core").PluginSetupCheckResult>;
     installPluginSetup?(pluginId: string): Promise<void | { success: boolean; error?: string }>;

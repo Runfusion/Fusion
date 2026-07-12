@@ -2756,15 +2756,38 @@ export default plugin;
     it("getPluginSkills returns skills with pluginId", async () => {
       await pluginStore.init();
       loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      const pluginRoot = join(rootDir, "plugins", "skills-plugin");
       (loader as any).plugins.set("skills-plugin", {
         manifest: makeManifest({ id: "skills-plugin" }),
         state: "started",
         hooks: {},
         skills: [{ skillId: "browser", name: "Browser", description: "Web", skillFiles: ["./SKILL.md"] }],
       } as FusionPlugin);
+      (loader as any).pluginRoots.set("skills-plugin", pluginRoot);
       expect(loader.getPluginSkills()).toEqual([
         {
           pluginId: "skills-plugin",
+          pluginRoot,
+          skill: { skillId: "browser", name: "Browser", description: "Web", skillFiles: ["./SKILL.md"] },
+        },
+      ]);
+    });
+
+    it("getPluginSkills carries the resolved absolute pluginRoot after load", async () => {
+      await pluginStore.init();
+      loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      const pluginDir = join(rootDir, "plugins", "skills-plugin");
+      const plugin = makePlugin(makeManifest({ id: "skills-plugin" }));
+      plugin.skills = [{ skillId: "browser", name: "Browser", description: "Web", skillFiles: ["./SKILL.md"] }];
+      const pluginPath = await writePluginModule(pluginDir, "index.js", plugin);
+      await pluginStore.registerPlugin({ manifest: plugin.manifest, path: pluginPath });
+
+      await loader.loadPlugin("skills-plugin");
+
+      expect(loader.getPluginSkills()).toEqual([
+        {
+          pluginId: "skills-plugin",
+          pluginRoot: pluginDir,
           skill: { skillId: "browser", name: "Browser", description: "Web", skillFiles: ["./SKILL.md"] },
         },
       ]);

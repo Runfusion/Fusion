@@ -124,7 +124,7 @@ interface CachedCliProviderContributions {
 }
 
 interface CachedSkills {
-  skills: Array<{ pluginId: string; skill: PluginSkillContribution }>;
+  skills: Array<{ pluginId: string; skill: PluginSkillContribution; pluginRoot?: string }>;
   version: number;
 }
 
@@ -397,7 +397,7 @@ export class PluginRunner {
     return this.cachedCliProviderContributions.contributions;
   }
 
-  getPluginSkills(): Array<{ pluginId: string; skill: PluginSkillContribution }> {
+  getPluginSkills(): Array<{ pluginId: string; skill: PluginSkillContribution; pluginRoot?: string }> {
     if (!this.cachedSkills || this.cachedSkills.version !== this.skillsCacheVersion) {
       this.cachedSkills = {
         skills: this.options.pluginLoader.getPluginSkills(),

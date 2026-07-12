@@ -42,6 +42,11 @@ export {
   resolvePluginSkillEnabled,
 } from "./skill-settings.js";
 export type { SkillSettingState, SkillSettingsScope } from "./skill-settings.js";
+export {
+  resolvePluginRootFromEntryPath,
+  resolvePluginSkillBodyPath,
+} from "./plugin-skill-paths.js";
+export type { PluginSkillBodyPath } from "./plugin-skill-paths.js";
 export { redactSecrets } from "./redact-secrets.js";
 export {
   evaluatePromptCondition,

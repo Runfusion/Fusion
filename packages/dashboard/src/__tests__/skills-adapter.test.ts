@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createSkillsAdapter, extractSkillName, computeSkillId, bareSkillName } from "../skills-adapter.js";
 import { resolvePluginSkillEnabled } from "@fusion/core";
 import { writeFile, mkdir, access, readFile, rm } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -799,6 +799,79 @@ describe("createSkillsAdapter - plugin skill merge", () => {
     expect(byName.get("ce-debug")!.enabled).toBe(false);
     // Ids are stable + parseable, and distinct from any disk skill id.
     expect(byName.get("ce-plan")!.id).toContain("::");
+  });
+
+  it("honors plugin skillFiles in category subdirectories when pluginRoot is present", async () => {
+    const pluginRoot = resolve("/tmp/fusion-plugin-compound-engineering");
+    const adapter = createSkillsAdapter({
+      packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [] }) },
+      getSettingsPath: () => "/tmp/does-not-exist-settings.json",
+      getPluginSkills: () => [
+        {
+          pluginId: "fusion-plugin-compound-engineering",
+          pluginRoot,
+          skill: {
+            skillId: "entity-framework-core",
+            name: "entity-framework-core",
+            description: "EF Core guidance",
+            skillFiles: ["skills/data/entity-framework-core/SKILL.md"],
+          },
+        },
+      ],
+    });
+
+    const skills = await adapter.discoverSkills("/tmp/project");
+    const skill = skills.find((entry) => entry.name === "entity-framework-core")!;
+
+    expect(skill.relativePath).toBe("skills/data/entity-framework-core/SKILL.md");
+    expect(skill.path).toBe(join(pluginRoot, "skills/data/entity-framework-core/SKILL.md"));
+  });
+
+  it("keeps CE-style flat skillFiles on the previous name-derived path and id", async () => {
+    const pluginRoot = resolve("/tmp/fusion-plugin-compound-engineering");
+    const adapter = createSkillsAdapter({
+      packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [] }) },
+      getSettingsPath: () => "/tmp/does-not-exist-settings.json",
+      getPluginSkills: () => [
+        {
+          pluginId: "fusion-plugin-compound-engineering",
+          pluginRoot,
+          skill: {
+            skillId: "ce-plan",
+            name: "ce-plan",
+            description: "Plan work",
+            skillFiles: ["skills/ce-plan/SKILL.md"],
+          },
+        },
+      ],
+    });
+
+    const cePlan = (await adapter.discoverSkills("/tmp/project")).find((entry) => entry.name === "ce-plan")!;
+
+    expect(cePlan.relativePath).toBe("skills/ce-plan/SKILL.md");
+    expect(cePlan.id).toBe(computeSkillId("plugin:fusion-plugin-compound-engineering", "skills/ce-plan/SKILL.md"));
+  });
+
+  it("keeps the name-derived relative path when pluginRoot is missing", async () => {
+    const adapter = createSkillsAdapter({
+      packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [] }) },
+      getSettingsPath: () => "/tmp/does-not-exist-settings.json",
+      getPluginSkills: () => [
+        {
+          pluginId: "legacy-plugin",
+          skill: {
+            skillId: "entity-framework-core",
+            name: "entity-framework-core",
+            skillFiles: ["skills/data/entity-framework-core/SKILL.md"],
+          },
+        },
+      ],
+    });
+
+    const skill = (await adapter.discoverSkills("/tmp/project")).find((entry) => entry.name === "entity-framework-core")!;
+
+    expect(skill.relativePath).toBe("skills/entity-framework-core/SKILL.md");
+    expect(skill.path).toBe("skills/entity-framework-core/SKILL.md");
   });
 
   it("passes the requesting project root into async plugin-skill discovery", async () => {
