@@ -136,6 +136,8 @@ describe("executeHeartbeat", () => {
         updatedAt: new Date().toISOString(),
       }),
       getTaskDocuments: vi.fn().mockResolvedValue([]),
+      // FNXC:HeartbeatTests 2026-07-12-10:00: FN-7835's completeRun(failed) calls this.taskStore.getSettings() to resolve the error-recovery limit inside the failed-state transition block. Without this mock, the call throws TypeError, caught by the outer try-catch — so the agent is never set to "error" (it stays "running" from startRun), breaking every failed-run state-transition assertion. Placed before ...overrides so test-specific getSettings mocks still win.
+      getSettings: vi.fn().mockResolvedValue({}),
       ...overrides,
     } as unknown as TaskStore;
   }
@@ -882,7 +884,8 @@ describe("executeHeartbeat", () => {
 
       expect(result).toBeDefined();
       expect(result.status).toBe("completed");
-      expect(result.resultJson).toEqual({ reason: "invalid_state", state: "error" });
+      // FNXC:HeartbeatTests 2026-07-12-09:30: FN-7835 adds recoveryEligible to the invalid_state resultJson so the UI/recovery logic knows whether auto-recovery applies.
+      expect(result.resultJson).toEqual({ reason: "invalid_state", recoveryEligible: false, state: "error" });
       expect(mockedCreateFnAgent).not.toHaveBeenCalled();
       expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
     });
@@ -920,7 +923,8 @@ describe("executeHeartbeat", () => {
       expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "error");
       expect(store.updateAgent).toHaveBeenCalledWith("agent-001", { lastError: "Prompt failed" });
       expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "active");
-      expect(store.updateAgent).toHaveBeenCalledWith("agent-001", { lastError: undefined });
+      // FNXC:HeartbeatTests 2026-07-12-10:10: FN-7835's success path also resets error-recovery metadata alongside lastError, so use objectContaining to tolerate the extra metadata key.
+      expect(store.updateAgent).toHaveBeenCalledWith("agent-001", expect.objectContaining({ lastError: undefined }));
     });
 
     it("completes as failed when agent not found in store", async () => {

@@ -271,6 +271,11 @@ function v2DefWithField(): WorkflowDefinition {
 
 describe("WorkflowFieldsPanel — editor round-trip", () => {
   beforeEach(() => {
+    // FNXC:WorkflowSimpleView 2026-07-12: commit bcbd97cc1 made the workflow editor default to the "simple" graphical
+    // view, which hides the Advanced-view sidebar panels (including WorkflowFieldsPanel, rendered only when
+    // !simpleViewEnabled — see WorkflowNodeEditor.tsx ~L2926). Force "advanced" so the Fields panel mounts and the
+    // round-trip assertion can reach it. Key mirrors viewModeStorageKey in WorkflowNodeEditor.tsx.
+    localStorage.setItem("fusion:wf-editor-view-mode", "advanced");
     vi.mocked(fetchTraits).mockResolvedValue([
       { id: "intake", name: "Intake", builtin: true, flags: { intake: true } },
       { id: "complete", name: "Complete", builtin: true, flags: { complete: true } },
