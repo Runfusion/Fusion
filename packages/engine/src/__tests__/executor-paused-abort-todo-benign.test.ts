@@ -714,4 +714,45 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     await flushScheduledRetry();
     expect(graphSpy).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowLifecycle 2026-07-12:
+  Live-acceptance repro: the workflow merge boundary hard-cancels the in-flight
+  executor session on the in-progress → in-review move, the AI merge lands, the
+  task advances to done — and the aborted graph run's teardown then reached the
+  operator-action sink and logged "operator action required" on a task that
+  finished perfectly. A pause-abort observed in a terminal SUCCESS column must
+  be benign across BOTH terminal columns (done and archived): no alarming log,
+  no failed park, marker cleared, worktree slot released.
+  */
+  describe("terminal-success columns are benign (post-merge hard-cancel false alarm)", () => {
+    it.each([
+      { column: "done" as const },
+      { column: "archived" as const },
+    ])("classifies a hard-cancel pause abort on a '$column' task as benign", async ({ column }) => {
+      const { store, task, executor } = makeHarness({ column });
+      (executor as any).addActiveWorktree(task.id, task.worktree);
+
+      await invokeGraphFailure(executor, task, {
+        interruptedNodeId: "merge",
+        interruptedAbortKind: "engine-pause",
+        visitedNodeIds: ["plan", "execute", "merge"],
+        context: { "node:merge:value": "merged", "node:merge:abortKind": "engine-pause" },
+      });
+
+      // No operator-action alarm and no PAUSE_ABORT_PARK markers in the log.
+      expect(logText(store)).not.toContain("operator action required");
+      expect(logText(store)).not.toContain("Workflow graph failure surfaced");
+      // The benign completion note is logged instead.
+      expect(logText(store)).toContain(`after the task already completed ('${column}') — benign, no action needed`);
+      // Never parked failed.
+      const parkedFailed = store.updateTask.mock.calls.some(
+        (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
+      );
+      expect(parkedFailed).toBe(false);
+      // Marker cleared + worktree slot released so nothing re-fires or leaks.
+      expect((executor as any).pausedAborted.has(task.id)).toBe(false);
+      expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
+    });
+  });
 });

@@ -8895,6 +8895,33 @@ export class TaskExecutor {
             await this.persistTokenUsage(task.id);
             return;
           }
+          /*
+          FNXC:WorkflowLifecycle 2026-07-12:
+          A pause-abort whose task already reached a terminal SUCCESS column is
+          benign teardown, not an operator problem. The live-acceptance repro:
+          the workflow merge boundary hard-cancels the in-flight executor
+          session when it moves the task in-progress → in-review
+          (abort-in-flight provenance=hard-cancel), the AI merge then lands and
+          the task advances to done — and only afterwards does the aborted
+          graph run reach this sink, where it logged "Workflow graph failure
+          surfaced ... operator action required; retry or explicitly
+          unpause/resume" on a task that finished perfectly. The `status:
+          "failed"` write below was already guarded for done/archived, but the
+          alarming operator-action log entry (and its warn) still fired on
+          every auto-merged task. Treat done/archived like the todo benign
+          case: clear the abort marker, release the worktree slot, log a
+          benign completion note, and never emit the PAUSE_ABORT_PARK markers
+          (so self-healing's recoverPausedAbortFailures has nothing to chase).
+          */
+          if (live.column === "done" || live.column === "archived") {
+            this.clearPausedAborted(task.id);
+            this.activeWorktrees.delete(task.id);
+            const doneBenign = `Workflow graph run ended during ${pauseProvenance} after the task already completed ('${live.column}') — benign, no action needed`;
+            executorLog.log(`${task.id}: ${doneBenign}`);
+            await this.store.logEntry(task.id, doneBenign, undefined, this.getRunContextFor(task.id));
+            await this.persistTokenUsage(task.id);
+            return;
+          }
           const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
           // FNXC:WorkflowLifecycle 2026-06-20-00:00: build the parked-failure
           // message from the shared markers so self-healing's recoverPausedAbortFailures
@@ -8902,7 +8929,7 @@ export class TaskExecutor {
           const message = `${PAUSE_ABORT_PARK_ERROR_MARKER} ${pauseProvenance} in '${live.column}' at node '${failedNode}' — ${PAUSE_ABORT_PARK_OPERATOR_MARKER}; retry or explicitly unpause/resume after inspecting the task`;
           executorLog.warn(`${task.id}: ${message}`);
           await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-          if (live.column !== "done" && live.column !== "archived" && live.status == null && live.error == null) {
+          if (live.status == null && live.error == null) {
             await this.store.updateTask(task.id, { error: message, status: "failed" }, this.getRunContextFor(task.id));
           }
           await this.persistTokenUsage(task.id);
