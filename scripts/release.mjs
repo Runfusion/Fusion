@@ -37,6 +37,12 @@ import { extractVersionNotes, replaceVersionSection } from "./lib/extract-versio
 import { parseChangesetFile } from "./lib/changeset-schema.mjs";
 import { distillDeterministic } from "./lib/distill-release-notes.mjs";
 import { shouldPromptForVersion } from "./lib/release-prompt-gate.mjs";
+import {
+  archivePointerLine,
+  CHANGELOG_ARCHIVE_CUTOFF,
+  CHANGELOG_ARCHIVE_FILE,
+  partitionVersionsByCutoff,
+} from "./lib/changelog-archive.mjs";
 
 const args = new Set(process.argv.slice(2));
 /*
@@ -68,7 +74,7 @@ function run(cmd, { capture = false, allowFail = false, cwd } = {}) {
 }
 
 /**
- * Rewrite the repo-root CHANGELOG.md by aggregating every
+ * Rewrite the repo-root changelogs by aggregating every
  * `packages/*\/CHANGELOG.md` into a single per-version view.
  *
  * For each version that appears in any package, we emit a top-level
@@ -80,6 +86,10 @@ function run(cmd, { capture = false, allowFail = false, cwd } = {}) {
  * release (the one whose top version is highest by semver). Any extra
  * versions found only in other packages are appended in semver-descending
  * order at the end.
+ *
+ * FNXC:ReleaseChangelog 2026-07-12-00:00:
+ * The root CHANGELOG.md is regenerated during every release, so the pre-0.50 prune must happen in this generator instead of as a manual docs edit.
+ * Keep versions greater than or equal to the 0.50.0 cutoff in CHANGELOG.md, and write older versions to CHANGELOG-archive.md so the split survives the next release sync.
  */
 function syncRootChangelog() {
   const pkgsDir = "packages";
@@ -113,12 +123,31 @@ function syncRootChangelog() {
     }
   }
 
-  const lines = [
-    "# Fusion changelog",
-    "",
-    "User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.",
-    "",
-  ];
+  const { current, archived } = partitionVersionsByCutoff(versionOrder);
+  const currentLines = buildRootChangelogLines({
+    title: "# Fusion changelog",
+    banner: "User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.",
+    parsed,
+    versionOrder: current,
+  });
+
+  if (archived.length > 0) {
+    currentLines.push(archivePointerLine(), "");
+  }
+
+  const archiveLines = buildRootChangelogLines({
+    title: "# Fusion changelog archive",
+    banner: `Archived release notes before ${CHANGELOG_ARCHIVE_CUTOFF}. This file is auto-synced from each \`packages/*/CHANGELOG.md\` by \`scripts/release.mjs\` — do not edit by hand.`,
+    parsed,
+    versionOrder: archived,
+  });
+
+  writeFileSync("CHANGELOG.md", normalizeChangelogLines(currentLines));
+  writeFileSync(CHANGELOG_ARCHIVE_FILE, normalizeChangelogLines(archiveLines));
+}
+
+function buildRootChangelogLines({ title, banner, parsed, versionOrder }) {
+  const lines = [title, "", banner, ""];
 
   for (const version of versionOrder) {
     lines.push(`## ${version}`, "");
@@ -136,7 +165,11 @@ function syncRootChangelog() {
     }
   }
 
-  writeFileSync("CHANGELOG.md", lines.join("\n").replace(/\n{3,}/g, "\n\n"));
+  return lines;
+}
+
+function normalizeChangelogLines(lines) {
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /**
