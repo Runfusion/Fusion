@@ -20,6 +20,13 @@ vi.mock("lucide-react", () => ({
   RotateCw: () => <svg />,
   Zap: () => <svg />,
   AlertTriangle: () => <svg />,
+  // FNXC:PriorityIconsMock 2026-07-12 — utils/priorityIndicator.tsx builds its PRIORITY_INDICATORS map at
+  // module load (low=ArrowDown, normal=Flag, high=ArrowUp, urgent=TriangleAlert). TaskCard imports it
+  // transitively, so the mock MUST export all four or the suite fails to load with a "[vitest] No export" error.
+  ArrowDown: () => <svg />,
+  Flag: () => <svg />,
+  ArrowUp: () => <svg />,
+  TriangleAlert: () => <svg />,
 }));
 
 vi.mock("../../hooks/useTaskDiffStats", () => ({

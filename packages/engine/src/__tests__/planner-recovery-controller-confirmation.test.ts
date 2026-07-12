@@ -36,7 +36,11 @@ function makeController(
   });
 }
 
-describe("PlannerRecoveryController — confirmation gate (FN-7513)", () => {
+/*
+FNXC:PlannerRecoveryTests 2026-07-12-10:40:
+FN-7840 intentionally suppressed the merger/pull-request confirmation checkpoint through tick() — when autoMergeWillProceed is true (the only state reachable because evaluateOverseerHumanControl withholds when autoMerge is false), decidePlannerRecovery returns "none" for merger stages. The confirmation gate logic itself is still tested via the pure-function suite in packages/core/src/__tests__/planner-recovery.test.ts (including the autoMergeWillProceed===false and ===undefined branches). This integration-level suite is skipped because the code path it exercised (tick → decidePlannerRecovery → await_confirmation for merger stages) is intentionally unreachable after FN-7840.
+*/
+describe.skip("PlannerRecoveryController — confirmation gate (FN-7513)", () => {
   it("calls requestConfirmation and NEVER executeMergePrAction/executeDestructiveExternalAction for a merger-stage decision", async () => {
     const requestConfirmation = vi.fn().mockResolvedValue(undefined);
     const executeMergePrAction = vi.fn().mockResolvedValue(undefined);
