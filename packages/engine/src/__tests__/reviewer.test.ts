@@ -18,6 +18,10 @@ vi.mock("../pi.js", () => ({
       await session.promptWithFallback(prompt, options);
     }
   }),
+  // FNXC: pi.js tool-policy wrappers (wrapToolsWithRtkRewrite, wrapToolsWithPermanentAgentGating, wrapToolsWithActionGate) are now imported by agent-session-helpers.ts (wrapCustomToolsForPluginRuntime, called from createResolvedAgentSession). Mocks pass tools through unchanged.
+  wrapToolsWithRtkRewrite: vi.fn((tools) => tools),
+  wrapToolsWithPermanentAgentGating: vi.fn((tools) => tools),
+  wrapToolsWithActionGate: vi.fn((tools) => tools),
 }));
 
 import { resolveAgentPrompt } from "@fusion/core";

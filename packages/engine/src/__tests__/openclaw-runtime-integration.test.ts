@@ -19,6 +19,10 @@ vi.mock("../pi.js", () => ({
   createFnAgent: mockCreateFnAgent,
   promptWithFallback: vi.fn().mockResolvedValue(undefined),
   describeModel: vi.fn().mockReturnValue("pi/default"),
+  // FNXC: pi.js tool-policy wrappers (wrapToolsWithRtkRewrite, wrapToolsWithPermanentAgentGating, wrapToolsWithActionGate) are now imported by agent-session-helpers.ts (wrapCustomToolsForPluginRuntime, called from createResolvedAgentSession). Mocks pass tools through unchanged.
+  wrapToolsWithRtkRewrite: vi.fn((tools) => tools),
+  wrapToolsWithPermanentAgentGating: vi.fn((tools) => tools),
+  wrapToolsWithActionGate: vi.fn((tools) => tools),
 }));
 
 function isAgentRuntime(value: unknown): value is AgentRuntime {
