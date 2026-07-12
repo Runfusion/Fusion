@@ -22,6 +22,27 @@ import { ArtifactMedia, getArtifactTypeLabel } from "./ArtifactMedia";
 // Document key validation: alphanumeric, hyphens, underscores, 1-64 chars
 const DOCUMENT_KEY_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
 const MAX_CONTENT_PREVIEW = 200;
+const TASK_DOCUMENTS_MARKDOWN_TOGGLE_STORAGE_KEY = "fusion.taskDocuments.renderMarkdown";
+
+function readBooleanPref(key: string, defaultValue: boolean): boolean {
+  if (typeof window === "undefined") return defaultValue;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return defaultValue;
+    return raw === "true";
+  } catch {
+    return defaultValue;
+  }
+}
+
+function writeBooleanPref(key: string, value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // ignore storage failures (quota, private mode, etc.)
+  }
+}
 
 interface TaskDocumentsTabProps {
   taskId: string;
@@ -109,8 +130,8 @@ export function TaskDocumentsTab({
   const { t } = useTranslation("app");
   const [documents, setDocuments] = useState<TaskDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedDocKey, setExpandedDocKey] = useState<string | null>(null);
-  const [expandedContent, setExpandedContent] = useState("");
+  const [expandedDocKeys, setExpandedDocKeys] = useState<Set<string>>(() => new Set());
+  const [revisionContentByKey, setRevisionContentByKey] = useState<Record<string, string>>({});
   const [editingDocKey, setEditingDocKey] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [showHistory, setShowHistory] = useState<string | null>(null);
@@ -122,7 +143,11 @@ export function TaskDocumentsTab({
   const [saving, setSaving] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [renderMarkdown, setRenderMarkdown] = useState(false);
+  /*
+   * FNXC:ArtifactRegistry 2026-07-11-00:00:
+   * FN-7833 makes task Artifacts-tab documents readable without extra clicks: render Markdown by default and persist the operator's Markdown/Plain preference for future task document views.
+   */
+  const [renderMarkdown, setRenderMarkdown] = useState<boolean>(() => readBooleanPref(TASK_DOCUMENTS_MARKDOWN_TOGGLE_STORAGE_KEY, true));
   /*
    * FNXC:ArtifactRegistry 2026-06-29-00:00:
    * Task detail image artifacts must be viewable in-place from the task modal. Keep the expand target image-only so document, audio, video, and generic cards retain their current non-lightbox behavior without empty controls.
@@ -131,12 +156,28 @@ export function TaskDocumentsTab({
   const lightboxDialogRef = useRef<HTMLDivElement>(null);
   const lightboxCloseRef = useRef<HTMLButtonElement>(null);
   const lightboxReturnFocusRef = useRef<HTMLElement | null>(null);
+  const loadedTaskIdRef = useRef(taskId);
+  const documentKeysRef = useRef<Set<string>>(new Set());
   const { artifacts, loading: artifactsLoading, error: artifactsError } = useArtifacts({ projectId, taskId });
 
   const loadDocuments = useCallback(async () => {
     try {
       const docs = await fetchTaskDocuments(taskId, projectId);
+      const previousKeys = loadedTaskIdRef.current === taskId ? documentKeysRef.current : new Set<string>();
+      const nextKeys = new Set(docs.map((doc) => doc.key));
+      loadedTaskIdRef.current = taskId;
+      documentKeysRef.current = nextKeys;
       setDocuments(docs);
+      setExpandedDocKeys((current) => {
+        const next = new Set<string>();
+        for (const doc of docs) {
+          if (current.has(doc.key) || !previousKeys.has(doc.key)) {
+            next.add(doc.key);
+          }
+        }
+        return next;
+      });
+      setRevisionContentByKey((current) => Object.fromEntries(Object.entries(current).filter(([key]) => nextKeys.has(key))));
     } catch (error) {
       addToast(getErrorMessage(error) || t("taskDocuments.failedToLoad", "Failed to load documents"), "error");
     } finally {
@@ -154,23 +195,30 @@ export function TaskDocumentsTab({
     }
   }, [addToast, artifactsError, t]);
 
-  async function handleExpandDocument(doc: TaskDocument) {
-    if (expandedDocKey === doc.key) {
-      setExpandedDocKey(null);
-      setExpandedContent("");
-      setEditingDocKey(null);
-      setEditContent("");
-      setShowHistory(null);
-      setRevisions([]);
-      setRenderMarkdown(false);
-    } else {
-      setExpandedDocKey(doc.key);
-      setExpandedContent(doc.content);
-      setEditingDocKey(null);
-      setEditContent("");
-      setShowHistory(null);
-      setRevisions([]);
-      setRenderMarkdown(false);
+  useEffect(() => {
+    writeBooleanPref(TASK_DOCUMENTS_MARKDOWN_TOGGLE_STORAGE_KEY, renderMarkdown);
+  }, [renderMarkdown]);
+
+  function handleExpandDocument(doc: TaskDocument) {
+    const isExpanded = expandedDocKeys.has(doc.key);
+    setExpandedDocKeys((current) => {
+      const next = new Set(current);
+      if (isExpanded) {
+        next.delete(doc.key);
+      } else {
+        next.add(doc.key);
+      }
+      return next;
+    });
+    if (isExpanded) {
+      if (editingDocKey === doc.key) {
+        setEditingDocKey(null);
+        setEditContent("");
+      }
+      if (showHistory === doc.key) {
+        setShowHistory(null);
+        setRevisions([]);
+      }
     }
   }
 
@@ -192,11 +240,9 @@ export function TaskDocumentsTab({
     }
   }
 
-  function handleStartEdit() {
-    if (expandedDocKey) {
-      setEditingDocKey(expandedDocKey);
-      setEditContent(expandedContent);
-    }
+  function handleStartEdit(doc: TaskDocument) {
+    setEditingDocKey(doc.key);
+    setEditContent(revisionContentByKey[doc.key] ?? doc.content);
   }
 
   function handleCancelEdit() {
@@ -211,12 +257,12 @@ export function TaskDocumentsTab({
       await putTaskDocument(taskId, editingDocKey, editContent, {}, projectId);
       setEditingDocKey(null);
       setEditContent("");
+      setRevisionContentByKey((current) => {
+        const next = { ...current };
+        delete next[editingDocKey];
+        return next;
+      });
       await loadDocuments();
-      // Refresh expanded content
-      const updated = documents.find((d) => d.key === editingDocKey);
-      if (updated) {
-        setExpandedContent(updated.content);
-      }
       addToast(t("taskDocuments.saved", "Document saved"), "success");
     } catch (error) {
       addToast(getErrorMessage(error) || t("taskDocuments.failedToSave", "Failed to save document"), "error");
@@ -264,10 +310,16 @@ export function TaskDocumentsTab({
       await deleteTaskDocument(taskId, key, projectId);
       setConfirmDelete(null);
       setDeletingKey(null);
-      if (expandedDocKey === key) {
-        setExpandedDocKey(null);
-        setExpandedContent("");
-      }
+      setExpandedDocKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+      setRevisionContentByKey((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
       if (showHistory === key) {
         setShowHistory(null);
         setRevisions([]);
@@ -281,8 +333,8 @@ export function TaskDocumentsTab({
     }
   }
 
-  function handleViewRevision(revision: TaskDocumentRevision) {
-    setExpandedContent(revision.content);
+  function handleViewRevision(docKey: string, revision: TaskDocumentRevision) {
+    setRevisionContentByKey((current) => ({ ...current, [docKey]: revision.content }));
     setEditingDocKey(null);
     setEditContent("");
   }
@@ -468,7 +520,11 @@ export function TaskDocumentsTab({
         )
       ) : (
         <div className="task-documents-list">
-          {documents.map((doc) => (
+          {documents.map((doc) => {
+            const isExpanded = expandedDocKeys.has(doc.key);
+            const displayedContent = revisionContentByKey[doc.key] ?? doc.content;
+
+            return (
             <div key={doc.key} className="task-document-card">
               <div className="task-document-card-header">
                 <div className="task-document-card-title">
@@ -483,7 +539,7 @@ export function TaskDocumentsTab({
               </div>
 
               {/* Expanded Content View */}
-              {expandedDocKey === doc.key && editingDocKey !== doc.key && (
+              {isExpanded && editingDocKey !== doc.key && (
                 <>
                   <div className="task-document-content-header">
                     <button
@@ -500,11 +556,11 @@ export function TaskDocumentsTab({
                     {renderMarkdown ? (
                       <div className="task-document-content-markdown">
                         <div className="markdown-body">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{expandedContent}</ReactMarkdown>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayedContent}</ReactMarkdown>
                         </div>
                       </div>
                     ) : (
-                      <pre className="task-document-content-text">{expandedContent}</pre>
+                      <pre className="task-document-content-text">{displayedContent}</pre>
                     )}
                   </div>
 
@@ -525,7 +581,7 @@ export function TaskDocumentsTab({
                               <div
                                 key={revision.id}
                                 className="task-document-revision-item"
-                                onClick={() => handleViewRevision(revision)}
+                                onClick={() => handleViewRevision(doc.key, revision)}
                               >
                                 <div className="revision-header">
                                   <span className="revision-badge">v{revision.revision}</span>
@@ -570,9 +626,9 @@ export function TaskDocumentsTab({
               <div className="task-document-actions">
                 <button
                   className="btn btn-sm"
-                  onClick={() => void handleExpandDocument(doc)}
+                  onClick={() => handleExpandDocument(doc)}
                 >
-                  {expandedDocKey === doc.key ? (
+                  {isExpanded ? (
                     <>
                       <ChevronUp size={14} /> {t("taskDocuments.collapse", "Collapse")}
                     </>
@@ -583,7 +639,7 @@ export function TaskDocumentsTab({
                   )}
                 </button>
 
-                {expandedDocKey === doc.key && (
+                {isExpanded && (
                   <>
                     <button
                       className="btn btn-sm"
@@ -593,7 +649,7 @@ export function TaskDocumentsTab({
                     </button>
 
                     {canEdit && editingDocKey !== doc.key && (
-                      <button className="btn btn-sm" onClick={handleStartEdit}>
+                      <button className="btn btn-sm" onClick={() => handleStartEdit(doc)}>
                         {t("taskDocuments.edit", "Edit")}
                       </button>
                     )}
@@ -630,7 +686,8 @@ export function TaskDocumentsTab({
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

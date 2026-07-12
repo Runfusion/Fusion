@@ -1,5 +1,9 @@
+/*
+FNXC:DashboardTests 2026-07-11-00:00:
+FN-7833 changed per-task Artifacts-tab document defaults. Keep multi-document coverage here so the component cannot regress to single-expanded or Plain-first rendering while the separate Documents view remains out of scope.
+*/
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocument } from "@fusion/core";
 import { TaskDocumentsTab } from "../TaskDocumentsTab";
 import { artifactMediaUrl, fetchTaskDocuments, fetchTaskDocumentRevisions } from "../../api";
@@ -22,6 +26,12 @@ const mockFetchTaskDocuments = vi.mocked(fetchTaskDocuments);
 const mockFetchTaskDocumentRevisions = vi.mocked(fetchTaskDocumentRevisions);
 const mockArtifactMediaUrl = vi.mocked(artifactMediaUrl);
 const mockUseArtifacts = vi.mocked(useArtifacts);
+
+function getDocumentCard(key: string): HTMLElement {
+  const keyElement = screen.getAllByText(key).find((element) => element.classList.contains("task-document-key"));
+  expect(keyElement).toBeDefined();
+  return keyElement!.closest(".task-document-card") as HTMLElement;
+}
 
 const mockArtifacts: ArtifactWithTask[] = [
   {
@@ -97,6 +107,7 @@ describe("TaskDocumentsTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     mockFetchTaskDocuments.mockResolvedValue(mockDocuments);
     mockFetchTaskDocumentRevisions.mockResolvedValue([]);
     mockArtifactMediaUrl.mockImplementation((id: string) => `/api/artifacts/${id}/media`);
@@ -113,7 +124,7 @@ describe("TaskDocumentsTab", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Artifacts" })).toBeInTheDocument();
-      expect(screen.getByText("plan")).toBeInTheDocument();
+      expect(screen.getAllByText("plan").length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText("notes")).toBeInTheDocument();
@@ -148,7 +159,7 @@ describe("TaskDocumentsTab", () => {
     render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("plan")).toBeInTheDocument();
+      expect(screen.getAllByText("plan").length).toBeGreaterThan(0);
     });
 
     expect(screen.queryByRole("heading", { name: "Media artifacts" })).not.toBeInTheDocument();
@@ -186,7 +197,7 @@ describe("TaskDocumentsTab", () => {
     render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} projectId="project-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("plan")).toBeInTheDocument();
+      expect(screen.getAllByText("plan").length).toBeGreaterThan(0);
       expect(screen.getByRole("heading", { name: "Media artifacts" })).toBeInTheDocument();
     });
 
@@ -272,7 +283,7 @@ describe("TaskDocumentsTab", () => {
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
     expect(closeButton).toHaveFocus();
 
-    screen.getAllByRole("button", { name: "Expand" })[0].focus();
+    screen.getAllByRole("button", { name: "Collapse" })[0].focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(closeButton).toHaveFocus();
   });
@@ -292,212 +303,78 @@ describe("TaskDocumentsTab", () => {
     });
   });
 
-  it("expands document to show content", async () => {
+  it("renders every task document expanded as markdown by default", async () => {
     render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
-    await waitFor(() => {
-      expect(screen.getByText("plan")).toBeInTheDocument();
-    });
-
-    const expandButton = screen.getAllByRole("button", { name: /expand/i })[0];
-    fireEvent.click(expandButton);
-
-    await waitFor(() => {
-      expect(screen.getByText(/This is the \*\*plan\*\* content/)).toBeInTheDocument();
-    });
+    const planStrong = (await screen.findAllByText("plan")).find((element) => element.tagName === "STRONG");
+    expect(planStrong).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+    expect(screen.getByText("Item 1")).toBeInTheDocument();
+    expect(screen.getByText("Item 2")).toBeInTheDocument();
+    expect(document.querySelectorAll(".task-document-content-markdown .markdown-body")).toHaveLength(2);
+    expect(document.querySelector("pre.task-document-content-text")).not.toBeInTheDocument();
   });
 
-  it("collapses document when expand button clicked again", async () => {
+  it("collapses only the selected document while other documents stay expanded", async () => {
     render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
-    await waitFor(() => {
-      expect(screen.getByText("plan")).toBeInTheDocument();
-    });
+    await screen.findByText("Item 1");
+    const planCard = getDocumentCard("plan");
 
-    const expandButton = screen.getAllByRole("button", { name: /expand/i })[0];
-    fireEvent.click(expandButton);
+    fireEvent.click(within(planCard).getByRole("button", { name: /collapse/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/This is the \*\*plan\*\* content/)).toBeInTheDocument();
+      expect(screen.queryByText("This is the")).not.toBeInTheDocument();
     });
-
-    fireEvent.click(screen.getByRole("button", { name: /collapse/i }));
-
-    // Content should be hidden
-    expect(screen.queryByText(/This is the/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+    expect(screen.getByText("Item 1")).toBeInTheDocument();
+    expect(within(planCard).getByRole("button", { name: /expand/i })).toBeInTheDocument();
   });
 
   describe("markdown toggle", () => {
-    it("defaults to raw text mode", async () => {
+    it("defaults to markdown render mode", async () => {
       render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
       await waitFor(() => {
-        expect(screen.getByText("plan")).toBeInTheDocument();
+        expect(document.querySelector(".task-document-content-markdown strong")?.textContent).toBe("plan");
       });
-
-      const expandButton = screen.getAllByRole("button", { name: /expand/i })[0];
-      fireEvent.click(expandButton);
-
-      await waitFor(() => {
-        // Should show raw markdown syntax
-        expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
-      });
+      expect(screen.getAllByRole("button", { name: /switch to plain text/i })[0]).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByText(/\*\*plan\*\*/)).not.toBeInTheDocument();
     });
 
-    it("toggles to markdown render mode", async () => {
+    it("toggles to raw text mode", async () => {
       render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("plan")).toBeInTheDocument();
-      });
-
-      const expandButton = screen.getAllByRole("button", { name: /expand/i })[0];
-      fireEvent.click(expandButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
-      });
-
-      // Find and click the markdown toggle
-      const toggleBtn = screen.getByRole("button", { name: /switch to markdown/i });
-      expect(toggleBtn).toHaveAttribute("aria-pressed", "false");
-
+      const toggleBtn = (await screen.findAllByRole("button", { name: /switch to plain text/i }))[0];
       fireEvent.click(toggleBtn);
 
-      // Should now be in markdown mode
-      expect(screen.getByRole("button", { name: /switch to plain text/i })).toHaveAttribute("aria-pressed", "true");
-      // Bold text should be rendered as <strong> - use a data-testid to scope the query
-      const container = document.querySelector(".task-document-content-markdown");
-      expect(container).not.toBeNull();
-      const strongEl = container!.querySelector("strong");
-      expect(strongEl).not.toBeNull();
-      expect(strongEl!.textContent).toBe("plan");
-    });
-
-    it("toggles back to raw text mode", async () => {
-      render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
-
       await waitFor(() => {
-        expect(screen.getByText("plan")).toBeInTheDocument();
+        expect(document.querySelectorAll("pre.task-document-content-text")).toHaveLength(2);
       });
-
-      const expandButton = screen.getAllByRole("button", { name: /expand/i })[0];
-      fireEvent.click(expandButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
-      });
-
-      // Toggle to markdown mode
-      fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
-
-      await waitFor(() => {
-        expect(document.querySelector(".task-document-content-markdown strong")).not.toBeNull();
-      });
-
-      // Toggle back to raw text
-      fireEvent.click(screen.getByRole("button", { name: /switch to plain text/i }));
-
-      // Should be back to raw text mode
       expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
+      expect(screen.getByText(/# Notes/)).toBeInTheDocument();
+      expect(document.querySelector(".task-document-content-markdown")).not.toBeInTheDocument();
     });
 
-    it("resets markdown mode when switching documents", async () => {
+    it("persists raw text preference across collapse and re-expand", async () => {
       render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("plan")).toBeInTheDocument();
-      });
+      fireEvent.click((await screen.findAllByRole("button", { name: /switch to plain text/i }))[0]);
+      await waitFor(() => expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument());
 
-      // Expand first document and enable markdown mode
-      const expandButtons = screen.getAllByRole("button", { name: /expand/i });
-      fireEvent.click(expandButtons[0]);
+      const planCard = getDocumentCard("plan");
+      fireEvent.click(within(planCard).getByRole("button", { name: /collapse/i }));
+      fireEvent.click(within(planCard).getByRole("button", { name: /expand/i }));
 
-      await waitFor(() => {
-        expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
-
-      await waitFor(() => {
-        expect(document.querySelector(".task-document-content-markdown strong")).not.toBeNull();
-      });
-
-      // Collapse first document
-      fireEvent.click(screen.getByRole("button", { name: /collapse/i }));
-
-      // Expand second document
-      fireEvent.click(expandButtons[1]);
-
-      await waitFor(() => {
-        // Should be in raw text mode by default
-        expect(screen.getByText(/# Notes/)).toBeInTheDocument();
-      });
-
-      // Toggle button should be in raw text mode
-      const toggleBtn = screen.getByRole("button", { name: /switch to markdown/i });
-      expect(toggleBtn).toHaveAttribute("aria-pressed", "false");
+      expect(await screen.findByText(/\*\*plan\*\*/)).toBeInTheDocument();
+      expect(within(planCard).getByRole("button", { name: /switch to markdown/i })).toHaveAttribute("aria-pressed", "false");
     });
 
-    it("resets markdown mode when collapsing document", async () => {
+    it("renders markdown list syntax without an extra toggle click", async () => {
       render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("plan")).toBeInTheDocument();
-      });
-
-      // Expand document and enable markdown mode
-      const expandButton = screen.getAllByRole("button", { name: /expand/i })[0];
-      fireEvent.click(expandButton);
-
-      await waitFor(() => {
-        expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
-
-      await waitFor(() => {
-        expect(document.querySelector(".task-document-content-markdown strong")).not.toBeNull();
-      });
-
-      // Collapse document
-      fireEvent.click(screen.getByRole("button", { name: /collapse/i }));
-
-      // Re-expand document (first expand button after collapse)
-      fireEvent.click(screen.getAllByRole("button", { name: /expand/i })[0]);
-
-      await waitFor(() => {
-        // Should be in raw text mode by default
-        expect(screen.getByText(/\*\*plan\*\*/)).toBeInTheDocument();
-      });
-
-      const toggleBtn = screen.getByRole("button", { name: /switch to markdown/i });
-      expect(toggleBtn).toHaveAttribute("aria-pressed", "false");
-    });
-
-    it("renders markdown list syntax", async () => {
-      render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} />);
-
-      await waitFor(() => {
-        expect(screen.getByText("notes")).toBeInTheDocument();
-      });
-
-      // Expand the notes document (second one)
-      const expandButtons = screen.getAllByRole("button", { name: /expand/i });
-      fireEvent.click(expandButtons[1]);
-
-      await waitFor(() => {
-        expect(screen.getByText(/# Notes/)).toBeInTheDocument();
-      });
-
-      // Toggle to markdown mode
-      fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
-
-      // Check heading is rendered
       const heading = await screen.findByRole("heading", { name: "Notes" });
       expect(heading).toBeInTheDocument();
-
-      // Check list items are rendered
       expect(screen.getByText("Item 1")).toBeInTheDocument();
       expect(screen.getByText("Item 2")).toBeInTheDocument();
     });
