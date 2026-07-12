@@ -11,7 +11,7 @@ plugin suite and manual smoke against `grok agent stdio`.
 */
 
 function makeFakeAcpAdapter(overrides?: {
-  createSession?: AcpAdapterFactory extends (s: never) => infer R ? R["createSession"] : never;
+  createSession?: ReturnType<AcpAdapterFactory>["createSession"];
   promptWithFallback?: (
     session: AgentSession,
     prompt: string,
