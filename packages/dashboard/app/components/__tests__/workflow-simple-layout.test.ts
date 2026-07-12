@@ -6,6 +6,7 @@ import {
   edgeSupportsSimpleInsert,
   insertNodeOnEdge,
   findAppendEdgeId,
+  spliceInsertedSubgraphOnEdge,
   SIMPLE_NODE_WIDTH,
 } from "../workflow-simple-layout";
 
@@ -201,5 +202,69 @@ describe("findAppendEdgeId", () => {
   it("returns null when the graph has no end target", () => {
     const nodes = [node("start", "start"), node("a", "prompt")];
     expect(findAppendEdgeId(nodes, [edge("e1", "start", "a")])).toBeNull();
+  });
+});
+
+
+/*
+FNXC:WorkflowSimpleView 2026-07-12-10:30:
+PR #2006 review coverage: edge-targeted fragment / optional-group inserts must
+splice the already-inserted subgraph into the targeted edge (entries inherit
+the original condition, exits feed the old target, the original edge is
+removed, the subgraph moves into the source's y band).
+*/
+describe("spliceInsertedSubgraphOnEdge", () => {
+  const baseNodes = (): N[] => [
+    node("start", "start", 0, 120),
+    node("a", "prompt", 300, 120),
+    node("end", "end", 900, 120),
+  ];
+  const baseEdges = (): FlowEdge[] => [edge("e1", "start", "a"), edge("e2", "a", "end", "failure")];
+
+  it("wires source→entry and exit→target, removes the edge, preserves condition", () => {
+    const nodes = [
+      ...baseNodes(),
+      node("f1", "gate", 240, 700),
+      node("f2", "script", 520, 700),
+    ];
+    const edges = [...baseEdges(), edge("f-e", "f1", "f2")];
+    const result = spliceInsertedSubgraphOnEdge(nodes, edges, "e2", ["f1", "f2"]);
+    expect(result).not.toBeNull();
+    const { nodes: nextNodes, edges: nextEdges } = result!;
+    expect(nextEdges.find((e) => e.id === "e2")).toBeUndefined();
+    const inbound = nextEdges.find((e) => e.source === "a" && e.target === "f1");
+    const outbound = nextEdges.find((e) => e.source === "f2" && e.target === "end");
+    expect(inbound?.data?.condition).toBe("failure");
+    expect(outbound?.data?.condition).toBe("success");
+    // Subgraph translated into the source's y band, preserving relative layout.
+    const f1 = nextNodes.find((n) => n.id === "f1")!;
+    const f2 = nextNodes.find((n) => n.id === "f2")!;
+    expect(f1.position.y).toBe(120 + 8);
+    expect(f2.position.x - f1.position.x).toBe(280);
+  });
+
+  it("wires an optional-group container while leaving its template children alone", () => {
+    const nodes = [
+      ...baseNodes(),
+      node("grp", "optional-group", 240, 700, { style: { width: 560, height: 220 } }),
+      node("grp-child", "prompt", 30, 56, { parentId: "grp" }),
+    ];
+    const result = spliceInsertedSubgraphOnEdge(nodes, baseEdges(), "e2", ["grp", "grp-child"]);
+    expect(result).not.toBeNull();
+    const inbound = result!.edges.find((e) => e.source === "a" && e.target === "grp");
+    const outbound = result!.edges.find((e) => e.source === "grp" && e.target === "end");
+    expect(inbound).toBeDefined();
+    expect(outbound).toBeDefined();
+    // Child keeps its parent-relative position.
+    const child = result!.nodes.find((n) => n.id === "grp-child")!;
+    expect(child.position).toEqual({ x: 30, y: 56 });
+  });
+
+  it("returns null when the target edge is gone or ineligible", () => {
+    const nodes = [...baseNodes(), node("f1", "gate", 240, 700)];
+    expect(spliceInsertedSubgraphOnEdge(nodes, baseEdges(), "missing", ["f1"])).toBeNull();
+    const rework = [edge("r1", "a", "start", "failure", "rework")];
+    expect(spliceInsertedSubgraphOnEdge(nodes, rework, "r1", ["f1"])).toBeNull();
+    expect(spliceInsertedSubgraphOnEdge(baseNodes(), baseEdges(), "e2", ["not-present"])).toBeNull();
   });
 });

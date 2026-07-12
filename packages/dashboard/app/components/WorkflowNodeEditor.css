@@ -1642,6 +1642,12 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
   color: var(--text);
 }
 
+/*
+FNXC:WorkflowEditor 2026-07-12-10:30:
+The banner is a <details> disclosure: collapsed it reads as one quiet count
+line ("2 lifecycle warnings"); expanding reveals the full list. Hide the
+native marker and rotate the chevron on open.
+*/
 .wf-lifecycle-warnings-title {
   display: inline-flex;
   align-items: center;
@@ -1649,6 +1655,32 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
   font-size: 0.78rem;
   font-weight: 650;
   color: var(--ws-warning);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.wf-lifecycle-warnings-title::-webkit-details-marker {
+  display: none;
+}
+
+.wf-lifecycle-warnings-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.wf-lifecycle-warnings-chevron {
+  transition: transform var(--transition-fast);
+  opacity: 0.75;
+}
+
+.wf-lifecycle-warnings[open] .wf-lifecycle-warnings-chevron {
+  transform: rotate(180deg);
+}
+
+.wf-lifecycle-warnings[open] ul {
+  margin-top: var(--space-xs);
 }
 
 .wf-lifecycle-warnings ul {

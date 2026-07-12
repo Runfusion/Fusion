@@ -8795,6 +8795,8 @@
     "importInvalidJson": "Ce fichier n'est pas un JSON valide.",
     "importStripped": "Les indicateurs d'approbation automatique ont été supprimés des nœuds importés",
     "importTooltip": "Importer un workflow depuis un fichier JSON",
+    "lifecycleWarningsCount_one": "",
+    "lifecycleWarningsCount_other": "",
     "loadFailed": "",
     "loading": "",
     "migrationNotice": "Vos anciennes étapes de workflow ont été converties — retrouvez-les sous forme de modèles dans la palette et sous le workflow « Étapes migrées ».",

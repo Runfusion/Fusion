@@ -8805,6 +8805,8 @@
     "importInvalidJson": "That file isn't valid JSON.",
     "importStripped": "Auto-approval flags were removed from imported nodes",
     "importTooltip": "Import a workflow from a JSON file",
+    "lifecycleWarningsCount_one": "{{count}} lifecycle warning",
+    "lifecycleWarningsCount_other": "{{count}} lifecycle warnings",
     "loadFailed": "Failed to load workflows",
     "loading": "Loading…",
     "migrationNotice": "Your legacy workflow steps were converted — find them as templates in the palette and as the \"Migrated steps\" workflow.",

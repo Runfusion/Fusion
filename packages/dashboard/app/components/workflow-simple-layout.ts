@@ -269,6 +269,101 @@ export function insertNodeOnEdge(
   return { nodes: refreshed.nodes, edges: refreshed.edges, newNodeId: id };
 }
 
+/*
+FNXC:WorkflowSimpleView 2026-07-12-10:30:
+PR #2006 review: fragment and "insert as optional group" picks from an
+edge-targeted add-step dialog previously fell through to the advanced
+fixed-position insertFragment path, leaving the "+" edge untouched and the
+inserted subgraph disconnected. This splice helper wires an ALREADY-inserted
+subgraph into the targeted edge: source→(subgraph entries) preserving the
+original routing condition, (subgraph exits)→target as success, original edge
+removed, and the subgraph translated next to the source node's y so v2
+column banding stays valid for simple-view authors who cannot drag.
+*/
+
+/**
+ * Wire an inserted subgraph (from insertFragment) into an existing edge.
+ * Entries/exits derive from in/out degree over the subgraph's internal
+ * non-rework edges (mirroring template boundary semantics). Returns null when
+ * the edge is gone/ineligible or the subgraph has no top-level nodes — the
+ * caller keeps the plain fixed-position insert in that case.
+ */
+export function spliceInsertedSubgraphOnEdge(
+  nodes: LayoutNode[],
+  edges: FlowEdge[],
+  edgeId: string,
+  insertedNodeIds: readonly string[],
+): { nodes: LayoutNode[]; edges: FlowEdge[] } | null {
+  const edge = edges.find((e) => e.id === edgeId);
+  if (!edge || !edgeSupportsSimpleInsert(edge)) return null;
+  const source = nodes.find((n) => n.id === edge.source);
+  const target = nodes.find((n) => n.id === edge.target);
+  if (!source || !target) return null;
+
+  const insertedSet = new Set(insertedNodeIds);
+  const insertedTop = nodes.filter(
+    (n) => insertedSet.has(n.id) && !n.parentId && !isColumnBandNode(n.id),
+  );
+  if (insertedTop.length === 0) return null;
+  const topIds = new Set(insertedTop.map((n) => n.id));
+
+  const indegree = new Map<string, number>();
+  const outdegree = new Map<string, number>();
+  for (const id of topIds) {
+    indegree.set(id, 0);
+    outdegree.set(id, 0);
+  }
+  for (const e of edges) {
+    if (isVisualOnlyWorkflowEdge(e)) continue;
+    if ((e.data?.kind as string | undefined) === "rework") continue;
+    if (!topIds.has(e.source) || !topIds.has(e.target)) continue;
+    outdegree.set(e.source, (outdegree.get(e.source) ?? 0) + 1);
+    indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
+  }
+  const entries = insertedTop.filter((n) => (indegree.get(n.id) ?? 0) === 0);
+  const exits = insertedTop.filter((n) => (outdegree.get(n.id) ?? 0) === 0);
+  const entryNodes = entries.length > 0 ? entries : insertedTop;
+  const exitNodes = exits.length > 0 ? exits : insertedTop;
+
+  // Translate the subgraph beside the wiring point: same y band as the source
+  // (column validity), x around the source/target midpoint. Relative layout
+  // inside the subgraph is preserved.
+  const minX = Math.min(...insertedTop.map((n) => n.position.x));
+  const minY = Math.min(...insertedTop.map((n) => n.position.y));
+  const deltaX = (source.position.x + target.position.x) / 2 + 24 - minX;
+  const deltaY = source.position.y + 8 - minY;
+  const nextNodes = nodes.map((n) =>
+    topIds.has(n.id)
+      ? { ...n, position: { x: n.position.x + deltaX, y: n.position.y + deltaY } }
+      : n,
+  );
+
+  const inboundCondition = (edge.data?.condition as string | undefined) ?? "success";
+  const newEdges: FlowEdge[] = [
+    ...entryNodes.map((entry) => ({
+      id: `e-${newNodeId()}`,
+      source: edge.source,
+      target: entry.id,
+      label: shortConditionLabel(inboundCondition),
+      data: { condition: inboundCondition, kind: undefined },
+      className: edgeClassName(inboundCondition, false),
+      interactionWidth: WF_EDGE_INTERACTION_WIDTH,
+    })),
+    ...exitNodes.map((exit) => ({
+      id: `e-${newNodeId()}`,
+      source: exit.id,
+      target: edge.target,
+      label: shortConditionLabel("success"),
+      data: { condition: "success", kind: undefined },
+      className: edgeClassName("success", false),
+      interactionWidth: WF_EDGE_INTERACTION_WIDTH,
+    })),
+  ];
+
+  const nextEdges = [...edges.filter((e) => e.id !== edgeId), ...newEdges];
+  return refreshTemplateContainerVisualBoundaries(nextNodes, nextEdges);
+}
+
 /**
  * The simple view's "+ Add step" (no specific edge): insert before the `end`
  * node when a single wiring point is unambiguous, otherwise signal the caller

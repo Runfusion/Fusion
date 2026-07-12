@@ -91,7 +91,7 @@ import {
   FOREACH_CHILD_Y,
 } from "./workflow-flow-mapping";
 import { autoLayout, applyAutoLayout } from "./workflow-auto-layout";
-import { insertNodeOnEdge, findAppendEdgeId } from "./workflow-simple-layout";
+import { insertNodeOnEdge, findAppendEdgeId, spliceInsertedSubgraphOnEdge } from "./workflow-simple-layout";
 import { WorkflowSimpleCanvas } from "./WorkflowSimpleCanvas";
 import { WorkflowAddStepModal, type AddStepPaletteEntry } from "./WorkflowAddStepModal";
 import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
@@ -1620,7 +1620,10 @@ function InnerEditor({
   surfaces label it.
   */
   const handleInsertStepTemplateAsOptionalGroup = useCallback(
-    (tpl: WorkflowStepTemplate) => {
+    // FNXC:WorkflowSimpleView 2026-07-12-10:30: PR #2006 review — when the
+    // add-step dialog targeted an edge "+", this path must splice the new
+    // optional-group into that edge instead of dropping it free-floating.
+    (tpl: WorkflowStepTemplate, targetEdgeId?: string | null) => {
       if (isBuiltin) return;
       const { kind, config } = stepTemplateToNode(tpl);
       const fragmentIr = optionalGroupFragmentIr(
@@ -1631,8 +1634,11 @@ function InnerEditor({
         x: 240,
         y: 200 + (nodes.length % 4) * 40,
       });
-      setNodes(result.nodes);
-      setEdges(result.edges);
+      const spliced = targetEdgeId
+        ? spliceInsertedSubgraphOnEdge(result.nodes, result.edges, targetEdgeId, result.insertedNodeIds)
+        : null;
+      setNodes(spliced?.nodes ?? result.nodes);
+      setEdges(spliced?.edges ?? result.edges);
       setSelectedNodeId(result.insertedNodeIds[0] ?? null);
     },
     [isBuiltin, nodes, edges, setNodes, setEdges],
@@ -1644,7 +1650,11 @@ function InnerEditor({
   // insertFragment remaps ids + rewires internal edges, landing nodes at a fixed
   // offset from the canvas origin.
   const handleInsertFragment = useCallback(
-    (fragment: WorkflowDefinition) => {
+    // FNXC:WorkflowSimpleView 2026-07-12-10:30: PR #2006 review — an
+    // edge-targeted pick ("+" on an edge) splices the fragment's entry/exit
+    // boundary into that edge; the toolbar/free path keeps the classic
+    // fixed-position landing.
+    (fragment: WorkflowDefinition, targetEdgeId?: string | null) => {
       if (isBuiltin) return false;
       const loadedIrFallback = canvasNodesMaterializedRef.current ? undefined : activeWorkflow?.ir;
       const conflicts = fragmentSeamConflicts(fragment.ir, nodes, loadedIrFallback);
@@ -1660,8 +1670,11 @@ function InnerEditor({
         { x: 240, y: 200 + (nodes.length % 4) * 40 },
         fragment.layout,
       );
-      setNodes(result.nodes);
-      setEdges(result.edges);
+      const spliced = targetEdgeId
+        ? spliceInsertedSubgraphOnEdge(result.nodes, result.edges, targetEdgeId, result.insertedNodeIds)
+        : null;
+      setNodes(spliced?.nodes ?? result.nodes);
+      setEdges(spliced?.edges ?? result.edges);
       setSelectedNodeId(result.insertedNodeIds[0] ?? null);
       return true;
     },
@@ -3077,11 +3090,21 @@ function InnerEditor({
                   )}
                 </div>
                 {lifecycleWarnings.length > 0 && (
-                  <div className="wf-lifecycle-warnings" role="status" data-testid="wf-lifecycle-warnings">
-                    <div className="wf-lifecycle-warnings-title">
+                  /* FNXC:WorkflowEditor 2026-07-12-10:30: the lifecycle
+                     warnings banner previously rendered fully expanded and
+                     dominated the editor header (every fresh workflow starts
+                     with two warnings). It is now a one-line disclosure —
+                     count summary, details on demand — in every view mode. */
+                  <details className="wf-lifecycle-warnings" data-testid="wf-lifecycle-warnings">
+                    <summary className="wf-lifecycle-warnings-title" data-testid="wf-lifecycle-warnings-toggle">
                       <Shield size={14} aria-hidden />
-                      <span>{t("workflows.lifecycleWarningsTitle", "Lifecycle warnings")}</span>
-                    </div>
+                      <span role="status">
+                        {t("workflows.lifecycleWarningsCount", "{{count}} lifecycle warnings", {
+                          count: lifecycleWarnings.length,
+                        })}
+                      </span>
+                      <ChevronDown size={12} className="wf-lifecycle-warnings-chevron" aria-hidden />
+                    </summary>
                     <ul>
                       {lifecycleWarnings.map((warning, index) => (
                         <li key={`${warning.code}:${warning.nodeId ?? ""}:${index}`}>
@@ -3091,7 +3114,7 @@ function InnerEditor({
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </details>
                 )}
                 {simpleLayoutEnabled && (
                   <div className="wf-mobile-shell" data-testid="wf-mobile-shell">
@@ -5479,11 +5502,11 @@ function InnerEditor({
           templateConflict={templateConflict}
           onPickPalette={handleAddStepPalettePick}
           onPickFragment={(fragment) => {
-            if (handleInsertFragment(fragment)) setAddStepTarget(null);
+            if (handleInsertFragment(fragment, addStepTarget?.edgeId)) setAddStepTarget(null);
           }}
           onPickStepTemplate={handleAddStepTemplatePick}
           onPickStepTemplateAsOptionalGroup={(tpl) => {
-            handleInsertStepTemplateAsOptionalGroup(tpl);
+            handleInsertStepTemplateAsOptionalGroup(tpl, addStepTarget?.edgeId);
             setAddStepTarget(null);
           }}
         />

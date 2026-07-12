@@ -570,8 +570,13 @@ describe("WorkflowNodeEditor", () => {
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
+    // FNXC:WorkflowEditor 2026-07-12-10:30: banner is a collapsed-by-default
+    // disclosure: a count summary line, with details revealed on expand.
     const banner = await screen.findByTestId("wf-lifecycle-warnings");
-    expect(banner).toHaveTextContent("Lifecycle warnings");
+    expect(banner).toHaveTextContent("2 lifecycle warnings");
+    expect(banner).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByTestId("wf-lifecycle-warnings-toggle"));
+    expect(banner).toHaveAttribute("open");
     expect(banner).toHaveTextContent("missing-merge-region");
     expect(banner).toHaveTextContent("optional-group-after-execution");
     expect(banner).toHaveTextContent("plan-review");
@@ -4158,6 +4163,34 @@ describe("WorkflowNodeEditor simplified view modes", () => {
     expect(screen.queryByTestId("wf-simple-toolbar-add-step")).not.toBeInTheDocument();
     expect(screen.queryByTestId("wf-simple-add-step")).not.toBeInTheDocument();
     expect(document.querySelector('[data-testid^="wf-simple-insert-"]')).toBeNull();
+  });
+
+  it("splices an edge-targeted fragment pick into the targeted edge", async () => {
+    // FNXC:WorkflowSimpleView 2026-07-12-10:30: PR #2006 review — fragment
+    // picks from an edge-targeted add-step dialog must rewire
+    // source→fragment→target instead of dropping a disconnected subgraph.
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), fragmentDef()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-simple-canvas");
+
+    // def() has a single edge into end, so the toolbar add targets that edge.
+    fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
+    const dialog = await screen.findByTestId("wf-add-step-modal");
+    fireEvent.click(within(dialog).getByTestId("wf-add-step-fragment-WF-FRAG"));
+    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+
+    // Save and inspect the serialized IR: merge no longer feeds end directly;
+    // the fragment's lint gate sits between them.
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: Array<{ id: string; kind: string }>; edges: Array<{ from: string; to: string; condition?: string }> } }).ir;
+    const insertedGate = ir.nodes.find((n) => n.kind === "gate" && n.id !== "lint");
+    expect(insertedGate).toBeDefined();
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === "end")).toBe(false);
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === insertedGate!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === insertedGate!.id && e.to === "end")).toBe(true);
   });
 
   it("defaults the mobile graph tab to the simplified canvas with a list fallback", async () => {

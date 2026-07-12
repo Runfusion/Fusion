@@ -8794,6 +8794,8 @@
     "importInvalidJson": "該檔案不是有效的 JSON。",
     "importStripped": "已從匯入的節點移除自動核准旗標",
     "importTooltip": "從 JSON 檔案匯入工作流程",
+    "lifecycleWarningsCount_one": "",
+    "lifecycleWarningsCount_other": "",
     "loadFailed": "",
     "loading": "",
     "migrationNotice": "你的舊版工作流程步驟已轉換 — 可在選盤中以範本形式找到它們，以及名為「已遷移步驟」的工作流程。",
