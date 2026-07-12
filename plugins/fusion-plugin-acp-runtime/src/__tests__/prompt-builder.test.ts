@@ -1,5 +1,38 @@
 import { describe, it, expect } from "vitest";
-import { buildPromptBlocks } from "../prompt-builder.js";
+import { buildPromptBlocks, extractPromptImagesFromOptions } from "../prompt-builder.js";
+
+describe("extractPromptImagesFromOptions", () => {
+  /*
+  FNXC:GrokAcp 2026-07-12-07:15:
+  Chat attachment options must map into PromptImage for ACP session/prompt.
+  */
+  it("extracts chat-style image contents", () => {
+    expect(
+      extractPromptImagesFromOptions({
+        images: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+      }),
+    ).toEqual([{ data: "AAAA", mimeType: "image/png" }]);
+  });
+
+  it("keeps uri when present and drops malformed entries", () => {
+    expect(
+      extractPromptImagesFromOptions({
+        images: [
+          { data: "AAAA", mimeType: "image/png", uri: "file:///a.png" },
+          { data: "", mimeType: "image/png" },
+          { mimeType: "image/jpeg" },
+          null,
+        ],
+      }),
+    ).toEqual([{ data: "AAAA", mimeType: "image/png", uri: "file:///a.png" }]);
+  });
+
+  it("returns undefined for missing or empty images", () => {
+    expect(extractPromptImagesFromOptions(undefined)).toBeUndefined();
+    expect(extractPromptImagesFromOptions({})).toBeUndefined();
+    expect(extractPromptImagesFromOptions({ images: [] })).toBeUndefined();
+  });
+});
 
 describe("buildPromptBlocks", () => {
   it("turns a plain string into a single text block", () => {

@@ -22,6 +22,39 @@ export interface BuildPromptOptions {
   images?: PromptImage[];
 }
 
+/*
+FNXC:GrokAcp 2026-07-12-07:15:
+Dashboard chat forwards attachments as promptWithFallback options
+`{ images: ChatImageContent[] }` where each item is
+`{ type: "image", data: base64, mimeType }`. ACP session/prompt needs
+ContentBlock image variants. Extract defensively so pi-style ImageContent
+and PromptImage shapes both work; ignore malformed entries.
+*/
+/**
+ * Pull image attachments from Fusion `promptWithFallback` options.
+ * Accepts `{ images: Array<{ data, mimeType, uri? }> }` (chat / pi ImageContent).
+ */
+export function extractPromptImagesFromOptions(options: unknown): PromptImage[] | undefined {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    return undefined;
+  }
+  const raw = (options as { images?: unknown }).images;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return undefined;
+  }
+  const images: PromptImage[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const rec = item as Record<string, unknown>;
+    const data = typeof rec.data === "string" ? rec.data : undefined;
+    const mimeType = typeof rec.mimeType === "string" ? rec.mimeType : undefined;
+    if (!data || !mimeType || data.length === 0 || mimeType.length === 0) continue;
+    const uri = typeof rec.uri === "string" && rec.uri.length > 0 ? rec.uri : undefined;
+    images.push({ data, mimeType, ...(uri ? { uri } : {}) });
+  }
+  return images.length > 0 ? images : undefined;
+}
+
 /**
  * Build the ACP prompt content blocks for a turn.
  *

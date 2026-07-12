@@ -125,11 +125,17 @@ class EchoAgent {
       });
       return { stopReason: "end_turn" };
     }
+    // FNXC:GrokAcp 2026-07-12-07:15: report image ContentBlock count so
+    // adapter tests can prove chat image options reach session/prompt.
+    const imageCount = Array.isArray(params.prompt)
+      ? params.prompt.filter((block) => block && block.type === "image").length
+      : 0;
+    const replyText = imageCount > 0 ? `echo: images=${imageCount}` : "echo: hello";
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "echo: hello" },
+        content: { type: "text", text: replyText },
       },
     });
     // Cancel-mid-prompt test: keep the turn open until cancel() arrives, then

@@ -17,7 +17,7 @@ import {
   createBridgingClientHandler,
 } from "./provider.js";
 import { buildSpawnEnv } from "./process-manager.js";
-import { buildPromptBlocks } from "./prompt-builder.js";
+import { buildPromptBlocks, extractPromptImagesFromOptions } from "./prompt-builder.js";
 import type {
   AgentRuntime,
   AgentRuntimeOptions,
@@ -141,7 +141,7 @@ export class AcpRuntimeAdapter implements AgentRuntime {
   async promptWithFallback(
     session: AgentSession,
     prompt: string,
-    _options?: unknown,
+    options?: unknown,
   ): Promise<{ stopReason?: string }> {
     const acp = session as AcpSession;
     if (!acp.connection) {
@@ -152,7 +152,14 @@ export class AcpRuntimeAdapter implements AgentRuntime {
     // each turn (FIX 1). Without this, a turn that hit the per-turn output cap
     // would silently suppress all later turns.
     acp.resetTurn?.();
-    const blocks = buildPromptBlocks(prompt);
+    /*
+    FNXC:GrokAcp 2026-07-12-07:15:
+    Chat/triage pass `{ images: [{ type:"image", data, mimeType }] }` through
+    promptWithFallback. Previously options were ignored (`_options`) so Grok ACP
+    and generic ACP sessions never received image ContentBlocks on session/prompt.
+    */
+    const images = extractPromptImagesFromOptions(options);
+    const blocks = buildPromptBlocks(prompt, images ? { images } : undefined);
     // Resolve when the SDK prompt promise resolves — it already drains all
     // session/update notifications for the turn before reporting the stopReason.
     // The bridging client handler installed at createSession (U4) has already
