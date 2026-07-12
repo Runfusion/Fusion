@@ -144,6 +144,20 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
       const migrated = await first!.taskStore.getTask("FN-MIG-1");
       expect(migrated.title).toBe("Legacy task");
       expect(migrated.column).toBe("todo");
+
+      /*
+      FNXC:PostgresMigrationBanner 2026-07-12:
+      A successful auto-migration must persist the one-time dashboard notice
+      ("your data was migrated and a backup exists") into project settings,
+      pointing at the retained SQLite backup file, not yet dismissed.
+      */
+      const settings = await first!.taskStore.getSettings();
+      const notice = settings.sqliteMigrationNotice;
+      expect(notice).toBeTruthy();
+      expect(notice!.migratedRows).toBeGreaterThanOrEqual(1);
+      expect(notice!.tables).toBeGreaterThanOrEqual(1);
+      expect(notice!.sqliteBackups).toContain(join(fusionDir, "fusion.db"));
+      expect(notice!.dismissed).toBe(false);
     } finally {
       await first!.shutdown();
     }

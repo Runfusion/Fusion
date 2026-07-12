@@ -365,6 +365,11 @@ export async function createTaskStoreForBackend(
   close. `fn db migrate` remains the manual/explicit path (dry-run, external
   URLs, partial sources).
   */
+  // FNXC:PostgresMigrationBanner 2026-07-12: populated when Step 5.5 actually
+  // migrated data; persisted into project settings after Step 7.
+  let autoMigrationNotice:
+    | { migratedAt: string; migratedRows: number; tables: number; sqliteBackups: string[] }
+    | undefined;
   if (rootDir) {
     try {
       const fusionDir = join(rootDir, ".fusion");
@@ -424,7 +429,25 @@ export async function createTaskStoreForBackend(
               await connections.migration.execute(
                 drizzleSql`UPDATE project.archived_tasks SET project_id = ${options.projectId} WHERE project_id IS NULL`,
               );
+              // The cold-storage archive is also partitioned (PR #2007 review
+              // P1); migrated snapshots must be owned by this project too.
+              await connections.migration.execute(
+                drizzleSql`UPDATE archive.archived_tasks SET project_id = ${options.projectId} WHERE project_id IS NULL`,
+              );
             }
+            /*
+            FNXC:PostgresMigrationBanner 2026-07-12:
+            Remember the successful auto-migration so the dashboard can show a
+            one-time "your data was migrated and a backup exists" banner. The
+            notice is persisted into project settings AFTER the TaskStore is
+            constructed (the settings write needs the async layer).
+            */
+            autoMigrationNotice = {
+              migratedAt: new Date().toISOString(),
+              migratedRows,
+              tables: report.tables.length,
+              sqliteBackups: sources.map((source) => source.sqlitePath),
+            };
             log.log(`startup-factory: SQLite → PostgreSQL auto-migration complete (${migratedRows} row(s) across ${report.tables.length} table(s))`);
           }
         }
@@ -487,6 +510,25 @@ export async function createTaskStoreForBackend(
         err instanceof Error ? err.message : String(err)
       }`,
     );
+  }
+
+  /*
+  FNXC:PostgresMigrationBanner 2026-07-12:
+  Step 7.5 — persist the auto-migration notice into project settings so the
+  dashboard shows a one-time "your data was migrated and a backup exists"
+  banner (dismissible; a "Need help?" button links to the Fusion Discord).
+  Best-effort: a failed settings write must not fail a boot whose migration
+  already succeeded — the loud path is the migration itself (Step 5.5).
+  */
+  if (autoMigrationNotice) {
+    try {
+      const { patchProjectSettings } = await import("../task-store/async-settings.js");
+      await patchProjectSettings(asyncLayer, {
+        sqliteMigrationNotice: { ...autoMigrationNotice, dismissed: false },
+      });
+    } catch (err) {
+      log.warn(`startup-factory: failed to persist the migration notice (banner will not show): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // FNXC:SqliteRemoval 2026-06-25-00:00:

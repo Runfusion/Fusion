@@ -1,15 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { afterEach, beforeAll, beforeEach, afterAll, describe, expect, it } from "vitest";
 
 import type { TaskSourceIssue } from "../types.js";
 import { TaskStore } from "../store.js";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  createTaskStoreForTest,
+  type SharedPgTaskStoreHarness,
+} from "../__test-utils__/pg-test-harness.js";
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "kb-gitlab-source-storage-test-"));
-}
+const pgTest = pgDescribe;
 
 const projectIssue: TaskSourceIssue = {
   provider: "gitlab",
@@ -41,25 +41,20 @@ const mergeRequest: TaskSourceIssue = {
 FNXC:GitLabStorage 2026-07-02-00:00:
 GitLab imports share the generic sourceIssue columns with GitHub, but provider rows must stay isolated. These tests preserve GitLab project/group/MR identity, self-managed URLs, IID-vs-global-id fields, and optional close timestamps without rewriting GitHub metadata.
 */
-describe("TaskStore GitLab source issue storage", () => {
-  let rootDir: string;
-  let globalDir: string;
-  let store: TaskStore;
+pgTest("TaskStore GitLab source issue storage", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({ prefix: "fusion_gitlab_source" });
 
+  beforeAll(h.beforeAll);
+  afterAll(h.afterAll);
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    globalDir = makeTmpDir();
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    await h.beforeEach();
   });
-
   afterEach(async () => {
-    store.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    await rm(globalDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await h.afterEach();
   });
 
   it("round-trips GitLab project issues, group-backed issues, and merge requests", async () => {
+    const store = h.store();
     const projectTask = await store.createTask({ description: "Project import", sourceIssue: projectIssue });
     const groupTask = await store.createTask({ description: "Group import", sourceIssue: groupIssue });
     const mrTask = await store.createTask({ description: "MR review", sourceIssue: mergeRequest });
@@ -75,6 +70,7 @@ describe("TaskStore GitLab source issue storage", () => {
   });
 
   it("preserves encoded project paths, IID/global id split, and optional closedAt through updates", async () => {
+    const store = h.store();
     const task = await store.createTask({
       description: "Encoded GitLab import",
       sourceIssue: {
@@ -97,18 +93,20 @@ describe("TaskStore GitLab source issue storage", () => {
   });
 
   it("persists GitLab source metadata across disk-backed reopen, done, reopen, archive, and restore flows", async () => {
-    const diskRoot = makeTmpDir();
-    const diskGlobal = makeTmpDir();
+    const harness = await createTaskStoreForTest({ prefix: "fusion_gitlab_source_disk" });
     try {
-      const first = new TaskStore(diskRoot, diskGlobal);
-      await first.init();
+      const first = harness.store;
       const created = await first.createTask({ description: "Disk GitLab", sourceIssue: groupIssue });
       await first.moveTask(created.id, "todo");
       await first.moveTask(created.id, "in-progress");
       await first.moveTask(created.id, "done");
-      first.close();
 
-      const second = new TaskStore(diskRoot, diskGlobal);
+      // Simulate a restart by opening a second TaskStore instance against the
+      // same backing layer. In backend mode the PG connection pool is owned by
+      // the shared layer (not the store), so a new instance re-reads the
+      // persisted rows without closing the first store — closing the first
+      // would tear down the shared pool (TaskStore.close closes asyncLayer).
+      const second = new TaskStore(harness.rootDir, undefined, { asyncLayer: harness.layer });
       await second.init();
       const reopened = (await second.listTasks()).find((task) => task.description === "Disk GitLab");
       expect(reopened?.sourceIssue).toEqual(groupIssue);
@@ -119,10 +117,8 @@ describe("TaskStore GitLab source issue storage", () => {
       await second.archiveTask(reopened!.id, false);
       const restored = await second.unarchiveTask(reopened!.id);
       expect(restored.sourceIssue).toEqual(groupIssue);
-      second.close();
     } finally {
-      await rm(diskRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      await rm(diskGlobal, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await harness.teardown();
     }
   });
 });

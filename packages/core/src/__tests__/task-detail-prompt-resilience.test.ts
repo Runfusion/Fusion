@@ -12,30 +12,41 @@ Original symptom: getTask throws on an unreadable PROMPT.md, 500ing all per-task
 Exact reproduction: replace a task's PROMPT.md with a directory so readFile raises EISDIR.
 Assertion it is gone: getTask resolves with the row (prompt degraded to ""), and a
 representative mutation still succeeds — the per-task API is no longer bricked.
+
+Migrated from the removed SQLite `new TaskStore(root)` path (VAL-REMOVAL-005) to the
+PostgreSQL test harness via `createTaskStoreForTest`. The harness provides a
+backend-mode TaskStore (`asyncLayer` injected) backed by an isolated PG database plus a
+real temp `rootDir` where `.fusion/tasks/{id}/PROMPT.md` lives, so the filesystem
+resilience assertions are unchanged.
 */
-import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import {
+  pgDescribe,
+  createTaskStoreForTest,
+  type PgTestHarness,
+} from "../__test-utils__/pg-test-harness.js";
 
-const cleanupDirs: string[] = [];
+pgDescribe("getTask PROMPT.md read resilience (task-write-API 500 regression)", () => {
+  let harness: PgTestHarness | null = null;
 
-afterEach(() => {
-  for (const dir of cleanupDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+  async function makeHarness(): Promise<PgTestHarness> {
+    harness = await createTaskStoreForTest({ prefix: "fusion_prompt_resilience" });
+    return harness;
   }
-});
 
-describe("getTask PROMPT.md read resilience (task-write-API 500 regression)", () => {
+  async function teardown(): Promise<void> {
+    if (harness) {
+      await harness.teardown();
+      harness = null;
+    }
+  }
+
   it("returns the task detail (and mutations still work) when PROMPT.md cannot be read", async () => {
-    const { TaskStore } = await import("../store.js");
-
-    const root = mkdtempSync(join(tmpdir(), "fn-task-detail-resilience-"));
-    cleanupDirs.push(root);
-
-    const store = new TaskStore(root);
-    await store.init();
+    const h = await makeHarness();
     try {
+      const store = h.store;
       const task = await store.createTask({ description: "task whose PROMPT.md becomes unreadable" });
 
       // Baseline: a healthy task detail loads and carries the prompt text.
@@ -46,7 +57,7 @@ describe("getTask PROMPT.md read resilience (task-write-API 500 regression)", ()
       // Make PROMPT.md unreadable deterministically: replace the file with a
       // directory so `readFile` raises EISDIR (mirrors the EACCES a root-owned
       // PROMPT.md produces, without depending on chmod/uid semantics).
-      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      const promptPath = join(h.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
       rmSync(promptPath, { force: true });
       mkdirSync(promptPath, { recursive: true });
       expect(existsSync(promptPath)).toBe(true);
@@ -97,13 +108,19 @@ describe("getTask PROMPT.md read resilience (task-write-API 500 regression)", ()
       // cause (PROMPT.md) rather than a misleading "task has 0 steps".
       await expect(store.updateStep(task.id, 0, "in-progress")).rejects.toThrow(/PROMPT\.md/);
 
-      await expect(store.archiveTask(task.id)).resolves.toBeTruthy();
-      const archived = await store.getTask(task.id);
-      expect(archived.column).toBe("archived");
+      // PG backend archive moves the row to archive cold storage
+      // (archiveParentTaskWithLineageGate), so getTask can no longer find it.
+      // Assert the resolved archiveTask return value instead.
+      const archived = await store.archiveTask(task.id);
+      expect(archived).toBeTruthy();
 
       await expect(store.deleteTask(task.id)).resolves.toBeTruthy();
     } finally {
-      await store.close();
+      await teardown();
     }
   });
 });
+
+// Keep `describe` referenced so the import is not flagged as unused if the
+// pgDescribe.skip path is taken in CI (no PG available).
+void describe;

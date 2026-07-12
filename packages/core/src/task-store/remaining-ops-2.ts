@@ -462,6 +462,60 @@ export async function listTasksForGithubTrackingReconcileImpl(store: TaskStore, 
     return { tasks: [...deletedTasks, ...archivedTasks], hasMore };
   }
 
+/**
+ * FNXC:GitLabTracking 2026-07-02-00:00:
+ * GitLab-tracking reconcile, cloned from listTasksForGithubTrackingReconcileImpl
+ * with githubTracking → gitlabTracking. Returns soft-deleted tasks carrying
+ * gitlab_tracking JSONB, paginated by updatedAt ASC. Archived tasks are skipped
+ * in backend mode (AsyncArchiveLineage is a separate async subsystem).
+ */
+export async function listTasksForGitlabTrackingReconcileImpl(store: TaskStore, options?: { offset?: number; limit?: number }): Promise<{ tasks: Task[]; hasMore: boolean }> {
+    const reconcileScanLimit = 200;
+    const offset = Math.max(0, options?.offset ?? 0);
+    const limit = Math.max(0, options?.limit ?? reconcileScanLimit);
+
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const trackedDeletedFilter = and(
+        isNotNull(schema.project.tasks.gitlabTracking),
+        isNotNull(schema.project.tasks.deletedAt),
+      );
+      const countRows = await layer.db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.project.tasks)
+        .where(trackedDeletedFilter);
+      const deletedCount = Number(countRows[0]?.count ?? 0);
+      const deletedOffset = Math.min(offset, deletedCount);
+      const deletedRowsRaw = await layer.db
+        .select()
+        .from(schema.project.tasks)
+        .where(trackedDeletedFilter)
+        .orderBy(asc(schema.project.tasks.updatedAt))
+        .limit(limit)
+        .offset(deletedOffset);
+      const deletedTasks = deletedRowsRaw.map((row) => {
+        const raw = row as unknown as Record<string, unknown>;
+        const task = store.rowToTask(store.pgRowToTaskRow(raw));
+        // FNXC:GitLabTracking 2026-07-12-00:00: the generic row mapper does not
+        // yet include gitlabTracking (the feature is partial on this branch).
+        // Manually attach it from the raw jsonb column so reconcile callers get
+        // the tracking item they need to reconcile.
+        if (raw.gitlabTracking != null) {
+          task.gitlabTracking = raw.gitlabTracking as Task["gitlabTracking"];
+        }
+        task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
+        task.log = [];
+        return task;
+      });
+      const totalCount = deletedCount;
+      const hasMore = offset + limit < totalCount;
+      return { tasks: deletedTasks, hasMore };
+    }
+    // FNXC:SqliteFinalRemoval 2026-07-12-00:00: non-backend (SQLite) path is unreachable after
+    // VAL-REMOVAL-005; throw so a misconfigured caller is not silently fed empty data.
+    throw new Error("listTasksForGitlabTrackingReconcile requires backend mode (PostgreSQL).");
+  }
+
 export async function listTasksModifiedSinceImpl2(store: TaskStore, since: string, limit?: number, opts?: { includeArchived?: boolean },): Promise<{ tasks: Task[]; hasMore: boolean }> {
     /*
     FNXC:SqliteFinalRemoval 2026-06-25-10:45:

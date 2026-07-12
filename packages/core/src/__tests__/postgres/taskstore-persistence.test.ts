@@ -448,12 +448,21 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
     expect(config.nextWorkflowStepId).toBe(7);
   });
 
-  it("config row enforces the singleton CHECK (id = 1)", async () => {
+  it("config row enforces per-project singleton via project_id PK", async () => {
     ctx = await setupCtx();
-    // Inserting a second config row must violate the CHECK constraint.
+    // FNXC:MultiProjectIsolation 2026-07-11: config is now keyed per-project on
+    // project_id (the PK). The old singleton CHECK (id = 1) was removed so multiple
+    // projects can each have their own config row. A duplicate project_id must
+    // still violate the PK constraint.
     await expect(
       ctx.adminDb.execute(sql`
-        INSERT INTO project.config (id, settings) VALUES (2, '{}'::jsonb)
+        INSERT INTO project.config (project_id, settings) VALUES ('dup', '{}'::jsonb)
+      `),
+    ).resolves.toBeDefined();
+    // Inserting a second row with the same project_id must violate the PK.
+    await expect(
+      ctx.adminDb.execute(sql`
+        INSERT INTO project.config (project_id, settings) VALUES ('dup', '{}'::jsonb)
       `),
     ).rejects.toThrow();
   });

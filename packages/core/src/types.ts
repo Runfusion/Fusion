@@ -4810,6 +4810,27 @@ export interface ProjectSettings {
    *  per-task JSONL files — see agentLogFileRetentionDays. Default: 30. Set 0
    *  to disable pruning. */
   operationalLogRetentionDays?: number;
+  /*
+  FNXC:PostgresMigrationBanner 2026-07-12:
+  Written by the startup factory after the first-boot SQLite → PostgreSQL
+  auto-migration succeeds, so the dashboard can show a one-time banner telling
+  the operator their data was migrated and the original SQLite files were
+  kept as backups. Dismissing the banner sets dismissed: true (the notice is
+  retained for support/audit rather than deleted). null/absent = no migration
+  happened on this project.
+  */
+  sqliteMigrationNotice?: {
+    /** ISO timestamp of the auto-migration. */
+    migratedAt: string;
+    /** Total rows imported across all tables. */
+    migratedRows: number;
+    /** Number of tables imported. */
+    tables: number;
+    /** Absolute paths of the original SQLite files kept as backups. */
+    sqliteBackups: string[];
+    /** True once the operator dismissed the banner. */
+    dismissed?: boolean;
+  } | null;
   /** Number of days to retain per-task agent-log JSONL files for soft-deleted
    *  and archived tasks. Only affects tasks that are no longer active. Entries
    *  older than this window are removed from the JSONL file during periodic

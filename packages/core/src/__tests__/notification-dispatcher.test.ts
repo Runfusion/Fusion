@@ -152,6 +152,7 @@ describe("NotificationDispatcher", () => {
       "awaiting-approval",
       "awaiting-user-review",
       "planning-awaiting-input",
+      "cli-agent-awaiting-input",
       "message:agent-to-user",
       "message:agent-to-agent",
       "message:room",

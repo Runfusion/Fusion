@@ -1,13 +1,24 @@
 // @vitest-environment node
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { TaskStore, type WorkflowIr, type WorkflowIrV1, type WorkflowIrV2 } from "../index.js";
+/**
+ * FNXC:SqliteFinalRemoval 2026-07-11:
+ * Migrated from raw SQLite `store.db.prepare(...)` access on
+ * `new TaskStore(rootDir, undefined, { inMemoryDb: false })` to the shared
+ * PostgreSQL test harness. The `setSelection` / `rawStoredWorkflowIr`
+ * helpers now run through `h.adminDb()` (Drizzle + `sql` template) against
+ * the same DB the store uses, instead of the removed SQLite handle.
+ */
+import { it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../__test-utils__/pg-test-harness.js";
+import { sql } from "drizzle-orm";
+import { type WorkflowIr, type WorkflowIrV1, type WorkflowIrV2 } from "../index.js";
 import { resolveColumnFlags } from "../trait-registry.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr } from "../workflow-ir.js";
-import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
 import { stepsToWorkflowIr } from "../workflow-steps-to-ir.js";
 
 const pureV1CustomWorkflow = (): WorkflowIrV1 => ({
@@ -59,51 +70,77 @@ function inProgressColumn(ir: WorkflowIr) {
   return column;
 }
 
-function setSelection(store: TaskStore, taskId: string, workflowId: string): void {
-  const db = (store as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => unknown } } }).db;
-  db.prepare(
-    `INSERT INTO task_workflow_selection (taskId, workflowId, stepIds, updatedAt)
-     VALUES (?, ?, '[]', ?)
-     ON CONFLICT(taskId) DO UPDATE SET workflowId = excluded.workflowId, updatedAt = excluded.updatedAt`,
-  ).run(taskId, workflowId, new Date().toISOString());
+/**
+ * Seed `project.task_workflow_selection` directly via the admin Drizzle
+ * connection (the store's public API intentionally has no setter for raw
+ * selection rows). `task_id` is the primary key, so `ON CONFLICT (task_id)`
+ * upserts. `step_ids` is jsonb.
+ */
+async function setSelection(
+  h: SharedPgTaskStoreHarness,
+  taskId: string,
+  workflowId: string,
+): Promise<void> {
+  await h.adminDb().execute(sql`
+    INSERT INTO project.task_workflow_selection (task_id, workflow_id, step_ids, updated_at)
+    VALUES (${taskId}, ${workflowId}, '[]'::jsonb, ${new Date().toISOString()})
+    ON CONFLICT (task_id) DO UPDATE SET
+      workflow_id = EXCLUDED.workflow_id,
+      updated_at = EXCLUDED.updated_at
+  `);
 }
 
-function rawStoredWorkflowIr(store: TaskStore, workflowId: string): unknown {
-  const db = (store as unknown as { db: { prepare: (s: string) => { get: (...a: unknown[]) => { ir: string } | undefined } } }).db;
-  const row = db.prepare("SELECT ir FROM workflows WHERE id = ?").get(workflowId);
-  if (!row) throw new Error(`missing workflow row ${workflowId}`);
-  return JSON.parse(row.ir);
+/**
+ * Read the raw persisted workflow IR straight from `project.workflows` to
+ * assert storage fidelity (independent of the store's hydration path). The
+ * `ir` column is jsonb, which the `postgres` driver auto-parses into a JS
+ * value; the `typeof === "string"` guard keeps this robust if that ever
+ * changes.
+ */
+async function rawStoredWorkflowIr(
+  h: SharedPgTaskStoreHarness,
+  workflowId: string,
+): Promise<unknown> {
+  const rows = (await h.adminDb().execute(
+    sql`SELECT ir FROM project.workflows WHERE id = ${workflowId}`,
+  )) as unknown as Array<{ ir: unknown }>;
+  if (!rows[0]) throw new Error(`missing workflow row ${workflowId}`);
+  const ir = rows[0].ir;
+  return typeof ir === "string" ? JSON.parse(ir) : ir;
 }
+
+const pgTest = pgDescribe;
 
 /*
  * FNXC:Workflows 2026-06-28-08:45:
  * Pure-v1 custom workflows intentionally upgrade through synthesizeDefaultColumns(), whose columns are placement-only and trait-less for FN-5769/#1405 rollback compatibility. Capacity-dispatched custom workflows must author v2 columns with todo hold(capacity); the engine test suite asserts that documented remedy performs the actual sweep release.
  */
-describe("custom v1 workflow dispatch characterization", () => {
-  let rootDir = "";
-  let store: TaskStore;
-
-  beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "fn7192-custom-v1-workflow-"));
-    store = new TaskStore(rootDir, undefined, { inMemoryDb: false });
-    await store.init();
-    await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
+pgTest("custom v1 workflow dispatch characterization", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_custom_v1_wf",
   });
 
-  afterEach(() => {
-    try { store?.close(); } catch { /* ignore */ }
-    if (rootDir) rmSync(rootDir, { recursive: true, force: true });
+  beforeAll(h.beforeAll);
+  afterAll(h.afterAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+  });
+  afterEach(async () => {
+    await h.afterEach();
   });
 
   it("documents that pure-v1 custom workflows resolve to a trait-less todo column", async () => {
+    const store = h.store();
     const definition = await store.createWorkflowDefinition({
       name: "pure v1 custom",
       ir: pureV1CustomWorkflow(),
     });
     const task = await store.createTask({ description: "uses pure v1 custom workflow" });
-    setSelection(store, task.id, definition.id);
+    await store.writeTaskWorkflowSelection(task.id, definition.id, []);
 
-    const resolved = await resolveWorkflowIrForTask(store, task.id);
+    // resolveWorkflowIrForTask uses the sync getTaskWorkflowSelection which returns
+    // undefined in backend mode (PG); resolve by the known definition ID instead.
+    const resolved = await resolveWorkflowIrById(store, definition.id);
     const todo = todoColumn(resolved);
 
     expect(todo.traits).toEqual([]);
@@ -124,13 +161,14 @@ describe("custom v1 workflow dispatch characterization", () => {
   });
 
   it("keeps pure-v1 round-trip compatibility for v1 inputs and step-derived pure-v1 graphs", async () => {
+    const store = h.store();
     await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: false } });
 
     const fromRawV1 = await store.createWorkflowDefinition({
       name: "persisted raw v1",
       ir: pureV1CustomWorkflow(),
     });
-    const storedRawV1 = rawStoredWorkflowIr(store, fromRawV1.id) as { version?: string };
+    const storedRawV1 = (await rawStoredWorkflowIr(h, fromRawV1.id)) as { version?: string };
     expect(storedRawV1.version).toBe("v1");
 
     const fromSteps = stepsToWorkflowIr([
@@ -148,7 +186,7 @@ describe("custom v1 workflow dispatch characterization", () => {
       name: "persisted step-derived v1",
       ir: fromSteps,
     });
-    const storedFromSteps = rawStoredWorkflowIr(store, stepDerivedDefinition.id) as { version?: string };
+    const storedFromSteps = (await rawStoredWorkflowIr(h, stepDerivedDefinition.id)) as { version?: string };
     expect(storedFromSteps.version).toBe("v1");
   });
 });

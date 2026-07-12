@@ -643,6 +643,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   chatAutoCleanupDays: 0,
   mailAutoCleanupDays: 0,
   operationalLogRetentionDays: 30,
+  // FNXC:PostgresMigrationBanner 2026-07-12: set by the startup factory after
+  // the first-boot SQLite → PostgreSQL auto-migration; drives the one-time
+  // "your data was migrated" dashboard banner. null = no migration.
+  sqliteMigrationNotice: null,
   agentLogFileRetentionDays: 0,
   chatRoomRecentVerbatimMessages: 25,
   chatRoomCompactionFetchLimit: 200,

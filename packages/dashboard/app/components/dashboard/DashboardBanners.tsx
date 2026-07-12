@@ -5,6 +5,7 @@ DashboardBanners is the conditional banner cluster rendered above the dashboard-
 import type { DashboardBannersProps } from "./types";
 import type { SectionId } from "../SettingsModal";
 import { TestModeBanner } from "../TestModeBanner";
+import { SqliteMigrationBanner } from "../SqliteMigrationBanner";
 import { EngineUnavailableBanner } from "../EngineUnavailableBanner";
 import { EngineStatusBanner } from "../EngineStatusBanner";
 import { OAuthReloginBanner } from "../OAuthReloginBanner";
@@ -78,6 +79,10 @@ export function DashboardBanners({
       {viewMode === "project" && currentProject && (
         <>
           <TestModeBanner isActive={isTestMode} />
+          {/* FNXC:PostgresMigrationBanner 2026-07-12: one-time post-auto-migration
+              notice ("data migrated, backup exists") with a Discord Need-help link;
+              self-fetches settings, keyed to re-check on project switch. */}
+          <SqliteMigrationBanner key={`sqlite-migration-${currentProject.id}`} projectId={currentProject.id} />
           {showEngineRemediationBanners && (
             <EngineUnavailableBanner isVisible={dashboardHealth?.engine?.available === false} />
           )}
