@@ -2757,6 +2757,34 @@ function TaskCardComponent({
     // metadata (absent for the common "off" default) — include it in the wrapper
     // guard so `.card-meta-badges` only renders when it has a real child.
     || showOversightBadge;
+  const hasHeaderBadges = Boolean(isPaused)
+    || Boolean(!isPaused && visualStatus && visualStatus !== "queued")
+    || planReviewRunning
+    || Boolean(!isPaused && task.column === "todo" && !visualStatus && (task.steps?.length ?? 0) > 0)
+    || Boolean(hasInReviewStall && stallCopy)
+    || cliWaitingOnInput
+    || cliNeedsAttention
+    || Boolean(hasStalePausedReview && stalePausedReviewCopy)
+    || Boolean(hasTaskAgeStaleness && taskAgeStalenessCopy)
+    || Boolean(isStuck && (isPaused || !task.status || task.status === "queued"))
+    || Boolean(Array.isArray((task as TaskWithBranchProgress).branchProgress) && (task as TaskWithBranchProgress).branchProgress!.length > 0)
+    || Boolean(task.plannerOverseerState && task.plannerOverseerState.state !== "idle")
+    || Boolean(showStalledReview && stalledReview)
+    || Boolean(livePrInfo || liveIssueInfo)
+    || Boolean(task.gitlabTracking?.item)
+    || Boolean(prNode)
+    || hasCardMetaBadges
+    || task.noCommitsExpected === true
+    || Boolean(task.missionId);
+  const hasHeaderActions = Boolean(isAwaitingInput && onOpenDetailWithTab)
+    || Boolean(canEdit)
+    || Boolean(task.column === "triage" && onDeleteTask)
+    || Boolean(task.column === "done" && onArchiveTask)
+    || Boolean(task.column === "archived" && onUnarchiveTask)
+    || Boolean((task.column === "done" || task.column === "archived") && onRevertTask && isRevertable)
+    || Boolean(task.column === "in-progress" && onMoveTask)
+    || Boolean(task.size)
+    || hasContextMenuActions;
 
   if (isEditing) {
     return (
@@ -2834,6 +2862,12 @@ function TaskCardComponent({
       )}
       <div className="card-header">
         <span className="card-id">{task.id}</span>
+        {hasHeaderBadges && (
+          /*
+          FNXC:TaskCardLayout 2026-07-11-00:00:
+          FN-7837 keeps the task id and right-aligned size/actions cluster in the same non-wrapping header row. Extra header badges (fast-mode, priority, oversight, decision-only, PR/GitHub, and status chips) wrap inside this middle group instead of pushing the size chip onto a misaligned second row on desktop or mobile.
+          */
+          <div className="card-header-badges" data-testid="card-header-badges">
         {isPaused && (
           <span
             className="card-status-badge paused"
@@ -3072,6 +3106,9 @@ function TaskCardComponent({
             {abbreviateMissionTitle(missionTitle ?? task.missionId)}
           </span>
         )}
+          </div>
+        )}
+        {hasHeaderActions && (
         <div className="card-header-actions">
           {isAwaitingInput && onOpenDetailWithTab && (
             <button
@@ -3205,6 +3242,7 @@ function TaskCardComponent({
             </button>
           )}
         </div>
+        )}
       </div>
       {showStalledReview && stalledReview && (
         <div className="card-stalled-review-reason" title={stalledReview.reason}>

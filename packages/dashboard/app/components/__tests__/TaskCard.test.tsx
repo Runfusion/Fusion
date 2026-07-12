@@ -2029,8 +2029,10 @@ describe("TaskCard", () => {
     const badge = container.querySelector(".card-status-badge")!;
     expect(cardId).toBeDefined();
     expect(badge).toBeDefined();
-    // Badge should be the next sibling of card-id
-    expect(cardId.nextElementSibling).toBe(badge);
+    const headerBadges = container.querySelector(".card-header-badges")!;
+    expect(headerBadges).toBeDefined();
+    expect(cardId.nextElementSibling).toBe(headerBadges);
+    expect(headerBadges.contains(badge)).toBe(true);
   });
 
   it("does not render a status badge when task.status is falsy", () => {
@@ -3401,18 +3403,29 @@ describe("TaskCard", () => {
     expect(actionsContainer?.contains(sizeBadge)).toBe(true);
   });
 
-  it("places card-header-actions after card-id in DOM order", () => {
+  it("places card-header-actions as a direct header child after the wrapped badge group", () => {
     const { container } = render(
-      <TaskCard task={makeTask({ size: "S" })} onOpenDetail={noop} addToast={noop} />,
+      <TaskCard
+        task={makeTask({ size: "S", priority: "urgent" as Task["priority"], executionMode: "fast" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
     );
+    const header = container.querySelector(".card-header")!;
     const cardId = container.querySelector(".card-id")!;
+    const headerBadges = container.querySelector(".card-header-badges")!;
     const actionsContainer = container.querySelector(".card-header-actions")!;
-    
+
     expect(cardId).not.toBeNull();
+    expect(headerBadges).not.toBeNull();
     expect(actionsContainer).not.toBeNull();
-    // The actions container should come after card-id
+    expect(actionsContainer.parentElement).toBe(header);
+    expect(headerBadges.parentElement).toBe(header);
     expect(
-      cardId.compareDocumentPosition(actionsContainer) & Node.DOCUMENT_POSITION_FOLLOWING
+      cardId.compareDocumentPosition(headerBadges) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      headerBadges.compareDocumentPosition(actionsContainer) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
   });
 

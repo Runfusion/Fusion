@@ -23,6 +23,7 @@ vi.mock("lucide-react", () => ({
   Zap: () => null,
   AlertTriangle: () => null,
   Eye: () => null,
+  MoreHorizontal: () => null,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -98,13 +99,74 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     cleanupCss = undefined;
   });
 
-  it("wraps the header row and keeps a non-zero row gap", () => {
+  it("keeps the outer header row non-wrapping while badges wrap inside their own group", () => {
     const header = container.querySelector(".card-header");
+    const headerBadges = container.querySelector(".card-header-badges");
     expect(header).toBeTruthy();
+    expect(headerBadges).toBeTruthy();
 
-    const styles = getComputedStyle(header!);
-    expect(styles.flexWrap).toBe("wrap");
-    expect(styles.rowGap).toMatch(/^(var\(--space-xs\)|(?!0px$)\d+(?:\.\d+)?px)$/);
+    const headerStyles = getComputedStyle(header!);
+    expect(headerStyles.flexWrap).toBe("nowrap");
+    expect(headerStyles.rowGap).toMatch(/^(var\(--space-xs\)|(?!0px$)\d+(?:\.\d+)?px)$/);
+
+    const badgeStyles = getComputedStyle(headerBadges!);
+    expect(badgeStyles.display).toBe("flex");
+    expect(badgeStyles.flexWrap).toBe("wrap");
+    expect(badgeStyles.minWidth).toBe("0px");
+    expect(header?.contains(headerBadges)).toBe(true);
+    expect(container.querySelector(".card-header-actions")).toBeNull();
+  });
+
+  it("keeps a fast-mode size badge in the right-aligned header actions instead of an orphaned wrapped row", () => {
+    const { container: sizedContainer } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-7832",
+          column: "done",
+          status: "done" as Task["status"],
+          size: "S",
+          priority: "urgent" as Task["priority"],
+          executionMode: "fast",
+          noCommitsExpected: true,
+          issueInfo: {
+            owner: "owner",
+            repo: "repo",
+            number: 7832,
+            state: "open",
+            title: "Fast-mode done card with extra header badges",
+            url: "https://github.com/owner/repo/issues/7832",
+          } as Task["issueInfo"],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onArchiveTask={async () => makeTask()}
+        workflowBadge={{ workflowId: "wf-fast-size", workflowName: "Fast size workflow" }}
+      />,
+    );
+
+    const header = sizedContainer.querySelector(".card-header") as HTMLElement;
+    const headerBadges = sizedContainer.querySelector(".card-header-badges") as HTMLElement;
+    const actions = sizedContainer.querySelector(".card-header-actions") as HTMLElement;
+    const sizeBadge = sizedContainer.querySelector(".card-size-badge") as HTMLElement;
+    const fastBadge = sizedContainer.querySelector(".card-execution-mode-badge") as HTMLElement;
+
+    expect(header).toBeTruthy();
+    expect(headerBadges).toBeTruthy();
+    expect(actions).toBeTruthy();
+    expect(sizeBadge).toBeTruthy();
+    expect(fastBadge).toBeTruthy();
+    expect(actions.contains(sizeBadge)).toBe(true);
+    expect(headerBadges.contains(fastBadge)).toBe(true);
+    expect(sizeBadge.closest(".card-header-badges")).toBeNull();
+    expect(actions.parentElement).toBe(header);
+    expect(headerBadges.parentElement).toBe(header);
+
+    const headerStyles = getComputedStyle(header);
+    const actionsStyles = getComputedStyle(actions);
+    expect(headerStyles.flexWrap).toBe("nowrap");
+    expect(actionsStyles.marginLeft).toBe("auto");
+    expect(actionsStyles.flexShrink).toBe("0");
+    expect(actionsStyles.alignSelf).toBe("flex-start");
   });
 
   it.each([

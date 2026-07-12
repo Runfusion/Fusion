@@ -96,12 +96,30 @@ Mobile long-press opens the Board task context menu, so non-editing card text mu
 
 .card-header {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  flex-wrap: nowrap;
   gap: var(--space-xs);
   row-gap: var(--space-xs);
   min-width: 0;
   margin-bottom: var(--space-xs);
+}
+
+/*
+FNXC:TaskCardLayout 2026-07-11-00:00:
+FN-7837 keeps the id row and right-aligned size/actions cluster together while extra header badges wrap inside this middle group, preventing the size chip from orphaning onto a misaligned second row on desktop and mobile.
+*/
+.card-header-badges {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  row-gap: var(--space-xs);
+  min-width: 0;
+}
+
+.card-id {
+  flex-shrink: 0;
 }
 
 .card-meta-badges {
@@ -1408,7 +1426,9 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
 .card-header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  align-self: flex-start;
+  flex: 0 0 auto;
+  gap: var(--space-xs);
   margin-left: auto;
 }
 
@@ -1773,9 +1793,9 @@ too so future divergence doesn't have to rediscover the shared selector group.
     height: 16px;
   }
 
-  /* FN-4365/FN-4351: keep secondary actions compact and inline with the header title row on mobile. */
+  /* FN-4365/FN-4351/FN-7837: keep secondary actions compact, token-spaced, and inline with the non-wrapping header title row on mobile. */
   .card-header-actions {
-    gap: 4px;
+    gap: calc(var(--space-xs) / 2);
     flex-shrink: 0;
   }
 
@@ -1835,6 +1855,7 @@ too so future divergence doesn't have to rediscover the shared selector group.
   }
 
 
+  .card-header-badges,
   .card-meta-badges {
     gap: calc(var(--space-xs) / 2);
     row-gap: var(--space-xs);
