@@ -110,7 +110,7 @@ export interface SkillSelectionResult {
 /**
  * Project settings structure relevant to skill selection.
  */
-interface ProjectSkillSettings {
+export interface ProjectSkillSettings {
   skills?: string[];
   packages?: Array<string | { source: string; skills?: string[] }>;
 }
@@ -137,7 +137,7 @@ function readJsonObject(path: string): Record<string, unknown> {
 /**
  * Read project settings from .fusion/settings.json.
  */
-function readProjectSettings(projectRootDir: string): ProjectSkillSettings {
+export function readProjectSettings(projectRootDir: string): ProjectSkillSettings {
   const fusionSettings = join(projectRootDir, ".fusion", "settings.json");
 
   if (existsSync(fusionSettings)) {

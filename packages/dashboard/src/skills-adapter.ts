@@ -7,7 +7,15 @@
 
 import { access, readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
 import { join, relative, dirname, resolve, sep } from "node:path";
-import { superviseSpawn } from "@fusion/core";
+import {
+  computeSkillId,
+  getSkillSettingState,
+  normalizeStoredSkillPath,
+  parseSkillId,
+  resolvePluginSkillEnabled,
+  superviseSpawn,
+} from "@fusion/core";
+export { computeSkillId, getSkillSettingState, parseSkillId } from "@fusion/core";
 import type { ChildProcess } from "node:child_process";
 
 /**
@@ -198,39 +206,6 @@ export interface SkillFileContent {
 }
 
 /**
- * Compute deterministic skill ID from metadata.
- * Format: encodeURIComponent(metadata.source) + "::" + relativePath
- *
- * @param source - The package source identifier
- * @param relativePath - Path relative to the skill directory
- * @returns Deterministic skill ID
- */
-export function computeSkillId(source: string, relativePath: string): string {
-  const normalizedPath = relativePath.replaceAll("\\", "/");
-  return `${encodeURIComponent(source)}::${normalizedPath}`;
-}
-
-/**
- * Parse a skill ID back into source and relativePath components.
- */
-export function parseSkillId(skillId: string): { source: string; relativePath: string } | null {
-  const parts = skillId.split("::");
-  if (parts.length !== 2) return null;
-  try {
-    return {
-      source: decodeURIComponent(parts[0]!),
-      relativePath: parts[1]!,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function normalizeStoredSkillPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^skills\//, "");
-}
-
-/**
  * Reduce any skill-name form to a single bare token (lowercased) for dedup:
  *   "ce-work/SKILL.md" / "<src>::skills/ce-work/SKILL.md" / "ce-work" → "ce-work"
  * Mirrors the editor-side helper (app/components/nodes/node-summary.ts); kept
@@ -272,55 +247,6 @@ async function waitForSupervisedExit(
     child.once("error", reject);
   });
   return Promise.race([exitPromise, spawnError]);
-}
-
-/**
- * Resolve a skill's explicit enable/disable state from settings.
- * Checks both top-level skills and package-scoped skills. Returns "enabled" or
- * "disabled" when a settings entry matches, or undefined when the settings file
- * says nothing about this skill -- so callers can apply their own default.
- */
-function getSkillSettingState(
-  skillId: string,
-  settings: { skills?: string[]; packages?: Array<{ source: string; skills?: string[] }> },
-): "enabled" | "disabled" | undefined {
-  const parsedSkillId = parseSkillId(skillId);
-  if (!parsedSkillId) {
-    return undefined;
-  }
-
-  const normalizedSkillPath = normalizeStoredSkillPath(parsedSkillId.relativePath);
-
-  const skills = settings.skills ?? [];
-  for (const entry of skills) {
-    const entryPath = normalizeStoredSkillPath(
-      entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry,
-    );
-    const entryId = computeSkillId("*", `skills/${entryPath}`);
-    if (entryId === skillId || entryPath === normalizedSkillPath) {
-      return entry.startsWith("+") ? "enabled" : "disabled";
-    }
-  }
-
-  // Check package-scoped skills
-  const packages = settings.packages ?? [];
-  for (const pkg of packages) {
-    const source = typeof pkg === "string" ? pkg : pkg.source;
-    const pkgSkills = typeof pkg === "object" ? pkg.skills : undefined;
-    if (!pkgSkills) continue;
-
-    for (const entry of pkgSkills) {
-      const entryPath = normalizeStoredSkillPath(
-        entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry,
-      );
-      const entryId = computeSkillId(source, `skills/${entryPath}`);
-      if (entryId === skillId || entryPath === normalizedSkillPath) {
-        return entry.startsWith("+") ? "enabled" : "disabled";
-      }
-    }
-  }
-
-  return undefined;
 }
 
 /**
@@ -433,17 +359,12 @@ export function createSkillsAdapter(options: {
           seenBareNames.add(bare);
           const relativePath = `skills/${name}/SKILL.md`;
           const id = computeSkillId(`plugin:${pluginId}`, relativePath);
-          // Respect an explicit enable/disable written to project settings by
-          // toggleExecutionSkill, falling back to the plugin's declared default.
-          // Without consulting settings here, a user toggle on a plugin skill
-          // would be silently reverted on the very next discovery.
-          const settingState = getSkillSettingState(
-            id,
-            settings as Parameters<typeof getSkillSettingState>[1],
+          const enabled = resolvePluginSkillEnabled(
+            settings as Parameters<typeof resolvePluginSkillEnabled>[0],
+            pluginId,
+            name,
+            skill.enabled,
           );
-          const enabled = settingState === undefined
-            ? skill.enabled !== false
-            : settingState === "enabled";
           discoveredSkills.push({
             id,
             name,

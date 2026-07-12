@@ -936,6 +936,48 @@ describe("PluginStore", () => {
       expect(plugin.path).toBe("/new/path/to/plugin");
     });
 
+    it("updates version and settingsSchema without touching enabled or setting values", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          apiKey: { type: "string", defaultValue: "default-key" },
+        },
+      });
+      await store.registerPlugin({ manifest, path: "/path/to/plugin" });
+      await store.updatePluginSettings("test-plugin", { apiKey: "saved-key" });
+      await store.disablePlugin("test-plugin");
+
+      const plugin = await store.updatePlugin("test-plugin", {
+        version: "1.1.0",
+        settingsSchema: {
+          apiKey: { type: "string", defaultValue: "default-key" },
+          mode: { type: "enum", enumValues: ["fast", "safe"], defaultValue: "safe" },
+        },
+      });
+
+      expect(plugin.version).toBe("1.1.0");
+      expect(plugin.settingsSchema?.mode).toEqual({ type: "enum", enumValues: ["fast", "safe"], defaultValue: "safe" });
+      expect(plugin.settings).toEqual({ apiKey: "saved-key" });
+      expect(plugin.enabled).toBe(false);
+
+      const reloaded = await store.getPlugin("test-plugin");
+      expect(reloaded.settingsSchema?.mode?.enumValues).toEqual(["fast", "safe"]);
+      expect(reloaded.settings).toEqual({ apiKey: "saved-key" });
+      expect(reloaded.enabled).toBe(false);
+    });
+
+    it("clears settingsSchema when updatePlugin receives null", async () => {
+      const manifest = makeManifest({
+        settingsSchema: {
+          apiKey: { type: "string" },
+        },
+      });
+      await store.registerPlugin({ manifest, path: "/path/to/plugin" });
+
+      const plugin = await store.updatePlugin("test-plugin", { settingsSchema: null });
+
+      expect(plugin.settingsSchema).toBeUndefined();
+    });
+
     it("updates dependencies", async () => {
       const manifest = makeManifest();
       await store.registerPlugin({ manifest, path: "/path/to/plugin" });

@@ -151,7 +151,7 @@ After a plugin is installed/enabled, these are the current user-visible capabili
 
 ### A) Plugin-contributed skills (runtime behavior)
 
-Plugin-contributed skills are merged into agent sessions automatically at runtime when enabled.
+Plugin-contributed skills are merged into agent sessions automatically at runtime when enabled; per-project Skills view toggles override the plugin's default for those sessions.
 
 1. Install + enable the plugin.
 2. Run a task through an agent flow (triage/executor/reviewer/merger).
@@ -159,7 +159,7 @@ Plugin-contributed skills are merged into agent sessions automatically at runtim
 
 Expected outcome: plugin skills affect session behavior, but there is no dedicated "plugin skills" management panel in Fusion Plugins.
 
-> Note: **Skills view** shows discovered execution skills and toggles, but plugin-contributed skills are documented as runtime session behavior here (not a plugin-manager-specific skills UI).
+> Note: **Skills view** shows discovered execution skills and toggles, and its per-project plugin-skill toggles apply to runtime agent sessions as well as discovery (not a plugin-manager-specific skills UI).
 
 ### B) Plugin-contributed workflow step templates (dashboard + API)
 

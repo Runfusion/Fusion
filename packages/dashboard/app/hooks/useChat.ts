@@ -548,9 +548,40 @@ export function useChat(
           }
         } else {
           if (shouldCommitMessages) {
-            setMessages(mappedMessages);
+            const isActiveStreamingSession = isStreamingRef.current && activeSessionRef.current?.id === sessionId;
+            const responseBelongsToSession = mappedMessages.every((message) => message.sessionId === sessionId);
+            const currentMessagesBelongToSession = messagesRef.current.length > 0 && messagesRef.current.every((message) => message.sessionId === sessionId);
+            const shouldPreserveActiveStreamingThread = isActiveStreamingSession
+              && currentMessagesBelongToSession
+              && (!responseBelongsToSession || mappedMessages.length === 0);
+            setMessages((prev) => {
+              if (isActiveStreamingSession && prev.length > 0) {
+                const previousBelongsToSession = prev.every((message) => message.sessionId === sessionId);
+                if (previousBelongsToSession && (!responseBelongsToSession || mappedMessages.length === 0)) {
+                  /*
+                  FNXC:ChatStreaming 2026-07-12-11:08:
+                  During an active assistant turn, the visible prior thread is append-only until onDone/recovery performs the authoritative reload. Mid-turn chat:session:updated, tool-call, and streaming churn can leave an older loadMessages request in flight; an empty or cross-session response must not blank/reflow messages because chat:message:added assistant echoes are suppressed while streaming.
+                  */
+                  return prev;
+                }
+
+                if (previousBelongsToSession && mappedMessages.length > 0) {
+                  const merged = [...prev];
+                  const seen = new Set(prev.map((message) => message.id));
+                  for (const message of mappedMessages) {
+                    if (!seen.has(message.id)) {
+                      merged.push(message);
+                      seen.add(message.id);
+                    }
+                  }
+                  return merged;
+                }
+              }
+
+              return mappedMessages;
+            });
             setHasMoreMessages(data.messages.length >= 50);
-            if (cacheKey) writeCache(cacheKey, mappedMessages, { maxBytes: 500_000 });
+            if (cacheKey && responseBelongsToSession && !shouldPreserveActiveStreamingThread) writeCache(cacheKey, mappedMessages, { maxBytes: 500_000 });
           }
         }
       } catch {

@@ -104,7 +104,15 @@ type StreamAppendHandlers = {
   onThinking: (delta: string) => void;
   onToolStart: (data: { toolName: string; args?: Record<string, unknown> }) => void;
   onToolEnd: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
+  onDone?: (data: { messageId?: string; message?: ChatMessage; accumulated: { text: string; thinking: string; toolCalls: unknown[]; fallbackInfo?: unknown } }) => void;
 };
+
+function cacheMessages(projectId: string, sessionId: string, messages: ChatMessage[]) {
+  localStorage.setItem(
+    `${swrCacheModule.SWR_CACHE_KEYS.CHAT_MESSAGES_PREFIX}${projectId}:${sessionId}`,
+    JSON.stringify({ savedAt: Date.now(), data: messages }),
+  );
+}
 
 const setDocumentVisibilityState = (state: DocumentVisibilityState) => {
   Object.defineProperty(document, "visibilityState", {
@@ -3511,6 +3519,206 @@ describe("useChat", () => {
           "Second answer",
         ]);
       });
+    });
+
+    it("FN-7853 keeps cached prior thread stable when stale mid-turn load resolves empty", async () => {
+      const generatingSession = {
+        ...makeSession({ id: "session-mid-turn-stable", agentId: "agent-001", title: "Mid turn stable" }),
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "working",
+          streamingThinking: "thinking",
+          toolCalls: [],
+          replayFromEventId: 201,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      const priorThread = [
+        makeMessage({ id: "msg-001", sessionId: generatingSession.id, role: "user", content: "First question" }),
+        makeMessage({ id: "msg-002", sessionId: generatingSession.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-003", sessionId: generatingSession.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-004", sessionId: generatingSession.id, role: "assistant", content: "Second answer" }),
+      ];
+      const staleFetch = createDeferredPromise<{ messages: ChatMessage[] }>();
+      let attachedHandlers: StreamAppendHandlers | undefined;
+
+      cacheMessages("proj-123", generatingSession.id, priorThread);
+      mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? generatingSession.id : undefined);
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [generatingSession] });
+      mockFetchChatMessages.mockReturnValue(staleFetch.promise);
+      mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
+        attachedHandlers = handlers;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("working");
+        expect(result.current.messages.map((message) => message.content)).toEqual([
+          "First question",
+          "First answer",
+          "Second question",
+          "Second answer",
+        ]);
+      });
+
+      const expectPriorThreadStable = () => {
+        const contents = result.current.messages.map((message) => message.content);
+        expect(contents).toEqual(expect.arrayContaining([
+          "First question",
+          "First answer",
+          "Second question",
+          "Second answer",
+        ]));
+      };
+
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify({
+            ...generatingSession,
+            inFlightGeneration: { ...generatingSession.inFlightGeneration, streamingText: "working harder", replayFromEventId: 202 },
+          }),
+        } as MessageEvent);
+      });
+      expectPriorThreadStable();
+
+      vi.useFakeTimers();
+      act(() => {
+        attachedHandlers?.onToolStart({ toolName: "read", args: { path: "README.md" } });
+        attachedHandlers?.onText(" now");
+        attachedHandlers?.onToolEnd({ toolName: "read", isError: false, result: "ok" });
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+      });
+      expectPriorThreadStable();
+
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(makeMessage({
+            id: "msg-005",
+            sessionId: generatingSession.id,
+            role: "user",
+            content: "Follow-up question",
+          })),
+        } as MessageEvent);
+      });
+      expectPriorThreadStable();
+
+      await act(async () => {
+        staleFetch.resolve({ messages: [] });
+        await staleFetch.promise;
+      });
+
+      expectPriorThreadStable();
+      expect(result.current.isStreaming).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it("FN-7853 keeps prior thread stable during the client's own streaming send turn", async () => {
+      const session = makeSession({ id: "session-live-send", agentId: "agent-001", title: "Live send" });
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-004", sessionId: session.id, role: "assistant", content: "Second answer" }),
+        makeMessage({ id: "msg-003", sessionId: session.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
+      let streamHandlers: StreamAppendHandlers | undefined;
+
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: priorThreadNewestFirst });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers = handlers;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession(session.id);
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages.map((message) => message.content)).toEqual([
+          "First question",
+          "First answer",
+          "Second question",
+          "Second answer",
+        ]);
+      });
+
+      act(() => {
+        result.current.sendMessage("Third question");
+      });
+
+      expect(result.current.messages.map((message) => message.content)).toEqual([
+        "First question",
+        "First answer",
+        "Second question",
+        "Second answer",
+        "Third question",
+      ]);
+      expect(result.current.isStreaming).toBe(true);
+
+      vi.useFakeTimers();
+      act(() => {
+        streamHandlers?.onText("Partial answer");
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify({
+            ...session,
+            isGenerating: true,
+            inFlightGeneration: {
+              status: "generating" as const,
+              streamingText: "Partial answer",
+              streamingThinking: "",
+              toolCalls: [],
+              replayFromEventId: 301,
+              updatedAt: "2026-04-08T00:00:00.000Z",
+            },
+          }),
+        } as MessageEvent);
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(makeMessage({ id: "msg-ignored-assistant", sessionId: session.id, role: "assistant", content: "Duplicate assistant" })),
+        } as MessageEvent);
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+      });
+
+      expect(result.current.messages.map((message) => message.content)).toEqual([
+        "First question",
+        "First answer",
+        "Second question",
+        "Second answer",
+        "Third question",
+      ]);
+      expect(result.current.streamingText).toBe("Partial answer");
+
+      act(() => {
+        streamHandlers?.onDone?.({
+          messageId: "msg-final-live-send",
+          accumulated: { text: "Final live answer", thinking: "", toolCalls: [] },
+        });
+      });
+
+      expect(result.current.messages.map((message) => message.content)).toEqual([
+        "First question",
+        "First answer",
+        "Second question",
+        "Second answer",
+        "Third question",
+        "Partial answer",
+      ]);
+      vi.useRealTimers();
     });
 
     it("FN-6496 loads prior thread during chat:session:updated in-flight attach", async () => {

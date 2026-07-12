@@ -1099,6 +1099,16 @@ Any state can transition to:
 | `stopped` | Plugin shut down gracefully |
 | `error` | Plugin failed during load or execution |
 
+### Updating path-registered plugins
+
+For plugins installed from a filesystem path, the normal update loop is now:
+
+1. Pull or edit the plugin source.
+2. Rebuild the plugin entrypoint if your plugin uses a build step.
+3. Restart Fusion, or disable and re-enable the plugin.
+
+On the next load/reload, Fusion re-imports the plugin module and refreshes the persisted manifest `version` and `settingsSchema` from the rebuilt manifest. Existing per-project enablement and saved setting values are preserved, so you do not need to unregister and re-register a path-based plugin just to expose a new version or settings field.
+
 ---
 
 ## 12. Testing Plugins

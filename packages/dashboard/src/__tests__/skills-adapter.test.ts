@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createSkillsAdapter, extractSkillName, computeSkillId, bareSkillName } from "../skills-adapter.js";
+import { resolvePluginSkillEnabled } from "@fusion/core";
 import { writeFile, mkdir, access, readFile, rm } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -863,12 +864,10 @@ describe("createSkillsAdapter - plugin skill merge", () => {
     // ce-plan defaults to enabled, but a "-" entry under its plugin package
     // source must disable it; without the settings lookup the toggle is lost.
     const relativePath = "skills/ce-plan/SKILL.md";
-    await writeFile(
-      settingsPath,
-      JSON.stringify({
-        packages: [{ source: "plugin:fusion-plugin-compound-engineering", skills: [`-${relativePath}`] }],
-      }),
-    );
+    const settings = {
+      packages: [{ source: "plugin:fusion-plugin-compound-engineering", skills: [`-${relativePath}`] }],
+    };
+    await writeFile(settingsPath, JSON.stringify(settings));
 
     try {
       const adapter = createSkillsAdapter({
@@ -883,6 +882,55 @@ describe("createSkillsAdapter - plugin skill merge", () => {
       const cePlan = skills.find((s) => s.name === "ce-plan");
       expect(cePlan).toBeDefined();
       expect(cePlan!.enabled).toBe(false);
+      expect(cePlan!.enabled).toBe(resolvePluginSkillEnabled(
+        settings,
+        "fusion-plugin-compound-engineering",
+        "ce-plan",
+        true,
+      ));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps plugin discovery enablement in parity with the shared session resolver", async () => {
+    const dir = join(tmpdir(), `skills-adapter-plugin-parity-${process.pid}-${Date.now()}`);
+    const settingsPath = join(dir, "settings.json");
+    await mkdir(dir, { recursive: true });
+    const settings = {
+      packages: [
+        { source: "plugin:fusion-plugin-compound-engineering", skills: ["+skills/opt-in/SKILL.md"] },
+        { source: "plugin:fusion-plugin-compound-engineering", skills: ["-skills/opt-out/SKILL.md"] },
+      ],
+    };
+    await writeFile(settingsPath, JSON.stringify(settings));
+
+    try {
+      const adapter = createSkillsAdapter({
+        packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [] }) },
+        getSettingsPath: () => settingsPath,
+        getPluginSkills: () => [
+          { pluginId: "fusion-plugin-compound-engineering", skill: { name: "opt-in", enabled: false } },
+          { pluginId: "fusion-plugin-compound-engineering", skill: { name: "opt-out", enabled: true } },
+          { pluginId: "fusion-plugin-compound-engineering", skill: { name: "default-on" } },
+        ],
+      });
+
+      const byName = new Map((await adapter.discoverSkills(dir)).map((skill) => [skill.name, skill.enabled]));
+      expect(byName).toEqual(new Map([
+        ["opt-in", true],
+        ["opt-out", false],
+        ["default-on", true],
+      ]));
+      for (const [name, enabled] of byName) {
+        const staticEnabled = name === "opt-in" ? false : true;
+        expect(enabled).toBe(resolvePluginSkillEnabled(
+          settings,
+          "fusion-plugin-compound-engineering",
+          name,
+          staticEnabled,
+        ));
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

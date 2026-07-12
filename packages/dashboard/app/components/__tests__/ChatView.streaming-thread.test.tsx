@@ -55,6 +55,7 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
 
 import * as apiModule from "../../api";
 import * as projectStorageModule from "../../utils/projectStorage";
+import * as sseBusModule from "../../sse-bus";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
 
 const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
@@ -62,6 +63,7 @@ const mockFetchChatSession = vi.mocked(apiModule.fetchChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockAttachChatStream = vi.mocked(apiModule.attachChatStream);
 const mockGetScopedItem = vi.mocked(projectStorageModule.getScopedItem);
+const mockSubscribeSse = vi.mocked(sseBusModule.subscribeSse);
 const mockUseChatRooms = vi.mocked(useChatRoomsModule.useChatRooms);
 
 const defaultRoomsState: UseChatRoomsResult = {
@@ -103,8 +105,32 @@ function makeMessage(overrides: Partial<ChatMessage> & Pick<ChatMessage, "id" | 
     content: overrides.content,
     thinkingOutput: overrides.thinkingOutput ?? null,
     metadata: overrides.metadata ?? null,
+    attachments: overrides.attachments,
     createdAt: overrides.createdAt ?? "2026-04-08T00:00:00.000Z",
   };
+}
+
+type StreamAppendHandlers = {
+  onText: (delta: string) => void;
+  onToolStart: (data: { toolName: string; args?: Record<string, unknown> }) => void;
+  onToolEnd: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
+};
+
+function createDeferredPromise<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function cacheMessages(projectId: string, sessionId: string, messages: ChatMessage[]) {
+  localStorage.setItem(
+    `kb-dashboard-chat-messages-cache:${projectId}:${sessionId}`,
+    JSON.stringify({ savedAt: Date.now(), data: messages }),
+  );
 }
 
 describe("FN-6599 ChatView streaming prior thread", () => {
@@ -113,6 +139,7 @@ describe("FN-6599 ChatView streaming prior thread", () => {
     localStorage.clear();
     mockUseChatRooms.mockReturnValue(defaultRoomsState);
     mockGetScopedItem.mockReturnValue(undefined);
+    mockSubscribeSse.mockReturnValue(() => {});
     mockFetchChatSession.mockResolvedValue({ session: makeSession({ id: "session-001", agentId: "agent-001" }) });
     mockAttachChatStream.mockReturnValue({ close: vi.fn(), isConnected: () => true });
   });
@@ -164,5 +191,108 @@ describe("FN-6599 ChatView streaming prior thread", () => {
     expect(screen.getByText("First answer")).toBeInTheDocument();
     expect(screen.getByText("Second question")).toBeInTheDocument();
     expect(screen.getByText("Second answer")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["desktop", 1280],
+    ["mobile", 390],
+  ])("FN-7853 keeps cached multi-turn prior thread visible across mid-turn churn on %s", async (_label, width) => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+    const generatingSession = makeSession({
+      id: "session-mid-turn-stable",
+      agentId: "agent-001",
+      title: "Mid turn stable",
+      isGenerating: true,
+      inFlightGeneration: {
+        status: "generating" as const,
+        streamingText: "working",
+        streamingThinking: "thinking",
+        toolCalls: [],
+        replayFromEventId: 201,
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+    });
+    const priorThread = [
+      makeMessage({ id: "msg-001", sessionId: generatingSession.id, role: "user", content: "First question" }),
+      makeMessage({ id: "msg-002", sessionId: generatingSession.id, role: "assistant", content: "First answer" }),
+      makeMessage({ id: "msg-003", sessionId: generatingSession.id, role: "user", content: "Second question" }),
+      makeMessage({ id: "msg-004", sessionId: generatingSession.id, role: "assistant", content: "Second answer" }),
+    ];
+    const staleFetch = createDeferredPromise<{ messages: ChatMessage[] }>();
+    let attachedHandlers: StreamAppendHandlers | undefined;
+    let subscribeHandler: Record<string, (event: MessageEvent) => void> = {};
+
+    cacheMessages("proj-123", generatingSession.id, priorThread);
+    mockGetScopedItem.mockImplementation((key) => key === "kb-chat-active-session" ? generatingSession.id : undefined);
+    mockFetchChatSessions.mockResolvedValue({ sessions: [generatingSession] });
+    mockFetchChatMessages.mockReturnValue(staleFetch.promise);
+    mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
+      attachedHandlers = handlers;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    mockSubscribeSse.mockImplementation((_url, options) => {
+      subscribeHandler = options?.events as typeof subscribeHandler;
+      return () => {};
+    });
+
+    await act(async () => {
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("working")).toBeInTheDocument();
+      expect(screen.getByText("First question")).toBeInTheDocument();
+      expect(screen.getByText("First answer")).toBeInTheDocument();
+      expect(screen.getByText("Second question")).toBeInTheDocument();
+      expect(screen.getByText("Second answer")).toBeInTheDocument();
+    });
+
+    const expectPriorThreadVisible = () => {
+      expect(screen.getByText("First question")).toBeInTheDocument();
+      expect(screen.getByText("First answer")).toBeInTheDocument();
+      expect(screen.getByText("Second question")).toBeInTheDocument();
+      expect(screen.getByText("Second answer")).toBeInTheDocument();
+    };
+
+    act(() => {
+      subscribeHandler["chat:session:updated"]?.({
+        data: JSON.stringify({
+          ...generatingSession,
+          inFlightGeneration: { ...generatingSession.inFlightGeneration, streamingText: "working harder", replayFromEventId: 202 },
+        }),
+      } as MessageEvent);
+    });
+    expectPriorThreadVisible();
+
+    act(() => {
+      attachedHandlers?.onToolStart({ toolName: "read", args: { path: "README.md" } });
+      attachedHandlers?.onText(" now");
+      attachedHandlers?.onToolEnd({ toolName: "read", isError: false, result: "ok" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expectPriorThreadVisible();
+
+    act(() => {
+      subscribeHandler["chat:message:added"]?.({
+        data: JSON.stringify(makeMessage({
+          id: "msg-005",
+          sessionId: generatingSession.id,
+          role: "user",
+          content: "Follow-up question",
+        })),
+      } as MessageEvent);
+    });
+    expectPriorThreadVisible();
+
+    await act(async () => {
+      staleFetch.resolve({ messages: [] });
+      await staleFetch.promise;
+    });
+
+    expectPriorThreadVisible();
+    expect(screen.getByText(/working/)).toBeInTheDocument();
   });
 });

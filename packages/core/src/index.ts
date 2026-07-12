@@ -34,6 +34,14 @@ export {
 export type { OpenAiCodexProviderRegistration } from "./openai-models.js";
 export { detectImageMimeFromBytes } from "./image-mime.js";
 export type { DetectedImageMime } from "./image-mime.js";
+export {
+  computeSkillId,
+  getSkillSettingState,
+  normalizeStoredSkillPath,
+  parseSkillId,
+  resolvePluginSkillEnabled,
+} from "./skill-settings.js";
+export type { SkillSettingState, SkillSettingsScope } from "./skill-settings.js";
 export { redactSecrets } from "./redact-secrets.js";
 export {
   evaluatePromptCondition,

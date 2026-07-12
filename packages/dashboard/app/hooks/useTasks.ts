@@ -744,12 +744,74 @@ export function useTasks(options?: UseTasksOptions) {
     return normalizeTask(await api.moveTask(id, column, projectId, optionsOrPosition));
   }, [projectId]);
 
+  /*
+  FNXC:DashboardPauseState 2026-07-12-00:00:
+  FN-7861 makes pause and unpause user-visible state boundaries. After the API confirms either transition, patch shared hook state and the project SWR task cache immediately, mirroring retryTask/bypassReview, so Board/List/right-dock task renderers do not wait for SSE or polling to clear stale paused rendering.
+  */
   const pauseTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeTask(await api.pauseTask(id, projectId));
+    const updatedTask = normalizeTask(await api.pauseTask(id, projectId));
+    fetchVersionRef.current++;
+
+    const projectUpdatedTasks = (currentTasks: Task[]) => currentTasks.map((task) => (task.id === id ? updatedTask : task));
+
+    if (projectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const cacheContainsOnlyTaskRows = cachedTasks.every((task) => Boolean(task && typeof task === "object" && typeof (task as Task).id === "string"));
+        if (cacheContainsOnlyTaskRows) {
+          const nextCachedTasks = cachedTasks.map((task) => ((task as Task).id === id ? updatedTask : normalizeTask(task as Task)));
+          writeCache(cacheKey, nextCachedTasks.length > 500 ? nextCachedTasks.slice(0, 500) : nextCachedTasks, { maxBytes: 500_000 });
+        } else {
+          clearCache(cacheKey);
+        }
+      } else if (cachedTasks === null) {
+        const nextCurrentTasks = projectUpdatedTasks(tasksRef.current);
+        writeCache(cacheKey, nextCurrentTasks.length > 500 ? nextCurrentTasks.slice(0, 500) : nextCurrentTasks, { maxBytes: 500_000 });
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+
+    setTasks((prev) => {
+      const next = projectUpdatedTasks(prev);
+      tasksRef.current = next;
+      return next;
+    });
+    return updatedTask;
   }, [projectId]);
 
   const unpauseTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeTask(await api.unpauseTask(id, projectId));
+    const updatedTask = normalizeTask(await api.unpauseTask(id, projectId));
+    fetchVersionRef.current++;
+
+    const projectUpdatedTasks = (currentTasks: Task[]) => currentTasks.map((task) => (task.id === id ? updatedTask : task));
+
+    if (projectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const cacheContainsOnlyTaskRows = cachedTasks.every((task) => Boolean(task && typeof task === "object" && typeof (task as Task).id === "string"));
+        if (cacheContainsOnlyTaskRows) {
+          const nextCachedTasks = cachedTasks.map((task) => ((task as Task).id === id ? updatedTask : normalizeTask(task as Task)));
+          writeCache(cacheKey, nextCachedTasks.length > 500 ? nextCachedTasks.slice(0, 500) : nextCachedTasks, { maxBytes: 500_000 });
+        } else {
+          clearCache(cacheKey);
+        }
+      } else if (cachedTasks === null) {
+        const nextCurrentTasks = projectUpdatedTasks(tasksRef.current);
+        writeCache(cacheKey, nextCurrentTasks.length > 500 ? nextCurrentTasks.slice(0, 500) : nextCurrentTasks, { maxBytes: 500_000 });
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+
+    setTasks((prev) => {
+      const next = projectUpdatedTasks(prev);
+      tasksRef.current = next;
+      return next;
+    });
+    return updatedTask;
   }, [projectId]);
 
   const deleteTask = useCallback(async (

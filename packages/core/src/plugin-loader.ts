@@ -30,6 +30,7 @@ import type {
   PluginRuntimeRegistration,
   CliProviderContribution,
   PluginInstallation,
+  PluginManifest,
   PluginSkillContribution,
   PluginWorkflowStepContribution,
   PluginTraitContribution,
@@ -355,6 +356,8 @@ export class PluginLoader extends EventEmitter<{
         );
       }
 
+      await this.refreshPersistedManifestMetadata(installation, plugin.manifest);
+
       // Check version compatibility
       if (plugin.manifest.fusionVersion) {
         const compatible = this.checkVersionCompatibility(
@@ -420,6 +423,54 @@ export class PluginLoader extends EventEmitter<{
 
       throw err;
     }
+  }
+
+  private async refreshPersistedManifestMetadata(
+    installation: PluginInstallation,
+    manifest: PluginManifest,
+  ): Promise<void> {
+    const versionChanged = installation.version !== manifest.version;
+    const settingsSchemaChanged =
+      this.stableManifestMetadataJson(installation.settingsSchema ?? null) !==
+      this.stableManifestMetadataJson(manifest.settingsSchema ?? null);
+
+    if (!versionChanged && !settingsSchemaChanged) {
+      return;
+    }
+
+    try {
+      /*
+      FNXC:Plugins 2026-07-12-10:59:
+      FN-7855 requires each fresh module re-import to reconcile persisted manifest metadata for path-registered plugins, because rebuilt code can change version/settingsSchema without re-registration.
+      Keep this update metadata-only so per-project enablement and saved setting values survive reload/restart; bundled plugins may already be current from ensureBundledPluginInstalled, making this idempotent.
+      */
+      await this.options.pluginStore.updatePlugin(installation.id, {
+        ...(versionChanged ? { version: manifest.version } : {}),
+        ...(settingsSchemaChanged ? { settingsSchema: manifest.settingsSchema ?? null } : {}),
+      });
+    } catch (err) {
+      this.log.warn(
+        `Failed to refresh persisted manifest metadata for plugin ${installation.id}:`,
+        err,
+      );
+    }
+  }
+
+  private stableManifestMetadataJson(value: unknown): string {
+    if (value === null || value === undefined) {
+      return "null";
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => this.stableManifestMetadataJson(entry)).join(",")}]`;
+    }
+    if (typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${this.stableManifestMetadataJson(record[key])}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
   }
 
   private resolvePluginPath(path: string): string {
@@ -557,6 +608,8 @@ export class PluginLoader extends EventEmitter<{
         timeoutMs,
         `onLoad timeout for ${pluginId}`,
       );
+
+      await this.refreshPersistedManifestMetadata(installation, newPlugin.manifest);
 
       // State is already "started", no need to update store
       // (avoiding started -> started transition which is disallowed)

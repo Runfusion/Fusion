@@ -1420,6 +1420,11 @@
     "versionMismatchPrefix": "Your installed",
     "versionMismatchSuffix": "Update to stay in sync."
   },
+  "storageMigrationNotice": {
+    "body": "The next Fusion version will replace the current SQLite data store with an embedded Postgres backend for data storage. No migration runs from this notice; it is an advance heads-up for operators who rely on the current .fusion/fusion.db SQLite file.",
+    "dismissLabel": "Dismiss storage update notice",
+    "title": "Storage update coming in the next Fusion version"
+  },
   "cliBinary": {
     "binaryLabel": "Binary:",
     "checking": "Checking…",

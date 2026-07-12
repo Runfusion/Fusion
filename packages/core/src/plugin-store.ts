@@ -43,6 +43,7 @@ export interface PluginUpdateInput {
   homepage?: string;
   path?: string;
   dependencies?: string[];
+  settingsSchema?: Record<string, PluginSettingSchema> | null;
   aiScanOnLoad?: boolean;
   lastSecurityScan?: PluginSecurityScanResult;
 }
@@ -589,6 +590,15 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     if (updates.dependencies !== undefined) {
       setClauses.push("dependencies = ?");
       params.push(toJson(updates.dependencies));
+    }
+    /*
+    FNXC:Plugins 2026-07-12-10:59:
+    FN-7855 requires updatePlugin to persist manifest settingsSchema changes independently from per-project setting values so path-registered plugin reloads can refresh dashboard metadata without unregistering the plugin.
+    Undefined means "leave schema unchanged"; null explicitly clears the persisted schema when a rebuilt manifest removes it.
+    */
+    if (updates.settingsSchema !== undefined) {
+      setClauses.push("settingsSchema = ?");
+      params.push(updates.settingsSchema === null ? null : toJson(updates.settingsSchema));
     }
     if (updates.aiScanOnLoad !== undefined) {
       setClauses.push("aiScanOnLoad = ?");

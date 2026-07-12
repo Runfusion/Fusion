@@ -30,9 +30,10 @@
  */
 
 import type { Agent, AgentStore } from "@fusion/core";
+import { resolvePluginSkillEnabled } from "@fusion/core";
 import { piLog } from "./logger.js";
 import type { PluginRunner } from "./plugin-runner.js";
-import type { SkillSelectionContext } from "./skill-resolver.js";
+import { readProjectSettings, resolveProjectRoot, type SkillSelectionContext } from "./skill-resolver.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -123,11 +124,25 @@ export function normalizeAgentSkills(
   return result;
 }
 
+/**
+ * FNXC:PluginSkills 2026-07-12-00:00:
+ * Session assembly must honor the same per-project plugin-skill override as the Skills view. Resolve worktree project roots before reading settings, then delegate effective enablement to @fusion/core so static plugin defaults cannot drift from project toggles again.
+ */
 export function collectPluginSkillNames(
   pluginRunner: PluginRunner | undefined,
+  projectRootDir?: string,
 ): { names: string[]; pluginIds: string[] } {
   if (!pluginRunner) {
     return { names: [], pluginIds: [] };
+  }
+
+  let settings = {};
+  if (projectRootDir) {
+    try {
+      settings = readProjectSettings(resolveProjectRoot(projectRootDir));
+    } catch {
+      settings = {};
+    }
   }
 
   const pluginSkills = pluginRunner.getPluginSkills();
@@ -137,11 +152,11 @@ export function collectPluginSkillNames(
 
   for (const contribution of pluginSkills) {
     const { pluginId, skill } = contribution;
-    if (skill.enabled === false) {
+    const name = skill.name.trim();
+    if (!resolvePluginSkillEnabled(settings, pluginId, name, skill.enabled)) {
       continue;
     }
 
-    const name = skill.name.trim();
     if (name.length === 0 || seenNames.has(name)) {
       continue;
     }
@@ -296,7 +311,7 @@ function mergePluginSkills(
   projectRootDir: string,
   pluginRunner: PluginRunner | undefined,
 ): SessionSkillContextResult {
-  const { names: pluginSkillNames } = collectPluginSkillNames(pluginRunner);
+  const { names: pluginSkillNames } = collectPluginSkillNames(pluginRunner, projectRootDir);
   if (pluginSkillNames.length === 0) {
     return baseResult;
   }

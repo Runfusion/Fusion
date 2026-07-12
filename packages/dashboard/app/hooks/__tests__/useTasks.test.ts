@@ -34,6 +34,8 @@ vi.mock("../../api", async (importOriginal) => {
     mergeTask: vi.fn(),
     retryTask: vi.fn(),
     bypassReview: vi.fn(),
+    pauseTask: vi.fn(),
+    unpauseTask: vi.fn(),
     duplicateTask: vi.fn(),
     updateTask: vi.fn(),
     archiveTask: vi.fn(),
@@ -53,6 +55,8 @@ const mockCreateTask = vi.mocked(api.createTask);
 const mockDeleteTask = vi.mocked(api.deleteTask);
 const mockRetryTask = vi.mocked(api.retryTask);
 const mockBypassReview = vi.mocked(api.bypassReview);
+const mockPauseTask = vi.mocked(api.pauseTask);
+const mockUnpauseTask = vi.mocked(api.unpauseTask);
 const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
 const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
@@ -104,6 +108,8 @@ beforeEach(() => {
   mockFetchArchivedTasks.mockReset().mockResolvedValue({ tasks: [], total: 0, hasMore: false });
   mockDeleteTask.mockReset();
   mockRetryTask.mockReset();
+  mockPauseTask.mockReset();
+  mockUnpauseTask.mockReset();
   mockReadCache.mockReset();
   mockWriteCache.mockReset();
   mockClearCache.mockReset();
@@ -1827,6 +1833,151 @@ describe("useTasks", () => {
       expect(clearedCall?.[4]).not.toBe(true);
       expect(result.current.tasks.map((task) => task.id).sort()).toEqual(["FN-ACTIVE", "FN-ARCHIVED-1"]);
       vi.useRealTimers();
+    });
+  });
+
+  describe("pauseTask and unpauseTask", () => {
+    it("FN-7861 immediately reflects unpaused state locally and in the project SWR cache without SSE", async () => {
+      const paused = createMockTask({
+        id: "FN-PAUSE",
+        column: "todo" as Column,
+        paused: true,
+        userPaused: true,
+        pausedByAgentId: null,
+        pausedReason: "operator",
+      });
+      const keep = createMockTask({ id: "FN-KEEP", column: "in-progress" as Column, paused: false, userPaused: false });
+      const unpaused = createMockTask({
+        ...paused,
+        paused: false,
+        userPaused: false,
+        pausedByAgentId: null,
+        pausedReason: null,
+        updatedAt: "2026-07-12T00:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([paused, keep]);
+      mockUnpauseTask.mockResolvedValueOnce(unpaused);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+      mockReadCache.mockReturnValueOnce([paused, keep]);
+
+      let returned: Task | undefined;
+      await act(async () => {
+        returned = await result.current.unpauseTask("FN-PAUSE");
+      });
+
+      expect(mockUnpauseTask).toHaveBeenCalledWith("FN-PAUSE", "proj-1");
+      expect(returned).toEqual(expect.objectContaining({ id: "FN-PAUSE", paused: false, userPaused: false }));
+      expect(result.current.tasks.find((task) => task.id === "FN-PAUSE")).toEqual(unpaused);
+      expect(result.current.tasks.find((task) => task.id === "FN-PAUSE")?.paused).toBe(false);
+      expect(result.current.tasks.find((task) => task.id === "FN-PAUSE")?.userPaused).toBe(false);
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        [unpaused, keep],
+        { maxBytes: 500_000 },
+      );
+      expect(mockClearCache).not.toHaveBeenCalled();
+    });
+
+    it("FN-7861 immediately reflects paused state locally and in the project SWR cache without SSE", async () => {
+      const unpaused = createMockTask({
+        id: "FN-PAUSE",
+        column: "todo" as Column,
+        paused: false,
+        userPaused: false,
+        pausedByAgentId: null,
+        pausedReason: null,
+      });
+      const keep = createMockTask({ id: "FN-KEEP", column: "in-progress" as Column, paused: false, userPaused: false });
+      const paused = createMockTask({
+        ...unpaused,
+        paused: true,
+        userPaused: true,
+        pausedByAgentId: null,
+        pausedReason: "operator",
+        updatedAt: "2026-07-12T00:01:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([unpaused, keep]);
+      mockPauseTask.mockResolvedValueOnce(paused);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+      mockReadCache.mockReturnValueOnce([unpaused, keep]);
+
+      let returned: Task | undefined;
+      await act(async () => {
+        returned = await result.current.pauseTask("FN-PAUSE");
+      });
+
+      expect(mockPauseTask).toHaveBeenCalledWith("FN-PAUSE", "proj-1");
+      expect(returned).toEqual(expect.objectContaining({ id: "FN-PAUSE", paused: true, userPaused: true }));
+      expect(result.current.tasks.find((task) => task.id === "FN-PAUSE")).toEqual(paused);
+      expect(result.current.tasks.find((task) => task.id === "FN-PAUSE")?.paused).toBe(true);
+      expect(result.current.tasks.find((task) => task.id === "FN-PAUSE")?.userPaused).toBe(true);
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        [paused, keep],
+        { maxBytes: 500_000 },
+      );
+      expect(mockClearCache).not.toHaveBeenCalled();
+    });
+
+    it("does not let an older in-flight fetch restore stale paused state after unpause", async () => {
+      const paused = createMockTask({ id: "FN-PAUSE", column: "todo" as Column, paused: true, userPaused: true });
+      const keep = createMockTask({ id: "FN-KEEP", column: "in-progress" as Column });
+      const unpaused = createMockTask({ ...paused, paused: false, userPaused: false, updatedAt: "2026-07-12T00:02:00.000Z" });
+      let resolveRefresh!: (tasks: Task[]) => void;
+      mockReadCache.mockReturnValue([paused, keep]);
+      mockFetchTasks.mockImplementationOnce(() => new Promise<Task[]>((resolve) => {
+        resolveRefresh = resolve;
+      }));
+      mockUnpauseTask.mockResolvedValueOnce(unpaused);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-PAUSE", "FN-KEEP"]);
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await result.current.unpauseTask("FN-PAUSE");
+      });
+
+      expect(result.current.tasks).toEqual([unpaused, keep]);
+
+      await act(async () => {
+        resolveRefresh([paused, keep]);
+        await flushPromises();
+      });
+
+      expect(result.current.tasks).toEqual([unpaused, keep]);
+    });
+
+    it("leaves missing-id task collections stable after pause success", async () => {
+      const keep = createMockTask({ id: "FN-KEEP", column: "in-progress" as Column, paused: false, userPaused: false });
+      const pausedMissing = createMockTask({ id: "FN-MISSING", column: "todo" as Column, paused: true, userPaused: true });
+      mockFetchTasks.mockResolvedValueOnce([keep]);
+      mockPauseTask.mockResolvedValueOnce(pausedMissing);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toEqual([keep]));
+
+      await act(async () => {
+        await result.current.pauseTask("FN-MISSING");
+      });
+
+      expect(result.current.tasks).toEqual([keep]);
     });
   });
 

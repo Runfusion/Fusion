@@ -451,6 +451,111 @@ describe("PluginLoader", () => {
       expect(loader.isPluginLoaded("load-test")).toBe(true);
     });
 
+    it.each([
+      {
+        name: "version-only change",
+        stored: makeManifest({ id: "manifest-load-version", version: "1.0.0", settingsSchema: { s1: { type: "string" } } }),
+        imported: makeManifest({ id: "manifest-load-version", version: "1.1.0", settingsSchema: { s1: { type: "string" } } }),
+        expectedVersion: "1.1.0",
+        expectedSchema: { s1: { type: "string" } },
+        expectUpdatedEvent: true,
+      },
+      {
+        name: "settingsSchema added key",
+        stored: makeManifest({ id: "manifest-load-schema-add", settingsSchema: { s1: { type: "string" } } }),
+        imported: makeManifest({ id: "manifest-load-schema-add", settingsSchema: { s1: { type: "string" }, s2: { type: "number" } } }),
+        expectedVersion: "1.0.0",
+        expectedSchema: { s1: { type: "string" }, s2: { type: "number" } },
+        expectUpdatedEvent: true,
+      },
+      {
+        name: "settingsSchema enum changed",
+        stored: makeManifest({ id: "manifest-load-schema-enum", settingsSchema: { mode: { type: "enum", enumValues: ["fast", "safe"] } } }),
+        imported: makeManifest({ id: "manifest-load-schema-enum", settingsSchema: { mode: { type: "enum", enumValues: ["fast", "safe", "turbo"] } } }),
+        expectedVersion: "1.0.0",
+        expectedSchema: { mode: { type: "enum", enumValues: ["fast", "safe", "turbo"] } },
+        expectUpdatedEvent: true,
+      },
+      {
+        name: "settingsSchema removed",
+        stored: makeManifest({ id: "manifest-load-schema-remove", settingsSchema: { s1: { type: "string" } } }),
+        imported: makeManifest({ id: "manifest-load-schema-remove", settingsSchema: undefined }),
+        expectedVersion: "1.0.0",
+        expectedSchema: undefined,
+        expectUpdatedEvent: true,
+      },
+      {
+        name: "first-time settingsSchema addition",
+        stored: makeManifest({ id: "manifest-load-schema-first", settingsSchema: undefined }),
+        imported: makeManifest({ id: "manifest-load-schema-first", settingsSchema: { s2: { type: "boolean" } } }),
+        expectedVersion: "1.0.0",
+        expectedSchema: { s2: { type: "boolean" } },
+        expectUpdatedEvent: true,
+      },
+      {
+        name: "version and settingsSchema changed",
+        stored: makeManifest({ id: "manifest-load-both", version: "1.0.0", settingsSchema: { s1: { type: "string" } } }),
+        imported: makeManifest({ id: "manifest-load-both", version: "1.1.0", settingsSchema: { s1: { type: "string" }, s2: { type: "number" } } }),
+        expectedVersion: "1.1.0",
+        expectedSchema: { s1: { type: "string" }, s2: { type: "number" } },
+        expectUpdatedEvent: true,
+      },
+      {
+        name: "unchanged manifest",
+        stored: makeManifest({ id: "manifest-load-unchanged", version: "1.0.0", settingsSchema: { s1: { type: "string" } } }),
+        imported: makeManifest({ id: "manifest-load-unchanged", version: "1.0.0", settingsSchema: { s1: { type: "string" } } }),
+        expectedVersion: "1.0.0",
+        expectedSchema: { s1: { type: "string" } },
+        expectUpdatedEvent: false,
+      },
+    ])("refreshes persisted manifest metadata on loadPlugin for $name", async ({
+      stored,
+      imported,
+      expectedVersion,
+      expectedSchema,
+      expectUpdatedEvent,
+    }) => {
+      await pluginStore.init();
+
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(pluginDir, `${stored.id}.js`, makePlugin(imported));
+      await pluginStore.registerPlugin({ manifest: stored, path: pluginPath, settings: { s1: "saved-value" } });
+      const updatePluginSpy = vi.spyOn(pluginStore, "updatePlugin");
+
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      await loader.loadPlugin(stored.id);
+
+      const persisted = await pluginStore.getPlugin(stored.id);
+      expect(persisted.version).toBe(expectedVersion);
+      expect(persisted.settingsSchema).toEqual(expectedSchema);
+      expect(persisted.enabled).toBe(true);
+      expect(persisted.settings).toEqual({ s1: "saved-value" });
+      expect(updatePluginSpy).toHaveBeenCalledTimes(expectUpdatedEvent ? 1 : 0);
+    });
+
+    it("keeps bundled-plugin load idempotent when persisted metadata already matches", async () => {
+      await pluginStore.init();
+
+      const pluginDir = join(rootDir, "plugins");
+      const manifest = makeManifest({
+        id: "fusion-plugin-bundled-idempotent",
+        version: "2.0.0",
+        settingsSchema: { enabled: { type: "boolean" } },
+      });
+      const pluginPath = await writePluginModule(pluginDir, "bundled-idempotent.js", makePlugin(manifest));
+      await pluginStore.registerPlugin({ manifest, path: pluginPath });
+      const updatePluginSpy = vi.spyOn(pluginStore, "updatePlugin");
+
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      await loader.loadPlugin(manifest.id);
+
+      expect(updatePluginSpy).not.toHaveBeenCalled();
+      await expect(pluginStore.getPlugin(manifest.id)).resolves.toMatchObject({
+        version: "2.0.0",
+        settingsSchema: { enabled: { type: "boolean" } },
+      });
+    });
+
     it("records activation analytics only for a genuine successful plugin load", async () => {
       await pluginStore.init();
 
@@ -1393,6 +1498,78 @@ export default plugin;
         source: "plugin",
         pluginVersion: "3.4.5",
       });
+    });
+
+    it("refreshes persisted version and settingsSchema on reloadPlugin while preserving settings", async () => {
+      await pluginStore.init();
+
+      const pluginId = "manifest-reload-refresh";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(
+        pluginDir,
+        "manifest-reload-refresh.js",
+        makePlugin(makeManifest({ id: pluginId, version: "1.0.0", settingsSchema: { s1: { type: "string" } } })),
+      );
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId, version: "1.0.0", settingsSchema: { s1: { type: "string" } } }),
+        path: pluginPath,
+        settings: { s1: "saved-value" },
+      });
+
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      await loader.loadPlugin(pluginId);
+      await writePluginModule(
+        pluginDir,
+        "manifest-reload-refresh.js",
+        makePlugin(makeManifest({
+          id: pluginId,
+          version: "1.1.0",
+          settingsSchema: { s1: { type: "string" }, s2: { type: "number" } },
+        })),
+      );
+      const now = new Date();
+      utimesSync(pluginPath, now, now);
+
+      await loader.reloadPlugin(pluginId);
+
+      const persisted = await pluginStore.getPlugin(pluginId);
+      expect(persisted.version).toBe("1.1.0");
+      expect(persisted.settingsSchema).toEqual({ s1: { type: "string" }, s2: { type: "number" } });
+      expect(persisted.enabled).toBe(true);
+      expect(persisted.settings).toEqual({ s1: "saved-value" });
+    });
+
+    it("does not persist new manifest metadata when reload rolls back", async () => {
+      await pluginStore.init();
+
+      const pluginId = "manifest-reload-rollback";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(
+        pluginDir,
+        "manifest-reload-rollback.js",
+        makePlugin(makeManifest({ id: pluginId, version: "1.0.0", settingsSchema: { s1: { type: "string" } } })),
+      );
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId, version: "1.0.0", settingsSchema: { s1: { type: "string" } } }),
+        path: pluginPath,
+      });
+
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      await loader.loadPlugin(pluginId);
+      await writePluginWithHooks(
+        pluginDir,
+        "manifest-reload-rollback.js",
+        { onLoad: "(async () => { throw new Error('new onLoad failed'); })" },
+        makeManifest({ id: pluginId, version: "1.1.0", settingsSchema: { s1: { type: "string" }, s2: { type: "number" } } }),
+      );
+      const now = new Date();
+      utimesSync(pluginPath, now, now);
+
+      await expect(loader.reloadPlugin(pluginId)).rejects.toThrow("new onLoad failed");
+
+      const persisted = await pluginStore.getPlugin(pluginId);
+      expect(persisted.version).toBe("1.0.0");
+      expect(persisted.settingsSchema).toEqual({ s1: { type: "string" } });
     });
 
     it("logs reload failures", async () => {
