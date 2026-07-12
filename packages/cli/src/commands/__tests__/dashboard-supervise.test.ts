@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { resolveSupervisorRespawnCommand, shouldSuperviseDashboard } from "../dashboard.js";
 
 /*
@@ -33,6 +33,16 @@ describe("shouldSuperviseDashboard", () => {
 });
 
 describe("resolveSupervisorRespawnCommand", () => {
+  const originalBun = (globalThis as { Bun?: unknown }).Bun;
+
+  afterEach(() => {
+    if (originalBun === undefined) {
+      delete (globalThis as { Bun?: unknown }).Bun;
+    } else {
+      (globalThis as { Bun?: unknown }).Bun = originalBun;
+    }
+  });
+
   it("re-execs the node entry script with execArgv preserved outside a compiled binary", () => {
     const respawn = resolveSupervisorRespawnCommand();
     expect(respawn).not.toBeNull();
@@ -41,5 +51,14 @@ describe("resolveSupervisorRespawnCommand", () => {
     // the last respawn arg, after any loader flags from execArgv.
     expect(respawn!.args[respawn!.args.length - 1]).toBe(process.argv[1]);
     expect(respawn!.args.slice(0, -1)).toEqual(process.execArgv);
+  });
+
+  it("re-execs the compiled binary itself (no args) under a bun-compiled build", () => {
+    // A bun-compiled single-file `fn` binary exposes `Bun.embeddedFiles`; argv[1]
+    // is then a virtual embedded path, so the binary must re-exec process.execPath
+    // alone (empty args) rather than passing a bogus entry script.
+    (globalThis as { Bun?: { embeddedFiles: unknown[] } }).Bun = { embeddedFiles: [{}] };
+    const respawn = resolveSupervisorRespawnCommand();
+    expect(respawn).toEqual({ command: process.execPath, args: [] });
   });
 });

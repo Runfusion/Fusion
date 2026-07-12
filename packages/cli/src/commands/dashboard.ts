@@ -1115,11 +1115,22 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   before the shutdown closure exists.
   */
   let shutdownExitCode = 0;
+  // Coalesce concurrent restart requests: without this, a second /system/restart
+  // arriving inside the 300ms flush delay would return success and schedule a
+  // second shutdown() whose timer hits the shutdownInProgress fast-path and
+  // process.exit(86)s before the first (graceful) teardown finishes.
+  let restartScheduled = false;
   let requestSelfRestart: ((reason: string) => boolean) | null = null;
   const systemControlForServer = {
     supervised: process.env.FUSION_RESTART_SUPERVISED === "1",
     requestRestart: (reason: string) => (requestSelfRestart ? requestSelfRestart(reason) : false),
     sourceWorkspaceRoot: resolveFusionSourceWorkspaceRoot(),
+  };
+  // Built once and spread into both createServer() call sites (engine-mode and
+  // UI-only) so the System panel log surface stays a single definition.
+  const systemLogsForServer = {
+    getRecent: (limit?: number) => logSink.getRecentEntries(limit),
+    subscribe: (listener: (entry: import("./dashboard-tui/log-ring-buffer.js").LogEntry) => void) => logSink.subscribeEntries(listener),
   };
 
   /*
@@ -2100,10 +2111,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       noAuth: opts.noAuth,
       runtimeLogger,
       systemControl: systemControlForServer,
-      systemLogs: {
-        getRecent: (limit?: number) => logSink.getRecentEntries(limit),
-        subscribe: (listener) => logSink.subscribeEntries(listener),
-      },
+      systemLogs: systemLogsForServer,
     });
 
     const shutdown = async (signal: NodeJS.Signals) => {
@@ -2176,7 +2184,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     Restart is only honored when a supervising parent will respawn us.
     */
     requestSelfRestart = (reason: string) => {
-      if (!systemControlForServer.supervised || shutdownInProgress) return false;
+      if (!systemControlForServer.supervised || shutdownInProgress || restartScheduled) return false;
+      restartScheduled = true;
       logSink.log(`restart requested (${reason}) — shutting down for supervised respawn`, "dashboard");
       shutdownExitCode = FUSION_RESTART_EXIT_CODE;
       setTimeout(() => {
@@ -2436,10 +2445,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       noAuth: opts.noAuth,
       runtimeLogger,
       systemControl: systemControlForServer,
-      systemLogs: {
-        getRecent: (limit?: number) => logSink.getRecentEntries(limit),
-        subscribe: (listener) => logSink.subscribeEntries(listener),
-      },
+      systemLogs: systemLogsForServer,
     });
   }
 
@@ -2507,7 +2513,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // FNXC:SystemPanel 2026-07-12-11:00: System panel restart binding for
     // UI-only mode — same contract as the engine-mode shutdown above.
     requestSelfRestart = (reason: string) => {
-      if (!systemControlForServer.supervised || shutdownInProgress) return false;
+      if (!systemControlForServer.supervised || shutdownInProgress || restartScheduled) return false;
+      restartScheduled = true;
       logSink.log(`restart requested (${reason}) — shutting down for supervised respawn`, "dashboard");
       shutdownExitCode = FUSION_RESTART_EXIT_CODE;
       setTimeout(() => {
@@ -3325,8 +3332,10 @@ export function shouldSuperviseDashboard(
  * interactive TUI must own the terminal: a background-process-group child
  * reading a TTY gets SIGTTIN/SIGTTOU-stopped, which is why detached
  * supervision was headless-only. Attached means terminal Ctrl+C reaches the
- * child directly; the parent ignores SIGINT (waiting for the child's graceful
- * exit) and forwards direct SIGTERM kills to the child. Exit code
+ * child directly; when a child is alive the parent waits for its graceful exit
+ * (and exits immediately on SIGINT during crash-backoff, when no child is alive
+ * to receive Ctrl+C), and forwards direct SIGTERM kills to the child. A parent
+ * signal latches `stopping` so an intentional shutdown never respawns. Exit code
  * FUSION_RESTART_EXIT_CODE is an operator-requested restart (System panel):
  * immediate respawn, no crash budget consumed.
  *
@@ -3356,17 +3365,29 @@ export async function runDashboardSupervised(
   const restartCommand = formatSupervisorRestartCommand(respawn.command, respawn.args, childArgs);
 
   let activeChild: ReturnType<typeof spawnAttached> | null = null;
+  // `stopping` latches once the operator asks to quit so the restart loop never
+  // respawns after an intentional shutdown, even if the child's post-signal
+  // exit code is non-zero.
+  let stopping = false;
   // Parent lifecycle: terminal Ctrl+C (SIGINT) already reaches the attached
-  // child via the shared foreground process group, so the parent just waits
-  // for the child's graceful exit. A direct SIGTERM to the parent (process
-  // managers, `kill`) is forwarded so the child shuts down too. If the parent
-  // dies unexpectedly, best-effort kill the child on exit.
+  // child via the shared foreground process group, so when a child is alive the
+  // parent just waits for its graceful exit. But during crash-backoff (or
+  // between spawns) there is NO child to receive the terminal SIGINT, so Ctrl+C
+  // would hang for up to the backoff window — exit immediately in that case.
   process.on("SIGINT", () => {
-    /* child receives terminal SIGINT directly; wait for its exit */
+    stopping = true;
+    if (!activeChild) process.exit(130);
   });
+  // A direct SIGTERM to the parent (process managers, `kill`) is forwarded so
+  // the child shuts down too, then the loop stops. During crash-backoff there
+  // is no child to forward to and the loop is parked in a sleep, so exit
+  // immediately rather than waiting out the backoff. If the parent dies
+  // unexpectedly, best-effort kill the child on exit.
   process.on("SIGTERM", () => {
+    stopping = true;
+    if (!activeChild) process.exit(143);
     try {
-      activeChild?.child.kill("SIGTERM");
+      activeChild.child.kill("SIGTERM");
     } catch {
       // Child may already be gone.
     }
@@ -3395,6 +3416,12 @@ export async function runDashboardSupervised(
     activeChild = null;
     const exitCode = exitResult.code ?? 1;
     const exitSignal = exitResult.signal;
+
+    // Operator asked to stop (SIGINT/SIGTERM to the parent) — never respawn,
+    // regardless of the child's post-signal exit code.
+    if (stopping) {
+      return;
+    }
 
     // Clean exit — propagate without restart
     if (exitSignal === "SIGINT" || exitSignal === "SIGTERM" || exitCode === 0) {

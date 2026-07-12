@@ -350,4 +350,20 @@ describe("DashboardLogSink system-log history", () => {
 
     expect(seen).toEqual(["first"]);
   });
+
+  // FNXC:SystemPanel 2026-07-12-14:40: The history is served over /system/logs
+  // and fed into diagnostics/bug reports, so secrets must be redacted before an
+  // entry enters the ring buffer or reaches a live subscriber.
+  it("redacts secrets before storing and before notifying subscribers", () => {
+    const sink = new DashboardLogSink();
+    const seen: string[] = [];
+    sink.subscribeEntries((entry) => seen.push(entry.message));
+
+    sink.log("auth failed Authorization: Bearer sk-abcdef0123456789abcdef");
+
+    const stored = sink.getRecentEntries()[0].message;
+    expect(stored).toContain("[REDACTED]");
+    expect(stored).not.toContain("sk-abcdef0123456789abcdef");
+    expect(seen[0]).toBe(stored);
+  });
 });

@@ -49,22 +49,35 @@ plain node:child_process spawn (foreground, TUI-safe) instead of the detached
 superviseSpawn, so tests mock spawn and complete the loop by emitting a clean
 SIGINT close on a microtask (after the supervisor wires its close listener).
 */
-const { mockSupervisorSpawn } = vi.hoisted(() => ({
-  mockSupervisorSpawn: vi.fn(() => {
-    const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
-    const child = {
-      on(event: string, cb: (...args: unknown[]) => void) {
-        (listeners[event] ??= []).push(cb);
-        return child;
-      },
-      kill: () => true,
-    };
-    queueMicrotask(() => {
-      for (const cb of listeners["close"] ?? []) cb(null, "SIGINT");
-    });
-    return child;
-  }),
-}));
+/*
+FNXC:SystemPanel 2026-07-12-15:10:
+supervisorCloseQueue lets a test script successive child exits (e.g. exit-86
+intentional restart followed by a clean exit-0) so the respawn loop can be
+driven deterministically. Each spawn pops one queued close result; when the
+queue is empty it defaults to a clean `{ code: 0, signal: null }` exit so the
+existing single-spawn supervision tests still terminate the loop.
+*/
+const { mockSupervisorSpawn, supervisorCloseQueue } = vi.hoisted(() => {
+  const supervisorCloseQueue: Array<{ code: number | null; signal: NodeJS.Signals | null }> = [];
+  return {
+    supervisorCloseQueue,
+    mockSupervisorSpawn: vi.fn(() => {
+      const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+      const child = {
+        on(event: string, cb: (...args: unknown[]) => void) {
+          (listeners[event] ??= []).push(cb);
+          return child;
+        },
+        kill: () => true,
+      };
+      const result = supervisorCloseQueue.shift() ?? { code: 0, signal: null };
+      queueMicrotask(() => {
+        for (const cb of listeners["close"] ?? []) cb(result.code, result.signal);
+      });
+      return child;
+    }),
+  };
+});
 vi.mock("../startup-model-sync.js", () => ({
   syncStartupModels: mockSyncStartupModels,
 }));
@@ -3532,6 +3545,32 @@ describe("runDashboard update check wiring", () => {
 describe("runDashboardSupervised — bounded restart behavior", () => {
   beforeEach(() => {
     mockSupervisorSpawn.mockClear();
+    supervisorCloseQueue.length = 0;
+  });
+
+  it("respawns on the intentional restart exit code (86) then exits cleanly", async () => {
+    const mod = await import("../dashboard.js");
+    const originalArgv = process.argv;
+    process.argv = [
+      originalArgv[0] ?? process.execPath,
+      "/tmp/fn-entry.mjs",
+      "dashboard",
+      "--supervise",
+    ];
+
+    // First child exits 86 (System-panel restart request → respawn without
+    // consuming the crash budget); the respawned child exits 0 (clean stop).
+    supervisorCloseQueue.push({ code: 86, signal: null }, { code: 0, signal: null });
+
+    try {
+      await mod.runDashboardSupervised(0);
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    // Two spawns proves the exit-86 respawn happened and the loop then returned
+    // cleanly (no crash-budget exhaustion / process.exit).
+    expect(mockSupervisorSpawn).toHaveBeenCalledTimes(2);
   });
 
   it("spawns an attached child without the supervision flags and advertises the restart contract", async () => {

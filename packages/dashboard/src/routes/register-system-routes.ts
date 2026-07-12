@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { superviseSpawn, AgentStore } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { writeSSEEvent } from "../sse-buffer.js";
@@ -33,6 +33,57 @@ builds would corrupt each other's dist output.
 
 const JOB_LINE_CAP = 4_000;
 const REBUILD_MAX_LIFETIME_MS = 30 * 60_000;
+
+/*
+FNXC:SystemPanel 2026-07-12-14:05:
+SSE heartbeat interval. The shared client sse-bus force-reconnects a stream
+that goes silent for ~45s; each reconnect re-runs the route's replay-on-connect
+(the last N log lines / job lines), which surfaced as the log tail duplicating
+every entry. A periodic comment-frame heartbeat keeps the stream "live" so
+steady-state reconnects don't happen. Cleared on client disconnect / job end.
+*/
+const SSE_HEARTBEAT_MS = 25_000;
+
+/*
+FNXC:SystemPanel 2026-07-12-14:05:
+Same-origin CSRF guard for the mutating /system/* POSTs. These are privileged
+operator actions (restart, rebuild, engine/agent bounce, plugin reload) and must
+stay safe even when bearer auth is off — `--no-auth`, and the desktop embedded
+server which runs unauthenticated on a random localhost port where a malicious
+web page can reach it via DNS-rebinding / localhost port-scan. A same-origin
+dashboard fetch sends an Origin matching Host; a cross-origin browser attack
+sends a mismatched Origin; a CLI/curl call sends none. Reject only a present,
+mismatched Origin so legitimate same-origin and non-browser callers pass.
+Returns true (and responds 403) when the request was rejected.
+*/
+function rejectCrossOrigin(req: Request, res: Response): boolean {
+  const origin = req.headers.origin;
+  if (typeof origin !== "string" || origin.length === 0) return false;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    res.status(403).json({ error: "Invalid Origin header" });
+    return true;
+  }
+  if (originHost !== req.headers.host) {
+    res.status(403).json({ error: "Cross-origin request rejected" });
+    return true;
+  }
+  return false;
+}
+
+function startSseHeartbeat(res: Response): () => void {
+  const timer = setInterval(() => {
+    try {
+      res.write(": heartbeat\n\n");
+    } catch {
+      // Stream already closed; the close handler clears this timer.
+    }
+  }, SSE_HEARTBEAT_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
 
 type RebuildScope = "app" | "full" | "plugins";
 
@@ -199,7 +250,9 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       rebuildSupported: Boolean(systemControl?.sourceWorkspaceRoot),
       sourceWorkspaceRoot: systemControl?.sourceWorkspaceRoot,
       logsSupported: Boolean(systemLogs),
-      engineAvailable: Boolean(options?.engineManager),
+      // Engine restart needs both the manager and CentralCore (see the
+      // /system/engine/restart guard), so advertise availability on both.
+      engineAvailable: Boolean(options?.engineManager) && Boolean(options?.centralCore),
       pluginReloadSupported: Boolean(options?.pluginRunner?.reloadPlugin),
       pid: process.pid,
       uptimeSeconds: Math.floor(process.uptime()),
@@ -214,12 +267,17 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
 
   /** POST /api/system/restart — graceful restart via the supervising parent. */
   router.post("/system/restart", (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
     if (!systemControl) {
       throw new ApiError(409, "Restart is not available: host process did not wire system control");
     }
-    const reason = typeof (req.body as { reason?: unknown })?.reason === "string"
-      ? (req.body as { reason: string }).reason
-      : "operator-request";
+    // Sanitize the client-supplied reason before it reaches host logs: strip
+    // control chars/newlines (log injection) and bound the length.
+    const rawReason = (req.body as { reason?: unknown })?.reason;
+    const reason = (typeof rawReason === "string" ? rawReason : "operator-request")
+      // eslint-disable-next-line no-control-regex -- deliberately strip C0 control chars (log injection)
+      .replace(/[\r\n -]+/g, " ")
+      .slice(0, 200);
     const accepted = systemControl.requestRestart(reason);
     if (!accepted) {
       throw new ApiError(
@@ -233,6 +291,7 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
 
   /** POST /api/system/rebuild — start a rebuild job. Body: { scope?, restart? } */
   router.post("/system/rebuild", (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
     const root = systemControl?.sourceWorkspaceRoot;
     if (!root) {
       throw new ApiError(409, "Rebuild is only available when running from a Fusion source checkout");
@@ -243,7 +302,9 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
 
     const body = (req.body ?? {}) as { scope?: unknown; restart?: unknown };
     const scope = (body.scope ?? "app") as RebuildScope;
-    if (!(scope in rebuildScopes)) {
+    // Object.hasOwn (not `in`) so prototype keys like "constructor"/"toString"
+    // are rejected instead of passing validation and crashing on lookup.
+    if (typeof scope !== "string" || !Object.hasOwn(rebuildScopes, scope)) {
       throw badRequest(`Invalid scope "${String(body.scope)}". Expected one of: app, full, plugins.`);
     }
     const restartAfter = body.restart !== false && scope !== "plugins";
@@ -342,6 +403,13 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       }
       finishJob(job, "succeeded", { exitCode: 0, restartScheduled });
       log.info("System rebuild succeeded", { jobId: job.id, scope, restartScheduled });
+    }).catch((err) => {
+      // Never let an unexpected throw in the completion chain strand activeJob
+      // (which would 409 every subsequent rebuild until process restart).
+      const message = err instanceof Error ? err.message : String(err);
+      appendJobLine(job, "system", `Rebuild post-processing failed: ${message}`);
+      finishJob(job, "failed", { error: message });
+      log.error("System rebuild post-processing failed", { jobId: job.id, scope, error: message });
     });
 
     res.status(202).json(jobSnapshot(job, false));
@@ -363,6 +431,10 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    // Disable proxy buffering (nginx / Tailscale Serve) so live output streams
+    // in real time instead of appearing to hang — parity with the other SSE
+    // endpoints (routes.ts makeRunStreamHandler).
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
     res.write(": connected\n\n");
 
@@ -380,9 +452,11 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       return;
     }
 
+    const stopHeartbeat = startSseHeartbeat(res);
     job.subscribers.add(res);
     req.on("close", () => {
       job.subscribers.delete(res);
+      stopHeartbeat();
     });
   });
 
@@ -404,6 +478,7 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
     res.write(": connected\n\n");
 
@@ -413,11 +488,16 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
     const unsubscribe = systemLogs.subscribe((entry: SystemLogEntry) => {
       writeSSEEvent(res, "log", JSON.stringify(entry));
     });
-    req.on("close", unsubscribe);
+    const stopHeartbeat = startSseHeartbeat(res);
+    req.on("close", () => {
+      unsubscribe();
+      stopHeartbeat();
+    });
   });
 
   /** POST /api/system/engine/restart — bounce all running project engines. */
-  router.post("/system/engine/restart", async (_req, res) => {
+  router.post("/system/engine/restart", async (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
     const engineManager = options?.engineManager;
     const centralCore = options?.centralCore;
     if (!engineManager || !centralCore) {
@@ -436,6 +516,15 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
           await engineManager.resumeProject(projectId);
           restarted.push(projectId);
         } catch (err) {
+          // resumeProject flips CentralCore status to "active" BEFORE
+          // ensureEngine(); a throw there would leave the project reading
+          // online while its engine is dead. Park it paused so status matches
+          // reality (best-effort — never mask the original failure).
+          try {
+            await engineManager.pauseProject(projectId);
+          } catch {
+            // Ignore — the primary failure below is what the operator needs.
+          }
           failed.push({ projectId, error: err instanceof Error ? err.message : String(err) });
         }
       }
@@ -448,6 +537,7 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
 
   /** POST /api/system/agents/restart-all — pause+resume every active agent. */
   router.post("/system/agents/restart-all", async (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
@@ -490,7 +580,8 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
   });
 
   /** POST /api/system/plugins/reload-all — hot-reload every started plugin. */
-  router.post("/system/plugins/reload-all", async (_req, res) => {
+  router.post("/system/plugins/reload-all", async (req, res) => {
+    if (rejectCrossOrigin(req, res)) return;
     try {
       const result = await reloadStartedPlugins();
       log.info("Plugin reload-all completed", { reloadedCount: result.reloaded.length, failedCount: result.failed.length });

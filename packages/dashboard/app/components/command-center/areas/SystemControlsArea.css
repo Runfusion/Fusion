@@ -69,6 +69,11 @@ never grows the page; the page must not scroll horizontally (pre wraps).
   justify-content: space-between;
 }
 
+.cc-syscontrols-banner--error {
+  justify-content: space-between;
+  border-color: var(--danger, #f87171);
+}
+
 .cc-syscontrols-job-status {
   font-size: 0.8125rem;
   color: var(--text-muted);

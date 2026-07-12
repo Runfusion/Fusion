@@ -16,6 +16,7 @@ import {
 import {
   createBackup,
   fetchDashboardHealth,
+  fetchCurrentSystemRebuild,
   fetchSystemInfo,
   fetchSystemLogs,
   reloadAllSystemPlugins,
@@ -52,10 +53,14 @@ runtime-metrics area. Requirements this encodes:
 const LOG_VIEW_CAP = 500;
 const RESTART_POLL_MS = 1500;
 const BACK_ONLINE_RELOAD_DELAY_MS = 3000;
+// Bound the post-restart wait so a server that never comes back (crashed
+// respawn, unsupervised restart that stopped) doesn't leave the panel polling
+// forever with every control disabled.
+const RESTART_WAIT_TIMEOUT_MS = 90_000;
 const BUG_URL_BODY_CAP = 5500;
 const GITHUB_NEW_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
 
-type RestartPhase = null | "waiting" | "back";
+type RestartPhase = null | "waiting" | "back" | "timeout";
 
 interface SystemControlsAreaProps {
   projectId?: string;
@@ -95,7 +100,13 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
       setInfo(next);
       setInfoError(null);
       if (next.activeRebuild) {
-        setJob((current) => (current && current.id === next.activeRebuild!.id ? current : next.activeRebuild));
+        setJob((current) => {
+          if (current && current.id === next.activeRebuild!.id) return current;
+          // Adopting a different (resumed) job — clear stale lines so the new
+          // job's stream doesn't render mixed with the previous job's output.
+          setJobLines([]);
+          return next.activeRebuild;
+        });
       }
       return next;
     } catch (err) {
@@ -104,8 +115,28 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
     }
   }, []);
 
+  // On mount, hydrate the buffered rebuild output. A running job's lines also
+  // arrive via the SSE replay-on-connect below, but a job that already
+  // succeeded/failed before the panel opened is never streamed (the stream
+  // effect skips non-running jobs), so without this the operator would see a
+  // finished job with an empty log — losing the output needed to diagnose it.
   useEffect(() => {
-    void loadInfo();
+    let cancelled = false;
+    void (async () => {
+      await loadInfo();
+      try {
+        const { job: current } = await fetchCurrentSystemRebuild();
+        if (!cancelled && current) {
+          setJob(current);
+          setJobLines(current.lines ?? []);
+        }
+      } catch {
+        // Best-effort hydration; the live stream still fills a running job.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadInfo]);
 
   // ── Rebuild job output streaming ──────────────────────────────────────────
@@ -154,8 +185,13 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   useEffect(() => {
     if (restartPhase !== "waiting") return;
     let cancelled = false;
+    const startedAt = Date.now();
     const timer = setInterval(() => {
       void (async () => {
+        if (Date.now() - startedAt > RESTART_WAIT_TIMEOUT_MS) {
+          if (!cancelled) setRestartPhase("timeout");
+          return;
+        }
         try {
           const next = await fetchSystemInfo();
           if (cancelled) return;
@@ -164,7 +200,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
             setRestartPhase("back");
           }
         } catch {
-          // Server still restarting — keep polling.
+          // Server still restarting — keep polling until the timeout above.
         }
       })();
     }, RESTART_POLL_MS);
@@ -181,14 +217,13 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   }, [restartPhase]);
 
   // ── Live server log tail ──────────────────────────────────────────────────
+  // FNXC:SystemPanel 2026-07-12-14:05: The SSE stream replays the recent log
+  // ring on connect (and reconnect), so it is the single source of truth — a
+  // separate REST backfill here duplicated every recent line. Reset on open so
+  // a reconnect's replay overwrites rather than appends past the cap boundary.
   useEffect(() => {
     if (!logsOpen || !info?.logsSupported) return;
-    let unsubscribed = false;
-    void fetchSystemLogs(LOG_VIEW_CAP)
-      .then((response) => {
-        if (!unsubscribed) setLogEntries(response.entries);
-      })
-      .catch(() => undefined);
+    setLogEntries([]);
     const unsubscribe = subscribeSse("/api/system/logs/stream", {
       events: {
         log: (event) => {
@@ -203,11 +238,9 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           }
         },
       },
+      onReconnect: () => setLogEntries([]),
     });
-    return () => {
-      unsubscribed = true;
-      unsubscribe();
-    };
+    return unsubscribe;
   }, [logsOpen, info?.logsSupported]);
 
   useEffect(() => {
@@ -338,6 +371,20 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
               .then((r) => r.entries.filter((entry) => entry.level === "error").slice(-5))
               .catch(() => [])
           : [];
+        // FNXC:SystemPanel 2026-07-12-14:05: The recent-errors excerpt is
+        // server log content sent to github.com. Require explicit confirmation
+        // before including it (operator may not want internal logs public), and
+        // neutralize embedded ``` so a log line can't break out of the fence.
+        const includeErrors =
+          recentErrors.length > 0 &&
+          window.confirm(
+            t(
+              "systemControls.reportBugConfirm",
+              "Include the last {{count}} server error log line(s) in the GitHub issue? They will be sent to github.com — review after the issue opens.",
+              { count: recentErrors.length },
+            ),
+          );
+        const fenceSafe = (text: string) => text.replace(/`/g, "'");
         let body = [
           "### What happened",
           "",
@@ -348,8 +395,8 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           `- Platform: ${info?.platform ?? "unknown"} (${info?.arch ?? "?"}), Node ${info?.nodeVersion ?? "?"}`,
           `- Uptime: ${info?.uptimeSeconds ?? "?"}s, supervised: ${info?.supervised ?? false}`,
           "",
-          ...(recentErrors.length
-            ? ["### Recent server errors", "```", ...recentErrors.map((entry) => `${entry.prefix ? `[${entry.prefix}] ` : ""}${entry.message}`), "```"]
+          ...(includeErrors
+            ? ["### Recent server errors", "```", ...recentErrors.map((entry) => fenceSafe(`${entry.prefix ? `[${entry.prefix}] ` : ""}${entry.message}`)), "```"]
             : []),
         ].join("\n");
         if (body.length > BUG_URL_BODY_CAP) body = `${body.slice(0, BUG_URL_BODY_CAP)}\n…(truncated)`;
@@ -553,6 +600,19 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         {restartPhase === "back" ? (
           <div className="cc-syscontrols-banner cc-syscontrols-banner--back" role="status" data-testid="cc-system-restart-back">
             <span>{t("systemControls.restartBack", "Server is back online — reloading…")}</span>
+            <button type="button" className="btn" onClick={() => window.location.reload()}>
+              {t("systemControls.reloadNow", "Reload now")}
+            </button>
+          </div>
+        ) : null}
+        {restartPhase === "timeout" ? (
+          <div className="cc-syscontrols-banner cc-syscontrols-banner--error" role="status" data-testid="cc-system-restart-timeout">
+            <span>
+              {t(
+                "systemControls.restartTimeout",
+                "The server did not come back within the expected time. It may still be restarting, or the restart may have stopped it.",
+              )}
+            </span>
             <button type="button" className="btn" onClick={() => window.location.reload()}>
               {t("systemControls.reloadNow", "Reload now")}
             </button>

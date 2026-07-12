@@ -1,3 +1,4 @@
+import { redactSecrets } from "@fusion/core";
 import { LogRingBuffer, type LogEntry } from "./log-ring-buffer.js";
 
 // ── formatConsoleArgs ─────────────────────────────────────────────────────────
@@ -118,7 +119,11 @@ export class DashboardLogSink {
   }
 
   private record(level: LogEntry["level"], message: string, prefix?: string): void {
-    const entry: LogEntry = { timestamp: new Date(), level, message, prefix };
+    // Redact before storing/broadcasting: the System panel serves this history
+    // over /system/logs + /system/logs/stream and into diagnostics/bug reports,
+    // so any secret that reaches a log line would otherwise be resurfaceable to
+    // a dashboard client. Mask before it enters the ring buffer or listeners.
+    const entry: LogEntry = { timestamp: new Date(), level, message: redactSecrets(message), prefix };
     this.history.push(entry);
     for (const listener of this.entryListeners) {
       try {

@@ -103,19 +103,28 @@ async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
 /*
 FNXC:SystemPanel 2026-07-12-14:20:
 Desktop restart support for the dashboard System panel. Electron owns the
-process lifecycle, so "restart" = app.relaunch() + app.exit() (after a short
-delay so the HTTP 202 flushes). Electron is resolved dynamically so this
-module still loads under plain-node tests, where the electron package exports
-a binary path instead of the runtime API — then systemControl is simply
+process lifecycle, so "restart" = app.relaunch() then a GRACEFUL app.quit()
+(after a short delay so the HTTP 202 flushes). quit() — not exit() — is
+required so the app's `before-quit` teardown (which stops the embedded Fusion
+runtime: engines, CentralCore, store) actually runs; app.exit() skipped it and
+risked DB/state corruption on every restart. A bounded fallback still forces
+app.exit(0) if quit is vetoed or stalls. Electron is resolved dynamically so
+this module still loads under plain-node tests, where the electron package
+exports a binary path instead of the runtime API — then systemControl is simply
 omitted and the System panel disables its restart controls. Rebuild controls
 never appear on desktop (no sourceWorkspaceRoot — nothing to rebuild).
 Cross-reference: local-server.ts carries the matching wiring for the other
 desktop startup path.
 */
-export async function resolveDesktopSystemControl(): Promise<Record<string, unknown>> {
+const DESKTOP_RESTART_FLUSH_MS = 300;
+const DESKTOP_QUIT_FALLBACK_MS = 5_000;
+
+export async function resolveDesktopSystemControl(): Promise<
+  Pick<import("@fusion/dashboard").ServerOptions, "systemControl">
+> {
   try {
     const electron = (await import("electron")) as unknown as {
-      app?: { relaunch: () => void; exit: (code?: number) => void };
+      app?: { relaunch: () => void; quit: () => void; exit: (code?: number) => void };
     };
     const electronApp = electron.app;
     if (!electronApp || typeof electronApp.relaunch !== "function") return {};
@@ -125,8 +134,10 @@ export async function resolveDesktopSystemControl(): Promise<Record<string, unkn
         requestRestart: (_reason: string) => {
           setTimeout(() => {
             electronApp.relaunch();
-            electronApp.exit(0);
-          }, 300);
+            // Graceful quit runs before-quit teardown; force-exit only if it stalls.
+            electronApp.quit();
+            setTimeout(() => electronApp.exit(0), DESKTOP_QUIT_FALLBACK_MS).unref?.();
+          }, DESKTOP_RESTART_FLUSH_MS);
           return true;
         },
       },

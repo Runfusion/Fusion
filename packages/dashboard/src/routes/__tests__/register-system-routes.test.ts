@@ -1,8 +1,11 @@
 // @vitest-environment node
 
+import http from "node:http";
+import type { Socket } from "node:net";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import express from "express";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { request as performRequest } from "../../test-request.js";
@@ -155,7 +158,10 @@ describe("GET /system/info", () => {
       options: {
         systemControl: { supervised: true, requestRestart: vi.fn(() => true), sourceWorkspaceRoot: "/checkout" },
         systemLogs: { getRecent: vi.fn(() => []), subscribe: vi.fn(() => () => {}) },
+        // engineAvailable requires BOTH engineManager and centralCore, matching
+        // the /system/engine/restart guard.
         engineManager: {},
+        centralCore: {},
       },
     });
     const res = await getJson(app, "/api/system/info");
@@ -289,7 +295,7 @@ describe("POST /system/engine/restart", () => {
   });
 
   it("pause+resumes each running project engine and reports failures", async () => {
-    const pauseProject = vi.fn(async () => {});
+    const pauseProject = vi.fn(async (_id: string) => {});
     const resumeProject = vi.fn(async (id: string) => {
       if (id === "p2") throw new Error("resume failed");
     });
@@ -307,8 +313,36 @@ describe("POST /system/engine/restart", () => {
     expect(res.status).toBe(200);
     expect(res.body.restarted).toEqual(["p1"]);
     expect(res.body.failed).toEqual([{ projectId: "p2", error: "resume failed" }]);
-    // p3 has no running engine — must not be touched.
-    expect(pauseProject).toHaveBeenCalledTimes(2);
+    // p1 paused once (then resumed); p2 paused twice — the initial pause plus a
+    // compensating pause after resume failed, so the project isn't left marked
+    // active with a dead engine. p3 has no running engine and is untouched.
+    expect(pauseProject.mock.calls.map((c) => c[0])).toEqual(["p1", "p2", "p2"]);
+    expect(pauseProject).toHaveBeenCalledTimes(3);
+  });
+
+  it("still succeeds when the compensating pause of a failed project also throws", async () => {
+    const resumeProject = vi.fn(async () => {
+      throw new Error("resume failed");
+    });
+    // First pause (pre-resume) succeeds; the recovery pause in the catch throws
+    // — the route must swallow it and still report the original resume failure.
+    let pauseCalls = 0;
+    const pauseProject = vi.fn(async () => {
+      pauseCalls += 1;
+      if (pauseCalls === 2) throw new Error("pause failed too");
+    });
+    const engineManager = {
+      getEngine: () => ({}),
+      pauseProject,
+      resumeProject,
+    };
+    const centralCore = { listProjects: vi.fn(async () => [{ id: "p1" }]) };
+    const { app } = createApp({ options: { engineManager, centralCore } });
+
+    const res = await postJson(app, "/api/system/engine/restart");
+    expect(res.status).toBe(200);
+    expect(res.body.restarted).toEqual([]);
+    expect(res.body.failed).toEqual([{ projectId: "p1", error: "resume failed" }]);
   });
 });
 
@@ -373,5 +407,125 @@ describe("POST /system/plugins/reload-all", () => {
     });
     const res = await postJson(app, "/api/system/plugins/reload-all");
     expect(res.status).toBe(409);
+  });
+});
+
+/*
+FNXC:SystemPanel 2026-07-12-15:10:
+SSE-stream contract tests. An open SSE response (/system/logs/stream with a live
+provider) never calls res.end(), so the finish-based performRequest harness would
+hang; instead openSseStream builds a MockSocket-backed req/res, drives the
+(synchronous) handler, captures the replayed bytes, and lets the test simulate a
+client disconnect via req "close" to assert unsubscribe/cleanup. Deterministic —
+no real timers or network. Error paths (404 unknown job, 409 no provider) DO end
+the response, so those ride the normal performRequest harness.
+*/
+class SseMockSocket extends PassThrough {
+  public writable = true;
+  public readable = true;
+  public remoteAddress = "127.0.0.1";
+  public encrypted = false;
+  setTimeout(): this { return this; }
+  setNoDelay(): this { return this; }
+  setKeepAlive(): this { return this; }
+  destroySoon(): void { this.destroy(); }
+}
+
+function openSseStream(app: App, path: string, headers: Record<string, string> = {}) {
+  const socket = new SseMockSocket();
+  socket.resume();
+  const req = new http.IncomingMessage(socket as unknown as Socket);
+  const res = new http.ServerResponse(req);
+  const chunks: Buffer[] = [];
+
+  req.method = "GET";
+  req.url = path;
+  req.httpVersion = "1.1";
+  req.headers = Object.fromEntries(
+    Object.entries({ host: "127.0.0.1", ...headers }).map(([key, value]) => [key.toLowerCase(), value]),
+  );
+  res.assignSocket(socket as unknown as Socket);
+
+  const originalWrite = res.write.bind(res);
+  res.write = ((chunk: string | Buffer, encoding?: unknown, cb?: unknown) => {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, typeof encoding === "string" ? (encoding as BufferEncoding) : undefined));
+    return originalWrite(chunk as never, encoding as never, cb as never);
+  }) as typeof res.write;
+
+  // The stream handlers are fully synchronous (no await before the initial
+  // replay/subscribe), and express.json() skips a bodyless GET synchronously, so
+  // routing + writes complete during this call.
+  (app as unknown as (req: http.IncomingMessage, res: http.ServerResponse) => void)(req, res);
+
+  return {
+    req,
+    res,
+    text: () => Buffer.concat(chunks).toString("utf8"),
+    close: () => req.emit("close"),
+  };
+}
+
+describe("SSE streams", () => {
+  it("GET /system/jobs/:id/stream 404s for an unknown job id", async () => {
+    const { app } = createApp();
+    const res = await performRequest(app, "GET", "/api/system/jobs/does-not-exist/stream");
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /system/logs/stream 409s when no systemLogs provider is wired", async () => {
+    const { app } = createApp();
+    const res = await performRequest(app, "GET", "/api/system/logs/stream");
+    expect(res.status).toBe(409);
+  });
+
+  it("GET /system/logs/stream replays getRecent(200) as SSE log events and unsubscribes on client close", () => {
+    const entries = [
+      { timestamp: new Date(), level: "info" as const, message: "first-entry" },
+      { timestamp: new Date(), level: "warn" as const, message: "second-entry" },
+    ];
+    const getRecent = vi.fn((limit?: number) => (limit === 200 ? entries : []));
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => unsubscribe);
+    const { app } = createApp({ options: { systemLogs: { getRecent, subscribe } } });
+
+    const stream = openSseStream(app, "/api/system/logs/stream");
+
+    // Initial replay reads exactly the last-200 window, and the live tail is
+    // wired via a single subscribe().
+    expect(getRecent).toHaveBeenCalledWith(200);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+
+    const text = stream.text();
+    const logFrames = text.split("\n\n").filter((frame) => frame.startsWith("event: log"));
+    expect(logFrames).toHaveLength(2);
+    expect(text).toContain("first-entry");
+    expect(text).toContain("second-entry");
+
+    // Client disconnect must tear down the live subscription (no leak).
+    expect(unsubscribe).not.toHaveBeenCalled();
+    stream.close();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST /system/restart rejects a cross-origin Origin with 403 and passes a same-origin Origin", async () => {
+    const { app } = createApp();
+
+    // Cross-origin: Origin host (evil.example) != Host (127.0.0.1) → the
+    // same-origin CSRF guard returns 403 before touching any restart logic.
+    const cross = await performRequest(app, "POST", "/api/system/restart", JSON.stringify({}), {
+      "content-type": "application/json",
+      origin: "https://evil.example",
+      host: "127.0.0.1",
+    });
+    expect(cross.status).toBe(403);
+
+    // Same-origin: Origin host matches Host → guard passes, so the request
+    // reaches the normal handler (409 here because no systemControl is wired).
+    const same = await performRequest(app, "POST", "/api/system/restart", JSON.stringify({}), {
+      "content-type": "application/json",
+      origin: "http://127.0.0.1",
+      host: "127.0.0.1",
+    });
+    expect(same.status).toBe(409);
   });
 });
