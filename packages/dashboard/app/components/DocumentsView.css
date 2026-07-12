@@ -370,27 +370,37 @@ Task-document header actions group the Markdown/Plain toggle with the new Edit (
 /*
 FNXC:DocumentsView 2026-07-10-17:40:
 FN-7811 reuses the Project Files shell for Task Documents, while task-scoped sidebar groups preserve task id/title/status context before each selectable document entry. Keep these styles scoped so Project Files continues to own the generic markdown-file list visuals.
+
+FNXC:DocumentsView 2026-07-11-19:03:
+FN-7834 requires task-document groups to scan as discrete task containers, not a flat sequence of peer rows. Keep the stronger card/header hierarchy and inter-group gap scoped under .documents-task-documents-sidebar so Project Files' shared .markdown-file-item list and the Artifacts gallery remain visually unchanged.
 */
 .documents-task-documents-sidebar {
   display: flex;
   flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--surface);
 }
 
 .documents-task-sidebar-group {
-  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
 }
 
 .documents-task-sidebar-group:last-child {
-  border-bottom: none;
+  border-bottom: thin solid var(--border);
 }
 
 .documents-task-sidebar-group-header {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  padding: var(--space-md);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-md) var(--space-lg);
+  background: color-mix(in srgb, var(--todo) 8%, var(--card));
+  border-bottom: thin solid var(--border);
 }
 
 .documents-task-sidebar-title-wrap {
@@ -415,8 +425,23 @@ FN-7811 reuses the Project Files shell for Task Documents, while task-scoped sid
   gap: var(--space-sm);
 }
 
+.documents-task-documents-sidebar .documents-task-document-list {
+  background: var(--card);
+}
+
 .documents-task-document-item {
   border-left-color: transparent;
+  padding-inline-start: var(--space-lg);
+  background: color-mix(in srgb, var(--surface) 44%, transparent);
+}
+
+.documents-task-document-item:hover {
+  background: var(--card-hover);
+}
+
+.documents-task-document-item.markdown-file-item--selected {
+  border-left-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 14%, var(--card));
 }
 
 /*
@@ -433,13 +458,14 @@ The meta line (author · revision · date) renders as its own row directly under
 .documents-group-task-id {
   font-family: var(--font-mono);
   font-size: 12px;
+  font-weight: 700;
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .documents-group-task-title {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 700;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;

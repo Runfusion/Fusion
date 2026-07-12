@@ -830,7 +830,7 @@ Artifacts view aggregates registered artifacts, project markdown files, and task
 
 Features:
 
-- Browse **Task Documents** in the same left-sidebar/right-pane pattern as **Project Files**: the sidebar groups document entries by task ID with revision metadata and parent task status badges when available, while the right pane loads the selected document content
+- Browse **Task Documents** in the same left-sidebar/right-pane pattern as **Project Files**: the sidebar groups document entries by task ID in distinct task cards with clear spacing between tasks, revision metadata, and parent task status badges when available, while the right pane loads the selected document content
 - Search documents across tasks
 - Open project markdown files and task documents with inline preview
 - Browse the **Artifacts** tab for registry media registered by any agent, dashboard chat/user action, or system tool across tasks

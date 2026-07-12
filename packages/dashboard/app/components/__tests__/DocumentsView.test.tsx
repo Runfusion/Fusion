@@ -389,6 +389,56 @@ describe("DocumentsView", () => {
     expect(screen.queryByText("Alpha document content")).not.toBeInTheDocument();
   });
 
+  /*
+  FNXC:DocumentsView 2026-07-11-19:03:
+  FN-7834 protects the Task Documents sidebar hierarchy: task headers must remain non-clickable group containers while each document stays a selectable child row, so CSS-only visual hierarchy changes cannot accidentally collapse the two surfaces into peer list items again.
+  */
+  it("keeps task document group headers structurally distinct from document entries", () => {
+    mockUseProjectMarkdownFiles.mockReturnValue({
+      files: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockUseDocuments.mockReturnValue({
+      documents: mockStatusTaskDocuments,
+      projectFiles: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+
+    const sidebar = screen.getByLabelText("Task documents");
+    expect(sidebar).toHaveClass("documents-task-documents-sidebar");
+
+    const groups = Array.from(sidebar.querySelectorAll(".documents-task-sidebar-group"));
+    expect(groups.length).toBeGreaterThan(1);
+
+    const doneGroup = screen.getByRole("heading", { name: /KB-DONE.*Done task/i }).closest(".documents-task-sidebar-group") as HTMLElement;
+    const doneHeader = doneGroup.children[0];
+    const doneDocumentList = doneGroup.children[1];
+
+    expect(doneHeader).toHaveClass("documents-task-sidebar-group-header");
+    expect(doneHeader).not.toHaveClass("markdown-file-item");
+    expect(doneHeader.querySelector(".documents-task-document-item")).toBeNull();
+    expect(doneDocumentList).toHaveClass("documents-task-document-list");
+
+    const doneEntries = within(doneDocumentList as HTMLElement).getAllByRole("button", { name: /open KB-DONE/i });
+    expect(doneEntries).toHaveLength(2);
+    doneEntries.forEach((entry) => {
+      expect(entry).toHaveClass("markdown-file-item", "documents-task-document-item");
+      expect(entry.closest(".documents-task-sidebar-group-header")).toBeNull();
+    });
+
+    const legacyGroup = screen.getByRole("heading", { name: /KB-MISSING.*Legacy task/i }).closest(".documents-task-sidebar-group") as HTMLElement;
+    expect(legacyGroup.children[0]).toHaveClass("documents-task-sidebar-group-header");
+    expect(legacyGroup.querySelector(".documents-group-status")).not.toBeInTheDocument();
+  });
+
   it("selecting a task document loads content and marks the sidebar entry current", () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
