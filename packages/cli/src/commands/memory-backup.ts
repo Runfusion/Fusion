@@ -1,7 +1,6 @@
 import {
   createMemoryBackupManager,
   runMemoryBackupCommand,
-  TaskStore,
   type ProjectSettings,
 } from "@fusion/core";
 import { resolveProject, createLocalStore, closeProjectStore, asLocalProjectContext, type ProjectContext } from "../project-context.js";

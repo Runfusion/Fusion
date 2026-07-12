@@ -165,11 +165,11 @@ export async function runMissionList(projectName?: string, options: RunMissionLi
   // removed under VAL-REMOVAL-005). PG ai_sessions columns are snake_case, so
   // alias updated_at -> updatedAt to preserve the existing draft row shape.
   // The legacy SQLite path is retained for the FUSION_NO_EMBEDDED_PG opt-out.
-  const draftStatuses = ["generating", "awaiting_input", "error", "complete"] as const;
+  type MissionInterviewDraftStatus = "generating" | "awaiting_input" | "error" | "complete";
   type MissionInterviewDraft = {
     id: string;
     title: string;
-    status: (typeof draftStatuses)[number];
+    status: MissionInterviewDraftStatus;
     updatedAt: string;
   };
   let drafts: MissionInterviewDraft[] = [];

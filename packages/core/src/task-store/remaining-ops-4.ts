@@ -22,7 +22,6 @@ import {validateCustomFieldPatch, applyFieldDefaults, reconcileFieldsOnWorkflowC
 import "../builtin-traits.js";
 import type {WorkflowDefinition} from "../workflow-definition-types.js";
 import {resolveDefaultOnOptionalGroupIds} from "../workflow-optional-steps.js";
-import {isBuiltinWorkflowId} from "../builtin-workflows.js";
 import {toJson} from "../db.js";
 import {GoalStore} from "../goal-store.js";
 import {AsyncGoalStore} from "../async-goal-store.js";

@@ -2,7 +2,6 @@ import {
   BackupManager,
   createBackupManager,
   runBackupCommand,
-  TaskStore,
 } from "@fusion/core";
 import { resolveProject, createLocalStore, closeProjectStore, asLocalProjectContext, type ProjectContext } from "../project-context.js";
 import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";

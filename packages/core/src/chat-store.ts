@@ -16,7 +16,6 @@ import type { Database } from "./db.js";
 import { fromJson, toJsonNullable } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { sql } from "drizzle-orm";
-import * as schema from "./postgres/schema/index.js";
 import * as asyncChatStore from "./async-chat-store.js";
 import type {
   ChatSession,
