@@ -14,6 +14,14 @@ describe("extractPromptImagesFromOptions", () => {
     ).toEqual([{ data: "AAAA", mimeType: "image/png" }]);
   });
 
+  it("maps absolute path to file:// uri", () => {
+    expect(
+      extractPromptImagesFromOptions({
+        images: [{ type: "image", data: "AAAA", mimeType: "image/png", path: "/tmp/photo.png" }],
+      }),
+    ).toEqual([{ data: "AAAA", mimeType: "image/png", uri: "file:///tmp/photo.png" }]);
+  });
+
   it("keeps uri when present and drops malformed entries", () => {
     expect(
       extractPromptImagesFromOptions({

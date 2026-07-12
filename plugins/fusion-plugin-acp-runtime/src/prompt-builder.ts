@@ -48,7 +48,11 @@ export function extractPromptImagesFromOptions(options: unknown): PromptImage[] 
     const data = typeof rec.data === "string" ? rec.data : undefined;
     const mimeType = typeof rec.mimeType === "string" ? rec.mimeType : undefined;
     if (!data || !mimeType || data.length === 0 || mimeType.length === 0) continue;
-    const uri = typeof rec.uri === "string" && rec.uri.length > 0 ? rec.uri : undefined;
+    // Prefer explicit uri; else map absolute filesystem `path` to file:// for agents.
+    let uri = typeof rec.uri === "string" && rec.uri.length > 0 ? rec.uri : undefined;
+    if (!uri && typeof rec.path === "string" && rec.path.length > 0) {
+      uri = rec.path.startsWith("file:") ? rec.path : `file://${rec.path}`;
+    }
     images.push({ data, mimeType, ...(uri ? { uri } : {}) });
   }
   return images.length > 0 ? images : undefined;
