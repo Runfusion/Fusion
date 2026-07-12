@@ -789,6 +789,8 @@ Anthropic also supports a raw `ANTHROPIC_API_KEY` from a separate **Anthropic AP
 
 ## Setup Warning Banner
 
+The dashboard banner cluster can also show a one-time storage notice announcing that the next Fusion version replaces the current SQLite data store with an embedded Postgres backend; dismissing it stores a browser-local acknowledgement so it does not reappear.
+
 The dashboard and New Task modal show setup warnings only after readiness checks finish. AI-provider warnings appear immediately because agents cannot work without a provider. GitHub warnings are delayed per project: Fusion records the first time GitHub OAuth and authenticated `gh` CLI are both missing, waits one day, and then shows **GitHub not connected** if GitHub is still unavailable. Reconnecting GitHub clears the timer so a later disconnect starts a fresh one-day grace period.
 
 When the dashboard GitHub warning is visible, its **Connect GitHub** action opens **Settings → Authentication**. The New Task modal keeps immediate AI-provider warnings but suppresses the GitHub warning because that modal does not own the Settings navigation callback required for an actionable GitHub setup control.

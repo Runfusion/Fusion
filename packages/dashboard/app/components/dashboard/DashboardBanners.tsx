@@ -10,6 +10,7 @@ import { EngineStatusBanner } from "../EngineStatusBanner";
 import { OAuthReloginBanner } from "../OAuthReloginBanner";
 import { SessionNotificationBanner } from "../SessionNotificationBanner";
 import { CliBinaryInstallBanner } from "../CliBinaryInstallBanner";
+import { StorageMigrationNoticeBanner } from "../StorageMigrationNoticeBanner";
 import { OnboardingResumeCard } from "../OnboardingResumeCard";
 import { PostOnboardingRecommendations } from "../PostOnboardingRecommendations";
 import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
@@ -101,9 +102,13 @@ export function DashboardBanners({
         />
       )}
       {viewMode === "project" && currentProject && (
-        <CliBinaryInstallBanner
-          onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
-        />
+        <>
+          {/* FNXC:StorageMigrationNotice 2026-07-12-00:00: Keep the one-time storage-backend announcement beside other project-scoped passive notices while its localStorage dismissal remains app-wide. */}
+          <StorageMigrationNoticeBanner />
+          <CliBinaryInstallBanner
+            onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
+          />
+        </>
       )}
       {viewMode === "project" && currentProject && showOnboardingResumeCard && (
         <OnboardingResumeCard onResume={modalManager.openModelOnboarding} />
