@@ -338,6 +338,19 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   validatorGlobalModelId: "configured via the model-lane picker, not a plain description field",
   defaultProviderOverride: "configured via the model-lane picker, not a plain description field",
   defaultModelIdOverride: "configured via the model-lane picker, not a plain description field",
+  // FNXC:Settings-ThinkingLevel 2026-07-10: FN-7770 (commit 5f14a58d3) / FN-7772 (commit df8ad460a) /
+  // FN-7795 (commit 3d5cc0ada) added inline thinking-level companion selectors rendered inside the
+  // model-lane pickers (GlobalModelsSection / ProjectModelsSection). They are NOT standalone
+  // description fields — they ride alongside their provider/model lane pair, exactly like
+  // executionGlobalProvider / titleSummarizerProvider etc. above.
+  executionGlobalThinkingLevel: "inline thinking companion for the global execution lane, configured via the model-lane picker, not a plain description field",
+  planningGlobalThinkingLevel: "inline thinking companion for the global planning lane, configured via the model-lane picker, not a plain description field",
+  validatorGlobalThinkingLevel: "inline thinking companion for the global validator lane, configured via the model-lane picker, not a plain description field",
+  titleSummarizerGlobalThinkingLevel: "inline thinking companion for the global title-summarizer lane, configured via the model-lane picker, not a plain description field",
+  defaultThinkingLevelOverride: "project-scoped Default-lane inline thinking companion, configured via the model-lane picker, not a plain description field",
+  titleSummarizerThinkingLevel: "project title-summarizer inline thinking companion, configured via the model-lane picker, not a plain description field",
+  titleSummarizerFallbackThinkingLevel: "project title-summarizer fallback inline thinking companion, configured via the model-lane picker, not a plain description field",
+  fallbackThinkingLevel: "global fallback model inline thinking companion, configured via the model-lane picker, not a plain description field",
   agentPrompts2: "not a real key (placeholder guard)",
   promptOverrides2: "not a real key (placeholder guard)",
   taskTokenBudget: "not yet exposed as a distinct Settings field",
@@ -446,6 +459,11 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   useLlamaCpp: "configured via CliBinaryPanel, not a plain description field",
   useCursorCli: "configured via CliBinaryPanel, not a plain description field",
   cursorCliBinaryPath: "configured via CliBinaryPanel, not a plain description field",
+  // FNXC:GrokCli 2026-07-09: FN-7705 (commit 081dae0e0) / FN-7790 (commit db9b9d22c) added the Grok
+  // CLI runtime adapter. Its enable toggle + binary path are managed by GrokCliProviderCard in the
+  // Authentication section (POSTs /auth/grok-cli), not rendered as a plain description field.
+  useGrokCli: "managed via GrokCliProviderCard in the Authentication section, not a plain description field",
+  grokCliBinaryPath: "managed via GrokCliProviderCard in the Authentication section, not a plain description field",
   vitestAutoKillEnabled: "dashboard TUI memory guard, no Settings UI field",
   vitestKillThresholdPct: "dashboard TUI memory guard, no Settings UI field",
   agentMemoryInclusionMode: "not yet exposed as a distinct Settings field",

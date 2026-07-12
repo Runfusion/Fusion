@@ -289,11 +289,13 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress tasks show exactly 11 tabs:
-      // Activity, Chat, Plan, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
+      // FNXC:CostAndTerminalTabs FN-7820 (commit 937650472) added the "Cost" tab between Chat and Plan;
+      // FN-7826 (commit 17d7bd19e) made the interactive "Terminal" tab always available at the end.
+      // In-progress tasks show exactly 13 tabs:
+      // Activity, Chat, Cost, Plan, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing, Terminal
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Chat", "Cost", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Terminal",
       ]);
       // Commits tab should NOT be present for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
@@ -313,10 +315,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress task with workflow steps: 11 tabs (Review after Changes, Workflow after Model)
+      // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above: "Cost" after Chat, "Terminal" at end.
+      // In-progress task with workflow steps: 13 tabs (Review after Changes, Workflow after Model)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Chat", "Cost", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Terminal",
       ]);
     });
 
@@ -337,10 +340,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Activity, Chat, Summary, Plan, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing (12 tabs, no Commits)
+      // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above. Done task: "Cost" after Summary (before Plan), "Terminal" at end.
+      // Done task with commit SHA: Activity, Chat, Summary, Cost, Plan, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing, Terminal (14 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Summary", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Chat", "Summary", "Cost", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Terminal",
       ]);
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
@@ -364,10 +368,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with workflow steps and commit SHA: 12 tabs including Summary and Review (no Commits)
+      // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above.
+      // Done task with workflow steps and commit SHA: 14 tabs including Summary, Cost and Review (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Summary", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Chat", "Summary", "Cost", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Terminal",
       ]);
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
@@ -388,8 +393,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
+      // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above. Triage has no Changes tab; "Cost" after Chat, "Terminal" at end.
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Chat", "Cost", "Plan", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Terminal",
       ]);
 
       const { container: todoContainer } = render(
@@ -406,8 +412,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
+      // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above (todo, same as triage).
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Activity", "Chat", "Plan", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Chat", "Cost", "Plan", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing", "Terminal",
       ]);
     });
 
