@@ -5796,6 +5796,7 @@
     "footer": {
       "help": "도움말",
       "version": "버전 {{version}}",
+      "versionShort": "",
       "checkUpdates": "",
       "helpDiscussions": ""
     },
