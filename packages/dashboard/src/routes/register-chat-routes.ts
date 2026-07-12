@@ -4,14 +4,19 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { THINKING_LEVELS, type EnrichedChatSession, type ChatAttachment } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
-import { resolveProjectChatContext } from "../chat-project-services.js";
+/*
+FNXC:GrokAcp 2026-07-11-18:30:
+List/create and ChatManager share resolveProjectChatContext (not getOrCreateProjectStore /
+getOrCreateScopedChatStore at this layer). Direct imports of those helpers were leftover after
+the store-alignment fix and failed lint as unused; keep manager construction on the resolved
+store/chatStore pair only.
+*/
+import { getOrCreateScopedChatManager, resolveProjectChatContext } from "../chat-project-services.js";
 import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
 import { rateLimit, RATE_LIMITS } from "../rate-limit.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import { TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "../chat.js";
 import type { ApiRoutesContext } from "./types.js";
-import { getOrCreateScopedChatManager, getOrCreateScopedChatStore } from "../chat-project-services.js";
-import { getOrCreateProjectStore } from "../project-store-resolver.js";
 
 interface ChatRouteDeps {
   parseLastEventId: (req: import("express").Request) => number | undefined;

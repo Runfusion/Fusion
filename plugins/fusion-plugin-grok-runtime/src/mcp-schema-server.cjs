@@ -12,6 +12,8 @@ Grok actually invokes MCP tools/call itself.
 const fs = require("fs");
 const http = require("http");
 const readline = require("readline");
+// FNXC:GrokAcp 2026-07-11-18:30: CJS has no global URL under eslint no-undef; use node:url.
+const { URL } = require("node:url");
 
 const schemaPath = process.argv[2];
 const bridgeUrl = process.env.FUSION_GROK_TOOL_BRIDGE_URL;
