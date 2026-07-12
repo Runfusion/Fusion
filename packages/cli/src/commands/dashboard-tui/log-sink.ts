@@ -119,11 +119,8 @@ export class DashboardLogSink {
   }
 
   private record(level: LogEntry["level"], message: string, prefix?: string): void {
-    // Redact before storing/broadcasting: the System panel serves this history
-    // over /system/logs + /system/logs/stream and into diagnostics/bug reports,
-    // so any secret that reaches a log line would otherwise be resurfaceable to
-    // a dashboard client. Mask before it enters the ring buffer or listeners.
-    const entry: LogEntry = { timestamp: new Date(), level, message: redactSecrets(message), prefix };
+    // `message` is already redacted by the public log/warn/error entry points.
+    const entry: LogEntry = { timestamp: new Date(), level, message, prefix };
     this.history.push(entry);
     for (const listener of this.entryListeners) {
       try {
@@ -150,6 +147,10 @@ export class DashboardLogSink {
 
   log(message: string, prefix?: string): void {
     if (this.silenced) return;
+    // Redact once at the entry point so BOTH the recorded history (served over
+    // /system/logs) and the TUI/console output are masked — a secret must not
+    // leak on either path.
+    message = redactSecrets(message);
     this.record("info", message, prefix);
     const line = prefix ? `[${prefix}] ${message}` : message;
     if (this.tui && this.isTTY) {
@@ -163,6 +164,7 @@ export class DashboardLogSink {
 
   warn(message: string, prefix?: string): void {
     if (this.silenced) return;
+    message = redactSecrets(message);
     this.record("warn", message, prefix);
     const line = prefix ? `[${prefix}] ${message}` : message;
     if (this.tui && this.isTTY) {
@@ -176,6 +178,7 @@ export class DashboardLogSink {
 
   error(message: string, prefix?: string): void {
     if (this.silenced) return;
+    message = redactSecrets(message);
     this.record("error", message, prefix);
     const line = prefix ? `[${prefix}] ${message}` : message;
     if (this.tui && this.isTTY) {
