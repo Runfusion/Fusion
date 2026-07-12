@@ -2289,6 +2289,38 @@ describe("createFnAgent", () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["connect", "TypeError"],
+    ["list", "RangeError"],
+  ] as const)("fails configured MCP session bootstrap explicitly on %s failure and closes once", async (phase, reason) => {
+    const close = vi.fn(async () => undefined);
+    const mcpClient = {
+      connect: vi.fn(async () => {
+        if (phase === "connect") throw new TypeError("sensitive connection detail");
+      }),
+      listTools: vi.fn(async () => {
+        if (phase === "list") throw new RangeError("sensitive listing detail");
+        return { tools: [] };
+      }),
+      callTool: vi.fn(),
+      close,
+    };
+    const { createFnAgent } = await import("../pi.js");
+
+    await expect(createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "coding",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+      mcpServers: [{ name: "postiz", transport: "stdio", command: "redacted", enabled: true }],
+      mcpClientFactory: () => mcpClient as any,
+    })).rejects.toThrow(`MCP session bootstrap failed: server=postiz reason=${reason}`);
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+  });
+
   it("keeps MCP tools out of readonly sessions without the explicit opt-in", async () => {
     const { createFnAgent } = await import("../pi.js");
     const mcpClient = {

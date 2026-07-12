@@ -94,7 +94,7 @@ import {
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
-import { resolveMcpServersForStore } from "./mcp-resolution.js";
+import { assertMcpResolutionSucceeded, resolveMcpServersForStore } from "./mcp-resolution.js";
 import { reviewStep, proseSignalsClearApproval, extractJsonObjectCandidates, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
@@ -2797,9 +2797,23 @@ export class TaskExecutor {
    * Paused tasks are moved back to `todo` rather than marked as `failed`.
    */
   private async resolveMcpServers(agentId?: string | null) {
-    // FNXC:McpConfig 2026-06-25-22:20:
-    // Executor-owned lanes (main execution, retry, workflow model nodes, self-fix, and spawned child sessions) resolve the same trusted MCP server set from the task store immediately before session creation so secret material is never persisted in task state.
-    return (await resolveMcpServersForStore(this.store, { agentId: agentId ?? undefined })).servers;
+    /*
+     * FNXC:McpConfig 2026-06-25-22:20:
+     * Executor-owned lanes (main execution, retry, workflow model nodes, self-fix, and spawned child sessions) resolve the same trusted MCP server set from the task store immediately before session creation so secret material is never persisted in task state.
+     *
+     * FNXC:McpConfig 2026-07-12-17:02:
+     * MAIN-008 forbids executor paths from silently consuming a partially
+     * materialized server set. Convert secret-resolution errors into a
+     * content-free bootstrap failure before any runtime can connect with
+     * missing credentials; only server names/counts and a coarse category may
+     * cross this seam.
+     */
+    const resolved = await resolveMcpServersForStore(this.store, { agentId: agentId ?? undefined });
+    if (resolved.errors.length > 0) {
+      const serverNames = [...new Set(resolved.errors.map((error) => error.serverName))].sort();
+      executorLog.warn(`MCP executor resolution failed: servers=${serverNames.join(",")} count=${serverNames.length} reason=secret-materialization`);
+    }
+    return assertMcpResolutionSucceeded(resolved);
   }
 
   constructor(

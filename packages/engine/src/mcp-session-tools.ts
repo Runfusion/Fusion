@@ -15,6 +15,19 @@ export interface McpSessionToolset {
   skipped: Array<{ name: string; reason: string }>;
 }
 
+export class McpSessionBootstrapError extends Error {
+  readonly failures: Array<{ name: string; reason: string }>;
+
+  constructor(failures: Array<{ name: string; reason: string }>) {
+    const sanitized = failures
+      .map(({ name, reason }) => ({ name, reason }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.reason.localeCompare(b.reason));
+    super(`MCP session bootstrap failed: ${sanitized.map(({ name, reason }) => `server=${name} reason=${reason}`).join("; ")}`);
+    this.name = "McpSessionBootstrapError";
+    this.failures = sanitized;
+  }
+}
+
 export interface McpSessionClient {
   connect(transport: Transport): Promise<void>;
   listTools(): Promise<{ tools?: McpToolMetadata[] }>;
@@ -68,13 +81,20 @@ export async function connectMcpSessionTools(
   const connected: string[] = [];
   const skipped: Array<{ name: string; reason: string }> = [];
   const clients: McpSessionClient[] = [];
+  const closedClients = new WeakSet<McpSessionClient>();
   const usedToolNames = new Set<string>();
   let disposed = false;
+
+  const closeOnce = async (client: McpSessionClient): Promise<void> => {
+    if (closedClients.has(client)) return;
+    closedClients.add(client);
+    await closeClient(client, opts.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS);
+  };
 
   const closeAll = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
-    await Promise.allSettled(clients.map((client) => closeClient(client, opts.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS)));
+    await Promise.allSettled(clients.map(closeOnce));
   };
 
   const onAbort = (): void => {
@@ -93,13 +113,19 @@ export async function connectMcpSessionTools(
         break;
       }
       const client = (opts.clientFactory ?? defaultClientFactory)(server);
-      let didConnect = false;
+      // Track the client before transport creation/connect so abort and every
+      // partial-bootstrap failure can close it exactly once.
+      clients.push(client);
       try {
         const transport = (opts.transportFactory ?? defaultTransportFactory)(server, { cwd: opts.cwd });
         await client.connect(transport);
-        didConnect = true;
-        clients.push(client);
+        if (opts.signal?.aborted || disposed) {
+          throw new DOMException("MCP bootstrap aborted", "AbortError");
+        }
         const listed = await client.listTools();
+        if (opts.signal?.aborted || disposed) {
+          throw new DOMException("MCP bootstrap aborted", "AbortError");
+        }
         connected.push(server.name);
         const listedTools = listed.tools ?? [];
         opts.logger?.log?.(`MCP server connected for pi session: name=${server.name} transport=${server.transport} tools=${listedTools.length}`);
@@ -107,12 +133,10 @@ export async function connectMcpSessionTools(
           tools.push(wrapMcpTool(server.name, tool, client, usedToolNames));
         }
       } catch (error) {
-        const reason = safeErrorReason(error);
+        const reason = opts.signal?.aborted ? "aborted" : safeErrorReason(error);
         skipped.push({ name: server.name, reason });
         opts.logger?.warn?.(`Skipping MCP server for pi session: name=${server.name} transport=${server.transport} reason=${reason}`);
-        if (didConnect) {
-          await closeClient(client, opts.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS);
-        }
+        await closeOnce(client);
       }
     }
   } finally {

@@ -83,6 +83,27 @@ describe("resolveMcpServersForRuntime", () => {
     });
   });
 
+  it("treats a missing settings seam as a genuine empty configuration", async () => {
+    const { resolveMcpServersForStore } = await import("../mcp-resolution.js");
+    await expect(resolveMcpServersForStore({})).resolves.toEqual({ servers: [], errors: [] });
+  });
+
+  it("honors an explicitly disabled project scope and disabled project shadow", async () => {
+    const disabledScope = await resolveMcpServersForRuntime({
+      globalSettings: { mcpServers: { enabled: true, servers: [{ name: "global", transport: "stdio", command: "node" }] } },
+      projectSettings: { mcpServers: { enabled: false, servers: [] } },
+      secrets: secrets({}),
+    });
+    const disabledShadow = await resolveMcpServersForRuntime({
+      globalSettings: { mcpServers: { enabled: true, servers: [{ name: "global", transport: "stdio", command: "node" }] } },
+      projectSettings: { mcpServers: { enabled: true, servers: [{ name: "global", enabled: false, transport: "stdio", command: "noop" }] } },
+      secrets: secrets({}),
+    });
+
+    expect(disabledScope).toEqual({ servers: [], errors: [] });
+    expect(disabledShadow).toEqual({ servers: [], errors: [] });
+  });
+
   it("returns materialization errors without leaking through logs", async () => {
     const result = await resolveMcpServersForRuntime({
       globalSettings: {
