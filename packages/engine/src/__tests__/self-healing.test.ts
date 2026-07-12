@@ -980,12 +980,23 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-1", "active");
-      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("report-1", { lastError: undefined });
+      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("report-1", { lastError: undefined, pauseReason: undefined });
       expect(restartDurableAgentHeartbeat).toHaveBeenCalledWith("report-1", { reason: "transient-error", attempt: 1 });
       managerWithAgents.stop();
     });
 
-    it("parks a manager-present agent whose error is operator-actionable (FN-7672/FN-7859 auth-credential cluster shape)", async () => {
+    /*
+     * FNXC:AgentHeartbeat 2026-07-12-20:10:
+     * The FN-7672 auth-credential cluster shape turned out to be a routine Claude
+     * Max OAuth token rotation (~8 h lifetime): the in-flight call 401s with
+     * "authentication_error: Invalid authentication credentials" even though
+     * refreshed credentials already exist, and the next call succeeds. That shape
+     * is now classified transient/recoverable, so the sweep AUTO-RECOVERS it
+     * (bounded by the shared retry budget) instead of parking a whole fleet of
+     * durable agents paused/"error-unrecoverable" for a human. Genuinely
+     * operator-actionable auth failures (scope grants, bad API keys) still park.
+     */
+    it("auto-recovers a manager-present agent stuck on an OAuth token-rotation 401 (former unrecoverable-park shape)", async () => {
       vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
       const now = Date.now();
       const agentStore = createMockAgentStore([
@@ -996,6 +1007,42 @@ describe("SelfHealingManager", () => {
           reportsTo: "manager-1",
           lastError:
             'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcpL6f3iXHxeHfMUjg9o8"}',
+          metadata: {},
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+      ]);
+      const restartDurableAgentHeartbeat = vi.fn().mockResolvedValue(true);
+      const managerWithAgents = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        agentStore,
+        restartDurableAgentHeartbeat,
+      });
+
+      const result = await managerWithAgents.recoverOrphanedAgents();
+
+      expect(result).toBe(1);
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-auth", "active");
+      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("report-auth", { lastError: undefined, pauseReason: undefined });
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "agent:auto-recover-error-state",
+        target: "report-auth",
+        metadata: expect.objectContaining({ agentId: "report-auth", attempt: 1, limit: 5, source: "self-healing" }),
+      }));
+      expect(restartDurableAgentHeartbeat).toHaveBeenCalledWith("report-auth", { reason: "transient-error", attempt: 1 });
+      managerWithAgents.stop();
+    });
+
+    it("still parks a manager-present agent whose auth error is genuinely operator-actionable (OAuth scope grant)", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const agentStore = createMockAgentStore([
+        { id: "manager-1", state: "active", updatedAt: new Date(now).toISOString() } as Agent,
+        {
+          id: "report-scope",
+          state: "error",
+          reportsTo: "manager-1",
+          lastError:
+            'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token does not meet scope requirements"}}',
           updatedAt: new Date(now - 120_000).toISOString(),
         } as Agent,
       ]);
@@ -1004,9 +1051,9 @@ describe("SelfHealingManager", () => {
       const result = await managerWithAgents.recoverOrphanedAgents();
 
       expect(result).toBe(1);
-      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-auth", "paused");
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-scope", "paused");
       expect(agentStore.updateAgent).toHaveBeenCalledWith(
-        "report-auth",
+        "report-scope",
         expect.objectContaining({
           pauseReason: HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
           metadata: expect.objectContaining({
@@ -1016,9 +1063,63 @@ describe("SelfHealingManager", () => {
       );
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "agent:error-parked-unrecoverable",
-        target: "report-auth",
-        metadata: expect.objectContaining({ agentId: "report-auth", attempts: 0, limit: 5, source: "self-healing" }),
+        target: "report-scope",
+        metadata: expect.objectContaining({ agentId: "report-scope", attempts: 0, limit: 5, source: "self-healing" }),
       }));
+      managerWithAgents.stop();
+    });
+
+    it("un-parks an agent previously parked error-unrecoverable whose lastError now classifies recoverable", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const agentStore = createMockAgentStore([
+        {
+          id: "parked-rotation",
+          state: "paused",
+          pauseReason: HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
+          lastError:
+            'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}',
+          metadata: {},
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+        // Same pauseReason but genuinely operator-actionable error: stays parked.
+        {
+          id: "parked-scope",
+          state: "paused",
+          pauseReason: HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
+          lastError: "OAuth token does not meet scope requirements",
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+        // Different pauseReason (e.g. user/budget pause): never touched.
+        {
+          id: "parked-budget",
+          state: "paused",
+          pauseReason: "budget-exhausted",
+          lastError: "Invalid authentication credentials",
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+      ]);
+      const restartDurableAgentHeartbeat = vi.fn().mockResolvedValue(true);
+      const managerWithAgents = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        agentStore,
+        restartDurableAgentHeartbeat,
+      });
+
+      const result = await managerWithAgents.recoverOrphanedAgents();
+
+      expect(result).toBe(1);
+      expect(agentStore.updateAgentState).toHaveBeenCalledTimes(1);
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("parked-rotation", "active");
+      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("parked-rotation", { lastError: undefined, pauseReason: undefined });
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "agent:auto-recover-error-state",
+        target: "parked-rotation",
+        metadata: expect.objectContaining({ agentId: "parked-rotation", attempt: 1, limit: 5, source: "self-healing" }),
+      }));
+      expect(restartDurableAgentHeartbeat).toHaveBeenCalledWith("parked-rotation", { reason: "transient-error", attempt: 1 });
+      expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("parked-scope", expect.anything());
+      expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("parked-budget", expect.anything());
       managerWithAgents.stop();
     });
 
@@ -1057,7 +1158,8 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(2);
       expect(agentStore.updateAgentState).toHaveBeenCalledTimes(2);
       expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-transient", "active");
-      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-auth-1", "paused");
+      // Rotation-shaped auth 401s are transient credential rotations — recovered, not parked.
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-auth-1", "active");
       expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("sibling-healthy-1", expect.anything());
       expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("sibling-healthy-2", expect.anything());
       managerWithAgents.stop();
@@ -1102,7 +1204,7 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(agentStore.updateAgentState).toHaveBeenCalledWith("orphan-1", "active");
-      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("orphan-1", { lastError: undefined });
+      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("orphan-1", { lastError: undefined, pauseReason: undefined });
       expect(agentStore.updateAgent).toHaveBeenCalledWith(
         "orphan-1",
         expect.objectContaining({
@@ -1483,7 +1585,7 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(agentStore.updateAgentState).toHaveBeenCalledWith("orphan-2", "active");
-      expect(agentStore.updateAgent).toHaveBeenCalledWith("orphan-2", { lastError: undefined });
+      expect(agentStore.updateAgent).toHaveBeenCalledWith("orphan-2", { lastError: undefined, pauseReason: undefined });
       managerWithAgents.stop();
     });
 

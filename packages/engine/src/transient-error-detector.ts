@@ -98,7 +98,35 @@ export function isTransientError(errorMessage: string): boolean {
   if (!errorMessage || typeof errorMessage !== "string") {
     return false;
   }
+  if (isTransientAuthCredentialError(errorMessage)) {
+    return true;
+  }
   return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(errorMessage));
+}
+
+/*
+FNXC:Reliability-ErrorClassification 2026-07-12-20:10:
+A long-running agent session holds its OAuth access token in memory. Claude Max access tokens rotate mid-run (~8 h lifetime); the in-flight call fails with a 401 {"type":"authentication_error","message":"Invalid authentication credentials"} even though the credentials file has already been refreshed, and the very next call succeeds. These must classify as TRANSIENT (retryable) and NOT operator-actionable, so in-run retry (withRateLimitRetry) and durable-agent heartbeat error recovery (FN-7835/FN-7844/FN-7859) auto-recover instead of parking agents paused with pauseReason "error-unrecoverable". Previously the message matched the operator-actionable /credential/ and /unauthorized/ patterns and defaulted to "permanent", so a routine token rotation parked every durable agent for manual operator repair.
+Genuinely operator-actionable auth failures are excluded first: OAuth scope/permission-grant errors (token valid but lacks grants) and explicit API-key problems (invalid/missing x-api-key) — retrying those only repeats the failing call.
+*/
+const TRANSIENT_AUTH_CREDENTIAL_ROTATION_PATTERN =
+  /"type":\s*"authentication_error"|invalid authentication credentials|token[_\s]?expired/i;
+const OPERATOR_ACTIONABLE_AUTH_EXCLUSION_PATTERN =
+  /oauth token does not meet scope|insufficient[_\s-]?scope|invalid[_\s-]?scope|invalid (?:api[_\s-]?key|x-api-key)|missing\s+(?:\S+\s+)?(?:api[_\s-]?)?key/i;
+
+/**
+ * Detect a transient authentication failure caused by credential rotation
+ * (e.g. a Claude Max OAuth access token expiring mid-run). Scope-grant and
+ * API-key misconfiguration errors are excluded — those need operator action.
+ */
+export function isTransientAuthCredentialError(errorMessage: string): boolean {
+  if (!errorMessage || typeof errorMessage !== "string") {
+    return false;
+  }
+  if (OPERATOR_ACTIONABLE_AUTH_EXCLUSION_PATTERN.test(errorMessage)) {
+    return false;
+  }
+  return TRANSIENT_AUTH_CREDENTIAL_ROTATION_PATTERN.test(errorMessage);
 }
 
 /**
@@ -281,6 +309,13 @@ const OPERATOR_ACTIONABLE_AGENT_ERROR_PATTERNS: RegExp[] = [
 
 export function isOperatorActionableAgentError(errorMessage: string): boolean {
   if (!errorMessage || typeof errorMessage !== "string") {
+    return false;
+  }
+  /*
+  FNXC:Reliability-ErrorClassification 2026-07-12-20:10:
+  Transient OAuth token-rotation 401s must NOT be treated as operator-actionable even though the provider message contains "credentials": no operator action fixes them (the refreshed token already exists on disk) and marking them actionable parks durable agents "error-unrecoverable" instead of letting bounded heartbeat error recovery retry. Scope/API-key failures are excluded inside the classifier and still fall through to the actionable patterns below.
+  */
+  if (isTransientAuthCredentialError(errorMessage)) {
     return false;
   }
   return (
