@@ -10,7 +10,7 @@
 import type { AgentRuntimeOptions } from "./agent-runtime.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
 import type { PluginRunner } from "./plugin-runner.js";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   GROK_CLI_PROVIDER_ID,
   isGrokApiKeyFusionVisible,
@@ -28,9 +28,52 @@ import {
 } from "@fusion/core";
 import { resolveRuntime, buildRuntimeResolutionContext, isMockProviderId, type SessionPurpose } from "./runtime-resolution.js";
 import { createLogger } from "./logger.js";
-import { promptWithFallback, describeModel } from "./pi.js";
+import {
+  promptWithFallback,
+  describeModel,
+  wrapToolsWithActionGate,
+  wrapToolsWithPermanentAgentGating,
+  wrapToolsWithRtkRewrite,
+} from "./pi.js";
 import type { RunAuditor } from "./run-audit.js";
 import { MockAgentRuntime } from "./providers/mock-provider.js";
+
+/*
+FNXC:GrokAcp 2026-07-12-06:30:
+Non-pi plugin runtimes (Grok ACP, Hermes, OpenClaw, …) receive `customTools` as
+engine-injected `fn_*` ToolDefinitions and dispatch them via in-process execute
+(or a loopback MCP bridge). Pi applies RTK rewrite → permanent-agent gating →
+action gate inside `createFnAgent` before tools reach a session; plugin runtimes
+previously skipped that chain and executed raw `execute` closures (Greptile P1
+on PR #2011). Apply the same policy wrappers once here for every non-pi runtime
+before `runtime.createSession`, so Grok/other CLI bridges cannot bypass gate
+policy. Do not wrap for `pi` — `createFnAgent` still owns that chain and must
+not double-wrap. Boundary jailing stays pi-local (needs worktree paths derived
+inside createFnAgent).
+*/
+
+/** Runtime ids that already wrap customTools inside their own createSession path. */
+const RUNTIMES_WITH_INTERNAL_TOOL_GATING = new Set(["pi"]);
+
+/**
+ * Apply Fusion tool policy wrappers for plugin runtimes that do not wrap tools
+ * themselves. Mirrors the customTools portion of the pi createFnAgent chain.
+ */
+export function wrapCustomToolsForPluginRuntime(
+  tools: ToolDefinition[] | undefined,
+  options: Pick<AgentRuntimeOptions, "actionGateContext" | "permanentAgentGating">,
+): ToolDefinition[] | undefined {
+  if (!tools || tools.length === 0) {
+    return tools;
+  }
+  const withRtk = wrapToolsWithRtkRewrite(tools);
+  const withPermanent = wrapToolsWithPermanentAgentGating(withRtk, options.permanentAgentGating);
+  return wrapToolsWithActionGate(withPermanent, options.actionGateContext);
+}
+
+function shouldWrapCustomToolsForRuntime(runtimeId: string): boolean {
+  return !RUNTIMES_WITH_INTERNAL_TOOL_GATING.has(runtimeId);
+}
 
 /** Logger for agent session helpers */
 const sessionLog = createLogger("agent-session");
@@ -584,7 +627,21 @@ export async function createResolvedAgentSession(
   // latest sync point (just before LLM session instantiation) rather than
   // here, before the runtime's own awaited setup work runs. See
   // AgentRuntimeOptions.beforeSpawnSession for the contract.
-  const result = await resolved.runtime.createSession(effectiveRuntimeOptionsWithModel);
+  //
+  // FNXC:GrokAcp 2026-07-12-06:30:
+  // Gate customTools for non-pi runtimes before createSession so ACP/CLI
+  // bridges (e.g. Grok loopback MCP) execute already-gated closures.
+  const sessionCreateOptions: AgentRuntimeOptions =
+    shouldWrapCustomToolsForRuntime(resolved.runtimeId)
+      ? {
+          ...effectiveRuntimeOptionsWithModel,
+          customTools: wrapCustomToolsForPluginRuntime(
+            effectiveRuntimeOptionsWithModel.customTools,
+            effectiveRuntimeOptionsWithModel,
+          ),
+        }
+      : effectiveRuntimeOptionsWithModel;
+  const result = await resolved.runtime.createSession(sessionCreateOptions);
 
   const testModeActive = settings ? isTestModeActive(settings) : false;
   const mockProviderActive = isMockProviderId(runtimeOptions.defaultProvider);

@@ -622,6 +622,127 @@ describe("createResolvedAgentSession", () => {
 
     warnSpy.mockRestore();
   });
+
+  /*
+  FNXC:GrokAcp 2026-07-12-06:30:
+  PR #2011 Greptile P1: non-pi runtimes must receive action-gated customTools so
+  Grok ACP loopback execute cannot bypass AgentPermissionPolicy.
+  */
+  it("wraps customTools with action gate for non-pi runtimes before createSession", async () => {
+    const mockSession = { prompt: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({ session: mockSession });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "grok",
+        name: "Grok Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "grok/default"),
+      },
+      runtimeId: "grok",
+      wasConfigured: true,
+    });
+
+    const execute = vi.fn().mockResolvedValue({ ok: true });
+    const rawTool = {
+      name: "fn_workflow_delete",
+      label: "Delete Workflow",
+      description: "",
+      parameters: {},
+      execute,
+    };
+    const lockedDownPolicy = {
+      presetId: "locked-down",
+      rules: {
+        git_write: "block",
+        file_write_delete: "block",
+        command_execution: "block",
+        network_api: "block",
+        task_agent_mutation: "block",
+        review_gate_bypass: "block",
+        file_scope: "block",
+      },
+    };
+
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+    await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      customTools: [rawTool as any],
+      actionGateContext: {
+        agentId: "agent-1",
+        agentName: "Agent",
+        isEphemeral: false,
+        taskId: "FN-1",
+        permissionPolicy: lockedDownPolicy as any,
+        createApprovalRequest: vi.fn(),
+        findApprovalByDedupeKey: vi.fn().mockResolvedValue(null),
+      } as any,
+    });
+
+    expect(createSessionMock).toHaveBeenCalledTimes(1);
+    const passedTools = createSessionMock.mock.calls[0][0].customTools as Array<{
+      name: string;
+      execute: (...args: unknown[]) => Promise<unknown>;
+    }>;
+    expect(passedTools).toHaveLength(1);
+    expect(passedTools[0].name).toBe("fn_workflow_delete");
+    expect(passedTools[0].execute).not.toBe(execute);
+    // Gated execute must not call the raw tool when policy blocks.
+    const blocked = await passedTools[0].execute("call-1", { workflow_id: "WF-1" });
+    expect(blocked).toEqual(
+      expect.objectContaining({
+        isError: true,
+      }),
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("does not pre-wrap customTools for the pi runtime (createFnAgent owns the chain)", async () => {
+    const mockSession = { prompt: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({ session: mockSession });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "pi",
+        name: "Default PI Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "mock/model"),
+      },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+
+    const execute = vi.fn().mockResolvedValue({ ok: true });
+    const rawTool = {
+      name: "fn_workflow_delete",
+      label: "Delete",
+      description: "",
+      parameters: {},
+      execute,
+    };
+
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+    await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      customTools: [rawTool as any],
+      actionGateContext: {
+        agentId: "agent-1",
+        agentName: "Agent",
+        isEphemeral: false,
+        taskId: "FN-1",
+        permissionPolicy: { defaultDisposition: "block", rules: {} } as any,
+        createApprovalRequest: vi.fn(),
+        findApprovalByDedupeKey: vi.fn(),
+      } as any,
+    });
+
+    const passedTools = createSessionMock.mock.calls[0][0].customTools;
+    expect(passedTools[0]).toBe(rawTool);
+  });
 });
 
 describe("resolveMergerSessionModel", () => {
