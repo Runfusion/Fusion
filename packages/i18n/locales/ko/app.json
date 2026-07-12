@@ -1410,6 +1410,11 @@
     "versionMismatchPrefix": "설치된",
     "versionMismatchSuffix": "최신 버전으로 업데이트하여 동기화를 유지하세요."
   },
+  "storageMigrationNotice": {
+    "body": "",
+    "dismissLabel": "",
+    "title": ""
+  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "확인 중…",

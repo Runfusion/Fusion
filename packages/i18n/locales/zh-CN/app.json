@@ -1410,6 +1410,11 @@
     "versionMismatchPrefix": "你安装的",
     "versionMismatchSuffix": "更新以保持同步。"
   },
+  "storageMigrationNotice": {
+    "body": "",
+    "dismissLabel": "",
+    "title": ""
+  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "检查中…",

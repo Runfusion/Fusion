@@ -1410,6 +1410,11 @@
     "versionMismatchPrefix": "Votre",
     "versionMismatchSuffix": "Mettez à jour pour rester synchronisé."
   },
+  "storageMigrationNotice": {
+    "body": "",
+    "dismissLabel": "",
+    "title": ""
+  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "Vérification…",
