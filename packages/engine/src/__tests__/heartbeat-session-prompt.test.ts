@@ -740,7 +740,8 @@ describe("Budget Governance", () => {
     });
 
     expect(store.getBudgetStatus).not.toHaveBeenCalled();
-    expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "error");
+    // FNXC:HeartbeatTests 2026-07-12-FN7835: FN-7835/FN-7859 park non-recoverable run failures as "paused" (pauseReason: error-unrecoverable) instead of bare "error". Budget governance still does not engage on failure (assertion below: never paused with budget-exhausted reason).
+    expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "paused");
     expect(store.updateAgent).not.toHaveBeenCalledWith("agent-001", { pauseReason: "budget-exhausted" });
   });
 
