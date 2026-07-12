@@ -366,4 +366,52 @@ describe("DashboardLogSink system-log history", () => {
     expect(stored).not.toContain("sk-abcdef0123456789abcdef");
     expect(seen[0]).toBe(stored);
   });
+
+  it("redacts secrets on the TUI/console output path too", () => {
+    const secret = "sk-abcdef0123456789abcdef";
+    // Non-TTY sink → forwards to console.*; assert the raw secret never prints.
+    const consoleSpies = {
+      log: vi.spyOn(console, "log").mockImplementation(() => {}),
+      warn: vi.spyOn(console, "warn").mockImplementation(() => {}),
+      error: vi.spyOn(console, "error").mockImplementation(() => {}),
+    };
+    try {
+      const sink = new DashboardLogSink();
+      sink.log(`token=${secret}`);
+      sink.warn(`token=${secret}`, "engine");
+      sink.error(`Authorization: Bearer ${secret}`);
+
+      const allPrinted = [
+        ...consoleSpies.log.mock.calls,
+        ...consoleSpies.warn.mock.calls,
+        ...consoleSpies.error.mock.calls,
+      ]
+        .flat()
+        .join(" ");
+      expect(allPrinted).not.toContain(secret);
+      expect(allPrinted).toContain("[REDACTED]");
+    } finally {
+      consoleSpies.log.mockRestore();
+      consoleSpies.warn.mockRestore();
+      consoleSpies.error.mockRestore();
+    }
+  });
+
+  it("redacts secrets forwarded to the TUI target", () => {
+    const secret = "ghp_abcdef0123456789ABCDEF";
+    const lines: string[] = [];
+    const tuiTarget = {
+      running: true,
+      log: (m: string) => lines.push(m),
+      warn: (m: string) => lines.push(m),
+      error: (m: string) => lines.push(m),
+    };
+    const sink = new DashboardLogSink(tuiTarget);
+    sink.log(`leaked ${secret}`);
+    sink.error(`boom ${secret}`, "engine");
+
+    const joined = lines.join(" ");
+    expect(joined).not.toContain(secret);
+    expect(joined).toContain("[REDACTED]");
+  });
 });
