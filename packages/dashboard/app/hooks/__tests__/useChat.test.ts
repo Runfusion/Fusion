@@ -84,6 +84,7 @@ function makeMessage(overrides: Partial<ChatMessage> & Pick<ChatMessage, "id" | 
     content: overrides.content,
     thinkingOutput: overrides.thinkingOutput ?? null,
     metadata: overrides.metadata ?? null,
+    attachments: overrides.attachments,
     createdAt: overrides.createdAt ?? "2026-04-08T00:00:00.000Z",
   };
 }
@@ -4035,6 +4036,165 @@ describe("useChat", () => {
 
       await waitFor(() => {
         expect(result.current.messages).toHaveLength(1);
+      });
+    });
+
+    it("reconciles persisted user attachment echo during streaming without refetch or duplicate", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, _handlers) => ({ close: vi.fn(), isConnected: () => true }));
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+      const fetchCountAfterSelect = mockFetchChatMessages.mock.calls.length;
+      const uploadedFiles = [
+        new File(["image-bytes"], "screenshot.png", { type: "image/png" }),
+        new File(["notes"], "notes.txt", { type: "text/plain" }),
+      ];
+
+      act(() => {
+        result.current.sendMessage("Hi", uploadedFiles);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        const userMessages = result.current.messages.filter((message) => message.role === "user");
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages[0]?.id.startsWith("temp-")).toBe(true);
+        expect(userMessages[0]?.attachments).toBeUndefined();
+      });
+
+      const persistedAttachments = [
+        {
+          id: "att-image-001",
+          filename: "2026-07-12T00-00-00_screenshot.png",
+          originalName: "screenshot.png",
+          mimeType: "image/png",
+          size: 11,
+          createdAt: "2026-07-12T00:00:00.000Z",
+        },
+        {
+          id: "att-file-001",
+          filename: "2026-07-12T00-00-00_notes.txt",
+          originalName: "notes.txt",
+          mimeType: "text/plain",
+          size: 5,
+          createdAt: "2026-07-12T00:00:00.000Z",
+        },
+      ];
+      const persistedEcho = makeMessage({
+        id: "msg-user-001",
+        sessionId: "session-001",
+        role: "user",
+        content: "Hi",
+        attachments: persistedAttachments,
+      });
+
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(persistedEcho),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        const userMessages = result.current.messages.filter((message) => message.role === "user");
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages[0]?.id).toBe("msg-user-001");
+        expect(userMessages[0]?.attachments).toEqual(persistedAttachments);
+      });
+      expect(mockFetchChatMessages).toHaveBeenCalledTimes(fetchCountAfterSelect);
+    });
+
+    it("reconciles attachment-only persisted user echo during streaming", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, _handlers) => ({ close: vi.fn(), isConnected: () => true }));
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+      act(() => result.current.selectSession("session-001"));
+      await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+      act(() => {
+        result.current.sendMessage("", [new File(["image-bytes"], "screenshot.png", { type: "image/png" })]);
+      });
+      await waitFor(() => expect(result.current.isStreaming).toBe(true));
+
+      const persistedAttachments = [
+        {
+          id: "att-image-only-001",
+          filename: "2026-07-12T00-00-00_screenshot.png",
+          originalName: "screenshot.png",
+          mimeType: "image/png",
+          size: 11,
+          createdAt: "2026-07-12T00:00:00.000Z",
+        },
+      ];
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(makeMessage({
+            id: "msg-user-attachment-only",
+            sessionId: "session-001",
+            role: "user",
+            content: "",
+            attachments: persistedAttachments,
+          })),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        const userMessages = result.current.messages.filter((message) => message.role === "user");
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages[0]?.id).toBe("msg-user-attachment-only");
+        expect(userMessages[0]?.content).toBe("");
+        expect(userMessages[0]?.attachments).toEqual(persistedAttachments);
+      });
+    });
+
+    it("reconciles text-only persisted user echo during streaming without duplicate", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({
+        sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],
+      });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, _handlers) => ({ close: vi.fn(), isConnected: () => true }));
+
+      const { result } = renderHook(() => useChat("proj-123"));
+      await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+      act(() => result.current.selectSession("session-001"));
+      await waitFor(() => expect(result.current.activeSession?.id).toBe("session-001"));
+
+      act(() => {
+        result.current.sendMessage("Plain text only");
+      });
+      await waitFor(() => expect(result.current.isStreaming).toBe(true));
+
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(makeMessage({
+            id: "msg-user-text-only",
+            sessionId: "session-001",
+            role: "user",
+            content: "Plain text only",
+          })),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        const userMessages = result.current.messages.filter((message) => message.role === "user");
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages[0]?.id).toBe("msg-user-text-only");
+        expect(userMessages[0]?.attachments).toBeUndefined();
       });
     });
 

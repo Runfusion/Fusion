@@ -1563,6 +1563,19 @@ export function useChat(
         return;
       }
 
+      /**
+       * FNXC:ChatAttachments 2026-07-12-00:00:
+       * FN-7849 requires direct-chat uploaded attachments to render immediately after send. During streaming, reconcile the optimistic temp user bubble with the persisted user-message SSE echo because that echo carries the real id and attachment filenames; otherwise images/files only appear after leaving and re-entering the thread.
+       */
+      if (
+        activeSessionRef.current?.id === message.sessionId &&
+        isStreamingRef.current &&
+        message.role === "user"
+      ) {
+        setMessages((prev) => reconcileOptimisticSentMessage(prev, message));
+        return;
+      }
+
       // Recovery mode: isStreaming is true but there's no active stream (streamRef is null).
       // This happens after a page reload/HMR when the server is still generating.
       // When the assistant message arrives via SSE, add it and clear the recovery state.
