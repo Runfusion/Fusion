@@ -368,6 +368,11 @@ function SimpleCanvasAutoFit({
 }
 
 export interface WorkflowSimpleCanvasProps {
+  /** Identity of the workflow being rendered (e.g. its id). Changing it
+   *  remounts the flow so React Flow re-measures and re-fits from scratch —
+   *  switching workflows otherwise leaves a viewport fitted to the PREVIOUS
+   *  graph's bounds (seen as an empty-looking canvas after "New workflow"). */
+  instanceKey: string;
   nodes: FlowNode<WorkflowFlowNodeData>[];
   edges: FlowEdge[];
   /** Column id → display name (v2). Empty map for v1 workflows. */
@@ -388,6 +393,7 @@ export interface WorkflowSimpleCanvasProps {
 }
 
 export function WorkflowSimpleCanvas({
+  instanceKey,
   nodes,
   edges,
   columnNames,
@@ -451,7 +457,7 @@ export function WorkflowSimpleCanvas({
           advanced canvas mounted (CSS-hidden) in list/mobile presentations;
           sharing one store between two ReactFlow instances corrupts node
           measurements and breaks fitView on the visible one. */}
-      <ReactFlowProvider>
+      <ReactFlowProvider key={instanceKey}>
       <SimpleCanvasInsertContext.Provider value={onInsertOnEdge}>
       <ReactFlow
         nodes={displayNodes}

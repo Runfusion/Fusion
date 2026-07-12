@@ -3155,6 +3155,7 @@ function InnerEditor({
                             <div className="wf-mobile-simple-canvas" data-testid="wf-mobile-simple-canvas">
                               <WorkflowEditorCatalogContext.Provider value={catalogs}>
                                 <WorkflowSimpleCanvas
+                                  instanceKey={activeWorkflow.id}
                                   nodes={nodesForRender}
                                   edges={edges}
                                   columnNames={columnNameMap}
@@ -3883,6 +3884,7 @@ function InnerEditor({
                   <div className="wf-editor-canvas wf-editor-canvas--simple" ref={canvasRef} tabIndex={-1}>
                     <WorkflowEditorCatalogContext.Provider value={catalogs}>
                       <WorkflowSimpleCanvas
+                        instanceKey={activeWorkflow.id}
                         nodes={nodesForRender}
                         edges={edges}
                         columnNames={columnNameMap}
