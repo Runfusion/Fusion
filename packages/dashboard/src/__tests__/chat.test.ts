@@ -26,11 +26,35 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 // Mock @fusion/core to prevent cascade loading of real fs modules
 vi.mock("@fusion/core", () => ({
   summarizeTitle: vi.fn(),
-  // FNXC:DashboardChatTests 2026-07-08-12:00: FN-7675 added FUSION_RUNTIME_SELF_AWARENESS to chat.ts's @fusion/core imports (CHAT_SYSTEM_PROMPT embeds it). The hand-written core mock must stub it so chat.js loads; importOriginal is intentionally avoided to prevent the real fs cascade this mock exists to block.
+  // FNXC:DashboardChatTests 2026-07-08-12:00: FN-7675 added FUSION_RUNTIME_SELF_AWARENESS to chat.ts's direct @fusion/core imports (CHAT_SYSTEM_PROMPT embeds it).
   FUSION_RUNTIME_SELF_AWARENESS: "",
   AgentStore: vi.fn(),
   ChatStore: vi.fn(),
   registerTraitHookImpl: vi.fn(),
+}));
+/*
+FNXC:DashboardChatTests 2026-07-12-08:15:
+chat.ts has 14 named runtime imports + `import * as engineModule` from @fusion/engine (lines 43-59).
+The engine module transitively imports many @fusion/core exports (AWAITING_APPROVAL_PAUSE_REASON,
+THINKING_LEVELS, etc.), so loading the real engine against a partial @fusion/core mock throws.
+Since this test only exercises resolveFileReferences (no real AI calls), stub every engine export
+chat.ts references so the real engine module never loads.
+*/
+vi.mock("@fusion/engine", () => ({
+  createFnAgent: vi.fn(),
+  createResolvedAgentSession: vi.fn(),
+  promptWithFallback: vi.fn(),
+  extractRuntimeHint: vi.fn(() => undefined),
+  extractRuntimeModel: vi.fn(() => undefined),
+  buildSessionSkillContextSync: vi.fn(() => ({ skillSelectionContext: undefined, resolvedSkillNames: [], skillSource: "none" as const })),
+  createSendMessageTool: vi.fn(() => ({})),
+  createReadMessagesTool: vi.fn(() => ({})),
+  createAskQuestionTool: vi.fn(() => ({})),
+  createChatArtifactTools: vi.fn(() => []),
+  createChatTaskDocumentTools: vi.fn(() => []),
+  createWorkflowAuthoringTools: vi.fn(() => []),
+  resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
+  resolveExecutorThinkingLevel: vi.fn(() => undefined),
 }));
 
 describe("resolveFileReferences", () => {
