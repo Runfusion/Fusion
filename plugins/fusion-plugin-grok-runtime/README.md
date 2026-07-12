@@ -39,6 +39,14 @@ grok -p "<text>" --output-format json -m "grok-4.5" --cwd "/path/to/project"
 - A wrong-binary/wrong-flag run that emits no parseable JSON surfaces a concrete diagnostic instead of a blank assistant response.
 - **Auth implication:** because the `grok` binary resolves its own credentials for this path, a CLI-routed selection needs **no Fusion-visible `GROK_API_KEY`** — unlike the direct xAI OpenAI-compatible streaming path.
 
+## Configuration
+
+| Environment variable | Default | Description |
+|---|---|---|
+| `GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS` | `120000` | Cold-start / first-stdout-byte kill ceiling for headless `grok` prompts. Blank, non-numeric, zero, or negative values fall back to the default. |
+
+The first-output guard is separate from the 30-minute inactivity safety net that applies after stdout has begun.
+
 See `docs/grok-cli-contract.md` for the full contract, live captures, and the reason Fusion no longer uses the old `grok --prompt <text> --format json` / `step_*` schema or the flaky streaming-json prompt path.
 
 ## Routing Grok through the CLI runtime (FN-7725 / FN-7753 / FN-7790)

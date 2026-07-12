@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
@@ -58,6 +58,12 @@ function makeProc() {
 describe("streamViaCli", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS;
+  });
+
+  afterEach(() => {
+    delete process.env.PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS;
+    vi.useRealTimers();
   });
 
   it("spawns droid and writes prompt", async () => {
@@ -112,4 +118,93 @@ describe("streamViaCli", () => {
       expect.objectContaining({ mcpConfigPath: "/tmp/mcp.json" }),
     );
   });
+
+  it("kills the subprocess if no stdout line arrives within the default cold-start ceiling", async () => {
+    vi.useFakeTimers();
+    const proc = makeProc();
+    mocks.spawnDroid.mockReturnValue(proc);
+
+    const stream = streamViaCli(
+      { id: "droid-pro", provider: "droid-cli" } as any,
+      { messages: [{ role: "user", content: "hi" }] } as any,
+    ) as any;
+    const push = vi.spyOn(stream, "push");
+
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(mocks.forceKillProcess).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(mocks.forceKillProcess).toHaveBeenCalledWith(proc);
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({
+      type: "done",
+      message: expect.objectContaining({
+        content: [expect.objectContaining({
+          text: expect.stringContaining("Droid CLI produced no output within 120s"),
+        })],
+      }),
+    }));
+    proc.emit("close", null, "SIGKILL");
+    await Promise.resolve();
+  });
+
+  it("uses PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS when it is a positive integer", async () => {
+    vi.useFakeTimers();
+    process.env.PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS = "25";
+    const proc = makeProc();
+    mocks.spawnDroid.mockReturnValue(proc);
+
+    const stream = streamViaCli(
+      { id: "droid-pro", provider: "droid-cli" } as any,
+      { messages: [{ role: "user", content: "hi" }] } as any,
+    ) as any;
+    const push = vi.spyOn(stream, "push");
+
+    await vi.advanceTimersByTimeAsync(24);
+    expect(mocks.forceKillProcess).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(mocks.forceKillProcess).toHaveBeenCalledWith(proc);
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({
+      type: "done",
+      message: expect.objectContaining({
+        content: [expect.objectContaining({
+          text: expect.stringContaining("Droid CLI produced no output within 0.025s"),
+        })],
+      }),
+    }));
+    proc.emit("close", null, "SIGKILL");
+    await Promise.resolve();
+  });
+
+  it.each(["", " ", "nope", "0", "-1", "1.5"])(
+    "falls back to the default cold-start ceiling for invalid PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS=%j",
+    async (value) => {
+      vi.useFakeTimers();
+      process.env.PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS = value;
+      const proc = makeProc();
+      mocks.spawnDroid.mockReturnValue(proc);
+
+      const stream = streamViaCli(
+        { id: "droid-pro", provider: "droid-cli" } as any,
+        { messages: [{ role: "user", content: "hi" }] } as any,
+      ) as any;
+      const push = vi.spyOn(stream, "push");
+
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(mocks.forceKillProcess).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(mocks.forceKillProcess).toHaveBeenCalledWith(proc);
+      expect(push).toHaveBeenCalledWith(expect.objectContaining({
+        type: "done",
+        message: expect.objectContaining({
+          content: [expect.objectContaining({
+            text: expect.stringContaining("Droid CLI produced no output within 120s"),
+          })],
+        }),
+      }));
+      proc.emit("close", null, "SIGKILL");
+      await Promise.resolve();
+    },
+  );
 });

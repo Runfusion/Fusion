@@ -24,6 +24,14 @@ Core implementation files live in `src/`:
 - `probe.ts`
 - prompt/tool/thinking/control helpers
 
+## Configuration
+
+| Environment variable | Default | Description |
+|---|---|---|
+| `PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS` | `120000` | Cold-start / first-stdout-line kill ceiling for Droid CLI streams. Blank, non-numeric, zero, or negative values fall back to the default. |
+
+The first-line guard is separate from the 30-minute inactivity safety net that applies after stdout has begun.
+
 ## Dashboard UI contribution surfaces
 
 The plugin registers `uiSlots` for:

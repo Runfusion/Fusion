@@ -66,10 +66,25 @@ const INACTIVITY_TIMEOUT_MS = 30 * 60_000;
  * Cold-start ceiling: kill the subprocess if it hasn't produced a single line
  * of stdout within this window. Distinct from INACTIVITY_TIMEOUT_MS so a hung
  * binary (no output ever) is reported with a clear cause instead of being
- * indistinguishable from a slow-thinking turn. Observed cold-start on a healthy
- * droid is ~20s; 60s gives 3x headroom for slow machines / cold caches.
+ * indistinguishable from a slow-thinking turn.
+ *
+ * FNXC:DroidCli 2026-07-11-00:00:
+ * FN-7838 raises Droid's cold-start ceiling from 60s to 120s because slow/cold first-token starts were killed prematurely. Operators can override the first-line guard with PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS; invalid values fall back to the default so the guard is never disabled. This mirrors the OpenClaw/Hermes *_CLI_TIMEOUT_MS precedence pattern while keeping the 30-minute inactivity safety net separate.
  */
-const FIRST_LINE_TIMEOUT_MS = 60_000;
+const DEFAULT_FIRST_LINE_TIMEOUT_MS = 120_000;
+const PI_DROID_FIRST_LINE_TIMEOUT_ENV = "PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS";
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+function resolveFirstLineTimeoutMs(): number {
+  return parsePositiveInteger(process.env[PI_DROID_FIRST_LINE_TIMEOUT_ENV]) ?? DEFAULT_FIRST_LINE_TIMEOUT_MS;
+}
 function isDebugStreamEnabled(): boolean {
   return process.env.PI_DROID_CLI_DEBUG === "1";
 }
@@ -117,6 +132,7 @@ export function streamViaCli(
 
     try {
       const cwd = options?.cwd ?? process.cwd();
+      const firstLineTimeoutMs = resolveFirstLineTimeoutMs();
 
       // Resume if pi provides a session ID AND this isn't the first turn.
       // Pi passes sessionId on every call (including first), but we can only
@@ -282,9 +298,9 @@ export function streamViaCli(
         if (firstLineReceived) return;
         forceKillProcess(proc!);
         endStreamWithError(
-          `Droid CLI produced no output within ${FIRST_LINE_TIMEOUT_MS / 1000}s — likely binary hang or auth failure (try \`droid --version\` and \`droid auth status\`)`,
+          `Droid CLI produced no output within ${firstLineTimeoutMs / 1000}s — likely binary hang or auth failure (try \`droid --version\` and \`droid auth status\`)`,
         );
-      }, FIRST_LINE_TIMEOUT_MS);
+      }, firstLineTimeoutMs);
       proc.on("close", () => clearTimeout(firstLineTimer));
 
       // Process NDJSON lines from stdout using event-based callback

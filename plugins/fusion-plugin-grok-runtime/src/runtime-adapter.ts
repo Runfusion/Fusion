@@ -15,8 +15,24 @@ FN-7753's auto-derived `grok` runtime routing from a `grok-cli/*` model selectio
  * bytes within this window, treat it as a hung/failed subprocess and resolve
  * (never reject — mirrors the Droid adapter's resolve-on-error lifecycle so pi
  * always gets a well-formed, if diagnostic, result instead of an unhandled rejection).
+ *
+ * FNXC:GrokCli 2026-07-11-00:00:
+ * FN-7838 raises Grok's cold-start ceiling from 60s to 120s because slow/cold first-token starts were killed prematurely. Operators can override the first-output guard with GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS; invalid values fall back to the default so the guard is never disabled. This mirrors the OpenClaw/Hermes *_CLI_TIMEOUT_MS precedence pattern while keeping the 30-minute inactivity safety net separate.
  */
-const FIRST_OUTPUT_TIMEOUT_MS = 60_000;
+const DEFAULT_FIRST_OUTPUT_TIMEOUT_MS = 120_000;
+const GROK_FIRST_OUTPUT_TIMEOUT_ENV = "GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS";
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+function resolveFirstOutputTimeoutMs(): number {
+  return parsePositiveInteger(process.env[GROK_FIRST_OUTPUT_TIMEOUT_ENV]) ?? DEFAULT_FIRST_OUTPUT_TIMEOUT_MS;
+}
 
 /**
  * Inactivity safety net: kill the subprocess if no stdout bytes arrive for
@@ -203,6 +219,7 @@ export class GrokRuntimeAdapter implements AgentRuntime {
     const cwd = options?.cwd;
     const signal = options?.signal;
     appendMessage(grokSession, "user", prompt);
+    const firstOutputTimeoutMs = resolveFirstOutputTimeoutMs();
 
     return new Promise<void>((resolve) => {
       let proc: GrokStreamProcess;
@@ -332,11 +349,11 @@ export class GrokRuntimeAdapter implements AgentRuntime {
       firstOutputTimer = setTimeout(() => {
         if (firstOutputReceived) return;
         setErrorMessage(
-          `Grok CLI produced no stdout within ${FIRST_OUTPUT_TIMEOUT_MS}ms for a headless prompt; the process was killed.`,
+          `Grok CLI produced no stdout within ${firstOutputTimeoutMs}ms for a headless prompt; the process was killed.`,
         );
         forceKillGrokStream(proc);
         finish();
-      }, FIRST_OUTPUT_TIMEOUT_MS);
+      }, firstOutputTimeoutMs);
 
       proc.stdout?.on("data", (chunk: Buffer | string) => {
         const text = chunk.toString();

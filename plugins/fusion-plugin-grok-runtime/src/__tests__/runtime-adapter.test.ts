@@ -334,23 +334,71 @@ describe("GrokRuntimeAdapter", () => {
   describe("lifecycle timeouts (fake timers)", () => {
     beforeEach(() => {
       vi.useFakeTimers();
+      delete process.env.GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS;
     });
     afterEach(() => {
+      delete process.env.GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS;
       vi.useRealTimers();
     });
 
-    it("kills the subprocess and resolves if no stdout line arrives within the cold-start ceiling", async () => {
+    it("kills the subprocess and resolves if no stdout line arrives within the default cold-start ceiling", async () => {
       const { proc, kill } = makeFakeProc();
       const spawn = vi.fn().mockReturnValue(proc);
       const adapter = new GrokRuntimeAdapter({ spawn });
       const { session } = await adapter.createSession({});
 
       const promise = adapter.promptWithFallback(session, "hi");
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
 
       await promise;
       expect(kill).toHaveBeenCalledWith("SIGKILL");
+      expect(session.state.errorMessage).toBe(
+        "Grok CLI produced no stdout within 120000ms for a headless prompt; the process was killed.",
+      );
     });
+
+    it("uses GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS when it is a positive integer", async () => {
+      process.env.GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS = "25";
+      const { proc, kill } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const { session } = await adapter.createSession({});
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      await vi.advanceTimersByTimeAsync(24);
+      expect(kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      await promise;
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+      expect(session.state.errorMessage).toBe(
+        "Grok CLI produced no stdout within 25ms for a headless prompt; the process was killed.",
+      );
+    });
+
+    it.each(["", " ", "nope", "0", "-1", "1.5"])(
+      "falls back to the default cold-start ceiling for invalid GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS=%j",
+      async (value) => {
+        process.env.GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS = value;
+        const { proc, kill } = makeFakeProc();
+        const spawn = vi.fn().mockReturnValue(proc);
+        const adapter = new GrokRuntimeAdapter({ spawn });
+        const { session } = await adapter.createSession({});
+
+        const promise = adapter.promptWithFallback(session, "hi");
+        await vi.advanceTimersByTimeAsync(119_999);
+        expect(kill).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+
+        await promise;
+        expect(kill).toHaveBeenCalledWith("SIGKILL");
+        expect(session.state.errorMessage).toBe(
+          "Grok CLI produced no stdout within 120000ms for a headless prompt; the process was killed.",
+        );
+      },
+    );
   });
 
   it("resolves without throwing if the injected spawn function throws synchronously and records the diagnostic", async () => {

@@ -1192,7 +1192,18 @@ fn plugin install ./plugins/fusion-plugin-openclaw-runtime
 
 3. Assign the agent to tasks that should use this runtime.
 
-For more details, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md), [Hermes Runtime Plugin documentation](../plugins/fusion-plugin-hermes-runtime/README.md), and [OpenClaw Runtime Plugin documentation](../plugins/fusion-plugin-openclaw-runtime/README.md).
+For more details, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md), [Hermes Runtime Plugin documentation](../plugins/fusion-plugin-hermes-runtime/README.md), [OpenClaw Runtime Plugin documentation](../plugins/fusion-plugin-openclaw-runtime/README.md), [Grok Runtime Plugin documentation](../plugins/fusion-plugin-grok-runtime/README.md), and [Droid Runtime Plugin documentation](../plugins/fusion-plugin-droid-runtime/README.md).
+
+### CLI Runtime Cold-Start Timeout Configuration
+
+Grok and Droid have first-output cold-start guards for subprocesses that never emit initial stdout. These guards are configured by environment variable only and resolve as: environment variable → built-in default. Blank, non-numeric, zero, or negative values are ignored and the default remains active.
+
+| Runtime | Environment Variable | Default if Unset | Description |
+|---|---|---|---|
+| Grok | `GROK_CLI_FIRST_OUTPUT_TIMEOUT_MS` | `120000` | Fusion-side cold-start / first-stdout-byte kill ceiling for `grok` headless prompts. |
+| Droid | `PI_DROID_CLI_FIRST_LINE_TIMEOUT_MS` | `120000` | Fusion-side cold-start / first-stdout-line kill ceiling for `droid` CLI streams. |
+
+These cold-start guards are distinct from OpenClaw/Hermes `cliTimeoutMs` settings (full-turn subprocess hard kills, default `300000`) and from Grok/Droid's separate 30-minute inactivity safety nets after output has begun.
 
 ### OpenClaw Runtime Configuration
 
