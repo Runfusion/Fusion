@@ -260,6 +260,48 @@ describe("spliceInsertedSubgraphOnEdge", () => {
     expect(child.position).toEqual({ x: 30, y: 56 });
   });
 
+  it("refuses to splice into a container-internal (template child) edge", () => {
+    // FNXC:WorkflowSimpleView 2026-07-12-14:30: PR #2006 review — subgraphs
+    // are top-level; splicing into a template-child edge would create
+    // cross-boundary edges into the container.
+    const nodes = [
+      ...baseNodes(),
+      node("grp", "foreach", 240, 700, { style: { width: 560, height: 220 } }),
+      node("c1", "prompt", 30, 56, { parentId: "grp" }),
+      node("c2", "prompt", 300, 56, { parentId: "grp" }),
+      node("f1", "gate", 240, 900),
+    ];
+    const edges = [...baseEdges(), edge("t1", "c1", "c2")];
+    expect(spliceInsertedSubgraphOnEdge(nodes, edges, "t1", ["f1"])).toBeNull();
+  });
+
+  it("fans out to multiple entries and exits, preserving the inbound condition on each entry", () => {
+    const nodes = [
+      ...baseNodes(),
+      node("in1", "gate", 200, 700),
+      node("in2", "script", 500, 700),
+      node("out", "prompt", 350, 900),
+    ];
+    // Diamond: in1/in2 are entries (no internal inbound), out is the exit.
+    const edges = [...baseEdges(), edge("i1", "in1", "out"), edge("i2", "in2", "out")];
+    const result = spliceInsertedSubgraphOnEdge(nodes, edges, "e2", ["in1", "in2", "out"]);
+    expect(result).not.toBeNull();
+    const inbound = result!.edges.filter((e) => e.source === "a" && ["in1", "in2"].includes(e.target));
+    expect(inbound).toHaveLength(2);
+    expect(inbound.every((e) => e.data?.condition === "failure")).toBe(true);
+    expect(result!.edges.some((e) => e.source === "out" && e.target === "end")).toBe(true);
+  });
+
+  it("falls back to all inserted nodes when the subgraph is an internal cycle (no entries/exits)", () => {
+    const nodes = [...baseNodes(), node("x", "prompt", 200, 700), node("y", "prompt", 500, 700)];
+    const edges = [...baseEdges(), edge("c1", "x", "y"), edge("c2", "y", "x")];
+    const result = spliceInsertedSubgraphOnEdge(nodes, edges, "e2", ["x", "y"]);
+    expect(result).not.toBeNull();
+    // Every inserted node is treated as both entry and exit.
+    expect(result!.edges.filter((e) => e.source === "a" && ["x", "y"].includes(e.target))).toHaveLength(2);
+    expect(result!.edges.filter((e) => e.target === "end" && ["x", "y"].includes(e.source))).toHaveLength(2);
+  });
+
   it("returns null when the target edge is gone or ineligible", () => {
     const nodes = [...baseNodes(), node("f1", "gate", 240, 700)];
     expect(spliceInsertedSubgraphOnEdge(nodes, baseEdges(), "missing", ["f1"])).toBeNull();

@@ -299,6 +299,12 @@ export function spliceInsertedSubgraphOnEdge(
   const source = nodes.find((n) => n.id === edge.source);
   const target = nodes.find((n) => n.id === edge.target);
   if (!source || !target) return null;
+  // FNXC:WorkflowSimpleView 2026-07-12-14:30: PR #2006 review — subgraphs
+  // insert as TOP-LEVEL nodes, so splicing one into a container-internal
+  // (template child) edge would wire cross-boundary edges into the container.
+  // Refuse; the caller falls back to the fixed-position insert, and the
+  // add-step dialog hides fragments for container-edge targets anyway.
+  if (source.parentId || target.parentId) return null;
 
   const insertedSet = new Set(insertedNodeIds);
   const insertedTop = nodes.filter(

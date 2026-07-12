@@ -4187,6 +4187,34 @@ describe("WorkflowNodeEditor simplified view modes", () => {
      (workflow-simple-layout.test.ts) and the toolbar-pick test above, which
      exercises the same insertFromAddStep path end-to-end. */
 
+  it("splices an edge-targeted 'as optional group' pick into the targeted edge", async () => {
+    // FNXC:WorkflowSimpleView 2026-07-12-14:30: PR #2006 review coverage —
+    // the optional-group template variant must wire into the targeted edge,
+    // not land free-floating.
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: [{ id: "tpl-sec", name: "Security review", prompt: "Review security", defaultOn: true }],
+    });
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-simple-canvas");
+
+    fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
+    const dialog = await screen.findByTestId("wf-add-step-modal");
+    fireEvent.click(within(dialog).getByTestId("wf-add-step-tpl-tpl-sec-optional-group"));
+    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: Array<{ id: string; kind: string }>; edges: Array<{ from: string; to: string }> } }).ir;
+    const group = ir.nodes.find((n) => n.kind === "optional-group");
+    expect(group).toBeDefined();
+    // def()'s single edge into end was the target: merge → group → end.
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === "end")).toBe(false);
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === group!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === group!.id && e.to === "end")).toBe(true);
+  });
+
   it("keeps built-in workflows read-only in the simplified view", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);

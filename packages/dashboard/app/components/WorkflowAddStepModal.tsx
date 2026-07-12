@@ -17,7 +17,11 @@ The simplified workflow view's add-step surface. Requirements:
    registry, because the flat 16-button advanced palette is the main thing
    users found hard to use.
  - When inserting INSIDE a container (foreach/loop/optional-group child
-   edge), container kinds are hidden — containers cannot nest.
+   edge), container kinds are hidden — containers cannot nest — and
+   FRAGMENTS are hidden too (PR #2006 review): fragments expand to top-level
+   subgraphs, so splicing one into a template-child edge would create
+   cross-boundary edges into the container. Step templates stay available
+   (they materialize a single prompt/script node, valid as a sibling child).
 */
 
 export interface AddStepPaletteEntry {
@@ -108,8 +112,8 @@ export function WorkflowAddStepModal({
   }, [palette, disallowContainers, q, t]);
 
   const filteredFragments = useMemo(
-    () => fragments.filter((f) => !q || f.name.toLowerCase().includes(q)),
-    [fragments, q],
+    () => (disallowContainers ? [] : fragments.filter((f) => !q || f.name.toLowerCase().includes(q))),
+    [fragments, q, disallowContainers],
   );
   const filteredStepTemplates = useMemo(
     () => stepTemplates.filter((s) => !q || s.name.toLowerCase().includes(q)),

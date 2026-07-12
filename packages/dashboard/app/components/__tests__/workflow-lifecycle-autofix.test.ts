@@ -50,6 +50,24 @@ describe("lifecycleFixTargetEdgeId", () => {
     expect(lifecycleFixTargetEdgeId(nodes, edges, "missing-merge-region")).toBe("e3");
   });
 
+  it("falls back to the append edge when the merge node has multiple inbound edges", () => {
+    const nodes = [
+      node("start", "start"),
+      node("a", "prompt", 300, 0),
+      node("b", "prompt", 300, 200),
+      node("m", "merge", 600, 0),
+      node("end", "end", 900, 0),
+    ];
+    const edges = [
+      edge("e1", "start", "a"),
+      edge("e2", "start", "b"),
+      edge("e3", "a", "m"),
+      edge("e4", "b", "m"),
+      edge("e5", "m", "end"),
+    ];
+    expect(lifecycleFixTargetEdgeId(nodes, edges, "missing-completion-summary")).toBe("e5");
+  });
+
   it("falls back to the edge into end when no merge node exists", () => {
     const nodes = [node("start", "start"), node("end", "end", 360, 0)];
     const edges = [edge("e1", "start", "end")];
