@@ -971,7 +971,20 @@ export async function runDaemon(opts: DaemonOptions = {}) {
 
   let shuttingDown = false;
 
-  const shutdown = async () => {
+  /*
+  FNXC:DaemonSignalExit 2026-07-10-14:00:
+  When the host terminates the daemon under memory pressure it sends SIGTERM, which
+  this handler turns into a graceful shutdown. Exiting 0 on a signal made a
+  memory-pressure kill indistinguishable from a clean operator stop, so a
+  `Restart=on-failure` systemd unit treated it as success and left the daemon dead.
+  Exit with the POSIX 128+signal convention (SIGINT=130, SIGTERM=143) so
+  `Restart=on-failure` restarts an externally-killed daemon; a deliberate
+  `systemctl stop` still won't restart (systemd honors the requested inactive
+  state regardless of exit code). A non-signal shutdown() caller still exits 0.
+  */
+  const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
+
+  const shutdown = async (signal?: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
 
@@ -1015,14 +1028,14 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     }
 
     store.close();
-    process.exit(0);
+    process.exit(signal ? (SIGNAL_EXIT_CODES[signal] ?? 128) : 0);
   };
 
   process.on("SIGINT", () => {
-    void shutdown();
+    void shutdown("SIGINT");
   });
   process.on("SIGTERM", () => {
-    void shutdown();
+    void shutdown("SIGTERM");
   });
 
   // Ignore SIGHUP so the daemon survives SSH session disconnects

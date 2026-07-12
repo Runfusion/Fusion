@@ -19,8 +19,25 @@ vi.mock("@fusion/core/gh-cli", () => ({
   getGhErrorMessage: vi.fn((error: unknown) => (error instanceof Error ? error.message : String(error))),
 }));
 
+// FNXC:CliBoardMutation 2026-07-09-00:00: task.ts imports closeProjectStore +
+// asLocalProjectContext from project-context; stub both so the whole-module
+// mock stays accurate as task.ts's project-context surface grows.
 vi.mock("../project-context.js", () => ({
   resolveProject: resolveProjectMock,
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => unknown } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort, mirrors production closeProjectStore
+    }
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
 }));
 
 vi.mock("@fusion/dashboard", () => ({

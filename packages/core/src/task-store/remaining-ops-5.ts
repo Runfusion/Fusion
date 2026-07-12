@@ -159,7 +159,15 @@ export async function readPromptForArchiveImpl(store: TaskStore, taskId: string)
     if (!existsSync(promptPath)) {
       return undefined;
     }
-    return readFile(promptPath, "utf-8");
+    // FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
+    // best-effort — an unreadable PROMPT.md must not fail archiving; the
+    // archive entry simply omits the prompt text.
+    try {
+      return await readFile(promptPath, "utf-8");
+    } catch (err) {
+      storeLog.warn(`[task-detail] failed to read PROMPT.md for archive of ${taskId}: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
 }
 
 export async function buildArchivedAgentLogFieldsImpl(store: TaskStore,

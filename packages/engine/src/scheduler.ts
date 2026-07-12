@@ -3093,10 +3093,51 @@ export class Scheduler {
 
         for (const slice of activeSlices) {
           const missionAutoTriageEnabled = mission.autopilotEnabled === true || mission.autoAdvance === true;
+          const supersededFixes = missionStore.reconcileSupersededGeneratedFixFeatures?.(slice.id)
+            ?? { supersededCount: 0, featureIds: [] };
+          if (supersededFixes.supersededCount > 0) {
+            totalFixed += supersededFixes.supersededCount;
+            schedulerLog.warn(
+              `Superseded ${supersededFixes.supersededCount} stale generated fix feature(s) during mission reconciliation for slice ${slice.id}`,
+            );
+          }
+          const features = supersededFixes.supersededCount > 0
+            ? missionStore.listFeatures(slice.id)
+            : slice.features;
+          const supersededFeatureIds = new Set(supersededFixes.featureIds);
 
-          for (const feature of slice.features) {
+          if (supersededFixes.supersededCount > 0) {
+            const refreshedSlice = missionStore.getSlice?.(slice.id);
+            if (refreshedSlice?.status === "complete") {
+              /*
+              FNXC:Missions 2026-07-11-12:35:
+              Startup reconciliation can terminalize every stale generated-fix feature in an active slice before the scheduler loop runs no-task recovery.
+              Treat the recomputed complete slice as complete immediately so stale fixes do not keep an active slice from advancing after restart.
+              */
+              await this.onSliceComplete(refreshedSlice);
+              continue;
+            }
+          }
+
+          for (const feature of features) {
             let featureForReconciliation = feature;
             let task: Task | undefined;
+            if (supersededFeatureIds.has(feature.id)) {
+              /*
+              FNXC:Missions 2026-07-11-12:35:
+              The title-to-task map is built before generated-fix supersedence detaches stale task ownership.
+              Skip freshly superseded features so pre-reconciliation task links cannot be restored in the same startup sweep.
+              */
+              continue;
+            }
+            if (feature.status === "done" && this.isGeneratedFixFeature(feature) && !feature.taskId) {
+              /*
+              FNXC:Missions 2026-07-11-12:35:
+              Done generated-fix features with no task ownership are terminal after supersedence clears their board links.
+              Keep any done feature that still has task ownership in startup self-healing so linked task drift can still be repaired.
+              */
+              continue;
+            }
             if (feature.taskId) {
               task = await this.store.getTask(feature.taskId);
             } else {

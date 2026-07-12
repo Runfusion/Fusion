@@ -422,8 +422,15 @@ For bug-class/bug-fix tasks, add and fill in the exact \`## Symptom Verification
 
 ### Step {N}: Documentation & Delivery
 
+<!--
+FNXC:ArtifactRegistry 2026-07-11-10:20:
+Agents historically never registered visual/media deliverables because nothing in the planning/spec layer required it — executors saved screenshots or mockups to disk and moved on, so the dashboard Artifacts gallery stayed empty.
+This checkbox is the planning-side half of the artifact-pipeline contract; the executor-side half lives in the "Artifact Registry" prompt section in packages/engine/src/executor.ts.
+The two must stay in sync on the supported types (images, videos, HTML mockups rendered as live previews, PDFs) and the fn_artifact_register(type=..., path=...) recipes.
+-->
 - [ ] Update relevant documentation
 - [ ] Save documentation deliverables as task documents via \`fn_task_document_write\` (key="docs", content=...)
+- [ ] For UI-visible changes or design deliverables: register screenshots/wireframes/mockups as image artifacts via \`fn_artifact_register(type="image", title=..., path="<saved file>")\`; screen recordings as \`type="video"\` with \`path\`; interactive HTML mockups as \`type="document"\` with \`mimeType="text/html"\` (rendered as live previews); PDF exports as \`type="document"\` with \`mimeType="application/pdf"\` and \`path\`
 - [ ] Out-of-scope findings created as new tasks via \`fn_task_create\` tool
 
 ## Documentation Requirements
@@ -578,6 +585,12 @@ For source-free forensic or spec-compliance tasks whose only deliverables are gi
 - Steps should express OUTCOMES, not micro-instructions (2-5 checkboxes per step)
 - Always include a testing step and a documentation step
 - For tasks whose primary deliverable is documentation (updating docs, writing README, API references), include an explicit step or checkbox instructing the executor to save the final documentation content via \`fn_task_document_write\`
+<!--
+FNXC:ArtifactRegistry 2026-07-11-10:22:
+Spec-authoring counterpart of the Documentation & Delivery artifact-registration checkbox above: specs for visual/media tasks must instruct the executor explicitly, because agents historically skipped registration when the planning layer never demanded it.
+This bullet is the planning-side half of the artifact-pipeline contract; keep it in sync with the executor-side "Artifact Registry" prompt section in packages/engine/src/executor.ts on supported types (images, videos, HTML mockups rendered as live previews, PDFs) and the fn_artifact_register(type=..., path=...) recipes.
+-->
+- For tasks with a visible UI surface or whose deliverable is visual/media (wireframes, mockups, designs, diagrams, screenshots, screen recordings, HTML prototypes, PDF exports), include an explicit step or checkbox instructing the executor to save each deliverable to disk and register it via \`fn_artifact_register\` (images via \`type="image", path=...\`; recordings via \`type="video", path=...\`; HTML mockups via \`type="document", mimeType="text/html"\` for live gallery previews; PDFs via \`type="document", mimeType="application/pdf", path=...\`) so it appears in the dashboard Artifacts gallery
 - Include a "Do NOT" section with project-appropriate guardrails
 - Size assessment: S (<{{triageSizeSmallMaxHours}}h), M ({{triageSizeSmallMaxHours}}-{{triageSizeMediumMaxHours}}h), L ({{triageSizeMediumMaxHours}}-{{triageSizeLargeMaxHours}}h). Split if XL ({{triageSizeLargeMaxHours}}h+)
 - Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)

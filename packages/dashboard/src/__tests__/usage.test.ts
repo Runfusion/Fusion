@@ -35,6 +35,8 @@ import {
   withTimeout,
   CLAUDE_FETCH_TIMEOUT_MS,
   _clearRefreshedToken,
+  readCursorApiKey,
+  fetchCursorUsage,
 } from "../usage.js";
 
 // Mock the https module
@@ -91,6 +93,8 @@ describe("usage", () => {
     coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({});
     vi.stubEnv("HOME", "/home/testuser");
     vi.stubEnv("CODEX_HOME", "");
+    vi.stubEnv("GROK_API_KEY", "");
+    vi.stubEnv("CURSOR_API_KEY", "");
   });
 
   afterEach(() => {
@@ -256,6 +260,28 @@ describe("usage", () => {
       expect(copilot).toBeUndefined();
     });
 
+    it("omits Fusion-sourced Copilot credentials when GitHub reports no subscription", async () => {
+      coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({
+        "github-copilot": { type: "oauth", access: "fusion-gho", refresh: "r", expires: Date.now() + 60_000 },
+      });
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 404,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from('{"message":"No Copilot subscription found"}'));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const copilot = providers.find((p) => p.name === "GitHub Copilot");
+      expect(copilot).toBeUndefined();
+    });
+
     it("surfaces Fusion re-login guidance when Fusion-sourced token gets 401", async () => {
       coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({
         "github-copilot": { type: "oauth", access: "fusion-gho", refresh: "r", expires: Date.now() + 60_000 },
@@ -279,6 +305,29 @@ describe("usage", () => {
       expect(copilot?.error).toContain("re-login from Fusion Settings");
     });
 
+    it("surfaces Fusion HTTP failures when a configured Copilot provider fails transiently", async () => {
+      coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({
+        "github-copilot": { type: "oauth", access: "fusion-gho", refresh: "r", expires: Date.now() + 60_000 },
+      });
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 500,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from('{"message":"server unavailable"}'));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const copilot = providers.find((p) => p.name === "GitHub Copilot");
+      expect(copilot?.status).toBe("error");
+      expect(copilot?.error).toContain("HTTP 500");
+    });
+
     it("falls back to gh CLI when no Fusion credential is present", async () => {
       coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({});
       mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
@@ -299,8 +348,9 @@ describe("usage", () => {
       expect(copilot!.windows.some((window) => window.label === "Chat (Monthly)")).toBe(true);
     });
 
-    it("returns error when Copilot subscription not found (404)", async () => {
+    it("omits gh CLI Copilot when GitHub reports no subscription", async () => {
       mockReadFile.mockRejectedValue(new Error("File not found"));
+      coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({});
       mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
         if (cmd === "gh" && args[0] === "auth") {
           return "";
@@ -313,9 +363,26 @@ describe("usage", () => {
 
       const providers = await fetchAllProviderUsage();
       const copilot = providers.find((p) => p.name === "GitHub Copilot");
-      expect(copilot).toBeDefined();
-      expect(copilot!.status).toBe("error");
-      expect(copilot!.error).toContain("No Copilot subscription");
+      expect(copilot).toBeUndefined();
+    });
+
+    it("surfaces gh CLI auth-expired errors as configured but failing", async () => {
+      mockReadFile.mockRejectedValue(new Error("File not found"));
+      coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({});
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "gh" && args[0] === "auth") {
+          return "";
+        }
+        if (cmd === "gh" && args[0] === "api") {
+          throw new Error("HTTP 401: Bad credentials");
+        }
+        throw new Error("File not found");
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const copilot = providers.find((p) => p.name === "GitHub Copilot");
+      expect(copilot?.status).toBe("error");
+      expect(copilot?.error).toContain("GitHub auth expired");
     });
   });
 
@@ -2551,11 +2618,74 @@ describe("usage", () => {
   });
 
   describe("Gemini provider", () => {
+    const setupGeminiFiles = (options: { selectedType?: string; accessToken?: string | null } = {}) => {
+      const { selectedType, accessToken = "test-token" } = options;
+      mockReadFile.mockImplementation((filePath: string) => {
+        if (filePath.includes("gemini")) {
+          if (filePath.includes("oauth_creds")) {
+            return JSON.stringify({
+              ...(accessToken ? { access_token: accessToken } : {}),
+              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
+            });
+          }
+          if (filePath.includes("settings") && selectedType) {
+            return JSON.stringify({
+              security: {
+                auth: {
+                  selectedType,
+                },
+              },
+            });
+          }
+        }
+        return Promise.reject(new Error("File not found"));
+      });
+    };
+
+    const mockGeminiResponse = (statusCode: number, body: unknown = {}) => {
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(typeof body === "string" ? body : JSON.stringify(body)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+    };
+
+    const mockGeminiNetworkError = (error: Error) => {
+      const mockReq = {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === "error") queueMicrotask(() => handler(error));
+        }),
+        write: vi.fn(),
+        end: vi.fn(),
+        destroy: vi.fn(),
+      };
+      mockRequest.mockReturnValue(mockReq);
+    };
+
     it("detects no auth when oauth_creds.json doesn't exist", async () => {
       mockReadFile.mockImplementation(async () => {
         return Promise.reject(new Error("File not found"));
       });
 
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("detects no auth when oauth_creds.json has no access token", async () => {
+      setupGeminiFiles({ accessToken: null });
+
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini");
 
@@ -2578,43 +2708,10 @@ describe("usage", () => {
         ],
       };
 
-      mockReadFile.mockImplementation((path: string) => {
-        if (path.includes("gemini")) {
-          if (path.includes("oauth_creds")) {
-            return JSON.stringify({
-              access_token: "test-token",
-              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
-            });
-          }
-          // settings.json doesn't exist (oauth-personal is default)
-          return Promise.reject(new Error("File not found"));
-        }
-        return Promise.reject(new Error("File not found"));
-      });
+      setupGeminiFiles();
+      mockGeminiResponse(200, mockResponse);
 
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini")!;
 
@@ -2640,33 +2737,10 @@ describe("usage", () => {
         ],
       };
 
-      mockReadFile.mockImplementation((path: string) => {
-        if (path.includes("gemini")) {
-          if (path.includes("oauth_creds")) {
-            return JSON.stringify({
-              access_token: "test-token",
-              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
-            });
-          }
-          return Promise.reject(new Error("File not found"));
-        }
-        return Promise.reject(new Error("File not found"));
-      });
+      setupGeminiFiles();
+      mockGeminiResponse(200, mockResponse);
 
-      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
-      mockRequest.mockImplementation((_options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
-            if (event === "end") handler();
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini")!;
 
@@ -2675,32 +2749,70 @@ describe("usage", () => {
       expect(flashWindow.resetAt).toBe(new Date(resetTime).toISOString());
     });
 
-    it("handles unsupported auth type (api-key)", async () => {
-      mockReadFile.mockImplementation((path: string) => {
-        if (path.includes("gemini")) {
-          if (path.includes("oauth_creds")) {
-            return JSON.stringify({
-              access_token: "test-token",
-            });
-          }
-          if (path.includes("settings")) {
-            return JSON.stringify({
-              security: {
-                auth: {
-                  selectedType: "api-key",
-                },
-              },
-            });
-          }
-        }
-        return Promise.reject(new Error("File not found"));
-      });
+    it("omits unsupported auth type (api-key)", async () => {
+      setupGeminiFiles({ selectedType: "api-key" });
 
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("omits unsupported auth type (vertex-ai)", async () => {
+      setupGeminiFiles({ selectedType: "vertex-ai" });
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("omits Gemini when OAuth token returns 401", async () => {
+      setupGeminiFiles();
+      mockGeminiResponse(401, { error: "unauthorized" });
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("omits Gemini when OAuth token returns 403", async () => {
+      setupGeminiFiles();
+      mockGeminiResponse(403, { error: "forbidden" });
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("keeps configured Gemini visible for HTTP 500 failures", async () => {
+      setupGeminiFiles();
+      mockGeminiResponse(500, { error: "backend unavailable" });
+
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini")!;
 
       expect(gemini.status).toBe("error");
-      expect(gemini.error).toContain("Unsupported auth type");
+      expect(gemini.error).toContain("HTTP 500");
+    });
+
+    it("keeps configured Gemini visible for network failures", async () => {
+      setupGeminiFiles();
+      mockGeminiNetworkError(new Error("network error"));
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini")!;
+
+      expect(gemini.status).toBe("error");
+      expect(gemini.error).toContain("network error");
     });
   });
 
@@ -3141,6 +3253,365 @@ describe("usage", () => {
       const resetAtDate = new Date(modelWindow.resetAt!);
       const expectedMs = Date.now() + remainsTimeMs;
       expect(Math.abs(resetAtDate.getTime() - expectedMs)).toBeLessThan(1000);
+    });
+  });
+
+  describe("readCursorApiKey", () => {
+    const cursorAuthStorage = (apiKey: string) => ({
+      reload: vi.fn(),
+      hasAuth: vi.fn((provider: string) => provider === "cursor"),
+      getApiKey: vi.fn((provider: string) => provider === "cursor" ? apiKey : null),
+      get: vi.fn(),
+    });
+
+    it("resolves a trimmed CURSOR_API_KEY without injected authStorage", async () => {
+      vi.stubEnv("CURSOR_API_KEY", "  cursor-env-key  ");
+
+      await expect(readCursorApiKey()).resolves.toBe("cursor-env-key");
+    });
+
+    it("returns null when CURSOR_API_KEY is unset or blank and no authStorage key exists", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      vi.stubEnv("CURSOR_API_KEY", "   ");
+
+      await expect(readCursorApiKey()).resolves.toBeNull();
+    });
+
+    it("resolves the documented cursor authStorage api-key entry", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      const authStorage = cursorAuthStorage("cursor-storage-key");
+
+      await expect(readCursorApiKey(authStorage)).resolves.toBe("cursor-storage-key");
+      expect(authStorage.reload).toHaveBeenCalled();
+      expect(authStorage.getApiKey).toHaveBeenCalledWith("cursor");
+    });
+
+    it("prefers CURSOR_API_KEY over authStorage", async () => {
+      vi.stubEnv("CURSOR_API_KEY", "cursor-env-key");
+      const authStorage = cursorAuthStorage("cursor-storage-key");
+
+      await expect(readCursorApiKey(authStorage)).resolves.toBe("cursor-env-key");
+      expect(authStorage.getApiKey).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("fetchCursorUsage (via fetchAllProviderUsage)", () => {
+    const cursorAuthStorage = (apiKey: string) => ({
+      reload: vi.fn(),
+      hasAuth: vi.fn((provider: string) => provider === "cursor"),
+      getApiKey: vi.fn((provider: string) => provider === "cursor" ? apiKey : null),
+    });
+
+    const mockCursorAccount = (account: { email?: string; plan?: string } = {}) => {
+      mockExecFileSync.mockImplementation((cmd: string) => {
+        if (cmd === "cursor-agent") {
+          return JSON.stringify({
+            userEmail: account.email ?? "developer@company.com",
+            subscriptionTier: account.plan ?? "Pro",
+          });
+        }
+        throw new Error("File not found");
+      });
+    };
+
+    const mockCursorSpendResponse = (statusCode: number, body: unknown) => {
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        expect(options.hostname).toBe("api.cursor.com");
+        expect(options.path).toBe("/teams/spend");
+        expect(options.method).toBe("POST");
+        const responseBody = typeof body === "string" ? body : JSON.stringify(body);
+        const mockRes = {
+          statusCode,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(responseBody));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+      return mockReq;
+    };
+
+    it("renders Cursor usage from the Admin API spend response", async () => {
+      const cycleStart = Date.now() - 15 * 24 * 60 * 60 * 1000;
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      mockCursorAccount({ email: "developer@company.com", plan: "Pro" });
+      const mockReq = mockCursorSpendResponse(200, {
+        subscriptionCycleStart: cycleStart,
+        teamMemberSpend: [
+          {
+            email: "developer@company.com",
+            overallSpendCents: 2450,
+            spendCents: 2450,
+            hardLimitOverrideDollars: null,
+            monthlyLimitDollars: 100,
+          },
+        ],
+      });
+
+      vi.stubEnv("CURSOR_API_KEY", "cursor-admin-env-key");
+
+      const providers = await fetchAllProviderUsage();
+      const cursor = providers.find((p) => p.name === "Cursor")!;
+
+      expect(cursor.status).toBe("ok");
+      expect(cursor.plan).toBe("Pro");
+      expect(cursor.email).toBe("developer@company.com");
+      expect(cursor.windows).toHaveLength(1);
+      expect(cursor.windows[0].label).toBe("Monthly spend");
+      expect(cursor.windows[0].percentUsed).toBeCloseTo(24.5, 1);
+      expect(cursor.windows[0].percentLeft).toBeCloseTo(75.5, 1);
+      expect(cursor.windows[0].resetText).toContain("resets in");
+      expect(cursor.windows[0].resetAt).toBeDefined();
+      expect(cursor.windows[0].pace).toBeDefined();
+      expect(mockReq.write).toHaveBeenCalledWith(expect.stringContaining("developer@company.com"));
+      expect(mockRequest.mock.calls[0][0].headers.authorization).toBe(`Basic ${Buffer.from("cursor-admin-env-key:").toString("base64")}`);
+    });
+
+    it("keeps a zero-utilization Cursor window visible", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      mockCursorAccount({ email: "developer@company.com" });
+      mockCursorSpendResponse(200, {
+        subscriptionCycleStart: Date.now() - 24 * 60 * 60 * 1000,
+        teamMemberSpend: [
+          {
+            email: "developer@company.com",
+            overallSpendCents: 0,
+            monthlyLimitDollars: 100,
+          },
+        ],
+      });
+
+      const providers = await fetchAllProviderUsage(cursorAuthStorage("cursor-admin-key"));
+      const cursor = providers.find((p) => p.name === "Cursor")!;
+
+      expect(cursor.status).toBe("ok");
+      expect(cursor.windows).toHaveLength(1);
+      expect(cursor.windows[0].percentUsed).toBe(0);
+      expect(cursor.windows[0].percentLeft).toBe(100);
+    });
+
+    it("omits Cursor when no Cursor API key is configured", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("File not found");
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const cursor = providers.find((p) => p.name === "Cursor");
+
+      expect(cursor).toBeUndefined();
+    });
+
+    it("names CURSOR_API_KEY in the credential-absent message", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+
+      const cursor = await fetchCursorUsage();
+
+      expect(cursor.status).toBe("no-auth");
+      expect(cursor.error).toBe("No Cursor Admin API key — set CURSOR_API_KEY in the Fusion dashboard environment");
+    });
+
+    it("omits Cursor when the spend response has no meterable row", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      mockCursorAccount({ email: "developer@company.com" });
+      mockCursorSpendResponse(200, { teamMemberSpend: [] });
+
+      const providers = await fetchAllProviderUsage(cursorAuthStorage("cursor-admin-key"));
+      const cursor = providers.find((p) => p.name === "Cursor");
+
+      expect(cursor).toBeUndefined();
+    });
+
+    it("keeps Cursor visible as error for expired API keys", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      mockCursorAccount({ email: "developer@company.com" });
+      mockCursorSpendResponse(401, { error: "unauthorized" });
+
+      const providers = await fetchAllProviderUsage(cursorAuthStorage("expired-cursor-key"));
+      const cursor = providers.find((p) => p.name === "Cursor")!;
+
+      expect(cursor.status).toBe("error");
+      expect(cursor.error).toContain("Auth expired");
+    });
+
+    it("keeps Cursor visible as error for non-200 and parse failures", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      mockCursorAccount({ email: "developer@company.com" });
+      mockCursorSpendResponse(500, { error: "server error" });
+
+      let providers = await fetchAllProviderUsage(cursorAuthStorage("cursor-admin-key"));
+      let cursor = providers.find((p) => p.name === "Cursor")!;
+      expect(cursor.status).toBe("error");
+      expect(cursor.error).toContain("HTTP 500");
+
+      clearUsageCache();
+      mockRequest.mockClear();
+      mockCursorSpendResponse(200, "not json");
+
+      providers = await fetchAllProviderUsage(cursorAuthStorage("cursor-admin-key"));
+      cursor = providers.find((p) => p.name === "Cursor")!;
+      expect(cursor.status).toBe("error");
+      expect(cursor.error).toMatch(/JSON|Unexpected/i);
+    });
+  });
+
+  describe("Grok provider", () => {
+    const mockGrokApiKeyResponse = (statusCode: number, body: unknown) => {
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((options: any, callback: any) => {
+        expect(options.hostname).toBe("api.x.ai");
+        expect(options.path).toBe("/v1/api-key");
+        const responseBody = typeof body === "string" ? body : JSON.stringify(body);
+        const mockRes = {
+          statusCode,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(responseBody));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+    };
+
+    it("omits Grok when no env, user settings, or auth-file key exists", async () => {
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((p) => p.name === "Grok");
+
+      expect(grok).toBeUndefined();
+    });
+
+    it("uses GROK_API_KEY env first and renders a validity-only ok card", async () => {
+      vi.stubEnv("GROK_API_KEY", "env-grok-key");
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      mockGrokApiKeyResponse(200, {
+        api_key_blocked: false,
+        api_key_disabled: false,
+        team_blocked: false,
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((p) => p.name === "Grok")!;
+
+      expect(grok.status).toBe("ok");
+      expect(grok.icon).toBe("✖️");
+      expect(grok.windows).toEqual([]);
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+      expect(mockRequest.mock.calls[0][0].headers.authorization).toBe("Bearer env-grok-key");
+      expect(mockReadFile.mock.calls.every(([filePath]) => !String(filePath).includes(".grok/user-settings.json"))).toBe(true);
+    });
+
+    it("reads Grok API key from ~/.grok/user-settings.json before auth files", async () => {
+      mockReadFile.mockImplementation((filePath: string) => {
+        if (filePath.includes(".grok/user-settings.json")) {
+          return JSON.stringify({ apiKey: "user-settings-grok-key" });
+        }
+        if (filePath.includes(".pi/agent/auth.json")) {
+          return JSON.stringify({ "grok-cli": { type: "api_key", key: "auth-file-grok-key" } });
+        }
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      mockGrokApiKeyResponse(200, { api_key_blocked: false });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((p) => p.name === "Grok")!;
+
+      expect(grok.status).toBe("ok");
+      expect(mockRequest.mock.calls[0][0].headers.authorization).toBe("Bearer user-settings-grok-key");
+    });
+
+    it("falls back to grok-cli auth storage when env and user settings are absent", async () => {
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      mockGrokApiKeyResponse(200, { api_key_blocked: false });
+
+      const providers = await fetchAllProviderUsage({
+        reload: vi.fn(),
+        hasAuth: vi.fn(() => true),
+        getApiKey: vi.fn((provider: string) =>
+          provider === "grok-cli" ? "auth-storage-grok-key" : null
+        ),
+      });
+      const grok = providers.find((p) => p.name === "Grok")!;
+
+      expect(grok.status).toBe("ok");
+      expect(mockRequest.mock.calls[0][0].headers.authorization).toBe("Bearer auth-storage-grok-key");
+    });
+
+    it("keeps Grok visible as error for 401/403 auth failures", async () => {
+      vi.stubEnv("GROK_API_KEY", "expired-grok-key");
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      mockGrokApiKeyResponse(401, { error: "unauthorized" });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((p) => p.name === "Grok")!;
+
+      expect(grok).toBeDefined();
+      expect(grok.status).toBe("error");
+      expect(grok.error).toContain("Auth expired");
+    });
+
+    it("keeps Grok visible as error when xAI reports the key is blocked", async () => {
+      vi.stubEnv("GROK_API_KEY", "blocked-grok-key");
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      mockGrokApiKeyResponse(200, { api_key_blocked: true });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((p) => p.name === "Grok")!;
+
+      expect(grok.status).toBe("error");
+      expect(grok.error).toContain("blocked or disabled");
+    });
+
+    it("keeps Grok visible as error for non-200 responses", async () => {
+      vi.stubEnv("GROK_API_KEY", "server-error-grok-key");
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      mockGrokApiKeyResponse(500, { error: "server error" });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((p) => p.name === "Grok")!;
+
+      expect(grok.status).toBe("error");
+      expect(grok.error).toContain("HTTP 500");
     });
   });
 

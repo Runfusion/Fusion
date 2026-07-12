@@ -545,9 +545,7 @@ export class MissionAutopilot {
         { milestoneCount: milestones.length },
       );
       await this.updateActivity(missionId);
-      await this.setAutopilotState(missionId, "inactive");
-      this.watchedMissions.delete(missionId);
-      this.perMissionTaskRetries.delete(missionId);
+      await this.normalizeCompleteMissionAutopilotState(missionId, "checkMissionCompletion");
       return true;
     }
 
@@ -597,8 +595,13 @@ export class MissionAutopilot {
       const missions = await this.missionStore.listMissions();
 
       for (const mission of missions) {
+        if (mission.status === "complete") {
+          await this.normalizeCompleteMissionAutopilotState(mission.id, "poll");
+          continue;
+        }
+
         // Auto-watch missions with autopilot enabled that aren't being watched
-        if (mission.autopilotEnabled && !this.isWatching(mission.id) && mission.status !== "complete" && mission.status !== "archived") {
+        if (mission.autopilotEnabled && !this.isWatching(mission.id) && mission.status !== "archived") {
           autopilotLog.log(`Poll: auto-watching mission ${mission.id}`);
           await this.watchMission(mission.id);
         }
@@ -793,7 +796,12 @@ export class MissionAutopilot {
       let inconsistencyFixes = 0;
 
       for (const mission of missions) {
-        if (!mission.autopilotEnabled || mission.status === "complete" || mission.status === "archived") {
+        if (mission.status === "complete") {
+          await this.normalizeCompleteMissionAutopilotState(mission.id, "recoverMissions");
+          continue;
+        }
+
+        if (!mission.autopilotEnabled || mission.status === "archived") {
           continue;
         }
 
@@ -835,6 +843,51 @@ export class MissionAutopilot {
     } catch (err) {
       autopilotLog.error("Mission recovery failed:", err);
     }
+  }
+
+  /*
+  FNXC:PostgresCutover 2026-07-11:
+  Merge port from main: the mission store is async on the PG backend, so the
+  helper (and its call sites) await getMission/updateMission/logMissionEventSafe.
+  */
+  private async normalizeCompleteMissionAutopilotState(missionId: string, source: string): Promise<void> {
+    const mission = await this.missionStore.getMission(missionId);
+    if (!mission) {
+      return;
+    }
+
+    if (mission.status !== "complete") {
+      /*
+      FNXC:Missions 2026-07-11-12:35:
+      Autopilot cleanup is only safe for missions that are already complete.
+      Active missions may still need watched-state and retry memory even if a future caller reaches this helper by mistake.
+      */
+      return;
+    }
+
+    this.watchedMissions.delete(missionId);
+    this.perMissionTaskRetries.delete(missionId);
+
+    if (!mission.autopilotEnabled && !mission.autoAdvance && mission.autopilotState === "inactive") {
+      return;
+    }
+
+    await this.missionStore.updateMission(missionId, {
+      autoAdvance: false,
+      autopilotEnabled: false,
+      autopilotState: "inactive",
+    });
+    await this.logMissionEventSafe(
+      missionId,
+      "autopilot_disabled",
+      `Autopilot disabled for already-complete mission ${mission.title}`,
+      {
+        source,
+        previousAutoAdvance: mission.autoAdvance,
+        previousAutopilotEnabled: mission.autopilotEnabled,
+        previousAutopilotState: mission.autopilotState ?? "inactive",
+      },
+    );
   }
 
   private async reconcileMissionConsistency(

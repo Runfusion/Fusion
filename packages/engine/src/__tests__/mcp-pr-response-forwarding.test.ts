@@ -16,6 +16,12 @@ vi.mock("../agent-session-helpers.js", () => ({
     provider: settings.defaultProvider,
     modelId: settings.defaultModelId,
   })),
+  // FNXC:EngineTestDrift 2026-07-11-22:30:
+  // pr-response-run-ops resolves the merger lane thinking level via
+  // resolveMergerThinkingLevel (Settings-ThinkingLevel precedence, 2026-07-10).
+  // The mock must surface it or every PR-response run throws on the missing
+  // export. Neutral undefined return — no test asserts on thinking level.
+  resolveMergerThinkingLevel: vi.fn(() => undefined),
 }));
 
 vi.mock("../pi.js", () => ({

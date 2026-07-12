@@ -1,5 +1,5 @@
 import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { runAiMerge, landWorkspaceTask } from "@fusion/engine";
+import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
@@ -1284,15 +1284,39 @@ export async function runTaskRetry(id: string, projectName?: string) {
         task.status === "stuck-killed" ||
         isInReviewExecutionStall ||
         isInReviewMergeRetryStall);
+    /*
+    FNXC:MissingWorktreeRetry 2026-07-10-18:28:
+    Upstream #1992 requires operator retry to recover an in-review task whose session start refused a missing/incomplete/unregistered worktree even when the row is stuck in an invalid merge-active status. This signature-only bypass clears stale session metadata instead of requiring a valid `merging` transition.
+    */
+    const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
 
     // Validate task is in a retryable state
-    if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry) {
+    if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
       throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
     }
 
     const autoPauseClearPatch = buildAutoPauseClearPatch(task);
     const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
     const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+
+    if (isMissingWorktreeSessionRetry) {
+      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo", { preserveProgress: true }));
+      await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
+        status: null,
+        error: null,
+        worktree: null,
+        branch: null,
+        sessionFile: null,
+        ...autoPauseClearPatch,
+        ...buildManualRetryResetPatch({ resetMergeRetries: true }),
+      }));
+      await retryBoardCall(context, id, "log entry", () => context.store.logEntry(id, `Retry requested from CLI (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`));
+
+      console.log();
+      console.log(`  ✓ Retried ${id} → todo (unusable worktree session metadata cleared)`);
+      console.log();
+      return;
+    }
 
     // In-review retry: distinguish between execution failures (incomplete steps)
     // and merge failures (all steps done).

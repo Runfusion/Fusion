@@ -721,8 +721,8 @@ describe("Memory Tab", () => {
     await navigateToMemory(user);
     await waitFor(() => {
       expect(screen.getByLabelText("Agent Memory")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Edit mode" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Preview mode" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Inline memory edit mode" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Inline memory preview mode" })).toBeInTheDocument();
     });
   });
 
@@ -731,12 +731,12 @@ describe("Memory Tab", () => {
     const user = userEvent.setup();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
-    await user.click(screen.getByRole("button", { name: "Preview mode" }));
+    await user.click(screen.getByRole("button", { name: "Inline memory preview mode" }));
     await waitFor(() => {
       expect(screen.queryByLabelText("Agent Memory")).not.toBeInTheDocument();
       expect(document.querySelector(".markdown-body")).toBeInTheDocument();
     });
-    await user.click(screen.getByRole("button", { name: "Edit mode" }));
+    await user.click(screen.getByRole("button", { name: "Inline memory edit mode" }));
     await waitFor(() => {
       expect(screen.getByLabelText("Agent Memory")).toBeInTheDocument();
     });
@@ -746,7 +746,7 @@ describe("Memory Tab", () => {
     const user = userEvent.setup();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
-    await user.click(screen.getByRole("button", { name: "Preview mode" }));
+    await user.click(screen.getByRole("button", { name: "Inline memory preview mode" }));
     await waitFor(() => {
       expect(screen.getByText("No agent memory defined yet. Switch to Edit mode to add memory content.")).toBeInTheDocument();
     });
@@ -757,7 +757,7 @@ describe("Memory Tab", () => {
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
     expect(screen.getByText("Save Memory")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Preview mode" }));
+    await user.click(screen.getByRole("button", { name: "Inline memory preview mode" }));
     await waitFor(() => expect(screen.queryByText("Save Memory")).not.toBeInTheDocument());
   });
 
@@ -767,8 +767,8 @@ describe("Memory Tab", () => {
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Preview mode" })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Edit mode" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Inline memory preview mode" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Inline memory edit mode" })).not.toBeInTheDocument();
     });
   });
 
@@ -777,46 +777,50 @@ describe("Memory Tab", () => {
     const user = userEvent.setup();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
-    await user.click(screen.getByRole("button", { name: "Preview mode" }));
+    await user.click(screen.getByRole("button", { name: "Inline memory preview mode" }));
     await waitFor(() => expect(document.querySelector(".markdown-body")).toBeInTheDocument());
   });
 
-  it("renders memory file preview markdown and toggles back to edit", async () => {
+  it("renders the memory file in the shared FileEditor and toggles preview", async () => {
     mockFetchAgentMemoryFile.mockResolvedValue({ path: ".fusion/agent-memory/agent-001/MEMORY.md", content: "# Heading\n\n- entry" } as any);
     const user = userEvent.setup();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
-    await user.click(await screen.findByRole("button", { name: "Memory file preview mode" }));
+    /*
+    FNXC:AgentMemory 2026-07-11-00:20:
+    The memory-file editor is the shared FileEditor (CodeMirror + Edit/Preview/Wrap toolbar);
+    the FileEditor toolbar owns the unqualified "Edit mode"/"Preview mode" labels while the
+    inline-memory toggle uses "Inline memory ..." labels.
+    */
+    await user.click(await screen.findByRole("button", { name: "Preview mode" }));
     await waitFor(() => {
-      expect(screen.queryByPlaceholderText("Select a memory file to view and edit its content...")).not.toBeInTheDocument();
       expect(screen.getByText("Heading")).toBeInTheDocument();
-      expect(screen.queryByText("Save Memory File")).not.toBeInTheDocument();
     });
-    await user.click(screen.getByRole("button", { name: "Memory file edit mode" }));
+    await user.click(screen.getByRole("button", { name: "Edit mode" }));
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("Select a memory file to view and edit its content...")).toBeInTheDocument();
+      expect(document.querySelector(".agent-memory-file-editor .file-editor-codemirror")).toBeInTheDocument();
     });
   });
 
-  it("shows memory file preview placeholder when selected file is empty", async () => {
-    mockFetchAgentMemoryFile.mockResolvedValue({ path: ".fusion/agent-memory/agent-001/MEMORY.md", content: "" } as any);
+  it("keeps the Save Memory File action visible and enabled only when the file is dirty", async () => {
+    mockFetchAgentMemoryFile.mockResolvedValue({ path: ".fusion/agent-memory/agent-001/MEMORY.md", content: "content" } as any);
     const user = userEvent.setup();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
-    await user.click(await screen.findByRole("button", { name: "Memory file preview mode" }));
     await waitFor(() => {
-      expect(screen.getByText("No memory file content yet. Switch to Edit mode to add content.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save Memory File" })).toBeDisabled();
     });
   });
 
-  it("hides memory file edit button and disables save button for running agents", async () => {
+  it("hides all edit buttons and disables save for running agents", async () => {
     mockFetchAgent.mockResolvedValue(createMockAgent({ state: "running" }));
     const user = userEvent.setup();
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
     await navigateToMemory(user);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Memory file preview mode" })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Memory file edit mode" })).not.toBeInTheDocument();
+      // FileEditor is readOnly (forced preview, its Edit button hidden) and the inline Edit toggle is hidden.
+      expect(screen.queryByRole("button", { name: "Edit mode" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Inline memory edit mode" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Save Memory File" })).toBeDisabled();
     });
   });

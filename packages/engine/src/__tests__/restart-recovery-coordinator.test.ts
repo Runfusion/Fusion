@@ -4,6 +4,7 @@ import {
   RestartRecoveryCoordinator,
   extractMissingWorktreePathFromSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
+  isMergeActiveMissingWorktreeSessionStartFailure,
   isRecoverableMissingWorktreeReviewFailure,
   isRecoverableMissingWorktreeReviewFailureNoProgress,
   isRecoverableMissingWorktreeReviewFailureWithProgress,
@@ -74,6 +75,25 @@ describe("RestartRecoveryCoordinator", () => {
       expect(isRecoverableMissingWorktreeReviewFailureNoProgress(noProgressTask)).toBe(true);
       expect(isRecoverableMissingWorktreeReviewFailure(noProgressTask)).toBe(true);
     }
+  });
+
+  it("recognizes missing-worktree failures in every merge-active review status", () => {
+    const baseTask = createTask({
+      column: "in-review",
+      paused: false,
+      error: "Refusing to start coding agent in missing worktree: /tmp/wt",
+      steps: [{ id: "s1", title: "step", status: "done" }] as any,
+    });
+
+    for (const status of ["merging", "merging-pr", "merging-fix"] as const) {
+      const task = { ...baseTask, status };
+      expect(isMergeActiveMissingWorktreeSessionStartFailure(task)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailure(task)).toBe(true);
+    }
+
+    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: "failed" })).toBe(false);
+    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: null as any })).toBe(false);
+    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: "merging", error: "ordinary merge failure" })).toBe(false);
   });
 
   it("requeues interrupted failed tasks with no progress, then resumes remaining orphans", async () => {

@@ -24,7 +24,7 @@ import { WorkflowAuthoritativeDriver } from "../workflow-authoritative-driver.js
 import { buildPrNodeDeps } from "../pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
-import { WorktreePool, isGitRepository, type PoolInvariantViolation } from "../worktree-pool.js";
+import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree-pool.js";
 import { AgentSemaphore, ScopedAgentSemaphore } from "../concurrency.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
 import { AutoClaimSnapshotManager } from "../auto-claim-snapshot.js";
@@ -169,6 +169,15 @@ export function buildCliAgentAwaitingInputNotificationPayload(input: {
  * await runtime.stop();
  * ```
  */
+function formatRuntimeGitDetectionWarning(workingDirectory: string, detection: Extract<GitRepoDetection, { status: "error" }>): string {
+  const stderr = detection.stderr.trim() || "git rev-parse --git-dir failed without stderr";
+  const remedy = detection.reason === "dubious-ownership"
+    ? ` Resolve Git safe-directory ownership with: git config --global --add safe.directory "${workingDirectory}"`
+    : "";
+  return `Project directory "${workingDirectory}" could not be verified as a Git repository. ` +
+    `Task execution will fail until the Git error is resolved. Git reported: ${stderr}.${remedy}`;
+}
+
 export class InProcessRuntime
   extends EventEmitter<ProjectRuntimeEvents>
   implements ProjectRuntime
@@ -400,12 +409,15 @@ export class InProcessRuntime
         runtimeLog.warn(`reapOrphanWorktrees failed (continuing): ${msg}`);
       }
 
-      if (!(await isGitRepository(this.config.workingDirectory))) {
+      const gitDetection = await detectGitRepository(this.config.workingDirectory);
+      if (gitDetection.status === "not-repo") {
         runtimeLog.warn(
           `Project directory "${this.config.workingDirectory}" is not a Git repository. ` +
           `Task execution will fail until a Git repository is initialized. ` +
           `Run 'git init' in the project directory to enable worktree-based task execution.`,
         );
+      } else if (gitDetection.status === "error") {
+        runtimeLog.warn(formatRuntimeGitDetectionWarning(this.config.workingDirectory, gitDetection));
       }
 
       this.worktreePool = new WorktreePool();

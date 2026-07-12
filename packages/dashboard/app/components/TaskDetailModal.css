@@ -3677,3 +3677,20 @@ Read-only list/placeholder only — not the deferred rich per-repo-status compon
 .workspace-worktrees-branch {
   color: var(--text-muted, inherit);
 }
+
+/*
+FNXC:TaskDetailTerminal 2026-07-10-00:00:
+FN-7813's interactive task Terminal tab hosts an embedded TerminalModal, so the section must provide a real flex height and keep terminal scrolling internal to the shell instead of the surrounding detail modal.
+*/
+.detail-section--worktree-terminal {
+  display: flex;
+  flex-direction: column;
+  min-height: min(60dvh, calc(var(--space-2xl) * 16));
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .detail-section--worktree-terminal {
+    min-height: min(65dvh, calc(var(--space-2xl) * 14));
+  }
+}

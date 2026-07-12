@@ -48,7 +48,7 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
     expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
       dependencyName,
-      "^0.80.3",
+      "^0.80.6",
     );
     expect(peerDependencies, `${label}: ${dependencyName} must not be a peer dependency`).not.toHaveProperty(
       dependencyName,

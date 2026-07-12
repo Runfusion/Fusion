@@ -85,10 +85,18 @@ const mocks = vi.hoisted(() => {
     electronChild: createMockChild(),
   };
 
+  /*
+   * FNXC:PluginSubsystem 2026-07-08-00:00: desktop.ts constructs a PluginStore
+   * via store.getPluginStore() and a PluginLoader before handing them to the
+   * embedded dashboard server (mirroring dashboard.ts). The TaskStore mock must
+   * expose getPluginStore() returning an init()-able store so that path runs.
+   */
+  const pluginStore = { init: vi.fn().mockResolvedValue(undefined) };
   const store = {
     init: vi.fn().mockResolvedValue(undefined),
     watch: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue(undefined),
+    getPluginStore: vi.fn(() => pluginStore),
     close: vi.fn(),
   };
   const project = { id: "project-1", name: "Repo", path: "/repo", status: "active" };
@@ -166,6 +174,9 @@ vi.mock("node:fs", () => ({
 vi.mock("@fusion/core", () => ({
   TaskStore: mocks.taskStoreCtor,
   CentralCore: mocks.centralCoreCtor,
+  // FNXC:PluginSubsystem 2026-07-08-00:00: desktop.ts imports PluginLoader
+  // from @fusion/core and constructs it for the embedded dashboard server.
+  PluginLoader: vi.fn(),
 }));
 
 vi.mock("@fusion/engine", () => ({

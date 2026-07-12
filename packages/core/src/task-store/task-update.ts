@@ -633,6 +633,22 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
       task.updatedAt = new Date().toISOString();
 
+      // FNXC:TaskDetailPromptResilience 2026-07-10-17:00 (merge port from main):
+      // Perform the explicit PROMPT.md write (and its File Scope validation)
+      // BEFORE committing the task row, so a failed write (EACCES/EISDIR/
+      // disk-full) or an invalid File Scope aborts the whole update atomically.
+      // Previously this ran AFTER the row/task.json commit, so a failed prompt
+      // write returned an error while the field changes stayed committed and
+      // PROMPT.md went stale — a partial commit.
+      if (updates.prompt !== undefined) {
+        const validation = validateFileScopeInPromptContent(updates.prompt);
+        if (validation.invalid.length > 0) {
+          throw new InvalidFileScopeError(id, validation.invalid);
+        }
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "PROMPT.md"), updates.prompt);
+      }
+
       // When runContext is provided, record audit event atomically with task mutation
       if (runContext) {
         await store.atomicWriteTaskJsonWithAudit(dir, task, {
@@ -653,15 +669,6 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
 
       // Update cache if watcher is active
       if (store.isWatching) store.taskCache.set(id, { ...task });
-
-      if (updates.prompt !== undefined) {
-        const validation = validateFileScopeInPromptContent(updates.prompt);
-        if (validation.invalid.length > 0) {
-          throw new InvalidFileScopeError(id, validation.invalid);
-        }
-        await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, "PROMPT.md"), updates.prompt);
-      }
 
       // Sync PROMPT.md when title or description changes (but not when explicit
       // prompt update — that already wrote the new content above).
@@ -686,34 +693,44 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       // task.json remains the canonical source for title/description fields.
       // PROMPT.md is only ever fully rewritten via explicit `updates.prompt`.
       if (updates.prompt === undefined && (updates.title !== undefined || updates.description !== undefined)) {
+        // FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
+        // Keeping the human-visible PROMPT.md heading/mission in sync with
+        // task.json is cosmetic — the DB row (persisted above) is canonical. An
+        // unreadable/unwritable PROMPT.md (EACCES/EISDIR/transient FS error)
+        // must NOT fail the update itself, or every title/description edit 500s.
+        // Best-effort: log and skip the sync on failure.
         const promptPath = join(dir, "PROMPT.md");
-        if (existsSync(promptPath)) {
-          const existingPrompt = await readFile(promptPath, "utf-8");
+        try {
+          if (existsSync(promptPath)) {
+            const existingPrompt = await readFile(promptPath, "utf-8");
 
-          if (isBootstrapPromptStub(existingPrompt, task.id, preUpdateTitle, preUpdateDescription)) {
-            const newPrompt = buildBootstrapPrompt(task.id, task.title, task.description);
-            await writeFile(promptPath, newPrompt);
-          } else {
-            // Real spec — surgical edits only. Each section we propagate to is
-            // edited in place; everything else (Review Level, Frontend UX
-            // Criteria, custom sections from triage) is preserved verbatim.
-            let next = existingPrompt;
-            if (updates.title !== undefined) {
-              // Match the existing heading style: triage emits
-              // `# Task: {id} - {title}`; createTask uses `# {id}: {title}`.
-              const triageStyle = /^#\s+Task:\s+[A-Z]+-\d+\s+-\s+/m.test(existingPrompt);
-              const heading = triageStyle
-                ? (task.title ? `Task: ${task.id} - ${task.title}` : `Task: ${task.id}`)
-                : (task.title ? `${task.id}: ${task.title}` : task.id);
-              next = rewriteHeadingLine(next, heading);
-            }
-            if (updates.description !== undefined) {
-              next = rewriteMissionSection(next, task.description);
-            }
-            if (next !== existingPrompt) {
-              await writeFile(promptPath, next);
+            if (isBootstrapPromptStub(existingPrompt, task.id, preUpdateTitle, preUpdateDescription)) {
+              const newPrompt = buildBootstrapPrompt(task.id, task.title, task.description);
+              await writeFile(promptPath, newPrompt);
+            } else {
+              // Real spec — surgical edits only. Each section we propagate to is
+              // edited in place; everything else (Review Level, Frontend UX
+              // Criteria, custom sections from triage) is preserved verbatim.
+              let next = existingPrompt;
+              if (updates.title !== undefined) {
+                // Match the existing heading style: triage emits
+                // `# Task: {id} - {title}`; createTask uses `# {id}: {title}`.
+                const triageStyle = /^#\s+Task:\s+[A-Z]+-\d+\s+-\s+/m.test(existingPrompt);
+                const heading = triageStyle
+                  ? (task.title ? `Task: ${task.id} - ${task.title}` : `Task: ${task.id}`)
+                  : (task.title ? `${task.id}: ${task.title}` : task.id);
+                next = rewriteHeadingLine(next, heading);
+              }
+              if (updates.description !== undefined) {
+                next = rewriteMissionSection(next, task.description);
+              }
+              if (next !== existingPrompt) {
+                await writeFile(promptPath, next);
+              }
             }
           }
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to sync PROMPT.md heading for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 

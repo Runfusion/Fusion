@@ -55,7 +55,7 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 | recoverOrphanedAgents | 6180 | dead parent/direct-report linkage | n/a | org topology checks | pause/delete/reparent decisions | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverStaleHeartbeatRuns | 6372 | stale heartbeat run records | run age thresholds | pid/age mismatch | terminate run records | RECONCILE-ONLY | keep | n/a | n/a |
 | recoverNoProgressNoTaskDoneFailures | 6451 | in-progress failed no-task-done no progress | implicit (no explicit grace) | no-step-progress + no git work + not executing | clear metadata + move to todo | BACKWARD | tighten | triple proof + no-progress checks + recent liveness-audit absence | gate move; emit `task:no-progress-no-task-done-no-action` |
-| recoverMissingWorktreeReviewFailures | 6516 | in-review failed session-start missing/unusable worktree | classifier-based | error classifier proof only | autoRecover requeue to todo | BACKWARD | tighten | triple proof + classifier proof | gate requeue; emit `task:missing-worktree-review-no-action` |
+| recoverMissingWorktreeReviewFailures | 6516 | in-review failed OR merge-active (`merging`/`merging-pr`/`merging-fix`) session-start missing/unusable worktree | classifier-based | error classifier proof only | autoRecover requeue to todo | BACKWARD | tightened | triple proof + classifier proof + `allowsAutoMergeProcessing` + workspace-task exclusion | gate requeue; emit `task:missing-worktree-review-no-action` or `task:reconcile-missing-worktree-merge-active-no-action`; successful merge-active recovery clears `worktree`/`branch`/`sessionFile`, resets the worktree-session retry budget, increments `recoveryRetryCount` as the bounded stale-metadata clear counter, emits `task:reconcile-missing-worktree-merge-active`, and requeues to todo preserving progress |
 | recoverPartialProgressNoTaskDoneFailures | 6586 | in-review failed no-task-done with partial progress | bounded by `MAX_TASK_DONE_RETRIES` | no-task-done + partial progress + retry budget | clear error + move to todo preserveProgress | BACKWARD | tighten | triple proof + retry-budget predicates | gate move; emit `task:partial-progress-no-task-done-no-action` |
 | recoverApprovedTriageTasks | 6706 | triage planning specified stale | `APPROVED_TRIAGE_RECOVERY_GRACE_MS` | planning idle + valid PROMPT.md | recoverApprovedTriageTask callback | FORWARD | keep | n/a | n/a |
 | recoverStarvedRefinementTriageTasks | 6827 | refinement planning stale | `STARVED_REFINEMENT_RECOVERY_GRACE_MS` | no progress idle | requeue/annotation in triage | RECONCILE-ONLY | keep | n/a | n/a |
@@ -89,7 +89,8 @@ Stages that cannot satisfy all three must either (a) tighten predicate to requir
 
 ### recoverMissingWorktreeReviewFailures
 - Existing classifier proof is necessary but not sufficient for backward movement.
-- Tighten: require full triple-proof before auto requeue.
+- Tightened: require full triple-proof before auto requeue, and keep `allowsAutoMergeProcessing` as the first lifecycle gate so `autoMerge:false` remains terminal-until-merged.
+- Merge-active rows (`merging`, `merging-pr`, `merging-fix`) with the same unusable-worktree session-start signature are now owned here before interrupted/deadlocked merge sweeps can re-drive the phantom path. Workspace tasks are annotation-only in this path; per-repo land recovery remains workspace-owned.
 
 ### recoverPartialProgressNoTaskDoneFailures
 - Retry-budget alone can still reopen tasks under active/residual execution races.

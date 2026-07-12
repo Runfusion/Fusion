@@ -424,6 +424,52 @@ export async function insertArtifactRow(
 }
 
 /**
+ * FNXC:ArtifactRegistry 2026-07-11 (merge port from main):
+ * In-place edit of an inline-content artifact (title/description/content).
+ * Binary artifacts (rows with a uri) keep content non-editable; archived-task
+ * artifacts stay read-only, mirroring insertArtifactRow's gate. Runs in a
+ * transaction so the read-validate-write cycle is consistent.
+ */
+export async function updateArtifactRow(
+  layer: AsyncDataLayer,
+  id: string,
+  updates: { title?: string; description?: string; content?: string },
+): Promise<Artifact> {
+  return layer.transactionImmediate(async (tx) => {
+    const existing = await getArtifact(tx, id);
+    if (!existing) {
+      throw new Error(`Artifact ${id} not found`);
+    }
+    if (existing.taskId) {
+      const column = await getLiveTaskColumn(tx, existing.taskId);
+      if (column === "archived") {
+        throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
+      }
+    }
+    if (updates.content !== undefined && existing.uri) {
+      throw new Error(`Artifact ${id} stores a binary payload; its content is not editable`);
+    }
+
+    const now = new Date().toISOString();
+    await tx
+      .update(schema.project.artifacts)
+      .set({
+        title: updates.title !== undefined ? updates.title : existing.title,
+        description: updates.description !== undefined ? updates.description : existing.description ?? null,
+        content: updates.content !== undefined ? updates.content : existing.content ?? null,
+        updatedAt: now,
+      })
+      .where(eq(schema.project.artifacts.id, id));
+
+    const updated = await getArtifact(tx, id);
+    if (!updated) {
+      throw new Error(`Failed to update artifact ${id}`);
+    }
+    return updated;
+  });
+}
+
+/**
  * Read an artifact by id (metadata-only; does not read the binary payload).
  * Returns `null` if not found.
  */

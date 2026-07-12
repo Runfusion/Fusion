@@ -116,6 +116,19 @@ export {
   type WorkflowRuntimePrimitiveFactory,
 } from "./workflow-runtime-primitive-provider.js";
 export {
+  MERGE_ACTIVE_MISSING_WORKTREE_STATUSES,
+  MISSING_WORKTREE_SESSION_PREFIXES,
+  classifyMissingWorktreeSessionStartFailure,
+  extractMissingWorktreePathFromSessionStartFailure,
+  hasStepProgress,
+  isInReviewMissingWorktreeSessionStartFailure,
+  isMergeActiveMissingWorktreeSessionStartFailure,
+  isMissingWorktreeSessionStartFailure,
+  isRecoverableMissingWorktreeReviewFailure,
+  isRecoverableMissingWorktreeReviewFailureNoProgress,
+  isRecoverableMissingWorktreeReviewFailureWithProgress,
+} from "./restart-recovery-coordinator.js";
+export {
   WorkflowCustomNodeExecutionService,
   type WorkflowCustomNodeExecutionServiceDeps,
 } from "./workflow-custom-node-execution.js";

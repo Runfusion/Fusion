@@ -1536,6 +1536,32 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("Moonshot")).toBeInTheDocument();
   });
 
+  it("maps Cursor provider to the cursor-cli icon and renders usage windows", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: [
+        {
+          name: "Cursor",
+          icon: "🟣",
+          status: "ok",
+          windows: [
+            { label: "Monthly spend", percentUsed: 25, percentLeft: 75, resetText: "resets in 15d" },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    }));
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    expect(screen.getByTestId("cursor-cli-icon")).toBeInTheDocument();
+    expect(document.querySelector('[data-provider="cursor-cli"]')).toBeInTheDocument();
+    expect(screen.getByText("Monthly spend")).toBeInTheDocument();
+    expect(screen.getByText("25% used")).toBeInTheDocument();
+  });
+
   // Pace indicator tests
   it("renders pace marker for weekly windows with timing data", () => {
     mockUseUsageData.mockReturnValue(createUsageDataState({

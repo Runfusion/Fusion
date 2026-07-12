@@ -856,20 +856,21 @@ describe("TaskDetailModal", () => {
       );
 
       // For an in-progress task (no workflow steps, no merge commit), the
-      // top-level tabs are: Activity, Chat, Plan, Changes, Review, Comments,
+      // top-level tabs are: Activity, Chat, Cost, Plan, Changes, Review, Comments,
       // Artifacts, Model, Workflow, Stats, Routing.
-      const tabTexts = ["Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
+      const tabTexts = ["Activity", "Chat", "Cost", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
       expect(tabs.map((tab) => tab.textContent)).toEqual(tabTexts);
       expect(tabs[0].textContent).toBe("Activity");
       expect(tabs[1].textContent).toBe("Chat");
-      expect(tabs[2].textContent).toBe("Plan");
-      expect(tabs[3].textContent).toBe("Changes");
+      expect(tabs[2].textContent).toBe("Cost");
+      expect(tabs[3].textContent).toBe("Plan");
+      expect(tabs[4].textContent).toBe("Changes");
       expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
 
-      expect(container.querySelectorAll(".detail-tab").length).toBe(11);
+      expect(container.querySelectorAll(".detail-tab").length).toBe(12);
       // Workflow tab should always appear even when no workflow steps are configured
       expect(screen.getByText("Workflow")).toBeInTheDocument();
       // Commits tab should NOT appear for non-done tasks

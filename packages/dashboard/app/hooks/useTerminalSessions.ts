@@ -72,11 +72,16 @@ function generateTabId(): string {
   return `tab-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
-function readTabsFromStorage(projectId?: string): TerminalTab[] {
+function terminalTabsStorageKey(storageScope?: string): string {
+  const trimmed = storageScope?.trim();
+  return trimmed ? `${STORAGE_KEY}:${trimmed}` : STORAGE_KEY;
+}
+
+function readTabsFromStorage(projectId?: string, storageScope?: string): TerminalTab[] {
   if (typeof window === "undefined") return [];
 
   try {
-    const stored = getScopedItem(STORAGE_KEY, projectId);
+    const stored = getScopedItem(terminalTabsStorageKey(storageScope), projectId);
     if (stored) {
       return JSON.parse(stored) as TerminalTab[];
     }
@@ -132,9 +137,24 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * const { tabs, activeTab, isReady, createTab, closeTab, setActiveTab, updateTabTitle, restartActiveTab } = useTerminalSessions();
  * ```
  */
-export function useTerminalSessions(projectId?: string): UseTerminalSessionsReturn {
+export interface UseTerminalSessionsOptions {
+  /** Optional namespace for isolating persisted terminal tabs, e.g. `task:FN-123`. */
+  storageScope?: string;
+  /** Optional working directory used when auto-created/replacement tabs have no explicit cwd. */
+  defaultCwd?: string;
+}
+
+/**
+ * FNXC:TerminalWorktrees 2026-07-10-00:00:
+ * FN-7813 embeds TerminalModal inside Task Detail, so task terminals need an isolated per-task tab namespace and a worktree-rooted default cwd. Omitted options preserve the global footer terminal contract: the original kb-terminal-tabs key and project-root session creation.
+ */
+export function useTerminalSessions(projectId?: string, options: UseTerminalSessionsOptions = {}): UseTerminalSessionsReturn {
+  const storageScope = options.storageScope?.trim() || undefined;
+  const defaultCwd = options.defaultCwd?.trim() || undefined;
+  const storageKey = terminalTabsStorageKey(storageScope);
+
   // Initialize state synchronously from localStorage (no async here)
-  const [tabs, setTabs] = useState<TerminalTab[]>(() => readTabsFromStorage(projectId));
+  const [tabs, setTabs] = useState<TerminalTab[]>(() => readTabsFromStorage(projectId, storageScope));
 
   // Track whether validation has completed
   const [isReady, setIsReady] = useState(false);
@@ -150,20 +170,20 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
 
   useEffect(() => {
     generationRef.current += 1;
-    setTabs(readTabsFromStorage(projectId));
+    setTabs(readTabsFromStorage(projectId, storageScope));
     setIsReady(false);
     setServerAvailable(true);
     setBootstrapError(null);
-  }, [projectId]);
+  }, [projectId, storageScope]);
 
   // Persist tabs to localStorage whenever they change
   useEffect(() => {
     try {
-      setScopedItem(STORAGE_KEY, JSON.stringify(tabs), projectId);
+      setScopedItem(storageKey, JSON.stringify(tabs), projectId);
     } catch {
       // Ignore localStorage errors
     }
-  }, [projectId, tabs]);
+  }, [projectId, storageKey, tabs]);
 
   // Validate and restore tabs from server on mount
   useEffect(() => {
@@ -187,7 +207,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
       the list call below, since its result IS decision-relevant there (which
       sessionIds still exist server-side).
       */
-      if (readTabsFromStorage(projectId).length === 0) {
+      if (readTabsFromStorage(projectId, storageScope).length === 0) {
         if (cancelled || gen !== generationRef.current) return;
         setServerAvailable(true);
         setIsReady(true);
@@ -259,7 +279,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     return () => {
       cancelled = true;
     };
-  }, [projectId]); // Re-run when project scope changes
+  }, [projectId, storageScope]); // Re-run when project or terminal tab storage scope changes
 
   // Auto-create first tab if no tabs exist after validation
   // On Windows, do NOT auto-create because the embedded shell may invoke Windows Terminal
@@ -284,7 +304,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
         Terminal bootstrap failures must render once inside Fusion and then wait for an explicit Retry, so Windows Terminal help/version output cannot recur through an automatic create-session loop.
         */
         withTimeout(
-          createTerminalSession(undefined, undefined, undefined, projectId),
+          createTerminalSession(defaultCwd, undefined, undefined, projectId),
           BOOTSTRAP_CREATE_TIMEOUT_MS,
           "createTerminalSession"
         )
@@ -295,7 +315,8 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
             const newTab: TerminalTab = {
               id: generateTabId(),
               sessionId: session.sessionId,
-              title: `Terminal ${tabs.length + 1}`,
+              title: defaultCwd ? titleFromCwd(defaultCwd) : `Terminal ${tabs.length + 1}`,
+              ...(defaultCwd ? { cwd: session.cwd } : {}),
               isActive: true,
               createdAt: Date.now(),
             };
@@ -329,7 +350,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
       }, 0);
       return () => clearTimeout(timeout);
     }
-  }, [bootstrapError, isReady, serverAvailable, tabs.length, retryGeneration]); // Run when ready or when tabs become empty
+  }, [bootstrapError, defaultCwd, isReady, projectId, serverAvailable, tabs.length, retryGeneration]); // Run when ready or when tabs become empty
 
   /**
    * Internal create tab function (used for auto-creation and user-initiated creation).
@@ -467,17 +488,18 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     const currentActiveTab = tabs.find((t) => t.isActive);
     if (!currentActiveTab) return;
 
-    // Recreate worktree-scoped tabs in their original cwd so restart does not silently fall back to the project root.
-    const session = await createTerminalSession(currentActiveTab.cwd, undefined, undefined, projectId);
+    // Recreate worktree-scoped tabs in their original cwd or the hook default so restart does not silently fall back to the project root.
+    const restartCwd = currentActiveTab.cwd ?? defaultCwd;
+    const session = await createTerminalSession(restartCwd, undefined, undefined, projectId);
     
     setTabs((currentTabs) =>
       currentTabs.map((tab) =>
         tab.id === currentActiveTab.id
-          ? { ...tab, sessionId: session.sessionId, cwd: currentActiveTab.cwd ? session.cwd : undefined }
+          ? { ...tab, sessionId: session.sessionId, cwd: restartCwd ? session.cwd : undefined }
           : tab
       )
     );
-  }, [projectId, tabs]);
+  }, [defaultCwd, projectId, tabs]);
 
   /**
    * Replace the active tab's session with a fresh server session.
@@ -499,12 +521,13 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     if (!currentActiveTab) return;
 
     try {
-      const session = await createTerminalSession(currentActiveTab.cwd, undefined, undefined, projectId);
+      const replacementCwd = currentActiveTab.cwd ?? defaultCwd;
+      const session = await createTerminalSession(replacementCwd, undefined, undefined, projectId);
 
       setTabs((currentTabs) =>
         currentTabs.map((tab) =>
           tab.id === currentActiveTab.id
-            ? { ...tab, sessionId: session.sessionId, cwd: currentActiveTab.cwd ? session.cwd : undefined }
+            ? { ...tab, sessionId: session.sessionId, cwd: replacementCwd ? session.cwd : undefined }
             : tab
         )
       );
@@ -517,7 +540,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
         err instanceof Error ? err.message : typeof err === "string" ? err : "Failed to create terminal session";
       setBootstrapError(message);
     }
-  }, [projectId, tabs]);
+  }, [defaultCwd, projectId, tabs]);
 
   // Derive active tab
   const activeTab = tabs.find((tab) => tab.isActive) ?? null;

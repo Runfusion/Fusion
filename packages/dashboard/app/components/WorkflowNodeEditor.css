@@ -797,30 +797,110 @@ Flow's SVG attributes and makes the graph preview read blank.
   display: none;
 }
 
-.wf-layout-toggle {
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Segmented three-mode view switch (Simple / Advanced / List) replacing the old
+boolean .wf-layout-toggle. Also reused by the mobile graph-style toggle
+(Graph / List) so both switches read as one control family.
+*/
+.wf-view-mode-toggle,
+.wf-mobile-graph-style-toggle {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-secondary);
+}
+
+.wf-mobile-graph-style-toggle {
+  margin: var(--space-sm) var(--space-md) 0;
+}
+
+.wf-view-mode-option {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  width: fit-content;
-  min-height: 30px;
-  padding: var(--space-xs) var(--space-sm);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  min-height: 26px;
+  padding: var(--space-xs) 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 
-.wf-layout-toggle:hover {
-  background: var(--bg-tertiary);
+.wf-view-mode-option:hover {
   color: var(--text);
 }
 
-.wf-layout-toggle:focus-visible {
+.wf-view-mode-option--active {
+  background: var(--surface-emphasis);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.wf-view-mode-option:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: 1px;
+}
+
+/* Simplified-view toolbar: a single quiet row (Add step + common actions). */
+.wf-editor-toolbar--simple {
+  justify-content: space-between;
+}
+
+.wf-editor-toolbar--simple .wf-simple-toolbar-add {
+  border-color: color-mix(in srgb, var(--todo) 45%, var(--border));
+  color: var(--text);
+}
+
+.wf-editor-toolbar--simple .wf-simple-toolbar-add:hover {
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, var(--surface));
+}
+
+/* Mobile graph tab: the simplified canvas needs a bounded, non-scrolling
+   region inside the scrollable mobile panel (WorkflowSimpleCanvas fills it
+   with position:absolute). */
+.wf-mobile-simple-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: max(340px, 55dvh);
+  margin: var(--space-sm) var(--space-md) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Simple-view inspector polish: the shared node/edge inspector gets a roomier,
+card-like presentation in the simplified view (wider pane, soft section
+cards) without touching its advanced-view layout or any field markup.
+*/
+.wf-editor-inspector--simple {
+  width: 320px;
+  padding: var(--space-lg);
+  gap: var(--space-md);
+  background: var(--surface);
+}
+
+.wf-editor-inspector--simple h3 {
+  font-size: 1rem;
+}
+
+.wf-editor-inspector--simple .wf-inspector-fields {
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
 }
 
 .wf-editor-body--simple-layout :where(.wf-editor-readonly-banner),
@@ -1562,6 +1642,12 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
   color: var(--text);
 }
 
+/*
+FNXC:WorkflowEditor 2026-07-12-10:30:
+The banner is a <details> disclosure: collapsed it reads as one quiet count
+line ("2 lifecycle warnings"); expanding reveals the full list. Hide the
+native marker and rotate the chevron on open.
+*/
 .wf-lifecycle-warnings-title {
   display: inline-flex;
   align-items: center;
@@ -1569,6 +1655,67 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
   font-size: 0.78rem;
   font-weight: 650;
   color: var(--ws-warning);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.wf-lifecycle-warnings-title::-webkit-details-marker {
+  display: none;
+}
+
+.wf-lifecycle-warnings-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.wf-lifecycle-warnings-chevron {
+  transition: transform var(--transition-fast);
+  opacity: 0.75;
+}
+
+.wf-lifecycle-warnings[open] .wf-lifecycle-warnings-chevron {
+  transform: rotate(180deg);
+}
+
+.wf-lifecycle-warnings[open] ul {
+  margin-top: var(--space-xs);
+}
+
+/*
+FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
+One-click fix affordances: a quiet pill per fixable warning row plus a
+"Fix all" pill inline in the collapsed summary line.
+*/
+.wf-lifecycle-fix {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, var(--ws-warning) 55%, var(--border));
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ws-warning);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.wf-lifecycle-fix:hover {
+  background: color-mix(in srgb, var(--ws-warning) 15%, transparent);
+}
+
+.wf-lifecycle-fix:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.wf-lifecycle-fix--all {
+  margin-left: var(--space-xs);
 }
 
 .wf-lifecycle-warnings ul {

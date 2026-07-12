@@ -136,6 +136,117 @@ describe("FileEditor", () => {
     });
   });
 
+  it.each([
+    ["markdown", "notes.md"],
+    ["non-markdown", "a.ts"],
+  ])("keeps newline and caret through stale self-echo renders for %s files", async (_label, filePath) => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="alpha" onChange={onChange} filePath={filePath} />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 5, insert: " beta" }, selection: { anchor: 10 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("alpha beta");
+    rerender(<FileEditor content="alpha beta" onChange={onChange} filePath={filePath} />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 10, insert: "\nnext" }, selection: { anchor: 15 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("alpha beta\nnext");
+
+    rerender(<FileEditor content="alpha beta" onChange={onChange} filePath={filePath} />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe("alpha beta\nnext");
+      expect(liveView.state.selection.main.head).toBe(15);
+      expect(liveView.state.selection.main.anchor).toBe(15);
+    });
+  });
+
+  it.each([
+    ["markdown trailing header", "notes.md", "intro\n\n# Heading"],
+    ["non-markdown trailing header text", "a.ts", "intro\n\n# Heading"],
+    ["markdown trailing plain text", "notes.md", "intro\n\nplain trailing text"],
+    ["non-markdown trailing plain text", "a.ts", "intro\n\nplain trailing text"],
+  ])("keeps a newline inserted after %s through a stale content prop", async (_label, filePath, initialContent) => {
+    document.documentElement.dataset.theme = "dark";
+    const nextContent = `${initialContent}\n`;
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content={initialContent} onChange={onChange} filePath={filePath} />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: initialContent.length, insert: "\n" }, selection: { anchor: nextContent.length } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith(nextContent);
+
+    rerender(<FileEditor content={nextContent} onChange={onChange} filePath={filePath} />);
+    rerender(<FileEditor content={initialContent} onChange={onChange} filePath={filePath} />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe(nextContent);
+      expect(liveView.state.selection.main.head).toBe(nextContent.length);
+      expect(liveView.state.selection.main.anchor).toBe(nextContent.length);
+    });
+  });
+
+  it("keeps local end-of-file edits when a stale self-echo was emitted more than twenty edits ago", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const initialContent = "intro\n\n# Heading";
+    const acknowledgedContent = `${initialContent}\n`;
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content={initialContent} onChange={onChange} filePath="notes.md" />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: initialContent.length, insert: "\n" }, selection: { anchor: acknowledgedContent.length } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith(acknowledgedContent);
+    rerender(<FileEditor content={acknowledgedContent} onChange={onChange} filePath="notes.md" />);
+
+    let expectedContent = acknowledgedContent;
+    for (const character of "abcdefghijklmnopqrstu") {
+      act(() => {
+        const view = getEditorView();
+        view.dispatch({ changes: { from: view.state.doc.length, insert: character }, selection: { anchor: view.state.doc.length + 1 } });
+      });
+      expectedContent += character;
+    }
+    expect(onChange).toHaveBeenLastCalledWith(expectedContent);
+
+    rerender(<FileEditor content={expectedContent} onChange={onChange} filePath="notes.md" />);
+    rerender(<FileEditor content={acknowledgedContent} onChange={onChange} filePath="notes.md" />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe(expectedContent);
+      expect(liveView.state.selection.main.head).toBe(expectedContent.length);
+      expect(liveView.state.selection.main.anchor).toBe(expectedContent.length);
+    });
+  });
+
+  it("applies external content changes while preserving the clamped caret", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="abcdef" onChange={onChange} filePath="a.ts" />);
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 6, insert: "!" }, selection: { anchor: 7 } });
+    });
+    expect(onChange).toHaveBeenLastCalledWith("abcdef!");
+
+    rerender(<FileEditor content="xy" onChange={onChange} filePath="a.ts" />);
+
+    await waitFor(() => {
+      const liveView = getEditorView();
+      expect(liveView.state.doc.toString()).toBe("xy");
+      expect(liveView.state.selection.main.head).toBe(2);
+      expect(liveView.state.selection.main.anchor).toBe(2);
+    });
+    expect(onChange).not.toHaveBeenCalledWith("xy");
+  });
+
   it("respects readOnly prop", () => {
     document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="readonly" onChange={vi.fn()} readOnly filePath="a.ts" />);

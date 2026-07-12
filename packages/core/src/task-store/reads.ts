@@ -138,13 +138,30 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
           });
         task.stalledReview = mergeQueuedTaskIds.has(task.id) || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now });
         task.retrySummary = computeRetrySummary(task);
+        /*
+        FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
+        PROMPT.md is enrichment for the task detail — NOT essential row data.
+        getTask is the shared load for the entire per-task API, so an unguarded
+        read/parse throw here turned every per-task operation into a 500 while
+        the PROMPT.md-free board list kept working. A read can fail for reasons
+        unrelated to the row (EACCES from a root-owned file, EISDIR, symlink
+        loop, transient FS error). Degrade to empty prompt / unsynced steps.
+        */
         if (task.steps.length === 0) {
-          task.steps = await store.parseStepsFromPrompt(id);
+          try {
+            task.steps = await store.parseStepsFromPrompt(id);
+          } catch (err) {
+            storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${id}: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
         let prompt = "";
-        const promptPath = join(store.taskDir(id), "PROMPT.md");
-        if (existsSync(promptPath)) {
-          prompt = await readFile(promptPath, "utf-8");
+        try {
+          const promptPath = join(store.taskDir(id), "PROMPT.md");
+          if (existsSync(promptPath)) {
+            prompt = await readFile(promptPath, "utf-8");
+          }
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to read PROMPT.md for ${id}: ${err instanceof Error ? err.message : String(err)}`);
         }
         return { ...task, prompt };
       }
@@ -198,15 +215,26 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
       // Derived at read time only; retrySummary is never persisted to SQLite.
       task.retrySummary = computeRetrySummary(task);
 
-      // Sync steps from PROMPT.md if task.steps is empty
+      // Sync steps from PROMPT.md if task.steps is empty.
+      // FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
+      // best-effort — see the backend branch above; an unreadable PROMPT.md must
+      // not 500 every per-task operation.
       if (task.steps.length === 0) {
-        task.steps = await store.parseStepsFromPrompt(id);
+        try {
+          task.steps = await store.parseStepsFromPrompt(id);
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
 
       let prompt = "";
-      const promptPath = join(store.taskDir(id), "PROMPT.md");
-      if (existsSync(promptPath)) {
-        prompt = await readFile(promptPath, "utf-8");
+      try {
+        const promptPath = join(store.taskDir(id), "PROMPT.md");
+        if (existsSync(promptPath)) {
+          prompt = await readFile(promptPath, "utf-8");
+        }
+      } catch (err) {
+        storeLog.warn(`[task-detail] failed to read PROMPT.md for ${id}: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       return { ...task, prompt };
@@ -340,8 +368,16 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         if (!slim || task.steps.length > 0) {
           return task;
         }
-        const steps = await store.parseStepsFromPrompt(task.id);
-        return steps.length > 0 ? { ...task, steps } : task;
+        // FNXC:TaskDetailPromptResilience 2026-07-10-16:00 (merge port from main):
+        // an unreadable PROMPT.md must not reject this Promise.all and 500 the
+        // entire board list — degrade to the persisted (empty) steps and log.
+        try {
+          const steps = await store.parseStepsFromPrompt(task.id);
+          return steps.length > 0 ? { ...task, steps } : task;
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${task.id} during listTasks: ${err instanceof Error ? err.message : String(err)}`);
+          return task;
+        }
       }));
       // Sort by createdAt, then by numeric ID suffix for tie-breaking
       const sorted = tasks.sort((a, b) => {
@@ -480,8 +516,16 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         return task;
       }
 
-      const steps = await store.parseStepsFromPrompt(task.id);
-      return steps.length > 0 ? { ...task, steps } : task;
+      // FNXC:TaskDetailPromptResilience 2026-07-10-16:00 (merge port from main):
+      // an unreadable PROMPT.md must not reject this Promise.all and 500 the
+      // entire board list — degrade to the persisted (empty) steps and log.
+      try {
+        const steps = await store.parseStepsFromPrompt(task.id);
+        return steps.length > 0 ? { ...task, steps } : task;
+      } catch (err) {
+        storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${task.id} during listTasks: ${err instanceof Error ? err.message : String(err)}`);
+        return task;
+      }
     }));
     const archivedTasks = includeArchived && (!columnFilter || columnFilter === "archived") ? store.archiveDb.list().map((entry) => store.archiveEntryToTask(entry, slim)) : [];
     // FNXC:BoardConsistency 2026-06-21-08:34: FN-6851's cache-sync fix is primary; listTasks still collapses duplicate storage sources so one task ID cannot render in two columns. Active SQLite rows are authoritative over archive snapshots.
@@ -778,8 +822,16 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
         if (task.steps.length > 0) {
           return task;
         }
-        const steps = await store.parseStepsFromPrompt(task.id);
-        return steps.length > 0 ? { ...task, steps } : task;
+        // FNXC:TaskDetailPromptResilience 2026-07-10-16:00 (merge port from main):
+        // an unreadable PROMPT.md must not reject this Promise.all and 500 the
+        // entire search — degrade to the persisted (empty) steps and log.
+        try {
+          const steps = await store.parseStepsFromPrompt(task.id);
+          return steps.length > 0 ? { ...task, steps } : task;
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${task.id} during searchTasks: ${err instanceof Error ? err.message : String(err)}`);
+          return task;
+        }
       }));
       return tasks;
     }
@@ -923,8 +975,16 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
         return task;
       }
 
-      const steps = await store.parseStepsFromPrompt(task.id);
-      return steps.length > 0 ? { ...task, steps } : task;
+      // FNXC:TaskDetailPromptResilience 2026-07-10-16:00 (merge port from main):
+      // an unreadable PROMPT.md must not reject this Promise.all and 500 the
+      // entire search — degrade to the persisted (empty) steps and log.
+      try {
+        const steps = await store.parseStepsFromPrompt(task.id);
+        return steps.length > 0 ? { ...task, steps } : task;
+      } catch (err) {
+        storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${task.id} during searchTasks: ${err instanceof Error ? err.message : String(err)}`);
+        return task;
+      }
     }));
     const archiveMatches = includeArchived
       ? store.archiveDb.search(trimmedQuery, limit >= 0 ? limit : 100).map((entry) => store.archiveEntryToTask(entry, slim))

@@ -596,6 +596,11 @@ export function createSSE(
       send(`event: artifact:registered\ndata: ${JSON.stringify(artifact)}\n\n`);
     };
 
+    const onArtifactUpdated = (artifact: unknown) => {
+      /* FNXC:ArtifactRegistry 2026-07-10-15:20: Forward in-place artifact edits (Artifacts view doc editor) so open galleries and viewers refresh without a manual reload. */
+      send(`event: artifact:updated\ndata: ${JSON.stringify(artifact)}\n\n`);
+    };
+
     const onResearchRunCreated = (run: unknown) => {
       send(`event: research:run:created\ndata: ${JSON.stringify(run)}\n\n`);
     };
@@ -896,6 +901,7 @@ export function createSSE(
       store.off("task:merged", onMerged);
       store.off("agent:log", onAgentLog);
       store.off("artifact:registered", onArtifactRegistered);
+      store.off("artifact:updated", onArtifactUpdated);
       if (missionStore) {
         missionStore.off("mission:created", onMissionCreated);
         missionStore.off("mission:updated", onMissionUpdated);
@@ -1011,6 +1017,7 @@ export function createSSE(
     */
     store.on("agent:log", onAgentLog);
     store.on("artifact:registered", onArtifactRegistered);
+    store.on("artifact:updated", onArtifactUpdated);
 
     if (missionStore) {
       missionStore.on("mission:created", onMissionCreated);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Artifact, ArtifactType, ArtifactWithTask, MessageStore, TaskStore } from "@fusion/core";
@@ -332,6 +332,300 @@ describe("artifact register tool", () => {
 
     expect(getText(result)).toContain("ERROR: Failed to register artifact");
     expect(getText(result)).toContain("database temporarily unavailable");
+  });
+});
+
+/*
+FNXC:ArtifactRegistry 2026-07-10-14:30:
+Agents save screenshots/wireframes/mocks as files in their worktree; `path` registration is the practical ingestion route (inline base64 for real screenshots is impractical). These tests pin: worktree-relative resolution via baseDir, defaultTaskId fallback for executor-lane runs, MIME inference from extension, image signature validation (including SVG text sniff), and payload-source exclusivity.
+*/
+describe("artifact register tool path payloads", () => {
+  let baseDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    baseDir = mkdtempSync(join(tmpdir(), "agent-artifact-path-"));
+  });
+
+  afterEach(() => {
+    rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it("registers an image from a worktree-relative path with inferred mimeType and default task", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-path", type: "image", mimeType: "image/png", content: undefined, uri: "artifacts/after.png" }));
+    mkdirSync(join(baseDir, "screenshots"), { recursive: true });
+    writeFileSync(join(baseDir, "screenshots", "after.png"), PNG_IMAGE_BYTES);
+
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    const result = await runTool(tool, "call-path-relative", {
+      type: "image",
+      title: "After screenshot",
+      path: "screenshots/after.png",
+    });
+
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      type: "image",
+      title: "After screenshot",
+      mimeType: "image/png",
+      taskId: TASK_ID,
+      data: PNG_IMAGE_BYTES,
+    }));
+    expect(getText(result)).toContain("Registered artifact");
+    expect(getText(result)).not.toContain("ERROR:");
+  });
+
+  it("prefers an explicit taskId over the defaultTaskId", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-path-explicit", type: "image", taskId: "FN-9999" }));
+    writeFileSync(join(baseDir, "shot.png"), PNG_IMAGE_BYTES);
+
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    await runTool(tool, "call-path-explicit-task", {
+      type: "image",
+      title: "Explicit task screenshot",
+      path: "shot.png",
+      taskId: "FN-9999",
+    });
+
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-9999" }));
+  });
+
+  it("registers an absolute-path SVG wireframe via text sniffing", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-svg", type: "image", mimeType: "image/svg+xml", content: undefined, uri: "artifacts/wireframe.svg" }));
+    const svgPath = join(baseDir, "wireframe.svg");
+    writeFileSync(svgPath, `<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100"/></svg>`);
+
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+    const result = await runTool(tool, "call-path-svg", {
+      type: "image",
+      title: "Login wireframe",
+      path: svgPath,
+    });
+
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "image/svg+xml" }));
+    expect(getText(result)).not.toContain("ERROR:");
+  });
+
+  it("rejects a missing file, non-image bytes for image type, and unknown extensions without mimeType", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir });
+    writeFileSync(join(baseDir, "fake.png"), "not a real png");
+    writeFileSync(join(baseDir, "blob.xyz"), "opaque bytes");
+
+    const missingResult = await runTool(tool, "call-path-missing", { type: "image", title: "Missing", path: "nope.png" });
+    const fakeResult = await runTool(tool, "call-path-fake", { type: "image", title: "Fake PNG", path: "fake.png" });
+    const unknownResult = await runTool(tool, "call-path-unknown", { type: "other", title: "Blob", path: "blob.xyz" });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(missingResult)).toContain("does not exist or is not readable");
+    expect(getText(fakeResult)).toContain("does not contain valid image bytes");
+    expect(getText(unknownResult)).toContain("Could not infer a MIME type");
+  });
+
+  it("rejects combining path with other payload sources", async () => {
+    const { store, registerArtifact } = createMockStore();
+    writeFileSync(join(baseDir, "shot.png"), PNG_IMAGE_BYTES);
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir });
+
+    const result = await runTool(tool, "call-path-conflict", {
+      type: "image",
+      title: "Conflicting payloads",
+      path: "shot.png",
+      dataBase64: PNG_IMAGE_BYTES.toString("base64"),
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("path cannot be combined with uri, content, or dataBase64");
+  });
+
+  it("rejects combining content with uri", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir });
+
+    const result = await runTool(tool, "call-content-uri-conflict", {
+      type: "document",
+      title: "Conflicting payloads",
+      content: "# inline",
+      uri: "https://example.com/doc.md",
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("provide exactly one artifact payload source: content, uri, dataBase64, or path");
+  });
+
+  /*
+  FNXC:ArtifactRegistry 2026-07-11-10:05:
+  Containment coverage: `path` must never read files outside the session workspace directory or
+  the OS temp directory (realpath-canonicalized, so `../` and symlink escapes are caught), and
+  no-baseDir lanes must reject relative paths instead of resolving against process.cwd().
+  macOS note: tmpdir() is /var/folders/... which realpaths to /private/var/...; these tests rely
+  on the implementation comparing canonical roots.
+  */
+  it("rejects a relative path that escapes the baseDir via ../ segments", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const outsideDir = mkdtempSync(join(tmpdir(), "agent-artifact-outside-"));
+    try {
+      writeFileSync(join(outsideDir, "escape.png"), PNG_IMAGE_BYTES);
+      const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+
+      const result = await runTool(tool, "call-path-escape", {
+        type: "image",
+        title: "Escaped screenshot",
+        path: join("..", outsideDir.split("/").pop()!, "escape.png"),
+      });
+
+      expect(registerArtifact).not.toHaveBeenCalled();
+      expect(getText(result)).toContain("escapes the session workspace directory");
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlink inside the baseDir that targets a file outside the allowed roots", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    const outsideTarget = join(process.cwd(), "package.json");
+    symlinkSync(outsideTarget, join(baseDir, "sneaky.json"));
+
+    const result = await runTool(tool, "call-symlink-escape", {
+      type: "document",
+      title: "Sneaky symlink",
+      path: "sneaky.json",
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("escapes the session workspace directory");
+  });
+
+  it("rejects an absolute path outside both baseDir and the OS temp directory, naming the allowed roots", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    // package.json of the engine package: exists, but lives outside tmpdir and outside baseDir.
+    const outsideAbsolute = join(process.cwd(), "package.json");
+
+    const result = await runTool(tool, "call-absolute-outside", {
+      type: "document",
+      title: "Server file grab",
+      path: outsideAbsolute,
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("outside the allowed roots");
+    expect(getText(result)).toContain("OS temp directory");
+  });
+
+  it("rejects a relative path when no baseDir is configured instead of resolving against process.cwd()", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+
+    const result = await runTool(tool, "call-relative-no-basedir", {
+      type: "image",
+      title: "CWD-relative screenshot",
+      path: "package.json",
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("relative path requires a workspace directory");
+  });
+
+  it("accepts an absolute path under the OS temp directory when no baseDir is configured", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-tmp", type: "image", mimeType: "image/png", content: undefined }));
+    const captureDir = mkdtempSync(join(tmpdir(), "agent-artifact-capture-"));
+    try {
+      const capturePath = join(captureDir, "capture.png");
+      writeFileSync(capturePath, PNG_IMAGE_BYTES);
+      const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+
+      const result = await runTool(tool, "call-absolute-tmpdir", {
+        type: "image",
+        title: "Temp-dir capture",
+        path: capturePath,
+        taskId: TASK_ID,
+      });
+
+      expect(getText(result)).toContain("Registered artifact");
+      expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
+        type: "image",
+        mimeType: "image/png",
+        data: PNG_IMAGE_BYTES,
+      }));
+    } finally {
+      rmSync(captureDir, { recursive: true, force: true });
+    }
+  });
+
+  it("registers video media from path with extension-inferred mimeType and container signature validation", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-video", type: "video", mimeType: "video/mp4", content: undefined, uri: "artifacts/demo.mp4" }));
+    // Minimal ISO BMFF header: 4-byte box size then "ftyp".
+    const mp4Bytes = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42-demo-recording")]);
+    writeFileSync(join(baseDir, "demo.mp4"), mp4Bytes);
+
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    const result = await runTool(tool, "call-path-video", {
+      type: "video",
+      title: "Feature demo recording",
+      path: "demo.mp4",
+    });
+
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      type: "video",
+      mimeType: "video/mp4",
+      taskId: TASK_ID,
+      data: mp4Bytes,
+    }));
+    expect(getText(result)).not.toContain("ERROR:");
+  });
+
+  /*
+  FNXC:ArtifactRegistry 2026-07-11-10:20:
+  Video and PDF path payloads are signature-gated like images so the gallery never receives an unplayable "video" or unrenderable "PDF"; WebM validates via its EBML header, mp4/mov via the ftyp box, PDFs via the %PDF- prefix.
+  */
+  it("rejects renamed junk for video and pdf payloads but accepts valid containers", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir });
+    writeFileSync(join(baseDir, "fake.mp4"), "not a real video");
+    writeFileSync(join(baseDir, "fake.pdf"), "not a real pdf");
+    writeFileSync(join(baseDir, "real.webm"), Buffer.concat([Buffer.from("1a45dfa3", "hex"), Buffer.from("webm-body")]));
+    writeFileSync(join(baseDir, "real.pdf"), "%PDF-1.4\nminimal pdf body");
+
+    const fakeVideo = await runTool(tool, "call-fake-video", { type: "video", title: "Fake video", path: "fake.mp4" });
+    const fakePdf = await runTool(tool, "call-fake-pdf", { type: "document", title: "Fake PDF", path: "fake.pdf" });
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(fakeVideo)).toContain("does not contain valid video bytes");
+    expect(getText(fakePdf)).toContain("does not contain valid PDF bytes");
+
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-webm", type: "video", mimeType: "video/webm", content: undefined, uri: "artifacts/real.webm" }));
+    const realWebm = await runTool(tool, "call-real-webm", { type: "video", title: "Real WebM", path: "real.webm" });
+    expect(getText(realWebm)).not.toContain("ERROR:");
+
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-pdf", type: "document", mimeType: "application/pdf", content: undefined, uri: "artifacts/real.pdf" }));
+    const realPdf = await runTool(tool, "call-real-pdf", { type: "document", title: "Real PDF", path: "real.pdf" });
+    expect(getText(realPdf)).not.toContain("ERROR:");
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "application/pdf" }));
+  });
+
+  it("registers an HTML mockup from path with text/html mimeType inferred", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-html", type: "document", mimeType: "text/html", content: undefined, uri: "artifacts/mock.html" }));
+    writeFileSync(join(baseDir, "mock.html"), "<!doctype html><html><body><h1>Login mock</h1></body></html>");
+
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    const result = await runTool(tool, "call-path-html", {
+      type: "document",
+      title: "Login page mockup",
+      path: "mock.html",
+    });
+
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      type: "document",
+      mimeType: "text/html",
+      taskId: TASK_ID,
+    }));
+    expect(getText(result)).not.toContain("ERROR:");
   });
 });
 

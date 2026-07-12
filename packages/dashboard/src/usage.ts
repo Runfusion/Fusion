@@ -3,7 +3,12 @@ import * as path from "node:path";
 import { readFile } from "node:fs/promises";
 import * as https from "node:https";
 import * as child_process from "node:child_process";
-import { choosePreferredStoredCredential, readStoredCredentialsFromAuthFile } from "@fusion/core";
+import {
+  choosePreferredStoredCredential,
+  GROK_CLI_PROVIDER_ID,
+  GROK_PROVIDER_REGISTRATION,
+  readStoredCredentialsFromAuthFile,
+} from "@fusion/core";
 import { getAuthFileCandidates } from "./auth-paths.js";
 
 function getHomeDir(): string {
@@ -1341,7 +1346,14 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
     const authType = settings?.security?.auth?.selectedType;
     if (authType === "api-key" || authType === "vertex-ai") {
-      usage.status = "error";
+      /*
+      FNXC:UsageProviders 2026-07-10-12:00:
+      Gemini appears in usage only when configured for the meterable OAuth path and its token authenticates. Unsupported auth types mean Gemini is not configured for metering, so demote to `no-auth` for the single aggregate filter instead of showing a noisy error card.
+
+      FNXC:UsageProviders 2026-07-10-12:00:
+      Gemini deliberately differs from the general FN-7798 keep-auth-expired-visible rule: stale Gemini CLI logins should not clutter the usage list, while transient failures of a configured OAuth token still stay `error` and visible.
+      */
+      usage.status = "no-auth";
       usage.error = `Unsupported auth type: ${authType} (need oauth-personal)`;
       return usage;
     }
@@ -1363,7 +1375,11 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     );
 
     if (res.status === 401 || res.status === 403) {
-      usage.status = "error";
+      /*
+      FNXC:UsageProviders 2026-07-10-12:00:
+      Gemini auth failures mean the meter cannot authenticate the stored OAuth token, so classify 401/403 as `no-auth` and let `fetchAllProviderUsage` omit Gemini. Keep the diagnostic message for logs; HTTP 5xx, network, timeout, and parse failures remain actionable `error` states for configured Gemini.
+      */
+      usage.status = "no-auth";
       usage.error = "Auth expired — run 'gemini' to re-login";
       return usage;
     }
@@ -1579,6 +1595,91 @@ async function fetchMinimaxUsage(authStorage?: AuthStorageLike): Promise<Provide
   return usage;
 }
 
+
+// ── Grok (xAI) fetcher ─────────────────────────────────────────────────────
+
+async function readGrokUserSettingsApiKey(): Promise<string | null> {
+  try {
+    const settingsPath = path.join(getHomeDir(), ".grok", "user-settings.json");
+    const raw = await readFile(settingsPath, "utf-8");
+    const parsed = JSON.parse(raw) as { apiKey?: unknown };
+    return typeof parsed?.apiKey === "string" && parsed.apiKey.trim().length > 0
+      ? parsed.apiKey.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readGrokApiKey(authStorage?: AuthStorageLike): Promise<string | null> {
+  const envKey = process.env.GROK_API_KEY;
+  if (typeof envKey === "string" && envKey.trim().length > 0) {
+    return envKey.trim();
+  }
+
+  const userSettingsKey = await readGrokUserSettingsApiKey();
+  if (userSettingsKey) {
+    return userSettingsKey;
+  }
+
+  return readConfiguredApiKey(GROK_CLI_PROVIDER_ID, authStorage);
+}
+
+async function fetchGrokUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
+  const usage: ProviderUsage = {
+    name: "Grok",
+    icon: "✖️",
+    status: "no-auth",
+    windows: [],
+  };
+
+  const apiKey = await readGrokApiKey(authStorage);
+  if (!apiKey) {
+    usage.error = "No Grok credentials — set GROK_API_KEY or add a key";
+    return usage;
+  }
+
+  try {
+    /*
+    FNXC:UsageProviders 2026-07-10-00:00:
+    xAI's inference key exposes GET /api-key as the verified auth-validity endpoint on the same direct provider base URL Fusion already uses for `grok-cli`. The public xAI API does not document a subscription reset-window or remaining-quota meter for inference keys, so this provider must remain an auth-validity card unless xAI returns confirmed consumption data in this response or standard rate-limit headers. Do not fabricate percent-used, reset timestamps, or UsageWindow entries from key metadata alone.
+    */
+    const res = await httpsRequest(`${GROK_PROVIDER_REGISTRATION.baseUrl}/api-key`, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      usage.status = "error";
+      usage.error = "Auth expired — check your Grok/xAI API key";
+      return usage;
+    }
+
+    if (res.status !== 200) {
+      usage.status = "error";
+      usage.error = `HTTP ${res.status}: ${res.body.slice(0, 200)}`;
+      return usage;
+    }
+
+    const data = res.body.trim().length > 0 ? JSON.parse(res.body) : {};
+    if (data?.api_key_blocked === true || data?.api_key_disabled === true || data?.team_blocked === true) {
+      usage.status = "error";
+      usage.error = "Grok/xAI API key is blocked or disabled";
+      return usage;
+    }
+
+    usage.status = "ok";
+  } catch (e: unknown) {
+    usage.status = "error";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch";
+  }
+
+  return usage;
+}
+
 // ── Zai (Zhipu AI) fetcher ──────────────────────────────────────────────────
 
 async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
@@ -1709,6 +1810,221 @@ async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsa
   return usage;
 }
 
+// ── Cursor fetcher ──────────────────────────────────────────────────────────
+
+const CURSOR_ADMIN_SPEND_ENDPOINT = "https://api.cursor.com/teams/spend";
+const CURSOR_API_KEY_ENV_VAR = "CURSOR_API_KEY";
+const CURSOR_API_KEY_PROVIDER_ID = "cursor";
+const CURSOR_MONTHLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+type CursorAccountInfo = {
+  email?: string;
+  plan?: string;
+};
+
+/*
+FNXC:UsageProviders 2026-07-11-00:00:
+Cursor Admin API usage metering needs a real operator-reachable credential path, but Cursor CLI runtime auth remains OAuth/session-based through `cursor-agent status` and is not an Admin API key. Use Fusion's documented `CURSOR_API_KEY` environment variable first, mirroring the `GROK_API_KEY` precedent, then the single `cursor` authStorage fallback for tests/imported credentials. Cursor documents Basic Auth with an API key for the Admin API and `POST /teams/spend`, but does not document a local Admin API key file, so no file fallback is invented here.
+*/
+export async function readCursorApiKey(authStorage?: AuthStorageLike): Promise<string | null> {
+  const envKey = process.env[CURSOR_API_KEY_ENV_VAR];
+  if (typeof envKey === "string" && envKey.trim().length > 0) {
+    return envKey.trim();
+  }
+
+  return readConfiguredApiKey(CURSOR_API_KEY_PROVIDER_ID, authStorage);
+}
+
+async function readCursorAccountInfo(): Promise<CursorAccountInfo> {
+  for (const command of ["cursor-agent", "cursor"]) {
+    try {
+      const { stdout } = await execFileAsync(command, ["about", "--format", "json"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      const data = JSON.parse(stdout.trim()) as Record<string, unknown>;
+      return {
+        email: typeof data.userEmail === "string" ? data.userEmail : undefined,
+        plan: typeof data.subscriptionTier === "string" ? data.subscriptionTier : undefined,
+      };
+    } catch {
+      // Try the next binary/status fallback.
+    }
+
+    try {
+      const { stdout } = await execFileAsync(command, ["status", "--format", "json"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      const data = JSON.parse(stdout.trim()) as { userInfo?: { email?: unknown }; status?: unknown };
+      return {
+        email: typeof data.userInfo?.email === "string" ? data.userInfo.email : undefined,
+        plan: typeof data.status === "string" ? data.status : undefined,
+      };
+    } catch {
+      // Try the next binary.
+    }
+  }
+
+  return {};
+}
+
+function readNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+function addOneMonth(value: Date): Date {
+  const next = new Date(value.getTime());
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  return next;
+}
+
+function deriveCursorReset(cycleStart: unknown): { resetText: string | null; resetMs?: number; resetAt?: string; windowDurationMs: number } {
+  const startMs = readNumber(cycleStart);
+  if (!startMs) {
+    return { resetText: null, windowDurationMs: CURSOR_MONTHLY_WINDOW_MS };
+  }
+
+  let resetAtDate = addOneMonth(new Date(startMs >= 1e12 ? startMs : startMs * 1000));
+  const now = Date.now();
+  while (resetAtDate.getTime() <= now) {
+    resetAtDate = addOneMonth(resetAtDate);
+  }
+
+  const parsedReset = _parseResetTimestamp(resetAtDate.toISOString());
+  if (!parsedReset) {
+    return { resetText: null, windowDurationMs: CURSOR_MONTHLY_WINDOW_MS };
+  }
+
+  return {
+    resetText: `resets in ${formatDuration(parsedReset.msLeft)}`,
+    resetMs: parsedReset.msLeft,
+    resetAt: parsedReset.resetAt,
+    windowDurationMs: CURSOR_MONTHLY_WINDOW_MS,
+  };
+}
+
+function getCursorSpendRows(data: Record<string, unknown>): Record<string, unknown>[] {
+  const nested = typeof data.data === "object" && data.data !== null ? data.data as Record<string, unknown> : undefined;
+  const rows = data.teamMemberSpend ?? nested?.teamMemberSpend ?? data.members ?? nested?.members;
+  return Array.isArray(rows) ? rows.filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null) : [];
+}
+
+function selectCursorSpendRow(rows: Record<string, unknown>[], email?: string): Record<string, unknown> | null {
+  if (rows.length === 0) return null;
+  if (email) {
+    const normalizedEmail = email.toLowerCase();
+    const match = rows.find((row) => typeof row.email === "string" && row.email.toLowerCase() === normalizedEmail);
+    if (match) return match;
+  }
+  return rows.length === 1 ? rows[0] : null;
+}
+
+export async function fetchCursorUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
+  const usage: ProviderUsage = {
+    name: "Cursor",
+    icon: "🟣",
+    status: "no-auth",
+    windows: [],
+  };
+
+  const apiKey = await readCursorApiKey(authStorage);
+  if (!apiKey) {
+    usage.error = "No Cursor Admin API key — set CURSOR_API_KEY in the Fusion dashboard environment";
+    return usage;
+  }
+
+  const account = await readCursorAccountInfo();
+  if (account.email) usage.email = account.email;
+  if (account.plan) usage.plan = account.plan;
+
+  try {
+    /*
+    FNXC:UsageProviders 2026-07-11-00:00:
+    Cursor exposes meterable team spend through the documented Admin API `POST https://api.cursor.com/teams/spend`, authenticated with Basic auth using the API key as the username (`-u YOUR_API_KEY:`). Fusion resolves that key from the documented `CURSOR_API_KEY` environment variable; Cursor CLI OAuth/session auth is not an Admin API credential and cannot reach this endpoint by itself. The response documents `teamMemberSpend[].overallSpendCents`, `spendCents`, `hardLimitOverrideDollars`, `monthlyLimitDollars`, `email`, and `subscriptionCycleStart`; no personal CLI usage endpoint or direct reset timestamp is documented, so personal/session-only Cursor logins stay `no-auth` and the reset is derived from the monthly cycle start.
+    */
+    const body: Record<string, unknown> = { page: 1, pageSize: 500 };
+    if (account.email) body.searchTerm = account.email;
+
+    const res = await httpsRequest(CURSOR_ADMIN_SPEND_ENDPOINT, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      usage.status = "error";
+      usage.error = "Auth expired — check your Cursor Admin API key";
+      return usage;
+    }
+
+    if (res.status === 404) {
+      usage.status = "no-auth";
+      usage.error = "No Cursor usage entitlement found";
+      return usage;
+    }
+
+    if (res.status !== 200) {
+      usage.status = "error";
+      usage.error = `HTTP ${res.status}: ${res.body.slice(0, 200)}`;
+      return usage;
+    }
+
+    const data = JSON.parse(res.body) as Record<string, unknown>;
+    const rows = getCursorSpendRows(data);
+    const row = selectCursorSpendRow(rows, account.email);
+    if (!row) {
+      usage.status = "no-auth";
+      usage.error = rows.length > 1
+        ? "Cursor usage response did not include a unique current user row"
+        : "Cursor usage response did not include meterable spend";
+      return usage;
+    }
+
+    const spentCents = readNumber(row.overallSpendCents) ?? readNumber(row.spendCents);
+    const hardLimitDollars = readNumber(row.hardLimitOverrideDollars);
+    const monthlyLimitDollars = readNumber(row.monthlyLimitDollars);
+    const limitDollars = hardLimitDollars && hardLimitDollars > 0 ? hardLimitDollars : monthlyLimitDollars;
+    if (spentCents === undefined || !limitDollars || limitDollars <= 0) {
+      usage.status = "no-auth";
+      usage.error = "Cursor usage response did not include a spend limit to meter";
+      return usage;
+    }
+
+    const percentUsed = clampPercent((spentCents / (limitDollars * 100)) * 100);
+    const reset = deriveCursorReset(data.subscriptionCycleStart ?? row.subscriptionCycleStart);
+    usage.status = "ok";
+    usage.email = typeof row.email === "string" ? row.email : usage.email;
+    usage.plan = usage.plan ?? (typeof row.plan === "string" ? row.plan : null);
+    usage.windows.push({
+      label: "Monthly spend",
+      percentUsed,
+      percentLeft: clampPercent(100 - percentUsed),
+      resetText: reset.resetText,
+      resetMs: reset.resetMs,
+      resetAt: reset.resetAt,
+      windowDurationMs: reset.windowDurationMs,
+    });
+  } catch (e: unknown) {
+    usage.status = "error";
+    usage.error = e instanceof Error ? e.message : "Failed to fetch";
+  }
+
+  return usage;
+}
+
 // ── GitHub Copilot fetcher ──────────────────────────────────────────────────
 
 type CopilotCredential = {
@@ -1808,12 +2124,18 @@ async function fetchGitHubCopilotUsage(): Promise<ProviderUsage> {
         return usage;
       }
 
-      usage.status = "error";
       if (res.status === 404) {
+        /*
+        FNXC:UsageProviders 2026-07-10-00:00:
+        Usage surfaces must only show providers the user configured with meterable data. A GitHub credential without Copilot entitlement is a no-entitlement path, so demote it to `no-auth` for the aggregate filter while keeping diagnostics on the provider result.
+        */
+        usage.status = "no-auth";
         usage.error = "No Copilot subscription found";
       } else if (res.status === 401 || res.status === 403) {
+        usage.status = "error";
         usage.error = "Auth expired — re-login from Fusion Settings → Authentication";
       } else {
+        usage.status = "error";
         usage.error = `HTTP ${res.status}: ${res.body.slice(0, 200)}`;
       }
       return usage;
@@ -1841,7 +2163,11 @@ async function fetchGitHubCopilotUsage(): Promise<ProviderUsage> {
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : "Failed to fetch";
     if (errMsg.includes("404") || errMsg.includes("Not Found")) {
-      usage.status = "error";
+      /*
+      FNXC:UsageProviders 2026-07-10-00:00:
+      An authenticated `gh` CLI can exist for ordinary git without Fusion Copilot setup or a Copilot subscription. Treat the 404 no-subscription response as not configured/no meterable entitlement so it is omitted, while 401/403 and transient failures remain visible errors.
+      */
+      usage.status = "no-auth";
       usage.error = "No Copilot subscription found";
     } else if (errMsg.includes("401") || errMsg.includes("403")) {
       usage.status = "error";
@@ -1916,13 +2242,15 @@ export async function fetchAllProviderUsage(authStorage?: AuthStorageLike): Prom
   }
 
   // Fetch all providers in parallel with per-provider timeout
-  // Currently includes: Claude, Codex, Gemini, Minimax, Zai, GitHub Copilot
+  // Currently includes: Claude, Codex, Gemini, Minimax, Zai, Grok, Cursor, GitHub Copilot
   const results = await Promise.allSettled([
     withTimeout(fetchClaudeUsage(authStorage), "Claude", CLAUDE_FETCH_TIMEOUT_MS),
     withTimeout(fetchCodexUsage(), "Codex"),
     withTimeout(fetchGeminiUsage(), "Gemini"),
     withTimeout(fetchMinimaxUsage(authStorage), "Minimax"),
     withTimeout(fetchZaiUsage(authStorage), "Zai"),
+    withTimeout(fetchGrokUsage(authStorage), "Grok"),
+    withTimeout(fetchCursorUsage(authStorage), "Cursor"),
     withTimeout(fetchGitHubCopilotUsage(), "GitHub Copilot"),
   ]);
 
@@ -1936,7 +2264,10 @@ export async function fetchAllProviderUsage(authStorage?: AuthStorageLike): Prom
     }
   }
 
-  // Only return providers that have valid auth configured.
+  /*
+  FNXC:UsageProviders 2026-07-10-00:00:
+  This is the single enforcement point for the usage-list invariant: show only providers that are both configured and expose meterable data. Fetchers demote missing credentials and no-entitlement/nothing-to-meter outcomes to `no-auth`; configured providers with actionable failures stay `error` and remain visible.
+  */
   const authenticatedProviders = providers.filter((provider) => provider.status !== "no-auth");
 
   // Update cache

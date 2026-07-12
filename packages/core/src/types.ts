@@ -4020,6 +4020,11 @@ export interface ProjectSettings {
    */
   openMobileTasksInPopup?: boolean;
   /**
+   * FNXC:TaskCardCostBadge 2026-07-11-12:15:
+   * Default-off project setting that lets operators opt board cards into showing derived read-time task cost next to the execution-time badge. Missing/false preserves existing card density and no badge shell renders unless a task has positive token usage.
+   */
+  showCostBadgeOnCards?: boolean;
+  /**
    * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
    * Default-off keeps task details Activity-first so omitted non-done opens land on the legacy `chat` Activity → Live surface. Operators can set true to restore Chat-first ordering/default while explicit Activity/Chat/Logs deep links remain stable.
    */
@@ -7946,3 +7951,19 @@ export {
 export type { ResolvedModelSelection } from "./model-resolution.js";
 export { resolveResearchSettings } from "./research-settings.js";
 export type { ResolvedResearchSettings } from "./research-settings.js";
+
+/*
+FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00:
+The workflow editor recomputes lifecycle warnings client-side as the graph is
+edited (so the banner clears without a save round-trip) and offers one-click
+fixes that insert the canonical completion-summary node. Both helpers are
+pure (types + string constants only), so they are safe to re-export through
+this browser-safe alias entry.
+*/
+export { analyzeWorkflowLifecycle } from "./workflow-lifecycle-validation.js";
+export type { WorkflowLifecycleWarning, WorkflowLifecycleWarningCode } from "./workflow-lifecycle-validation.js";
+export {
+  completionSummaryNode,
+  isCompletionSummaryNode,
+  COMPLETION_SUMMARY_NODE_ID,
+} from "./builtin-completion-summary-node.js";

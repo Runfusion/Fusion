@@ -607,11 +607,18 @@ export async function resetPromptCheckboxesImpl(store: TaskStore, dir: string): 
       return;
     }
 
-    const content = await readFile(promptPath, "utf-8");
-    const resetContent = content.replace(/^- \[x\]/gm, "- [ ]");
+    // FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
+    // cosmetic checkbox reset — an unreadable/unwritable PROMPT.md must not
+    // fail the task reset itself; the DB reset already proceeded.
+    try {
+      const content = await readFile(promptPath, "utf-8");
+      const resetContent = content.replace(/^- \[x\]/gm, "- [ ]");
 
-    if (resetContent !== content) {
-      await writeFile(promptPath, resetContent, "utf-8");
+      if (resetContent !== content) {
+        await writeFile(promptPath, resetContent, "utf-8");
+      }
+    } catch (err) {
+      storeLog.warn(`[task-detail] failed to reset PROMPT.md checkboxes in ${dir}: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
 

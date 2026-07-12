@@ -130,7 +130,7 @@ describe("component CSS hygiene scan regressions", () => {
         ".plugin-registry-retry:focus-visible",
       ],
       "WorkflowNodeEditor.css": [
-        ".wf-layout-toggle:focus-visible",
+        ".wf-view-mode-option:focus-visible",
         ".wf-template-option:focus-visible",
         ".wf-ai-prompt:focus-visible",
         ".wf-mobile-tab:focus-visible",

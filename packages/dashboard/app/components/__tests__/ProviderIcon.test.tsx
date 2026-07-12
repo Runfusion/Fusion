@@ -58,14 +58,20 @@ describe("ProviderIcon", () => {
     expect(svg.parentElement).toHaveStyle({ color: "var(--provider-openai)" });
   });
 
-  it("renders cursor-cli icon with provider token color", () => {
+  it("renders cursor-cli icon with provider token color and official brand mark", () => {
     render(<ProviderIcon provider="cursor-cli" />);
     const svg = screen.getByTestId("cursor-cli-icon");
     expect(svg).toBeInTheDocument();
     expect(screen.getByLabelText("Cursor — via Cursor CLI")).toBeInTheDocument();
-    const badgeGlyph = svg.querySelector('path[stroke="var(--provider-icon-contrast)"]');
-    expect(badgeGlyph).toBeInTheDocument();
+    expect(svg.querySelector('path[data-cursor-brand-mark="cube"]')).toHaveAttribute("fill", "var(--provider-cursor-cli)");
+    expect(svg.querySelector('path[data-cursor-brand-mark="arrow"]')).toHaveAttribute("fill", "var(--provider-icon-contrast)");
     expect(svg.parentElement).toHaveStyle({ color: "var(--provider-cursor-cli)" });
+  });
+
+  it("infers cursor provider strings to the cursor-cli brand icon", () => {
+    render(<ProviderIcon provider="cursor" />);
+    expect(screen.getByTestId("cursor-cli-icon")).toBeInTheDocument();
+    expect(document.querySelector('[data-provider="cursor"] svg:not([data-testid])')).not.toBeInTheDocument();
   });
 
   it("renders grok-cli icon reusing the xAI brand mark", () => {
@@ -122,6 +128,7 @@ describe("ProviderIcon", () => {
 
   it("renders Cpu icon as fallback for unknown providers", () => {
     render(<ProviderIcon provider="unknown" />);
+    expect(screen.queryByTestId("xai-icon")).not.toBeInTheDocument();
     // Cpu icon from lucide-react renders as an svg without our custom data-testid
     const icon = screen.getByText((_, element) => {
       return element?.tagName.toLowerCase() === "svg" && 
@@ -132,6 +139,7 @@ describe("ProviderIcon", () => {
 
   it("renders Cpu icon as fallback for empty provider", () => {
     render(<ProviderIcon provider="" />);
+    expect(screen.queryByTestId("xai-icon")).not.toBeInTheDocument();
     const icon = screen.getByText((_, element) => {
       return element?.tagName.toLowerCase() === "svg" && 
              element?.parentElement?.getAttribute("data-provider") === "";
@@ -418,6 +426,31 @@ describe("ProviderIcon", () => {
   });
 
   // xAI provider tests
+  it.each(["xai", "grok", "grok-cli"])("renders xAI brand icon for exact %s provider key", (provider) => {
+    render(<ProviderIcon provider={provider} />);
+    expect(screen.getByTestId("xai-icon")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["grok-4.5", "grok-4.5"],
+    ["grok-4-fast", "grok-4-fast"],
+    ["grok-cli/grok-4-fast", "grok-cli/grok-4-fast"],
+    ["xai-grok-4", "xai-grok-4"],
+    ["Grok-4.5", "grok-4.5"],
+  ])("renders xAI brand icon for inferred Grok model/provider string %s", (provider, expectedDataProvider) => {
+    render(<ProviderIcon provider={provider} />);
+    const icon = screen.getByTestId("xai-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "var(--text)" });
+    expect(icon).toHaveAttribute("data-provider", expectedDataProvider);
+  });
+
+  it("infers non-Grok provider icons from model-shaped ids", () => {
+    render(<ProviderIcon provider="gpt-5.5" />);
+    const icon = screen.getByTestId("openai-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "var(--provider-openai)" });
+    expect(icon).toHaveAttribute("data-provider", "gpt-5.5");
+  });
+
   it("renders xAI brand icon for xai provider", () => {
     render(<ProviderIcon provider="xai" />);
     expect(screen.getByTestId("xai-icon")).toBeInTheDocument();

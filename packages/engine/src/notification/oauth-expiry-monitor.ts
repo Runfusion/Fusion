@@ -23,11 +23,15 @@ export interface AuthStorageLike {
   reload?(): void;
   getOAuthProviders?(): OAuthProviderInfo[];
   get?(providerId: string): OAuthCredential | undefined;
+  getApiKey?(providerId: string): Promise<string | null | undefined> | string | null | undefined;
 }
 
 /*
 FNXC:ClaudeOAuth 2026-07-08-20:55:
 `getOAuthProviders()` is NOT aliased by the engine auth-storage proxy, so it only yields the base id `anthropic`. But the Anthropic subscription token the runtime actually uses/refreshes lives under `anthropic-subscription`, while `get("anthropic")` can still return a STALE legacy row (e.g. a months-old credential in ~/.pi/agent/auth.json). Evaluating `get("anthropic")` alone made the expiry monitor and validity logger fire a false "Anthropic OAuth expired" alert even though the subscription token had refreshed successfully. Resolve the FRESHEST of the two aliased ids so a live subscription token suppresses the false alert — mirroring the refresh scheduler's alias handling (getRefreshCandidateIds in oauth-refresh-scheduler.ts).
+
+FNXC:ClaudeOAuth 2026-07-11-18:00:
+OAuthExpiryMonitor must refresh-then-recheck before firing `oauth-token-expired` so ntfy observes the same manual re-login truth as `/api/auth/status`, which already calls `getApiKey()` and recomputes expiry for OAuthReloginBanner. The FN-7574 start-refresher-before-monitor ordering only protected the startup check; short-lived auto-refreshing credentials such as GitHub Copilot's ephemeral token can still expire between interval ticks and silently refresh moments later, so dispatching from the stored timestamp alone creates false pushes with no matching banner.
 */
 export function resolveEffectiveOAuthCredential(
   authStorage: AuthStorageLike,
@@ -39,7 +43,7 @@ export function resolveEffectiveOAuthCredential(
   }
   const subscription = authStorage.get?.(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
   const candidates = [direct, subscription].filter(
-    (c): c is OAuthCredential => c?.type === "oauth" && typeof c.expires === "number",
+    (c): c is OAuthCredential => c?.type === "oauth" && typeof c.expires === "number" && Number.isFinite(c.expires),
   );
   if (candidates.length === 0) {
     return direct;
@@ -109,21 +113,53 @@ export class OAuthExpiryMonitor {
     const activeExpiryKeys = new Set<string>();
 
     for (const provider of providers) {
-      const credential = resolveEffectiveOAuthCredential(this.opts.authStorage, provider.id);
-      if (credential?.type !== "oauth" || typeof credential.expires !== "number") {
+      let credential = resolveEffectiveOAuthCredential(this.opts.authStorage, provider.id);
+      if (credential?.type !== "oauth" || typeof credential.expires !== "number" || !Number.isFinite(credential.expires)) {
         this.alertState.clear([provider.id]);
         continue;
       }
 
-      const expiryKey = `${provider.id}:${credential.expires}`;
-      activeExpiryKeys.add(expiryKey);
-
+      let expiryKey = `${provider.id}:${credential.expires}`;
       if (now + this.warnBeforeMs < credential.expires) {
+        activeExpiryKeys.add(expiryKey);
         continue;
       }
       if (this.dispatchedExpiryKeys.has(expiryKey)) {
+        activeExpiryKeys.add(expiryKey);
         continue;
       }
+
+      if (this.opts.authStorage.getApiKey) {
+        try {
+          /*
+          FNXC:ClaudeOAuth 2026-07-11-18:00:
+          The expiry monitor must reuse authStorage.getApiKey() as the single refresh side effect and then reload/re-resolve the effective credential before notifying. This keeps `oauth-token-expired` aligned with the banner-driving `/api/auth/status` route without duplicating provider-specific token refresh code or logging token material.
+          */
+          await this.opts.authStorage.getApiKey(provider.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          schedulerLog.warn(`OAuth expiry refresh-before-notify failed provider=${provider.id}: ${message}`);
+        }
+
+        this.opts.authStorage.reload?.();
+        credential = resolveEffectiveOAuthCredential(this.opts.authStorage, provider.id);
+        if (credential?.type !== "oauth" || typeof credential.expires !== "number" || !Number.isFinite(credential.expires)) {
+          this.alertState.clear([provider.id]);
+          continue;
+        }
+
+        expiryKey = `${provider.id}:${credential.expires}`;
+        if (now + this.warnBeforeMs < credential.expires) {
+          activeExpiryKeys.add(expiryKey);
+          continue;
+        }
+        if (this.dispatchedExpiryKeys.has(expiryKey)) {
+          activeExpiryKeys.add(expiryKey);
+          continue;
+        }
+      }
+
+      activeExpiryKeys.add(expiryKey);
 
       const previousNotificationAt = this.alertState.getLastAlertAt(provider.id);
       if (

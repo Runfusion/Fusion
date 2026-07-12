@@ -29,6 +29,8 @@ Object.defineProperty(window, "localStorage", {
 
 const TEST_PROJECT_ID = "proj-123";
 const TERMINAL_TABS_KEY = scopedKey("kb-terminal-tabs", TEST_PROJECT_ID);
+const TASK_TERMINAL_TABS_KEY = scopedKey("kb-terminal-tabs:task:FN-7813", TEST_PROJECT_ID);
+const TASK_WORKTREE = "/project/.worktrees/FN-7813";
 
 describe("useTerminalSessions", () => {
   beforeEach(() => {
@@ -67,6 +69,74 @@ describe("useTerminalSessions", () => {
       });
 
       expect(mockCreateTerminalSession).toHaveBeenCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+    });
+
+    it("auto-creates first scoped tab in defaultCwd with a basename title", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      mockCreateTerminalSession.mockResolvedValueOnce({
+        sessionId: "session-task",
+        shell: "/bin/bash",
+        cwd: TASK_WORKTREE,
+      });
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenCalledWith(
+        TASK_WORKTREE,
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(result.current.activeTab?.title).toBe("FN-7813");
+      expect(result.current.activeTab?.cwd).toBe(TASK_WORKTREE);
+      expect(localStorageMock.getItem).toHaveBeenCalledWith(TASK_TERMINAL_TABS_KEY);
+      expect(localStorageMock.getItem).not.toHaveBeenCalledWith(TERMINAL_TABS_KEY);
+    });
+
+    it("restores scoped tabs without reading the default terminal tab key", async () => {
+      const scopedTabs = [
+        {
+          id: "tab-task",
+          sessionId: "session-task",
+          title: "FN-7813",
+          cwd: TASK_WORKTREE,
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TASK_TERMINAL_TABS_KEY ? JSON.stringify(scopedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-task", shell: "/bin/bash", cwd: TASK_WORKTREE, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs).toHaveLength(1);
+      expect(result.current.activeTab?.sessionId).toBe("session-task");
+      expect(localStorageMock.getItem).toHaveBeenCalledWith(TASK_TERMINAL_TABS_KEY);
+      expect(localStorageMock.getItem).not.toHaveBeenCalledWith(TERMINAL_TABS_KEY);
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
     });
 
     it("restores tabs from localStorage on mount", async () => {
@@ -670,6 +740,49 @@ describe("useTerminalSessions", () => {
       expect(result.current.activeTab?.sessionId).toBe("session-new");
     });
 
+    it("restarts tabs without explicit cwd in the hook defaultCwd", async () => {
+      const storedTabs = [
+        {
+          id: "tab-task",
+          sessionId: "session-task-old",
+          title: "Task shell",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TASK_TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-task-old", shell: "/bin/bash", cwd: TASK_WORKTREE, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      mockCreateTerminalSession.mockResolvedValueOnce({ sessionId: "session-task-new", shell: "/bin/bash", cwd: TASK_WORKTREE });
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.restartActiveTab();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        TASK_WORKTREE,
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(result.current.activeTab?.sessionId).toBe("session-task-new");
+      expect(result.current.activeTab?.cwd).toBe(TASK_WORKTREE);
+    });
+
     it("restarts worktree tabs in their preserved cwd", async () => {
       localStorageMock.getItem.mockReturnValue(null);
       mockListTerminalSessions.mockResolvedValue([]);
@@ -768,6 +881,50 @@ describe("useTerminalSessions", () => {
       expect(result.current.activeTab?.id).toBe(tabId);
       expect(result.current.activeTab?.sessionId).toBe("session-worktree-replacement");
       expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+
+    it("replaces tabs without explicit cwd in the hook defaultCwd", async () => {
+      const storedTabs = [
+        {
+          id: "tab-task",
+          sessionId: "session-task-old",
+          title: "Task shell",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockImplementation((key: string) =>
+        key === TASK_TERMINAL_TABS_KEY ? JSON.stringify(storedTabs) : null,
+      );
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-task-old", shell: "/bin/bash", cwd: TASK_WORKTREE, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      mockCreateTerminalSession.mockResolvedValueOnce({ sessionId: "session-task-replacement", shell: "/bin/bash", cwd: TASK_WORKTREE });
+
+      const { result } = renderHook(() =>
+        useTerminalSessions(TEST_PROJECT_ID, {
+          storageScope: "task:FN-7813",
+          defaultCwd: TASK_WORKTREE,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        TASK_WORKTREE,
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(mockKillPtyTerminalSession).not.toHaveBeenCalled();
+      expect(result.current.activeTab?.sessionId).toBe("session-task-replacement");
+      expect(result.current.activeTab?.cwd).toBe(TASK_WORKTREE);
     });
 
     it("sets bootstrapError when replacement session creation fails", async () => {

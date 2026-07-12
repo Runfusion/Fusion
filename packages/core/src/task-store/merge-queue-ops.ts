@@ -6,7 +6,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore} from "../store.js";
+import {TaskStore, storeLog} from "../store.js";
 import {InvalidMergeQueueLeaseDurationError} from "./errors.js";
 import {existsSync} from "node:fs";
 import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from "../types.js";
@@ -37,8 +37,20 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
 
       // Auto-initialize steps from PROMPT.md if empty. Bypassed for graph-source
       // writes (U6/KTD-3): the graph owns explicit indices pinned at expansion.
+      // FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
+      // step auto-init is best-effort — an unreadable PROMPT.md must not fail
+      // updateStep; proceed with the persisted (empty) steps.
+      let promptStepsUnavailable: string | undefined;
       if (task.steps.length === 0 && !graphSource) {
-        task.steps = await store.parseStepsFromPrompt(id);
+        try {
+          task.steps = await store.parseStepsFromPrompt(id);
+        } catch (err) {
+          // Remember WHY steps couldn't be resolved so the range check below
+          // attributes the failure to the unreadable PROMPT.md rather than a
+          // misleading "0 steps".
+          promptStepsUnavailable = err instanceof Error ? err.message : String(err);
+          storeLog.warn(`[task-detail] failed to auto-init steps from PROMPT.md for ${id}: ${promptStepsUnavailable}`);
+        }
       }
 
       // Initialize log array if missing (for legacy tasks)
@@ -47,6 +59,14 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
       }
 
       if (stepIndex < 0 || stepIndex >= task.steps.length) {
+        // FNXC:TaskDetailPromptResilience 2026-07-10-16:30 (merge port from main):
+        // when the range failure is caused by an unreadable PROMPT.md (not a
+        // genuinely stepless task), surface the real cause.
+        if (promptStepsUnavailable !== undefined && task.steps.length === 0) {
+          throw new Error(
+            `Cannot update step ${stepIndex} for ${id}: its steps are defined in PROMPT.md, which could not be read (${promptStepsUnavailable}).`,
+          );
+        }
         throw new Error(
           `Step ${stepIndex} out of range (task has ${task.steps.length} steps)`,
         );

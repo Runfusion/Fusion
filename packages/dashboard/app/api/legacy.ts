@@ -1722,6 +1722,28 @@ export function artifactMediaUrl(id: string, projectId?: string): string {
   return buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId));
 }
 
+/*
+FNXC:ArtifactRegistry 2026-07-10-15:20:
+The Artifacts view document viewer needs the full artifact INCLUDING inline content (list responses strip content), and edit mode persists title/description/content through PATCH.
+*/
+export async function fetchArtifact(id: string, projectId?: string): Promise<Artifact> {
+  return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId));
+}
+
+export interface UpdateArtifactInput {
+  title?: string;
+  description?: string;
+  content?: string;
+}
+
+export async function updateArtifact(id: string, updates: UpdateArtifactInput, projectId?: string): Promise<Artifact> {
+  return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+}
+
 export async function fetchAllDocuments(
   options?: FetchAllDocumentsOptions,
   projectId?: string,

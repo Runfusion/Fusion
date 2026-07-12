@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type {
   TaskStore,
@@ -61,6 +62,7 @@ import {
   createAiUndoTask,
   prepareRevertPrBranch,
   prepareWorkspaceRevertPrBranches,
+  isInReviewMissingWorktreeSessionStartFailure,
   type AiUndoTaskResult,
   type PrepareRevertPrBranchResult,
   type PrepareWorkspaceRevertPrBranchesResult,
@@ -2319,7 +2321,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
           isInReviewMergeRetryStall);
-      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !isInReviewRetry) {
+      /*
+      FNXC:MissingWorktreeRetry 2026-07-10-18:32:
+      Dashboard retry must support the upstream #1992 signature where the task is stranded in a merge-active status but the durable failure is an unusable worktree session-start assertion. Only that classifier bypasses the merge-active status gate.
+      */
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
+      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }
 
@@ -2332,6 +2339,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+
+      if (isMissingWorktreeSessionRetry) {
+        clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+        await scopedStore.updateTask(req.params.id, {
+          status: null,
+          error: null,
+          worktree: null,
+          branch: null,
+          sessionFile: null,
+          ...autoPauseClearPatch,
+          ...buildManualRetryResetPatch({ resetMergeRetries: true }),
+        });
+        await scopedStore.logEntry(req.params.id, `Retry requested from dashboard (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
+        const updated = await scopedStore.moveTask(req.params.id, "todo", { preserveProgress: true });
+        res.json(updated);
+        return;
+      }
 
       // In-review retry: distinguish between execution failures (incomplete steps)
       // and merge failures (all steps done).
@@ -3825,7 +3849,52 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw notFound("Artifact media not found");
       }
 
-      const stream = createReadStream(mediaPath);
+      /*
+      FNXC:ArtifactRegistry 2026-07-11-10:20:
+      Video (and audio) playback requires HTTP byte-range serving: <video> seeking issues Range
+      requests, and Safari refuses to play media at all from a server that ignores them. Serve
+      single-range requests with 206 + Content-Range, advertise Accept-Ranges on full responses,
+      and answer unsatisfiable ranges with 416 so players fail cleanly instead of hanging.
+      */
+      let fileSize: number;
+      try {
+        // FNXC:ArtifactRegistry 2026-07-10-00:00: use async stat so media/range requests never block the event loop.
+        fileSize = (await stat(mediaPath)).size;
+      } catch {
+        throw notFound("Artifact media not found");
+      }
+
+      const mimeType = artifact.mimeType ?? "application/octet-stream";
+      const rangeHeader = req.headers.range;
+      res.setHeader("Accept-Ranges", "bytes");
+
+      let start = 0;
+      let end = fileSize - 1;
+      let status = 200;
+      if (typeof rangeHeader === "string") {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+        if (match && (match[1] !== "" || match[2] !== "")) {
+          if (match[1] === "") {
+            // suffix range: last N bytes
+            const suffixLength = Number(match[2]);
+            start = Math.max(0, fileSize - suffixLength);
+          } else {
+            start = Number(match[1]);
+            if (match[2] !== "") {
+              end = Math.min(Number(match[2]), fileSize - 1);
+            }
+          }
+          if (start >= fileSize || start > end) {
+            res.status(416).setHeader("Content-Range", `bytes */${fileSize}`);
+            res.end();
+            return;
+          }
+          status = 206;
+          res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+        }
+      }
+
+      const stream = createReadStream(mediaPath, status === 206 ? { start, end } : undefined);
       stream.on("error", () => {
         if (!res.headersSent) {
           res.status(404).json({ error: "Artifact media not found" });
@@ -3833,13 +3902,83 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           res.end();
         }
       });
-      res.setHeader("Content-Type", artifact.mimeType ?? "application/octet-stream");
+      res.status(status);
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Length", end - start + 1);
       stream.pipe(res);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
       throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /*
+  FNXC:ArtifactRegistry 2026-07-10-15:20:
+  The Artifacts view opens documents in a full viewer with edit mode, so it needs a single-artifact
+  read that INCLUDES inline content (listArtifacts intentionally strips content for lightness) and a
+  PATCH that persists title/description/content edits for any inline-content doc. Binary artifacts
+  reject content edits in the store layer.
+  */
+  router.get("/artifacts/:id", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const artifact = await scopedStore.getArtifact(req.params.id);
+      if (!artifact) {
+        throw notFound("Artifact not found");
+      }
+      res.json(artifact);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  router.patch("/artifacts/:id", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const updates: { title?: string; description?: string; content?: string } = {};
+
+      if (body.title !== undefined) {
+        if (typeof body.title !== "string" || body.title.trim().length === 0) {
+          throw badRequest("title must be a non-empty string");
+        }
+        updates.title = body.title;
+      }
+      if (body.description !== undefined) {
+        if (typeof body.description !== "string") {
+          throw badRequest("description must be a string");
+        }
+        updates.description = body.description;
+      }
+      if (body.content !== undefined) {
+        if (typeof body.content !== "string") {
+          throw badRequest("content must be a string");
+        }
+        updates.content = body.content;
+      }
+      if (Object.keys(updates).length === 0) {
+        throw badRequest("Provide at least one of title, description, or content");
+      }
+
+      const artifact = await scopedStore.updateArtifact(req.params.id, updates);
+      res.json(artifact);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("not found")) {
+        throw notFound("Artifact not found");
+      }
+      if (message.includes("read-only") || message.includes("not editable")) {
+        throw badRequest(message);
+      }
+      throw new ApiError(500, message);
     }
   });
 

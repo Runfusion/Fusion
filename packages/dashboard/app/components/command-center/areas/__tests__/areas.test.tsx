@@ -59,7 +59,7 @@ import { ActivityArea } from "../ActivityArea";
 import { EcosystemArea } from "../EcosystemArea";
 import { useAnalyticsArea } from "../useAnalyticsArea";
 import { ConfirmDialogProvider } from "../../../../hooks/useConfirm";
-import { rangeQuery } from "../areaShared";
+import { formatCost, rangeQuery } from "../areaShared";
 import { defaultPresets, rangeFromPreset } from "../../DateRangePicker";
 import {
   activityFixture,
@@ -79,6 +79,18 @@ import {
   range7d,
   tokenFixture,
 } from "./areas.test-harness";
+
+describe("Command Center cost formatting", () => {
+  it("shows priced subtotals when only part of the usage has known pricing", () => {
+    expect(formatCost(911.39004125, true)).toBe("$911.39+");
+    expect(formatCost(12.5, false)).toBe("$12.50");
+    expect(formatCost(0, false)).toBe("$0.00");
+    expect(formatCost(0, true)).toBe("—");
+    expect(formatCost(0.004, true)).toBe("—");
+    expect(formatCost(0.01, true)).toBe("$0.01+");
+    expect(formatCost(null, true)).toBe("—");
+  });
+});
 
 beforeEach(() => {
   apiMock.mockReset();
@@ -1394,11 +1406,16 @@ describe("TeamArea", () => {
   });
 
   it("renders a large comma-grouped total unchanged in the team total tokens stat", async () => {
-    apiMock.mockResolvedValue(populatedTeamFixture(1_234_567_890));
+    const fixture = populatedTeamFixture(1_234_567_890);
+    apiMock.mockResolvedValue({
+      ...fixture,
+      totals: { ...fixture.totals, cost: { usd: 4.25, unavailable: true, stale: false } },
+    });
     render(<TeamArea range={range7d} />);
 
     await screen.findByTestId("cc-area-team");
     expect(screen.getByTestId("cc-team-total-tokens").textContent).toContain("1,234,567,890");
+    expect(screen.getByTestId("cc-team-total-cost")).toHaveTextContent("$4.25+");
   });
 
   it("keeps the team pie safe for single-item and non-finite data", async () => {

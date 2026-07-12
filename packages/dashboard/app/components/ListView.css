@@ -961,8 +961,11 @@ In the split sidebar the title cell must allow the title to wrap to two lines (h
   border-bottom: 1px solid var(--border);
 }
 
-/* === List View Mobile Responsive === */
-@media (max-width: 768px) {
+/* === List View Single-Pane Responsive ===
+FNXC:ListView 2026-07-10-00:00 (FN-7809):
+Tablet-width List view shares the mobile single-pane scaffolding so the full-width toolbar and QuickEntryBox are not clipped by the desktop split sidebar. Mobile behavior stays unchanged; desktop split rules remain active above the tablet tier.
+*/
+@media (max-width: 1024px) {
   .list-toolbar {
     padding: var(--space-md);
     flex-wrap: wrap;
@@ -1025,8 +1028,8 @@ In the split sidebar the title cell must allow the title to wrap to two lines (h
   }
 }
 
-/* === List View Mobile Cards (FN-1140) === */
-@media (max-width: 768px) {
+/* === List View Single-Pane Cards (FN-1140, FN-7809) === */
+@media (max-width: 1024px) {
   /* Hide the table on mobile — card layout is rendered via JS */
   .list-table {
     display: none;

@@ -1824,3 +1824,54 @@ reapply the mobile-only `.terminal-shortcuts--header, .terminal-connection-statu
     touch-action: pan-x pan-y;
   }
 }
+
+/*
+FNXC:Terminal 2026-07-10-00:00:
+FN-7813 embeds the shared terminal inside Task Detail. The host must fill the parent tab panel, keep scroll/resize inside the terminal surface, and avoid overlay/floating dimensions so Task Detail owns layout at every breakpoint.
+*/
+.terminal-embedded-host {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  background: var(--surface);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.modal.terminal-modal.terminal-modal--embedded {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  resize: none;
+}
+
+.terminal-modal--embedded .terminal-header {
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .terminal-embedded-host {
+    border-radius: var(--radius-md);
+  }
+
+  .terminal-modal--embedded .terminal-header {
+    align-items: stretch;
+  }
+
+  .terminal-modal--embedded .terminal-tabs,
+  .terminal-modal--embedded .terminal-workspace-picker,
+  .terminal-modal--embedded .terminal-actions {
+    min-width: 0;
+  }
+}

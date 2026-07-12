@@ -171,23 +171,21 @@ describe("Grok CLI runtime routing (FN-7725)", () => {
     expect(mockCreateFnAgent).not.toHaveBeenCalled();
 
     // Drive the resolved session's promptWithFallback (attached by
-    // createResolvedAgentSession) and feed faked NDJSON `text` lines through
-    // the adapter's injected fake stdout — no live grok binary involved.
+    // createResolvedAgentSession) and feed a faked single-JSON `grok
+    // --output-format json` response through the adapter's injected fake stdout
+    // — no live grok binary involved. FNXC:GrokCli 2026-07-10-12:52: FN-7796
+    // replaced the streaming-NDJSON contract with a single JSON object parsed
+    // once on subprocess close; onText now fires once with the full `text`.
     const session = result.session as { promptWithFallback: (prompt: string) => Promise<void> };
     const promptPromise = session.promptWithFallback("hello grok");
 
-    stdout.write(`${JSON.stringify({ type: "step_start", stepNumber: 1, timestamp: 1 })}\n`);
-    stdout.write(`${JSON.stringify({ type: "text", stepNumber: 1, text: "hi ", timestamp: 2 })}\n`);
-    stdout.write(`${JSON.stringify({ type: "text", stepNumber: 1, text: "there", timestamp: 3 })}\n`);
-    stdout.write(
-      `${JSON.stringify({ type: "step_finish", stepNumber: 1, timestamp: 4, finishReason: "stop", usage: {} })}\n`,
-    );
+    stdout.write(`${JSON.stringify({ text: "hi there", stopReason: "EndTurn" })}\n`);
     (proc as EventEmitter).emit("close", 0, null);
 
     await promptPromise;
 
     expect(spawn).toHaveBeenCalledWith("grok", "hello grok", expect.objectContaining({}));
-    expect(onText.mock.calls.map((c) => c[0])).toEqual(["hi ", "there"]);
+    expect(onText.mock.calls.map((c) => c[0])).toEqual(["hi there"]);
   });
 
   it("surfaces code-0 zero-NDJSON Grok exits through the shared runtime session seam", async () => {
@@ -216,8 +214,10 @@ describe("Grok CLI runtime routing (FN-7725)", () => {
 
     await promptPromise;
 
-    expect(session.state?.errorMessage).toContain("Grok CLI produced no NDJSON output");
-    expect(onText).toHaveBeenCalledWith(expect.stringContaining("Grok CLI produced no NDJSON output"));
+    // FNXC:GrokCli 2026-07-10-12:52: FN-7796 renamed the zero-output diagnostic
+    // from "no NDJSON output" to "no JSON output" (single-object json contract).
+    expect(session.state?.errorMessage).toContain("Grok CLI produced no JSON output");
+    expect(onText).toHaveBeenCalledWith(expect.stringContaining("Grok CLI produced no JSON output"));
   });
 
   it("falls back to the default pi runtime when the Grok plugin runtime is not registered", async () => {

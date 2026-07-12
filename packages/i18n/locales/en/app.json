@@ -5676,7 +5676,9 @@
       "title": "Appearance",
       "openTasksInRightSidebarHelp": "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
       "openMobileTasksInPopupHelp": "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
-      "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way."
+      "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
+      "showCostBadgeOnCards": "Show cost badges on task cards",
+      "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge."
     },
     "auth": {
       "apiKeyCleared": "API key cleared",
@@ -5806,6 +5808,7 @@
     "footer": {
       "help": "Help",
       "version": "Version {{version}}",
+      "versionShort": "v{{version}}",
       "checkUpdates": "Check for updates",
       "helpDiscussions": "Help and discussions"
     },
@@ -7829,8 +7832,10 @@
       "routing": "Routing",
       "stats": "Stats",
       "summary": "Summary",
-      "terminal": "Terminal",
-      "workflow": "Workflow"
+      "terminal": "Session",
+      "worktreeTerminal": "Terminal",
+      "workflow": "Workflow",
+      "cost": "Cost"
     },
     "terminal": {
       "loading": "Loading terminal…"
@@ -7861,7 +7866,23 @@
     },
     "workflowRuntime": "Workflow runtime",
     "workflowTimedSteps": "Workflow timed steps",
-    "yes": "Yes"
+    "yes": "Yes",
+    "costTab": {
+      "cacheWriteTokens": "Cache write",
+      "cachedTokens": "Cached",
+      "cost": "Derived USD",
+      "costUnavailable": "No pricing for this model",
+      "description": "Derived from recorded input, output, cached, and cache-write tokens. Unpriced rows use — instead of a guessed value.",
+      "empty": "No model token usage has been recorded for this task yet.",
+      "heading": "Model cost",
+      "inputTokens": "Input",
+      "model": "Model",
+      "outputTokens": "Output",
+      "totalCost": "Total cost",
+      "totalCostLabel": "Total",
+      "totalTokens": "Total tokens",
+      "unknownModel": "(unknown)"
+    }
   },
   "taskDocuments": {
     "cancel": "Cancel",
@@ -8283,7 +8304,9 @@
     "usingDefault": "Using default",
     "viewDependency": "Click to view {{depId}}",
     "workflow": "workflow",
-    "workflowCheck": "Workflow check"
+    "workflowCheck": "Workflow check",
+    "costBadgeTitle": "Estimated cost {{amount}}",
+    "costBadgeAriaLabel": "Estimated cost {{amount}}"
   },
   "terminal": {
     "arrowKeysLabel": "Terminal arrow keys",
@@ -8642,12 +8665,22 @@
     "widgetDefault": "Default"
   },
   "workflowNodes": {
+    "addStepAgentSteps": "Agent steps",
+    "addStepAutomation": "Automation",
+    "addStepFlowControl": "Flow control",
+    "addStepFragmentDesc": "Workflow fragment",
+    "addStepNoMatches": "No steps match “{{query}}”.",
+    "addStepSearchLabel": "Search steps",
+    "addStepSearchPlaceholder": "Search steps and templates…",
+    "addStepTitle": "Add a step",
     "advisory": "Advisory",
     "autoLayout": "Auto-layout",
     "codeNote": "Runs sandboxed TypeScript. Syntax is validated at save.",
     "codeSource": "Source (TypeScript)",
     "codeTimeout": "Timeout (ms)",
     "collapseInspector": "Collapse",
+    "conditionFailure": "failure",
+    "conditionSuccess": "success",
     "cycleBlocked": "That connection would create a cycle — only rework edges inside a for-each template may loop back",
     "deleteEdge": "Delete edge",
     "deleteNode": "Delete node",
@@ -8700,9 +8733,13 @@
     "mobileConnectTarget": "Target node",
     "mobileGraph": "Graph",
     "mobileGraphEmpty": "No graph nodes yet.",
+    "mobileGraphStyleCanvas": "Graph",
+    "mobileGraphStyleLabel": "Graph presentation",
+    "mobileGraphStyleList": "List",
     "mobileMoveDown": "Move down",
     "mobileMoveUp": "Move up",
     "mobileNodeKinds": "Node types",
+    "nodeInspector": "Node",
     "notifyCustom": "Custom",
     "notifyCustomEvent": "Custom event",
     "notifyEvent": "Event type",
@@ -8712,6 +8749,7 @@
     "parseArtifact": "Artifact",
     "parseParser": "Parser",
     "quorumN": "Quorum count (n)",
+    "readOnlyDuplicateToEdit": "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here.",
     "releaseCapacity": "Downstream capacity",
     "releaseCondition": "Release condition",
     "releaseDependency": "Dependency complete",
@@ -8724,6 +8762,9 @@
     "reviewPlan": "Plan review",
     "reviewType": "Review type",
     "showInspector": "Show node details",
+    "simpleAddStep": "Add step",
+    "simpleContainerEmpty": "No steps inside yet",
+    "simpleInsertStep": "Insert step here",
     "splitNote": "Branches run concurrently from this node. Execute and merge seams are not allowed inside a branch.",
     "startEntryColumn": "Entry column",
     "startEntryColumnAuto": "— Auto (first column)",
@@ -8738,11 +8779,7 @@
     "templatesPluginSteps": "Plugin steps",
     "templatesSection": "Templates",
     "timeoutMs": "{{timeout}}ms",
-    "trivialGraphHint": "This workflow only runs start → end. Add steps from the palette above to build it out.",
-    "conditionFailure": "failure",
-    "conditionSuccess": "success",
-    "nodeInspector": "Node",
-    "readOnlyDuplicateToEdit": "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here."
+    "trivialGraphHint": "This workflow only runs start → end. Add steps from the palette above to build it out."
   },
   "workflows": {
     "aiEdit": "Design with AI",
@@ -8758,6 +8795,7 @@
     "backToWorkflowList": "Back to workflows",
     "clickToEditDescription": "Click to edit description",
     "clickToRename": "Click to rename",
+    "closeEditor": "Close workflow editor",
     "created": "Created workflow \"{{name}}\"",
     "createDescription": "Description (optional)",
     "createFailed": "Failed to create workflow",
@@ -8774,6 +8812,8 @@
     "discardConfirm": "Discard",
     "discardMessage": "You have unsaved changes to this workflow. Discard them?",
     "discardTitle": "Discard unsaved changes?",
+    "duplicatedEditable": "Duplicated to \"{{name}}\" — editable",
+    "duplicateFailed": "Failed to duplicate workflow",
     "duplicateToCustomize": "Duplicate to customize",
     "emptyDescription": "Workflows orchestrate the steps and gates that run around task execution. Create one to start arranging that flow.",
     "emptyTitle": "No workflow selected",
@@ -8787,17 +8827,22 @@
     "importInvalidJson": "That file isn't valid JSON.",
     "importStripped": "Auto-approval flags were removed from imported nodes",
     "importTooltip": "Import a workflow from a JSON file",
+    "lifecycleFix": "Fix",
+    "lifecycleFixAll": "Fix all",
+    "lifecycleWarningsCount_one": "{{count}} lifecycle warning",
+    "lifecycleWarningsCount_other": "{{count}} lifecycle warnings",
+    "loadFailed": "Failed to load workflows",
+    "loading": "Loading…",
     "migrationNotice": "Your legacy workflow steps were converted — find them as templates in the palette and as the \"Migrated steps\" workflow.",
     "mobileEditorNav": "Workflow editor sections",
     "mobileSelectNote": "Select a workflow to edit.",
     "nameLabel": "Workflow name",
     "newWorkflow": "New workflow",
+    "noneYet": "No workflows yet.",
     "readOnlyBuiltin": "Built-in workflow: structure is read-only, prompts are editable.",
     "saved": "Workflow saved",
     "savedNotCompilable": "Workflow saved but cannot be compiled",
     "saveFailed": "Failed to save workflow",
-    "showCanvasEditor": "Show canvas editor",
-    "showSimpleEditor": "Show simple editor",
     "templateBlank": "Blank",
     "templateBlankDescription": "Start from an empty start → end graph.",
     "templateCopyName": "{{name}} copy",
@@ -8806,13 +8851,11 @@
     "templatePickerLabel": "Start from",
     "templateSectionBuiltin": "Built-in workflows",
     "templateSectionYours": "Your workflows",
-    "closeEditor": "Close workflow editor",
-    "duplicatedEditable": "Duplicated to \"{{name}}\" — editable",
-    "duplicateFailed": "Failed to duplicate workflow",
-    "loadFailed": "Failed to load workflows",
-    "loading": "Loading…",
-    "noneYet": "No workflows yet.",
-    "title": "Workflows"
+    "title": "Workflows",
+    "viewModeAdvanced": "Advanced",
+    "viewModeLabel": "Editor view",
+    "viewModeList": "List",
+    "viewModeSimple": "Simple"
   },
   "workflowSelector": {
     "switchActiveMessage": "This task has an active session. Switching workflows aborts it and re-homes the card into the new workflow's entry column. Continue?",

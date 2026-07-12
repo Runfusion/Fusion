@@ -27,18 +27,41 @@ import {
 export { BUNDLED_PLUGIN_IDS, isBundledPluginId, resolvePluginEntryPath } from "@fusion/core";
 export type { BundledPluginId, EnsureBundledResult } from "@fusion/core";
 
+/*
+FNXC:PluginLoader 2026-07-10-00:00:
+Candidate order encodes a freshness contract, not just a search path.
+
+Published/global install (the regression the first candidate protects): plugins
+are staged next to the running bin at `<cli>/dist/plugins/<id>`, and no workspace
+`plugins/` dir exists — so `join(moduleDir, "plugins", <id>)` MUST stay first and
+win.
+
+Source checkout / `pnpm dev` (the durability fix): the running dashboard would
+otherwise resolve the STAGED tsup bundle at `<cli>/dist/plugins/<id>/bundled.js`,
+which `resolvePluginEntryPath` prefers verbatim with NO freshness check. That
+bundle is a build artifact only `tsup` regenerates — the FN-7779 dev prebuild
+rebuilds each plugin's OWN `plugins/<id>/dist` but never the staged bundle, so a
+source-only plugin fix (e.g. the FN-7796 Grok adapter) silently ran stale and
+grok chat returned empty replies. Probe the workspace source dir
+(`<repo>/plugins/<id>`) BEFORE the staged bundle so dev loads the live plugin
+whose entry `resolvePluginEntryPath` freshness-checks (dist vs src) — self-healing
+even when the prebuild is skipped. The workspace dir only exists in a checkout, so
+published installs are unaffected.
+*/
 function getCandidatePluginDirs(pluginId: string): string[] {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const cliPackageRoot = resolve(moduleDir, "..", "..");
 
   return [
     // Bundled/global runtime: moduleDir is typically <cli>/dist, and plugins are
-    // staged under <cli>/dist/plugins/<id>.
+    // staged under <cli>/dist/plugins/<id>. Keep first for the global-install regression.
     join(moduleDir, "plugins", pluginId),
+    // Source checkout: prefer the live workspace plugin (freshness-checked by
+    // resolvePluginEntryPath) over the stale staged tsup bundle below.
+    join(cliPackageRoot, "..", "..", "plugins", pluginId),
     // Source/dev fallbacks.
     join(cliPackageRoot, "dist", "plugins", pluginId),
     join(cliPackageRoot, "plugins", pluginId),
-    join(cliPackageRoot, "..", "..", "plugins", pluginId),
   ];
 }
 

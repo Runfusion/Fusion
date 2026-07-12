@@ -17,7 +17,7 @@ import * as schema from "../postgres/schema/index.js";
 import { runCommandAsync } from "../run-command.js";
 import { getStepParser } from "../step-parsers.js";
 import { getTaskMergeBlocker } from "../task-merge.js";
-import { deleteTaskDocument as deleteTaskDocumentAsync, getArtifact as getArtifactAsync, getArtifacts as getArtifactsAsync, getTaskDocument as getTaskDocumentAsync, getTaskDocumentRevisions as getTaskDocumentRevisionsAsync, listTaskDocuments as listTaskDocumentsAsync } from "./async-comments-attachments.js";
+import { deleteTaskDocument as deleteTaskDocumentAsync, getArtifact as getArtifactAsync, getArtifacts as getArtifactsAsync, getTaskDocument as getTaskDocumentAsync, getTaskDocumentRevisions as getTaskDocumentRevisionsAsync, listTaskDocuments as listTaskDocumentsAsync, updateArtifactRow as updateArtifactRowAsync } from "./async-comments-attachments.js";
 import { emitUsageEvent as emitUsageEventAsync, recordPluginActivation as recordPluginActivationAsync } from "./async-events.js";
 import { enqueueMergeQueue as enqueueMergeQueueAsync, peekMergeQueue as peekMergeQueueAsync, peekMergeQueueHead as peekMergeQueueHeadAsync } from "./async-merge-coordination.js";
 import { clearCompletionHandoffMarker as clearCompletionHandoffMarkerAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync } from "./async-workflow-workitems.js";
@@ -713,6 +713,56 @@ export async function getArtifactImpl(store: TaskStore, id: string): Promise<Art
     }
     const row = store.db.prepare("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | undefined;
     return row ? store.rowToArtifact(row) : null;
+}
+
+/**
+ * FNXC:ArtifactRegistry 2026-07-10-15:20 (merge port from main):
+ * The dashboard Artifacts view lets operators edit any inline-content document artifact in place
+ * (title/description/content). Binary artifacts (rows with a uri) keep content non-editable because
+ * their payload lives on disk; only metadata edits are allowed there. Archived-task artifacts stay
+ * read-only, mirroring registerArtifact. Emits `artifact:updated` and bumps lastModified so open
+ * artifact lists live-refresh.
+ */
+export async function updateArtifactImpl(store: TaskStore, id: string, updates: { title?: string; description?: string; content?: string }): Promise<Artifact> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const updated = await updateArtifactRowAsync(layer, id, updates);
+      store.emit("artifact:updated", updated);
+      return updated;
+    }
+
+    const existing = await store.getArtifact(id);
+    if (!existing) {
+      throw new Error(`Artifact ${id} not found`);
+    }
+
+    if (existing.taskId && store.isTaskArchived(existing.taskId)) {
+      throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
+    }
+
+    if (updates.content !== undefined && existing.uri) {
+      throw new Error(`Artifact ${id} stores a binary payload; its content is not editable`);
+    }
+
+    const now = new Date().toISOString();
+    store.db.prepare(
+      "UPDATE artifacts SET title = ?, description = ?, content = ?, updatedAt = ? WHERE id = ?",
+    ).run(
+      updates.title !== undefined ? updates.title : existing.title,
+      updates.description !== undefined ? updates.description : existing.description ?? null,
+      updates.content !== undefined ? updates.content : existing.content ?? null,
+      now,
+      id,
+    );
+
+    const updated = await store.getArtifact(id);
+    if (!updated) {
+      throw new Error(`Failed to update artifact ${id}`);
+    }
+
+    store.db.bumpLastModified();
+    store.emit("artifact:updated", updated);
+    return updated;
 }
 
 export async function getArtifactsImpl(store: TaskStore, taskId: string): Promise<Artifact[]> {

@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -105,6 +105,75 @@ function getInstallErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/*
+FNXC:UpdateInstallPermissions 2026-07-10-14:00:
+The in-app "Update now" button runs `npm install -g @runfusion/fusion@latest` as the
+(typically non-root) dashboard process. When Fusion was installed via `sudo npm i -g`,
+the global package dir is root-owned, so npm's rename() fails with EACCES/EPERM and the
+button ALWAYS fails. Previously the raw npm stderr was surfaced with no explanation.
+Detect the permission class and return an actionable remediation instead of a cryptic
+EACCES, mirroring the CLI's Homebrew-path awareness. (`--force` cannot grant write
+permission, so we do not retry it for this class — unlike bin-collision errors.)
+*/
+function isPermissionInstallError(error: unknown): boolean {
+  const installError = error as InstallError & { code?: string };
+  if (installError?.code === "EACCES" || installError?.code === "EPERM") return true;
+  const message = [installError?.message, installError?.stderr, installError?.stdout]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
+  return /\bEACCES\b|\bEPERM\b|permission denied|operation not permitted/i.test(message);
+}
+
+/** Best-effort path of the running Fusion binary, used to tailor remediation. */
+function detectRunningBinaryPath(): string | null {
+  const argvPath = process.argv[1];
+  if (typeof argvPath === "string" && argvPath.length > 0) return argvPath;
+  return typeof process.execPath === "string" ? process.execPath : null;
+}
+
+/*
+FNXC:UpdateInstallPermissions 2026-07-10-16:00:
+Detect a Homebrew-managed install so the remediation says `brew upgrade` rather than
+the npm/sudo guidance. Formulae live under a Cellar and are symlinked into bin — on
+Apple Silicon everything is under `/opt/homebrew/`, but on Intel macOS the bin symlink
+is `/usr/local/bin/fn` -> `/usr/local/Cellar/...` (and `/usr/local/Homebrew/` is only
+brew's own git repo, not where formulae install). So resolve the symlink and match the
+real Cellar/opt install roots — checking only `/usr/local/Homebrew/` missed Intel Macs.
+`/usr/local/bin` is deliberately NOT matched: it is shared with npm-global bins.
+*/
+function isHomebrewInstall(binaryPath: string | null): boolean {
+  if (!binaryPath) return false;
+  let resolved = binaryPath;
+  try {
+    resolved = realpathSync(binaryPath);
+  } catch {
+    // Unresolvable symlink/path — fall back to the raw path.
+  }
+  return [binaryPath, resolved].some((p) =>
+    p.startsWith("/opt/homebrew/") ||     // Apple Silicon (bin, opt, Cellar)
+    p.startsWith("/usr/local/Cellar/") || // Intel formula install root
+    p.startsWith("/usr/local/opt/") ||    // Intel formula opt symlinks
+    p.includes("/Homebrew/") ||           // brew's own repo checkout
+    p.startsWith("/home/linuxbrew/"),     // Linuxbrew
+  );
+}
+
+function getPermissionRemediationMessage(binaryPath: string | null): string {
+  if (isHomebrewInstall(binaryPath)) {
+    return (
+      "Update failed: this Fusion install is managed by Homebrew and cannot be updated with npm. " +
+      "Update it from a terminal with: brew upgrade fusion"
+    );
+  }
+  return (
+    "Update failed: the global npm directory is not writable by the Fusion process (EACCES/EPERM). " +
+    "This happens when Fusion was installed with `sudo npm i -g`, leaving a root-owned package directory " +
+    "that the dashboard (running as a normal user) cannot replace. Update from a terminal instead:\n" +
+    "  • sudo fn update  (or: sudo npm i -g @runfusion/fusion@latest)\n" +
+    "  • or reinstall without sudo so the global directory is user-owned"
+  );
+}
+
 function getInstallOptions(): { timeout: number; maxBuffer: number } {
   return {
     timeout: INSTALL_TIMEOUT_MS,
@@ -169,6 +238,18 @@ export async function performUpdateInstall(
       updated: true,
     };
   } catch (error) {
+    // FNXC:UpdateInstallPermissions 2026-07-10-14:00: a root-owned global dir
+    // (from `sudo npm i -g`) yields EACCES/EPERM the non-root updater cannot
+    // recover from — return actionable guidance rather than raw npm stderr.
+    if (isPermissionInstallError(error)) {
+      return {
+        currentVersion,
+        latestVersion,
+        updated: false,
+        error: getPermissionRemediationMessage(detectRunningBinaryPath()),
+      };
+    }
+
     if (!isBinCollisionInstallError(error)) {
       return {
         currentVersion,

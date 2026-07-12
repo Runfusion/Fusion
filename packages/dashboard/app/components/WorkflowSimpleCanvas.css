@@ -1,0 +1,381 @@
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Simplified workflow view styling. Requirements encoded here:
+ - A modern node-card look competitive with leading workflow builders: soft
+   rounded cards, a colored icon chip per node family (agent / automation /
+   flow control / merge), quiet default edges, and a clear selected ring.
+ - All colors derive from the dashboard theme tokens so light/dark and color
+   themes cascade without per-theme overrides.
+ - Touch-first hit targets: the edge "+" insert button and the "Add step"
+   pill are ≥32px so the same canvas serves the mobile graph view.
+*/
+
+.wf-simple-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.wf-simple-canvas .react-flow {
+  background: var(--bg);
+}
+
+.wf-simple-canvas-bg {
+  color: color-mix(in srgb, var(--text-dim) 55%, transparent);
+}
+
+/* ── Node cards ─────────────────────────────────────────────────────────── */
+
+.wf-simple-node {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 260px;
+  min-height: 64px;
+  box-sizing: border-box;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.wf-simple-node:hover {
+  background: var(--card-hover);
+  border-color: var(--border-strong);
+}
+
+.wf-simple-node--selected,
+.wf-simple-node--selected:hover {
+  border-color: var(--todo);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--todo) 35%, transparent),
+    var(--shadow-md);
+}
+
+.wf-simple-node--error {
+  border-color: var(--color-error);
+}
+
+.wf-simple-node-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  color: #fff;
+}
+
+/* Node family accents (icon chip background + a subtle left accent). */
+.wf-simple-node--agent .wf-simple-node-chip {
+  background: color-mix(in srgb, var(--ws-quality) 85%, var(--bg));
+}
+.wf-simple-node--automation .wf-simple-node-chip {
+  background: color-mix(in srgb, var(--ws-teal) 85%, var(--bg));
+}
+.wf-simple-node--flow .wf-simple-node-chip,
+.wf-simple-node-chip--flow {
+  background: color-mix(in srgb, var(--color-merged) 85%, var(--bg));
+}
+.wf-simple-node--merge .wf-simple-node-chip {
+  background: color-mix(in srgb, var(--ws-success) 80%, var(--bg));
+}
+
+.wf-simple-node-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wf-simple-node-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wf-simple-node-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wf-simple-node-badge {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-emphasis);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wf-simple-node-summary {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wf-simple-node-column {
+  align-self: flex-start;
+  font-size: 0.64rem;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+}
+
+.wf-simple-node-error {
+  flex: 0 0 auto;
+  color: var(--color-error);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Start/end terminals: compact pills so the flow's boundaries read as quiet
+   markers, not steps. */
+.wf-simple-terminal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-emphasis);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.wf-simple-terminal--start {
+  border-color: color-mix(in srgb, var(--ws-success) 45%, var(--border));
+  color: var(--ws-success);
+}
+
+.wf-simple-terminal--end {
+  border-color: color-mix(in srgb, var(--done) 45%, var(--border));
+}
+
+.wf-simple-terminal.wf-simple-node--selected {
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--todo) 35%, transparent);
+}
+
+/* Containers (foreach/loop/optional-group): dashed region, children render
+   inside as regular cards. */
+.wf-simple-container {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border-radius: var(--radius-xl);
+  border: 1.5px dashed color-mix(in srgb, var(--color-merged) 55%, var(--border));
+  background: color-mix(in srgb, var(--color-merged) 6%, transparent);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.wf-simple-container.wf-simple-node--selected {
+  border-color: var(--todo);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.wf-simple-container-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wf-simple-container-header .wf-simple-node-chip {
+  width: 26px;
+  height: 26px;
+}
+
+.wf-simple-container-empty {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* Handles exist for edge anchoring only — never interactive in simple view. */
+.wf-simple-handle {
+  opacity: 0;
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+}
+
+/* ── Edges ──────────────────────────────────────────────────────────────── */
+
+.wf-simple-edge-path {
+  stroke: var(--border-strong);
+  stroke-width: 1.75;
+}
+
+.wf-simple-edge-path--selected {
+  stroke: var(--todo);
+  stroke-width: 2.25;
+}
+
+.wf-simple-edge-path--failure {
+  stroke: color-mix(in srgb, var(--color-error) 70%, var(--border));
+  stroke-dasharray: 6 4;
+}
+
+.wf-simple-edge-path--rework {
+  stroke: color-mix(in srgb, var(--accent, #7c5cbf) 75%, var(--border));
+  stroke-dasharray: 4 4;
+}
+
+.wf-simple-edge-label {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: all;
+  z-index: 5;
+}
+
+.wf-simple-edge-chip {
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.wf-simple-edge-chip--failure {
+  border-color: color-mix(in srgb, var(--color-error) 50%, var(--border));
+  color: var(--color-error);
+}
+
+.wf-simple-edge-chip--rework {
+  border-color: color-mix(in srgb, var(--accent, #7c5cbf) 50%, var(--border));
+  color: var(--accent, #7c5cbf);
+}
+
+/* The + insert affordance: faint at rest so it's discoverable without hover,
+   full-strength on hover/focus; larger and fully opaque on coarse (touch)
+   pointers so mobile users can find and hit it. */
+.wf-simple-edge-insert {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.wf-simple-edge-insert:focus-visible {
+  opacity: 1;
+}
+
+.wf-simple-edge-insert:hover {
+  opacity: 1;
+  transform: scale(1.05);
+  border-color: var(--todo);
+  color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+@media (pointer: coarse) {
+  .wf-simple-edge-insert {
+    opacity: 1;
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* ── Canvas chrome ──────────────────────────────────────────────────────── */
+
+.wf-simple-controls.react-flow__controls {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.wf-simple-controls .react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+}
+
+.wf-simple-controls .react-flow__controls-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.wf-simple-controls .react-flow__controls-button svg {
+  fill: currentcolor;
+}
+
+.wf-simple-add-panel {
+  margin-bottom: 18px;
+}
+
+.wf-simple-add-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--todo) 45%, var(--border));
+  background: color-mix(in srgb, var(--todo) 14%, var(--surface));
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.wf-simple-add-step:hover {
+  background: color-mix(in srgb, var(--todo) 24%, var(--surface));
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring), var(--shadow-md);
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .wf-simple-node {
+    width: 240px;
+  }
+
+  .wf-simple-add-step {
+    padding: 11px 20px;
+  }
+}

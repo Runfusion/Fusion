@@ -59,6 +59,19 @@ vi.mock("../../hooks/useBadgeWebSocket", () => ({
 vi.mock("../../hooks/useBatchBadgeFetch", () => ({ getFreshBatchData: vi.fn(() => null) }));
 vi.mock("../../utils/highlightDiff", () => ({ highlightDiff: (diff: string) => diff }));
 vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: vi.fn() }) }));
+/*
+FNXC:RuntimeFallbackUI 2026-07-11-00:00:
+RuntimeFallbackBadge (commit 0bed997af / FUX-022) calls the shared useToast() hook directly. TaskCard
+embeds RuntimeFallbackBadge and this file renders <TaskCard> outside a ToastProvider, so mock the hook
+to avoid "useToast must be used within ToastProvider", matching the TaskCard.test.tsx pattern.
+*/
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
 
 function makeTask(overrides: Partial<Task>): Task {
   return {

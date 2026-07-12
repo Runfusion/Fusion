@@ -1,5 +1,7 @@
 import { Cpu } from "lucide-react";
 
+import { inferProviderIconKey } from "../utils/providerIconKey";
+
 function LlamaCppIcon({ size, color, label = "llama.cpp" }: { size: number; color: string; label?: string }) {
   return <Cpu size={size} color={color} aria-label={label} data-testid="llama-cpp-icon" />;
 }
@@ -680,6 +682,10 @@ function DroidCliIcon({ size, color, label = "Factory AI — via Droid CLI" }: {
   );
 }
 
+/*
+FNXC:ProviderIcons 2026-07-11-00:00:
+FN-7818 replaced the hand-drawn Cursor placeholder with Cursor's official cube/arrow brand mark from cursor.com. This shared icon component is the single source for the Usage dropdown, model-selection surfaces, provider auth cards, and onboarding.
+*/
 function CursorCliIcon({ size, color, label = "Cursor — via Cursor CLI" }: { size: number; color: string; label?: string }) {
   return (
     <svg
@@ -691,23 +697,18 @@ function CursorCliIcon({ size, color, label = "Cursor — via Cursor CLI" }: { s
       data-testid="cursor-cli-icon"
       aria-label={label}
     >
-      <rect x="2" y="3" width="14" height="14" rx="3" fill={color} />
-      <path
-        d="M10.8 7.2a3.6 3.6 0 1 0 0 5.6"
-        stroke="var(--provider-icon-contrast)"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <rect x="13" y="13" width="10" height="9" rx="1.5" fill={color} />
-      <path
-        d="M15.2 16.2l1.6 1.4-1.6 1.4M18.6 19.6h2.4"
-        stroke="var(--provider-icon-contrast)"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
+      <g transform="translate(1.47 0) scale(0.06564) translate(-96 -73)">
+        <path
+          data-cursor-brand-mark="cube"
+          d="m410.344 159.545-146.38-84.5111c-4.7-2.7145-10.5-2.7145-15.2 0l-146.373 84.5111c-3.9515 2.282-6.391 6.501-6.391 11.071v170.418c0 4.569 2.4395 8.789 6.391 11.07l146.379 84.512c4.701 2.714 10.501 2.714 15.201 0l146.38-84.512c3.951-2.281 6.391-6.501 6.391-11.07v-170.418c0-4.57-2.44-8.789-6.391-11.071z"
+          fill={color}
+        />
+        <path
+          data-cursor-brand-mark="arrow"
+          d="m401.149 177.447-141.308 244.751c-.955 1.65-3.477.976-3.477-.934v-160.261c0-3.203-1.711-6.164-4.487-7.772l-138.786-80.127c-1.65-.956-.976-3.478.934-3.478h282.616c4.013 0 6.522 4.35 4.515 7.828h-.007z"
+          fill="var(--provider-icon-contrast)"
+        />
+      </g>
     </svg>
   );
 }
@@ -829,7 +830,14 @@ const providerConfig: Record<
 
 export function ProviderIcon({ provider, size = "sm" }: ProviderIconProps) {
   const normalizedProvider = provider.toLowerCase();
-  const config = providerConfig[normalizedProvider];
+  const directConfig = providerConfig[normalizedProvider];
+  /*
+  FNXC:ProviderIcons 2026-07-10-00:00:
+  FN-7801: dashboard surfaces can pass model-id-shaped provider strings such as grok-4.5 or grok-cli/grok-4-fast, which strict providerConfig lookups miss.
+  Fall through to the shared inferProviderIconKey normalizer before the Cpu default so Grok/xAI and other provider families keep their brand icons, while exact keys and genuinely unknown providers retain existing behavior.
+  */
+  const inferredConfig = directConfig ? undefined : providerConfig[inferProviderIconKey(provider)];
+  const config = directConfig ?? inferredConfig;
   const IconComponent = config?.component;
   const color = config?.color ?? "var(--text-muted)";
   const label = config?.label;

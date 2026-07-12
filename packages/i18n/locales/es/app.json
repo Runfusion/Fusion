@@ -5666,7 +5666,9 @@
       "title": "Apariencia",
       "openTasksInRightSidebarHelp": "",
       "openMobileTasksInPopupHelp": "",
-      "taskDetailChatFirstHelp": ""
+      "taskDetailChatFirstHelp": "",
+      "showCostBadgeOnCards": "",
+      "showCostBadgeOnCardsHelp": ""
     },
     "auth": {
       "apiKeyCleared": "Clave API borrada",
@@ -5796,8 +5798,10 @@
     "footer": {
       "help": "Ayuda",
       "version": "Versión {{version}}",
+      "versionShort": "",
       "checkUpdates": "",
-      "helpDiscussions": ""
+      "helpDiscussions": "",
+      "versionShort": ""
     },
     "general": {
       "25": "",
@@ -7763,9 +7767,11 @@
       "review": "Revisión",
       "routing": "Enrutamiento",
       "stats": "Estadísticas",
-      "terminal": "",
+      "terminal": "Sesión",
+      "worktreeTerminal": "Terminal",
       "workflow": "Flujo de trabajo",
-      "summary": "Summary"
+      "summary": "Summary",
+      "cost": ""
     },
     "terminal": {
       "loading": ""
@@ -7851,6 +7857,22 @@
       "unlinkMessage": "",
       "unlinkTitle": "",
       "unlinked": ""
+    },
+    "costTab": {
+      "cacheWriteTokens": "",
+      "cachedTokens": "",
+      "cost": "",
+      "costUnavailable": "",
+      "description": "",
+      "empty": "",
+      "heading": "",
+      "inputTokens": "",
+      "model": "",
+      "outputTokens": "",
+      "totalCost": "",
+      "totalCostLabel": "",
+      "totalTokens": "",
+      "unknownModel": ""
     }
   },
   "taskDocuments": {
@@ -8273,7 +8295,9 @@
     "revertTask": "",
     "undoOf": "",
     "undoOfTitle": "",
-    "undoTask": ""
+    "undoTask": "",
+    "costBadgeTitle": "",
+    "costBadgeAriaLabel": ""
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -8632,12 +8656,22 @@
     "widgetDefault": "Predeterminado"
   },
   "workflowNodes": {
+    "addStepAgentSteps": "",
+    "addStepAutomation": "",
+    "addStepFlowControl": "",
+    "addStepFragmentDesc": "",
+    "addStepNoMatches": "",
+    "addStepSearchLabel": "",
+    "addStepSearchPlaceholder": "",
+    "addStepTitle": "",
     "advisory": "",
     "autoLayout": "Diseño automático",
     "codeNote": "Ejecuta TypeScript en un entorno aislado. La sintaxis se valida al guardar.",
     "codeSource": "Origen (TypeScript)",
     "codeTimeout": "Tiempo de espera (ms)",
     "collapseInspector": "",
+    "conditionFailure": "",
+    "conditionSuccess": "",
     "cycleBlocked": "Esa conexión crearía un ciclo — solo las conexiones de revisión dentro de una plantilla for-each pueden hacer bucles de retorno",
     "deleteEdge": "Eliminar conexión",
     "deleteNode": "Eliminar nodo",
@@ -8690,9 +8724,13 @@
     "mobileConnectTarget": "Nodo de destino",
     "mobileGraph": "",
     "mobileGraphEmpty": "",
+    "mobileGraphStyleCanvas": "",
+    "mobileGraphStyleLabel": "",
+    "mobileGraphStyleList": "",
     "mobileMoveDown": "",
     "mobileMoveUp": "",
     "mobileNodeKinds": "",
+    "nodeInspector": "",
     "notifyCustom": "",
     "notifyCustomEvent": "",
     "notifyEvent": "",
@@ -8702,6 +8740,7 @@
     "parseArtifact": "Artifact",
     "parseParser": "Parser",
     "quorumN": "Recuento de quórum (n)",
+    "readOnlyDuplicateToEdit": "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here.",
     "releaseCapacity": "Capacidad posterior",
     "releaseCondition": "Condición de liberación",
     "releaseDependency": "Dependencia completada",
@@ -8714,6 +8753,9 @@
     "reviewPlan": "Plan review",
     "reviewType": "Review type",
     "showInspector": "",
+    "simpleAddStep": "",
+    "simpleContainerEmpty": "",
+    "simpleInsertStep": "",
     "splitNote": "Las ramas se ejecutan de forma concurrente desde este nodo. No se permiten uniones de ejecución y fusión dentro de una rama.",
     "startEntryColumn": "",
     "startEntryColumnAuto": "",
@@ -8728,11 +8770,7 @@
     "templatesPluginSteps": "Pasos de plugin",
     "templatesSection": "Plantillas",
     "timeoutMs": "",
-    "trivialGraphHint": "Este flujo de trabajo solo ejecuta inicio → fin. Añade pasos desde la paleta superior para construirlo.",
-    "conditionFailure": "",
-    "conditionSuccess": "",
-    "nodeInspector": "",
-    "readOnlyDuplicateToEdit": "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here."
+    "trivialGraphHint": "Este flujo de trabajo solo ejecuta inicio → fin. Añade pasos desde la paleta superior para construirlo."
   },
   "workflows": {
     "aiEdit": "Diseñar con IA",
@@ -8748,6 +8786,7 @@
     "backToWorkflowList": "",
     "clickToEditDescription": "Haz clic para editar la descripción",
     "clickToRename": "Haz clic para renombrar",
+    "closeEditor": "",
     "created": "Flujo de trabajo «{{name}}» creado",
     "createDescription": "Descripción (opcional)",
     "createFailed": "Error al crear el flujo de trabajo",
@@ -8764,6 +8803,8 @@
     "discardConfirm": "Descartar",
     "discardMessage": "Tienes cambios no guardados en este flujo de trabajo. ¿Descartarlos?",
     "discardTitle": "¿Descartar cambios no guardados?",
+    "duplicatedEditable": "",
+    "duplicateFailed": "",
     "duplicateToCustomize": "",
     "emptyDescription": "Los flujos de trabajo orquestan los pasos y compuertas que se ejecutan alrededor de la ejecución de tareas. Crea uno para comenzar a organizar ese flujo.",
     "emptyTitle": "Ningún flujo de trabajo seleccionado",
@@ -8777,17 +8818,22 @@
     "importInvalidJson": "Ese archivo no es JSON válido.",
     "importStripped": "Se eliminaron los indicadores de aprobación automática de los nodos importados",
     "importTooltip": "Importar un flujo de trabajo desde un archivo JSON",
+    "lifecycleFix": "",
+    "lifecycleFixAll": "",
+    "lifecycleWarningsCount_one": "",
+    "lifecycleWarningsCount_other": "",
+    "loadFailed": "",
+    "loading": "",
     "migrationNotice": "Los pasos del flujo de trabajo heredado fueron convertidos — encuéntralos como plantillas en la paleta y como el flujo de trabajo «Pasos migrados».",
     "mobileEditorNav": "",
     "mobileSelectNote": "",
     "nameLabel": "Nombre del flujo de trabajo",
     "newWorkflow": "Nuevo flujo de trabajo",
+    "noneYet": "",
     "readOnlyBuiltin": "Built-in workflow: structure is read-only, prompts are editable.",
     "saved": "",
     "savedNotCompilable": "",
     "saveFailed": "",
-    "showCanvasEditor": "",
-    "showSimpleEditor": "",
     "templateBlank": "En blanco",
     "templateBlankDescription": "Comenzar desde un grafo vacío inicio → fin.",
     "templateCopyName": "Copia de {{name}}",
@@ -8796,13 +8842,11 @@
     "templatePickerLabel": "Comenzar desde",
     "templateSectionBuiltin": "Flujos de trabajo integrados",
     "templateSectionYours": "Tus flujos de trabajo",
-    "closeEditor": "",
-    "duplicatedEditable": "",
-    "duplicateFailed": "",
-    "loadFailed": "",
-    "loading": "",
-    "noneYet": "",
-    "title": ""
+    "title": "",
+    "viewModeAdvanced": "",
+    "viewModeLabel": "",
+    "viewModeList": "",
+    "viewModeSimple": ""
   },
   "workflowSelector": {
     "switchActiveMessage": "",

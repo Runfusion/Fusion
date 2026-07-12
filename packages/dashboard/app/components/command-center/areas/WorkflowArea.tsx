@@ -14,7 +14,7 @@ import { WorkflowIcon } from "../../WorkflowIcon";
 type SortKey = "workflow" | "tokens" | "cost" | "filesChanged" | "tasksCompleted" | "tasksInProgress" | "tasksInReview";
 
 function costSortValue(cost: CostResult): number {
-  return cost.unavailable || cost.usd === null ? -1 : cost.usd;
+  return cost.usd ?? -1;
 }
 
 function workflowLabel(workflow: WorkflowSummary, unknownLabel: string): string {

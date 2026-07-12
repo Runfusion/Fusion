@@ -8,8 +8,9 @@ import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/mo
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Flag, Zap, Brain, Server } from "lucide-react";
+import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Zap, Brain, Server } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
+import { getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowIcon } from "./WorkflowIcon";
 
@@ -809,6 +810,11 @@ export function TaskForm({
   const selectedNode = (nodeOptions ?? []).find((node) => node.id === nodeId);
   const nodeInlineLabel = selectedNode?.name ?? t("taskForm.nodeInlineDefault", "Node");
   const modelInlineLabel = selectedPreset?.name ?? (presetMode === "custom" ? t("taskForm.modelsCustom", "Models") : t("taskForm.modelsDefault", "Models"));
+  const inlinePriority = priority ?? DEFAULT_TASK_PRIORITY;
+  const InlinePriorityIcon = getPriorityIcon(inlinePriority);
+  const inlinePriorityLabel = getPriorityLabel(inlinePriority);
+  const inlinePriorityButtonLabel = t("taskForm.priorityInlineAria", "Priority: {{priority}}", { priority: inlinePriorityLabel });
+  const inlineFastButtonLabel = t("taskForm.toggleFastMode", "Toggle fast execution mode");
 
   const revealAdvancedControl = useCallback((selector: string) => {
     if (!forceMoreOptionsOpen) setShowMoreOptions(true);
@@ -964,7 +970,10 @@ export function TaskForm({
       Common quick-add action row, adjacent to the description (create mode only). The deep/advanced controls stay collapsed behind the "Advanced" disclosure, but the buttons users reach for most — Attach, Fast (execution-mode), Priority — are surfaced INLINE here next to Plan, styled identically to QuickEntryBox's quick-add buttons (shared `.btn .btn-sm`, `.dep-trigger`, lucide icons at size 12). They are wired to TaskForm's existing state/handlers, NOT duplicated:
         - Attach   → fileInputRef.click() (same hidden input the Advanced Attachments group uses; onImagesChange handles the file).
         - Fast     → toggles executionMode standard⇄fast via onExecutionModeChange (mirrors QuickEntryBox quick-entry-fast-toggle).
-        - Priority → cycles through TASK_PRIORITIES via onPriorityChange (Flag affordance).
+        - Priority → cycles through TASK_PRIORITIES via onPriorityChange and uses the shared priorityIndicator glyph language.
+
+      FNXC:NewTaskDialogAffordances 2026-07-10-21:45:
+      Priority and Fast are icon-only in the inline New Task row to match QuickEntryBox: priority uses the shared up/high, down/low, flag/normal, alert/urgent helper, and Fast uses Zap while title/aria-label/test-id semantics preserve accessibility and tests.
       Plan/Subtask remain gated on their handoff callbacks. Model selectors, branch/base, node, review level, and GitHub tracking stay in the Advanced disclosure.
 
       FNXC:NewTaskDialogAffordances 2026-06-23-21:20:
@@ -1047,12 +1056,12 @@ export function TaskForm({
               className={`btn btn-sm ${executionMode === "fast" ? "btn-primary" : ""}`}
               onClick={() => handleExecutionModeChange(executionMode === "fast" ? "standard" : "fast")}
               aria-pressed={executionMode === "fast"}
+              aria-label={inlineFastButtonLabel}
               disabled={disabled}
               data-testid="task-form-inline-fast"
-              title={t("taskForm.toggleFastMode", "Toggle fast execution mode")}
+              title={inlineFastButtonLabel}
             >
-              <Zap size={12} className="task-form-action-icon" />
-              {t("taskForm.fast", "Fast")}
+              <Zap size={12} className="task-form-action-icon" aria-hidden="true" />
             </button>
           )}
 
@@ -1137,26 +1146,22 @@ export function TaskForm({
             </button>
           )}
 
-          {/* FNXC:NewTask 2026-06-23-00:10: Priority — cycles TASK_PRIORITIES via onPriorityChange (Flag affordance, same label shape as QuickEntryBox). */}
+          {/* FNXC:NewTask 2026-06-23-00:10: Priority — cycles TASK_PRIORITIES via onPriorityChange (shared icon-only glyph language, same accessible label shape as QuickEntryBox). */}
           {onPriorityChange && (
             <button
               type="button"
               className="btn btn-sm"
               onClick={() => {
-                const current = priority ?? DEFAULT_TASK_PRIORITY;
-                const idx = TASK_PRIORITIES.indexOf(current);
+                const idx = TASK_PRIORITIES.indexOf(inlinePriority);
                 const next = TASK_PRIORITIES[(idx + 1) % TASK_PRIORITIES.length];
                 onPriorityChange(next);
               }}
+              aria-label={inlinePriorityButtonLabel}
               disabled={disabled}
               data-testid="task-form-inline-priority"
-              title={t("taskForm.priorityLabel", "Priority")}
+              title={inlinePriorityButtonLabel}
             >
-              <Flag size={12} className="task-form-action-icon" />
-              {(() => {
-                const p = priority ?? DEFAULT_TASK_PRIORITY;
-                return `${p[0].toUpperCase()}${p.slice(1)}`;
-              })()}
+              <InlinePriorityIcon size={12} className="task-form-action-icon" aria-hidden="true" />
             </button>
           )}
         </div>

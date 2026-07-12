@@ -5666,7 +5666,9 @@
       "title": "모양",
       "openTasksInRightSidebarHelp": "",
       "openMobileTasksInPopupHelp": "",
-      "taskDetailChatFirstHelp": ""
+      "taskDetailChatFirstHelp": "",
+      "showCostBadgeOnCards": "",
+      "showCostBadgeOnCardsHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 키가 지워졌습니다",
@@ -5796,8 +5798,10 @@
     "footer": {
       "help": "도움말",
       "version": "버전 {{version}}",
+      "versionShort": "",
       "checkUpdates": "",
-      "helpDiscussions": ""
+      "helpDiscussions": "",
+      "versionShort": ""
     },
     "general": {
       "25": "",
@@ -7763,9 +7767,11 @@
       "review": "검토",
       "routing": "라우팅",
       "stats": "통계",
-      "terminal": "",
+      "terminal": "세션",
+      "worktreeTerminal": "터미널",
       "workflow": "워크플로",
-      "summary": "Summary"
+      "summary": "Summary",
+      "cost": ""
     },
     "terminal": {
       "loading": ""
@@ -7851,6 +7857,22 @@
       "unlinkMessage": "",
       "unlinkTitle": "",
       "unlinked": ""
+    },
+    "costTab": {
+      "cacheWriteTokens": "",
+      "cachedTokens": "",
+      "cost": "",
+      "costUnavailable": "",
+      "description": "",
+      "empty": "",
+      "heading": "",
+      "inputTokens": "",
+      "model": "",
+      "outputTokens": "",
+      "totalCost": "",
+      "totalCostLabel": "",
+      "totalTokens": "",
+      "unknownModel": ""
     }
   },
   "taskDocuments": {
@@ -8273,7 +8295,9 @@
     "revertTask": "",
     "undoOf": "",
     "undoOfTitle": "",
-    "undoTask": ""
+    "undoTask": "",
+    "costBadgeTitle": "",
+    "costBadgeAriaLabel": ""
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -8632,12 +8656,22 @@
     "widgetDefault": "기본값"
   },
   "workflowNodes": {
+    "addStepAgentSteps": "",
+    "addStepAutomation": "",
+    "addStepFlowControl": "",
+    "addStepFragmentDesc": "",
+    "addStepNoMatches": "",
+    "addStepSearchLabel": "",
+    "addStepSearchPlaceholder": "",
+    "addStepTitle": "",
     "advisory": "",
     "autoLayout": "자동 배치",
     "codeNote": "샌드박스에서 TypeScript를 실행합니다. 구문은 저장 시 검증됩니다.",
     "codeSource": "소스(TypeScript)",
     "codeTimeout": "제한 시간(ms)",
     "collapseInspector": "",
+    "conditionFailure": "",
+    "conditionSuccess": "",
     "cycleBlocked": "이 연결은 순환을 만듭니다 — for-each 템플릿 내부의 재작업 엣지만 되돌아올 수 있습니다",
     "deleteEdge": "엣지 삭제",
     "deleteNode": "노드 삭제",
@@ -8690,9 +8724,13 @@
     "mobileConnectTarget": "대상 노드",
     "mobileGraph": "",
     "mobileGraphEmpty": "",
+    "mobileGraphStyleCanvas": "",
+    "mobileGraphStyleLabel": "",
+    "mobileGraphStyleList": "",
     "mobileMoveDown": "",
     "mobileMoveUp": "",
     "mobileNodeKinds": "",
+    "nodeInspector": "",
     "notifyCustom": "",
     "notifyCustomEvent": "",
     "notifyEvent": "",
@@ -8702,6 +8740,7 @@
     "parseArtifact": "Artifact",
     "parseParser": "Parser",
     "quorumN": "정족수 개수(n)",
+    "readOnlyDuplicateToEdit": "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here.",
     "releaseCapacity": "다운스트림 용량",
     "releaseCondition": "릴리스 조건",
     "releaseDependency": "종속성 완료",
@@ -8714,6 +8753,9 @@
     "reviewPlan": "Plan review",
     "reviewType": "Review type",
     "showInspector": "",
+    "simpleAddStep": "",
+    "simpleContainerEmpty": "",
+    "simpleInsertStep": "",
     "splitNote": "분기는 이 노드에서 동시에 실행됩니다. 분기 내에서는 실행 및 병합 이음새가 허용되지 않습니다.",
     "startEntryColumn": "",
     "startEntryColumnAuto": "",
@@ -8728,11 +8770,7 @@
     "templatesPluginSteps": "플러그인 단계",
     "templatesSection": "템플릿",
     "timeoutMs": "",
-    "trivialGraphHint": "이 워크플로는 시작 → 끝만 실행합니다. 위 팔레트에서 단계를 추가하여 구성하세요.",
-    "conditionFailure": "",
-    "conditionSuccess": "",
-    "nodeInspector": "",
-    "readOnlyDuplicateToEdit": "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here."
+    "trivialGraphHint": "이 워크플로는 시작 → 끝만 실행합니다. 위 팔레트에서 단계를 추가하여 구성하세요."
   },
   "workflows": {
     "aiEdit": "AI로 디자인",
@@ -8748,6 +8786,7 @@
     "backToWorkflowList": "",
     "clickToEditDescription": "클릭하여 설명 편집",
     "clickToRename": "클릭하여 이름 변경",
+    "closeEditor": "",
     "created": "워크플로 \"{{name}}\"을(를) 만들었습니다",
     "createDescription": "설명 (선택 사항)",
     "createFailed": "워크플로 만들기에 실패했습니다",
@@ -8764,6 +8803,8 @@
     "discardConfirm": "버리기",
     "discardMessage": "이 워크플로에 저장하지 않은 변경 사항이 있습니다. 버릴까요?",
     "discardTitle": "저장하지 않은 변경 사항을 버릴까요?",
+    "duplicatedEditable": "",
+    "duplicateFailed": "",
     "duplicateToCustomize": "",
     "emptyDescription": "워크플로는 작업 실행 전후에 실행되는 단계와 게이트를 조율합니다. 하나 만들어 그 흐름을 구성해 보세요.",
     "emptyTitle": "선택된 워크플로 없음",
@@ -8777,17 +8818,22 @@
     "importInvalidJson": "이 파일은 유효한 JSON이 아닙니다.",
     "importStripped": "가져온 노드에서 자동 승인 플래그가 제거되었습니다",
     "importTooltip": "JSON 파일에서 워크플로 가져오기",
+    "lifecycleFix": "",
+    "lifecycleFixAll": "",
+    "lifecycleWarningsCount_one": "",
+    "lifecycleWarningsCount_other": "",
+    "loadFailed": "",
+    "loading": "",
     "migrationNotice": "이전 워크플로 단계가 변환되었습니다 — 팔레트의 템플릿과 \"마이그레이션된 단계\" 워크플로에서 찾을 수 있습니다.",
     "mobileEditorNav": "",
     "mobileSelectNote": "",
     "nameLabel": "워크플로 이름",
     "newWorkflow": "새 워크플로",
+    "noneYet": "",
     "readOnlyBuiltin": "Built-in workflow: structure is read-only, prompts are editable.",
     "saved": "",
     "savedNotCompilable": "",
     "saveFailed": "",
-    "showCanvasEditor": "",
-    "showSimpleEditor": "",
     "templateBlank": "빈 워크플로",
     "templateBlankDescription": "빈 시작 → 끝 그래프에서 시작합니다.",
     "templateCopyName": "{{name}} 복사본",
@@ -8796,13 +8842,11 @@
     "templatePickerLabel": "시작점",
     "templateSectionBuiltin": "기본 제공 워크플로",
     "templateSectionYours": "내 워크플로",
-    "closeEditor": "",
-    "duplicatedEditable": "",
-    "duplicateFailed": "",
-    "loadFailed": "",
-    "loading": "",
-    "noneYet": "",
-    "title": ""
+    "title": "",
+    "viewModeAdvanced": "",
+    "viewModeLabel": "",
+    "viewModeList": "",
+    "viewModeSimple": ""
   },
   "workflowSelector": {
     "switchActiveMessage": "",

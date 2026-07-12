@@ -11,6 +11,14 @@ export function inferProviderIconKey(modelOrProviderName: string): string {
   const normalized = modelOrProviderName.toLowerCase();
 
   // Map common provider/model names to their icon keys.
+  /*
+  FNXC:ProviderIcons 2026-07-11-00:00:
+  FN-7818: model-id-shaped Cursor provider strings (cursor, cursor-agent, cursor/<model>) must resolve to the cursor-cli brand icon on model-selection surfaces instead of the generic CPU fallback, mirroring UsageIndicator's local mapping.
+  Run before broad model-family checks so cursor/gpt-5 stays Cursor-branded instead of OpenAI-branded.
+  */
+  if (normalized.includes("cursor")) {
+    return "cursor-cli";
+  }
   if (normalized.includes("claude") || normalized.includes("anthropic")) {
     return "anthropic";
   }

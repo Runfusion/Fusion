@@ -386,6 +386,11 @@ export function ListView({
   });
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
+  /*
+  FNXC:ListView 2026-07-10-00:00 (FN-7809):
+  Tablet-width List view must use the same single-pane layout as mobile because the desktop two-pane sidebar leaves too little horizontal room and clips the primary actions plus expanded QuickEntryBox. Keep touch-only long-press behavior on `isMobile`; this gate only controls split-vs-single-pane structure and detail routing.
+  */
+  const useSinglePaneList = viewportMode === "mobile" || viewportMode === "tablet";
   const { confirm, confirmWithChoice } = useConfirm();
 
   useEffect(() => {
@@ -507,7 +512,7 @@ export function ListView({
   }, [selectedTaskId, tasks]);
 
   useEffect(() => {
-    if (isMobile || typeof ResizeObserver === "undefined") return;
+    if (useSinglePaneList || typeof ResizeObserver === "undefined") return;
     const container = splitLayoutRef.current;
     if (!container) return;
 
@@ -531,10 +536,10 @@ export function ListView({
     const observer = new ResizeObserver(applyClamp);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [isMobile, sidebarWidth]);
+  }, [sidebarWidth, useSinglePaneList]);
 
   useEffect(() => {
-    if (isMobile || typeof ResizeObserver === "undefined") return;
+    if (useSinglePaneList || typeof ResizeObserver === "undefined") return;
     const sidebar = splitSidebarRef.current;
     const container = splitLayoutRef.current;
     if (!sidebar || !container) return;
@@ -561,7 +566,7 @@ export function ListView({
       observer.disconnect();
       if (saveTimer) clearTimeout(saveTimer);
     };
-  }, [isMobile, projectId]);
+  }, [projectId, useSinglePaneList]);
 
   const toggleBulkEdit = useCallback(() => {
     setBulkEditEnabled((prev) => {
@@ -1701,7 +1706,7 @@ export function ListView({
           addToast(getErrorMessage(err), "error");
         }
       } : undefined,
-      onOpenRefine: () => onOpenDetail(task, { origin: isMobile ? "list-mobile" : undefined, initialAction: "refine" }),
+      onOpenRefine: () => onOpenDetail(task, { origin: useSinglePaneList ? "list-mobile" : undefined, initialAction: "refine" }),
       onRespecify: async () => {
         const shouldRebuild = await confirm({
           title: t("taskDetail.plan.rebuildTitle", "Rebuild Plan"),
@@ -1791,7 +1796,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -1913,7 +1918,7 @@ export function ListView({
         return;
       }
       closeContextMenu();
-      if (isMobile) {
+      if (useSinglePaneList) {
         onOpenDetail(task, { origin: "list-mobile" });
         return;
       }
@@ -1921,7 +1926,7 @@ export function ListView({
       setSelectedTaskId(task.id);
       setSelectedTaskSnapshot(task);
     },
-    [closeContextMenu, isMobile, onOpenDetail]
+    [closeContextMenu, onOpenDetail, useSinglePaneList]
   );
 
   // Debounce detail fetches so rapid keyboard/mouse navigation through a
@@ -2020,7 +2025,7 @@ export function ListView({
   style={{ width }} — which wins over the grid `auto` track — updates live and persists.
   */
   const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (isMobile) return;
+    if (useSinglePaneList) return;
     const container = splitLayoutRef.current;
     if (!container) return;
     event.preventDefault();
@@ -2061,13 +2066,13 @@ export function ListView({
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", teardown);
     window.addEventListener("pointercancel", teardown);
-  }, [isMobile]);
+  }, [useSinglePaneList]);
 
   // FNXC:ListView 2026-06-22-18:00: Tear down any in-flight resize drag on unmount so window pointer listeners never leak.
   useEffect(() => () => splitResizeTeardownRef.current?.(), []);
 
   const handleSplitResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (isMobile) return;
+    if (useSinglePaneList) return;
     const measuredWidth = splitLayoutRef.current?.clientWidth ?? 0;
     const fallbackWidth = sidebarWidth / LIST_SIDEBAR_MAX_RATIO + LIST_SIDEBAR_KEYBOARD_STEP;
     const containerWidth = Math.max(measuredWidth, fallbackWidth);
@@ -2091,7 +2096,7 @@ export function ListView({
       event.preventDefault();
       setSidebarWidth(maxWidth);
     }
-  }, [isMobile, sidebarWidth]);
+  }, [sidebarWidth, useSinglePaneList]);
 
   const handleColumnDragOver = useCallback(
     (e: React.DragEvent, column: ColumnId) => {
@@ -2305,7 +2310,7 @@ export function ListView({
         className="btn btn-sm list-view-options-toggle"
         onClick={() => setViewOptionsOpen((prev) => !prev)}
         aria-expanded={viewOptionsOpen}
-        aria-controls={isMobile ? "list-view-options-panel-mobile" : "list-view-options-panel"}
+        aria-controls={useSinglePaneList ? "list-view-options-panel-mobile" : "list-view-options-panel"}
       >
         <Columns3 size={14} />
         {t("listView.viewOptions", "View")}
@@ -2408,7 +2413,7 @@ export function ListView({
   }
 
   return (
-    <div className="list-view">
+    <div className={`list-view${useSinglePaneList ? " list-view--single-pane" : ""}`}>
       {contextMenuState && hasContextMenuActions && createPortal(
         <div
           ref={contextMenuRef}
@@ -2435,7 +2440,7 @@ export function ListView({
           addToast={addToast}
         />
       )}
-      {isMobile && (
+      {useSinglePaneList && (
         <>
           <div className="list-toolbar">
             {renderWorkflowSelector()}
@@ -2460,14 +2465,14 @@ export function ListView({
       )}
 
       <div className="list-table-container">
-        <div className={isMobile ? "" : "list-split-layout"} data-testid={isMobile ? undefined : "list-split-layout"} ref={splitLayoutRef}>
+        <div className={useSinglePaneList ? "" : "list-split-layout"} data-testid={useSinglePaneList ? undefined : "list-split-layout"} ref={splitLayoutRef}>
           <div
-            className={isMobile ? "" : "list-split-sidebar"}
-            data-testid={isMobile ? undefined : "list-split-sidebar"}
+            className={useSinglePaneList ? "" : "list-split-sidebar"}
+            data-testid={useSinglePaneList ? undefined : "list-split-sidebar"}
             ref={splitSidebarRef}
-            style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
+            style={useSinglePaneList ? undefined : { width: `${sidebarWidth}px` }}
           >
-            {!isMobile && (
+            {!useSinglePaneList && (
               <aside className="list-sidebar-controls" aria-label={t("listView.listControlsLabel", "List controls")}>
                 {/*
                 FNXC:ListView 2026-06-23-23:42:
@@ -2536,7 +2541,7 @@ export function ListView({
           <div className="list-empty">
             {searchQuery ? t("listView.noTasksMatch", "No tasks match your filter") : t("listView.noTasksYet", "No tasks yet")}
           </div>
-        ) : isMobile ? (
+        ) : useSinglePaneList ? (
           <div className="list-cards">
             {listColumns.map((columnDef) => {
               const column = columnDef.id;
@@ -2929,7 +2934,7 @@ export function ListView({
           </table>
         )}
           </div>
-          {!isMobile && (
+          {!useSinglePaneList && (
             <>
               <div
                 className="list-split-resize-handle"

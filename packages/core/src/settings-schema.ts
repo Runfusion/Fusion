@@ -392,6 +392,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   openMobileTasksInPopup: false,
   /*
+  FNXC:TaskCardCostBadge 2026-07-11-12:15:
+  Default off preserves existing board-card density. When true, the dashboard may render a read-time derived cost badge only for tasks with positive token usage; unavailable pricing remains the guess-free “—” sentinel.
+  */
+  showCostBadgeOnCards: false,
+  /*
   FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
   Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
   */

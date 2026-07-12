@@ -1118,7 +1118,17 @@ export async function runServe(
 
   let shuttingDown = false;
 
-  const shutdown = async () => {
+  /*
+  FNXC:DaemonSignalExit 2026-07-10-14:00:
+  Same invariant as `fn daemon`: a memory-pressure SIGTERM must exit non-zero so a
+  `Restart=on-failure` supervisor restarts the server rather than treating the kill
+  as a clean stop. Exit 128+signal (SIGINT=130, SIGTERM=143); a non-signal caller
+  still exits 0. A deliberate `systemctl stop` won't restart regardless (systemd
+  honors the requested inactive state).
+  */
+  const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
+
+  const shutdown = async (signal?: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
 
@@ -1189,14 +1199,14 @@ export async function runServe(
 
     stopDiagnosticInterval();
     store.close();
-    process.exit(0);
+    process.exit(signal ? (SIGNAL_EXIT_CODES[signal] ?? 128) : 0);
   };
 
   process.on("SIGINT", () => {
-    void shutdown();
+    void shutdown("SIGINT");
   });
   process.on("SIGTERM", () => {
-    void shutdown();
+    void shutdown("SIGTERM");
   });
 
   // Ignore SIGHUP so the server survives SSH session disconnects.

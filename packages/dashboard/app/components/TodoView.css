@@ -567,29 +567,43 @@ Redesign Todos to fit the rest of the dashboard theme: full-height tokenized wor
   gap: var(--space-sm);
 }
 
+/*
+FNXC:TodosStyling 2026-07-10-23:30:
+Modernization pass: todo items collapse from the two-row card (text row + full-width
+divided action row, which repeated 7 large buttons under every item and made each card
+~2x taller than its content) into a SINGLE compact row — checkbox + text on the left,
+the quiet action cluster right-aligned on the same line. Actions stay always visible
+(operator requirement: "visible but quiet action bars") but render muted and compact,
+sharpening to full contrast when the row is hovered or focused. The narrow-container
+stack and the 768px mobile breakpoint return to a stacked layout with the action row
+under the text because a phone-width row cannot fit text plus seven controls.
+*/
 .todo-item {
-  padding: var(--space-md);
+  flex-direction: row;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm) var(--space-xs) var(--space-md);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--card);
-  box-shadow: var(--shadow-sm, 0 1px 2px color-mix(in srgb, var(--bg) 70%, transparent));
-  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  min-height: 44px;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .todo-item:hover {
   background: var(--surface);
   border-color: color-mix(in srgb, var(--todo) 28%, var(--border));
-  transform: translateY(-1px);
 }
 
 .todo-item-main-row {
-  align-items: flex-start;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
 }
 
 .todo-item-checkbox {
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
 }
 
 .todo-item-text {
@@ -603,9 +617,25 @@ Redesign Todos to fit the rest of the dashboard theme: full-height tokenized wor
 
 .todo-item-actions {
   align-items: center;
-  margin-left: calc(var(--space-lg) + var(--space-sm));
-  padding-top: var(--space-xs);
-  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-top: 0;
+  border-top: none;
+  color: var(--text-muted);
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+
+.todo-item:hover .todo-item-actions,
+.todo-item:focus-within .todo-item-actions {
+  opacity: 1;
+}
+
+.todo-item-actions .todo-icon-btn svg,
+.todo-item-reorder-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .todo-item-reorder-btns {
@@ -678,8 +708,18 @@ NARROW container (right dock): collapse the side-by-side split into a single-pan
     opacity: 1;
   }
 
+  /* Stack text over the action row: a phone-width row cannot fit text plus seven controls. */
+  .todo-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+  }
+
   .todo-item-actions {
     margin-left: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .todo-add-item-row {
@@ -762,8 +802,18 @@ NARROW container (right dock): collapse the side-by-side split into a single-pan
     align-items: center;
   }
 
+  /* Stack text over the action row on mobile; mirror the narrow-container stack. */
+  .todo-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+  }
+
   .todo-item-actions {
     margin-left: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .todo-item-checkbox {

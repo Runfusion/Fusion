@@ -1,0 +1,51 @@
+/*
+FNXC:TaskDetailCost 2026-07-11-12:05:
+The always-available Cost tab reuses the Summary token-table visual system so desktop, right-dock, and mobile task-detail surfaces inherit the same responsive stacked-table behavior without a second cost-table design.
+*/
+.task-cost-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.task-cost-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.task-cost-total {
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-weight: 700;
+}
+
+.task-cost-table {
+  min-width: calc(var(--space-2xl) * 18);
+}
+
+@media (max-width: 768px) {
+  .detail-section--cost {
+    padding-inline: var(--space-sm);
+  }
+
+  .task-cost-tab {
+    gap: var(--space-md);
+  }
+
+  .task-cost-heading-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .task-cost-total {
+    width: 100%;
+  }
+}

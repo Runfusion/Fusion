@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { useMemoryData } from "../useMemoryData";
 
+/*
+FNXC:MemoryView 2026-07-10-23:00:
+The legacy single-file working-memory surface (fetchMemory/saveMemory) and the unused
+fetchMemoryStats call were removed from useMemoryData — MemoryView is a multi-file editor
+(fetchMemoryFiles/fetchMemoryFile/saveMemoryFile) and the Engines card uses the audit
+report. These tests cover the multi-file flow, and assert the removed endpoints are no
+longer called on mount.
+*/
+
 // Mock API functions
 vi.mock("../../api", () => ({
   fetchMemory: vi.fn(),
@@ -44,152 +53,144 @@ vi.mock("../useMemoryBackendStatus", () => ({
 // Import mocked functions
 import {
   fetchMemory,
-  saveMemory,
+  fetchMemoryStats,
   fetchMemoryInsights,
   saveMemoryInsights,
   triggerInsightExtraction,
   fetchMemoryAudit,
   compactMemory,
+  fetchMemoryFiles,
+  fetchMemoryFile,
+  saveMemoryFile,
+  fetchSettings,
   triggerMemoryDreams,
 } from "../../api";
+
+const MEMORY_FILES = [
+  {
+    path: ".fusion/memory/MEMORY.md",
+    label: "Long-term memory",
+    layer: "long-term" as const,
+    size: 100,
+    updatedAt: "2024-01-01T00:00:00.000Z",
+  },
+  {
+    path: ".fusion/memory/2024-01-01.md",
+    label: "Daily memory",
+    layer: "daily" as const,
+    size: 40,
+    updatedAt: "2024-01-01T00:00:00.000Z",
+  },
+];
+
+const AUDIT_REPORT = {
+  generatedAt: "2024-01-01T00:00:00.000Z",
+  workingMemory: { exists: true, size: 100, sectionCount: 2 },
+  insightsMemory: { exists: true, size: 50, insightCount: 5, categories: { pattern: 3 } },
+  extraction: {
+    runAt: "2024-01-01T00:00:00.000Z",
+    success: true,
+    insightCount: 5,
+    duplicateCount: 0,
+    skippedCount: 0,
+    summary: "Extracted 5 insights",
+  },
+  pruning: { applied: false, reason: "No pruning needed", sizeDelta: 0, originalSize: 50, newSize: 50 },
+  checks: [],
+  health: "healthy" as const,
+};
+
+function mockDefaults(): void {
+  vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: "## Patterns\n- Pattern 1", exists: true });
+  vi.mocked(fetchMemoryAudit).mockResolvedValue(AUDIT_REPORT);
+  vi.mocked(fetchMemoryFiles).mockResolvedValue({ files: MEMORY_FILES });
+  vi.mocked(fetchMemoryFile).mockResolvedValue({ path: ".fusion/memory/MEMORY.md", content: "# Long-term" });
+  vi.mocked(fetchSettings).mockResolvedValue({ memoryEnabled: true } as Awaited<ReturnType<typeof fetchSettings>>);
+}
 
 describe("useMemoryData", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDefaults();
   });
 
-  it("fetches working memory, insights, and audit on mount", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "# Working Memory\n\nSome content" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({
-      content: "## Patterns\n- Pattern 1",
-      exists: true,
-    });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 100, sectionCount: 2 },
-      insightsMemory: { exists: true, size: 50, insightCount: 5, categories: { pattern: 3 } },
-      extraction: {
-        runAt: "2024-01-01T00:00:00.000Z",
-        success: true,
-        insightCount: 5,
-        duplicateCount: 0,
-        skippedCount: 0,
-        summary: "Extracted 5 insights",
-      },
-      pruning: { applied: false, reason: "No pruning needed", sizeDelta: 0, originalSize: 50, newSize: 50 },
-      checks: [],
-      health: "healthy",
-    });
-
+  it("fetches memory files, insights, and audit on mount — and does NOT call the removed legacy endpoints", async () => {
     const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
-    // Initially loading
-    expect(result.current.workingMemoryLoading).toBe(true);
     expect(result.current.insightsLoading).toBe(true);
     expect(result.current.auditLoading).toBe(true);
 
-    // Wait for all data to load
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
       expect(result.current.insightsLoading).toBe(false);
       expect(result.current.auditLoading).toBe(false);
+      expect(result.current.memoryFilesLoading).toBe(false);
     });
 
-    // Verify working memory was fetched
-    expect(fetchMemory).toHaveBeenCalledWith("test-project");
-
-    // Verify insights were fetched
+    expect(fetchMemoryFiles).toHaveBeenCalledWith("test-project");
+    expect(fetchMemoryFile).toHaveBeenCalledWith(".fusion/memory/MEMORY.md", "test-project");
     expect(fetchMemoryInsights).toHaveBeenCalledWith("test-project");
-
-    // Verify audit was fetched
     expect(fetchMemoryAudit).toHaveBeenCalledWith("test-project");
 
-    // Verify state is updated
-    expect(result.current.workingMemory).toBe("# Working Memory\n\nSome content");
+    // Removed legacy surface: no single-file working-memory or stats fetch on mount
+    expect(fetchMemory).not.toHaveBeenCalled();
+    expect(fetchMemoryStats).not.toHaveBeenCalled();
+
+    expect(result.current.memoryFiles).toHaveLength(2);
+    expect(result.current.selectedFilePath).toBe(".fusion/memory/MEMORY.md");
+    expect(result.current.selectedFileContent).toBe("# Long-term");
     expect(result.current.insightsContent).toBe("## Patterns\n- Pattern 1");
     expect(result.current.insightsExists).toBe(true);
-    expect(result.current.auditReport).not.toBeNull();
     expect(result.current.auditReport?.health).toBe("healthy");
   });
 
-  it("marks working memory as dirty when content changes", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
-
-    const { result } = renderHook(() => useMemoryData());
+  it("selectFile loads the new file without refetching the whole file list", async () => {
+    const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
+      expect(result.current.memoryFilesLoading).toBe(false);
     });
 
-    expect(result.current.workingMemoryDirty).toBe(false);
+    expect(fetchMemoryFiles).toHaveBeenCalledTimes(1);
 
-    act(() => {
-      result.current.setWorkingMemory("New content");
+    vi.mocked(fetchMemoryFile).mockResolvedValue({ path: ".fusion/memory/2024-01-01.md", content: "daily notes" });
+
+    await act(async () => {
+      await result.current.selectFile(".fusion/memory/2024-01-01.md");
     });
 
-    expect(result.current.workingMemoryDirty).toBe(true);
-    expect(result.current.workingMemory).toBe("New content");
+    expect(result.current.selectedFilePath).toBe(".fusion/memory/2024-01-01.md");
+    expect(result.current.selectedFileContent).toBe("daily notes");
+    expect(result.current.selectedFileDirty).toBe(false);
+    // Selection changes must not re-trigger the mount-time file list fetch
+    expect(fetchMemoryFiles).toHaveBeenCalledTimes(1);
   });
 
-  it("saveWorkingMemory calls API and clears dirty flag", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
-    vi.mocked(saveMemory).mockResolvedValue({ success: true });
+  it("marks the selected file dirty on edit and saveSelectedFile persists it", async () => {
+    vi.mocked(saveMemoryFile).mockResolvedValue({ success: true });
 
     const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
+      expect(result.current.memoryFilesLoading).toBe(false);
     });
 
-    // Make changes
     act(() => {
-      result.current.setWorkingMemory("Modified content");
+      result.current.setSelectedFileContent("# Long-term (edited)");
     });
 
-    expect(result.current.workingMemoryDirty).toBe(true);
+    expect(result.current.selectedFileDirty).toBe(true);
 
-    // Save
     await act(async () => {
-      await result.current.saveWorkingMemory();
+      await result.current.saveSelectedFile();
     });
 
-    expect(saveMemory).toHaveBeenCalledWith("Modified content", "test-project");
-    expect(result.current.workingMemoryDirty).toBe(false);
-    expect(result.current.savingWorkingMemory).toBe(false);
+    expect(saveMemoryFile).toHaveBeenCalledWith(".fusion/memory/MEMORY.md", "# Long-term (edited)", "test-project");
+    expect(result.current.selectedFileDirty).toBe(false);
+    expect(result.current.savingSelectedFile).toBe(false);
   });
 
   it("extractInsights calls API then refreshes insights and audit", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Working memory content" });
     vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
     vi.mocked(triggerInsightExtraction).mockResolvedValue({
       success: true,
       summary: "Extracted 3 insights",
@@ -203,7 +204,6 @@ describe("useMemoryData", () => {
       expect(result.current.auditLoading).toBe(false);
     });
 
-    // Extract insights
     let extractResult: { success: boolean; summary: string } | undefined;
     await act(async () => {
       extractResult = await result.current.extractInsights();
@@ -213,93 +213,61 @@ describe("useMemoryData", () => {
     expect(extractResult).toEqual({ success: true, summary: "Extracted 3 insights" });
     expect(result.current.extracting).toBe(false);
 
-    // Verify insights and audit were refreshed
     expect(fetchMemoryInsights).toHaveBeenCalledTimes(2); // Initial + refresh
     expect(fetchMemoryAudit).toHaveBeenCalledTimes(2); // Initial + refresh
   });
 
-  it("compactMemory calls API and updates working memory with returned content", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Long memory content that needs compaction" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 200, sectionCount: 5 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
+  it("compactMemory compacts the selected file in place and reloads the file list", async () => {
     vi.mocked(compactMemory).mockResolvedValue({
+      path: ".fusion/memory/MEMORY.md",
       content: "Compacted memory content",
     });
 
     const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
+      expect(result.current.memoryFilesLoading).toBe(false);
     });
 
-    // Compact memory
     await act(async () => {
-      await result.current.compactMemory();
+      await result.current.compactMemory(".fusion/memory/MEMORY.md");
     });
 
-    expect(compactMemory).toHaveBeenCalledWith("test-project");
-    expect(result.current.workingMemory).toBe("Compacted memory content");
-    expect(result.current.workingMemoryDirty).toBe(true);
+    expect(compactMemory).toHaveBeenCalledWith(".fusion/memory/MEMORY.md", "test-project");
+    expect(result.current.selectedFileContent).toBe("Compacted memory content");
+    expect(result.current.selectedFileDirty).toBe(false);
     expect(result.current.compacting).toBe(false);
+    expect(fetchMemoryFiles).toHaveBeenCalledTimes(2); // Initial + reload after compaction
   });
 
   it("saveInsights calls API then refreshes insights", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Working memory" });
     vi.mocked(fetchMemoryInsights)
       .mockResolvedValueOnce({ content: null, exists: false })
       .mockResolvedValueOnce({ content: "New insights content", exists: true });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
     vi.mocked(saveMemoryInsights).mockResolvedValue({ success: true });
 
     const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
+      expect(result.current.insightsLoading).toBe(false);
     });
 
-    // Save insights
     await act(async () => {
       await result.current.saveInsights("New insights content");
     });
 
     expect(saveMemoryInsights).toHaveBeenCalledWith("New insights content", "test-project");
     expect(fetchMemoryInsights).toHaveBeenCalledTimes(2); // Initial + refresh
+    expect(result.current.insightsContent).toBe("New insights content");
   });
 
   it("triggerDreamNow calls triggerMemoryDreams", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
     vi.mocked(triggerMemoryDreams).mockResolvedValue({ success: true, summary: "done" });
 
     const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
+      expect(result.current.memoryFilesLoading).toBe(false);
     });
 
     await act(async () => {
@@ -311,17 +279,6 @@ describe("useMemoryData", () => {
   });
 
   it("triggerDreamNow propagates API errors and resets state", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
     vi.mocked(triggerMemoryDreams).mockRejectedValue(
       new Error("Memory dreams are disabled. Enable dream processing in memory settings first."),
     );
@@ -329,7 +286,7 @@ describe("useMemoryData", () => {
     const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
 
     await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
+      expect(result.current.memoryFilesLoading).toBe(false);
     });
 
     await act(async () => {
@@ -340,51 +297,5 @@ describe("useMemoryData", () => {
 
     expect(triggerMemoryDreams).toHaveBeenCalledTimes(1);
     expect(result.current.dreamRunning).toBe(false);
-  });
-
-  it("sets correct loading states during async operations", async () => {
-    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
-    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
-    vi.mocked(fetchMemoryAudit).mockResolvedValue({
-      generatedAt: "2024-01-01T00:00:00.000Z",
-      workingMemory: { exists: true, size: 20, sectionCount: 1 },
-      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
-      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
-      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
-      checks: [],
-      health: "warning",
-    });
-    vi.mocked(saveMemory).mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return { success: true };
-    });
-
-    const { result } = renderHook(() => useMemoryData());
-
-    await waitFor(() => {
-      expect(result.current.workingMemoryLoading).toBe(false);
-    });
-
-    // Make changes and save
-    act(() => {
-      result.current.setWorkingMemory("Modified content");
-    });
-
-    expect(result.current.workingMemoryDirty).toBe(true);
-    expect(result.current.savingWorkingMemory).toBe(false);
-
-    // Start save operation
-    const savePromise = act(async () => {
-      await result.current.saveWorkingMemory();
-    });
-
-    // During save, savingWorkingMemory should be true
-    // Note: This is a bit tricky to test because the state update happens synchronously
-    // but the actual save is async. The loading state might not be visible in tests.
-
-    await savePromise;
-
-    expect(result.current.savingWorkingMemory).toBe(false);
-    expect(result.current.workingMemoryDirty).toBe(false);
   });
 });

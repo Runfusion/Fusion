@@ -94,6 +94,9 @@ export function FileEditor({
   const previewRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const syncingFromPropsRef = useRef(false);
+  const localEditVersionRef = useRef(0);
+  const contentEditVersionsRef = useRef<Map<string, number>>(new Map([[content, 0]]));
+  const lastPropEditVersionRef = useRef(0);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -176,7 +179,10 @@ export function FileEditor({
         themeOverlay,
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || syncingFromPropsRef.current) return;
-          onChangeRef.current(update.state.doc.toString());
+          const nextContent = update.state.doc.toString();
+          localEditVersionRef.current += 1;
+          contentEditVersionsRef.current.set(nextContent, localEditVersionRef.current);
+          onChangeRef.current(nextContent);
         }),
       ],
     });
@@ -242,14 +248,44 @@ export function FileEditor({
     });
   }, [darkThemeActive]);
 
+  /*
+   * FNXC:FileViewer 2026-07-10-22:52:
+   * FN-7810 found that the bounded self-echo Set could evict a stale value during long sessions, and it could miss end-of-file Enter flows where a trailing header newline raced an older prop. Use monotonic edit versions for every local CodeMirror emission instead: any prop whose known version is older than the live editor or last accepted prop is a stale self-echo at any session length, while never-emitted external reload/save-normalization content still replaces the document with the caret clamped into range.
+   */
   useEffect(() => {
     const view = editorViewRef.current;
     if (!view) return;
     const currentContent = view.state.doc.toString();
-    if (currentContent === content) return;
+    if (currentContent === content) {
+      const acknowledgedVersion = contentEditVersionsRef.current.get(content) ?? localEditVersionRef.current;
+      contentEditVersionsRef.current.set(content, acknowledgedVersion);
+      lastPropEditVersionRef.current = Math.max(lastPropEditVersionRef.current, acknowledgedVersion);
+      return;
+    }
+
+    const incomingEditVersion = contentEditVersionsRef.current.get(content);
+    const currentEditVersion = contentEditVersionsRef.current.get(currentContent) ?? localEditVersionRef.current;
+    const isStaleSelfEcho = incomingEditVersion !== undefined && incomingEditVersion < Math.max(currentEditVersion, lastPropEditVersionRef.current);
+    if (isStaleSelfEcho) return;
+
+    const previousSelection = view.state.selection.main;
+    const nextLength = content.length;
+    const clampPosition = (position: number) => Math.max(0, Math.min(position, nextLength));
     syncingFromPropsRef.current = true;
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
-    syncingFromPropsRef.current = false;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: content },
+        selection: {
+          anchor: clampPosition(previousSelection.anchor),
+          head: clampPosition(previousSelection.head),
+        },
+      });
+      const externalContentVersion = localEditVersionRef.current;
+      contentEditVersionsRef.current.set(content, externalContentVersion);
+      lastPropEditVersionRef.current = Math.max(lastPropEditVersionRef.current, externalContentVersion);
+    } finally {
+      syncingFromPropsRef.current = false;
+    }
   }, [content]);
 
   return (

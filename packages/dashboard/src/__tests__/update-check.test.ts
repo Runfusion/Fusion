@@ -227,6 +227,58 @@ describe("update-check", () => {
     expect(execFake).toHaveBeenCalledTimes(1);
   });
 
+  // FNXC:UpdateInstallPermissions 2026-07-10-14:00: a root-owned global dir
+  // (from `sudo npm i -g`) makes the non-root in-app updater fail with EACCES/
+  // EPERM. It must surface actionable remediation, not raw npm stderr, and must
+  // NOT retry with --force (which cannot grant write permission).
+  it("performUpdateInstall returns actionable guidance on an EACCES permission failure", async () => {
+    const execFake = vi.fn().mockRejectedValue(
+      Object.assign(new Error("EACCES"), {
+        code: "EACCES",
+        stderr: "npm error EACCES: permission denied, rename '/usr/lib/node_modules/@runfusion/fusion'",
+      }),
+    );
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+    expect(result.updated).toBe(false);
+    expect(result.error).toMatch(/EACCES\/EPERM|not writable|sudo/i);
+    // Must not fall through to raw npm stderr, and must not retry with --force.
+    expect(result.error).not.toContain("rename '/usr/lib/node_modules");
+    expect(execFake).toHaveBeenCalledTimes(1);
+  });
+
+  it("performUpdateInstall detects EPERM from stderr text without an error code", async () => {
+    const execFake = vi.fn().mockRejectedValue(
+      Object.assign(new Error("install failed"), {
+        stderr: "npm error code EPERM\nnpm error operation not permitted",
+      }),
+    );
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+    expect(result.updated).toBe(false);
+    expect(result.error).toMatch(/not writable|sudo/i);
+    expect(execFake).toHaveBeenCalledTimes(1);
+  });
+
+  // FNXC:UpdateInstallPermissions 2026-07-10-16:00: an Intel-macOS Homebrew install
+  // resolves through `/usr/local/Cellar/…` (not `/usr/local/Homebrew/`), so the
+  // remediation must recommend `brew upgrade`, not the npm/sudo guidance.
+  it("performUpdateInstall recommends brew for an Intel-macOS Homebrew install path", async () => {
+    const originalArgv1 = process.argv[1];
+    process.argv[1] = "/usr/local/Cellar/fusion/0.57.0/bin/fn";
+    try {
+      const execFake = vi.fn().mockRejectedValue(
+        Object.assign(new Error("EACCES"), { code: "EACCES", stderr: "npm error EACCES" }),
+      );
+      const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+      expect(result.updated).toBe(false);
+      expect(result.error).toMatch(/brew upgrade fusion/);
+      expect(result.error).not.toMatch(/sudo npm/);
+    } finally {
+      process.argv[1] = originalArgv1;
+    }
+  });
+
   describe("frequency", () => {
     beforeEach(() => {
       __resetStartupRefreshFlag();

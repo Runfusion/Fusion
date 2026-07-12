@@ -38,7 +38,7 @@ The Tokens detail area is the full-fidelity by-model source of truth: every grou
 */
 
 function costSortValue(cost: CostResult): number {
-  return cost.unavailable || cost.usd === null ? -1 : cost.usd;
+  return cost.usd ?? -1;
 }
 
 function modelGroupIdentity(group: TokenGroupSummary): string {
@@ -287,16 +287,12 @@ export function TokensArea({ range, projectId }: { range: DateRange; projectId?:
                   <td>{formatCount(g.cachedTokens)}</td>
                   <td>{formatCount(g.totalTokens)}</td>
                   <td>
-                    {g.cost.unavailable || g.cost.usd === null ? (
-                      <span
-                        className="cc-unavailable"
-                        title={t("commandCenter.tokens.costUnavailable", "No pricing for this model")}
-                      >
-                        —
-                      </span>
-                    ) : (
-                      formatCost(g.cost.usd, g.cost.unavailable)
-                    )}
+                    <span
+                      className={g.cost.usd === null ? "cc-unavailable" : undefined}
+                      title={g.cost.unavailable ? t("commandCenter.tokens.costUnavailable", "No pricing for some or all usage") : undefined}
+                    >
+                      {formatCost(g.cost.usd, g.cost.unavailable)}
+                    </span>
                   </td>
                 </tr>
               ))}

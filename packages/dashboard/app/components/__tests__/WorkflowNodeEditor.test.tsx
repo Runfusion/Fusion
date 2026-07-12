@@ -498,6 +498,23 @@ describe("workflow-flow-mapping", () => {
   });
 });
 
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+The editor now defaults to the simplified view ("simple"); this legacy suite
+was authored against the advanced canvas and the row-list (old "simple
+editor") behaviors, so it pins the persisted view-mode keys per test. The
+simplified view has its own dedicated suite below ("simplified view modes").
+*/
+beforeEach(() => {
+  localStorage.setItem("fusion:wf-editor-view-mode", "advanced");
+  localStorage.setItem("fusion:wf-mobile-graph-style", "list");
+});
+
+afterEach(() => {
+  localStorage.removeItem("fusion:wf-editor-view-mode");
+  localStorage.removeItem("fusion:wf-mobile-graph-style");
+});
+
 describe("WorkflowNodeEditor", () => {
   beforeEach(() => {
     vi.mocked(fetchWorkflows).mockResolvedValue([]);
@@ -533,33 +550,71 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getAllByRole("button", { name: "QA" })[0]).toHaveClass("active");
   });
 
-  it("renders workflow lifecycle warnings returned by the store", async () => {
-    vi.mocked(fetchWorkflows).mockResolvedValue([
-      {
-        ...v2Def(),
-        lifecycleWarnings: [
-          {
-            code: "missing-merge-region",
-            message: "Full task workflows should include a merge region so done is backed by merge proof.",
-          },
-          {
-            code: "optional-group-after-execution",
-            nodeId: "plan-review",
-            message: "Plan Review should be ordered before parse/execution.",
-          },
+  it("analyzes lifecycle warnings live and fixes a missing completion summary in one click", async () => {
+    // FNXC:WorkflowLifecycleAutofix 2026-07-12-13:00: warnings recompute from
+    // the LIVE graph (not the server snapshot) for editable workflows, and
+    // deterministically fixable codes carry a one-click Fix button.
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    // def() has a merge seam but no completion-summary node → exactly one
+    // live warning, collapsed to a count line by default.
+    const banner = await screen.findByTestId("wf-lifecycle-warnings");
+    expect(banner).toHaveTextContent("1 lifecycle warning");
+    expect(banner).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByTestId("wf-lifecycle-warnings-toggle"));
+    expect(banner).toHaveTextContent("missing-completion-summary");
+
+    fireEvent.click(screen.getByTestId("wf-lifecycle-fix-missing-completion-summary"));
+
+    // The canonical summary node is inserted (selected → inspector opens) and
+    // the live re-analysis clears the banner without a save round-trip.
+    await waitFor(() => expect(screen.queryByTestId("wf-lifecycle-warnings")).not.toBeInTheDocument());
+    expect(screen.getAllByText("Completion summary").length).toBeGreaterThan(0);
+  });
+
+  it("fixes all lifecycle warnings on a fresh start→end graph and wires summary→merge→end", async () => {
+    const blank: WorkflowDefinition = {
+      ...def(),
+      id: "WF-BLANK",
+      name: "Blank",
+      ir: {
+        version: "v1",
+        name: "Blank",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "end", kind: "end" },
         ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
       },
-    ]);
+      layout: { start: { x: 0, y: 0 }, end: { x: 360, y: 0 } },
+    };
+    vi.mocked(fetchWorkflows).mockResolvedValue([blank]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...blank, ...(updates as object) }));
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     const banner = await screen.findByTestId("wf-lifecycle-warnings");
-    expect(banner).toHaveTextContent("Lifecycle warnings");
-    expect(banner).toHaveTextContent("missing-merge-region");
-    expect(banner).toHaveTextContent("optional-group-after-execution");
-    expect(banner).toHaveTextContent("plan-review");
-  });
+    expect(banner).toHaveTextContent("2 lifecycle warnings");
 
+    // "Fix all" sits on the collapsed summary line — no expand needed.
+    fireEvent.click(screen.getByTestId("wf-lifecycle-fix-all"));
+    await waitFor(() => expect(screen.queryByTestId("wf-lifecycle-warnings")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: Array<{ id: string; kind: string; config?: Record<string, unknown> }>; edges: Array<{ from: string; to: string }> } }).ir;
+    const summary = ir.nodes.find((n) => n.config?.summaryTarget === "task");
+    const merge = ir.nodes.find((n) => n.config?.seam === "merge");
+    expect(summary).toBeDefined();
+    expect(merge).toBeDefined();
+    expect(ir.edges.some((e) => e.from === "start" && e.to === summary!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === summary!.id && e.to === merge!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === merge!.id && e.to === "end")).toBe(true);
+    expect(ir.edges.some((e) => e.from === "start" && e.to === "end")).toBe(false);
+  });
   it("lets desktop users collapse and restore the workflow sidebar", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
 
@@ -609,7 +664,7 @@ describe("WorkflowNodeEditor", () => {
     expect(document.body.querySelector(".react-flow__minimap")).toBeTruthy();
   });
 
-  it("lets desktop users switch to the simple graph layout and back", async () => {
+  it("lets desktop users switch to the list layout and back", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
@@ -617,17 +672,17 @@ describe("WorkflowNodeEditor", () => {
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
     expect(screen.queryByTestId("wf-mobile-shell")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
 
     expect(await screen.findByTestId("wf-mobile-shell")).toBeInTheDocument();
     expect(screen.getByTestId("wf-mobile-tab-graph")).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "start start" })).toBeInTheDocument();
-    expect(screen.getByTestId("wf-layout-toggle")).toHaveTextContent("Show canvas editor");
+    expect(screen.getByTestId("wf-view-mode-list")).toHaveAttribute("aria-pressed", "true");
 
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-advanced"));
 
     await waitFor(() => expect(screen.queryByTestId("wf-mobile-shell")).not.toBeInTheDocument());
-    expect(screen.getByTestId("wf-layout-toggle")).toHaveTextContent("Show simple editor");
+    expect(screen.getByTestId("wf-view-mode-advanced")).toHaveAttribute("aria-pressed", "true");
   });
 
   it("surfaces the full styled simple-editor affordance set at desktop width", async () => {
@@ -636,7 +691,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
 
     const shell = await screen.findByTestId("wf-mobile-shell");
     for (const panel of ["graph", "add", "settings", "fields", "columns", "actions"]) {
@@ -666,7 +721,7 @@ describe("WorkflowNodeEditor", () => {
     fireEvent.click(await screen.findByRole("button", { name: "QA" }));
 
     const shell = await screen.findByTestId("wf-mobile-shell");
-    expect(screen.queryByTestId("wf-layout-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wf-view-mode-toggle")).not.toBeInTheDocument();
     assertSimpleEditorTabScrollOwner(shell, 375);
   });
 
@@ -698,7 +753,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("Plain connect");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
     await screen.findByTestId("wf-mobile-shell");
 
     fireEvent.click(await screen.findByTestId("mobile-wf-connect-draft"));
@@ -729,7 +784,7 @@ describe("WorkflowNodeEditor", () => {
 
     await screen.findByText("Save");
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
     await screen.findByTestId("wf-mobile-shell");
 
     fireEvent.click(await screen.findByTestId("mobile-wf-connect-merge"));
@@ -778,7 +833,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("Default coding workflow");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
     await screen.findByTestId("wf-mobile-shell");
 
     fireEvent.click(screen.getByTestId("wf-mobile-tab-actions"));
@@ -821,7 +876,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
 
     const shell = await screen.findByTestId("wf-mobile-shell");
     expect(screen.getByTestId("wf-mobile-tab-actions")).toBeInTheDocument();
@@ -946,7 +1001,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     await screen.findByText("Save");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
     const lintRow = await screen.findByTestId("mobile-wf-node-lint");
     fireEvent.click(within(lintRow).getAllByRole("button")[0]);
 
@@ -966,7 +1021,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     await screen.findByText("Save");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
     fireEvent.click(within(await screen.findByTestId("mobile-wf-node-start")).getAllByRole("button")[0]);
 
     const startInspector = await screen.findByTestId("wf-node-inspector");
@@ -1230,7 +1285,7 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     await screen.findByText("Save");
-    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(screen.getByTestId("wf-view-mode-list"));
 
     fireEvent.click(within(await screen.findByTestId("mobile-wf-node-model")).getAllByRole("button")[0]);
     let inspector = await screen.findByTestId("wf-node-inspector");
@@ -4041,5 +4096,177 @@ describe("WorkflowNodeEditor — U6 column agents", () => {
     const note = await screen.findByTestId("wf-node-overridden-by-column-agent");
     expect(note).toHaveTextContent(/Overridden by column agent/i);
     expect(note).toHaveTextContent("Reviewer");
+  });
+});
+
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Simplified graphical view coverage: default mode, mode persistence, the
+add-step dialog (palette + search), insert-on-edge affordances, read-only
+built-in gating, and the mobile canvas/list graph-style toggle. Surface
+enumeration for the new affordances: desktop simple toolbar, edge "+"
+buttons, the add-step dialog, the segmented view switch, and both mobile
+graph styles.
+*/
+describe("WorkflowNodeEditor simplified view modes", () => {
+  beforeEach(() => {
+    // Exercise the REAL defaults (simple view / mobile canvas style) instead
+    // of the legacy-suite pins from the file-level hook.
+    localStorage.removeItem("fusion:wf-editor-view-mode");
+    localStorage.removeItem("fusion:wf-mobile-graph-style");
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("defaults desktop to the simplified graphical view", async () => {
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    expect(await screen.findByTestId("wf-simple-canvas")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-view-mode-simple")).toHaveAttribute("aria-pressed", "true");
+    // Advanced-only chrome is absent: palette buttons, templates, minimap toggle.
+    expect(document.querySelector(".wf-palette-btn")).toBeNull();
+    expect(screen.queryByTestId("wf-palette-templates")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wf-minimap-toggle")).not.toBeInTheDocument();
+    // The simplified toolbar keeps the common actions.
+    expect(screen.getByTestId("wf-simple-toolbar-add-step")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-simple-ai-edit")).toBeInTheDocument();
+    expect(screen.getByText("Save")).toBeInTheDocument();
+    // Node cards render on the simplified canvas.
+    expect(await screen.findByTestId("wf-simple-node-gate")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-simple-node-start")).toBeInTheDocument();
+  });
+
+  it("persists the chosen view mode and honors it on remount", async () => {
+    const first = render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-simple-canvas");
+
+    fireEvent.click(screen.getByTestId("wf-view-mode-advanced"));
+    await waitFor(() => expect(screen.queryByTestId("wf-simple-canvas")).not.toBeInTheDocument());
+    expect(localStorage.getItem("fusion:wf-editor-view-mode")).toBe("advanced");
+    expect(document.querySelector(".wf-palette-btn")).not.toBeNull();
+
+    first.unmount();
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-workflow-name");
+    expect(screen.getByTestId("wf-view-mode-advanced")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("wf-simple-canvas")).not.toBeInTheDocument();
+  });
+
+  it("opens the searchable add-step dialog and adds the picked node", async () => {
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-simple-canvas");
+
+    fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
+    const dialog = await screen.findByTestId("wf-add-step-modal");
+    expect(within(dialog).getByText("Agent steps")).toBeInTheDocument();
+    expect(within(dialog).getByText("Automation")).toBeInTheDocument();
+    expect(within(dialog).getByText("Flow control")).toBeInTheDocument();
+
+    // Search narrows the catalog.
+    fireEvent.change(within(dialog).getByTestId("wf-add-step-search"), { target: { value: "script" } });
+    expect(within(dialog).queryByTestId("wf-add-step-prompt-prompt")).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByTestId("wf-add-step-script-script"));
+    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+    // def() has an unambiguous edge into end, so the pick inserts there and
+    // the new node lands selected with the inspector open.
+    expect(await screen.findByTestId("wf-node-inspector")).toBeInTheDocument();
+    expect(await screen.findByTestId("wf-simple-node-script")).toBeInTheDocument();
+  });
+
+  /* NOTE: the per-edge "+" button itself cannot render under jsdom — React
+     Flow only mounts edge components once nodes have measured dimensions.
+     Its insert behavior is covered by insertNodeOnEdge unit tests
+     (workflow-simple-layout.test.ts) and the toolbar-pick test above, which
+     exercises the same insertFromAddStep path end-to-end. */
+
+  it("splices an edge-targeted 'as optional group' pick into the targeted edge", async () => {
+    // FNXC:WorkflowSimpleView 2026-07-12-14:30: PR #2006 review coverage —
+    // the optional-group template variant must wire into the targeted edge,
+    // not land free-floating.
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: [{ id: "tpl-sec", name: "Security review", prompt: "Review security", defaultOn: true }],
+    });
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-simple-canvas");
+
+    fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
+    const dialog = await screen.findByTestId("wf-add-step-modal");
+    fireEvent.click(within(dialog).getByTestId("wf-add-step-tpl-tpl-sec-optional-group"));
+    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: Array<{ id: string; kind: string }>; edges: Array<{ from: string; to: string }> } }).ir;
+    const group = ir.nodes.find((n) => n.kind === "optional-group");
+    expect(group).toBeDefined();
+    // def()'s single edge into end was the target: merge → group → end.
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === "end")).toBe(false);
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === group!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === group!.id && e.to === "end")).toBe(true);
+  });
+
+  it("keeps built-in workflows read-only in the simplified view", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    expect(await screen.findByTestId("wf-simple-canvas")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-readonly-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-simple-toolbar-add-step")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wf-simple-add-step")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-testid^="wf-simple-insert-"]')).toBeNull();
+  });
+
+  it("splices an edge-targeted fragment pick into the targeted edge", async () => {
+    // FNXC:WorkflowSimpleView 2026-07-12-10:30: PR #2006 review — fragment
+    // picks from an edge-targeted add-step dialog must rewire
+    // source→fragment→target instead of dropping a disconnected subgraph.
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), fragmentDef()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-simple-canvas");
+
+    // def() has a single edge into end, so the toolbar add targets that edge.
+    fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
+    const dialog = await screen.findByTestId("wf-add-step-modal");
+    fireEvent.click(within(dialog).getByTestId("wf-add-step-fragment-WF-FRAG"));
+    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+
+    // Save and inspect the serialized IR: merge no longer feeds end directly;
+    // the fragment's lint gate sits between them.
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: Array<{ id: string; kind: string }>; edges: Array<{ from: string; to: string; condition?: string }> } }).ir;
+    const insertedGate = ir.nodes.find((n) => n.kind === "gate" && n.id !== "lint");
+    expect(insertedGate).toBeDefined();
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === "end")).toBe(false);
+    expect(ir.edges.some((e) => e.from === "merge" && e.to === insertedGate!.id)).toBe(true);
+    expect(ir.edges.some((e) => e.from === insertedGate!.id && e.to === "end")).toBe(true);
+  });
+
+  it("defaults the mobile graph tab to the simplified canvas with a list fallback", async () => {
+    mockWorkflowEditorViewport("mobile");
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "QA" }));
+
+    await screen.findByTestId("wf-mobile-shell");
+    expect(await screen.findByTestId("wf-mobile-simple-canvas")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-mobile-graph-style-canvas")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("mobile-wf-graph")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("wf-mobile-graph-style-list"));
+    expect(await screen.findByTestId("mobile-wf-graph")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-mobile-simple-canvas")).not.toBeInTheDocument();
+    expect(localStorage.getItem("fusion:wf-mobile-graph-style")).toBe("list");
   });
 });

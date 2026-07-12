@@ -66,6 +66,56 @@ pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
     expect((await store.listArtifacts({ type: "document" })).some((a) => a.id === artifact.id)).toBe(true);
   });
 
+  it("updateArtifact edits inline content in place, rejects binary-content edits, and emits artifact:updated", async () => {
+    /*
+    FNXC:ArtifactRegistry 2026-07-11 (merge port from main):
+    Backend-mode coverage for the dashboard Artifacts view's in-place editor:
+    title/description/content edits persist for inline artifacts; a uri-backed
+    (binary) artifact keeps its content non-editable; unknown ids throw; the
+    store emits artifact:updated so open lists live-refresh.
+    */
+    const store = h.store();
+    const task = await store.createTask({ description: "Artifact edit parent" });
+
+    const doc = await store.registerArtifact({
+      type: "document",
+      title: "Editable doc",
+      content: "before",
+      authorId: "agent-1",
+      authorType: "agent",
+      taskId: task.id,
+    });
+
+    const events: string[] = [];
+    store.on("artifact:updated", (a) => events.push(a.id));
+
+    const updated = await store.updateArtifact(doc.id, { title: "Edited doc", content: "after" });
+    expect(updated.title).toBe("Edited doc");
+    expect(updated.content).toBe("after");
+    expect(events).toContain(doc.id);
+
+    const fresh = await store.getArtifact(doc.id);
+    expect(fresh?.title).toBe("Edited doc");
+    expect(fresh?.content).toBe("after");
+
+    const binary = await store.registerArtifact({
+      type: "image",
+      title: "Binary artifact",
+      uri: "attachments/some-image.png",
+      mimeType: "image/png",
+      authorId: "agent-1",
+      authorType: "agent",
+      taskId: task.id,
+    });
+    // Metadata edits are allowed on binary artifacts…
+    const renamed = await store.updateArtifact(binary.id, { title: "Renamed binary" });
+    expect(renamed.title).toBe("Renamed binary");
+    // …but content edits are rejected (the payload lives on disk).
+    await expect(store.updateArtifact(binary.id, { content: "nope" })).rejects.toThrow(/binary payload/);
+
+    await expect(store.updateArtifact("no-such-artifact", { title: "x" })).rejects.toThrow(/not found/);
+  });
+
   it("getAllDocuments returns an upserted document joined to its live task", async () => {
     const store = h.store();
 

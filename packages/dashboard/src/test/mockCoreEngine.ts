@@ -66,6 +66,17 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
     */
     createChatTaskDocumentTools: vi.fn(() => []),
     createChatArtifactTools: vi.fn(() => []),
+    /*
+    FNXC:MissingWorktreeRetry 2026-07-10-18:45:
+    Dashboard route tests mock @fusion/engine wholesale; the retry route must still exercise the upstream #1992 classifier so merge-active unusable-worktree failures are admitted while unrelated merging rows remain rejected.
+    */
+    isInReviewMissingWorktreeSessionStartFailure: vi.fn((task: { column?: string; error?: unknown }) => (
+      task.column === "in-review"
+      && typeof task.error === "string"
+      && (task.error.includes("Refusing to start coding agent in missing worktree:")
+        || task.error.includes("Refusing to start coding agent in incomplete worktree:")
+        || task.error.includes("Refusing to start coding agent in unregistered git worktree:"))
+    )),
     // FNXC:McpConfig 2026-07-02-13:45: Planning/mission route tests share this engine mock; MCP resolution must return the full shaped empty result so readonly session creation can proceed without importing real engine stores.
     resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
     ...overrides,

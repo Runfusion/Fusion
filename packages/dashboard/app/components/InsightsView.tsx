@@ -374,7 +374,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
       >
         <div className="insights-section-header">
           <div className="insights-section-title">
-            <IconComponent size={20} className="insights-section-icon" />
+            <IconComponent size={18} className="insights-section-icon" />
             <h3>{activeSection.label}</h3>
             <span className="insights-section-count">{activeSection.items.length}</span>
           </div>
@@ -414,7 +414,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
                           aria-label={t("insights.unarchiveLabel", "Unarchive this insight")}
                           data-testid={`unarchive-${insight.id}`}
                         >
-                          {isUnarchiveInFlight ? <RefreshCw size={20} className="spin" /> : <ArchiveRestore size={20} />}
+                          {isUnarchiveInFlight ? <RefreshCw size={16} className="spin" /> : <ArchiveRestore size={16} />}
                         </button>
                       ) : (
                         <>
@@ -426,7 +426,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
                             aria-label={t("insights.createTaskLabel", "Create task from this insight")}
                             data-testid={`create-task-${insight.id}`}
                           >
-                            {isCreateInFlight ? <RefreshCw size={20} className="spin" /> : <Plus size={20} />}
+                            {isCreateInFlight ? <RefreshCw size={16} className="spin" /> : <Plus size={16} />}
                           </button>
                           <button
                             className="insight-item-action-btn"
@@ -436,7 +436,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
                             aria-label={t("insights.archiveLabel", "Archive this insight")}
                             data-testid={`archive-${insight.id}`}
                           >
-                            {isArchiveInFlight ? <RefreshCw size={20} className="spin" /> : <Archive size={20} />}
+                            {isArchiveInFlight ? <RefreshCw size={16} className="spin" /> : <Archive size={16} />}
                           </button>
                         </>
                       )}
@@ -449,9 +449,9 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
                         data-testid={`dismiss-${insight.id}`}
                       >
                         {isDismissInFlight ? (
-                          <RefreshCw size={20} className="spin" />
+                          <RefreshCw size={16} className="spin" />
                         ) : (
-                          <X size={20} />
+                          <X size={16} />
                         )}
                       </button>
                     </div>

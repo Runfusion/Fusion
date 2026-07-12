@@ -8,6 +8,15 @@ The title row now comes from the shared .view-header (which supplies the --space
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  /*
+  FNXC:MemoryView 2026-07-10-23:30:
+  The view must always claim the full main-panel width. Without an explicit width the
+  Engines/Insights tabs (whose cards have no intrinsic width) let the whole view shrink
+  to content width, leaving the right half of the main panel as empty background.
+  */
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 /*
@@ -45,9 +54,14 @@ After the header migrated to the shared .view-header (which is flex-shrink:0), t
   box-shadow: var(--focus-ring);
 }
 
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Active tab underline uses the shared --accent token (was --todo, the Todos view color)
+so Memory matches the accent language of the other main-content views.
+*/
 .memory-view-tab--active {
   color: var(--text);
-  border-bottom: 2px solid var(--todo);
+  border-bottom: 2px solid var(--accent);
   font-weight: 500;
 }
 
@@ -171,7 +185,7 @@ The memory editor box is CAPPED to about a page (max-height: 60vh) so a long mem
 }
 
 .memory-category-count {
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  font-size: 0.75rem;
   color: var(--text-muted);
   background: color-mix(in srgb, var(--text-muted) 15%, transparent);
   padding: 2px 8px;
@@ -180,28 +194,62 @@ The memory editor box is CAPPED to about a page (max-height: 60vh) so a long mem
 
 .memory-category-items {
   padding-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
 }
 
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Parsed insights render as quiet cards (surface background + accent hairline) instead of
+bare border-left text rows, matching the InsightsView card language.
+*/
 .memory-insight-item {
-  padding: var(--space-xs) var(--space-sm);
-  margin-bottom: var(--space-xs);
-  border-left: 3px solid var(--border);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--card);
   font-size: 13px;
   color: var(--text);
   line-height: 1.5;
+  /* Multiline insights keep their continuation-line breaks (PR #2003 review). */
+  white-space: pre-wrap;
+}
+
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Engines tab modernization: the status cards previously stacked in one full-width column
+with --space-xl padding, producing very wide, mostly-empty cards. The tab is now a
+two-column card grid (single column under 900px container width via the media fallback
+below); the Run Audit action bar and the settings note span the full row.
+*/
+.memory-engines-tab {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+  align-content: start;
+  /* Cards keep their intrinsic height instead of stretching to the tallest card in the row. */
+  align-items: start;
+}
+
+.memory-engines-tab > .memory-action-bar,
+.memory-engines-tab > .memory-settings-note,
+.memory-engines-tab > .memory-empty-state {
+  grid-column: 1 / -1;
 }
 
 .memory-engine-card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-xl);
-  margin-bottom: var(--space-lg);
+  padding: var(--space-lg);
+  margin-bottom: 0;
 }
 
 .memory-engine-card h3 {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   margin: 0 0 var(--space-md) 0;
   color: var(--text);
 }
@@ -248,7 +296,7 @@ The memory editor box is CAPPED to about a page (max-height: 60vh) so a long mem
 }
 
 .memory-stat-value--updated {
-  font-size: var(--space-lg);
+  font-size: 1.125rem;
 }
 
 .memory-capability-row {
@@ -275,15 +323,22 @@ The memory editor box is CAPPED to about a page (max-height: 60vh) so a long mem
   gap: var(--space-md);
 }
 
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+These rules previously used spacing tokens (--space-md/--space-lg) as font sizes, so the
+label/detail text scaled with the spacing scale instead of the type scale. They now use
+explicit type sizes consistent with the stat-card labels.
+*/
 .memory-health-label {
-  font-size: var(--space-md);
+  font-size: 0.6875rem;
+  letter-spacing: 0.5px;
   color: var(--text-muted);
   text-transform: uppercase;
   margin-bottom: var(--space-xs);
 }
 
 .memory-health-detail {
-  font-size: var(--space-md);
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 
@@ -314,8 +369,8 @@ The memory editor box is CAPPED to about a page (max-height: 60vh) so a long mem
 }
 
 .memory-settings-note {
-  margin-top: var(--space-lg);
-  font-size: var(--space-md);
+  margin-top: var(--space-sm);
+  font-size: 0.8125rem;
   color: var(--text-muted);
   display: flex;
   align-items: center;
@@ -491,6 +546,16 @@ Scoped under .memory-working-tab so these rules out-specify same-name form rules
 /* === Memory View Styles === */
 
 /* Mobile responsive for memory view */
+/*
+FNXC:MemoryView 2026-07-10-23:30:
+Between 769px and 1100px the two-column engines grid gets cramped; collapse to one column.
+*/
+@media (max-width: 1100px) and (min-width: 769px) {
+  .memory-engines-tab {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 768px) {
   /* ViewHeader supplies its own responsive padding; the body blocks tighten their horizontal inset here. */
   .memory-view-tabs {
@@ -516,6 +581,10 @@ Scoped under .memory-working-tab so these rules out-specify same-name form rules
   .memory-view-tab {
     min-height: 36px;
     padding: var(--space-sm);
+  }
+
+  .memory-engines-tab {
+    grid-template-columns: 1fr;
   }
 
   .memory-engine-card {

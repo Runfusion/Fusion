@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -228,6 +228,33 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
   });
 
+  /*
+  FNXC:SettingsSimplification 2026-07-10-23:24:
+  Advanced settings must default off for a new browser, hide specialist sections from every navigation surface, and restore the browser-local preference without mutating Fusion settings.
+  */
+  it("hides advanced sections by default and persists the disclosure preference in local storage", async () => {
+    const firstRender = renderModal({ initialSection: "authentication" });
+    await waitForSettingsModalReady();
+
+    const toggle = screen.getByRole("checkbox", { name: "Advanced settings" });
+    expect(toggle).not.toBeChecked();
+    expect(document.querySelector(".settings-content")).toHaveAttribute("data-show-advanced", "false");
+    expect(screen.queryByRole("button", { name: /^Node Sync$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Experimental Features$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Appearance$/ })).toBeInTheDocument();
+
+    await settingsModalUser.click(toggle);
+    expect(document.querySelector(".settings-content")).toHaveAttribute("data-show-advanced", "true");
+    expect(localStorage.getItem("fusion:settings:show-advanced")).toBe("true");
+    expect(screen.getByRole("button", { name: /^Node Sync$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Experimental Features$/ })).toBeInTheDocument();
+
+    firstRender.unmount();
+    renderModal({ initialSection: "authentication" });
+    await waitForSettingsModalReady();
+    expect(screen.getByRole("checkbox", { name: "Advanced settings" })).toBeChecked();
+  });
+
   it("honors an explicit initialSection override", async () => {
     renderModal({ initialSection: "authentication" });
     await waitForSettingsModalReady();
@@ -239,6 +266,7 @@ describe("SettingsModal", () => {
   it("filters settings navigation by section and setting-level keywords without exposing hidden sections", async () => {
     renderModal();
     await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
     // FN-7713: this file mocks useViewportMode to "mobile", so the search row starts collapsed
     // behind the toggle — expand it before interacting with the search input.
@@ -277,6 +305,7 @@ describe("SettingsModal", () => {
   it("keeps duplicate global and project labels searchable while preserving no-results clearing", async () => {
     renderModal();
     await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
     // FN-7713: search row is collapsed by default under the "mobile" viewport mock — expand it first.
     await settingsModalUser.click(screen.getByLabelText("Show search"));
@@ -388,6 +417,7 @@ describe("SettingsModal", () => {
   it("shows a Secrets entry in the settings nav", async () => {
     renderModal();
     await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
     expect(screen.getByRole("button", { name: "Secrets" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Manage secrets" })).not.toBeInTheDocument();
@@ -396,6 +426,7 @@ describe("SettingsModal", () => {
   it("renders the SecretsView when the Secrets section is selected", async () => {
     renderModal();
     await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
     await settingsModalUser.click(screen.getByRole("button", { name: "Secrets" }));
 
@@ -521,6 +552,7 @@ describe("SettingsModal", () => {
   it("persists the legacy sibling branch rename escape hatch in worktree settings", async () => {
     renderModal();
     await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
     await settingsModalUser.click(screen.getByRole("button", { name: /^Worktrees$/ }));
 
@@ -568,6 +600,7 @@ describe("SettingsModal", () => {
     it("enables memory backend status hook only when Memory section is active", async () => {
       renderModal();
       await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
       expect(mockUseMemoryBackendStatus).toHaveBeenCalled();
       const initialCallHasDisabled = mockUseMemoryBackendStatus.mock.calls.some(
@@ -587,6 +620,10 @@ describe("SettingsModal", () => {
   });
 
   describe("Global General", () => {
+    beforeEach(() => {
+      localStorage.setItem("fusion:settings:show-advanced", "true");
+    });
+
     // Read-only default-render assertions are merged into one rendered
     // instance to avoid re-rendering the full modal per pure-display check.
     it("renders default global logging fields, helper text, and tracking repo control", async () => {
@@ -1631,4 +1668,3 @@ describe("SettingsModal", () => {
     });
   });
 });
-

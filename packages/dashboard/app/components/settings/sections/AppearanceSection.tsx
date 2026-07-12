@@ -53,16 +53,24 @@ export function AppearanceSection({ scopeBanner, form, setForm, themeMode, color
         <small className="form-text text-muted">{t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.")}</small>
       </div>
       <div className="form-group">
+        {/* FNXC:TaskCardCostBadge 2026-07-11-12:15: This project setting is opt-in because board cards are already dense; when enabled, only tasks with recorded positive token usage render a read-time derived spend badge. */}
+        <label className="checkbox-label">
+          <input type="checkbox" checked={form.showCostBadgeOnCards === true} onChange={(e) => setForm((f) => ({ ...f, showCostBadgeOnCards: e.target.checked }))}/>
+          <span>{t("settings.appearance.showCostBadgeOnCards", "Show cost badges on task cards")}</span>
+        </label>
+        <small className="form-text text-muted">{t("settings.appearance.showCostBadgeOnCardsHelp", "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge.")}</small>
+      </div>
+      <div className="form-group">
         {/* FNXC:TaskDetailActivityFirst 2026-06-30-23:59: The project setting is opt-in because task details now default to Activity-first; explicit Activity/Chat/Logs links keep their destination regardless of this checkbox. */}
         <label className="checkbox-label">
-          <input type="checkbox" checked={form.taskDetailChatFirst === true} onChange={(e) => setForm((f) => ({ ...f, taskDetailChatFirst: e.target.checked }))}/>
+          <input id="taskDetailChatFirst" type="checkbox" checked={form.taskDetailChatFirst === true} onChange={(e) => setForm((f) => ({ ...f, taskDetailChatFirst: e.target.checked }))}/>
           <span>{t("settings.appearance.taskDetailChatFirst", "Open task details with Chat first")}</span>
         </label>
         <small className="form-text text-muted">{t("settings.appearance.taskDetailChatFirstHelp", "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.")}</small>
       </div>
       <div className="form-group">
         <label className="checkbox-label">
-          <input type="checkbox" checked={sessionBannersHidden} onChange={(e) => setSessionBannersHidden(e.target.checked)}/>
+          <input id="sessionBannersHidden" type="checkbox" checked={sessionBannersHidden} onChange={(e) => setSessionBannersHidden(e.target.checked)}/>
           <span>{t("settings.appearance.hideAISessionNotificationBanners", "Hide AI session notification banners")}</span>
         </label>
         <small className="form-text text-muted">{t("settings.appearance.suppressTheLdquoNeedsYourInputRdquoBanner", " Suppress the &ldquo;needs your input&rdquo; banner that appears when AI sessions are awaiting input or have failed. ")}</small>

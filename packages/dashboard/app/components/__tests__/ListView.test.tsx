@@ -365,6 +365,21 @@ function mockMobileViewport() {
   }));
 }
 
+function mockTabletViewport() {
+  ensureMatchMedia();
+  Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: query === "(min-width: 769px) and (max-width: 1024px)",
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
 function mockDesktopViewport() {
   ensureMatchMedia();
   Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
@@ -1705,6 +1720,40 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  it("renders tablet List view as a single full-width pane without split chrome", () => {
+    const viewportSpy = mockTabletViewport();
+    const tasks = [createMockTask({ id: "FN-001", title: "Tablet task" })];
+
+    const { container } = renderListView({ tasks });
+
+    expect(container.querySelector(".list-view--single-pane")).toBeInTheDocument();
+    expect(screen.queryByTestId("list-split-layout")).toBeNull();
+    expect(screen.queryByTestId("list-split-sidebar")).toBeNull();
+    expect(screen.queryByTestId("list-split-resize-handle")).toBeNull();
+    expect(screen.queryByTestId("list-split-detail")).toBeNull();
+    expect(container.querySelector(".list-toolbar .list-action-cluster")).toBeInTheDocument();
+    expect(within(container.querySelector(".list-toolbar .list-action-cluster") as HTMLElement).getByText("+ New Task")).toBeInTheDocument();
+    expect(container.querySelector(".list-quick-entry-above-table .quick-entry-box")).toBeInTheDocument();
+    expect(container.querySelector(".list-cards")).toBeInTheDocument();
+    expect(container.querySelector("table.list-table")).toBeNull();
+    viewportSpy.mockRestore();
+  });
+
+  it("opens tablet task detail through the single-pane detail route", () => {
+    const viewportSpy = mockTabletViewport();
+    const task = createMockTask({ id: "FN-001", title: "Tablet open" });
+    const onOpenDetail = vi.fn();
+
+    const { container } = renderListView({ tasks: [task], onOpenDetail });
+
+    fireEvent.click(container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement);
+
+    expect(onOpenDetail).toHaveBeenCalledWith(task, { origin: "list-mobile" });
+    expect(onOpenDetail).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
+    viewportSpy.mockRestore();
+  });
+
   it("sorts tasks by ID when ID header is clicked", () => {
     const tasks = [
       createMockTask({ id: "FN-003", title: "Third", column: "triage" }),
@@ -2100,7 +2149,7 @@ describe("ListView", () => {
     const css = readFileSync("app/components/ListView.css", "utf8");
     const actionClusterRule = css.match(/\.list-action-cluster,\s*\n\.list-sidebar-controls__actions\s*\{[^}]*\}/)?.[0] ?? "";
     const toolbarRule = css.match(/\.list-sidebar-controls__toolbar\s*\{[^}]*\}/)?.[0] ?? "";
-    const mobileToolbarRule = css.match(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.list-toolbar\s*\{[^}]*padding:\s*var\(--space-sm\) var\(--space-md\);[^}]*\}/)?.[0] ?? "";
+    const singlePaneToolbarRule = css.match(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.list-toolbar\s*\{[^}]*padding:\s*var\(--space-sm\) var\(--space-md\);[^}]*\}/)?.[0] ?? "";
 
     expect(actionClusterRule).toContain("flex-wrap: nowrap");
     expect(actionClusterRule).toContain("justify-content: center");
@@ -2108,7 +2157,23 @@ describe("ListView", () => {
     expect(actionClusterRule).toContain("min-width: max-content");
     expect(actionClusterRule).toContain("overflow-x: auto");
     expect(toolbarRule).toContain("justify-content: center");
-    expect(mobileToolbarRule).toContain("justify-content: center");
+    expect(singlePaneToolbarRule).toContain("justify-content: center");
+  });
+
+  it("loads CSS fixture rules that apply single-pane non-clipping layout at tablet while keeping desktop split rules", () => {
+    const css = loadAllAppCss();
+    const splitHideRule = css.match(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.list-split-resize-handle,\s*\n\s*\.list-split-detail\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0] ?? "";
+    const cardRule = css.match(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.list-table\s*\{[^}]*display:\s*none;[^}]*\}[\s\S]*?\.list-cards\s*\{[^}]*width:\s*100%;[^}]*\}/)?.[0] ?? "";
+    const desktopSplitRule = css.match(/\.list-split-layout\s*\{[^}]*grid-template-columns:\s*auto 0 minmax\(0, 1fr\);[^}]*\}/)?.[0] ?? "";
+
+    expect(splitHideRule).toContain("max-width: 1024px");
+    expect(splitHideRule).toContain(".list-split-resize-handle");
+    expect(splitHideRule).toContain("display: none");
+    expect(cardRule).toContain(".list-table");
+    expect(cardRule).toContain("display: none");
+    expect(cardRule).toContain(".list-cards");
+    expect(cardRule).toContain("width: 100%");
+    expect(desktopSplitRule).toContain("grid-template-columns: auto 0 minmax(0, 1fr)");
   });
 
   it("keeps Bulk Edit, View, and + New Task together in the mobile toolbar controls", () => {

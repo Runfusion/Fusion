@@ -15,19 +15,41 @@ vi.mock("../agent-session-helpers.js", () => ({
   createResolvedAgentSession: mockCreateResolvedAgentSession,
   extractRuntimeHint: vi.fn(),
   resolvePlanningSessionModel: vi.fn().mockReturnValue({ provider: "mock", modelId: "mock-model" }),
+  // FNXC:EngineTestDrift 2026-07-11-22:30:
+  // triage.ts planning imports resolvePlanningThinkingLevel +
+  // resolveImplicitPlanningFallbackModel (Settings-ThinkingLevel precedence +
+  // implicit fallback model, 2026-07-10). Surface the full resolver set so the
+  // next export doesn't re-break specifyTask on a missing mock member.
+  resolveExecutorThinkingLevel: vi.fn(() => undefined),
+  resolveExecutorFallbackThinkingLevel: vi.fn(() => undefined),
+  resolvePlanningThinkingLevel: vi.fn(() => undefined),
+  resolvePlanningFallbackThinkingLevel: vi.fn(() => undefined),
+  resolveValidatorThinkingLevel: vi.fn(() => undefined),
+  resolveValidatorFallbackThinkingLevel: vi.fn(() => undefined),
+  resolveMergerThinkingLevel: vi.fn(() => undefined),
+  resolveMergerFallbackThinkingLevel: vi.fn(() => undefined),
+  resolveImplicitPlanningFallbackModel: vi.fn(() => ({ provider: undefined, modelId: undefined })),
 }));
 
-vi.mock("../pi.js", () => ({
-  describeModel: vi.fn().mockReturnValue("mock-model"),
-  promptWithFallback: mockPromptWithFallback,
-  // FNXC:TriageTests 2026-07-02-07:40:
-  // triage.ts specifyTask now calls formatModelMarkerDetails (from pi.js) to
-  // build the model-marker log line after the agent session resolves. The mock
-  // must expose the export so the stuck-requeue planning path can reach
-  // finalization (moveTask todo / needs-replan) instead of throwing on a
-  // missing mock member.
-  formatModelMarkerDetails: vi.fn((model: string) => model),
-}));
+vi.mock("../pi.js", () => {
+  // FNXC:EngineTestDrift 2026-07-11-22:30:
+  // triage.ts specifyTask catch guards `err instanceof ModelFallbackExhaustedError`
+  // (FN-7559). The pi mock must expose the class so the stuck-requeue planning
+  // path can finalize instead of throwing on a missing mock member.
+  class ModelFallbackExhaustedError extends Error {}
+  return {
+    describeModel: vi.fn().mockReturnValue("mock-model"),
+    promptWithFallback: mockPromptWithFallback,
+    // FNXC:TriageTests 2026-07-02-07:40:
+    // triage.ts specifyTask now calls formatModelMarkerDetails (from pi.js) to
+    // build the model-marker log line after the agent session resolves. The mock
+    // must expose the export so the stuck-requeue planning path can reach
+    // finalization (moveTask todo / needs-replan) instead of throwing on a
+    // missing mock member.
+    formatModelMarkerDetails: vi.fn((model: string) => model),
+    ModelFallbackExhaustedError,
+  };
+});
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {

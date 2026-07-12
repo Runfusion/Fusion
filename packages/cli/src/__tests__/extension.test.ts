@@ -3466,6 +3466,70 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.retrySummary?.total ?? 0).toBe(0);
     };
 
+    it("moves merge-active missing-worktree session failures to todo with phantom metadata cleared", async () => {
+      const store = createStore();
+      await store.init();
+
+      const task = await store.createTask({
+        title: "missing-worktree merge-active task",
+        description: "test",
+        column: "todo",
+      });
+      await store.updateTask(task.id, {
+        steps: [
+          { name: "Step 0", status: "done" },
+          { name: "Step 1", status: "pending" },
+        ],
+      });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, {
+        status: "merging",
+        error: "Refusing to start coding agent in missing worktree: /tmp/fusion-missing-worktree",
+        worktree: "/tmp/fusion-missing-worktree",
+        branch: `fusion/${task.id}`,
+        sessionFile: "/tmp/fusion-session.json",
+        mergeRetries: 3,
+        worktreeSessionRetryCount: 3,
+        nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
+        ...nonZeroRetryCounters,
+      });
+
+      const retryTool = api.tools.get("fn_task_retry")!;
+      const result = await retryTool.execute("retry-missing-worktree-merge-active", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.isError).toBeFalsy();
+      expect(result.details.newColumn).toBe("todo");
+
+      const updated = await store.getTask(task.id);
+      expect(updated?.column).toBe("todo");
+      expect(updated?.status).toBeFalsy();
+      expect(updated?.error).toBeFalsy();
+      expect(updated?.worktree).toBeFalsy();
+      expect(updated?.branch).toBeFalsy();
+      expect(updated?.sessionFile).toBeFalsy();
+      expect(updated?.steps[0].status).toBe("done");
+      expectRetryCountersReset(updated);
+      expect(updated?.mergeRetries).toBe(0);
+    });
+
+    it("rejects unrelated merge-active tasks", async () => {
+      const store = createStore();
+      await store.init();
+
+      const task = await store.createTask({ title: "ordinary merge-active task", description: "test", column: "todo" });
+      await store.updateTask(task.id, { steps: [{ name: "Step 0", status: "done" }] });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { status: "merging", error: "ordinary merge still running", mergeRetries: 2 });
+
+      const retryTool = api.tools.get("fn_task_retry")!;
+      const result = await retryTool.execute("retry-unrelated-merge-active", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("not in a retryable state");
+    });
+
     it("clears the deadlock auto-pause for execution-failed in-review retries", async () => {
       const store = createStore();
 

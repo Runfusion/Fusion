@@ -64,6 +64,7 @@ import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
 import * as worktreePrune from "../worktree-prune.js";
 import {
   WorktreePool,
+  detectGitRepository,
   getRegisteredWorktreeBranchMap,
   getRegisteredWorktreePaths,
   isGitRepository,
@@ -643,46 +644,96 @@ describe("WorktreePool", () => {
   });
 });
 
-describe("isGitRepository", () => {
+describe("detectGitRepository", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns true when git rev-parse succeeds", async () => {
-    mockedExecSync.mockImplementation((cmd: any) => {
+  it("classifies a POSIX git repository as repo", async () => {
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      expect(opts).toEqual(expect.objectContaining({ cwd: "/tmp/repo", timeout: 10_000 }));
       if (String(cmd) === "git rev-parse --git-dir") {
         return Buffer.from(".git\n");
       }
       return Buffer.from("");
     });
 
+    await expect(detectGitRepository("/tmp/repo")).resolves.toEqual({ status: "repo" });
     await expect(isGitRepository("/tmp/repo")).resolves.toBe(true);
   });
 
-  it("returns false when target directory is not a git repository", async () => {
+  it("classifies a genuine non-git directory as not-repo", async () => {
     mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
       if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === "/tmp/plain") {
-        const error: any = new Error("fatal: not a git repository");
-        error.stderr = Buffer.from("fatal: not a git repository");
+        const error: any = new Error("fatal: not a git repository (or any of the parent directories): .git");
+        error.stderr = Buffer.from("fatal: not a git repository (or any of the parent directories): .git");
         throw error;
       }
       return Buffer.from("");
     });
 
+    await expect(detectGitRepository("/tmp/plain")).resolves.toEqual({
+      status: "not-repo",
+      stderr: "fatal: not a git repository (or any of the parent directories): .git",
+    });
     await expect(isGitRepository("/tmp/plain")).resolves.toBe(false);
   });
 
-  it("returns false when directory does not exist", async () => {
+  it("classifies dubious ownership on a Windows OneDrive Documents path as an error", async () => {
+    const windowsPath = "C:/Users/drewd/Documents/1. App Development/1. Active/NextGenEHS";
     mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
-      if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === "/tmp/missing") {
-        const error: any = new Error("spawn ENOENT");
+      if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === windowsPath) {
+        const error: any = new Error(`fatal: detected dubious ownership in repository at '${windowsPath}'`);
+        error.stderr = Buffer.from(`fatal: detected dubious ownership in repository at '${windowsPath}'`);
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    await expect(detectGitRepository(windowsPath)).resolves.toEqual({
+      status: "error",
+      reason: "dubious-ownership",
+      stderr: `fatal: detected dubious ownership in repository at '${windowsPath}'`,
+    });
+    await expect(isGitRepository(windowsPath)).resolves.toBe(false);
+  });
+
+  it("classifies git missing from PATH as an error", async () => {
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === "/tmp/repo") {
+        const error: any = new Error("spawn git ENOENT");
         error.code = "ENOENT";
         throw error;
       }
       return Buffer.from("");
     });
 
-    await expect(isGitRepository("/tmp/missing")).resolves.toBe(false);
+    await expect(detectGitRepository("/tmp/repo")).resolves.toEqual({
+      status: "error",
+      reason: "git-missing",
+      stderr: "spawn git ENOENT",
+    });
+    await expect(isGitRepository("/tmp/repo")).resolves.toBe(false);
+  });
+
+  it("classifies a timed-out git probe as an error", async () => {
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === "/tmp/repo") {
+        const error: any = new Error("Command failed: git rev-parse --git-dir");
+        error.code = "ETIMEDOUT";
+        error.killed = true;
+        error.stderr = Buffer.from("Timed out: git rev-parse --git-dir");
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    await expect(detectGitRepository("/tmp/repo")).resolves.toEqual({
+      status: "error",
+      reason: "timeout",
+      stderr: "Timed out: git rev-parse --git-dir",
+    });
+    await expect(isGitRepository("/tmp/repo")).resolves.toBe(false);
   });
 });
 

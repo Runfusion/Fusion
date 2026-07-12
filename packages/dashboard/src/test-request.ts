@@ -5,6 +5,11 @@ import { PassThrough } from "node:stream";
 type TestResponse = {
   status: number;
   body: unknown;
+  /*
+  FNXC:TestHarness 2026-07-10-12:30:
+  Raw response bytes concatenated before any UTF-8 decoding. Binary/media route tests (e.g. artifact byte-range serving) must compare exact bytes, and per the no-real-network testing rule they ride this in-memory harness instead of spinning up a real TCP server.
+  */
+  bodyBuffer: Buffer;
   headers: http.OutgoingHttpHeaders;
 };
 
@@ -83,7 +88,8 @@ export async function request(
 
   const response = new Promise<TestResponse>((resolve, reject) => {
     res.on("finish", () => {
-      const rawBody = Buffer.concat(chunks).toString("utf8");
+      const bodyBuffer = Buffer.concat(chunks);
+      const rawBody = bodyBuffer.toString("utf8");
       const contentType = res.getHeader("content-type");
       const shouldParseJson = typeof contentType === "string" && contentType.includes("application/json");
 
@@ -91,6 +97,7 @@ export async function request(
         resolve({
           status: res.statusCode,
           body: shouldParseJson && rawBody.length > 0 ? JSON.parse(rawBody) : rawBody,
+          bodyBuffer,
           headers: res.getHeaders(),
         });
       } catch (error) {

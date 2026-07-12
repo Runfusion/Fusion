@@ -937,6 +937,7 @@ FNXC:TaskCardTimingBadge 2026-06-13-17:26:
 The execution-time badge is part of the footer's bottom-right chip cluster, so it inherits the same height, padding, font, and responsive sizing as retry and GitHub tracking badges instead of using the old meta-row placement.
 */
 .card-time-indicator,
+.card-cost-indicator,
 .card-github-tracking-chip,
 .card-retry-badge,
 .card-create-pr-action {
@@ -957,6 +958,7 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
 }
 
 .card-time-indicator > span,
+.card-cost-indicator > span,
 .card-github-tracking-chip > span,
 .card-retry-badge > span,
 .card-create-pr-action > span {
@@ -967,6 +969,7 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
 }
 
 .card-time-indicator svg,
+.card-cost-indicator svg,
 .card-github-tracking-chip svg,
 .card-retry-badge svg,
 .card-create-pr-action svg,
@@ -1042,7 +1045,8 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   transform: translateY(1px);
 }
 
-.card-time-indicator {
+.card-time-indicator,
+.card-cost-indicator {
   border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   color: var(--text-muted);
@@ -1810,6 +1814,7 @@ too so future divergence doesn't have to rediscover the shared selector group.
   }
 
   .card-time-indicator,
+  .card-cost-indicator,
   .card-github-tracking-chip,
   .card-retry-badge,
   .card-create-pr-action {

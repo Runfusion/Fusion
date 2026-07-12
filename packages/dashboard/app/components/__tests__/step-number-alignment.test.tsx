@@ -36,6 +36,19 @@ vi.mock("../../api", () => ({
 vi.mock("../../hooks/useLiveTranscript", () => ({
   useLiveTranscript: () => ({ entries: [], isConnected: true }),
 }));
+/*
+FNXC:TaskStepNumbering 2026-07-11-00:00:
+RuntimeFallbackBadge (added in commit 0bed997af / FUX-022) calls the shared useToast() hook directly.
+This file renders <ActiveAgentsPanel> (which embeds RuntimeFallbackBadge) outside a ToastProvider, so
+mock the hook to avoid "useToast must be used within ToastProvider" failures, matching the TaskCard.test.tsx pattern.
+*/
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
 
 /**
  * Derives the Activity-tab's step number the way an operator would read it —

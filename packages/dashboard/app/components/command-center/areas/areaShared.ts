@@ -45,12 +45,24 @@ export function formatDurationMs(ms: number | null): string {
   return `${seconds}s`;
 }
 
-/** Format a USD cost result, returning the unavailable sentinel "—" when unknown. */
+/**
+ * Format a USD cost result for every Command Center cost surface.
+ *
+ * FNXC:CommandCenterCost 2026-07-10-23:20:
+ * Cost aggregation deliberately preserves the priced subtotal when some usage has unknown pricing. Overview, Tokens, Team, and Workflows must display that subtotal with a trailing `+`; show `—` only when no usage can be priced, and keep an exact priced zero distinct from unavailable data.
+ *
+ * FNXC:CommandCenterCost 2026-07-10-23:35:
+ * A zero subtotal is exact only when every contribution is priced. Mixed pricing with a zero known subtotal must remain `—`, because `$0.00+` suggests a meaningful lower bound while all positive cost may belong to unpriced usage.
+ *
+ * FNXC:CommandCenterCost 2026-07-10-23:39:
+ * Apply the mixed-zero rule at displayed cent precision so a positive sub-cent subtotal cannot leak through as `$0.00+`. A partial subtotal becomes meaningful only when it rounds to at least one visible cent.
+ */
 export function formatCost(usd: number | null, unavailable: boolean): string {
-  if (unavailable || usd === null || !Number.isFinite(usd)) {
+  if (usd === null || !Number.isFinite(usd) || (unavailable && Math.round(usd * 100) === 0)) {
     return "—";
   }
-  return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatted = `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return unavailable ? `${formatted}+` : formatted;
 }
 
 /** True when the picker's custom range is invalid (from after to). */

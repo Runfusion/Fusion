@@ -87,18 +87,74 @@ function getExecStdout(result: unknown): string {
   return "";
 }
 
-export async function isGitRepository(dir: string): Promise<boolean> {
+function stringifyExecOutput(value: unknown): string {
+  if (Buffer.isBuffer(value)) return value.toString("utf-8");
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+function getExecErrorOutput(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const record = error as { stderr?: unknown; message?: unknown };
+  const stderr = stringifyExecOutput(record.stderr).trim();
+  if (stderr) return stderr;
+  return stringifyExecOutput(record.message).trim();
+}
+
+export type GitRepoDetection =
+  | { status: "repo" }
+  | { status: "not-repo"; stderr: string }
+  | { status: "error"; reason: "dubious-ownership" | "git-missing" | "timeout" | "unknown"; stderr: string };
+
+function classifyGitRepoDetectionError(error: unknown): GitRepoDetection {
+  const stderr = getExecErrorOutput(error);
+  const output = stderr || String(error ?? "");
+  const errorRecord = (error && typeof error === "object") ? error as { code?: unknown; killed?: unknown; signal?: unknown } : {};
+
+  if (/not a git repo(sitory)?/i.test(output)) {
+    return { status: "not-repo", stderr: output };
+  }
+
+  if (/detected dubious ownership/i.test(output)) {
+    return { status: "error", reason: "dubious-ownership", stderr: output };
+  }
+
+  if (errorRecord.code === "ENOENT" || /(?:spawn\s+)?ENOENT/i.test(output) || /command not found/i.test(output)) {
+    return { status: "error", reason: "git-missing", stderr: output };
+  }
+
+  if (errorRecord.code === "ETIMEDOUT" || errorRecord.killed === true || /timed out|timeout/i.test(output)) {
+    return { status: "error", reason: "timeout", stderr: output };
+  }
+
+  return { status: "error", reason: "unknown", stderr: output };
+}
+
+/*
+FNXC:Worktree 2026-07-10-00:00:
+FN-7799 requires Git repository detection to distinguish a positive non-repo verdict from environmental Git failures. Dubious ownership on OneDrive-backed Windows Documents paths, git-not-on-PATH, index locks, and timeouts must never be reported as "not a Git repository", because that false negative permanently blocks valid repos across engine restarts.
+*/
+export async function detectGitRepository(dir: string): Promise<GitRepoDetection> {
   try {
     await execAsync("git rev-parse --git-dir", {
       cwd: dir,
       encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
     });
-    return true;
+    return { status: "repo" };
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    worktreePoolLog.log(`isGitRepository check failed for ${dir}: ${errorMessage}`);
-    return false;
+    const detection = classifyGitRepoDetectionError(err);
+    const reasonText = detection.status === "error" ? ` reason=${detection.reason}` : "";
+    const stderrText = detection.status === "repo" ? "" : detection.stderr;
+    worktreePoolLog.log(
+      `detectGitRepository check failed for ${dir}: status=${detection.status}${reasonText} stderr=${stderrText}`,
+    );
+    return detection;
   }
+}
+
+export async function isGitRepository(dir: string): Promise<boolean> {
+  return (await detectGitRepository(dir)).status === "repo";
 }
 
 export async function describeRegisteredWorktrees(rootDir: string): Promise<{ rawOutput: string; canonicalized: string[] }> {

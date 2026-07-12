@@ -95,8 +95,8 @@ const EXPECTED_EXCLUDED_LAZY = [
   },
   {
     file: "../components/TaskDetailModal.tsx",
-    symbols: ["LazySessionTerminal"],
-    reason: "task session terminal, not a top-level heavy view or modal",
+    symbols: ["LazySessionTerminal", "LazyTerminalModal"],
+    reason: "task-detail-internal terminal surfaces, not top-level heavy views or modals",
   },
   {
     file: "../components/TaskDetailModal.tsx",

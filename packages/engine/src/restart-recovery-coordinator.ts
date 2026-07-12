@@ -82,9 +82,26 @@ export function isRecoverableMissingWorktreeReviewFailureNoProgress(task: Task):
     && !hasStepProgress(task);
 }
 
+export const MERGE_ACTIVE_MISSING_WORKTREE_STATUSES = ["merging", "merging-pr", "merging-fix"] as const;
+const MERGE_ACTIVE_MISSING_WORKTREE_STATUS_SET = new Set<string>(MERGE_ACTIVE_MISSING_WORKTREE_STATUSES);
+
+export function isMergeActiveMissingWorktreeSessionStartFailure(task: Task): boolean {
+  return task.column === "in-review"
+    && !task.paused
+    && typeof task.status === "string"
+    && MERGE_ACTIVE_MISSING_WORKTREE_STATUS_SET.has(task.status)
+    && isMissingWorktreeSessionStartFailure(task.error);
+}
+
+export function isInReviewMissingWorktreeSessionStartFailure(task: Task): boolean {
+  return task.column === "in-review"
+    && isMissingWorktreeSessionStartFailure(task.error);
+}
+
 export function isRecoverableMissingWorktreeReviewFailure(task: Task): boolean {
   return isRecoverableMissingWorktreeReviewFailureWithProgress(task)
-    || isRecoverableMissingWorktreeReviewFailureNoProgress(task);
+    || isRecoverableMissingWorktreeReviewFailureNoProgress(task)
+    || isMergeActiveMissingWorktreeSessionStartFailure(task);
 }
 
 export class RestartRecoveryCoordinator {

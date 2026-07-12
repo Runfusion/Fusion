@@ -50,6 +50,16 @@ interface ParsedInsightCategory {
   expanded: boolean;
 }
 
+/*
+FNXC:MemoryView 2026-07-10-23:00:
+Insights parsing bug fix: the old implementation stripped the "- " bullet prefix BEFORE
+filtering for lines that start with "- ", so no markdown bullet ever survived the filter.
+Every category then collapsed into a single giant blob item and the "Total Insights" stat
+undercounted (~1 per category), contradicting the server-computed insight count on the
+Engines health card. Bullets must be FILTERED first, then stripped. HTML comments in the
+section body (extraction markers like "recurring themes that work well") are metadata,
+not insights, and are removed before parsing.
+*/
 /** Parse insights markdown content into categorized sections */
 function parseInsightsContent(content: string | null): ParsedInsightCategory[] {
   if (!content) return [];
@@ -66,13 +76,35 @@ function parseInsightsContent(content: string | null): ParsedInsightCategory[] {
     if (match) {
       const header = match[1].trim();
       const key = CATEGORY_HEADERS[header] ?? header.toLowerCase();
-      const body = trimmed.slice(match[0].length).trim();
+      const body = trimmed
+        .slice(match[0].length)
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .trim();
 
-      // Extract bullet points
+      /*
+      FNXC:MemoryView 2026-07-11-01:00:
+      PR #2003 review: an insight can span multiple lines (one bullet followed by
+      continuation text). Bullet lines start a new item; non-empty non-bullet lines
+      append to the previous item instead of being dropped, so multiline insights
+      render in full rather than silently truncating after the first line.
+
+      FNXC:MemoryView 2026-07-11-01:40:
+      PR #2003 review round 2: only a TOP-LEVEL bullet (column 0 on the raw line)
+      starts a new insight. Indented sub-bullets ("  - detail A") belong to the
+      insight above them, so the new-item test runs against the untrimmed line and
+      continuations keep their leading indentation (trimEnd only) for rendering.
+      */
       const items = body
         .split("\n")
-        .map((line) => line.replace(/^-\s+/, "").trim())
-        .filter((line) => line.length > 0 && (line.startsWith("- ") || line.startsWith("* ")));
+        .reduce<string[]>((acc, rawLine) => {
+          const line = rawLine.trim();
+          if (/^[-*]\s+/.test(rawLine)) {
+            acc.push(line.replace(/^[-*]\s+/, ""));
+          } else if (line.length > 0 && acc.length > 0) {
+            acc[acc.length - 1] = `${acc[acc.length - 1]}\n${rawLine.trimEnd()}`;
+          }
+          return acc;
+        }, []);
 
       if (items.length > 0 || body.length > 0) {
         categories.push({
@@ -692,7 +724,7 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
                     content={insightsEditorContent ?? ""}
                     onChange={setInsightsEditorContent}
                     readOnly={false}
-                    filePath=".fusion/memory/INSIGHTS.md"
+                    filePath=".fusion/memory/memory-insights.md"
                     forceToolbarActionsVisible
                     onSendSelectionToTask={onSendSelectionToTask}
                   />
@@ -860,20 +892,12 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
                       <span className="memory-char-count">{t("memory.qmdCheckingAvailability", "Checking qmd availability…")}</span>
                     </div>
                   )}
-                  <div className="memory-capability-row">
-                    {backendStatus?.capabilities?.readable && (
-                      <span className="memory-capability-badge">{t("memory.capReadable", "Readable")}</span>
-                    )}
-                    {backendStatus?.capabilities?.writable && (
-                      <span className="memory-capability-badge">{t("memory.capWritable", "Writable")}</span>
-                    )}
-                    {backendStatus?.capabilities?.supportsAtomicWrite && (
-                      <span className="memory-capability-badge">{t("memory.capAtomicWrites", "Atomic Writes")}</span>
-                    )}
-                    {backendStatus?.capabilities?.persistent && (
-                      <span className="memory-capability-badge">{t("memory.capPersistent", "Persistent")}</span>
-                    )}
-                  </div>
+                  {/*
+                  FNXC:MemoryView 2026-07-10-23:30:
+                  The capability badge row (Readable/Writable/Atomic Writes/Persistent) belongs to the
+                  Current Backend card only; it was duplicated verbatim on this QMD card, showing the
+                  same four badges twice on the Engines tab. QMD availability is this card's whole story.
+                  */}
                 </div>
 
                 {/* Memory Retrieval Test Card */}

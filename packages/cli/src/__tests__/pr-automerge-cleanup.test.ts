@@ -1,7 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// FNXC:CliBoardMutation 2026-07-09-00:00: pr.ts imports closeProjectStore +
+// asLocalProjectContext from project-context; stub both so the whole-module
+// mock stays accurate as pr.ts's project-context surface grows.
 vi.mock("../project-context.js", () => ({
   resolveProject: vi.fn(),
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => unknown } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort, mirrors production closeProjectStore
+    }
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
 }));
 
 vi.mock("@fusion/engine", () => ({

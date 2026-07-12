@@ -14,6 +14,11 @@ vi.mock("../logger.js", async () => {
 });
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),
+  // FNXC:EngineTestDrift 2026-07-11-22:23:
+  // DefaultPiRuntime.describeModel now reaches pi.js describeModel on the
+  // heartbeat path; the mock must surface it or createFnAgent throws and the
+  // whole heartbeat cascades to 'failed'.
+  describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
   promptWithFallback: vi.fn(async (session: any, prompt: string) => {
     await session.prompt(prompt);
   }),

@@ -2081,13 +2081,22 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // API Error Handling Middleware - MUST be after API routes but before SPA fallback
   // This ensures API errors return JSON instead of falling through to the SPA fallback (which returns HTML)
    
+  /*
+  FNXC:ApiErrorDiagnostics 2026-07-10-14:00:
+  The /api error boundary is the chokepoint for every unhandled per-request error.
+  It must LOG the underlying error (stack + cause), not just echo a message, so a
+  500 is root-causable server-side — the reported "task write API returns 500 for
+  every task" was undiagnosable because the wrapped error's origin was never
+  recorded. The client-facing body stays generic in production (avoid leaking
+  internals); pass `error: err` so sendErrorResponse logs the stack/cause.
+  */
   app.use("/api", (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (res.headersSent) {
       return;
     }
 
     if (err instanceof ApiError) {
-      sendErrorResponse(res, err.statusCode, err.message, { details: err.details });
+      sendErrorResponse(res, err.statusCode, err.message, { details: err.details, error: err });
       return;
     }
 
@@ -2099,7 +2108,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           ? err.message
           : fallbackMessage;
 
-    sendErrorResponse(res, 500, message);
+    sendErrorResponse(res, 500, message, { error: err });
   });
 
   if (!isHeadless) {
@@ -2587,6 +2596,14 @@ export function setupBadgeWebSocket(
 
     const onTaskUpdated = (task: Task) => {
       const cacheKey = `${scopeKey}:${task.id}`;
+      // FNXC:BadgeSnapshotEviction 2026-07-10-15:00: evict (not re-cache) when a
+      // task is archived off the live board, and skip the publish so peers don't
+      // re-cache it. An unarchive re-emits task:updated with a live column and
+      // re-primes the entry. See isBadgeEligibleTask.
+      if (!isBadgeEligibleTask(task)) {
+        badgeSnapshots.delete(cacheKey);
+        return;
+      }
       const previousSnapshot = badgeSnapshots.get(cacheKey);
       const nextSnapshot: BadgeSnapshot = {
         prInfo: task.prInfo ?? null,
@@ -2622,6 +2639,13 @@ export function setupBadgeWebSocket(
 
     const onTaskCreated = (task: Task) => {
       const cacheKey = `${scopeKey}:${task.id}`;
+      // FNXC:BadgeSnapshotEviction 2026-07-10-15:00: an already-archived task
+      // (e.g. restored/imported into the archive) must not seed the live-board
+      // badge cache — same eligibility rule as the update listener.
+      if (!isBadgeEligibleTask(task)) {
+        badgeSnapshots.delete(cacheKey);
+        return;
+      }
       badgeSnapshots.set(cacheKey, {
         prInfo: task.prInfo ?? null,
         issueInfo: task.issueInfo ?? null,
@@ -2743,6 +2767,19 @@ export function setupBadgeWebSocket(
     dashboardApp.badgeWsManager = null;
     dashboardApp.__fnWebSocketsAttached = false;
   });
+}
+
+/*
+FNXC:BadgeSnapshotEviction 2026-07-10-15:00:
+The in-memory badge-snapshot cache is keyed by task id and only ever removed a task
+on hard-delete, so archived tasks accumulated for the daemon's whole lifetime — a slow
+memory leak on long-running servers with task churn. Badge snapshots are only needed for
+tasks visible on the live board; archived tasks leave it. This predicate is the single
+eligibility rule used by both the create and update listeners (and mirrored by the
+startup prime's `includeArchived:false`). Exported for unit coverage of the invariant.
+*/
+export function isBadgeEligibleTask(task: Pick<Task, "column">): boolean {
+  return task.column !== "archived";
 }
 
 /** Compare two badge snapshots for equality */

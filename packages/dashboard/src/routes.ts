@@ -255,9 +255,13 @@ export interface AuthStorageLike {
   get?(providerId: string): { type?: string; key?: string; access?: string; refresh?: string; expires?: number; [key: string]: unknown } | null | undefined;
 }
 
+/*
+FNXC:ArtifactRegistry 2026-07-11-10:20:
+The multer ceiling only guards transport; the real per-type caps live in TaskStore.addAttachment (5MB non-video, 100MB video). Raised from 5MB so video attachments (screen recordings, demo reels) can reach the store at all.
+*/
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB transport ceiling; store enforces per-type caps
 });
 
 // Async variants — sync fs.* on a settings route blocks every concurrent

@@ -1436,7 +1436,7 @@ type MemorySettings = {
  * Resolve the appropriate memory backend based on settings.
  *
  * @param settings - Project settings object
- * @returns The memory backend to use, defaulting to file backend
+ * @returns The memory backend to use, defaulting to DEFAULT_MEMORY_BACKEND (qmd)
  */
 export function resolveMemoryBackend(settings?: MemorySettings): MemoryBackend {
   const backendType = (settings?.[MEMORY_BACKEND_SETTINGS_KEYS.MEMORY_BACKEND_TYPE] as string) || DEFAULT_MEMORY_BACKEND;
@@ -1444,7 +1444,7 @@ export function resolveMemoryBackend(settings?: MemorySettings): MemoryBackend {
   if (backend) {
     return backend;
   }
-  // Fall back to file backend if unknown type
+  // Fall back to the default (qmd) backend if the configured type is unknown
   return backendRegistry.get(DEFAULT_MEMORY_BACKEND)!;
 }
 

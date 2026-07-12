@@ -516,6 +516,12 @@ interface TerminalModalProps {
   initialCommand?: string;
   initialCommandGeneration?: number;
   projectId?: string;
+  /** Render the terminal inline inside a parent-owned layout instead of a portaled modal. */
+  embedded?: boolean;
+  /** Worktree/project directory used by the initial scoped tab. */
+  defaultCwd?: string;
+  /** Optional terminal-session namespace, usually the owning task id. */
+  scopeId?: string;
 }
 
 /**
@@ -533,7 +539,7 @@ interface TerminalModalProps {
  * 
  * The terminal spawns a real shell (bash/zsh/powershell based on platform).
  */
-export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId }: TerminalModalProps) {
+export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId }: TerminalModalProps) {
   const { t } = useTranslation("app");
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -568,9 +574,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
   // FNXC:TerminalFooter 2026-07-08-15:00: FN-7684 tablet tier (769-1024px, non-mobile) — keeps the desktop display modes (docked/floating/pinned-below), only the action-control render location changes.
   const [isTabletTerminal, setIsTabletTerminal] = useState(() => isTerminalTabletViewport());
-  const isDockedMode = !isMobileTerminal && displayMode === "docked";
-  const isFloatingMode = !isMobileTerminal && displayMode === "floating";
-  const isBelowMode = !isMobileTerminal && displayMode === "below";
+  /*
+  FNXC:Terminal 2026-07-10-00:00:
+  FN-7813 embedded mode is parent-layout owned: render in-flow, skip portal/overlay/display-mode chrome, and keep the shared xterm/session/resize observers so Task Detail gets the same terminal behavior without taking over the viewport.
+  */
+  const isDockedMode = !embedded && !isMobileTerminal && displayMode === "docked";
+  const isFloatingMode = !embedded && !isMobileTerminal && displayMode === "floating";
+  const isBelowMode = !embedded && !isMobileTerminal && displayMode === "below";
   // FNXC:FloatingWindow 2026-06-22-21:30: The FLOATING terminal shares the SINGLE cross-type floating z-index stack (floatingWindowStack) so tapping it raises it above every other floating modal regardless of type. A fresh z is claimed each time the modal opens (see effect below); tapping the panel (pointerdown/focus capture) re-raises it. Docked/mobile modes ignore this z-index (full-width bottom panel / full-screen sheet).
   const [floatingZ, setFloatingZ] = useState<number>(() => nextFloatingZ());
   const bringFloatingToFront = useCallback(() => {
@@ -1060,7 +1070,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     restartActiveTab,
     retryBootstrap,
     replaceActiveTabSession,
-  } = useTerminalSessions(projectId);
+  } = useTerminalSessions(projectId, {
+    storageScope: scopeId ? `task:${scopeId}` : undefined,
+    defaultCwd,
+  });
 
   /*
   FNXC:Terminal 2026-07-06-09:15:
@@ -2293,7 +2306,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const isLoading = !isReady || (!activeTab && !bootstrapError);
   // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
   const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
-  const modalClassName = `modal terminal-modal${isMobileTerminal ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}`;
+  const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
   const modalStyle = {
     ...(keyboardOverlap > 0
       ? {
@@ -2385,7 +2398,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       </span>
       {exitCode !== null && <span className="terminal-exit-code" data-testid="terminal-exit-code">{t("terminal.exitLabel", "Exit: {{code}}", { code: exitCode })}</span>}
       <span className="terminal-shortcuts terminal-shortcuts--header">{t("terminal.helpText", "Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close")}</span>
-      {!isMobileTerminal && (
+      {!embedded && !isMobileTerminal && (
         <button
           className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
           onClick={handleToggleBelowMode}
@@ -2397,7 +2410,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           {isBelowMode ? <PinOff size={14} /> : <Pin size={14} />}
         </button>
       )}
-      {!isMobileTerminal && (
+      {!embedded && !isMobileTerminal && (
         <button
           className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
           onClick={handleToggleDisplayMode}
@@ -2423,7 +2436,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       role={isBelowMode ? "region" : undefined}
       aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
     >
-        {(isDockedMode || isBelowMode) && (
+        {!embedded && (isDockedMode || isBelowMode) && (
           <div
             className={isBelowMode ? "terminal-below-resize-handle" : "terminal-docked-resize-handle"}
             data-testid="terminal-docked-resize-handle"
@@ -2433,7 +2446,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             onPointerDown={handleDockedResizePointerDown}
           />
         )}
-        {isFloatingMode && TERMINAL_RESIZE_DIRECTIONS.map((direction) => (
+        {!embedded && isFloatingMode && TERMINAL_RESIZE_DIRECTIONS.map((direction) => (
           <div
             key={direction}
             className={`terminal-floating-resize-handle terminal-floating-resize-handle--${direction}`}
@@ -2675,7 +2688,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           desktop `.terminal-tabs` (not the mobile dropdown) ahead of title/close
           in normal DOM order, so its plain close button needs no order override.
           */}
-          {isMobileTerminal ? (
+          {isMobileTerminal && !embedded ? (
             <button
               className="terminal-close terminal-close--corner"
               onClick={onClose}
@@ -2693,18 +2706,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
               </div>
 
               {isTabletTerminal ? (
-                <button
-                  className="terminal-close"
-                  onClick={onClose}
-                  data-testid="terminal-close-btn"
-                  title={t("terminal.closeTerminal", "Close terminal")}
-                >
-                  <X size={20} />
-                </button>
-              ) : (
-                /* Actions — labels hidden on mobile via .terminal-action-label */
-                <div className="terminal-actions" data-testid="terminal-actions">
-                  {terminalActionControls}
+                !embedded ? (
                   <button
                     className="terminal-close"
                     onClick={onClose}
@@ -2713,6 +2715,21 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                   >
                     <X size={20} />
                   </button>
+                ) : null
+              ) : (
+                /* Actions — labels hidden on mobile via .terminal-action-label */
+                <div className="terminal-actions" data-testid="terminal-actions">
+                  {terminalActionControls}
+                  {!embedded && (
+                    <button
+                      className="terminal-close"
+                      onClick={onClose}
+                      data-testid="terminal-close-btn"
+                      title={t("terminal.closeTerminal", "Close terminal")}
+                    >
+                      <X size={20} />
+                    </button>
+                  )}
                 </div>
               )}
             </>
@@ -3008,6 +3025,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
     </div>
   );
+
+  if (embedded) {
+    return (
+      <div className="terminal-embedded-host" data-testid="terminal-embedded-host">
+        {terminalPanel}
+      </div>
+    );
+  }
 
   if (isBelowMode) {
     return (

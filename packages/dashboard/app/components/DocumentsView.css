@@ -357,65 +357,70 @@ Subtle view-only indicator for the project-file preview header; muted so it info
   color: var(--color-error);
 }
 
-.documents-task-list-wrap {
-  width: 100%;
-}
-
-.documents-view-list {
+/*
+FNXC:DocumentsView 2026-07-10-17:40:
+FN-7811 reuses the Project Files shell for Task Documents, while task-scoped sidebar groups preserve task id/title/status context before each selectable document entry. Keep these styles scoped so Project Files continues to own the generic markdown-file list visuals.
+*/
+.documents-task-documents-sidebar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
 }
 
-/* Document Group */
-.documents-group {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background: var(--card);
+.documents-task-sidebar-group {
+  border-bottom: 1px solid var(--border);
 }
 
-.documents-group-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  align-items: center;
+.documents-task-sidebar-group:last-child {
+  border-bottom: none;
+}
+
+.documents-task-sidebar-group-header {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-md);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
-.documents-group-toggle-btn {
+.documents-task-sidebar-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.documents-task-sidebar-title {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  margin: 0;
   min-width: 0;
-  border: none;
-  background: none;
-  color: var(--text);
-  text-align: left;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-  min-height: 36px;
 }
 
-.documents-group-toggle-btn:hover {
-  background: var(--card-hover);
-}
-
-.documents-group-toggle-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.documents-group-toggle {
+.documents-task-sidebar-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.documents-task-document-item {
+  border-left-color: transparent;
+}
+
+.documents-task-document-title-block {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.documents-task-document-meta {
+  padding: 0;
+  border-bottom: none;
+  flex-wrap: wrap;
 }
 
 .documents-group-task-id {
@@ -470,13 +475,6 @@ Subtle view-only indicator for the project-file preview header; muted so it info
   box-shadow: var(--focus-ring-strong);
 }
 
-.documents-group-content {
-  padding: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
 /* Document Card */
 .document-card {
   background: var(--card);
@@ -497,48 +495,6 @@ Subtle view-only indicator for the project-file preview header; muted so it info
   padding: var(--space-sm) var(--space-md);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-}
-
-.document-card-key {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  color: var(--text);
-}
-
-.document-card-key svg {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.document-card-key-text {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.document-card-revision-badge {
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
-  color: var(--text-muted);
-  background: var(--surface);
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-}
-
-.document-card-expand-btn {
-  padding: var(--space-xs);
-  color: var(--text-muted);
-}
-
-.document-card-expand-btn:hover {
-  color: var(--text);
-}
-
-.document-card-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
 }
 
 .document-mode-toggle {
@@ -570,16 +526,6 @@ Subtle view-only indicator for the project-file preview header; muted so it info
   border-color: var(--accent);
 }
 
-.document-card-content-markdown {
-  /* Container chrome only; markdown styles delegated to .markdown-body */
-}
-
-.document-card-content-header {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-sm);
-}
-
 .document-card-meta {
   display: flex;
   align-items: center;
@@ -596,25 +542,6 @@ Subtle view-only indicator for the project-file preview header; muted so it info
 
 .document-card-content {
   padding: var(--space-md);
-}
-
-.document-card-preview {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.document-card-preview-truncated {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.document-card-content--expanded .document-card-preview,
-.document-card-content--expanded .document-card-preview-truncated {
-  display: none;
 }
 
 .document-card-content-text {
@@ -865,14 +792,26 @@ The artifacts tab is a thumbnail-first responsive media gallery for agent-create
     padding: 0 var(--space-md) var(--space-md);
   }
 
+  /*
+  FNXC:ArtifactsView 2026-07-11-11:30:
+  On mobile the two-line-wrapping "Project Files"/"Task Documents" tabs grew past 44px while the
+  one-line Artifacts tab stayed at 44px, so the buttons rendered at mismatched sizes. Stretch the
+  row, forbid label wrapping, and pin every tab to the standard 44px mobile control height; the row
+  scrolls horizontally when the labels do not fit.
+  */
   .documents-tab-bar {
     width: 100%;
+    align-items: stretch;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .documents-tab {
-    flex: 1;
+    flex: 1 0 auto;
     justify-content: center;
+    height: 44px;
     min-height: 44px;
+    white-space: nowrap;
   }
 
   .documents-hidden-toggle {
@@ -920,42 +859,32 @@ The artifacts tab is a thumbnail-first responsive media gallery for agent-create
     min-height: 160px;
   }
 
-  .documents-group-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "toggle count"
-      "status status"
-      "link link";
-    row-gap: var(--space-xs);
-  }
-
-  .documents-group-toggle-btn {
-    grid-area: toggle;
+  .documents-task-sidebar-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .documents-group-status {
-    grid-area: status;
     justify-self: start;
   }
 
   .documents-group-count {
-    grid-area: count;
     justify-self: end;
   }
 
   .documents-group-task-link {
-    grid-area: link;
     width: 100%;
     justify-self: stretch;
     min-height: 44px;
   }
 
   .documents-group-task-title {
-    max-width: 180px;
+    max-width: 11rem;
   }
 
-  .document-card-key-text {
-    font-size: 12px;
+  .documents-task-document-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .documents-artifact-gallery,

@@ -1,7 +1,9 @@
 # Planned work
 - Postgres migration
-- Coding (Ideas) workflow
 - Import from Beads
-- Improved core engine reliability
 - Orca integration
 - Paperclip Fusion plugin
+
+# Done
+- Coding (Ideas) workflow
+- Improved core engine reliability

@@ -441,6 +441,35 @@ describe("TerminalModal", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("renders embedded mode in-flow without overlay chrome while keeping shell tabs", async () => {
+    const { container } = render(
+      <TerminalModal
+        isOpen={true}
+        onClose={mockOnClose}
+        embedded
+        defaultCwd="/project/.worktrees/FN-7813"
+        scopeId="FN-7813"
+        projectId="proj-123"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal")).toBeTruthy();
+    });
+
+    expect(screen.getByTestId("terminal-embedded-host")).toBeTruthy();
+    expect(container.querySelector(".terminal-embedded-host")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-modal-overlay")).toBeNull();
+    expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
+    expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+    expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
+    expect(screen.getByTestId("terminal-tabs")).toBeTruthy();
+    expect(mockUseTerminalSessions).toHaveBeenCalledWith("proj-123", {
+      storageScope: "task:FN-7813",
+      defaultCwd: "/project/.worktrees/FN-7813",
+    });
+  });
+
   it("keeps the fast new-terminal button and hides the workspace picker when no task worktrees exist", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 

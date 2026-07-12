@@ -69,6 +69,7 @@ import {
   workflowDeleteParams,
   workflowSettingsParams,
   traitListParams,
+  isInReviewMissingWorktreeSessionStartFailure,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
@@ -1438,9 +1439,14 @@ export default function kbExtension(pi: ExtensionAPI) {
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
           isInReviewMergeRetryStall);
+      /*
+      FNXC:MissingWorktreeRetry 2026-07-10-18:30:
+      Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.
+      */
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
 
       // Validate task is in a retryable state
-      if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry) {
+      if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
         return {
           content: [{ type: "text", text: `Task ${params.id} is not in a retryable state (status: ${task.status || 'none'})` }],
           isError: true,
@@ -1451,6 +1457,24 @@ export default function kbExtension(pi: ExtensionAPI) {
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+
+      if (isMissingWorktreeSessionRetry) {
+        await store.updateTask(params.id, {
+          status: null,
+          error: null,
+          worktree: null,
+          branch: null,
+          sessionFile: null,
+          ...autoPauseClearPatch,
+          ...buildManualRetryResetPatch({ resetMergeRetries: true }),
+        });
+        await store.logEntry(params.id, `Retry requested via Fusion extension (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
+        await store.moveTask(params.id, "todo", { preserveProgress: true });
+        return {
+          content: [{ type: "text", text: `Retried ${params.id} → todo (unusable worktree session metadata cleared)` }],
+          details: { taskId: params.id, newColumn: 'todo' },
+        };
+      }
 
       // In-review retry: distinguish between execution failures and merge failures.
       if (isInReviewRetry) {

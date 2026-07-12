@@ -226,18 +226,30 @@ describe("SettingsModal mobile adaptations", () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it("renders the app version label in mobile layout", async () => {
+  it("renders the compact app version label in mobile layout", async () => {
     mockSettingsViewport(true);
-    const { findByText, container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    const { findByText, queryByText, container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const version = await findByText("Version 1.2.3");
+    const version = await findByText("v1.2.3");
     const modalActions = container.querySelector(".modal-actions");
     const modalHeader = container.querySelector(".modal-header");
 
     expect(version).toBeTruthy();
+    expect(queryByText("Version 1.2.3")).toBeNull();
     expect(modalActions?.contains(version)).toBe(true);
     expect(modalHeader?.contains(version)).toBe(false);
+  });
+
+  it("keeps the full app version label outside the mobile viewport", async () => {
+    mockSettingsViewport(false);
+    const { findByText, queryByText, container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const version = await findByText("Version 1.2.3");
+    expect(version).toBeTruthy();
+    expect(queryByText("v1.2.3")).toBeNull();
+    expect(container.querySelector(".modal-actions")?.contains(version)).toBe(true);
   });
 
   it("keeps update-check button clickable from the standalone and embedded mobile footers", async () => {

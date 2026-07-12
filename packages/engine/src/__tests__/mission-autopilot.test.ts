@@ -616,6 +616,49 @@ describe("MissionAutopilot", () => {
       expect(autopilot.isWatching("M-TEST1")).toBe(false);
     });
 
+    it("normalizes already-complete autopilot state when completion is checked", async () => {
+      const mission = createMockMission({
+        id: "M-COMPLETE-CHECK",
+        status: "complete",
+        autoAdvance: true,
+        autopilotEnabled: true,
+        autopilotState: "watching",
+      });
+      const store = createMockMissionStore([mission]);
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
+      store.listMilestones.mockReturnValue([createMockMilestone({ missionId: mission.id, status: "complete" })]);
+      store.getMissionWithHierarchy.mockReturnValue({
+        ...mission,
+        milestones: [{
+          ...createMockMilestone({ missionId: mission.id, status: "complete" }),
+          slices: [{
+            ...createMockSlice({ id: "SL-COMPLETE-CHECK", status: "complete" }),
+            features: [createMockFeature({ id: "F-COMPLETE-CHECK", status: "done" })],
+          }],
+        }],
+      });
+
+      ap.watchMission(mission.id);
+      const result = await ap.checkMissionCompletion(mission.id);
+
+      expect(result).toBe(true);
+      expect(store.updateMission).toHaveBeenCalledWith(
+        mission.id,
+        expect.objectContaining({
+          autoAdvance: false,
+          autopilotEnabled: false,
+          autopilotState: "inactive",
+        }),
+      );
+      expect(store.logMissionEvent).toHaveBeenCalledWith(
+        mission.id,
+        "autopilot_disabled",
+        expect.stringContaining("Autopilot disabled for already-complete mission"),
+        expect.objectContaining({ source: "checkMissionCompletion" }),
+      );
+      expect(ap.isWatching(mission.id)).toBe(false);
+    });
+
     it("should return false when milestones are not all complete", async () => {
       const m1 = createMockMilestone({ status: "active" });
       missionStore.listMilestones.mockReturnValue([m1]);
@@ -688,6 +731,34 @@ describe("MissionAutopilot", () => {
         "M-TEST1",
         expect.objectContaining({ status: "complete" }),
       );
+    });
+
+    it("normalizes autopilot flags when checkMissionCompletion completes the mission", async () => {
+      missionStore.listMilestones.mockReturnValue([createMockMilestone({ status: "complete" })]);
+      missionStore.getMissionWithHierarchy.mockReturnValue({
+        ...createMockMission(),
+        milestones: [{
+          ...createMockMilestone({ id: "MS-001", status: "complete" }),
+          slices: [{
+            ...createMockSlice({ id: "SL-001", status: "complete" }),
+            features: [createMockFeature({ id: "F-001", status: "done" })],
+          }],
+        }],
+      });
+
+      autopilot.watchMission("M-TEST1");
+      missionStore.updateMission.mockClear();
+      missionStore.logMissionEvent.mockClear();
+      const result = await autopilot.checkMissionCompletion("M-TEST1");
+
+      expect(result).toBe(true);
+      expect(missionStore.updateMission).toHaveBeenCalledWith("M-TEST1", expect.objectContaining({ status: "complete" }));
+      expect(missionStore.updateMission).toHaveBeenCalledWith("M-TEST1", expect.objectContaining({
+        autoAdvance: false,
+        autopilotEnabled: false,
+        autopilotState: "inactive",
+      }));
+      expect(autopilot.isWatching("M-TEST1")).toBe(false);
     });
   });
 
@@ -933,6 +1004,32 @@ describe("MissionAutopilot", () => {
   // ── Poll / stale detection ──────────────────────────────────────
 
   describe("poll stale detection", () => {
+    it("normalizes complete missions during poll", async () => {
+      const completeMission = createMockMission({
+        status: "complete",
+        autoAdvance: true,
+        autopilotEnabled: true,
+        autopilotState: "watching",
+      });
+      const store = createMockMissionStore([completeMission]);
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
+
+      ap.watchMission("M-TEST1");
+      store.updateMission.mockClear();
+      store.logMissionEvent.mockClear();
+      ap.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(store.updateMission).toHaveBeenCalledWith("M-TEST1", expect.objectContaining({
+        autoAdvance: false,
+        autopilotEnabled: false,
+        autopilotState: "inactive",
+      }));
+      expect(ap.isWatching("M-TEST1")).toBe(false);
+
+      ap.stop();
+    });
+
     it("recovers stale activating missions back to watching and advances slices", async () => {
       const staleMission = createMockMission({
         autopilotState: "activating",
@@ -1062,6 +1159,89 @@ describe("MissionAutopilot", () => {
       expect(ap.isWatching("M-TWO")).toBe(false);
       expect(ap.isWatching("M-THREE")).toBe(false);
       expect(ap.isWatching("M-FOUR")).toBe(false);
+    });
+
+    it("normalizes complete missions that still have autopilot watching", async () => {
+      const mission = createMockMission({
+        id: "M-COMPLETE",
+        status: "complete",
+        autoAdvance: true,
+        autopilotEnabled: true,
+        autopilotState: "watching",
+      });
+      const store = createMockMissionStore([mission]);
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
+
+      await ap.recoverMissions(store as any);
+
+      expect(store.updateMission).toHaveBeenCalledWith(
+        "M-COMPLETE",
+        expect.objectContaining({
+          autoAdvance: false,
+          autopilotEnabled: false,
+          autopilotState: "inactive",
+        }),
+      );
+      expect(store.logMissionEvent).toHaveBeenCalledWith(
+        "M-COMPLETE",
+        "autopilot_disabled",
+        expect.stringContaining("Autopilot disabled for already-complete mission"),
+        expect.objectContaining({ source: "recoverMissions" }),
+      );
+      expect(ap.isWatching("M-COMPLETE")).toBe(false);
+    });
+
+    it("normalizes complete missions that still have autopilot watching during poll", async () => {
+      const mission = createMockMission({
+        id: "M-COMPLETE-POLL",
+        status: "complete",
+        autoAdvance: true,
+        autopilotEnabled: true,
+        autopilotState: "watching",
+      });
+      const store = createMockMissionStore([mission]);
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
+
+      ap.watchMission(mission.id);
+      (ap as any).running = true;
+      await (ap as any).poll();
+
+      expect(store.updateMission).toHaveBeenCalledWith(
+        mission.id,
+        expect.objectContaining({
+          autoAdvance: false,
+          autopilotEnabled: false,
+          autopilotState: "inactive",
+        }),
+      );
+      expect(store.logMissionEvent).toHaveBeenCalledWith(
+        mission.id,
+        "autopilot_disabled",
+        expect.stringContaining("Autopilot disabled for already-complete mission"),
+        expect.objectContaining({ source: "poll" }),
+      );
+      expect(ap.isWatching(mission.id)).toBe(false);
+    });
+
+    it("does not clear watched state when normalization is accidentally called for an active mission", () => {
+      const mission = createMockMission({
+        id: "M-ACTIVE",
+        status: "active",
+        autoAdvance: true,
+        autopilotEnabled: true,
+        autopilotState: "watching",
+      });
+      const store = createMockMissionStore([mission]);
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
+
+      ap.watchMission("M-ACTIVE");
+      store.updateMission.mockClear();
+      store.logMissionEvent.mockClear();
+      (ap as any).normalizeCompleteMissionAutopilotState("M-ACTIVE", "test");
+
+      expect(ap.isWatching("M-ACTIVE")).toBe(true);
+      expect(store.updateMission).not.toHaveBeenCalled();
+      expect(store.logMissionEvent).not.toHaveBeenCalled();
     });
 
     it("recovers missions stuck in activating state", async () => {

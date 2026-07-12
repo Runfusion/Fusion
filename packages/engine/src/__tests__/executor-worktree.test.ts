@@ -728,6 +728,54 @@ describe("TaskExecutor worktree recovery", () => {
     expect(worktreeAddCalls).toHaveLength(0);
   });
 
+  it("surfaces dubious ownership as a distinct git detection error without suggesting git init", async () => {
+    const rootDir = "C:/Users/drewd/Documents/1. App Development/1. Active/NextGenEHS";
+    const store = createMockStore();
+    const onError = vi.fn();
+
+    mockedExecSync.mockImplementation((cmd: string | string[], opts?: any) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command === "git rev-parse --git-dir" && opts?.cwd === rootDir) {
+        const error: any = new Error(`fatal: detected dubious ownership in repository at '${rootDir}'`);
+        error.stderr = Buffer.from(`fatal: detected dubious ownership in repository at '${rootDir}'`);
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    const executor = new TaskExecutor(store, rootDir, { onError });
+    await executor.execute(makeTask());
+
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("git worktree add"),
+    );
+    expect(worktreeAddCalls).toHaveLength(0);
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("Cannot execute task: project directory is not a Git repository"),
+    );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("detected dubious ownership"),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-050",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining(`git config --global --add safe.directory "${rootDir}"`),
+      }),
+    );
+    const failedPatch = store.updateTask.mock.calls.find(
+      ([, patch]) => (patch as { status?: string }).status === "failed",
+    )?.[1] as { error?: string } | undefined;
+    expect(failedPatch?.error).not.toContain("Initialize with 'git init'");
+    expect(failedPatch?.error).not.toContain("Project directory is not a Git repository");
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-050" }),
+      expect.objectContaining({ message: expect.stringContaining("detected dubious ownership") }),
+    );
+  });
+
   it("extractWorktreeConflictInfo classifies not-a-git-repository errors", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -738,6 +786,19 @@ describe("TaskExecutor worktree recovery", () => {
     const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
     expect(conflictInfo.type).toBe("not-git-repo");
     expect(conflictInfo.message).toContain("not a git repository");
+  });
+
+  it("extractWorktreeConflictInfo does not misclassify dubious ownership as not-git-repo", () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const rootDir = "C:/Users/drewd/Documents/1. App Development/1. Active/NextGenEHS";
+
+    const error: any = new Error(`fatal: detected dubious ownership in repository at '${rootDir}'`);
+    error.stderr = Buffer.from(`fatal: detected dubious ownership in repository at '${rootDir}'`);
+
+    const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
+    expect(conflictInfo.type).toBe("unknown");
+    expect(conflictInfo.message).toContain("detected dubious ownership");
   });
 
   it("treats not-a-git-repository as non-retryable in tryCreateWorktree flow", async () => {
