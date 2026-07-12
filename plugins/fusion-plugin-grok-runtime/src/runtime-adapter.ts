@@ -124,10 +124,14 @@ function resetTurnAccum(session: GrokSession): void {
 
 function collectCustomTools(options: AgentRuntimeOptions): ToolLike[] {
   const fromCustom = Array.isArray(options.customTools) ? (options.customTools as ToolLike[]) : [];
-  // Some call sites pass tools as an array of ToolDefinitions instead of "coding"/"readonly".
-  const maybeToolsArray = Array.isArray((options as { tools?: unknown }).tools)
-    ? ((options as { tools: ToolLike[] }).tools)
-    : [];
+  /*
+  FNXC:GrokAcp 2026-07-11-19:00:
+  AgentRuntimeOptions.tools is typed as "coding"|"readonly"|undefined, but some call sites pass
+  an array of ToolDefinitions. Narrow via Array.isArray on the tools field, then cast the array
+  value only — never cast the whole options object to { tools: ToolLike[] } (TS2352).
+  */
+  const toolsField = (options as { tools?: unknown }).tools;
+  const maybeToolsArray = Array.isArray(toolsField) ? (toolsField as ToolLike[]) : [];
   return [...fromCustom, ...maybeToolsArray];
 }
 
@@ -211,9 +215,16 @@ export class GrokRuntimeAdapter implements AgentRuntime {
 
   constructor(options?: GrokRuntimeAdapterOptions) {
     this.binary = options?.binary ?? "grok";
+    /*
+    FNXC:GrokAcp 2026-07-11-19:00:
+    AcpRuntimeAdapter returns ACP AgentSession shapes (acp/types); AcpAdapterFactory is typed
+    against Grok AgentSessionResult (messages/state). createSession always runs
+    ensureGrokSessionShape after the ACP create, so the production factory is a deliberate
+    structural bridge via unknown rather than unifying the two session interfaces here.
+    */
     this.createAcpAdapter =
       options?.createAcpAdapter ??
-      ((settings) => new AcpRuntimeAdapter(settings));
+      ((settings) => new AcpRuntimeAdapter(settings) as unknown as ReturnType<AcpAdapterFactory>);
   }
 
   async createSession(
