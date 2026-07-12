@@ -65,11 +65,12 @@ describe("docs screenshot links", () => {
 
     expect(screenshotReferences.map(({ repoPath }) => repoPath).sort()).toEqual([
       "docs/screenshots/agents-view.png",
+      "docs/screenshots/artifacts-doc-edit.png",
+      "docs/screenshots/artifacts-gallery.png",
       "docs/screenshots/chat-view.png",
       "docs/screenshots/dashboard-overview.png",
       "docs/screenshots/dashboard-overview.png",
       "docs/screenshots/dashboard-overview.png",
-      "docs/screenshots/documents-view.png",
       "docs/screenshots/git-manager.png",
       "docs/screenshots/list-view.png",
       "docs/screenshots/mailbox-view.png",
