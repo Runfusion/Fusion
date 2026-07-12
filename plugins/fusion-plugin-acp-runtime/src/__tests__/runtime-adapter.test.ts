@@ -68,6 +68,32 @@ describe("AcpRuntimeAdapter (U3)", () => {
     }
   });
 
+  /*
+  FNXC:GrokAcp 2026-07-12-07:15:
+  Chat image attachments must arrive as ACP image ContentBlocks on session/prompt.
+  */
+  it("promptWithFallback forwards chat image options into session/prompt", async () => {
+    const chunks: string[] = [];
+    const adapter = makeAdapter();
+    const { session } = await adapter.createSession(
+      makeOptions({
+        onText: (t) => {
+          chunks.push(t);
+        },
+      }),
+    );
+    try {
+      await expect(
+        adapter.promptWithFallback(session, "describe this", {
+          images: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+        }),
+      ).resolves.toEqual({ stopReason: "end_turn" });
+      expect(chunks.join("")).toContain("images=1");
+    } finally {
+      await adapter.dispose(session);
+    }
+  });
+
   it("dispose tears down the subprocess and is idempotent", async () => {
     const adapter = makeAdapter();
     const { session } = await adapter.createSession(makeOptions());
