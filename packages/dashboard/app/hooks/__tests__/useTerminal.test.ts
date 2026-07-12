@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useTerminal } from "../useTerminal";
 
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 16000, 16000];
+
 class MockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -44,6 +46,20 @@ class MockWebSocket {
     this.readyState = MockWebSocket.CLOSED;
     this.onclose?.({ code });
   }
+}
+
+function closeLatestSocketAndAdvance(code: number, cycleIndex: number): MockWebSocket {
+  const socket = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+
+  act(() => {
+    socket.emitClose(code);
+  });
+
+  act(() => {
+    vi.advanceTimersByTime(RECONNECT_DELAYS_MS[cycleIndex] ?? 16000);
+  });
+
+  return MockWebSocket.instances[MockWebSocket.instances.length - 1];
 }
 
 describe("useTerminal", () => {
@@ -235,6 +251,147 @@ describe("useTerminal", () => {
     });
 
     expect(result.current.connectionStatus).toBe("disconnected");
+  });
+
+  describe("first-launch reconnect surface enumeration", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      { label: "without projectId", projectId: undefined },
+      { label: "with projectId", projectId: "proj-456" },
+    ])(
+      "keeps a never-opened initial socket retrying with capped backoff $label",
+      ({ projectId }) => {
+        const { result } = renderHook(() => useTerminal("test-session-123", projectId));
+
+        expect(result.current.connectionStatus).toBe("connecting");
+        expect(MockWebSocket.instances).toHaveLength(1);
+
+        for (let cycle = 0; cycle < 7; cycle++) {
+          const beforeCloseCount = MockWebSocket.instances.length;
+          const closingSocket = MockWebSocket.instances[beforeCloseCount - 1];
+
+          act(() => {
+            closingSocket.emitClose(1006);
+          });
+          expect(result.current.connectionStatus).toBe("reconnecting");
+
+          act(() => {
+            vi.advanceTimersByTime(RECONNECT_DELAYS_MS[cycle]);
+          });
+
+          expect(MockWebSocket.instances).toHaveLength(beforeCloseCount + 1);
+          expect(result.current.connectionStatus).toBe("reconnecting");
+        }
+
+        const finalSocket = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+        act(() => {
+          finalSocket.emitOpen();
+        });
+
+        expect(result.current.connectionStatus).toBe("connected");
+        expect(MockWebSocket.instances).toHaveLength(8);
+      },
+    );
+
+    it("keeps 4004 terminal and fires onSessionInvalid instead of retrying", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+      const onSessionInvalid = vi.fn();
+
+      act(() => {
+        result.current.onSessionInvalid(onSessionInvalid);
+        MockWebSocket.instances[0].emitClose(4004);
+      });
+      act(() => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      expect(result.current.connectionStatus).toBe("disconnected");
+      expect(onSessionInvalid).toHaveBeenCalledTimes(1);
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    it("keeps 4000 terminal without retrying", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      act(() => {
+        MockWebSocket.instances[0].emitClose(4000);
+      });
+      act(() => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      expect(result.current.connectionStatus).toBe("disconnected");
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    it("preserves bounded give-up behavior after a socket opened once", () => {
+      const { result } = renderHook(() => useTerminal("test-session-123"));
+
+      act(() => {
+        MockWebSocket.instances[0].emitOpen();
+      });
+      expect(result.current.connectionStatus).toBe("connected");
+
+      for (let cycle = 0; cycle < 5; cycle++) {
+        closeLatestSocketAndAdvance(1006, cycle);
+      }
+
+      expect(MockWebSocket.instances).toHaveLength(6);
+
+      act(() => {
+        MockWebSocket.instances[MockWebSocket.instances.length - 1].emitClose(1006);
+      });
+      act(() => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      expect(result.current.connectionStatus).toBe("disconnected");
+      expect(MockWebSocket.instances).toHaveLength(6);
+    });
+
+    it("does not create a socket or retry when sessionId is null", () => {
+      const { result } = renderHook(() => useTerminal(null));
+
+      act(() => {
+        vi.advanceTimersByTime(16000);
+      });
+
+      expect(result.current.connectionStatus).toBe("disconnected");
+      expect(MockWebSocket.instances).toHaveLength(0);
+    });
+
+    it("resets never-connected retry state on context change without leaking stale timers", () => {
+      const { result, rerender } = renderHook(
+        ({ sessionId, projectId }: { sessionId: string; projectId?: string }) =>
+          useTerminal(sessionId, projectId),
+        { initialProps: { sessionId: "test-session-123", projectId: "proj-A" } },
+      );
+
+      act(() => {
+        MockWebSocket.instances[0].emitClose(1006);
+      });
+      expect(result.current.connectionStatus).toBe("reconnecting");
+
+      rerender({ sessionId: "test-session-456", projectId: "proj-B" });
+      const countAfterContextChange = MockWebSocket.instances.length;
+      const activeContextSocket = MockWebSocket.instances[countAfterContextChange - 1];
+      expect(activeContextSocket.url).toContain("sessionId=test-session-456");
+      expect(activeContextSocket.url).toContain("projectId=proj-B");
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(MockWebSocket.instances).toHaveLength(countAfterContextChange);
+      expect(result.current.connectionStatus).toBe("connecting");
+    });
   });
 
   describe("onSessionInvalid callback", () => {
@@ -870,18 +1027,14 @@ describe("useTerminal", () => {
         vi.advanceTimersByTime(2000);
       });
 
-      // At this point:
-      // - ws1 was created (original)
-      // - ws1 close triggered reconnect
-      // - reconnect timeout fired and created ws2 (for stale context A)
-      // - context changed to B
-      // - closeWebSocketForContextChange closed ws1 and ws2
-      // - connect() created ws3 (for new context B)
-      // The stale ws2 reconnect should NOT have created another instance
       expect(MockWebSocket.instances).toHaveLength(3);
-      
-      // The final ws should be for project B
       expect(MockWebSocket.instances[2].url).toContain("projectId=proj-B");
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(MockWebSocket.instances).toHaveLength(3);
     });
 
     it("resets connection status on context change", () => {
@@ -946,6 +1099,8 @@ describe("useTerminal", () => {
         vi.advanceTimersByTime(0);
       });
 
+      expect(MockWebSocket.instances).toHaveLength(3);
+
       // Final ws should be for project B
       const finalWs = MockWebSocket.instances[MockWebSocket.instances.length - 1];
       expect(finalWs.url).toContain("projectId=proj-B");
@@ -956,6 +1111,39 @@ describe("useTerminal", () => {
       });
 
       // Status should be connected
+      expect(result.current.connectionStatus).toBe("connected");
+    });
+
+    it("connects after context switch races an in-flight automatic reconnect", () => {
+      const { result, rerender } = renderHook(
+        ({ sessionId, projectId }: { sessionId: string | null; projectId?: string }) =>
+          useTerminal(sessionId, projectId),
+        { initialProps: { sessionId: "test-session-123", projectId: "proj-A" } },
+      );
+
+      act(() => {
+        MockWebSocket.instances[0].emitOpen();
+        MockWebSocket.instances[0].emitClose(1006);
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(MockWebSocket.instances[1].url).toContain("projectId=proj-A");
+
+      rerender({ sessionId: "test-session-123", projectId: "proj-B" });
+
+      expect(MockWebSocket.instances).toHaveLength(3);
+      const projectBSocket = MockWebSocket.instances[2];
+      expect(projectBSocket.url).toContain("projectId=proj-B");
+
+      act(() => {
+        vi.advanceTimersByTime(0);
+        projectBSocket.emitOpen();
+      });
+
       expect(result.current.connectionStatus).toBe("connected");
     });
 

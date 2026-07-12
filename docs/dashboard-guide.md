@@ -628,6 +628,9 @@ Mailbox view shows inbox/outbox communication threads and unread state.
 
 Fusion embeds a terminal using xterm.js. Desktop and tablet use the footer status bar as the terminal launcher; mobile keeps the full-screen terminal path.
 
+<!-- FNXC:Terminal 2026-07-11-18:20: FN-7824 first-launch terminal sockets auto-retry with capped backoff until the first successful open, so the manual Reconnect affordance is reserved for terminal sessions that already connected and then exhaust their mid-session reconnect budget. -->
+On first launch or first open, the terminal keeps reconnecting automatically until its initial WebSocket opens; it should show **Reconnecting...** during that cold-start recovery rather than requiring a manual **Reconnect** click. If an already-connected terminal drops and exhausts its bounded reconnect budget, Fusion then parks it as **Disconnected** and surfaces the manual **Reconnect** control.
+
 <!-- FNXC:TaskDetailTerminal 2026-07-11-13:20: FN-7826 makes the Task Detail interactive Terminal tab always available while preserving the existing CLI-agent Session tab label. The first shell uses task.worktree when present and otherwise falls back to the project base directory, including for multi-repo workspace tasks with no single worktree, while task-scoped terminal tabs remain separate from the footer/global project terminal. -->
 Task Detail has two terminal-adjacent tabs when both are applicable: **Session** shows the pre-existing CLI agent session transcript/control surface, while **Terminal** embeds the interactive multi-tab terminal inside the task detail body. The interactive **Terminal** tab is always available in Task Detail; its first shell starts in the task worktree when one is recorded, otherwise it starts in the project base directory (project root), including for multi-repo workspace tasks that have no single task worktree. Its terminal tabs are stored separately from the footer/global project terminal tabs.
 

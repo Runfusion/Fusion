@@ -94,8 +94,12 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
   // Track previous values to detect context changes
   const previousSessionIdRef = useRef<string | null>(sessionId);
   const previousProjectIdRef = useRef<string | undefined>(projectId);
+  const contextChangedSinceLastEffectRef = useRef(false);
 
-  // Detect context change: either projectId or sessionId changed
+  /*
+   * FNXC:Terminal 2026-07-11-18:42:
+   * Context changes must invalidate stale WebSocket callbacks during render, before effects run, but the effect consumes a ref flag instead of depending on the transient boolean. Depending on that boolean makes React run cleanup again when it flips back to false after a status update, tearing down the replacement socket during context-switch/reconnect races.
+   */
   const contextChanged =
     previousSessionIdRef.current !== sessionId ||
     previousProjectIdRef.current !== projectId;
@@ -104,6 +108,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
     previousSessionIdRef.current = sessionId;
     previousProjectIdRef.current = projectId;
     contextVersionRef.current++;
+    contextChangedSinceLastEffectRef.current = true;
   }
   
   const wsRef = useRef<WebSocket | null>(null);
@@ -111,6 +116,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isManualCloseRef = useRef(false);
+  const hasEverConnectedRef = useRef(false);
   
   // Callback refs to avoid re-subscriptions
   const onDataCallbacksRef = useRef<Set<(data: string) => void>>(new Set());
@@ -221,6 +227,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
 
     // Clear buffers on context change to prevent stale replay
     initialBufferRef.current = createEmptyBuffer();
+    hasEverConnectedRef.current = false;
   }, []);
 
   // Cleanup function (used for unmount and manual reconnect)
@@ -256,7 +263,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
   }, []);
 
   // Connect function
-  const connect = useCallback(() => {
+  const connect = useCallback((nextStatus: ConnectionStatus = "connecting") => {
     if (!sessionId) {
       setConnectionStatus("disconnected");
       return;
@@ -281,7 +288,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
     }
 
     isManualCloseRef.current = false;
-    setConnectionStatus("connecting");
+    setConnectionStatus(nextStatus);
 
     // Capture the context version at connection start. Stale callbacks from
     // previous project/session contexts will be rejected by comparing against
@@ -312,6 +319,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
       // late-arriving messages from a previous session are discarded and
       // the new session's scrollback/data is captured in a fresh buffer.
       initialBufferRef.current = createEmptyBuffer();
+      hasEverConnectedRef.current = true;
       setConnectionStatus("connected");
       reconnectAttemptsRef.current = 0;
 
@@ -425,10 +433,16 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
         return;
       }
 
+      /**
+       * FNXC:Terminal 2026-07-11-18:20:
+       * FN-7824: A cold first launch can close the WebSocket before the backend is ready often enough to exhaust the normal reconnect budget. Never-opened sockets must keep retrying with capped backoff and stay in the reconnecting affordance so operators do not need a manual Reconnect click. Sockets that have opened at least once are real mid-session drops and keep the bounded give-up behavior, while permanent 4000/4004 closes remain terminal above.
+       */
+      const isInitialConnect = !hasEverConnectedRef.current;
+
       // Attempt reconnect with exponential backoff
       reconnectAttemptsRef.current++;
       
-      if (reconnectAttemptsRef.current > MAX_RECONNECT_ATTEMPTS) {
+      if (!isInitialConnect && reconnectAttemptsRef.current > MAX_RECONNECT_ATTEMPTS) {
         setConnectionStatus("disconnected");
         return;
       }
@@ -446,7 +460,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
           return;
         }
         if (!isManualCloseRef.current) {
-          connect();
+          connect("reconnecting");
         }
       }, Math.min(delay, 16000));
     };
@@ -459,6 +473,7 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
   // Manual reconnect
   const reconnect = useCallback(() => {
     reconnectAttemptsRef.current = 0;
+    hasEverConnectedRef.current = false;
     cleanup();
     connect();
   }, [cleanup, connect]);
@@ -466,25 +481,28 @@ export function useTerminal(sessionId: string | null, projectId?: string): UseTe
   // Connect when sessionId or projectId changes
   // Handle context change: close existing WebSocket, cancel timers, reset state
   useEffect(() => {
-    // If context changed, perform cleanup before connecting to new context
-    if (contextChanged) {
+    // If context changed, perform cleanup before connecting to new context.
+    if (contextChangedSinceLastEffectRef.current) {
+      contextChangedSinceLastEffectRef.current = false;
       // Use internal cleanup that doesn't mark as manual close,
       // allowing proper context transition without stale onclose interference
       closeWebSocketForContextChange();
 
       // Reset transient state
       reconnectAttemptsRef.current = 0;
+      hasEverConnectedRef.current = false;
       setConnectionStatus("disconnected");
     }
 
     if (sessionId) {
       connect();
     } else {
+      hasEverConnectedRef.current = false;
       setConnectionStatus("disconnected");
     }
 
     return cleanup;
-  }, [sessionId, projectId, contextChanged, connect, cleanup, closeWebSocketForContextChange]);
+  }, [sessionId, projectId, connect, cleanup, closeWebSocketForContextChange]);
 
   return {
     connectionStatus,
