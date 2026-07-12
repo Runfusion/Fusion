@@ -10475,11 +10475,20 @@ export class SelfHealingManager {
       const allAgentIds = new Set(allAgents.map((agent) => agent.id));
       const now = Date.now();
 
+      /*
+      FNXC:AgentHeartbeat 2026-07-12-20:10:
+      An agent parked paused/"error-unrecoverable" whose lastError NOW classifies as recoverable (e.g. transient OAuth token-rotation 401s that were misclassified operator-actionable before isTransientAuthCredentialError existed) must not stay parked forever waiting for a human. Re-admit exactly those parked agents to the error-recovery sweep; user pauses and every other pauseReason are untouched. The shared retry budget, cooldown, and staleness gates below still apply.
+      */
+      const isReclassifiedRecoverableParkedError = (agent: Agent): boolean =>
+        agent.state === "paused"
+        && agent.pauseReason === HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON
+        && isHeartbeatErrorRecoverable(agent);
+
       const orphaned = allAgents.filter((agent) => {
         if (isEphemeralAgent(agent)) {
           return false;
         }
-        if (agent.state !== "running" && agent.state !== "error") {
+        if (agent.state !== "running" && agent.state !== "error" && !isReclassifiedRecoverableParkedError(agent)) {
           return false;
         }
         /*
@@ -10513,7 +10522,7 @@ export class SelfHealingManager {
           return false;
         }
 
-        if (agent.state === "error") {
+        if (agent.state === "error" || isReclassifiedRecoverableParkedError(agent)) {
           const runtimeConfig = (agent.runtimeConfig ?? {}) as Record<string, unknown>;
           if (runtimeConfig.enabled === false) {
             return false;
@@ -10549,8 +10558,11 @@ export class SelfHealingManager {
       for (const agent of orphaned) {
         const updatedAt = Date.parse(agent.updatedAt ?? "");
         const stuckForMs = Math.max(0, now - updatedAt);
+        // Reclassified "error-unrecoverable" parked agents run the same recovery
+        // branch as error-state agents: shared budget, cooldown, audit, restart.
+        const isErrorRecoveryCandidate = agent.state === "error" || isReclassifiedRecoverableParkedError(agent);
         try {
-          if (agent.state === "error") {
+          if (isErrorRecoveryCandidate) {
             const recoveryState = this.getDurableAgentRecoveryState(agent);
             const isStaleMissingModule = isStaleWorktreeModuleResolutionError(agent.lastError ?? "");
             const isUnrecoverableHeartbeatError = !isHeartbeatErrorRecoverable(agent) && !isStaleMissingModule;
@@ -10653,9 +10665,12 @@ export class SelfHealingManager {
           await agentStore.updateAgentState(agent.id, "active");
           await agentStore.updateAgent(agent.id, {
             lastError: undefined,
+            // Clear the "error-unrecoverable" park marker when a reclassified
+            // parked agent is re-admitted; harmless no-op for error-state agents.
+            pauseReason: undefined,
           });
 
-          if (agent.state === "error") {
+          if (isErrorRecoveryCandidate) {
             const attempt = this.getDurableAgentRecoveryState(agent).attempts + 1;
             await this.emitDurableAgentErrorRecoveryAudit({
               agentId: agent.id,
@@ -10669,7 +10684,7 @@ export class SelfHealingManager {
             }
           }
 
-          if (agent.state === "error" && this.options.restartDurableAgentHeartbeat) {
+          if (isErrorRecoveryCandidate && this.options.restartDurableAgentHeartbeat) {
             const restartOk = await this.options.restartDurableAgentHeartbeat(agent.id, {
               reason: "transient-error",
               attempt: this.getDurableAgentRecoveryState(agent).attempts + 1,

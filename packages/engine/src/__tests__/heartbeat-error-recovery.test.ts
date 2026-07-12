@@ -177,6 +177,9 @@ describe("heartbeat error-recovery primitives", () => {
     expect(isErrorRecoveryEligible(baseAgent({ metadata: buildHeartbeatErrorRecoveryMetadata(baseAgent(), 5), lastError: "socket hang up" }), 5)).toBe(false);
     expect(isErrorRecoveryEligible(baseAgent({ lastError: "invalid api key" }), 5)).toBe(false);
     expect(isErrorRecoveryEligible(baseAgent({ lastError: "SyntaxError: Unexpected token" }), 5)).toBe(false);
+    // OAuth token-rotation 401s are transient credential rotations, not operator problems.
+    expect(isErrorRecoveryEligible(baseAgent({ lastError: 'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}' }), 5)).toBe(true);
+    expect(isErrorRecoveryEligible(baseAgent({ lastError: '401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token does not meet scope requirements"}}' }), 5)).toBe(false);
     expect(isHeartbeatErrorRecoverable({ lastError: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/deleted/node_modules/@runfusion/fusion/dist/bin.js' imported from /tmp/deleted/packages/engine/src/pi.ts" })).toBe(false);
   });
 });
@@ -237,7 +240,9 @@ describe("HeartbeatMonitor error-state recovery", () => {
   });
 
   it("parks a first-run operator-actionable failure immediately with an explicit reason", async () => {
-    mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => { throw new Error("Invalid authentication credentials"); }) as never);
+    mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => {
+      throw new Error('401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token does not meet scope requirements"}}');
+    }) as never);
     const store = createAgentStore(baseAgent({ state: "active", lastError: undefined }));
     const taskStore = createNoTaskStore();
     const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
@@ -245,7 +250,7 @@ describe("HeartbeatMonitor error-state recovery", () => {
     await monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
 
     expect(store.agent.state).toBe("paused");
-    expect(store.agent.lastError).toContain("Invalid authentication credentials");
+    expect(store.agent.lastError).toContain("OAuth token does not meet scope requirements");
     expect(store.agent.pauseReason).toBe(HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON);
     expect(readHeartbeatErrorRetryCount(store.agent)).toBe(0);
     expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -253,6 +258,77 @@ describe("HeartbeatMonitor error-state recovery", () => {
       target: store.agent.id,
       metadata: expect.objectContaining({ agentId: store.agent.id, source: "timer" }),
     }));
+  });
+
+  /*
+  FNXC:AgentHeartbeat 2026-07-12-20:10:
+  Regression for the OAuth token-rotation incident: a mid-run 401
+  "authentication_error: Invalid authentication credentials" must be retried
+  IN-RUN (withRateLimitRetry transient-auth budget) so a routine ~8h Claude Max
+  token rotation never fails the heartbeat run, and — if it still escapes —
+  must classify as a recoverable error (bare `error` + bounded auto-retry),
+  never an operator-actionable "error-unrecoverable" park.
+  */
+  it("retries a transient OAuth token-rotation 401 in-run and completes without entering error state", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const session = createSession(async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error('Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}');
+        }
+      });
+      mockedCreateFnAgent.mockResolvedValueOnce(session as never);
+      const store = createAgentStore(baseAgent({ state: "active", lastError: undefined }));
+      const taskStore = createNoTaskStore();
+      const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
+
+      let settled = false;
+      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" }).finally(() => { settled = true; });
+      // Flat transient-auth retry delay is ~5s ±10% jitter; advance fake time until the run settles.
+      for (let i = 0; i < 30 && !settled; i++) {
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      await heartbeat;
+
+      expect(session.prompt).toHaveBeenCalledTimes(2);
+      expect(store.agent.state).toBe("active");
+      expect(store.agent.lastError).toBeUndefined();
+      expect(taskStore.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "agent:error-parked-unrecoverable",
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a persistent rotation-shaped 401 recoverable (bare error, no unrecoverable park)", async () => {
+    vi.useFakeTimers();
+    try {
+      const rotation401 = 'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}';
+      mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => { throw new Error(rotation401); }) as never);
+      const store = createAgentStore(baseAgent({ state: "active", lastError: undefined }));
+      const taskStore = createNoTaskStore();
+      const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
+
+      let settled = false;
+      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" }).finally(() => { settled = true; });
+      // Exhaust the in-run transient-auth retry budget (2 retries × ~5s) on fake time.
+      for (let i = 0; i < 30 && !settled; i++) {
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      await heartbeat;
+
+      expect(store.agent.state).toBe("error");
+      expect(store.agent.pauseReason).toBeUndefined();
+      expect(isErrorRecoveryEligible(store.agent, 5)).toBe(true);
+      expect(taskStore.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "agent:error-parked-unrecoverable",
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("leaves runtime-disabled operator-actionable error agents excluded from timer recovery", async () => {

@@ -67,6 +67,7 @@ export const HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON = "error-unrecoverable";
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./run-audit.js";
 import { promptWithFallback } from "./pi.js";
+import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
@@ -1663,6 +1664,12 @@ export class HeartbeatMonitor {
       resultJson?: Record<string, unknown>;
       stdoutExcerpt?: string;
       stderrExcerpt?: string;
+      /*
+      FNXC:AgentHeartbeat 2026-07-12-20:10:
+      Failure classification (recoverable vs unrecoverable park, FN-7835/FN-7859) must run on the provider error MESSAGE, never on a stack-bearing detail string: stack frames contain classifier-triggering identifiers — e.g. `at withRateLimitRetry (.../rate-limit-retry.ts)` matches the usage-limit /rate[_\s]?limit/ pattern and would misclassify EVERY failed heartbeat as usage-limit/unrecoverable. `stderrExcerpt` keeps the full detail for run-detail observability; `errorMessage` (message-only) drives classification and `agent.lastError`.
+      */
+      /** Message-only failure text used for error classification and agent.lastError; falls back to stderrExcerpt. */
+      errorMessage?: string;
       /** When true, preserve current agent state instead of forcing a terminal transition. */
       skipStateTransition?: boolean;
     }
@@ -1744,7 +1751,7 @@ export class HeartbeatMonitor {
             }))
             : MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS;
           const retryCount = latestAgent ? readHeartbeatErrorRetryCount(latestAgent) : 0;
-          const failedError = completionResult.stderrExcerpt ?? "Run failed";
+          const failedError = completionResult.errorMessage ?? completionResult.stderrExcerpt ?? "Run failed";
           const failedWithRecoverableError = isHeartbeatErrorRecoverable({ lastError: failedError });
           const failedWithUnrecoverableError = !failedWithRecoverableError && !isStaleWorktreeModuleResolutionError(failedError);
           /*
@@ -1761,7 +1768,7 @@ export class HeartbeatMonitor {
           ) {
             await this.store.updateAgentState(agentId, "paused");
             await this.store.updateAgent(agentId, {
-              lastError: completionResult.stderrExcerpt ?? "Run failed",
+              lastError: failedError,
               pauseReason: HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON,
             });
             heartbeatLog.warn(`Agent ${agentId} error recovery exhausted after ${retryCount}/${errorRecoveryLimit} attempts — pausing`);
@@ -3415,7 +3422,16 @@ export class HeartbeatMonitor {
           }
 
           // Execute
-          await promptWithFallback(session, executionPrompt);
+          /*
+          FNXC:AgentHeartbeat 2026-07-12-20:10:
+          Heartbeat prompts must run under the same rate-limit + transient-auth retry wrapper as executor/triage/merger work. Claude Max OAuth tokens rotate mid-run (~8 h); the in-flight call 401s ("authentication_error: Invalid authentication credentials") even though refreshed credentials already exist, and the next attempt succeeds. Without this wrapper a routine token rotation failed the run, pushed every durable agent to `error`, and (via FN-7859 unrecoverable classification) parked them paused for operator action. Retrying in-run prevents the error state at the source; the durable-agent error-recovery budget stays the backstop for errors that escape.
+          */
+          await withRateLimitRetry(() => promptWithFallback(session, executionPrompt), {
+            onRetry: (attempt, delayMs, retryError) => {
+              const delaySec = Math.round(delayMs / 1000);
+              heartbeatLog.warn(`Agent ${agentId} heartbeat prompt hit retryable provider error — retry ${attempt} in ${delaySec}s: ${retryError.message}`);
+            },
+          });
 
           // Capture real per-session token counts from pi-coding-agent's
           // SessionStats. Falls back to a 4-chars-per-token estimate of output
@@ -3492,7 +3508,7 @@ export class HeartbeatMonitor {
 
           heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ${usageInput} input + ${usageOutput} output + ${usageCached} cache-read + ${usageCacheWrite} cache-write tokens)`);
         } catch (err) {
-          const errorDetail = formatError(err).detail;
+          const { message: errorMessage, detail: errorDetail } = formatError(err);
           heartbeatLog.error(`Heartbeat execution failed for ${agentId}: ${errorDetail}`);
           await flushAgentLogger();
 
@@ -3502,6 +3518,7 @@ export class HeartbeatMonitor {
             await this.completeRun(agentId, run.id, {
               status: "failed",
               stderrExcerpt: errorDetail,
+              errorMessage,
               stdoutExcerpt: stdoutExcerpt || undefined,
             });
           }
@@ -3576,6 +3593,7 @@ export class HeartbeatMonitor {
             await this.completeRun(agentId, run.id, {
               status: "failed",
               stderrExcerpt: errorDetail,
+              errorMessage,
             });
           }
         } catch (completeRunErr) {

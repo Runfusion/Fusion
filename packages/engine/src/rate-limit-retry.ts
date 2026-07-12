@@ -23,34 +23,18 @@
  */
 
 import { isUsageLimitError } from "./usage-limit-detector.js";
+import { isTransientAuthCredentialError } from "./transient-error-detector.js";
 
 /*
 FNXC:EngineAuthRetry 2026-07-05-06:07:
 A long-running agent session holds its OAuth access token in memory. Claude Max access tokens rotate mid-run (~8 h lifetime); the in-flight call fails with a 401 authentication_error even though the credentials file has already been refreshed, and the very next call succeeds. Retry these a few times so a token-boundary rotation does not surface as a spurious task-failure alert. This budget is separate from the rate-limit retry budget and must not consume rate-limit attempts.
-*/
 
-/**
- * Matches transient authentication failures caused by credential rotation —
- * e.g. a Claude Max OAuth access token expiring mid-run (~8 h lifetime). A
- * long-running agent session holds the old token in memory; the very next
- * call after the provider refreshes credentials succeeds, so these are worth
- * a couple of quick retries before propagating as a task failure.
- */
-const TRANSIENT_AUTH_ERROR_RE =
-  /"type":\s*"authentication_error"|invalid authentication credentials|token[_\s]?expired/i;
-
-/*
-FNXC:EngineAuthRetry 2026-07-05-06:07:
-OAuth scope/permission-grant failures are NOT transient — the token is valid but lacks required grants, so the operator must re-authorize the connection. Retrying would repeat the failing call for ~10 s before surfacing the real (operator-actionable) error. This exclusion runs BEFORE the transient match because providers wrap scope errors inside a generic {"type":"authentication_error"} envelope that would otherwise match TRANSIENT_AUTH_ERROR_RE and retry pointlessly.
+FNXC:EngineAuthRetry 2026-07-12-20:10:
+The transient-auth classifier moved to transient-error-detector.ts (isTransientAuthCredentialError) so the same rotation-vs-operator-actionable decision drives this in-run retry AND durable-agent heartbeat error recovery / self-healing (FN-7835/FN-7844/FN-7859). Scope-grant failures and invalid/missing API keys are excluded there — the operator must act, so they surface immediately instead of retrying.
 */
-const SCOPE_ERROR_RE =
-  /oauth token does not meet scope|insufficient[_\s-]?scope|invalid[_\s-]?scope/i;
 
 function isTransientAuthError(message: string | undefined): boolean {
-  const msg = message ?? "";
-  // Permanent scope failures must surface immediately instead of retrying.
-  if (SCOPE_ERROR_RE.test(msg)) return false;
-  return TRANSIENT_AUTH_ERROR_RE.test(msg);
+  return isTransientAuthCredentialError(message ?? "");
 }
 
 /** Transient-auth retry budget — separate from the rate-limit `maxRetries`. */

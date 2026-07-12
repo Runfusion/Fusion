@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isTransientError,
+  isTransientAuthCredentialError,
   classifyError,
   isSilentTransientError,
   extractMissingModulePath,
@@ -412,6 +413,59 @@ describe("Transient Error Detector", () => {
     it("returns false for transient network errors", () => {
       expect(isOperatorActionableAgentError("socket hang up")).toBe(false);
       expect(isOperatorActionableAgentError("upstream connect error")).toBe(false);
+    });
+  });
+
+  /*
+  FNXC:Reliability-ErrorClassification 2026-07-12-20:10:
+  Regression suite for the durable-agent OAuth token-rotation incident: a routine Claude Max
+  credential rotation surfaced as `401 {"type":"authentication_error","message":"Invalid
+  authentication credentials"}`, matched the operator-actionable /credential/ pattern,
+  classified "permanent", and parked every durable agent paused/"error-unrecoverable".
+  These 401s must classify transient + NOT operator-actionable on every surface so in-run
+  retry and heartbeat/self-healing error recovery auto-recover. Scope-grant and API-key
+  failures stay operator-actionable.
+  */
+  describe("isTransientAuthCredentialError", () => {
+    const rotation401 =
+      'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}';
+
+    it("classifies the OAuth token-rotation 401 as transient and not operator-actionable", () => {
+      expect(isTransientAuthCredentialError(rotation401)).toBe(true);
+      expect(isTransientError(rotation401)).toBe(true);
+      expect(classifyError(rotation401)).toBe("transient");
+      expect(isOperatorActionableAgentError(rotation401)).toBe(false);
+    });
+
+    it("matches bare rotation shapes (message-only, token expired, envelope-only)", () => {
+      expect(isTransientAuthCredentialError("Invalid authentication credentials")).toBe(true);
+      expect(isTransientAuthCredentialError("token_expired: please re-authenticate")).toBe(true);
+      expect(isTransientAuthCredentialError('{"type":"error","error":{"type":"authentication_error"}}')).toBe(true);
+    });
+
+    it("keeps OAuth scope-grant failures operator-actionable even inside an authentication_error envelope", () => {
+      const scopeError =
+        '401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token does not meet scope requirements"}}';
+      expect(isTransientAuthCredentialError(scopeError)).toBe(false);
+      expect(isTransientError(scopeError)).toBe(false);
+      expect(classifyError(scopeError)).toBe("permanent");
+    });
+
+    it("keeps API-key misconfiguration operator-actionable even inside an authentication_error envelope", () => {
+      const badApiKey =
+        '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}';
+      expect(isTransientAuthCredentialError(badApiKey)).toBe(false);
+      expect(classifyError(badApiKey)).toBe("permanent");
+      expect(isTransientAuthCredentialError("missing ANTHROPIC_API_KEY")).toBe(false);
+      expect(isOperatorActionableAgentError("invalid api key")).toBe(true);
+      expect(isOperatorActionableAgentError("missing OPENAI_API_KEY")).toBe(true);
+    });
+
+    it("does not match unrelated auth failures or empty input", () => {
+      expect(isTransientAuthCredentialError("Authentication failed for provider")).toBe(false);
+      expect(isOperatorActionableAgentError("Authentication failed for provider")).toBe(true);
+      expect(isTransientAuthCredentialError("")).toBe(false);
+      expect(isTransientAuthCredentialError(null as unknown as string)).toBe(false);
     });
   });
 
