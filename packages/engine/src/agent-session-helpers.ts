@@ -38,6 +38,10 @@ import {
 import type { RunAuditor } from "./run-audit.js";
 import { MockAgentRuntime } from "./providers/mock-provider.js";
 
+/** Logger for agent session helpers */
+const sessionLog = createLogger("agent-session");
+const mockRuntimeSingleton = new MockAgentRuntime();
+
 /*
 FNXC:GrokAcp 2026-07-12-06:30:
 Non-pi plugin runtimes (Grok ACP, Hermes, OpenClaw, …) receive `customTools` as
@@ -58,13 +62,31 @@ const RUNTIMES_WITH_INTERNAL_TOOL_GATING = new Set(["pi"]);
 /**
  * Apply Fusion tool policy wrappers for plugin runtimes that do not wrap tools
  * themselves. Mirrors the customTools portion of the pi createFnAgent chain.
+ *
+ * FNXC:GrokAcp 2026-07-12-06:35:
+ * Missing `actionGateContext` / `permanentAgentGating` is intentionally fail-open
+ * and matches `wrapToolsWithActionGate` / pi `createFnAgent`: when the caller
+ * omits gate context (dashboard chat, room responders, triage), tools stay
+ * ungated coordination primitives. Executor/heartbeat permanent-agent lanes
+ * pass gate context and get full policy. Do not invent a deny-all default here —
+ * that would break chat workflow tools on Grok while pi still allows them.
+ * Emit a content-free warn (tool count + which layers were applied) so missing
+ * context on a non-pi path is visible without logging tool names/args.
  */
 export function wrapCustomToolsForPluginRuntime(
   tools: ToolDefinition[] | undefined,
   options: Pick<AgentRuntimeOptions, "actionGateContext" | "permanentAgentGating">,
+  logContext?: { runtimeId: string; sessionPurpose: string },
 ): ToolDefinition[] | undefined {
   if (!tools || tools.length === 0) {
     return tools;
+  }
+  const hasActionGate = Boolean(options.actionGateContext) && options.actionGateContext?.isEphemeral !== true;
+  const hasPermanentGate = Boolean(options.permanentAgentGating);
+  if (!hasActionGate && !hasPermanentGate && logContext) {
+    sessionLog.warn(
+      `[${logContext.sessionPurpose}] non-pi runtime "${logContext.runtimeId}" received ${tools.length} customTool(s) without actionGateContext/permanentAgentGating; wrappers apply RTK rewrite only (matches pi fail-open when gate context is omitted)`,
+    );
   }
   const withRtk = wrapToolsWithRtkRewrite(tools);
   const withPermanent = wrapToolsWithPermanentAgentGating(withRtk, options.permanentAgentGating);
@@ -74,10 +96,6 @@ export function wrapCustomToolsForPluginRuntime(
 function shouldWrapCustomToolsForRuntime(runtimeId: string): boolean {
   return !RUNTIMES_WITH_INTERNAL_TOOL_GATING.has(runtimeId);
 }
-
-/** Logger for agent session helpers */
-const sessionLog = createLogger("agent-session");
-const mockRuntimeSingleton = new MockAgentRuntime();
 
 function extractSkillNamesFromSelection(skillSelection: SkillSelectionContext | undefined): string[] {
   if (!skillSelection || !Array.isArray(skillSelection.requestedSkillNames)) {
@@ -638,6 +656,7 @@ export async function createResolvedAgentSession(
           customTools: wrapCustomToolsForPluginRuntime(
             effectiveRuntimeOptionsWithModel.customTools,
             effectiveRuntimeOptionsWithModel,
+            { runtimeId: resolved.runtimeId, sessionPurpose },
           ),
         }
       : effectiveRuntimeOptionsWithModel;
