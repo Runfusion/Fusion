@@ -41,6 +41,30 @@ const { mockSuperviseSpawn } = vi.hoisted(() => ({
     waitExit: vi.fn().mockResolvedValue({ code: 0, signal: null }),
   })),
 }));
+
+/*
+FNXC:SystemPanel 2026-07-12-14:35:
+Fake attached child for runDashboardSupervised: the supervisor now uses a
+plain node:child_process spawn (foreground, TUI-safe) instead of the detached
+superviseSpawn, so tests mock spawn and complete the loop by emitting a clean
+SIGINT close on a microtask (after the supervisor wires its close listener).
+*/
+const { mockSupervisorSpawn } = vi.hoisted(() => ({
+  mockSupervisorSpawn: vi.fn(() => {
+    const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+    const child = {
+      on(event: string, cb: (...args: unknown[]) => void) {
+        (listeners[event] ??= []).push(cb);
+        return child;
+      },
+      kill: () => true,
+    };
+    queueMicrotask(() => {
+      for (const cb of listeners["close"] ?? []) cb(null, "SIGINT");
+    });
+    return child;
+  }),
+}));
 vi.mock("../startup-model-sync.js", () => ({
   syncStartupModels: mockSyncStartupModels,
 }));
@@ -332,6 +356,7 @@ vi.mock("node:child_process", async (importOriginal) => {
     execSync: mockExecSync,
     execFile: mockExecFile,
     execFileSync: mockExecFileSync,
+    spawn: mockSupervisorSpawn,
   };
 });
 
@@ -3506,10 +3531,10 @@ describe("runDashboard update check wiring", () => {
 
 describe("runDashboardSupervised — bounded restart behavior", () => {
   beforeEach(() => {
-    mockSuperviseSpawn.mockClear();
+    mockSupervisorSpawn.mockClear();
   });
 
-  it("spawns the dashboard without inheriting the supervisor flag or a lifetime cap", async () => {
+  it("spawns an attached child without the supervision flags and advertises the restart contract", async () => {
     const mod = await import("../dashboard.js");
     const originalArgv = process.argv;
     process.argv = [
@@ -3529,14 +3554,18 @@ describe("runDashboardSupervised — bounded restart behavior", () => {
       process.argv = originalArgv;
     }
 
-    expect(mockSuperviseSpawn).toHaveBeenCalledWith(
+    expect(mockSupervisorSpawn).toHaveBeenCalledWith(
       process.execPath,
-      ["/tmp/fn-entry.mjs", "dashboard", "--host", "127.0.0.1", "--port", "4040"],
+      [...process.execArgv, "/tmp/fn-entry.mjs", "dashboard", "--host", "127.0.0.1", "--port", "4040"],
       expect.objectContaining({
         stdio: "inherit",
-        maxLifetimeMs: Number.POSITIVE_INFINITY,
+        env: expect.objectContaining({ FUSION_RESTART_SUPERVISED: "1" }),
       }),
     );
+    // Attached child (TUI-safe): the supervisor must NOT detach it into a
+    // background process group.
+    const spawnOptions = mockSupervisorSpawn.mock.calls[0]![2] as Record<string, unknown>;
+    expect(spawnOptions.detached).toBeUndefined();
   });
 
   it("preserves global flags before the dashboard subcommand without duplicating dashboard", async () => {
@@ -3550,7 +3579,7 @@ describe("runDashboardSupervised — bounded restart behavior", () => {
       "dashboard",
       "--port",
       "4040",
-      "--supervise",
+      "--no-supervise",
     ];
 
     try {
@@ -3559,12 +3588,12 @@ describe("runDashboardSupervised — bounded restart behavior", () => {
       process.argv = originalArgv;
     }
 
-    expect(mockSuperviseSpawn).toHaveBeenCalledWith(
+    expect(mockSupervisorSpawn).toHaveBeenCalledWith(
       process.execPath,
-      ["/tmp/fn-entry.mjs", "--project", "atlas-notes", "dashboard", "--port", "4040"],
+      [...process.execArgv, "/tmp/fn-entry.mjs", "--project", "atlas-notes", "dashboard", "--port", "4040"],
       expect.objectContaining({
         stdio: "inherit",
-        maxLifetimeMs: Number.POSITIVE_INFINITY,
+        env: expect.objectContaining({ FUSION_RESTART_SUPERVISED: "1" }),
       }),
     );
   });

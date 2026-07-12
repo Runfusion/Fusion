@@ -501,6 +501,33 @@ export interface ServerOptions {
     key: string | Buffer;
     ca?: string | Buffer | Array<string | Buffer>;
   };
+  /*
+  FNXC:SystemPanel 2026-07-12-11:15:
+  Host-process control surface for the dashboard System panel (Command Center →
+  System). The host CLI injects these; the /api/system routes consume them.
+  `requestRestart` returns false when no supervising parent will respawn the
+  process (then the UI disables restart actions). `sourceWorkspaceRoot` is set
+  only when running from a Fusion source checkout, which gates the
+  "Rebuild & restart" controls.
+  */
+  systemControl?: {
+    supervised: boolean;
+    requestRestart: (reason: string) => boolean;
+    sourceWorkspaceRoot?: string;
+  };
+  /** Bounded host-process log history + live tail for the System panel log viewer. */
+  systemLogs?: {
+    getRecent(limit?: number): SystemLogEntry[];
+    subscribe(listener: (entry: SystemLogEntry) => void): () => void;
+  };
+}
+
+/** System panel log entry shape (mirrors the CLI log sink's ring buffer). */
+export interface SystemLogEntry {
+  timestamp: Date;
+  level: "info" | "warn" | "error";
+  message: string;
+  prefix?: string;
 }
 
 function hasDashboardEngine(options?: ServerOptions): boolean {

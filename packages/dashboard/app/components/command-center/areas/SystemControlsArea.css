@@ -1,0 +1,132 @@
+/*
+FNXC:SystemPanel 2026-07-12-11:50:
+Operator System-controls panel styling for the Command Center System tab.
+Follows the tokenized cc-* rhythm (space/radius/surface vars) so control cards
+sit visually beside the SystemStatsArea telemetry cards. The rebuild output and
+log tail use a terminal-style scroll box bounded in height so streaming output
+never grows the page; the page must not scroll horizontally (pre wraps).
+*/
+
+.cc-syscontrols-grid {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-md);
+}
+
+.cc-syscontrol-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+}
+
+.cc-syscontrol-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-syscontrol-icon {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.cc-syscontrol-title {
+  font-weight: 600;
+}
+
+.cc-syscontrol-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  flex: 1 1 auto;
+}
+
+.cc-syscontrol-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.cc-syscontrol-cta {
+  align-self: flex-start;
+}
+
+.cc-syscontrols-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-block-end: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface));
+}
+
+.cc-syscontrols-banner--back {
+  justify-content: space-between;
+}
+
+.cc-syscontrols-job-status {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.cc-syscontrols-job-status--succeeded {
+  color: var(--color-success);
+}
+
+.cc-syscontrols-job-status--failed {
+  color: var(--danger, #f87171);
+}
+
+.cc-syscontrols-output {
+  margin: 0;
+  padding: var(--space-md);
+  max-block-size: 20rem;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface));
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cc-syscontrols-logs {
+  display: flex;
+  flex-direction: column;
+}
+
+.cc-syscontrols-log-line {
+  display: flex;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.cc-syscontrols-log-line--warn .cc-syscontrols-log-message {
+  color: var(--warning, #facc15);
+}
+
+.cc-syscontrols-log-line--error .cc-syscontrols-log-message {
+  color: var(--danger, #f87171);
+}
+
+.cc-syscontrols-log-time {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.cc-syscontrols-log-prefix {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.cc-syscontrols-log-message {
+  word-break: break-word;
+}

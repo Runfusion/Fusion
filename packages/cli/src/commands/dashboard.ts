@@ -1,8 +1,10 @@
 import type { AddressInfo } from "node:net";
 import { join, resolve as pathResolve } from "node:path";
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, readdir, readFile as fsReadFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   TaskStore,
   AutomationStore,
@@ -28,8 +30,7 @@ import {
   registerBuiltInZaiProvider,
   type WorkflowIrColumn,
   type TraitFlags,
-  superviseSpawn,
-  type SupervisedChild,
+  FUSION_RESTART_EXIT_CODE,
 } from "@fusion/core";
 import {
   createServer,
@@ -1104,6 +1105,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   let shutdownInProgress = false;
 
   /*
+  FNXC:SystemPanel 2026-07-12-11:00:
+  In-place restart support for the dashboard System panel. A restart request
+  flips the shutdown exit code from 0 to FUSION_RESTART_EXIT_CODE so the
+  graceful-shutdown path (including the hard-exit watchdog and second-signal
+  escape hatch) exits with the restart code and a supervising parent
+  (`--supervise` loop or scripts/dev-with-memory.mjs) respawns the process.
+  `requestSelfRestart` is late-bound because createServer options are built
+  before the shutdown closure exists.
+  */
+  let shutdownExitCode = 0;
+  let requestSelfRestart: ((reason: string) => boolean) | null = null;
+  const systemControlForServer = {
+    supervised: process.env.FUSION_RESTART_SUPERVISED === "1",
+    requestRestart: (reason: string) => (requestSelfRestart ? requestSelfRestart(reason) : false),
+    sourceWorkspaceRoot: resolveFusionSourceWorkspaceRoot(),
+  };
+
+  /*
    * FNXC:DashboardShutdown 2026-06-27-10:32:
    * Pressing `q`/Ctrl+C in the TUI routes through SIGINT so the graceful shutdown
    * runs (kills dev-server process groups, engines, mesh, central-core). That
@@ -1143,7 +1162,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           `fusion: graceful shutdown stalled on "${currentShutdownStep}" after ${SHUTDOWN_HARD_EXIT_GRACE_MS}ms — forcing exit\n`,
         );
       }
-      process.exit(0);
+      process.exit(shutdownExitCode);
     }, SHUTDOWN_HARD_EXIT_GRACE_MS).unref();
   }
   async function timeShutdownStep(label: string, fn: () => Promise<void> | void): Promise<void> {
@@ -2080,12 +2099,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
       noAuth: opts.noAuth,
       runtimeLogger,
+      systemControl: systemControlForServer,
+      systemLogs: {
+        getRecent: (limit?: number) => logSink.getRecentEntries(limit),
+        subscribe: (listener) => logSink.subscribeEntries(listener),
+      },
     });
 
     const shutdown = async (signal: NodeJS.Signals) => {
       // Second signal (user mashing q/Ctrl+C because the first didn't exit) —
       // force an immediate exit rather than being swallowed by the guard.
-      if (shutdownInProgress) process.exit(0);
+      if (shutdownInProgress) process.exit(shutdownExitCode);
       shutdownInProgress = true;
       armHardExitWatchdog();
 
@@ -2143,7 +2167,22 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       );
 
       store.close();
-      process.exit(0);
+      process.exit(shutdownExitCode);
+    };
+    /*
+    FNXC:SystemPanel 2026-07-12-11:00:
+    Bind the System panel restart request to the real graceful-shutdown path.
+    The short delay lets the HTTP 202 response flush before teardown starts.
+    Restart is only honored when a supervising parent will respawn us.
+    */
+    requestSelfRestart = (reason: string) => {
+      if (!systemControlForServer.supervised || shutdownInProgress) return false;
+      logSink.log(`restart requested (${reason}) — shutting down for supervised respawn`, "dashboard");
+      shutdownExitCode = FUSION_RESTART_EXIT_CODE;
+      setTimeout(() => {
+        void shutdown("SIGTERM");
+      }, 300);
+      return true;
     };
     registerHandler(process, "SIGINT", () => void shutdown("SIGINT"));
     registerHandler(process, "SIGTERM", () => void shutdown("SIGTERM"));
@@ -2396,6 +2435,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       daemon: dashboardAuthToken ? { token: dashboardAuthToken } : undefined,
       noAuth: opts.noAuth,
       runtimeLogger,
+      systemControl: systemControlForServer,
+      systemLogs: {
+        getRecent: (limit?: number) => logSink.getRecentEntries(limit),
+        subscribe: (listener) => logSink.subscribeEntries(listener),
+      },
     });
   }
 
@@ -2404,7 +2448,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const devShutdown = async (signal: NodeJS.Signals) => {
       // Second signal (user mashing q/Ctrl+C because the first didn't exit) —
       // force an immediate exit rather than being swallowed by the guard.
-      if (shutdownInProgress) process.exit(0);
+      if (shutdownInProgress) process.exit(shutdownExitCode);
       shutdownInProgress = true;
       armHardExitWatchdog();
 
@@ -2458,7 +2502,18 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       store.close();
-      process.exit(0);
+      process.exit(shutdownExitCode);
+    };
+    // FNXC:SystemPanel 2026-07-12-11:00: System panel restart binding for
+    // UI-only mode — same contract as the engine-mode shutdown above.
+    requestSelfRestart = (reason: string) => {
+      if (!systemControlForServer.supervised || shutdownInProgress) return false;
+      logSink.log(`restart requested (${reason}) — shutting down for supervised respawn`, "dashboard");
+      shutdownExitCode = FUSION_RESTART_EXIT_CODE;
+      setTimeout(() => {
+        void devShutdown("SIGTERM");
+      }, 300);
+      return true;
     };
     registerHandler(process, "SIGINT", () => void devShutdown("SIGINT"));
     registerHandler(process, "SIGTERM", () => void devShutdown("SIGTERM"));
@@ -3156,12 +3211,100 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   return { dispose };
 }
 
+// ── System Panel Support ─────────────────────────────────────────────────────
+
+/*
+FNXC:SystemPanel 2026-07-12-11:05:
+"Rebuild & restart" in the dashboard System panel only makes sense when the
+running CLI comes from a Fusion source checkout (where `pnpm build` /
+scripts/*.mjs exist). Resolve the workspace root by walking up from this
+module and requiring BOTH pnpm-workspace.yaml AND package.json name
+"fusion-workspace" — the name guard prevents a globally-installed
+@runfusion/fusion nested under some unrelated pnpm workspace from being
+misdetected as a rebuildable checkout. Returns undefined for packaged
+installs, which disables rebuild controls in the UI.
+*/
+export function resolveFusionSourceWorkspaceRoot(): string | undefined {
+  try {
+    let dir = pathResolve(fileURLToPath(import.meta.url), "..");
+    for (let i = 0; i < 10; i++) {
+      if (existsSync(join(dir, "pnpm-workspace.yaml"))) {
+        try {
+          const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: string };
+          return pkg?.name === "fusion-workspace" ? dir : undefined;
+        } catch {
+          return undefined;
+        }
+      }
+      const parent = pathResolve(dir, "..");
+      if (parent === dir) return undefined;
+      dir = parent;
+    }
+  } catch {
+    // Best-effort detection only — never let it break startup.
+  }
+  return undefined;
+}
+
 // ── Supervised Dashboard Mode ────────────────────────────────────────────────
 
 const SUPERVISE_MAX_RESTARTS = 3;
 const SUPERVISE_BASE_DELAY_MS = 2_000;
 const SUPERVISE_MAX_DELAY_MS = 16_000;
 const SUPERVISE_STALE_RESET_MS = 60_000;
+
+/** True when running inside a bun-compiled single-file `fn` binary. */
+function isCompiledBinary(): boolean {
+  const bun = (globalThis as { Bun?: { embeddedFiles?: unknown } }).Bun;
+  return typeof bun !== "undefined" && Boolean(bun.embeddedFiles);
+}
+
+/*
+FNXC:SystemPanel 2026-07-12-14:05:
+How the supervisor respawns "itself", per install shape:
+  - node script (npx / global npm install / `pnpm dev` source run): re-exec
+    process.execPath with execArgv preserved (tsx loader flags under source
+    runs) plus the argv[1] entry script.
+  - bun-compiled packaged binary (`fn`/`fn.exe` from build:exe): the binary IS
+    the program; argv[1] is Bun's virtual embedded path, so re-exec
+    process.execPath alone.
+Returns null when no respawn command can be determined (then supervision is
+skipped and the dashboard runs unsupervised).
+*/
+export function resolveSupervisorRespawnCommand(): { command: string; args: string[] } | null {
+  if (isCompiledBinary()) {
+    return { command: process.execPath, args: [] };
+  }
+  const entryPoint = process.argv[1];
+  if (!entryPoint) return null;
+  return { command: process.execPath, args: [...process.execArgv, entryPoint] };
+}
+
+/*
+FNXC:SystemPanel 2026-07-12-14:05:
+Supervision decision for `fn dashboard` (and bare `fn`, which defaults to the
+dashboard). Supervision is now the DEFAULT so every install shape — bare `fn`,
+`fusion`, npx, packaged binary — supports the System panel's in-place restart
+and gets crash recovery. Skipped when:
+  - --no-supervise is passed (explicit opt-out; also the escape hatch for
+    debugging the child directly),
+  - FUSION_RESTART_SUPERVISED=1 (a supervising parent already exists — the
+    supervisor's own child, or scripts/dev-with-memory.mjs under `pnpm dev` —
+    so never nest supervisors),
+  - an inspector flag is active (the debugger must attach to the real app
+    process, and a respawned child would fight over the inspector port),
+  - no respawn command can be resolved.
+*/
+export function shouldSuperviseDashboard(
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  execArgv: readonly string[] = process.execArgv,
+): boolean {
+  if (args.includes("--no-supervise")) return false;
+  if (env.FUSION_RESTART_SUPERVISED === "1") return false;
+  if (execArgv.some((arg) => arg.startsWith("--inspect"))) return false;
+  return resolveSupervisorRespawnCommand() !== null;
+}
 
 /**
  * Run the dashboard under foreground process supervision with bounded restart
@@ -3176,6 +3319,17 @@ const SUPERVISE_STALE_RESET_MS = 60_000;
  * supervisor restarts up to SUPERVISE_MAX_RESTARTS times with exponential
  * backoff. Clean exits (SIGINT/SIGTERM/exit 0) propagate without restart.
  *
+ * FNXC:SystemPanel 2026-07-12-14:05:
+ * The child is spawned ATTACHED (same foreground process group, stdio
+ * inherited) — NOT via superviseSpawn's detached process group — because the
+ * interactive TUI must own the terminal: a background-process-group child
+ * reading a TTY gets SIGTTIN/SIGTTOU-stopped, which is why detached
+ * supervision was headless-only. Attached means terminal Ctrl+C reaches the
+ * child directly; the parent ignores SIGINT (waiting for the child's graceful
+ * exit) and forwards direct SIGTERM kills to the child. Exit code
+ * FUSION_RESTART_EXIT_CODE is an operator-requested restart (System panel):
+ * immediate respawn, no crash budget consumed.
+ *
  * This does NOT use shell detachment wrappers, shell kill loops, or unbounded retries.
  * Port 4040 processes are never killed — the child binds its own port.
  */
@@ -3183,47 +3337,81 @@ export async function runDashboardSupervised(
   port: number,
   _opts: Parameters<typeof runDashboard>[1] = {},
 ): Promise<void> {
-  // Reconstruct child args: same entry point, same flags, minus --supervise
-  const childArgs = process.argv.slice(2).filter((a) => a !== "--supervise");
+  // Reconstruct child args: same flags, minus the supervision flags.
+  const childArgs = process.argv.slice(2).filter((a) => a !== "--supervise" && a !== "--no-supervise");
   // Ensure "dashboard" is present without duplicating it after global flags.
   if (!childArgs.includes("dashboard")) {
     const firstOptionIndex = childArgs.findIndex((arg) => arg.startsWith("-"));
     childArgs.splice(firstOptionIndex === -1 ? 0 : firstOptionIndex, 0, "dashboard");
   }
 
-  const entryPoint = process.argv[1];
-  if (!entryPoint) {
+  const respawn = resolveSupervisorRespawnCommand();
+  if (!respawn) {
     console.error("[dashboard:supervisor] cannot determine entry point for child process");
     process.exit(1);
   }
 
   let restartCount = 0;
   let lastExitTime = 0;
-  const restartCommand = formatSupervisorRestartCommand(process.execPath, entryPoint, childArgs);
+  const restartCommand = formatSupervisorRestartCommand(respawn.command, respawn.args, childArgs);
+
+  let activeChild: ReturnType<typeof spawnAttached> | null = null;
+  // Parent lifecycle: terminal Ctrl+C (SIGINT) already reaches the attached
+  // child via the shared foreground process group, so the parent just waits
+  // for the child's graceful exit. A direct SIGTERM to the parent (process
+  // managers, `kill`) is forwarded so the child shuts down too. If the parent
+  // dies unexpectedly, best-effort kill the child on exit.
+  process.on("SIGINT", () => {
+    /* child receives terminal SIGINT directly; wait for its exit */
+  });
+  process.on("SIGTERM", () => {
+    try {
+      activeChild?.child.kill("SIGTERM");
+    } catch {
+      // Child may already be gone.
+    }
+  });
+  process.on("exit", () => {
+    try {
+      activeChild?.child.kill("SIGTERM");
+    } catch {
+      // Child may already be gone.
+    }
+  });
 
   while (true) {
     const attemptLabel = `${restartCount + 1}/${SUPERVISE_MAX_RESTARTS + 1}`;
     console.log(`[dashboard:supervisor] starting dashboard (attempt ${attemptLabel})`);
 
-    let child: SupervisedChild;
     try {
-      child = superviseSpawn(process.execPath, [entryPoint, ...childArgs], {
-        stdio: "inherit",
-        maxLifetimeMs: Number.POSITIVE_INFINITY,
-      });
+      activeChild = spawnAttached(respawn.command, [...respawn.args, ...childArgs]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[dashboard:supervisor] failed to spawn child: ${message}`);
       process.exit(1);
     }
 
-    const exitResult = await child.waitExit();
+    const exitResult = await activeChild.waitExit;
+    activeChild = null;
     const exitCode = exitResult.code ?? 1;
     const exitSignal = exitResult.signal;
 
     // Clean exit — propagate without restart
     if (exitSignal === "SIGINT" || exitSignal === "SIGTERM" || exitCode === 0) {
       return;
+    }
+
+    /*
+    FNXC:SystemPanel 2026-07-12-10:50:
+    Operator-requested restart (dashboard System panel). Respawn immediately
+    and reset the crash budget — an intentional restart must never consume
+    SUPERVISE_MAX_RESTARTS or incur crash backoff.
+    */
+    if (exitCode === FUSION_RESTART_EXIT_CODE) {
+      console.log("[dashboard:supervisor] restart requested — restarting now");
+      restartCount = 0;
+      lastExitTime = 0;
+      continue;
     }
 
     // Reset restart counter if the child ran for a long time
@@ -3257,8 +3445,33 @@ export async function runDashboardSupervised(
   }
 }
 
-function formatSupervisorRestartCommand(nodePath: string, entryPoint: string, childArgs: readonly string[]): string {
-  return [nodePath, entryPoint, ...childArgs].map(quoteShellArg).join(" ");
+interface AttachedChildExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+/*
+FNXC:SystemPanel 2026-07-12-14:05:
+Attached (non-detached) supervised spawn: the child shares the parent's
+foreground process group so the interactive TUI keeps terminal ownership.
+Deliberately NOT superviseSpawn (its detached process group is what made the
+supervised TUI unusable on a TTY); parent-death cleanup is handled by the
+supervisor's own exit/SIGTERM handlers.
+*/
+function spawnAttached(command: string, args: string[]): { child: ChildProcess; waitExit: Promise<AttachedChildExit> } {
+  const child = spawn(command, args, {
+    stdio: "inherit",
+    env: { ...process.env, FUSION_RESTART_SUPERVISED: "1" },
+  });
+  const waitExit = new Promise<AttachedChildExit>((resolve) => {
+    child.on("close", (code, signal) => resolve({ code, signal }));
+    child.on("error", () => resolve({ code: 1, signal: null }));
+  });
+  return { child, waitExit };
+}
+
+function formatSupervisorRestartCommand(command: string, respawnArgs: readonly string[], childArgs: readonly string[]): string {
+  return [command, ...respawnArgs, ...childArgs].map(quoteShellArg).join(" ");
 }
 
 function quoteShellArg(value: string): string {

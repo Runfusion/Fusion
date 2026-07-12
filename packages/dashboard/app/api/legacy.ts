@@ -11380,3 +11380,112 @@ export interface ResearchStatsResponse {
 export function getResearchStats(projectId?: string): Promise<ResearchStatsResponse> {
   return api<ResearchStatsResponse>(withProjectId("/research/stats", projectId));
 }
+
+// ── System Panel (Command Center → System) ──────────────────────────────────
+
+/*
+FNXC:SystemPanel 2026-07-12-11:35:
+Typed client for the /api/system operator controls: capability discovery,
+in-place restart, rebuild jobs with streamed output, engine/agent restarts,
+plugin reload, and the host-process log viewer.
+*/
+
+export interface SystemRebuildJobSnapshot {
+  id: string;
+  kind: "rebuild";
+  scope: "app" | "full" | "plugins";
+  restartAfter: boolean;
+  status: "running" | "succeeded" | "failed";
+  startedAt: number;
+  finishedAt?: number;
+  exitCode?: number | null;
+  error?: string;
+  restartScheduled?: boolean;
+  pluginsReloaded?: string[];
+  droppedLines: number;
+  lineCount: number;
+  lines?: SystemRebuildJobLine[];
+}
+
+export interface SystemRebuildJobLine {
+  i: number;
+  ts: number;
+  stream: "stdout" | "stderr" | "system";
+  text: string;
+}
+
+export interface SystemInfoResponse {
+  supervised: boolean;
+  restartSupported: boolean;
+  rebuildSupported: boolean;
+  sourceWorkspaceRoot?: string;
+  logsSupported: boolean;
+  engineAvailable: boolean;
+  pluginReloadSupported: boolean;
+  pid: number;
+  uptimeSeconds: number;
+  nodeVersion: string;
+  platform: string;
+  arch: string;
+  memoryRssBytes: number;
+  activeRebuild: SystemRebuildJobSnapshot | null;
+  lastRebuild: SystemRebuildJobSnapshot | null;
+}
+
+export interface SystemLogEntryDto {
+  timestamp: string;
+  level: "info" | "warn" | "error";
+  message: string;
+  prefix?: string;
+}
+
+export function fetchSystemInfo(): Promise<SystemInfoResponse> {
+  return api<SystemInfoResponse>("/system/info");
+}
+
+export function requestSystemRestart(reason?: string): Promise<{ scheduled: boolean }> {
+  return api<{ scheduled: boolean }>("/system/restart", {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function startSystemRebuild(
+  scope: "app" | "full" | "plugins",
+  restart?: boolean,
+): Promise<SystemRebuildJobSnapshot> {
+  return api<SystemRebuildJobSnapshot>("/system/rebuild", {
+    method: "POST",
+    body: JSON.stringify({ scope, restart }),
+  });
+}
+
+export function fetchCurrentSystemRebuild(): Promise<{ job: SystemRebuildJobSnapshot | null }> {
+  return api<{ job: SystemRebuildJobSnapshot | null }>("/system/rebuild/current");
+}
+
+export function restartSystemEngines(): Promise<{
+  restarted: string[];
+  failed: Array<{ projectId: string; error: string }>;
+}> {
+  return api("/system/engine/restart", { method: "POST" });
+}
+
+export function restartAllSystemAgents(projectId?: string): Promise<{
+  restarted: string[];
+  failed: Array<{ agentId: string; error: string }>;
+}> {
+  return api(withProjectId("/system/agents/restart-all", projectId), { method: "POST" });
+}
+
+export function reloadAllSystemPlugins(): Promise<{
+  reloaded: string[];
+  failed: Array<{ id: string; error: string }>;
+}> {
+  return api("/system/plugins/reload-all", { method: "POST" });
+}
+
+export function fetchSystemLogs(limit?: number): Promise<{ entries: SystemLogEntryDto[] }> {
+  const suffix = limit ? `?limit=${limit}` : "";
+  return api<{ entries: SystemLogEntryDto[] }>(`/system/logs${suffix}`);
+}

@@ -315,3 +315,39 @@ describe("formatConsoleArgs", () => {
     expect(typeof message).toBe("string");
   });
 });
+
+/*
+FNXC:SystemPanel 2026-07-12-12:10:
+The sink's history + listener surface powers the dashboard System panel's
+"View logs" tail; every log/warn/error must be recorded (with level and
+prefix) in both TTY and headless modes, and unsubscribing must stop delivery.
+*/
+describe("DashboardLogSink system-log history", () => {
+  it("records entries with level and prefix and serves bounded recents", () => {
+    const sink = new DashboardLogSink();
+    sink.log("hello", "dashboard");
+    sink.warn("careful");
+    sink.error("boom", "engine");
+
+    const entries = sink.getRecentEntries();
+    expect(entries).toHaveLength(3);
+    expect(entries[0]).toMatchObject({ level: "info", message: "hello", prefix: "dashboard" });
+    expect(entries[1]).toMatchObject({ level: "warn", message: "careful" });
+    expect(entries[2]).toMatchObject({ level: "error", message: "boom", prefix: "engine" });
+
+    expect(sink.getRecentEntries(1)).toHaveLength(1);
+    expect(sink.getRecentEntries(1)[0].message).toBe("boom");
+  });
+
+  it("notifies subscribers live and stops after unsubscribe", () => {
+    const sink = new DashboardLogSink();
+    const seen: string[] = [];
+    const unsubscribe = sink.subscribeEntries((entry) => seen.push(entry.message));
+
+    sink.log("first");
+    unsubscribe();
+    sink.log("second");
+
+    expect(seen).toEqual(["first"]);
+  });
+});

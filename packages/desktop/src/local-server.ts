@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
 import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
+import { resolveDesktopSystemControl } from "./local-runtime.js";
 
 /*
  * FNXC:DesktopRuntime 2026-07-07-12:00:
@@ -173,6 +174,9 @@ export class DesktopLocalServerManager {
         ...(pluginStore && pluginLoader ? { pluginStore: pluginStore as never, pluginLoader, pluginRunner: pluginLoader } : {}),
         ...(ensureBundledPluginInstalledCallback ? { ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback } : {}),
         onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+        // FNXC:SystemPanel 2026-07-12-14:20: System panel restart via Electron
+        // app.relaunch(); see resolveDesktopSystemControl in local-runtime.ts.
+        ...(await resolveDesktopSystemControl()),
       });
       server = app.listen(0);
 

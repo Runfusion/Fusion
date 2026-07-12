@@ -478,7 +478,8 @@ Options:
   --paused                   Start with engine paused (automation disabled)
   --dev                      Start dashboard in development mode
   --no-engine                Start dashboard only (no AI engine)
-  --supervise                Run with auto-restart on crash (bounded retries)
+  --supervise                (default) Run with auto-restart on crash and System-panel restart support
+  --no-supervise             Run the dashboard without the supervising parent process
   --lang <locale>            Terminal-UI locale for this run (en, zh-CN, zh-TW, fr, es, ko); the browser dashboard resolves its own language
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
@@ -833,7 +834,17 @@ async function main() {
         const noAuth = args.includes("--no-auth");
         const dashTokenIdx = args.indexOf("--token");
         const token = dashTokenIdx !== -1 && dashTokenIdx + 1 < args.length ? args[dashTokenIdx + 1] : undefined;
-        const supervise = args.includes("--supervise");
+        /*
+        FNXC:SystemPanel 2026-07-12-14:10:
+        Supervision is the default for the dashboard (bare `fn`, `fusion`,
+        npx, packaged binary alike): a foreground parent respawns the child on
+        crash and on the System panel's intentional-restart exit code.
+        `--no-supervise` opts out; a child under an existing supervisor
+        (FUSION_RESTART_SUPERVISED=1, incl. `pnpm dev`) and inspector runs
+        never self-supervise. `--supervise` is kept as a no-op-compat flag.
+        */
+        const { shouldSuperviseDashboard } = await import("./commands/dashboard.js");
+        const supervise = shouldSuperviseDashboard(args);
         const dashLangIdx = args.indexOf("--lang");
         const lang = dashLangIdx !== -1 && dashLangIdx + 1 < args.length ? args[dashLangIdx + 1] : undefined;
         if (lang !== undefined) {

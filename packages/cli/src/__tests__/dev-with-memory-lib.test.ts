@@ -52,6 +52,29 @@ describe("dev-with-memory prebuild options", () => {
     expect(() => parseDevWrapperArgs(["--prebuild=", "dashboard"], {})).toThrow(/Invalid prebuild mode/);
   });
 
+  it("defaults a bare invocation to the dashboard command with the dev host", () => {
+    // FNXC:DevWorkflow 2026-07-12-10:20: `pnpm dev`/`pnpm start` with no
+    // command must equal `pnpm dev dashboard` (prebuild + host injection).
+    expect(buildForwardedDevArgs([])).toEqual(["dashboard", "--host", "0.0.0.0"]);
+  });
+
+  it("defaults a flag-only invocation to the dashboard command, preserving flags", () => {
+    expect(buildForwardedDevArgs(["--paused"])).toEqual([
+      "dashboard",
+      "--paused",
+      "--host",
+      "0.0.0.0",
+    ]);
+  });
+
+  it("leaves non-dashboard commands untouched", () => {
+    expect(buildForwardedDevArgs(["serve", "--port", "4050"])).toEqual([
+      "serve",
+      "--port",
+      "4050",
+    ]);
+  });
+
   it("does not inject a dev host when --host=value is already present", () => {
     expect(buildForwardedDevArgs(["dashboard", "--host=127.0.0.1"])).toEqual([
       "dashboard",

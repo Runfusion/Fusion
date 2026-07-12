@@ -59,6 +59,19 @@ const ENTRY = path.resolve(process.cwd(), "packages/cli/src/bin.ts");
 // process and there's no parent/child wrapper consuming --inspect.
 // Inspector flags are CLI args here so they apply only to this process and
 // don't propagate to grandchildren via NODE_OPTIONS.
+/*
+FNXC:SystemPanel 2026-07-12-10:45:
+This wrapper is the supervising parent for `pnpm dev` / `pnpm start`, so it is
+where the dashboard System panel's "Restart"/"Rebuild & restart" actions land:
+the child exits with FUSION_RESTART_EXIT_CODE (86 — keep in sync with
+packages/core/src/process-supervisor.ts) and we respawn the same command
+immediately, keeping the same terminal/TTY so the TUI comes back seamlessly.
+FUSION_RESTART_SUPERVISED=1 tells the child a respawning parent exists, which
+is what makes the dashboard advertise restart support. Any other exit code
+propagates unchanged (no crash-restart loop here — `--supervise` owns that).
+*/
+const RESTART_EXIT_CODE = 86;
+
 function runApp(extraArgs) {
   const tsx = spawn(process.execPath, buildDevNodeArgs({
     inspectFlags,
@@ -66,8 +79,15 @@ function runApp(extraArgs) {
     loader: LOADER,
     entry: ENTRY,
     args: extraArgs,
-  }), { stdio: "inherit" });
-  tsx.on("close", (c) => process.exit(c ?? 1));
+  }), { stdio: "inherit", env: { ...process.env, FUSION_RESTART_SUPERVISED: "1" } });
+  tsx.on("close", (c) => {
+    if (c === RESTART_EXIT_CODE) {
+      console.log("[fusion:dev] restart requested — restarting…");
+      runApp(extraArgs);
+      return;
+    }
+    process.exit(c ?? 1);
+  });
 }
 
 async function warnIfSourceVersionBehind() {

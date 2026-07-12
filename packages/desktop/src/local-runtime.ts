@@ -100,6 +100,42 @@ async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
   return new TaskStore(rootDir) as TaskStoreLike;
 }
 
+/*
+FNXC:SystemPanel 2026-07-12-14:20:
+Desktop restart support for the dashboard System panel. Electron owns the
+process lifecycle, so "restart" = app.relaunch() + app.exit() (after a short
+delay so the HTTP 202 flushes). Electron is resolved dynamically so this
+module still loads under plain-node tests, where the electron package exports
+a binary path instead of the runtime API — then systemControl is simply
+omitted and the System panel disables its restart controls. Rebuild controls
+never appear on desktop (no sourceWorkspaceRoot — nothing to rebuild).
+Cross-reference: local-server.ts carries the matching wiring for the other
+desktop startup path.
+*/
+export async function resolveDesktopSystemControl(): Promise<Record<string, unknown>> {
+  try {
+    const electron = (await import("electron")) as unknown as {
+      app?: { relaunch: () => void; exit: (code?: number) => void };
+    };
+    const electronApp = electron.app;
+    if (!electronApp || typeof electronApp.relaunch !== "function") return {};
+    return {
+      systemControl: {
+        supervised: true,
+        requestRestart: (_reason: string) => {
+          setTimeout(() => {
+            electronApp.relaunch();
+            electronApp.exit(0);
+          }, 300);
+          return true;
+        },
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function createDashboardServerDefault(store: TaskStoreLike, rootDir: string): Promise<{ server: Server; cleanup: RuntimeCleanup }> {
   const { CentralCore, PluginLoader, ensureBundledPluginInstalled, isBundledPluginId } = await import("@fusion/core");
   const { createServer } = await import("@fusion/dashboard");
@@ -259,6 +295,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       ...(pluginStore && pluginLoader ? { pluginStore: pluginStore as never, pluginLoader, pluginRunner: pluginLoader } : {}),
       ...(ensureBundledPluginInstalledCallback ? { ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback } : {}),
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+      ...(await resolveDesktopSystemControl()),
     });
 
     strace("createDashboardServer: app.listen(0)");

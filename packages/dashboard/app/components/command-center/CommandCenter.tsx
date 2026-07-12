@@ -16,6 +16,8 @@ import { GithubArea } from "./areas/GithubArea";
 import { GitlabArea } from "./areas/GitlabArea";
 import { SignalsArea } from "./areas/SignalsArea";
 import { SystemStatsArea } from "./areas/SystemStatsArea";
+import { SystemControlsArea } from "./areas/SystemControlsArea";
+import { PluginManager } from "../PluginManager";
 import { MissionControlPanel } from "./MissionControlPanel";
 import { CommandCenterControls } from "./CommandCenterControls";
 import { ReliabilityView } from "../ReliabilityView";
@@ -44,6 +46,7 @@ type SubViewId =
   | "gitlab"
   | "signals"
   | "system"
+  | "plugins"
   | "nodes"
   | "reliability"
   | "mission-control";
@@ -87,6 +90,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     { id: "gitlab", label: t("commandCenter.tabs.gitlab", "GitLab") },
     { id: "signals", label: t("commandCenter.tabs.signals", "Signals") },
     { id: "system", label: t("commandCenter.tabs.system", "System") },
+    { id: "plugins", label: t("commandCenter.tabs.plugins", "Plugins") },
     ...(nodesEnabled ? [{ id: "nodes" as const, label: t("commandCenter.tabs.nodes", "Nodes") }] : []),
     { id: "reliability", label: t("commandCenter.tabs.reliability", "Reliability") },
     { id: "mission-control", label: t("commandCenter.tabs.missionControl", "Mission Control") },
@@ -583,7 +587,28 @@ export function CommandCenter({
       case "signals":
         return <SignalsArea range={range} projectId={projectId} />;
       case "system":
-        return <SystemStatsArea />;
+        /*
+        FNXC:SystemPanel 2026-07-12-11:55:
+        The System tab is the operator's debug home: system controls
+        (rebuild/restart/backup/logs/report-bug) render above the existing
+        runtime-metrics telemetry, per the requirement that these controls
+        live "on the dashboard under System where we have runtime metrics".
+        */
+        return (
+          <>
+            <SystemControlsArea projectId={projectId} addToast={addToast} />
+            <SystemStatsArea />
+          </>
+        );
+      case "plugins":
+        /*
+        FNXC:SystemPanel 2026-07-12-11:55:
+        Plugins is a first-class Command Center tab: installed plugins first,
+        then available (registry/builtin) plugins — reusing PluginManager
+        unchanged (same precedent as the Reliability and Nodes tabs) so a
+        future server-hosted plugin browser can extend the same surface.
+        */
+        return <PluginManager addToast={addToast ?? (() => {})} projectId={projectId} />;
       case "nodes":
         return <NodesView addToast={addToast} />;
       case "reliability":

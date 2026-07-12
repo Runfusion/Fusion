@@ -183,6 +183,7 @@ import { registerRuntimeProviderRoutes } from "./routes/register-runtime-provide
 import { registerFnBinaryRoutes } from "./routes/register-fn-binary-routes.js";
 import { registerUpdateCheckRoutes } from "./routes/register-update-check-routes.js";
 import { registerDiagnosticsRoutes } from "./routes/register-diagnostics-routes.js";
+import { registerSystemRoutes } from "./routes/register-system-routes.js";
 import { registerCliAgentHooksRoute } from "./routes/cli-agent-hooks.js";
 import { registerCliAgentSettingsRoutes } from "./routes/cli-agent-settings.js";
 import { registerIntegratedRouters, registerIntegratedDevServerRouter } from "./routes/register-integrated-routers.js";
@@ -3345,6 +3346,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     readAgentMemoryFile: (...args) => readAgentMemoryFile(...args),
     writeAgentMemoryFile: (...args) => writeAgentMemoryFile(...args),
     isMemoryBackendError: (error): error is { code: string; backend?: string; message: string } => error instanceof MemoryBackendError,
+  });
+
+  // ── System Panel Routes (Command Center → System) ─────────────────────────
+  // FNXC:SystemPanel 2026-07-12-11:25: operator restart/rebuild/logs/debug
+  // controls. Registered here so the same heartbeat-monitor resolution used by
+  // agent runtime routes powers "restart all agents".
+  registerSystemRoutes(routeContext, {
+    hasHeartbeatExecutor,
+    heartbeatMonitor,
+    isHeartbeatMonitorForProject,
+    resolveHeartbeatMonitor,
   });
 
   // ── Agent Reflection Routes ──────────────────────────────────────────────

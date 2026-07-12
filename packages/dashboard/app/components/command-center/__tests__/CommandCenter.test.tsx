@@ -1029,8 +1029,8 @@ describe("CommandCenter shell", () => {
     render(<CommandCenter />);
     const tablist = screen.getByRole("tablist");
     const tabs = within(tablist).getAllByRole("tab");
-    // Overview, Tokens, Tools, Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Reliability, Mission Control.
-    expect(tabs.length).toBe(14);
+    // Overview, Tokens, Tools, Activity, Productivity, Team, Workflows, Ecosystem, GitHub, GitLab, Signals, System, Plugins, Reliability, Mission Control.
+    expect(tabs.length).toBe(15);
     expect(screen.queryByTestId("command-center-tab-nodes")).toBeNull();
     // roving tabindex: exactly one tab is focusable.
     const focusable = tabs.filter((tab) => tab.getAttribute("tabindex") === "0");
@@ -1260,9 +1260,15 @@ describe("CommandCenter shell", () => {
     expect(tokensTab.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tokensTab);
 
+    // FNXC:SystemPanel 2026-07-12-12:20: Plugins sits between System and Nodes.
     const systemTab = screen.getByTestId("command-center-tab-system");
     systemTab.focus();
     fireEvent.keyDown(systemTab, { key: "ArrowRight" });
+    const pluginsTab = screen.getByTestId("command-center-tab-plugins");
+    expect(pluginsTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(pluginsTab);
+
+    fireEvent.keyDown(pluginsTab, { key: "ArrowRight" });
     const nodesTab = screen.getByTestId("command-center-tab-nodes");
     expect(nodesTab.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(nodesTab);

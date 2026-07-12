@@ -32,8 +32,18 @@ export function hasHostOverride(args) {
 }
 
 export function buildForwardedDevArgs(args) {
-  const needsDevHostInjection = args[0] === "dashboard" && !hasHostOverride(args);
-  return needsDevHostInjection ? [...args, "--host", "0.0.0.0"] : args;
+  /*
+  FNXC:DevWorkflow 2026-07-12-10:20:
+  `pnpm dev` and `pnpm start` with no command must behave exactly like
+  `pnpm dev dashboard` (client prebuild + LAN host injection), not fall through
+  to the CLI's bare default. Normalize empty/flag-only invocations to an
+  explicit "dashboard" command so every downstream decision (prebuild mode,
+  host injection) sees the same shape.
+  */
+  const hasCommand = args.length > 0 && !String(args[0]).startsWith("-");
+  const normalized = hasCommand ? args : ["dashboard", ...args];
+  const needsDevHostInjection = normalized[0] === "dashboard" && !hasHostOverride(normalized);
+  return needsDevHostInjection ? [...normalized, "--host", "0.0.0.0"] : normalized;
 }
 
 export function parseDevWrapperArgs(rawArgs, env = process.env) {

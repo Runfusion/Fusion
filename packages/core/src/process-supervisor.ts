@@ -2,6 +2,20 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { createLogger } from "./logger.js";
 
 const log = createLogger("process-supervisor");
+
+/*
+FNXC:SystemPanel 2026-07-12-10:40:
+Exit code contract for operator-requested in-place restarts (dashboard System
+panel "Restart"/"Rebuild & restart"). A supervised fusion process exits with
+this code to signal "respawn me immediately"; supervisors (`fn dashboard
+--supervise`'s runDashboardSupervised loop and scripts/dev-with-memory.mjs,
+which hardcodes 86 because plain .mjs cannot import TS) treat it as an
+intentional restart — no crash-backoff, no restart-budget consumption. Any
+other non-zero exit remains a crash. Keep the literal in sync with
+scripts/dev-with-memory.mjs.
+*/
+export const FUSION_RESTART_EXIT_CODE = 86;
+
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const DEFAULT_MAX_LIFETIME_MS = 600_000;
 const MAX_KILL_WAIT_MS = 1_000;
