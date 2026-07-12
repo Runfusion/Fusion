@@ -338,7 +338,7 @@ Simplified workflow view styling. Requirements encoded here:
 }
 
 .wf-simple-controls .react-flow__controls-button svg {
-  fill: currentColor;
+  fill: currentcolor;
 }
 
 .wf-simple-add-panel {
