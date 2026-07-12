@@ -65,6 +65,7 @@ import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import { FileBrowserProvider } from "./context/FileBrowserContext";
 import { ShellProvider } from "./context/ShellContext";
 import { RetryWarningProvider } from "./context/RetryWarningContext";
+import { CostBadgeProvider } from "./context/CostBadgeContext";
 import { ShellHostProvider, useShellHostContext } from "./context/ShellHostContext";
 import { useShellConnection } from "./hooks/useShellConnection";
 import { useStashOrphanCount } from "./hooks/useStashOrphanCount";
@@ -619,6 +620,8 @@ function AppInner() {
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
     openMobileTasksInPopup,
+    showCostBadgeOnCards,
+    modelPricingOverrides,
     taskDetailChatFirst,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
@@ -1506,6 +1509,7 @@ function AppInner() {
       <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
         <FileBrowserProvider openFile={openFileInBrowser}>
           <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
+            <CostBadgeProvider value={{ enabled: showCostBadgeOnCards, pricingOverrides: modelPricingOverrides }}>
         {isFirstEverBoot ? (
           <>
             <DashboardLoader stage={loadingStage} />
@@ -1856,6 +1860,7 @@ function AppInner() {
             )}
           </>
         )}
+            </CostBadgeProvider>
           </RetryWarningProvider>
         </FileBrowserProvider>
       </NavigationHistoryProvider>

@@ -21,6 +21,7 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}) {
     autoMerge: true,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
+    showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     ...formOverrides,
   } as SettingsFormState;
@@ -81,6 +82,25 @@ describe("AppearanceSection", () => {
     renderAppearanceSection({ openMobileTasksInPopup: true });
 
     expect(screen.getByLabelText("Open tasks as popups")).toBeChecked();
+  });
+
+  it("renders and updates the cost badge checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Show cost badges on task cards");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByText(/board cards show derived model cost next to execution time/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().showCostBadgeOnCards).toBe(true);
+  });
+
+  it("reflects a persisted enabled cost badge value", () => {
+    renderAppearanceSection({ showCostBadgeOnCards: true });
+
+    expect(screen.getByLabelText("Show cost badges on task cards")).toBeChecked();
   });
 
   it("renders task detail Chat-first as unchecked by default and updates it", () => {

@@ -3,12 +3,13 @@ import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { TaskDetail, TaskStep, TaskTokenUsagePerModel, WorkflowStepResult } from "@fusion/core";
-import { costFor, type CostResult, type ModelPricingOverrides } from "../../../core/src/model-pricing";
+import type { TaskDetail, TaskStep, WorkflowStepResult } from "@fusion/core";
+import type { ModelPricingOverrides } from "../../../core/src/model-pricing";
 import { createMermaidCodeComponent, sharedRehypePlugins } from "./markdownPipeline";
 import { ProviderIcon } from "./ProviderIcon";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { inferProviderIconKey } from "../utils/providerIconKey";
+import { buildTokenCostRows, formatCost, formatCount, totalCostForRows } from "../utils/taskTokenCost";
 
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
 const STRING_OBJECT_TAG = "[object String]";
@@ -39,124 +40,6 @@ function getCompletedSteps(steps: TaskStep[] | undefined): TaskStep[] {
 
 function getRenderableWorkflowResults(results: WorkflowStepResult[] | undefined): WorkflowStepResult[] {
   return (results ?? []).filter((result) => result.status !== "pending");
-}
-
-interface TokenCostRow {
-  key: string;
-  label: string;
-  modelProvider?: string;
-  modelId?: string;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  cacheWriteTokens: number;
-  totalTokens: number;
-  cost: CostResult;
-}
-
-function formatCount(n: number): string {
-  return Number.isFinite(n) ? Math.round(n).toLocaleString() : "0";
-}
-
-function formatCost(usd: number | null, unavailable: boolean): string {
-  if (unavailable || usd === null || !Number.isFinite(usd)) {
-    return "—";
-  }
-  return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function toTokenBucketKey(bucket: Pick<TaskTokenUsagePerModel, "modelProvider" | "modelId">): string {
-  return `${bucket.modelProvider ?? ""}:${bucket.modelId ?? ""}`;
-}
-
-function toTokenCostRow(
-  bucket: Pick<TaskTokenUsagePerModel, "modelProvider" | "modelId" | "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens">,
-  unknownLabel: string,
-  now: number,
-  pricingOverrides?: ModelPricingOverrides,
-): TokenCostRow {
-  const modelId = bucket.modelId?.trim() || undefined;
-  const modelProvider = bucket.modelProvider?.trim() || undefined;
-  const label = modelId ?? unknownLabel;
-  return {
-    key: toTokenBucketKey({ modelProvider, modelId }),
-    label,
-    modelProvider,
-    modelId,
-    inputTokens: bucket.inputTokens,
-    outputTokens: bucket.outputTokens,
-    cachedTokens: bucket.cachedTokens,
-    cacheWriteTokens: bucket.cacheWriteTokens,
-    totalTokens: bucket.totalTokens,
-    cost: costFor(
-      {
-        inputTokens: bucket.inputTokens,
-        outputTokens: bucket.outputTokens,
-        cachedTokens: bucket.cachedTokens,
-        cacheWriteTokens: bucket.cacheWriteTokens,
-      },
-      { provider: modelProvider, model: modelId },
-      now,
-      pricingOverrides,
-    ),
-  };
-}
-
-/**
- * FNXC:TaskDetailSummaryTokenCost 2026-06-27-00:00:
- * Done-task Summary shows durable token usage broken down by model with derived USD cost. Use already-loaded task.tokenUsage.perModel buckets plus costFor and global pricing overrides threaded from TaskDetailModal; do not fetch or persist cost here. Unpriced models render “—” instead of $0 and make the task total unavailable so estimates are never understated.
- */
-function buildTokenCostRows(task: TaskDetail, unknownLabel: string, pricingOverrides?: ModelPricingOverrides): TokenCostRow[] {
-  const tokenUsage = task.tokenUsage;
-  if (!tokenUsage) return [];
-
-  const buckets = tokenUsage.perModel?.length
-    ? tokenUsage.perModel
-    : [
-        {
-          modelProvider: tokenUsage.modelProvider,
-          modelId: tokenUsage.modelId,
-          inputTokens: tokenUsage.inputTokens,
-          outputTokens: tokenUsage.outputTokens,
-          cachedTokens: tokenUsage.cachedTokens,
-          cacheWriteTokens: tokenUsage.cacheWriteTokens,
-          totalTokens: tokenUsage.totalTokens,
-        },
-      ];
-
-  const merged = new Map<string, Pick<TaskTokenUsagePerModel, "modelProvider" | "modelId" | "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens">>();
-  buckets.forEach((bucket) => {
-    const modelProvider = bucket.modelProvider?.trim() || undefined;
-    const modelId = bucket.modelId?.trim() || undefined;
-    const key = toTokenBucketKey({ modelProvider, modelId });
-    const current = merged.get(key);
-    if (!current) {
-      merged.set(key, { ...bucket, modelProvider, modelId });
-      return;
-    }
-    current.inputTokens += bucket.inputTokens;
-    current.outputTokens += bucket.outputTokens;
-    current.cachedTokens += bucket.cachedTokens;
-    current.cacheWriteTokens += bucket.cacheWriteTokens;
-    current.totalTokens += bucket.totalTokens;
-  });
-
-  const now = Date.now();
-  return Array.from(merged.values()).map((bucket) => toTokenCostRow(bucket, unknownLabel, now, pricingOverrides));
-}
-
-function totalCostForRows(rows: TokenCostRow[]): { usd: number | null; unavailable: boolean } {
-  let usd = 0;
-  let unavailable = false;
-  rows.forEach((row) => {
-    if (row.totalTokens <= 0) return;
-    if (row.cost.unavailable || row.cost.usd === null || !Number.isFinite(row.cost.usd)) {
-      unavailable = true;
-      return;
-    }
-    usd += row.cost.usd;
-  });
-  return { usd: unavailable ? null : usd, unavailable };
 }
 
 /**

@@ -44,6 +44,7 @@ import { TaskReviewTab } from "./TaskReviewTab";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
 import { TaskSummaryTab } from "./TaskSummaryTab";
+import { TaskCostTab } from "./TaskCostTab";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { useNodes } from "../hooks/useNodes";
@@ -226,7 +227,7 @@ function formatDurationCompact(ageMs: number): string {
   return `${minutes}m`;
 }
 
-type TabId = "summary" | "definition" | "chat" | "planner-chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | "worktree-terminal" | `plugin-${string}`;
+type TabId = "summary" | "cost" | "definition" | "chat" | "planner-chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | "worktree-terminal" | `plugin-${string}`;
 type ActivitySegment = "current" | "feed" | "raw-logs" | "interventions";
 
 /*
@@ -4383,6 +4384,13 @@ export function TaskDetailContent({
                 {t("taskDetail.tabs.summary", "Summary")}
               </button>
             )}
+            {/* FNXC:TaskDetailCost 2026-07-11-12:10: The Cost tab is always reachable (unlike done-only Summary) because operators need read-time model spend visibility while work is still in progress; it reuses costFor via the shared taskTokenCost helper and never persists derived USD. */}
+            <button
+              className={`detail-tab${activeTab === "cost" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("cost")}
+            >
+              {t("taskDetail.tabs.cost", "Cost")}
+            </button>
             <button
               className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("definition")}
@@ -4518,6 +4526,10 @@ export function TaskDetailContent({
           ) : activeTab === "summary" && task.column === "done" ? (
             <div className="detail-section detail-section--summary">
               <TaskSummaryTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
+            </div>
+          ) : activeTab === "cost" ? (
+            <div className="detail-section detail-section--cost">
+              <TaskCostTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
           ) : activeTab === "planner-chat" ? (
             <div className="detail-section detail-section--planner-chat">

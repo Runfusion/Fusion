@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye, MoreHorizontal } from "lucide-react";
+import { Link, Clock, DollarSign, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye, MoreHorizontal } from "lucide-react";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
@@ -48,10 +48,12 @@ import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { MAX_AUTO_MERGE_RETRIES, type BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import { useRetryWarning } from "../context/RetryWarningContext";
+import { useCostBadge } from "../context/CostBadgeContext";
 import { useColumnLabel } from "../i18n/labels";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { WorkflowIcon } from "./WorkflowIcon";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuActionDescriptor } from "./TaskContextMenu";
+import { formatCost, hasTaskCost, taskTotalCost } from "../utils/taskTokenCost";
 
 /** Per-branch progress snapshot (U13). Surfaced as an optional additive field
  *  on the task payload for the parallel-window badge (U9). */
@@ -928,6 +930,15 @@ function TaskCardComponent({
   const { agentsMap } = useAgentsMapCache(projectId);
   const { confirm } = useConfirm();
   const retryWarningThreshold = useRetryWarning();
+  const costBadge = useCostBadge();
+  /*
+  FNXC:TaskCardCostBadge 2026-07-11-12:20:
+  The optional spend chip sits beside execution time but stays fully absent unless the default-off setting is enabled and the task has positive token usage. Use the shared read-time taskTokenCost helper so unpriced models show the guess-free “—” sentinel instead of a fabricated $0.
+  */
+  const cardCost = costBadge.enabled && hasTaskCost(task as TaskDetail)
+    ? taskTotalCost(task as TaskDetail, costBadge.pricingOverrides)
+    : null;
+  const cardCostLabel = cardCost ? formatCost(cardCost.usd, cardCost.unavailable) : null;
 
   // Touch gesture detection refs
   const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -3346,7 +3357,7 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {(filesChangedButton || isGitHubImportedTask || timeIndicator || showNearDuplicateChip || showUndoOfChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
+      {(filesChangedButton || isGitHubImportedTask || cardCostLabel || timeIndicator || showNearDuplicateChip || showUndoOfChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
         <div className={`card-footer-row${chipFarRight ? " card-footer-row--chip-far-right" : ""}`}>
           {filesChangedButton}
           {isGitHubImportedTask && !showLinkedIssueChipForImport && (
@@ -3358,7 +3369,7 @@ function TaskCardComponent({
               <ProviderIcon provider="github" size="sm" />
             </span>
           )}
-          {(timeIndicator || showNearDuplicateChip || showUndoOfChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
+          {(cardCostLabel || timeIndicator || showNearDuplicateChip || showUndoOfChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
             <div className="card-footer-row-right">
               {showUndoOfChip && (
                 <span
@@ -3444,6 +3455,16 @@ function TaskCardComponent({
               FNXC:TaskCardTimingBadge 2026-06-13-17:20:
               The execution-time badge belongs in the bottom-right footer cluster and must match sibling footer badge sizing while preserving its existing label, title, aria text, and live-update data.
               */}
+              {cardCostLabel && (
+                <span
+                  className="card-cost-indicator"
+                  title={t("tasks.costBadgeTitle", "Estimated cost {{amount}}", { amount: cardCostLabel })}
+                  aria-label={t("tasks.costBadgeAriaLabel", "Estimated cost {{amount}}", { amount: cardCostLabel })}
+                >
+                  <DollarSign size={12} />
+                  <span>{cardCostLabel}</span>
+                </span>
+              )}
               {timeIndicator && (
                 <span
                   className="card-time-indicator"

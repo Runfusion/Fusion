@@ -85,6 +85,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // AppearanceSection
   openTasksInRightSidebar: "appearance.openTasksInRightSidebarHelp",
   openMobileTasksInPopup: "appearance.openMobileTasksInPopupHelp",
+  showCostBadgeOnCards: "appearance.showCostBadgeOnCardsHelp",
   taskDetailChatFirst: "appearance.taskDetailChatFirstHelp",
   // AgentPermissionsSection
   defaultAgentPermissionPolicy: "agentPermissions.perAgentSettingsOverrideProjectDefaultsEachCategory",

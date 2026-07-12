@@ -2,6 +2,7 @@ import React from "react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { TaskCard, formatElapsedDurationDone, __test_areTaskCardPropsEqual } from "../TaskCard";
+import { CostBadgeProvider } from "../../context/CostBadgeContext";
 
 // Pre-existing gap (unrelated to FN-7676): TaskCard unconditionally renders
 // RuntimeFallbackBadge, which calls the shared useToast() hook directly (not
@@ -27,6 +28,7 @@ vi.mock("lucide-react", () => ({
   GitBranch: () => null,
   Gitlab: () => null,
   Clock: () => null,
+  DollarSign: () => null,
   Pencil: () => null,
   Layers: () => null,
   ChevronDown: () => null,
@@ -3872,10 +3874,10 @@ describe("TaskCard", () => {
   it("keeps GitHub tracking chip interaction-affordance CSS contract", () => {
     const css = loadAllAppCssBaseOnly();
 
-    expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*display:\s*inline-flex;[^}]*font-family:\s*var\(--font-mono\);[^}]*\}/);
+    expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-cost-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*display:\s*inline-flex;[^}]*font-family:\s*var\(--font-mono\);[^}]*\}/);
     expect(css).toContain(".card-github-tracking-chip:hover");
     expect(css).toMatch(/\.card-github-tracking-chip:focus-visible\s*\{[^}]*--focus-ring-strong/);
-    expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*padding:\s*var\(--space-xs\)\s+var\(--space-sm\);[^}]*height:\s*var\(--card-chip-height\);[^}]*border-radius:\s*var\(--radius-pill\);[^}]*font-size:\s*0\.6875rem;[^}]*line-height:\s*1;[^}]*\}/);
+    expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-cost-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*padding:\s*var\(--space-xs\)\s+var\(--space-sm\);[^}]*height:\s*var\(--card-chip-height\);[^}]*border-radius:\s*var\(--radius-pill\);[^}]*font-size:\s*0\.6875rem;[^}]*line-height:\s*1;[^}]*\}/);
     expect(css).toMatch(/\.card-github-tracking-chip\s+\.provider-icon\s+svg\s*\{[^}]*width:\s*12px;[^}]*height:\s*12px;[^}]*\}/);
 
     render(
@@ -4702,14 +4704,14 @@ describe("TaskCard", () => {
 
     expect(baseCss).toMatch(/:root\s*\{[^}]*--card-chip-height:\s*22px;[^}]*--card-chip-height-mobile:\s*20px;[^}]*\}/);
     expect(baseCss).toMatch(/\.card-github-badge\s*\{[^}]*height:\s*var\(--card-chip-height\);[^}]*\}/);
-    expect(baseCss).toMatch(/\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*height:\s*var\(--card-chip-height\);[^}]*\}/);
+    expect(baseCss).toMatch(/\.card-time-indicator\s*,\s*\.card-cost-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*height:\s*var\(--card-chip-height\);[^}]*\}/);
   });
 
   it("FN-4525 applies shared mobile card-chip height token to badges and chips", () => {
     const fullCss = loadAllAppCss();
 
     expect(fullCss).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-github-badge\s*\{[^}]*height:\s*var\(--card-chip-height-mobile\);[^}]*\}/);
-    expect(fullCss).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*height:\s*var\(--card-chip-height-mobile\);[^}]*\}/);
+    expect(fullCss).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-time-indicator\s*,\s*\.card-cost-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*,\s*\.card-create-pr-action\s*\{[^}]*height:\s*var\(--card-chip-height-mobile\);[^}]*\}/);
   });
 
   it("keeps Create PR action on shared chip height tokens", () => {
@@ -5194,6 +5196,77 @@ describe("TaskCard", () => {
     const timer = container.querySelector(".card-time-indicator");
     expect(timer).not.toBeNull();
     expect(timer?.textContent).toContain("30m");
+  });
+
+  it("renders the optional cost badge only when enabled and token usage exists", () => {
+    const pricedTask = makeTask({
+      column: "done",
+      tokenUsage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 1_000_000,
+        firstUsedAt: "2026-01-01T00:00:00Z",
+        lastUsedAt: "2026-01-01T00:00:00Z",
+        modelProvider: "openai",
+        modelId: "gpt-5-mini",
+      },
+    } as Partial<Task>);
+
+    const disabled = render(<TaskCard task={pricedTask} onOpenDetail={noop} addToast={noop} />);
+    expect(disabled.container.querySelector(".card-cost-indicator")).toBeNull();
+    disabled.unmount();
+
+    const enabled = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard task={pricedTask} onOpenDetail={noop} addToast={noop} />
+      </CostBadgeProvider>,
+    );
+
+    const costBadge = enabled.container.querySelector(".card-cost-indicator") as HTMLElement | null;
+    expect(costBadge).not.toBeNull();
+    expect(costBadge?.textContent).toContain("$0.25");
+    expect(costBadge?.getAttribute("aria-label")).toBe("Estimated cost $0.25");
+    expect(costBadge?.closest(".card-footer-row-right")).toBe(enabled.container.querySelector(".card-footer-row-right"));
+    enabled.unmount();
+
+    const noUsage = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard task={makeTask({ id: "FN-002", column: "done" })} onOpenDetail={noop} addToast={noop} />
+      </CostBadgeProvider>,
+    );
+    expect(noUsage.container.querySelector(".card-cost-indicator")).toBeNull();
+  });
+
+  it("renders the cost badge unavailable sentinel for unpriceable usage", () => {
+    const { container } = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard
+          task={makeTask({
+            column: "done",
+            tokenUsage: {
+              inputTokens: 1,
+              outputTokens: 0,
+              cachedTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 1,
+              firstUsedAt: "2026-01-01T00:00:00Z",
+              lastUsedAt: "2026-01-01T00:00:00Z",
+              modelProvider: "unknown",
+              modelId: "no-price",
+            },
+          } as Partial<Task>)}
+          onOpenDetail={noop}
+          addToast={noop}
+        />
+      </CostBadgeProvider>,
+    );
+
+    const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
+    expect(costBadge).not.toBeNull();
+    expect(costBadge?.textContent).toContain("—");
+    expect(costBadge?.getAttribute("title")).toBe("Estimated cost —");
   });
 
   it.each(["merging", "merging-fix"] as const)("shows live merge elapsed in timer chip while task.status is %s", (status) => {

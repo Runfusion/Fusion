@@ -950,6 +950,7 @@ export function SettingsModal({
     showWorktreeGrouping: false,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
+    showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
@@ -1305,6 +1306,11 @@ export function SettingsModal({
           ...s,
           ignoreHiddenOverlapPaths: s.ignoreHiddenOverlapPaths ?? true,
           allowAbsoluteFileBrowserPaths: s.allowAbsoluteFileBrowserPaths === true,
+          /*
+          FNXC:TaskCardCostBadge 2026-07-11-12:15:
+          The Settings form normalizes missing showCostBadgeOnCards to false so upgraded projects retain no card spend badge until an operator explicitly opts in.
+          */
+          showCostBadgeOnCards: s.showCostBadgeOnCards === true,
           /*
           FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
           The Settings form normalizes missing taskDetailChatFirst to false so new and upgraded projects show the Activity-first default until an operator explicitly opts into Chat-first.

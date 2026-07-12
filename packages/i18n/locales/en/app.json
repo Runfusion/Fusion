@@ -5676,7 +5676,9 @@
       "title": "Appearance",
       "openTasksInRightSidebarHelp": "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
       "openMobileTasksInPopupHelp": "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
-      "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way."
+      "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
+      "showCostBadgeOnCards": "Show cost badges on task cards",
+      "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge."
     },
     "auth": {
       "apiKeyCleared": "API key cleared",
@@ -7832,7 +7834,8 @@
       "summary": "Summary",
       "terminal": "Session",
       "worktreeTerminal": "Terminal",
-      "workflow": "Workflow"
+      "workflow": "Workflow",
+      "cost": "Cost"
     },
     "terminal": {
       "loading": "Loading terminal…"
@@ -7863,7 +7866,23 @@
     },
     "workflowRuntime": "Workflow runtime",
     "workflowTimedSteps": "Workflow timed steps",
-    "yes": "Yes"
+    "yes": "Yes",
+    "costTab": {
+      "cacheWriteTokens": "Cache write",
+      "cachedTokens": "Cached",
+      "cost": "Derived USD",
+      "costUnavailable": "No pricing for this model",
+      "description": "Derived from recorded input, output, cached, and cache-write tokens. Unpriced rows use — instead of a guessed value.",
+      "empty": "No model token usage has been recorded for this task yet.",
+      "heading": "Model cost",
+      "inputTokens": "Input",
+      "model": "Model",
+      "outputTokens": "Output",
+      "totalCost": "Total cost",
+      "totalCostLabel": "Total",
+      "totalTokens": "Total tokens",
+      "unknownModel": "(unknown)"
+    }
   },
   "taskDocuments": {
     "cancel": "Cancel",
@@ -8285,7 +8304,9 @@
     "usingDefault": "Using default",
     "viewDependency": "Click to view {{depId}}",
     "workflow": "workflow",
-    "workflowCheck": "Workflow check"
+    "workflowCheck": "Workflow check",
+    "costBadgeTitle": "Estimated cost {{amount}}",
+    "costBadgeAriaLabel": "Estimated cost {{amount}}"
   },
   "terminal": {
     "arrowKeysLabel": "Terminal arrow keys",
