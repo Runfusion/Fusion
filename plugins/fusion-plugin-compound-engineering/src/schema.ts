@@ -68,6 +68,16 @@ export function ensureCeSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idxCeSessionsProject
       ON ce_sessions(projectId, updatedAt DESC, id);
 
+    CREATE TABLE IF NOT EXISTS ce_plan_handoff_claims (
+      artifactPath TEXT PRIMARY KEY,
+      sessionId TEXT NOT NULL UNIQUE,
+      projectId TEXT,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idxCePlanHandoffClaimsSession
+      ON ce_plan_handoff_claims(sessionId);
+
     CREATE TABLE IF NOT EXISTS ce_pipeline_links (
       id TEXT PRIMARY KEY,
       taskId TEXT NOT NULL,

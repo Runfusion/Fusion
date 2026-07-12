@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CeSessionStore, STALE_INTERVAL_MULTIPLE } from "../session/session-store.js";
+import { CeSessionStore, PlanHandoffClaimError, STALE_INTERVAL_MULTIPLE } from "../session/session-store.js";
 import { ensureCeSchema } from "../schema.js";
 import { makeHarness, type TestHarness } from "./_harness.js";
 
@@ -28,6 +28,10 @@ describe("ensureCeSchema", () => {
         "lastActivityAt",
       ]),
     );
+    const claimsTable = h.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ce_plan_handoff_claims'")
+      .get() as { name: string } | undefined;
+    expect(claimsTable?.name).toBe("ce_plan_handoff_claims");
   });
 });
 
@@ -103,6 +107,18 @@ describe("multi-session independence + delete", () => {
     expect(store.get(c.id)).toBeDefined();
     // Deleting a missing row reports false, no throw.
     expect(store.delete(b.id)).toBe(false);
+  });
+
+  it("atomically claims a requirements artifact for one Plan session and releases it on discard", () => {
+    const store = new CeSessionStore(h.db);
+    const artifactPath = "docs/plans/2026-07-11-001-topic-plan.md";
+    const first = store.createWithPlanHandoffClaim({ stage: "plan", projectId: "p1" }, artifactPath);
+
+    expect(() => store.createWithPlanHandoffClaim({ stage: "plan", projectId: "p1" }, artifactPath)).toThrow(PlanHandoffClaimError);
+    expect(store.delete(first.id)).toBe(true);
+
+    const retry = store.createWithPlanHandoffClaim({ stage: "plan", projectId: "p1" }, artifactPath);
+    expect(retry.artifactPath).toBe(artifactPath);
   });
 });
 

@@ -465,29 +465,20 @@ export class CeOrchestrator {
 
     /*
      * FNXC:CompoundEngineeringPlanning 2026-07-10-22:52:
-     * Brainstorm creates the requirements-only unified plan. A same-project Plan session must carry the selected completed predecessor's safe docs/plans artifact path, accept it only while it remains requirements-only, and atomically replace it with valid implementation-ready output; absent a compatible handoff, legacy new-file behavior remains available.
+     * Brainstorm creates the requirements-only unified plan. A same-project Plan session must carry the selected completed predecessor's safe docs/plans artifact path, accept it only while it remains requirements-only, and atomically claim it with row creation so concurrent starts cannot enrich the same file; absent a compatible handoff, legacy new-file behavior remains available.
      */
     const handoffArtifactPath = stageId === PLAN_STAGE_ID
       ? this.findBrainstormHandoffArtifact(opts.projectId ?? null, opts.sourceSessionId)
       : null;
-    if (handoffArtifactPath) {
-      const competingPlan = this.store.list({ stage: PLAN_STAGE_ID }).find((candidate) => (
-        candidate.projectId === (opts.projectId ?? null)
-        && candidate.artifactPath === handoffArtifactPath
-        && candidate.status !== "completed"
-        && candidate.status !== "error"
-        && candidate.status !== "interrupted"
-      ));
-      if (competingPlan) {
-        throw new Error(`Plan session ${competingPlan.id} is already enriching ${handoffArtifactPath}`);
-      }
-    }
-    const session = this.store.create({
+    const sessionInput = {
       stage: stageId,
       projectId: opts.projectId ?? null,
       artifactPath: handoffArtifactPath,
       turnIntervalMs: this.turnTimeoutMs,
-    });
+    };
+    const session = handoffArtifactPath
+      ? this.store.createWithPlanHandoffClaim(sessionInput, handoffArtifactPath)
+      : this.store.create(sessionInput);
     this.store.appendHistory(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
 
     const turn = this.runOpeningTurn(session.id, stage, opts.openingMessage);

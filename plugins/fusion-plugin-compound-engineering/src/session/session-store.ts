@@ -93,6 +93,16 @@ export interface CreateCeSessionInput {
   id?: string;
 }
 
+export class PlanHandoffClaimError extends Error {
+  constructor(
+    readonly artifactPath: string,
+    readonly sessionId: string,
+  ) {
+    super(`Plan session ${sessionId} is already enriching ${artifactPath}`);
+    this.name = "PlanHandoffClaimError";
+  }
+}
+
 /**
  * Default multiple of the turn interval beyond which a non-terminal session is
  * considered stale. Mirrors the FN-4172 rubric (`> 3× interval`), interval-
@@ -172,8 +182,34 @@ export class CeSessionStore {
   }
 
   create(input: CreateCeSessionInput): CeSession {
+    const session = this.newSession(input);
+    this.insert(session);
+    return session;
+  }
+
+  /*
+   * FNXC:CompoundEngineeringPlanning 2026-07-11-00:18:
+   * A requirements artifact can have exactly one Plan owner until that session is discarded. Claim it in the same immediate transaction as the Plan row so concurrent dashboard/API requests cannot both enrich the same document; discarding that session intentionally releases the claim for a retry.
+   */
+  createWithPlanHandoffClaim(input: CreateCeSessionInput, artifactPath: string): CeSession {
+    const session = this.newSession({ ...input, artifactPath });
+    return this.db.transactionImmediate(() => {
+      const existing = this.db
+        .prepare("SELECT sessionId FROM ce_plan_handoff_claims WHERE artifactPath = ?")
+        .get(artifactPath) as { sessionId: string } | undefined;
+      if (existing) throw new PlanHandoffClaimError(artifactPath, existing.sessionId);
+
+      this.insert(session);
+      this.db
+        .prepare("INSERT INTO ce_plan_handoff_claims (artifactPath, sessionId, projectId, createdAt) VALUES (?, ?, ?, ?)")
+        .run(artifactPath, session.id, session.projectId, session.createdAt);
+      return session;
+    });
+  }
+
+  private newSession(input: CreateCeSessionInput): CeSession {
     const now = new Date().toISOString();
-    const session: CeSession = {
+    return {
       id: input.id ?? randomUUID(),
       stage: input.stage,
       status: "launching",
@@ -187,6 +223,9 @@ export class CeSessionStore {
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  private insert(session: CeSession): void {
     this.db
       .prepare(
         `INSERT INTO ce_sessions
@@ -207,7 +246,6 @@ export class CeSessionStore {
         session.createdAt,
         session.updatedAt,
       );
-    return session;
   }
 
   get(id: string): CeSession | undefined {
@@ -281,8 +319,14 @@ export class CeSessionStore {
 
   /** Delete a session row. Returns true when a row was removed. */
   delete(id: string): boolean {
-    const result = this.db.prepare(`DELETE FROM ce_sessions WHERE id = ?`).run(id);
-    return Number(result.changes ?? 0) > 0;
+    return this.db.transactionImmediate(() => {
+      const result = this.db.prepare(`DELETE FROM ce_sessions WHERE id = ?`).run(id);
+      if (Number(result.changes ?? 0) > 0) {
+        this.db.prepare("DELETE FROM ce_plan_handoff_claims WHERE sessionId = ?").run(id);
+        return true;
+      }
+      return false;
+    });
   }
 
   /** Append a turn to the conversation history (no other field touched). */
