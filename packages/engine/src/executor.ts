@@ -1723,6 +1723,10 @@ export class TaskExecutor {
   private executing = new Set<string>();
   /** Tasks currently being prepared for unpause resume, before execute() has registered them. */
   private resumingUnpaused = new Set<string>();
+  /** Tasks whose active session was intentionally suspended by an action gate. */
+  private approvalSuspended = new Set<string>();
+  /** Approval decisions received while the old execute() lifecycle is still unwinding. */
+  private approvalResumeAfterUnwind = new Set<string>();
   /** Completed orphan recovery tasks currently running during startup. */
   private recoveringCompleted = new Set<string>();
   /**
@@ -2335,8 +2339,20 @@ export class TaskExecutor {
           `paused: true` was set with no reason, which self-healing's
           autoReboundPausedScopeDecay could rebound before the operator ever
           decided.
+
+          FNXC:ApprovalResume 2026-07-12-17:02:
+          MAIN-008: record the approval-specific suspension before pauseTask emits its
+          task:updated event so every abort branch can preserve the in-progress row
+          for a deterministic fresh resume. Clear the mark if pauseTask fails so a
+          failed pause does not leave a sticky suspended marker.
           */
-          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+          this.approvalSuspended.add(taskId);
+          try {
+            await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+          } catch (error) {
+            this.approvalSuspended.delete(taskId);
+            throw error;
+          }
           await this.store.logEntry(
             taskId,
             `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
@@ -2481,6 +2497,8 @@ export class TaskExecutor {
     this.executing.delete(taskId);
     this.recoveringCompleted.delete(taskId);
     this.resumingUnpaused.delete(taskId);
+    this.approvalSuspended.delete(taskId);
+    this.approvalResumeAfterUnwind.delete(taskId);
     TaskExecutor.processWideGraphRouting.delete(taskId);
     executingTaskLock.release(taskId);
     this.effectiveColumnAgentByTask.delete(taskId);
@@ -2812,6 +2830,74 @@ export class TaskExecutor {
    * prevents new work dispatch — running sessions continue to completion.
    * Paused tasks are moved back to `todo` rather than marked as `failed`.
    */
+  private async parkApprovalSuspension(taskId: string, surface: string): Promise<boolean> {
+    if (!this.approvalSuspended.has(taskId)) return false;
+    this.clearPausedAborted(taskId);
+    await this.store.logEntry(
+      taskId,
+      `Execution suspended for approval — ${surface} disposed; task remains in progress for decision resume`,
+      undefined,
+      this.getRunContextFor(taskId),
+    );
+    executorLog.log(`${taskId}: approval suspension parked after ${surface} disposal`);
+    return true;
+  }
+
+  private async dispatchUnpauseResume(task: Task): Promise<boolean> {
+    if (
+      this.executing.has(task.id)
+      || this.resumingUnpaused.has(task.id)
+      || this.recoveringCompleted.has(task.id)
+      || this.activeSessions.has(task.id)
+      || this.activeStepExecutors.has(task.id)
+      || this.activeWorkflowStepSessions.has(task.id)
+    ) {
+      return false;
+    }
+
+    const pauseLabel = await this.getExecutionPauseLabel();
+    if (pauseLabel) {
+      executorLog.log(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
+      return false;
+    }
+
+    this.approvalSuspended.delete(task.id);
+    if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
+      this.recoveringCompleted.add(task.id);
+      executorLog.log(`${task.id} unpaused with completed work and no session — recovering directly to in-review`);
+      void this.recoverCompletedTask(task)
+        .catch((err) => executorLog.error(`Failed to recover completed unpaused task ${task.id}:`, err))
+        .finally(() => this.recoveringCompleted.delete(task.id));
+      return true;
+    }
+
+    this.resumingUnpaused.add(task.id);
+    executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
+    try {
+      await this.clearResumeFailureState(task);
+      await this.store.updateTask(task.id, {
+        resumeLimboCount: 0,
+        resumeLimboTipSha: null,
+        resumeLimboStepSignature: null,
+      });
+      await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.getRunContextFor(task.id));
+      await this.recoverApprovedStepsOnResume(task.id);
+    } catch (clearErr) {
+      executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
+    }
+    this.execute(task)
+      .catch((err) => executorLog.error(`Failed to resume unpaused ${task.id}:`, err))
+      .finally(() => this.resumingUnpaused.delete(task.id));
+    return true;
+  }
+
+  private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
+    if (!this.approvalResumeAfterUnwind.delete(taskId)) return false;
+    const latestTask = await this.store.getTask(taskId);
+    if (latestTask.paused || latestTask.userPaused || latestTask.column !== "in-progress") return false;
+    return this.dispatchUnpauseResume(latestTask);
+  }
+
   private async resolveMcpServers(agentId?: string | null) {
     /*
      * FNXC:McpConfig 2026-06-25-22:20:
@@ -2911,6 +2997,8 @@ export class TaskExecutor {
     });
 
     store.on("task:deleted", (task) => {
+      this.approvalSuspended.delete(task.id);
+      this.approvalResumeAfterUnwind.delete(task.id);
       this.trackTaskDisposal(
         task.id,
         this.awaitAbortInFlightTaskWork(task.id, "task soft-deleted", { userCanceled: true }),
@@ -2947,9 +3035,23 @@ export class TaskExecutor {
         }
 
         // Handle unpause of an in-progress task with no active session.
-        // This covers orphaned states (e.g., engine restarted while task was
-        // paused in-progress) where the task needs to resume execution.
-        // The executing/resuming guards prevent duplicate runs.
+        // Approval can be decided while the old session is still unwinding;
+        // remember that edge instead of losing the only task:updated event.
+        if (!task.paused && task.column === "in-progress" && this.approvalSuspended.has(task.id)) {
+          if (
+            this.executing.has(task.id)
+            || this.activeSessions.has(task.id)
+            || this.activeStepExecutors.has(task.id)
+            || this.activeWorkflowStepSessions.has(task.id)
+          ) {
+            this.approvalResumeAfterUnwind.add(task.id);
+            executorLog.log(`${task.id}: approval decision received during session unwind — deferred one resume`);
+            return;
+          }
+        }
+
+        // This also covers orphaned states (for example, engine restart while
+        // paused in-progress). dispatchUnpauseResume owns all duplicate guards.
         if (
           !task.paused
           && task.column === "in-progress"
@@ -2957,52 +3059,7 @@ export class TaskExecutor {
           && !this.activeStepExecutors.has(task.id)
           && !this.activeWorkflowStepSessions.has(task.id)
         ) {
-          if (
-            !this.executing.has(task.id)
-            && !this.resumingUnpaused.has(task.id)
-            && !this.recoveringCompleted.has(task.id)
-          ) {
-            const pauseLabel = await this.getExecutionPauseLabel();
-            if (pauseLabel) {
-              executorLog.log(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
-              return;
-            }
-
-            if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
-              this.recoveringCompleted.add(task.id);
-              executorLog.log(`${task.id} unpaused with completed work and no session — recovering directly to in-review`);
-              void this.recoverCompletedTask(task)
-                .catch((err) =>
-                  executorLog.error(`Failed to recover completed unpaused task ${task.id}:`, err),
-                )
-                .finally(() => {
-                  this.recoveringCompleted.delete(task.id);
-                });
-              return;
-            }
-
-            this.resumingUnpaused.add(task.id);
-            executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
-            try {
-              await this.clearResumeFailureState(task);
-              await this.store.updateTask(task.id, {
-                resumeLimboCount: 0,
-                resumeLimboTipSha: null,
-                resumeLimboStepSignature: null,
-              });
-              await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.getRunContextFor(task.id));
-              await this.recoverApprovedStepsOnResume(task.id);
-            } catch (clearErr) {
-              executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
-            }
-            this.execute(task)
-              .catch((err) =>
-                executorLog.error(`Failed to resume unpaused ${task.id}:`, err),
-              )
-              .finally(() => {
-                this.resumingUnpaused.delete(task.id);
-              });
-          }
+          await this.dispatchUnpauseResume(task);
           return;
         }
 
@@ -10102,6 +10159,7 @@ export class TaskExecutor {
               await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
               return;
             }
+            if (await this.parkApprovalSuspension(task.id, "step sessions")) return;
             this.clearPausedAborted(task.id);
             await this.store.logEntry(task.id, "Execution paused — step sessions terminated, moved to todo", undefined, this.getRunContextFor(task.id));
             this.markGraphExecuteSelfRequeued(task.id);
@@ -10385,6 +10443,7 @@ export class TaskExecutor {
               await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
               return;
             }
+            if (await this.parkApprovalSuspension(task.id, "step session")) return;
             this.clearPausedAborted(task.id);
             await this.store.logEntry(task.id, "Execution paused during step-session", undefined, this.getRunContextFor(task.id));
             this.markGraphExecuteSelfRequeued(task.id);
@@ -11062,6 +11121,10 @@ export class TaskExecutor {
               await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
               return;
             }
+            if (await this.parkApprovalSuspension(task.id, "agent session")) {
+              wasPaused = true;
+              return;
+            }
             this.clearPausedAborted(task.id);
             wasPaused = true;
             if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
@@ -11600,6 +11663,7 @@ export class TaskExecutor {
           await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
           return;
         }
+        if (await this.parkApprovalSuspension(task.id, "executor session")) return;
         this.clearPausedAborted(task.id);
         const latestTask = await this.store.getTask(task.id);
         if (
@@ -12342,6 +12406,16 @@ export class TaskExecutor {
           }
         }
       }
+
+      /*
+       * FNXC:AgentGating 2026-07-12-17:12:
+       * MAIN-008 closes the approval-decision/unwind race. The dashboard can
+       * unpause while the original executor still owns its process-wide lock;
+       * consume that single deferred edge only after every old-session cleanup
+       * path above has run, then bootstrap one new executor session. A Set plus
+       * resumingUnpaused makes duplicate task updates idempotent.
+       */
+      await this.resumeApprovalAfterUnwindIfNeeded(task.id);
     }
   }
 

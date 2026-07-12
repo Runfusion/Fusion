@@ -1904,7 +1904,7 @@ export function wrapToolsWithActionGate(
   tools: ToolDefinition[],
   gateContext: AgentActionGateContext | undefined,
 ): ToolDefinition[] {
-  if (!gateContext || gateContext.isEphemeral) {
+  if (!gateContext) {
     return tools;
   }
 
@@ -2369,10 +2369,18 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       ...allowlistFilteredCustomTools.allowed,
     ];
     const toolsWithRtkRewrite = wrapToolsWithRtkRewrite(toolChainStart);
-    const toolsWithPermanentGating = wrapToolsWithPermanentAgentGating(
-      toolsWithRtkRewrite,
-      options.permanentAgentGating,
-    );
+    /*
+     * FNXC:AgentGating 2026-07-12-17:22:
+     * MAIN-008 requires one approval authority per tool call. Executor sessions
+     * provide the status-aware action gate for permanent, ephemeral, and
+     * fallback task-worker identities; applying the legacy permanent gate
+     * inside it would reject the call again after the outer gate consumed an
+     * approved request. Standalone lanes without actionGateContext retain the
+     * permanent gate unchanged.
+     */
+    const toolsWithPermanentGating = options.actionGateContext
+      ? toolsWithRtkRewrite
+      : wrapToolsWithPermanentAgentGating(toolsWithRtkRewrite, options.permanentAgentGating);
     const toolsWithActionGate = wrapToolsWithActionGate(
       toolsWithPermanentGating,
       options.actionGateContext,

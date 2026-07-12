@@ -74,6 +74,36 @@ describe("executor project MCP bootstrap and approval resume invariant", () => {
     );
   });
 
+  it("defers an approval decision received during unwind and dispatches exactly one resume", async () => {
+    const listeners = new Map<string, (...args: any[]) => unknown>();
+    const task = { id: "MAIN-008", title: "test", description: "test", column: "in-progress", paused: false, userPaused: false, steps: [], currentStep: 0 };
+    const store = {
+      on: vi.fn((event: string, listener: (...args: any[]) => unknown) => listeners.set(event, listener)),
+      off: vi.fn(),
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
+      listTasks: vi.fn(async () => []),
+      getTask: vi.fn(async () => task),
+      updateTask: vi.fn(async () => task),
+      logEntry: vi.fn(async () => undefined),
+    } as any;
+    const executor = new TaskExecutor(store, "/tmp/project");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+    (executor as any).approvalSuspended.add(task.id);
+    (executor as any).executing.add(task.id);
+
+    await listeners.get("task:updated")?.(task);
+    await listeners.get("task:updated")?.(task);
+    expect(execute).not.toHaveBeenCalled();
+    expect((executor as any).approvalResumeAfterUnwind.size).toBe(1);
+
+    (executor as any).executing.delete(task.id);
+    await (executor as any).resumeApprovalAfterUnwindIfNeeded(task.id);
+    await (executor as any).resumeApprovalAfterUnwindIfNeeded(task.id);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect((executor as any).approvalSuspended.has(task.id)).toBe(false);
+  });
+
   it("closes a client whose connection fails before registration", async () => {
     const close = vi.fn(async () => undefined);
     const client = fakeClient(close);

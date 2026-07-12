@@ -957,20 +957,22 @@ describe("wrapToolsWithActionGate", () => {
     expect(tool.execute).not.toHaveBeenCalled();
   });
 
-  it("skips gating wrapper for ephemeral contexts", async () => {
+  it("applies the status-aware action gate to ephemeral and fallback task workers", async () => {
     const tool = { name: "write", label: "Write", description: "", parameters: {}, execute: vi.fn().mockResolvedValue({ ok: true }) };
     const { wrapToolsWithActionGate } = await import("../pi.js");
     const wrapped = wrapToolsWithActionGate([tool as any], {
-      agentId: "agent-1",
-      agentName: "Agent",
+      agentId: "executor-MAIN-008",
+      agentName: "Fallback task worker",
       isEphemeral: true,
+      taskId: "MAIN-008",
       permissionPolicy: { presetId: "locked-down", rules: lockedDownRules },
       createApprovalRequest: vi.fn(),
-      findApprovalByDedupeKey: vi.fn(),
+      findApprovalByDedupeKey: vi.fn().mockResolvedValue(null),
     });
 
-    await (wrapped[0] as any).execute("t1", { path: "a.ts" });
-    expect(tool.execute).toHaveBeenCalled();
+    const result = await (wrapped[0] as any).execute("t1", { path: "a.ts" });
+    expect(result.isError).toBe(true);
+    expect(tool.execute).not.toHaveBeenCalled();
   });
 
   it("governs newly exposed heartbeat network tools by policy instead of withholding them", async () => {
@@ -2244,6 +2246,50 @@ describe("createFnAgent", () => {
 
     const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> };
     expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_heartbeat_done");
+  });
+
+  it("uses the status-aware action gate as the single approval authority when both gate contexts are present", async () => {
+    const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+    const permanentCreateApproval = vi.fn();
+    const markApprovalCompleted = vi.fn();
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "coding",
+      customTools: [{ name: "mcp__postiz__integrationlist", label: "List", description: "", parameters: {}, execute } as any],
+      actionGateContext: {
+        agentId: "executor-MAIN-008",
+        agentName: "Fallback worker",
+        isEphemeral: true,
+        taskId: "MAIN-008",
+        permissionPolicy: {
+          presetId: "approval",
+          rules: { git_write: "allow", file_write_delete: "allow", command_execution: "allow", network_api: "require-approval", task_agent_mutation: "allow" },
+        },
+        createApprovalRequest: vi.fn(),
+        findApprovalByDedupeKey: vi.fn().mockResolvedValue({ id: "apr-main-008", status: "approved" }),
+        markApprovalCompleted,
+      },
+      permanentAgentGating: {
+        permissionPolicy: {
+          presetId: "approval",
+          rules: { git_write: "allow", file_write_delete: "allow", command_execution: "allow", network_api: "require-approval", task_agent_mutation: "allow" },
+        },
+        requester: { actorId: "executor-MAIN-008", actorType: "agent", actorName: "Fallback worker" },
+        taskId: "MAIN-008",
+        createApprovalRequest: permanentCreateApproval,
+        findPendingApprovalRequest: vi.fn(),
+      } as any,
+    });
+
+    const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> };
+    const mcpTool = createSessionArgs.customTools.find((tool) => tool.name === "mcp__postiz__integrationlist")!;
+    await expect(mcpTool.execute("call", {})).resolves.toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(markApprovalCompleted).toHaveBeenCalledWith("apr-main-008");
+    expect(permanentCreateApproval).not.toHaveBeenCalled();
   });
 
   it("exposes connected MCP tools in readonly sessions only with the explicit opt-in", async () => {

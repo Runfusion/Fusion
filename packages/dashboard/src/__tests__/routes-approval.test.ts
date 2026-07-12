@@ -319,6 +319,9 @@ describe("approval routes", async () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("denied");
+    expect(state.task.paused).toBe(false);
+    expect(state.pauseTaskCalls).toEqual([{ id: "FN-1", paused: false }]);
+    expect(updateAgent).toHaveBeenCalledWith("agent-1", { pauseReason: undefined });
   });
 
   it("approves provisioning create and records audit", async () => {

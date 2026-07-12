@@ -179,7 +179,14 @@ export function evaluateAgentActionGate(params: {
     category = "command_execution";
     operation = params.toolName;
     resourceType = "command";
-  } else if (NETWORK_API_TOOLS.has(params.toolName)) {
+  } else if (NETWORK_API_TOOLS.has(params.toolName) || params.toolName.startsWith("mcp__")) {
+    /*
+    FNXC:AgentGating 2026-07-12-17:18:
+    MAIN-008 requires every namespaced project MCP operation to remain inside
+    the external-action approval boundary. MCP tools are dynamically named and
+    therefore cannot live in the static tool registry; classify the namespace
+    as network_api instead of falling through to the exempt default.
+    */
     category = "network_api";
     operation = params.toolName;
     resourceType = "research";

@@ -122,6 +122,75 @@ describe("agent-action-gate", () => {
     expect(result.resourceType).toBe("command");
   });
 
+  it("classifies namespaced MCP tools as governed network API actions", () => {
+    const decision = evaluateAgentActionGate({
+      agentId: "agent-1",
+      taskId: "MAIN-008",
+      toolName: "mcp__postiz__integrationlist",
+      args: {},
+      permissionPolicy: approvalPolicy,
+    });
+
+    expect(decision).toMatchObject({
+      category: "network_api",
+      disposition: "require-approval",
+      operation: "mcp__postiz__integrationlist",
+      resourceType: "research",
+    });
+  });
+
+  it("executes an approved namespaced MCP operation once and never executes a denied one", async () => {
+    const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "real-shape-result" }] });
+    const tool = { name: "mcp__postiz__integrationlist", label: "List integrations", description: "", parameters: {}, execute };
+    const { wrapToolsWithActionGate } = await import("../pi.js");
+    const requests = new Map<string, { id: string; status: "pending" | "approved" | "denied" | "completed" }>();
+    const createApprovalRequest = vi.fn(async (decision: { approvalDedupeKey: string }) => {
+      const request = { id: "apr-main-008", status: "pending" as const };
+      requests.set(decision.approvalDedupeKey, request);
+      return request;
+    });
+    const findApprovalByDedupeKey = vi.fn(async (key: string) => requests.get(key) ?? null);
+    const markApprovalCompleted = vi.fn(async (id: string) => {
+      for (const [key, request] of requests) {
+        if (request.id === id) requests.set(key, { ...request, status: "completed" });
+      }
+    });
+    const context = {
+      agentId: "agent-main-008",
+      agentName: "MAIN-008 agent",
+      isEphemeral: false,
+      taskId: "MAIN-008",
+      permissionPolicy: approvalPolicy,
+      createApprovalRequest,
+      findApprovalByDedupeKey,
+      pauseForApproval: vi.fn(),
+      markApprovalCompleted,
+    };
+
+    const initial = wrapToolsWithActionGate([tool as any], context);
+    const pending = await (initial[0] as any).execute("pending", {});
+    expect(pending.isError).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+
+    const [dedupeKey, request] = [...requests.entries()][0]!;
+    requests.set(dedupeKey, { ...request, status: "approved" });
+    const resumed = wrapToolsWithActionGate([tool as any], context);
+    await expect((resumed[0] as any).execute("approved", {})).resolves.toEqual({
+      content: [{ type: "text", text: "real-shape-result" }],
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(markApprovalCompleted).toHaveBeenCalledWith("apr-main-008");
+    expect(requests.get(dedupeKey)?.status).toBe("completed");
+
+    execute.mockClear();
+    requests.set(dedupeKey, { id: "apr-denied", status: "denied" });
+    const denied = wrapToolsWithActionGate([tool as any], context);
+    const rejection = await (denied[0] as any).execute("denied", {});
+    expect(rejection.error).toMatch(/denied/i);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("classifies explicit network and management tools", () => {
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_research_run", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("network_api");
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_create", args: {}, permissionPolicy: unrestrictedPolicy }).category).toBe("task_agent_mutation");
