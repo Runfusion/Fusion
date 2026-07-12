@@ -68,7 +68,7 @@ describe("Workflow Steps Execution", () => {
     }) as any);
   }
 
-  it("exposes read-only artifact discovery tools even without an assigned agent", async () => {
+  it("exposes artifact discovery and register tools even without an assigned agent", async () => {
     const store = createMockStore();
     const task = {
       id: "FN-ART-1",
@@ -108,12 +108,12 @@ describe("Workflow Steps Execution", () => {
     await executor.execute(task as any);
 
     /*
-    FNXC:ArtifactRegistry 2026-06-21-07:04:
-    Read-only artifact list/view tools are cross-agent discovery surfaces, so legacy or unassigned executor sessions still receive them; only fn_artifact_register requires an assigned author id.
+    FNXC:ArtifactRegistry 2026-07-12-07:00:
+    FN-7790 (commits 9024f3a63 / a8eafbbb1: agent-created visual artifacts end-to-end) made fn_artifact_register available for ALL executor sessions, not just assigned-agent sessions, so artifact creation works even without an assigned author. The previous gate (register requires assigned agent) was intentionally removed. Update the assertion to reflect the new behavior.
     */
     expect(toolNames).toContain("fn_artifact_list");
     expect(toolNames).toContain("fn_artifact_view");
-    expect(toolNames).not.toContain("fn_artifact_register");
+    expect(toolNames).toContain("fn_artifact_register");
   });
 
   it("requeues to todo after 3 retries when the agent exits without calling fn_task_done", async () => {

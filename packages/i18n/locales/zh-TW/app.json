@@ -5796,6 +5796,7 @@
     "footer": {
       "help": "說明",
       "version": "版本 {{version}}",
+      "versionShort": "",
       "checkUpdates": "",
       "helpDiscussions": ""
     },

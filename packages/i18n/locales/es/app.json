@@ -5796,6 +5796,7 @@
     "footer": {
       "help": "Ayuda",
       "version": "Versión {{version}}",
+      "versionShort": "",
       "checkUpdates": "",
       "helpDiscussions": ""
     },
