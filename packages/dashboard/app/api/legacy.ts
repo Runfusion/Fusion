@@ -569,6 +569,8 @@ export function updateTask(
     planningModelProvider?: string | null;
     planningModelId?: string | null;
     thinkingLevel?: string | null;
+    validatorThinkingLevel?: string | null;
+    planningThinkingLevel?: string | null;
     plannerOversightLevel?: "off" | "observe" | "steer" | "autonomous" | null;
     reviewLevel?: number | null;
     executionMode?: "standard" | "fast" | null;

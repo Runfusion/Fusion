@@ -140,6 +140,10 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
   const [savedPlanning, setSavedPlanning] = useState<ModelSelection>(() => getPlanningSelection(task));
   const [selectedThinking, setSelectedThinking] = useState<string | null>(() => task.thinkingLevel ?? null);
   const [savedThinking, setSavedThinking] = useState<string | null>(() => task.thinkingLevel ?? null);
+  const [selectedValidatorThinking, setSelectedValidatorThinking] = useState<string | null>(() => task.validatorThinkingLevel ?? null);
+  const [savedValidatorThinking, setSavedValidatorThinking] = useState<string | null>(() => task.validatorThinkingLevel ?? null);
+  const [selectedPlanningThinking, setSelectedPlanningThinking] = useState<string | null>(() => task.planningThinkingLevel ?? null);
+  const [savedPlanningThinking, setSavedPlanningThinking] = useState<string | null>(() => task.planningThinkingLevel ?? null);
   const [savingTarget, setSavingTarget] = useState<"executor" | "validator" | "planning" | "thinking" | null>(null);
 
   const activeTaskIdRef = useRef(task.id);
@@ -174,10 +178,16 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
     setSelectedPlanning(nextPlanning);
     setSavedPlanning(nextPlanning);
     const nextThinking = task.thinkingLevel ?? null;
+    const nextValidatorThinking = task.validatorThinkingLevel ?? null;
+    const nextPlanningThinking = task.planningThinkingLevel ?? null;
     setSelectedThinking(nextThinking);
     setSavedThinking(nextThinking);
+    setSelectedValidatorThinking(nextValidatorThinking);
+    setSavedValidatorThinking(nextValidatorThinking);
+    setSelectedPlanningThinking(nextPlanningThinking);
+    setSavedPlanningThinking(nextPlanningThinking);
     setSavingTarget(null);
-  }, [task.id, task.modelProvider, task.modelId, task.validatorModelProvider, task.validatorModelId, task.planningModelProvider, task.planningModelId, task.thinkingLevel]);
+  }, [task.id, task.modelProvider, task.modelId, task.validatorModelProvider, task.validatorModelId, task.planningModelProvider, task.planningModelId, task.thinkingLevel, task.validatorThinkingLevel, task.planningThinkingLevel]);
 
   const executorValue = useMemo(() => getDropdownValue(selectedExecutor), [selectedExecutor]);
   const validatorValue = useMemo(() => getDropdownValue(selectedValidator), [selectedValidator]);
@@ -370,6 +380,112 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
     [task.id, savedThinking, settings, addToast, onTaskUpdated, projectId, t],
   );
 
+  const handleValidatorThinkingChange = useCallback(
+    async (value: string) => {
+      const requestTaskId = task.id;
+      const previousThinking = savedValidatorThinking;
+      const nextValue = value === "" ? null : value;
+
+      setSelectedValidatorThinking(nextValue);
+      setSavingTarget("thinking");
+
+      try {
+        const updatedTask = await updateTask(requestTaskId, {
+          validatorThinkingLevel: nextValue,
+        }, projectId);
+
+        if (activeTaskIdRef.current !== requestTaskId) {
+          return;
+        }
+
+        const nextThinking = updatedTask.validatorThinkingLevel ?? null;
+        setSavedValidatorThinking(nextThinking);
+        setSelectedValidatorThinking(nextThinking);
+        onTaskUpdated?.(updatedTask);
+
+        const effectiveDefault = settings?.defaultThinkingLevel ?? "off";
+        if (nextThinking === null) {
+          addToast(
+            t("models.messages.thinkingLevelSetDefault", "Thinking level set to default ({{level}})", { level: effectiveDefault }),
+            "success",
+          );
+        } else {
+          addToast(
+            t("models.messages.thinkingLevelSet", "Thinking level set to {{level}}", { level: nextThinking }),
+            "success",
+          );
+        }
+      } catch (err) {
+        if (activeTaskIdRef.current !== requestTaskId) {
+          return;
+        }
+
+        setSelectedValidatorThinking(previousThinking);
+        addToast(getErrorMessage(err) || t("models.errors.failedSaveThinking", "Failed to save thinking level"), "error");
+      } finally {
+        if (activeTaskIdRef.current === requestTaskId) {
+          setSavingTarget(null);
+        }
+      }
+    },
+    [task.id, savedValidatorThinking, settings, addToast, onTaskUpdated, projectId, t],
+  );
+
+  const handlePlanningThinkingChange = useCallback(
+    async (value: string) => {
+      const requestTaskId = task.id;
+      const previousThinking = savedPlanningThinking;
+      const nextValue = value === "" ? null : value;
+
+      setSelectedPlanningThinking(nextValue);
+      setSavingTarget("thinking");
+
+      try {
+        const updatedTask = await updateTask(requestTaskId, {
+          planningThinkingLevel: nextValue,
+        }, projectId);
+
+        if (activeTaskIdRef.current !== requestTaskId) {
+          return;
+        }
+
+        const nextThinking = updatedTask.planningThinkingLevel ?? null;
+        setSavedPlanningThinking(nextThinking);
+        setSelectedPlanningThinking(nextThinking);
+        onTaskUpdated?.(updatedTask);
+
+        const effectiveDefault = settings?.defaultThinkingLevel ?? "off";
+        if (nextThinking === null) {
+          addToast(
+            t("models.messages.thinkingLevelSetDefault", "Thinking level set to default ({{level}})", { level: effectiveDefault }),
+            "success",
+          );
+        } else {
+          addToast(
+            t("models.messages.thinkingLevelSet", "Thinking level set to {{level}}", { level: nextThinking }),
+            "success",
+          );
+        }
+      } catch (err) {
+        if (activeTaskIdRef.current !== requestTaskId) {
+          return;
+        }
+
+        setSelectedPlanningThinking(previousThinking);
+        addToast(getErrorMessage(err) || t("models.errors.failedSaveThinking", "Failed to save thinking level"), "error");
+      } finally {
+        if (activeTaskIdRef.current === requestTaskId) {
+          setSavingTarget(null);
+        }
+      }
+    },
+    [task.id, savedPlanningThinking, settings, addToast, onTaskUpdated, projectId, t],
+  );
+
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+   * Reviewer and Planning task-detail model boxes carry independent per-lane reasoning-effort overrides persisted to task.validatorThinkingLevel and task.planningThinkingLevel while the Executor box continues to use task.thinkingLevel.
+   */
   const executorUsingDefault = !savedExecutor.provider && !savedExecutor.modelId;
   const validatorUsingDefault = !savedValidator.provider && !savedValidator.modelId;
   const planningUsingDefault = !savedPlanning.provider && !savedPlanning.modelId;
@@ -448,6 +564,9 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               onToggleFavorite={handleToggleFavorite}
               favoriteModels={favoriteModels}
               onToggleModelFavorite={handleToggleModelFavorite}
+              thinkingLevel={selectedValidatorThinking ?? ""}
+              onThinkingLevelChange={handleValidatorThinkingChange}
+              defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
             />
             <small>{t("models.descriptions.reviewer", "The AI model used to review code and plans for this task.")}</small>
           </div>
@@ -478,13 +597,16 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               onToggleFavorite={handleToggleFavorite}
               favoriteModels={favoriteModels}
               onToggleModelFavorite={handleToggleModelFavorite}
+              thinkingLevel={selectedPlanningThinking ?? ""}
+              onThinkingLevelChange={handlePlanningThinkingChange}
+              defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
             />
             <small>{t("models.descriptions.planning", "The AI model used for task specification (triage phase).")}</small>
           </div>
 
 
           <div className="model-selector-status">
-            {executorUsingDefault && validatorUsingDefault && planningUsingDefault && savedThinking === null
+            {executorUsingDefault && validatorUsingDefault && planningUsingDefault && savedThinking === null && savedValidatorThinking === null && savedPlanningThinking === null
               ? t("models.messages.usingDefaults", "Using project or global default models.")
               : t("models.messages.upToDate", "Model settings are up to date.")}
           </div>

@@ -184,7 +184,7 @@ export function isFts5CorruptionError(error: unknown): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 144;
+const SCHEMA_VERSION = 145;
 
 const TASKS_FTS_AUTOMERGE = 8;
 const TASKS_FTS_CRISISMERGE = 16;
@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   error TEXT,
   summary TEXT,
   thinkingLevel TEXT,
+  validatorThinkingLevel TEXT,
+  planningThinkingLevel TEXT,
   executionMode TEXT DEFAULT 'standard',
   plannerOversightLevel TEXT,
   awaitingApprovalReason TEXT,
@@ -5711,6 +5713,17 @@ export class Database {
         if (this.hasTable("chat_rooms")) {
           this.addColumnIfMissing("chat_rooms", "thinkingLevel", "TEXT");
         }
+      });
+    }
+
+    if (version < 145) {
+      /*
+       * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+       * Tasks persist optional validator/planning reasoning-effort overrides separately from shared `thinkingLevel`; rerun these additive task columns under a fresh schema version so upgraded databases converge safely.
+       */
+      this.applyMigration(145, () => {
+        this.addColumnIfMissing("tasks", "validatorThinkingLevel", "TEXT");
+        this.addColumnIfMissing("tasks", "planningThinkingLevel", "TEXT");
       });
     }
 

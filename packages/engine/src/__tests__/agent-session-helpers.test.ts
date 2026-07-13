@@ -65,6 +65,21 @@ describe("resolve model-lane thinking levels", () => {
     })).toBe("medium");
   });
 
+  it("documents caller precedence for per-task planning and validator thinking overrides", () => {
+    const settings = { planningThinkingLevel: "minimal", validatorThinkingLevel: "low", defaultThinkingLevel: "off" } as const;
+    const task = { thinkingLevel: "medium", planningThinkingLevel: "high", validatorThinkingLevel: "xhigh" } as const;
+
+    expect(resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel)).toBe("high");
+    expect(resolveValidatorThinkingLevel(task.validatorThinkingLevel ?? task.thinkingLevel, settings)).toBe("xhigh");
+
+    const legacyTask = { thinkingLevel: "medium", planningThinkingLevel: undefined, validatorThinkingLevel: undefined } as const;
+    expect(resolvePlanningThinkingLevel(settings, legacyTask.planningThinkingLevel ?? legacyTask.thinkingLevel)).toBe("medium");
+    expect(resolveValidatorThinkingLevel(legacyTask.validatorThinkingLevel ?? legacyTask.thinkingLevel, settings)).toBe("medium");
+
+    const nodeThinkingLevel = "minimal" as const;
+    expect(resolveValidatorThinkingLevel(nodeThinkingLevel ?? task.validatorThinkingLevel ?? task.thinkingLevel, settings)).toBe("minimal");
+  });
+
   it("resolves fallback thinking through fallback key then executor lane then defaults", () => {
     expect(resolveExecutorFallbackThinkingLevel("task", { fallbackThinkingLevel: "high", executionThinkingLevel: "low" })).toBe("high");
     expect(resolveExecutorFallbackThinkingLevel(undefined, { executionThinkingLevel: "minimal", defaultThinkingLevel: "low" })).toBe("minimal");

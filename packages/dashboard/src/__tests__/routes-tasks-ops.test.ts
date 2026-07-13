@@ -3901,6 +3901,80 @@ describe("PATCH /tasks/:id", () => {
     expect(res.body.error).toContain("thinkingLevel must be one of");
   });
 
+  it("forwards valid per-lane thinking levels to store.updateTask", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      validatorThinkingLevel: "high",
+      planningThinkingLevel: "minimal",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      validatorThinkingLevel: "high",
+      planningThinkingLevel: "minimal",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      validatorThinkingLevel: "high",
+      planningThinkingLevel: "minimal",
+    });
+  });
+
+  it("returns 400 for invalid per-lane thinking level values via PATCH", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      validatorThinkingLevel: "maximum",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("validatorThinkingLevel must be one of");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("accepts null to clear per-lane thinking levels via PATCH", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      validatorThinkingLevel: undefined,
+      planningThinkingLevel: undefined,
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      validatorThinkingLevel: null,
+      planningThinkingLevel: null,
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      validatorThinkingLevel: null,
+      planningThinkingLevel: null,
+    });
+  });
+
+  it("omits per-lane thinking updates when fields are absent via PATCH", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      title: "No lane thinking patch",
+      validatorThinkingLevel: "high",
+      planningThinkingLevel: "low",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      title: "No lane thinking patch",
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      title: "No lane thinking patch",
+    });
+  });
+
   it("forwards reviewLevel to store.updateTask", async () => {
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...FAKE_TASK_DETAIL,
