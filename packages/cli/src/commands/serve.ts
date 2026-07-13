@@ -29,7 +29,7 @@ import {
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
-import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
+import { createServer, GitHubClient, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
 import {
   ProjectEngineManager,
   PeerExchangeService,
@@ -389,7 +389,11 @@ export async function runServe(
     // Some tests partially mock @fusion/dashboard and omit this export.
   }
 
+  const resolvedCliPackageVersion = getCliPackageVersion(import.meta.url);
+  const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
+
   const engineManager = new ProjectEngineManager(sharedCentralCore, {
+    cliPackageVersion,
     getMergeStrategy,
     processPullRequestMerge: (s, wd, taskId, pool) =>
       processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool),

@@ -572,11 +572,12 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
   return (
     <>
       <div className="cc-area-section" data-testid="cc-system-controls">
-        <div className="cc-area-section-header">
+        <div className="cc-area-section-header cc-system-controls-header">
           <h3 className="cc-area-section-title">{t("systemControls.title", "System controls")}</h3>
           <button
             type="button"
             className="btn-icon"
+            data-testid="cc-system-refresh"
             onClick={() => void loadInfo()}
             title={t("systemControls.refresh", "Refresh capabilities")}
             aria-label={t("systemControls.refresh", "Refresh capabilities")}

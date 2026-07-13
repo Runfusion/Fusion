@@ -146,6 +146,29 @@ describe("SystemControlsArea layout integration", () => {
     await waitFor(() => expect(mockFetchSystemInfo).toHaveBeenCalled());
   });
 
+  it("keeps the System controls refresh button in the scoped inline header", async () => {
+    render(<CommandCenter projectId="proj-1" />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+
+    const controls = await screen.findByTestId("cc-system-controls");
+    const header = controls.querySelector<HTMLElement>(".cc-system-controls-header");
+    const title = screen.getByRole("heading", { name: "System controls" });
+    const refresh = screen.getByTestId("cc-system-refresh");
+
+    expect(header).toBeInTheDocument();
+    expect(header).toHaveClass("cc-area-section-header", "cc-system-controls-header");
+    expect(title.parentElement).toBe(header);
+    expect(refresh.parentElement).toBe(header);
+  });
+
+  it("keeps the System controls header row override active on mobile", () => {
+    const css = readFileSync(join(process.cwd(), "app/components/command-center/areas/SystemControlsArea.css"), "utf8");
+
+    expect(css).toMatch(/\.cc-area-section-header\.cc-system-controls-header\s*{[^}]*flex-direction:\s*row;[^}]*justify-content:\s*space-between;/s);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)\s*{[\s\S]*\.cc-area-section-header\.cc-system-controls-header\s*{[^}]*flex-direction:\s*row;[^}]*justify-content:\s*space-between;/);
+  });
+
   it("keeps the System tab gap and mobile scroll-owner CSS contracts tokenized", () => {
     const css = readFileSync(join(process.cwd(), "app/components/command-center/CommandCenter.css"), "utf8");
 

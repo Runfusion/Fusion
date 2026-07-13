@@ -34,6 +34,11 @@ import { runtimeLog } from "./logger.js";
  * These are injected by the CLI layer (dashboard.ts / serve.ts).
  */
 export interface EngineManagerOptions {
+  /**
+   * FNXC:StorageMigrationNotice 2026-07-12-00:00:
+   * The manager carries the resolved CLI package version to each per-project engine so the one-time Postgres-migration inbox message is evaluated per project while remaining gated to the same released runtime version.
+   */
+  cliPackageVersion?: ProjectEngineOptions["cliPackageVersion"];
   getMergeStrategy?: ProjectEngineOptions["getMergeStrategy"];
   processPullRequestMerge?: ProjectEngineOptions["processPullRequestMerge"];
   createGroupPr?: ProjectEngineOptions["createGroupPr"];
@@ -536,6 +541,7 @@ export class ProjectEngineManager {
   ): ProjectEngineOptions {
     return {
       projectId: project.id,
+      cliPackageVersion: this.options.cliPackageVersion,
       getMergeStrategy: this.options.getMergeStrategy,
       processPullRequestMerge: this.options.processPullRequestMerge,
       createGroupPr: this.options.createGroupPr,

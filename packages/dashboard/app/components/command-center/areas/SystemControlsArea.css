@@ -7,6 +7,28 @@ log tail use a terminal-style scroll box bounded in height so streaming output
 never grows the page; the page must not scroll horizontally (pre wraps).
 */
 
+/*
+FNXC:SystemPanel 2026-07-12-17:10:
+The System-controls refresh button must stay inline with the "System controls"
+title and pinned to the far right on every breakpoint. The shared
+.cc-area-section-header collapses to a left-aligned column at <=768px (correct
+for analytics areas), so scope a row+space-between override to the System tab
+only, using a two-class selector so it wins over the shared mobile rule.
+*/
+.cc-area-section-header.cc-system-controls-header {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 768px) {
+  .cc-area-section-header.cc-system-controls-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
 .cc-syscontrols-grid {
   min-inline-size: 0;
   display: grid;
