@@ -76,6 +76,8 @@ const PLANNING_SIDEBAR_MIN_WIDTH = 220;
 const PLANNING_SIDEBAR_MAX_WIDTH = 560;
 const PLANNING_SIDEBAR_STORAGE_KEY = "fusion:planning-sidebar-width";
 
+const MAX_PLANNING_AUTO_RETRIES = 3;
+
 interface PlanningModeModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -320,6 +322,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isAutoRetrying, setIsAutoRetrying] = useState(false);
+  const [autoRetryAttempt, setAutoRetryAttempt] = useState(0);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isStartingBreakdown, setIsStartingBreakdown] = useState(false);
   const [isCreatingFromBreakdown, setIsCreatingFromBreakdown] = useState(false);
@@ -351,6 +355,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const modalRef = useRef<HTMLDivElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
+  const viewRef = useRef<ViewState>({ type: "initial" });
+  /*
+  FNXC:PlanningRetry 2026-07-13-00:00:
+  FN-7946 requires stuck or terminal Planning Mode generation errors to auto-retry at most three times before the permanent error view appears. Keep the budget in refs for async SSE/poll/loadSession handlers, mirror the current attempt in state for the visible "Retrying" loading message, and reset the budget when successful progress reaches question or summary.
+  */
+  const planningAutoRetryAttemptRef = useRef(0);
+  const planningAutoRetryInFlightRef = useRef(false);
+  const startPlanningAutoRetryRef = useRef<(sessionId: string, errorMessage: string) => Promise<boolean>>(async () => false);
   /*
   FNXC:PlanningMode 2026-07-02-07:56:
   Refine Further is a single-flight completed-summary turn. Guard synchronously with a ref so duplicate click, touch, or keyboard activations cannot submit a second refine request or close the active stream with a generation-in-progress error before React renders the disabled state.
@@ -370,6 +382,17 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // yanks the user back into the previous session's question view.
   const dismissedResumeRef = useRef<string | null>(null);
   const [lockSessionId, setLockSessionId] = useState<string | null>(resumeSessionId ?? null);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  const resetPlanningAutoRetryBudget = useCallback(() => {
+    planningAutoRetryAttemptRef.current = 0;
+    planningAutoRetryInFlightRef.current = false;
+    setAutoRetryAttempt(0);
+    setIsAutoRetrying(false);
+  }, []);
   const sessionTabId = useMemo(() => getSessionTabId(), []);
   const {
     isLockedByOther,
@@ -589,6 +612,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         if (cancelled || !session) return;
         if (currentSessionIdRef.current !== sessionId) return;
         if (session.status === "awaiting_input" && session.currentQuestion) {
+          resetPlanningAutoRetryBudget();
           const question = JSON.parse(session.currentQuestion) as PlanningQuestion;
           setView({
             type: "question",
@@ -596,6 +620,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setStreamingOutput("");
         } else if (session.status === "complete" && session.result) {
+          resetPlanningAutoRetryBudget();
           const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
           setView({
             type: "summary",
@@ -604,6 +629,46 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setEditedSummary(summary);
           setStreamingOutput("");
+        } else if (session.status === "error") {
+          const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
+          const handled = await startPlanningAutoRetryRef.current(sessionId, errorMessage);
+          if (handled) return;
+          if (cancelled || currentSessionIdRef.current !== sessionId) return;
+          /*
+          FNXC:PlanningRetry 2026-07-13-00:05:
+          Mirror the SSE onError terminal-error transition here: when this poll is the one that
+          discovers a terminal session error (missed SSE event) and the auto-retry budget is
+          already exhausted, startPlanningAutoRetryRef resolves false and previously nothing
+          transitioned the view out of "loading" — the modal was stuck spinning on
+          "Generating next question..." forever, re-polling every 8s with no visible progress.
+          Build the permanent error view exactly like connectToPlanningStream's onError does.
+          */
+          setIsRetrying(false);
+          setIsAutoRetrying(false);
+          setIsRefiningSummary(false);
+          refineSummaryInFlightRef.current = false;
+          setError(null);
+          setView((prev) => {
+            if (prev.type === "question" || prev.type === "summary" || prev.type === "error") {
+              return { type: "error", session: prev.session, errorMessage };
+            }
+            return {
+              type: "error",
+              session: { sessionId, currentQuestion: null, summary: null },
+              errorMessage,
+            };
+          });
+          setStreamingOutput("");
+          broadcastUpdate({
+            sessionId,
+            status: "error",
+            needsInput: false,
+            owningTabId: sessionTabId,
+            type: "planning",
+            title: initialPlan.trim() || undefined,
+            projectId: projectId ?? null,
+          });
+          broadcastCompleted({ sessionId, status: "error" });
         }
       } catch {
         // best-effort; keep polling
@@ -615,7 +680,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       cancelled = true;
       clearInterval(interval);
     };
-  }, [view.type]);
+  }, [broadcastCompleted, broadcastUpdate, initialPlan, lockSessionId, projectId, resetPlanningAutoRetryBudget, sessionTabId, t, view.type]);
 
   const resetDetailState = useCallback(() => {
     setInitialPlan("");
@@ -630,6 +695,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setStreamingOutput("");
     setIsReconnecting(false);
     setIsRetrying(false);
+    resetPlanningAutoRetryBudget();
     setIsRefiningSummary(false);
     refineSummaryInFlightRef.current = false;
     setPlanningModelProvider(undefined);
@@ -639,7 +705,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setCustomQuestionCount("");
     currentSessionIdRef.current = null;
     setLockSessionId(null);
-  }, []);
+  }, [resetPlanningAutoRetryBudget]);
 
   const planningSelectionValue = getModelSelectionValue(planningModelProvider, planningModelId);
 
@@ -744,6 +810,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           const normalizedQuestion = normalizeQuestionOptions(question);
           setIsReconnecting(false);
           setIsRetrying(false);
+          resetPlanningAutoRetryBudget();
           setIsRefiningSummary(false);
           refineSummaryInFlightRef.current = false;
           clearPlanningDescription(projectId);
@@ -785,6 +852,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           const normalizedSummary = normalizePlanningSummary(summary);
           setIsReconnecting(false);
           setIsRetrying(false);
+          resetPlanningAutoRetryBudget();
           setIsRefiningSummary(false);
           refineSummaryInFlightRef.current = false;
           clearPlanningDescription(projectId);
@@ -841,7 +909,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             }
 
             setIsReconnecting(false);
+            /*
+            FNXC:PlanningRetry 2026-07-13-00:00:
+            A terminal/persisted Planning Mode generation error is treated as a stuck-class turn. Try the existing /planning/:id/retry path up to MAX_PLANNING_AUTO_RETRIES before surfacing the permanent Retry/Dismiss error panel; overlapping SSE and poll signals share the same single-flight guard.
+            */
+            if (await startPlanningAutoRetryRef.current(sessionId, errorMessage)) {
+              return;
+            }
             setIsRetrying(false);
+            setIsAutoRetrying(false);
             setIsRefiningSummary(false);
             refineSummaryInFlightRef.current = false;
             setError(null);
@@ -873,6 +949,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         onComplete: () => {
           setIsReconnecting(false);
           setIsRetrying(false);
+          resetPlanningAutoRetryBudget();
           setIsRefiningSummary(false);
           refineSummaryInFlightRef.current = false;
           currentSessionIdRef.current = null;
@@ -885,8 +962,140 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       streamConnectionRef.current = connection;
     },
-    [broadcastCompleted, broadcastUpdate, initialPlan, projectId, sessionTabId],
+    [broadcastCompleted, broadcastUpdate, initialPlan, projectId, resetPlanningAutoRetryBudget, sessionTabId],
   );
+
+  const startPlanningRetry = useCallback(
+    async (retryTarget: { sessionId: string; currentQuestion: PlanningQuestion | null; summary: PlanningSummary | null }, options: { auto: boolean }) => {
+      setError(null);
+      setIsRetrying(!options.auto);
+      setIsAutoRetrying(options.auto);
+      setStreamingOutput("");
+      setView({ type: "loading" });
+
+      currentSessionIdRef.current = retryTarget.sessionId;
+      setLockSessionId(retryTarget.sessionId);
+      connectToPlanningStream(retryTarget.sessionId);
+
+      try {
+        await retryPlanningSession(retryTarget.sessionId, projectId, sessionTabId);
+      } catch (err) {
+        let retryError: unknown = err;
+        const retryErrorMessage = getErrorMessage(err) || "";
+
+        if (retryErrorMessage.includes("not in an error state")) {
+          try {
+            const session = await fetchAiSession(retryTarget.sessionId);
+            if (!session) {
+              throw new Error("Failed to refresh planning session.");
+            }
+
+            currentSessionIdRef.current = session.id;
+            setLockSessionId(session.id);
+
+            if (session.status === "generating") {
+              setStreamingOutput(session.thinkingOutput ?? "");
+              setView({ type: "loading" });
+            } else if (session.status === "awaiting_input") {
+              if (!session.currentQuestion) {
+                throw new Error("Planning session is awaiting input but has no current question.");
+              }
+              resetPlanningAutoRetryBudget();
+              const question = normalizeQuestionOptions(JSON.parse(session.currentQuestion) as PlanningQuestion);
+              clearPlanningDescription(projectId);
+              setView({
+                type: "question",
+                session: { sessionId: session.id, currentQuestion: question, summary: null },
+              });
+              if (session.thinkingOutput) {
+                const trimmed = session.thinkingOutput.trim();
+                if (trimmed) {
+                  setConversationHistory((prev) => {
+                    const lastEntry = prev[prev.length - 1];
+                    if (lastEntry?.thinkingOutput === trimmed) return prev;
+                    return [...prev, { thinkingOutput: trimmed }];
+                  });
+                }
+              }
+              if (!streamConnectionRef.current?.isConnected()) {
+                connectToPlanningStream(session.id);
+              }
+            } else if (session.status === "complete") {
+              if (!session.result) {
+                throw new Error("Planning session is complete but has no result.");
+              }
+              resetPlanningAutoRetryBudget();
+              const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
+              clearPlanningDescription(projectId);
+              setView({
+                type: "summary",
+                session: { sessionId: session.id, currentQuestion: null, summary },
+                summary,
+              });
+              setEditedSummary(summary);
+            } else if (session.status === "error") {
+              setView({
+                type: "error",
+                session: { sessionId: session.id, currentQuestion: null, summary: null },
+                errorMessage: session.error || t("planning.retryFailed", "Retry failed. Please try again."),
+              });
+              setIsAutoRetrying(false);
+            }
+
+            setIsReconnecting(false);
+            return;
+          } catch (sessionRefreshError) {
+            retryError = sessionRefreshError;
+          }
+        }
+
+        streamConnectionRef.current?.close();
+        streamConnectionRef.current = null;
+        setView({
+          type: "error",
+          session: retryTarget,
+          errorMessage: getErrorMessage(retryError) || t("planning.retryFailed", "Retry failed. Please try again."),
+        });
+        setIsReconnecting(false);
+        setIsAutoRetrying(false);
+      } finally {
+        if (!options.auto) {
+          setIsRetrying(false);
+        }
+        planningAutoRetryInFlightRef.current = false;
+      }
+    },
+    [connectToPlanningStream, projectId, resetPlanningAutoRetryBudget, sessionTabId, t],
+  );
+
+  const startPlanningAutoRetry = useCallback(
+    async (sessionId: string, _errorMessage: string) => {
+      if (viewRef.current.type === "error") {
+        return false;
+      }
+      if (planningAutoRetryInFlightRef.current) {
+        return true;
+      }
+      if (planningAutoRetryAttemptRef.current >= MAX_PLANNING_AUTO_RETRIES) {
+        setIsAutoRetrying(false);
+        return false;
+      }
+
+      const attempt = planningAutoRetryAttemptRef.current + 1;
+      planningAutoRetryAttemptRef.current = attempt;
+      planningAutoRetryInFlightRef.current = true;
+      setAutoRetryAttempt(attempt);
+      setIsAutoRetrying(true);
+      await startPlanningRetry(
+        { sessionId, currentQuestion: null, summary: null },
+        { auto: true },
+      );
+      return true;
+    },
+    [startPlanningRetry],
+  );
+
+  startPlanningAutoRetryRef.current = startPlanningAutoRetry;
 
   const handleStartPlanning = useCallback(async (planOverride?: string) => {
     const plan = planOverride ?? initialPlan;
@@ -897,6 +1106,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setConversationHistory([]);
     setResponseHistory([]);
     setIsReconnecting(false);
+    resetPlanningAutoRetryBudget();
     setIsRefiningSummary(false);
     refineSummaryInFlightRef.current = false;
     setView({ type: "loading" });
@@ -948,6 +1158,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     planningModelProvider,
     planningThinkingLevel,
     projectId,
+    resetPlanningAutoRetryBudget,
   ]);
 
   /*
@@ -1033,10 +1244,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         );
 
         if (session.status === "error") {
+          const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
+          if (await startPlanningAutoRetryRef.current(sessionId, errorMessage)) {
+            return;
+          }
           setView({
             type: "error",
             session: { sessionId, currentQuestion: null, summary: null },
-            errorMessage: session.error || t("planning.sessionFailed2", "Session failed"),
+            errorMessage,
           });
           return;
         }
@@ -1083,6 +1298,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             : null;
           setView({ type: "initial" });
         } else if (session.status === "awaiting_input" && session.currentQuestion) {
+          resetPlanningAutoRetryBudget();
           clearPlanningDescription(projectId);
           const question = normalizeQuestionOptions(JSON.parse(session.currentQuestion));
           setView({ type: "question", session: { sessionId, currentQuestion: question, summary: null } });
@@ -1102,6 +1318,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           }
           connectToPlanningStream(sessionId);
         } else if (session.status === "complete" && session.result) {
+          resetPlanningAutoRetryBudget();
           clearPlanningDescription(projectId);
           const summary = normalizePlanningSummary(JSON.parse(session.result));
           setView({ type: "summary", session: { sessionId, currentQuestion: null, summary }, summary });
@@ -1122,7 +1339,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         });
       }
     },
-    [connectToPlanningStream, projectId],
+    [connectToPlanningStream, projectId, resetPlanningAutoRetryBudget],
   );
 
   // Resume the externally-requested session when the modal first opens.
@@ -1682,6 +1899,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           },
         ];
       });
+      resetPlanningAutoRetryBudget();
       setView({ type: "loading" });
       setStreamingOutput(""); // Clear old thinking output when entering loading state
 
@@ -1694,7 +1912,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setView({ type: "question", session });
       }
     },
-    [projectId, sessionTabId, view]
+    [projectId, resetPlanningAutoRetryBudget, sessionTabId, view]
   );
 
   const handleRefineFurther = useCallback(async () => {
@@ -1711,6 +1929,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setIsRefiningSummary(true);
     setError(null);
     setIsRetrying(false);
+    resetPlanningAutoRetryBudget();
     setStreamingOutput("");
     setView({ type: "loading" });
 
@@ -1730,7 +1949,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setError(message);
       setView({ type: "summary", session, summary: editedSummary ?? summary });
     }
-  }, [connectToPlanningStream, editedSummary, projectId, sessionTabId, view]);
+  }, [connectToPlanningStream, editedSummary, projectId, resetPlanningAutoRetryBudget, sessionTabId, view]);
 
   const handleStopGeneration = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -1748,6 +1967,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     streamConnectionRef.current = null;
     setIsReconnecting(false);
     setIsRetrying(false);
+    setIsAutoRetrying(false);
     setIsRefiningSummary(false);
     refineSummaryInFlightRef.current = false;
     setView({
@@ -1763,97 +1983,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       return;
     }
 
-    const retryTarget = view.session;
-    setError(null);
-    setIsRetrying(true);
-    setStreamingOutput("");
-    setView({ type: "loading" });
-
-    connectToPlanningStream(retryTarget.sessionId);
-
-    try {
-      currentSessionIdRef.current = retryTarget.sessionId;
-      setLockSessionId(retryTarget.sessionId);
-      await retryPlanningSession(retryTarget.sessionId, projectId, sessionTabId);
-    } catch (err) {
-      let retryError: unknown = err;
-      const retryErrorMessage = getErrorMessage(err) || "";
-
-      if (retryErrorMessage.includes("not in an error state")) {
-        try {
-          const session = await fetchAiSession(retryTarget.sessionId);
-          if (!session) {
-            throw new Error("Failed to refresh planning session.");
-          }
-
-          currentSessionIdRef.current = session.id;
-          setLockSessionId(session.id);
-
-          if (session.status === "generating") {
-            setStreamingOutput(session.thinkingOutput ?? "");
-            setView({ type: "loading" });
-          } else if (session.status === "awaiting_input") {
-            if (!session.currentQuestion) {
-              throw new Error("Planning session is awaiting input but has no current question.");
-            }
-            const question = JSON.parse(session.currentQuestion) as PlanningQuestion;
-            clearPlanningDescription(projectId);
-            setView({
-              type: "question",
-              session: { sessionId: session.id, currentQuestion: question, summary: null },
-            });
-            if (session.thinkingOutput) {
-              const trimmed = session.thinkingOutput.trim();
-              if (trimmed) {
-                setConversationHistory((prev) => {
-                  const lastEntry = prev[prev.length - 1];
-                  if (lastEntry?.thinkingOutput === trimmed) return prev;
-                  return [...prev, { thinkingOutput: trimmed }];
-                });
-              }
-            }
-            if (!streamConnectionRef.current?.isConnected()) {
-              connectToPlanningStream(session.id);
-            }
-          } else if (session.status === "complete") {
-            if (!session.result) {
-              throw new Error("Planning session is complete but has no result.");
-            }
-            const summary = normalizePlanningSummary(JSON.parse(session.result) as PlanningSummary);
-            clearPlanningDescription(projectId);
-            setView({
-              type: "summary",
-              session: { sessionId: session.id, currentQuestion: null, summary },
-              summary,
-            });
-            setEditedSummary(summary);
-          } else if (session.status === "error") {
-            setView({
-              type: "error",
-              session: { sessionId: session.id, currentQuestion: null, summary: null },
-              errorMessage: session.error || t("planning.retryFailed", "Retry failed. Please try again."),
-            });
-          }
-
-          setIsReconnecting(false);
-          return;
-        } catch (sessionRefreshError) {
-          retryError = sessionRefreshError;
-        }
-      }
-
-      streamConnectionRef.current?.close();
-      streamConnectionRef.current = null;
-      setView({
-        type: "error",
-        session: retryTarget,
-        errorMessage: getErrorMessage(retryError) || t("planning.retryFailed", "Retry failed. Please try again."),
-      });
-      setIsReconnecting(false);
-    } finally {
-      setIsRetrying(false);
-    }
-  }, [connectToPlanningStream, projectId, sessionTabId, view]);
+    resetPlanningAutoRetryBudget();
+    await startPlanningRetry(view.session, { auto: false });
+  }, [resetPlanningAutoRetryBudget, startPlanningRetry, view]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -2370,7 +2502,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           {view.type === "loading" && (
             <div className="planning-loading">
               <Loader2 size={40} className="spin icon-todo" />
-              <p>{streamingOutput ? t("planning.aiThinking", "AI is thinking...") : t("planning.generatingQuestion", "Generating next question...")}</p>
+              <p>
+                {isAutoRetrying && autoRetryAttempt > 0
+                  ? t("planning.autoRetrying", "Retrying… (attempt {{attempt}} of {{max}})", {
+                      attempt: autoRetryAttempt,
+                      max: MAX_PLANNING_AUTO_RETRIES,
+                    })
+                  : streamingOutput
+                    ? t("planning.aiThinking", "AI is thinking...")
+                    : t("planning.generatingQuestion", "Generating next question...")}
+              </p>
               {generationStartTime && (
                 <div className="planning-elapsed">{t("planning.thinkingElapsed", "Thinking… ({{seconds}}s)", { seconds: elapsedSeconds })}</div>
               )}
