@@ -908,30 +908,6 @@ The terminal header pop-out/dock affordance is an icon-only utility control. It 
   color: var(--text-muted);
 }
 
-.terminal-shortcuts {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/*
-FNXC:TerminalHeader 2026-07-11-18:45:
-FN-7823: viewport-based terminal breakpoints keep narrow floating/docked panels on the desktop header layout, so the header help text must stay on one line and let .terminal-actions use the FN-7550 min-width: 0 + overflow-x scroll pattern instead of wrapping the header.
-*/
-.terminal-shortcuts--header {
-  white-space: nowrap;
-}
-
-.terminal-shortcuts kbd {
-  display: inline-block;
-  padding: 2px 6px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text);
-}
-
 .terminal-history {
   display: flex;
   flex-direction: column;
@@ -1808,10 +1784,6 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     font-size: 11px;
   }
 
-  .terminal-shortcuts {
-    font-size: 11px;
-  }
-
   .terminal-shortcut-panel {
     max-height: calc(var(--space-2xl) + var(--space-2xl) + var(--space-2xl) + var(--space-xl));
   }
@@ -1849,11 +1821,6 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
   .terminal-font-size-btn {
     min-width: calc(var(--space-xl) + var(--space-md));
     min-height: calc(var(--space-xl) + var(--space-md));
-  }
-
-  .terminal-shortcuts kbd {
-    padding: 1px 4px;
-    font-size: 10px;
   }
 
   .terminal-input-area {
@@ -1925,7 +1892,6 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     display: none;
   }
 
-  .terminal-shortcuts--header,
   .terminal-connection-status {
     display: none;
   }

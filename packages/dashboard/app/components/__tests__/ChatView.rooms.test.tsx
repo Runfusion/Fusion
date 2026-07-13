@@ -96,6 +96,7 @@ const roomA = {
   projectId: "proj-123",
   createdBy: "agent-1",
   status: "active" as const,
+  thinkingLevel: null,
   createdAt: "2026-04-08T00:00:00.000Z",
   updatedAt: "2026-04-08T00:00:00.000Z",
 };
@@ -110,6 +111,7 @@ const defaultRoomsState: UseChatRoomsResult = {
   messagesLoading: false,
   selectRoom: vi.fn(),
   createRoom: vi.fn(),
+  updateRoomSettings: vi.fn(),
   deleteRoom: vi.fn(),
   sendRoomMessage: vi.fn(),
   clearRoom: vi.fn(),
@@ -365,6 +367,27 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     });
   });
 
+  it("renders room header thinking picker and updates room settings", async () => {
+    const updateRoomSettings = vi.fn().mockResolvedValue({ ...roomA, thinkingLevel: "high" });
+    setup({}, { activeRoom: { ...roomA, thinkingLevel: "medium" }, updateRoomSettings });
+
+    const { container } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const select = screen.getByTestId("chat-room-thinking-level") as HTMLSelectElement;
+    expect(select.value).toBe("medium");
+    expect(within(select).getByRole("option", { name: "Use default" })).toBeDefined();
+    for (const label of ["Off", "Minimal", "Low", "Medium", "High", "Very High"]) {
+      expect(within(select).getByRole("option", { name: label })).toBeDefined();
+    }
+
+    await userEvent.selectOptions(select, "high");
+    expect(updateRoomSettings).toHaveBeenCalledWith("room-a", { thinkingLevel: "high" });
+
+    await userEvent.selectOptions(select, "");
+    expect(updateRoomSettings).toHaveBeenCalledWith("room-a", { thinkingLevel: null });
+    expect(container.querySelector(".chat-input-area [data-testid='chat-room-thinking-level']")).toBeNull();
+  });
+
   it("passes attachment file list shape to room sends", async () => {
     const addToast = vi.fn();
     const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
@@ -587,6 +610,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     setup();
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+    await userEvent.click(screen.getByTestId("chat-room-item-room-a"));
 
     expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
     mediaSpy.mockRestore();

@@ -33,6 +33,34 @@ describe("ChatView chat input autosize", () => {
     expect(stopRule?.[0]).toContain("min-height: var(--chat-input-control-size)");
   });
 
+  it("centers attach and thinking controls with the single-line input while preserving bottom row alignment", () => {
+    const attachRule = chatViewCss.match(/\.chat-attach-btn\s*\{[^}]*\}/);
+    const thinkingRootRule = chatViewCss.match(/\.chat-thinking-level-root\s*\{[^}]*\}/);
+    const thinkingButtonRule = chatViewCss.match(/\.chat-thinking-btn\s*\{[^}]*\}/);
+    const mobileRule = chatViewCss.match(
+      /\/\* primary touch targets[\s\S]*?\.chat-attach-btn,\s*\.chat-thinking-btn\s*\{[^}]*\}/,
+    );
+
+    expect(attachRule).not.toBeNull();
+    expect(thinkingRootRule).not.toBeNull();
+    expect(thinkingButtonRule).not.toBeNull();
+    expect(mobileRule).not.toBeNull();
+
+    expect(attachRule?.[0]).toContain("min-block-size: var(--chat-input-control-size)");
+    expect(attachRule?.[0]).toContain("block-size: var(--chat-input-control-size)");
+    expect(attachRule?.[0]).toContain("align-self: flex-end");
+    expect(thinkingRootRule?.[0]).toContain("min-block-size: var(--chat-input-control-size)");
+    expect(thinkingRootRule?.[0]).toContain("block-size: var(--chat-input-control-size)");
+    expect(thinkingRootRule?.[0]).toContain("align-self: flex-end");
+    expect(thinkingButtonRule?.[0]).toContain("min-block-size: var(--chat-input-control-size)");
+    expect(thinkingButtonRule?.[0]).toContain("block-size: var(--chat-input-control-size)");
+    expect(mobileRule?.[0]).toContain("min-block-size: var(--chat-input-control-size)");
+    expect(mobileRule?.[0]).toContain("block-size: var(--chat-input-control-size)");
+    expect(attachRule?.[0]).not.toContain("min-height: calc(var(--space-lg) * 2)");
+    expect(thinkingButtonRule?.[0]).not.toContain("min-height: calc(var(--space-lg) * 2)");
+    expect(mobileRule?.[0]).not.toContain("calc(var(--space-lg) * 2.25)");
+  });
+
   it("caps textarea max-height at 200px on tablet viewports", () => {
     const tabletRule = chatViewCss.match(
       /@media \(min-width: 769px\) and \(max-width: 1024px\)\s*\{\s*\.chat-input-textarea\s*\{[^}]*\}\s*\}/,

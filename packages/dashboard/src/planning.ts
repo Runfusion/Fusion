@@ -19,6 +19,7 @@ import type {
   TaskPriority,
   TaskStore,
   NtfyNotificationEvent,
+  ThinkingLevel,
 } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
@@ -27,6 +28,7 @@ import {
   PLANNING_DEEPEN_PROCEED_OPTION_ID,
   PLANNING_DEEPEN_PROCEED_RESPONSE_KEY,
   TASK_PRIORITIES,
+  THINKING_LEVELS,
   resolvePrompt,
   summarizeTitle,
   type PromptOverrideMap,
@@ -62,8 +64,19 @@ type SkillPluginRunner = Parameters<typeof buildSessionSkillContextSync>[3];
 
 const PLANNING_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 type PlanningMcpServers = Awaited<ReturnType<typeof resolveMcpServersForStore>>["servers"];
+type PlanningSessionOptions = {
+  projectId?: string;
+  ntfyConfig?: PlanningNtfyConfig;
+  planningDepth?: PlanningDepth;
+  customQuestionCount?: number;
+  pluginRunner?: SkillPluginRunner;
+};
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any = engineCreateFnAgent;
+
+function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return THINKING_LEVELS.includes(value as ThinkingLevel);
+}
 
 async function resolvePlanningMcpServers(store: TaskStore): Promise<PlanningMcpServers> {
   const resolved = await resolveMcpServersForStore(store);
@@ -267,6 +280,9 @@ export const DRAFT_PLACEHOLDER_TITLE = "New planning session";
  * picked at create time, and so summarizeDraftTitle calls hit that same
  * model rather than silently falling back to project defaults.
  *
+ * FNXC:Planning 2026-07-12-00:00:
+ * Planning drafts/sessions persist a validated per-session reasoning effort in inputPayload so draft reopen and start-existing rebuilds preserve the selected thinking level without a SQLite schema change.
+ *
  * `summarizedFor` records the exact `initialPlan` string the current
  * persisted title was summarized from. The start-existing path uses it to
  * skip re-summarizing when blur/close already produced a title for the
@@ -276,6 +292,7 @@ export interface DraftInputPayload {
   initialPlan?: string;
   modelProvider?: string;
   modelId?: string;
+  thinkingLevel?: ThinkingLevel;
   summarizedFor?: string;
   pendingSummary?: PlanningSummary;
 }
@@ -359,6 +376,8 @@ interface Session {
   /** Model override the user picked at draft-create time. Persisted in inputPayload so reopen restores it. */
   draftModelProvider?: string;
   draftModelId?: string;
+  /** Per-session reasoning effort persisted with the draft/session and threaded into planning agents when set. */
+  draftThinkingLevel?: ThinkingLevel;
   /** Plan text the current title was summarized from; lets startExistingSession skip a redundant re-summarize when blur/close already covered the final text. */
   draftSummarizedFor?: string;
   ntfyConfig?: PlanningNtfyConfig;
@@ -752,6 +771,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       initialPlan: session.initialPlan,
       ...(session.draftModelProvider ? { modelProvider: session.draftModelProvider } : {}),
       ...(session.draftModelId ? { modelId: session.draftModelId } : {}),
+      ...(session.draftThinkingLevel ? { thinkingLevel: session.draftThinkingLevel } : {}),
       ...(session.draftSummarizedFor ? { summarizedFor: session.draftSummarizedFor } : {}),
       ...(session.pendingSummary ? { pendingSummary: session.pendingSummary } : {}),
     }),
@@ -793,6 +813,8 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     { throwOnError: true, fieldName: "inputPayload" },
   );
 
+  const thinkingLevel = isThinkingLevel(payload.thinkingLevel) ? payload.thinkingLevel : undefined;
+
   const createdAt = new Date(row.createdAt);
   const updatedAt = new Date(row.updatedAt);
 
@@ -815,6 +837,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     projectId: row.projectId ?? undefined,
     draftModelProvider: payload.modelProvider,
     draftModelId: payload.modelId,
+    draftThinkingLevel: thinkingLevel,
     draftSummarizedFor: payload.summarizedFor,
     history: safeParseJson<PlanningHistoryEntry[]>(
       row.conversationHistory,
@@ -1355,9 +1378,12 @@ export async function createDraftSession(
   _rootDir: string,
   modelProvider?: string,
   modelId?: string,
-  _promptOverrides?: PromptOverrideMap,
-  options?: { projectId?: string },
+  thinkingLevelOrPromptOverrides?: ThinkingLevel | PromptOverrideMap,
+  _promptOverridesOrOptions?: PromptOverrideMap | { projectId?: string },
+  optionsMaybe?: { projectId?: string },
 ): Promise<{ sessionId: string; title: string }> {
+  const thinkingLevel = isThinkingLevel(thinkingLevelOrPromptOverrides) ? thinkingLevelOrPromptOverrides : undefined;
+  const options = (isThinkingLevel(thinkingLevelOrPromptOverrides) ? optionsMaybe : _promptOverridesOrOptions) as { projectId?: string } | undefined;
   if (!checkRateLimit(ip)) {
     const resetTime = getRateLimitResetTime(ip);
     throw new RateLimitError(
@@ -1382,6 +1408,7 @@ export async function createDraftSession(
     projectId: options?.projectId,
     draftModelProvider: hasModelOverride ? modelProvider : undefined,
     draftModelId: hasModelOverride ? modelId : undefined,
+    draftThinkingLevel: thinkingLevel,
     history: [],
     thinkingOutput: "",
     lastGeneratedThinking: "",
@@ -1472,9 +1499,15 @@ export async function startExistingSession(
   store: TaskStore,
   modelProvider?: string,
   modelId?: string,
-  promptOverrides?: PromptOverrideMap,
-  pluginRunner?: SkillPluginRunner,
+  thinkingLevelOrPromptOverrides?: ThinkingLevel | PromptOverrideMap,
+  promptOverridesOrPluginRunner?: PromptOverrideMap | SkillPluginRunner,
+  pluginRunnerMaybe?: SkillPluginRunner,
 ): Promise<void> {
+  const thinkingLevel = isThinkingLevel(thinkingLevelOrPromptOverrides) ? thinkingLevelOrPromptOverrides : undefined;
+  const promptOverrides = isThinkingLevel(thinkingLevelOrPromptOverrides)
+    ? (promptOverridesOrPluginRunner as PromptOverrideMap | undefined)
+    : (thinkingLevelOrPromptOverrides as PromptOverrideMap | undefined);
+  const pluginRunner = (isThinkingLevel(thinkingLevelOrPromptOverrides) ? pluginRunnerMaybe : promptOverridesOrPluginRunner) as SkillPluginRunner | undefined;
   let session = sessions.get(sessionId);
 
   // Draft sessions aren't included in rehydrateFromStore (which only loads
@@ -1509,6 +1542,7 @@ export async function startExistingSession(
   // summarized this exact text.
   let persistedProvider: string | undefined;
   let persistedModelId: string | undefined;
+  let persistedThinkingLevel: ThinkingLevel | undefined;
   let persistedSummarizedFor: string | undefined;
   let cameFromDraft = false;
   if (_aiSessionStore) {
@@ -1521,6 +1555,7 @@ export async function startExistingSession(
       }
       persistedProvider = payload.modelProvider;
       persistedModelId = payload.modelId;
+      persistedThinkingLevel = isThinkingLevel(payload.thinkingLevel) ? payload.thinkingLevel : undefined;
       persistedSummarizedFor = payload.summarizedFor;
     }
   }
@@ -1554,10 +1589,11 @@ export async function startExistingSession(
     }
   }
 
+  session.draftThinkingLevel = thinkingLevel ?? persistedThinkingLevel;
   persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
     session.pluginRunner = pluginRunner;
-    initializeAgent(session, rootDir, store, modelProvider, modelId, promptOverrides, undefined, undefined, pluginRunner).catch((err) => {
+    initializeAgent(session, rootDir, store, modelProvider, modelId, session.draftThinkingLevel, promptOverrides, undefined, undefined, pluginRunner).catch((err) => {
       diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
       persistSession(session, "error", err.message || "Failed to initialize AI agent");
       planningStreamManager.broadcast(sessionId, {
@@ -1587,15 +1623,15 @@ export async function createSessionWithAgent(
   store: TaskStore,
   modelProvider?: string,
   modelId?: string,
-  promptOverrides?: PromptOverrideMap,
-  options?: {
-    projectId?: string;
-    ntfyConfig?: PlanningNtfyConfig;
-    planningDepth?: PlanningDepth;
-    customQuestionCount?: number;
-    pluginRunner?: SkillPluginRunner;
-  },
+  thinkingLevelOrPromptOverrides?: ThinkingLevel | PromptOverrideMap,
+  promptOverridesOrOptions?: PromptOverrideMap | PlanningSessionOptions,
+  optionsMaybe?: PlanningSessionOptions,
 ): Promise<string> {
+  const thinkingLevel = isThinkingLevel(thinkingLevelOrPromptOverrides) ? thinkingLevelOrPromptOverrides : undefined;
+  const promptOverrides = isThinkingLevel(thinkingLevelOrPromptOverrides)
+    ? (promptOverridesOrOptions as PromptOverrideMap | undefined)
+    : (thinkingLevelOrPromptOverrides as PromptOverrideMap | undefined);
+  const options = (isThinkingLevel(thinkingLevelOrPromptOverrides) ? optionsMaybe : promptOverridesOrOptions) as PlanningSessionOptions | undefined;
   // Check rate limit
   if (!checkRateLimit(ip)) {
     const resetTime = getRateLimitResetTime(ip);
@@ -1627,6 +1663,7 @@ export async function createSessionWithAgent(
     lastGeneratedThinking: "",
     createdAt: new Date(),
     updatedAt: new Date(),
+    draftThinkingLevel: thinkingLevel,
     pluginRunner: options?.pluginRunner,
   };
 
@@ -1640,6 +1677,7 @@ export async function createSessionWithAgent(
       store,
       modelProvider,
       modelId,
+      thinkingLevel,
       promptOverrides,
       options?.planningDepth,
       options?.customQuestionCount,
@@ -1666,6 +1704,7 @@ async function initializeAgent(
   store: TaskStore,
   modelProvider?: string,
   modelId?: string,
+  thinkingLevel?: ThinkingLevel,
   promptOverrides?: PromptOverrideMap,
   planningDepth?: PlanningDepth,
   customQuestionCount?: number,
@@ -1683,6 +1722,7 @@ async function initializeAgent(
         store,
         modelProvider,
         modelId,
+        thinkingLevel,
         promptOverrides,
         planningDepth,
         customQuestionCount,
@@ -1739,6 +1779,7 @@ async function createPlanningAgent(
   store: TaskStore,
   modelProvider?: string,
   modelId?: string,
+  thinkingLevel?: ThinkingLevel,
   promptOverrides?: PromptOverrideMap,
   planningDepth?: PlanningDepth,
   customQuestionCount?: number,
@@ -1780,6 +1821,7 @@ async function createPlanningAgent(
           defaultModelId: modelId,
         }
       : {}),
+    ...(thinkingLevel ? { defaultThinkingLevel: thinkingLevel } : {}),
     onThinking: (delta: string) => {
       markPlanningGenerationProgress(session.id, delta);
       session.thinkingOutput += delta;
@@ -1847,7 +1889,7 @@ async function ensureSessionAgent(
     );
   }
 
-  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, promptOverrides, undefined, undefined, session.pluginRunner);
+  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, session.draftThinkingLevel, promptOverrides, undefined, undefined, session.pluginRunner);
 
   if (historyForReplay.length === 0) {
     return;

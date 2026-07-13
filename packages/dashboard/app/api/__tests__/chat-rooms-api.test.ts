@@ -39,19 +39,19 @@ describe("chat room legacy API client", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ success: true }));
 
     await fetchChatRoom("room-1", "proj-1");
-    await createChatRoom({ name: "Engineering" }, "proj-1");
-    await updateChatRoom("room-1", { description: "desc" }, "proj-1");
+    await createChatRoom({ name: "Engineering", thinkingLevel: "high" }, "proj-1");
+    await updateChatRoom("room-1", { description: "desc", thinkingLevel: null }, "proj-1");
     await deleteChatRoom("room-1", "proj-1");
 
     expect((fetchMock.mock.calls[0] as [string])[0]).toContain("/api/chat/rooms/room-1?projectId=proj-1");
 
     const [, createInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(createInit.method).toBe("POST");
-    expect(createInit.body).toBe(JSON.stringify({ name: "Engineering", projectId: "proj-1" }));
+    expect(createInit.body).toBe(JSON.stringify({ name: "Engineering", thinkingLevel: "high", projectId: "proj-1" }));
 
     const [, updateInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(updateInit.method).toBe("PATCH");
-    expect(updateInit.body).toBe(JSON.stringify({ description: "desc" }));
+    expect(updateInit.body).toBe(JSON.stringify({ description: "desc", thinkingLevel: null }));
 
     const [, deleteInit] = fetchMock.mock.calls[3] as [string, RequestInit];
     expect(deleteInit.method).toBe("DELETE");

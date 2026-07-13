@@ -246,6 +246,44 @@ describe("ChatManager.sendMessage", () => {
     });
   });
 
+  it("uses the updated session model pair on the next send after updateSession persistence", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          model: { provider: options.defaultProvider, id: options.defaultModelId },
+          state: { messages: [{ role: "assistant", content: "Updated model response" }] },
+        },
+        runtimeId: "openai",
+        wasConfigured: true,
+      } as any;
+    });
+    const session = {
+      id: "chat-001",
+      agentId: "__fn_agent__",
+      status: "active",
+      projectId: "project-a",
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    };
+    mockChatStore.getSession.mockImplementation(() => session);
+    mockChatStore.updateSession.mockImplementation((_id, input) => {
+      Object.assign(session, input);
+      return { ...session };
+    });
+
+    mockChatStore.updateSession("chat-001", { modelProvider: "openai", modelId: "gpt-4o" });
+    const chatManager = createChatManagerWithSettings({ defaultProvider: "anthropic", defaultModelId: "claude-sonnet-4-5" });
+    await chatManager.sendMessage("chat-001", "Use the new target");
+
+    expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { modelProvider: "openai", modelId: "gpt-4o" });
+    expect(createOptions.defaultProvider).toBe("openai");
+    expect(createOptions.defaultModelId).toBe("gpt-4o");
+  });
+
   it("passes the chat session thinking level to model-loop session options", async () => {
     let createOptions: any;
     __setCreateResolvedAgentSession(async (options: any) => {
@@ -766,6 +804,7 @@ describe("ChatManager.sendMessage", () => {
       "fn_workflow_settings",
       "fn_workflow_list",
       "fn_workflow_get",
+        "fn_workflow_validate",
       "fn_workflow_select",
       "fn_trait_list",
     ]) {

@@ -15,10 +15,10 @@ const convertedSelectors: SelectorExpectation[] = [
     selector: ".modal-actions",
     expectedColorMix: "color-mix(in srgb, var(--surface) 60%, transparent)",
   },
-  {
-    selector: ".settings-sidebar",
-    expectedColorMix: "color-mix(in srgb, var(--surface) 60%, transparent)",
-  },
+  // FN-7825 made .settings-sidebar structural-only (display/flex/scrollbar) and removed its
+  // background color-mix, so it is no longer a rgba->color-mix converted selector. The remaining
+  // entries are the selectors that still carry a tokenized color-mix value.
+  // FNXC:CssTokenization 2026-07-13-14:00 (round 11):
   {
     selector: ".step-progress-segment[data-tooltip]:hover::after",
     expectedColorMix: "color-mix(in srgb, var(--text) 20%, transparent)",

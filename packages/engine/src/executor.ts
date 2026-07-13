@@ -16,6 +16,7 @@ import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
+import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
 import {
   buildWorkflowObservationFromTask,
@@ -191,7 +192,7 @@ import {
   isMissingWorktreeSessionStartFailure,
 } from "./restart-recovery-coordinator.js";
 import { BranchWorktreeAutoRecoveryHandler } from "./auto-recovery-handlers/branch-worktree.js";
-import { autoRecoverWorktreeSessionStartFailure, MAX_WORKTREE_SESSION_RETRIES, PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
+import { autoRecoverWorktreeSessionStartFailure, COMPLETED_BLOCKED_PAUSE_REASON, MAX_WORKTREE_SESSION_RETRIES, PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
 import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/contamination.js";
 import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
@@ -221,6 +222,7 @@ import {
   createTaskLogTool as sharedCreateTaskLogTool,
   createWorkflowListTool as sharedCreateWorkflowListTool,
   createWorkflowGetTool as sharedCreateWorkflowGetTool,
+  createWorkflowValidateTool as sharedCreateWorkflowValidateTool,
   createWorkflowSelectTool as sharedCreateWorkflowSelectTool,
   createTaskPromoteTool as sharedCreateTaskPromoteTool,
   createWorkflowCreateTool as sharedCreateWorkflowCreateTool,
@@ -515,11 +517,53 @@ const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
 const TASK_DONE_REFUSAL_SUFFIX = "Either finish the work and resubmit, or do not call fn_task_done — exit the session and the engine will requeue.";
 
+function countExecuteRequeueTerminalSteps(live: TaskDetail): number {
+  return live.steps?.filter((step) => step.status === "done" || step.status === "skipped").length ?? 0;
+}
+
+function parseExecuteRequeueLoopProgressSignature(signature: string | null | undefined): { terminalStepCount: number; totalSteps: number } | null {
+  if (!signature) return null;
+  try {
+    const parsed = JSON.parse(signature) as { terminalStepCount?: unknown; totalSteps?: unknown };
+    if (typeof parsed.terminalStepCount !== "number" || typeof parsed.totalSteps !== "number") return null;
+    return {
+      terminalStepCount: parsed.terminalStepCount,
+      totalSteps: parsed.totalSteps,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function buildExecuteRequeueLoopSignature(live: TaskDetail): string {
+  /*
+  FNXC:WorkflowLifecycle 2026-07-13-07:42:
+  FN-7941: human reports #2043/#2045/#2046/#2047 showed that FN-7863's raw currentStep/status signature could drift on every execute self-requeue while no step reached a terminal state, resetting the loop counter to 1 forever. Anchor the bounded streak to monotonic terminal-step progress instead: pending/in-progress/currentStep oscillation still counts toward exhaustion, while real done/skipped progress resets the streak and FN-7926 still diverts completed-blocked work before this guard can fail it.
+  */
   return JSON.stringify({
-    currentStep: live.currentStep ?? null,
-    steps: live.steps?.map((step) => step.status) ?? [],
+    terminalStepCount: countExecuteRequeueTerminalSteps(live),
+    totalSteps: live.steps?.length ?? 0,
   });
+}
+
+function buildExecuteRequeueLoopHighWaterSignature(live: TaskDetail, previousSignature: string | null | undefined): { signature: string; madeForwardProgress: boolean } {
+  // FNXC:WorkflowLifecycle 2026-07-13-08:20: derive current terminal-step
+  // progress by parsing buildExecuteRequeueLoopSignature's own output rather
+  // than duplicating countExecuteRequeueTerminalSteps/totalSteps inline, so
+  // the two functions cannot silently drift out of sync.
+  const current = parseExecuteRequeueLoopProgressSignature(buildExecuteRequeueLoopSignature(live));
+  const currentTerminalStepCount = current?.terminalStepCount ?? countExecuteRequeueTerminalSteps(live);
+  const totalSteps = current?.totalSteps ?? (live.steps?.length ?? 0);
+  const previous = parseExecuteRequeueLoopProgressSignature(previousSignature);
+  const previousTerminalStepCount = previous?.terminalStepCount ?? currentTerminalStepCount;
+  const madeForwardProgress = previous != null && currentTerminalStepCount > previousTerminalStepCount;
+  return {
+    madeForwardProgress,
+    signature: JSON.stringify({
+      terminalStepCount: Math.max(previousTerminalStepCount, currentTerminalStepCount),
+      totalSteps,
+    }),
+  };
 }
 
 const TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN = /ENOENT:\s+no such file or directory,\s+open\s+'([^']+\/\.fusion\/tasks\/([^/]+)\/task\.json)'/;
@@ -3959,15 +4003,70 @@ export class TaskExecutor {
     this.workflowRerunWatchdogs.set(taskId, watchdog);
   }
 
-  private async shouldFinalizeCompletedTask(taskId: string, taskDone: boolean): Promise<boolean> {
+  private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = this.isTaskWorkComplete(task)): Promise<boolean> {
+    if (task.paused === true || task.userPaused === true) return false;
+    if (task.column === "done" || task.column === "archived") return false;
+    if (!workComplete) return false;
+
+    const message = `Completed work held — ${completionBlocker}; will advance to review when blocker clears`;
+    /*
+    FNXC:WorkflowLifecycle 2026-07-12-23:13:
+    FN-7926: completed work with a persistent `getTaskCompletionBlocker` result must not self-requeue through the execute node. Re-running implementation cannot clear dependency/blockedBy state, so it only feeds FN-7863's generic no-progress backstop and misclassifies good work as `EXECUTION_DISPATCH_LOOP_EXHAUSTED`. Park in a scheduler-skipped todo state, preserve worktree/branch/steps, and reset the FN-7863 signature so the backstop remains reserved for genuinely incomplete no-progress loops.
+    */
+    if (task.column !== "todo") {
+      await this.store.moveTask(task.id, "todo", {
+        preserveProgress: true,
+        preserveResumeState: true,
+        preserveWorktree: true,
+        moveSource: "engine",
+        recoveryRehome: true,
+      });
+    }
+    await this.store.updateTask(task.id, {
+      paused: true,
+      pausedReason: COMPLETED_BLOCKED_PAUSE_REASON,
+      status: "queued",
+      error: null,
+      executeRequeueLoopCount: null,
+      executeRequeueLoopSignature: null,
+    }, this.getRunContextFor(task.id));
+    executorLog.log(`${task.id}: ${message}`);
+    await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+    await this.store.recordRunAuditEvent?.({
+      taskId: task.id,
+      agentId: "executor",
+      runId: generateSyntheticRunId("completed-blocked-park", task.id),
+      domain: "database",
+      mutationType: "task:completed-blocked-parked",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        blocker: completionBlocker,
+        source,
+        priorColumn: task.column,
+        priorStatus: task.status ?? null,
+      },
+    });
+    return true;
+  }
+
+  private async getCompletedTaskFinalizationDecision(taskId: string, taskDone: boolean): Promise<"finalize" | "blocked" | "incomplete"> {
     const task = await this.store.getTask(taskId);
     const completionBlocker = await this.getTaskCompletionBlocker(task);
+    const workComplete = taskDone || this.isTaskWorkComplete(task);
     if (completionBlocker) {
       executorLog.log(`${taskId} completion blocked — ${completionBlocker}`);
-      return false;
+      if (workComplete && await this.parkCompletedBlockedTask(task, completionBlocker, "finalization", workComplete)) {
+        return "blocked";
+      }
+      return "incomplete";
     }
-    if (taskDone) return true;
-    return this.isTaskWorkComplete(task);
+    if (workComplete) return "finalize";
+    return "incomplete";
+  }
+
+  private async shouldFinalizeCompletedTask(taskId: string, taskDone: boolean): Promise<boolean> {
+    return await this.getCompletedTaskFinalizationDecision(taskId, taskDone) === "finalize";
   }
 
   private isTaskAlreadyCompleteForNonContinuableSession(task: Task, taskDone: boolean): boolean {
@@ -4487,15 +4586,20 @@ export class TaskExecutor {
         `Plan Review requested a planning revision before execution.\n\nStatus: ${info.status}\nFeedback:\n${feedback}`,
         this.getRunContextFor(taskId),
       );
+      /*
+      FNXC:PlanReviewReplan 2026-07-12-23:20:
+      The replan rebound is workflow-aware: workflows without a "triage" column (Coding
+      (Ideas)) replan in place in their planner column ("todo") instead of being orphaned
+      in an undeclared "triage" column, which the board rendered back in the intake lane.
+      */
+      const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
       await this.store.logEntry(
         taskId,
-        `Plan Review failed — moved to triage for automatic replan (attempt ${nextCount}/${budgetLabel})`,
+        `Plan Review failed — moved to ${replanColumn} for automatic replan (attempt ${nextCount}/${budgetLabel})`,
         optionalStepRevisionLogOutcome(feedback, revisionKey),
         this.getRunContextFor(taskId),
       );
-      if (liveTask.column !== "triage") {
-        await this.store.moveTask(taskId, "triage");
-      }
+      await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
       await this.store.updateTask(taskId, {
         status: "needs-replan",
         error: null,
@@ -6836,19 +6940,19 @@ export class TaskExecutor {
               fallbackProvider: settings.fallbackProvider,
               fallbackModelId: settings.fallbackModelId,
               /*
-               * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-               * Step-review model sessions honor per-node `config.thinkingLevel` before task, validator workflow lane, global lane, and default thinking settings.
+               * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+               * Step-review model sessions honor per-node `config.thinkingLevel` before the task validator override, then shared task thinking, validator workflow lane, global lane, and default thinking settings.
                */
               defaultThinkingLevel: resolveValidatorThinkingLevel(
                 typeof config.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(config.thinkingLevel)
                   ? (config.thinkingLevel as ThinkingLevel)
-                  : detail.thinkingLevel,
+                  : detail.validatorThinkingLevel ?? detail.thinkingLevel,
                 settings,
               ),
               fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(
                 typeof config.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(config.thinkingLevel)
                   ? (config.thinkingLevel as ThinkingLevel)
-                  : detail.thinkingLevel,
+                  : detail.validatorThinkingLevel ?? detail.thinkingLevel,
                 settings,
               ),
               taskValidatorProvider: detail.validatorModelProvider,
@@ -9066,11 +9170,19 @@ export class TaskExecutor {
 
         FNXC:WorkflowLifecycle 2026-07-12-00:00:
         FN-7863: the scheduler's wall-clock dispatchStormCount guard only increments when re-dispatches happen inside its short window; slow execute→pause-abort→todo loops reset that counter every cycle. Count this funnel by execution-progress signature instead, warn early for board-visible monitoring, and terminalize only non-paused live tasks after the bounded no-progress cap while preserving worktree/branch/step progress.
+
+        FNXC:WorkflowLifecycle 2026-07-12-23:14:
+        FN-7926 diverts completed-but-blocked rows before the FN-7863 counter increments. A stable all-done step signature plus unresolved dependency/blockedBy is a waiting state, not an implementation no-progress loop; park it with the specific blocker and let self-healing advance it when `getTaskCompletionBlocker` clears.
         */
-        const signature = buildExecuteRequeueLoopSignature(live);
-        const nextCount = live.executeRequeueLoopSignature === signature
-          ? (live.executeRequeueLoopCount ?? 0) + 1
-          : 1;
+        const completionBlocker = await this.getTaskCompletionBlocker(live);
+        if (completionBlocker && await this.parkCompletedBlockedTask(live, completionBlocker, "execute-requeue")) {
+          await this.persistTokenUsage(task.id);
+          return;
+        }
+        const { signature, madeForwardProgress } = buildExecuteRequeueLoopHighWaterSignature(live, live.executeRequeueLoopSignature);
+        const nextCount = madeForwardProgress || live.executeRequeueLoopSignature == null
+          ? 1
+          : (live.executeRequeueLoopCount ?? 0) + 1;
         if (live.executeRequeueLoopCount !== nextCount || live.executeRequeueLoopSignature !== signature) {
           await this.store.updateTask(task.id, {
             executeRequeueLoopCount: nextCount,
@@ -9658,8 +9770,9 @@ export class TaskExecutor {
       const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
       if (staleness.isStale) {
         executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-        // Move to triage first, then set status so the task enters triage with needs-replan
-        await this.store.moveTask(task.id, "triage");
+        // Move to the workflow-aware replan column first, then set status so the task
+        // enters it with needs-replan (workflows without "triage" replan in place in todo).
+        await moveTaskToReplanColumn(this.store, task);
         await this.store.updateTask(task.id, { status: "needs-replan" });
         await this.store.logEntry(task.id, staleness.reason, undefined, this.getRunContextFor(task.id));
         return;
@@ -10731,6 +10844,7 @@ export class TaskExecutor {
         this.createArtifactRegisterTool(assignedAgentId ?? "executor", task.id, worktreePath),
         this.createWorkflowListTool(),
         this.createWorkflowGetTool(),
+        this.createWorkflowValidateTool(),
         this.createWorkflowSelectTool(task.id),
         this.createTaskPromoteTool(task.id),
         this.createWorkflowCreateTool(),
@@ -11168,7 +11282,8 @@ export class TaskExecutor {
             }
             this.clearPausedAborted(task.id);
             wasPaused = true;
-            if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
+            const finalizationDecision = await this.getCompletedTaskFinalizationDecision(task.id, taskDone);
+            if (finalizationDecision === "finalize") {
               if (await this.shouldDeferCompletionForGlobalPause(task.id, "paused after completion")) {
                 return;
               }
@@ -11186,6 +11301,9 @@ export class TaskExecutor {
               await this.handoffTaskToReview(task, "paused-after-completion");
               this.clearCompletedTaskWatchdog(task.id);
               this.signalTaskComplete(task);
+            } else if (finalizationDecision === "blocked") {
+              await this.persistTokenUsage(task.id);
+              return;
             } else {
               executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
               await this.store.logEntry(task.id, "Execution paused — session preserved for resume, moved to todo");
@@ -11721,7 +11839,8 @@ export class TaskExecutor {
           );
           return;
         }
-        if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
+        const finalizationDecision = await this.getCompletedTaskFinalizationDecision(task.id, taskDone);
+        if (finalizationDecision === "finalize") {
           if (await this.shouldDeferCompletionForGlobalPause(task.id, "paused after completion")) {
             return;
           }
@@ -11738,6 +11857,9 @@ export class TaskExecutor {
           this.markCompletionFinalized(task.id);
           await this.handoffTaskToReview(task, "paused-after-completion");
           this.signalTaskComplete(task);
+        } else if (finalizationDecision === "blocked") {
+          await this.persistTokenUsage(task.id);
+          return;
         } else {
           executorLog.log(`${task.id} paused — moving to todo`);
           if (worktreePath && existsSync(worktreePath)) {
@@ -12807,6 +12929,10 @@ export class TaskExecutor {
 
   private createWorkflowGetTool(): ToolDefinition {
     return sharedCreateWorkflowGetTool(this.store);
+  }
+
+  private createWorkflowValidateTool(): ToolDefinition {
+    return sharedCreateWorkflowValidateTool(this.store);
   }
 
   private createWorkflowSelectTool(taskId: string): ToolDefinition {
@@ -13923,8 +14049,12 @@ export class TaskExecutor {
               defaultModelId: settings.defaultModelId,
               fallbackProvider: settings.fallbackProvider,
               fallbackModelId: settings.fallbackModelId,
-              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(latestDetailForReview.thinkingLevel, settings),
-              defaultThinkingLevel: resolveValidatorThinkingLevel(latestDetailForReview.thinkingLevel, settings),
+              /*
+               * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+               * Pre-merge review sessions honor the per-task validator override before shared task thinking, preserving shared-task fallback for legacy tasks.
+               */
+              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(latestDetailForReview.validatorThinkingLevel ?? latestDetailForReview.thinkingLevel, settings),
+              defaultThinkingLevel: resolveValidatorThinkingLevel(latestDetailForReview.validatorThinkingLevel ?? latestDetailForReview.thinkingLevel, settings),
               // Task-level validator override (from task)
               taskValidatorProvider: latestDetailForReview.validatorModelProvider,
               taskValidatorModelId: latestDetailForReview.validatorModelId,

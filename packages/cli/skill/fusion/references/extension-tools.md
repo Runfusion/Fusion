@@ -223,6 +223,16 @@ Fetch a Fusion workflow definition by ID, including its resolved workflow IR.
 |-----------|------|----------|-------------|
 | `workflow_id` | string | ✓ | The workflow definition ID to fetch (e.g. 'WF-003', or a 'builtin:*' id). Use fn_workflow_list to discover available IDs. |
 
+### fn_workflow_validate
+
+Dry-run validate a Fusion workflow IR without creating or mutating any workflow.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow_id` | string | — | Workflow definition ID to dry-run validate (e.g. 'WF-003', or a 'builtin:*' id). Use either workflow_id or ir; validation performs no persistence. |
+| `ir` | unknown | — | Inline workflow graph (intermediate representation) to dry-run validate. Use either ir or workflow_id; validation performs no persistence. |
+| `confirm_policy_escalation` | boolean | — | Set true to confirm that validating column-agent bindings may allow a broader agent policy. This is checked exactly like create/update but never persists anything. |
+
 ### fn_workflow_create
 
 Create a custom Fusion workflow definition from a validated workflow IR.

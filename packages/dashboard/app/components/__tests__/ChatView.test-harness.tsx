@@ -64,6 +64,7 @@ export const defaultChatState: UseChatReturn = {
   createSession: vi.fn().mockResolvedValue({ id: "session-new", agentId: "__fn_agent__", status: "active", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" } satisfies ChatSessionInfo),
   archiveSession: vi.fn(),
   renameSession: vi.fn(),
+  setSessionThinkingLevel: vi.fn(),
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
   editMessageAndResend: vi.fn(),

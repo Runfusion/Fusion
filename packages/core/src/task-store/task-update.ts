@@ -494,6 +494,16 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.planningModelId !== undefined) {
         task.planningModelId = updates.planningModelId;
       }
+      if (updates.validatorThinkingLevel === null) {
+        task.validatorThinkingLevel = undefined;
+      } else if (updates.validatorThinkingLevel !== undefined) {
+        task.validatorThinkingLevel = updates.validatorThinkingLevel as import("../types.js").ThinkingLevel;
+      }
+      if (updates.planningThinkingLevel === null) {
+        task.planningThinkingLevel = undefined;
+      } else if (updates.planningThinkingLevel !== undefined) {
+        task.planningThinkingLevel = updates.planningThinkingLevel as import("../types.js").ThinkingLevel;
+      }
       if (updates.thinkingLevel === null) {
         task.thinkingLevel = undefined;
       } else if (updates.thinkingLevel !== undefined) {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import type { ChatAttachment, ChatRoomCreateInput, ChatRoomStatus, ChatRoomUpdateInput } from "@fusion/core";
+import { THINKING_LEVELS, type ChatAttachment, type ChatRoomCreateInput, type ChatRoomStatus, type ChatRoomUpdateInput } from "@fusion/core";
 import type { Request } from "express";
 import { RoomReplyGenerationError } from "../chat.js";
 import { createProjectScopedChatManager, resolveProjectChatContext } from "../chat-project-services.js";
@@ -14,6 +14,14 @@ import type { ApiRoutesContext } from "./types.js";
 function isSlugCollisionError(err: unknown): boolean {
   const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
   return message.includes("slug") || message.includes("exists");
+}
+
+function parseRoomThinkingLevel(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value === "string" && THINKING_LEVELS.includes(value as (typeof THINKING_LEVELS)[number])) {
+    return value;
+  }
+  throw badRequest("thinkingLevel must be one of off, minimal, low, medium, high, xhigh, or null");
 }
 
 interface ChatRoomRouteDeps {
@@ -126,12 +134,13 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
 
   router.post("/chat/rooms", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
-      const { name, description, projectId, createdBy, memberAgentIds } = req.body as {
+      const { name, description, projectId, createdBy, memberAgentIds, thinkingLevel } = req.body as {
         name?: string;
         description?: string | null;
         projectId?: string | null;
         createdBy?: string | null;
         memberAgentIds?: string[];
+        thinkingLevel?: unknown;
       };
       const { chatStore } = await resolveRoomScopedServices(req, projectId);
 
@@ -144,6 +153,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         ...(description !== undefined ? { description } : {}),
         ...(projectId !== undefined ? { projectId } : {}),
         ...(createdBy !== undefined ? { createdBy } : {}),
+        ...(thinkingLevel !== undefined ? { thinkingLevel: parseRoomThinkingLevel(thinkingLevel) } : {}),
         ...(Array.isArray(memberAgentIds) ? { memberAgentIds } : {}),
       };
 
@@ -184,16 +194,17 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const { name, description, status } = req.body as { name?: string; description?: string | null; status?: ChatRoomStatus };
+      const { name, description, status, thinkingLevel } = req.body as { name?: string; description?: string | null; status?: ChatRoomStatus; thinkingLevel?: unknown };
 
-      if (name === undefined && description === undefined && status === undefined) {
-        throw badRequest("at least one of name, description, or status is required");
+      if (name === undefined && description === undefined && status === undefined && thinkingLevel === undefined) {
+        throw badRequest("at least one of name, description, status, or thinkingLevel is required");
       }
 
       const input: ChatRoomUpdateInput = {
         ...(name !== undefined ? { name: name.trim() } : {}),
         ...(description !== undefined ? { description } : {}),
         ...(status !== undefined ? { status } : {}),
+        ...(thinkingLevel !== undefined ? { thinkingLevel: parseRoomThinkingLevel(thinkingLevel) } : {}),
       };
 
       let room;

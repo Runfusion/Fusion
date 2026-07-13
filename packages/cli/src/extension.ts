@@ -62,6 +62,7 @@ import {
   createWorkflowAuthoringTools,
   workflowListParams,
   workflowGetParams,
+  workflowValidateParams,
   workflowSelectParams,
   workflowCreateParams,
   workflowUpdateParams,
@@ -693,6 +694,7 @@ async function fetchGitHubIssueViaGh(
 type EngineWorkflowToolName =
   | "fn_workflow_list"
   | "fn_workflow_get"
+  | "fn_workflow_validate"
   | "fn_workflow_create"
   | "fn_workflow_update"
   | "fn_workflow_delete"
@@ -723,6 +725,14 @@ const workflowExtensionToolSpecs: Array<{
     promptSnippet: "Fetch a Fusion workflow definition by ID",
     promptGuidelines: ["Use after fn_workflow_list to inspect the current IR before updating a workflow."],
     parameters: workflowGetParams,
+  },
+  {
+    name: "fn_workflow_validate",
+    label: "fn: Validate Workflow",
+    description: "Dry-run validate a Fusion workflow IR without creating or mutating any workflow.",
+    promptSnippet: "Validate a Fusion workflow IR without persisting it",
+    promptGuidelines: ["Use before create/update while iterating on custom workflow IR; validation failures are reported as dry-run results with no persistence."],
+    parameters: workflowValidateParams,
   },
   {
     name: "fn_workflow_create",

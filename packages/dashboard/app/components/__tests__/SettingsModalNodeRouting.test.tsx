@@ -112,7 +112,12 @@ const baseSettings = {
 };
 
 function renderModal() {
-  return render(<SettingsModal onClose={() => {}} addToast={() => {}} />);
+  // FNXC:DashboardMocks 2026-07-13-14:00 (round 11):
+  // node-routing is in ADVANCED_SETTINGS_SECTION_IDS, so the nav item is hidden
+  // unless Advanced settings is enabled. Passing initialSection="node-routing"
+  // enables advanced mode (SettingsModal derives showAdvancedSettings from the
+  // requested section) so the "Node Routing" nav button renders and is clickable.
+  return render(<SettingsModal onClose={() => {}} addToast={() => {}} initialSection="node-routing" />);
 }
 
 async function ready() {

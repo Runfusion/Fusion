@@ -147,7 +147,9 @@ export async function resolveDesktopSystemControl(): Promise<
     return {
       systemControl: {
         supervised: true,
-        requestRestart: (_reason: string) => {
+        requestRestart: (reason: string) => {
+          /* FNXC:DesktopRestart 2026-07-12-23:45: Desktop accepts the dashboard restart reason for API parity even though Electron relaunch does not consume it; keep it explicitly used so lint catches real unused parameters. */
+          void reason;
           setTimeout(() => {
             electronApp.relaunch();
             // Graceful quit runs before-quit teardown; force-exit only if it stalls.

@@ -21,6 +21,7 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}) {
     autoMerge: true,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
+    taskPopupsBoardListOnly: false,
     showCostBadgeOnCards: false,
     taskDetailChatFirst: false,
     ...formOverrides,
@@ -82,6 +83,26 @@ describe("AppearanceSection", () => {
     renderAppearanceSection({ openMobileTasksInPopup: true });
 
     expect(screen.getByLabelText("Open tasks as popups")).toBeChecked();
+  });
+
+  it("renders and updates the task popup view attachment checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Keep task popups on their Board/List view");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByText(/appears only on the Board or List view where it was opened/)).toBeInTheDocument();
+    expect(screen.getByText(/returning to that view restores it in the same position\. Default: disabled/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().taskPopupsBoardListOnly).toBe(true);
+  });
+
+  it("reflects a persisted enabled task popup view attachment value", () => {
+    renderAppearanceSection({ taskPopupsBoardListOnly: true });
+
+    expect(screen.getByLabelText("Keep task popups on their Board/List view")).toBeChecked();
   });
 
   it("renders and updates the cost badge checkbox", () => {

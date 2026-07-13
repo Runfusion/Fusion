@@ -17,6 +17,7 @@ vi.mock("../../sse-bus", () => ({
 }));
 
 vi.mock("../../api", () => ({
+  fetchSettings: vi.fn().mockResolvedValue({}),
   fetchChatSessions: vi.fn(),
   fetchChatSession: vi.fn(),
   createChatSession: vi.fn(),

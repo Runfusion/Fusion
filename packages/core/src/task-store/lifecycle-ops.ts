@@ -198,24 +198,58 @@ export async function initImpl(store: TaskStore): Promise<void> {
       });
     }
 
-    // U12: workflow-columns integrity pass. When the flag is ON, audit + re-home
-    // any task whose stored column is no longer valid in its resolved workflow
-    // (KTD-1 guarantees zero rewrites for healthy legacy rows, so this is a
-    // no-op for the common case). Idempotent; non-fatal — never blocks startup.
+    /*
+    FNXC:RunAudit 2026-07-13-13:10 (merge port from main):
+    Store-open provenance stamp. A store open by a stale binary is how the
+    FN-7910 incident happened (a pre-fix process's init evacuated Ideas cards;
+    the run-audit row said only agentId:"system"). Stamp pid / parent pid /
+    executable / entry script / cwd / node version — ids/paths only, no prose.
+    Best-effort: a failed stamp never blocks startup.
+    */
     try {
-      const settings = await store.getSettingsFast();
-      if (isWorkflowColumnsCompatibilityFlagEnabled(settings)) {
-        await store.runWorkflowColumnsIntegrityPass();
-        // #1401: recover any transitionPending markers stranded by a crash
-        // between the in-txn write and the post-commit clear (they otherwise
-        // permanently inflate capacity counts for their target column).
-        await store.recoverStaleTransitionPending();
-      } else {
-        // #1409: flag-OFF init — evacuate any card stuck in a non-legacy column
-        // (e.g. the flag was toggled OFF out-of-process while a card sat in a
-        // custom column) so the board stays listable and moves work.
-        await store.evacuateCustomColumnsToLegacy("flag-off-init");
-      }
+      store.insertRunAuditEventRow({
+        agentId: "store",
+        domain: "database",
+        mutationType: "store:open",
+        target: store.rootDir,
+        metadata: {
+          pid: process.pid,
+          ppid: process.ppid,
+          execPath: process.execPath,
+          entry: process.argv[1] ?? null,
+          cwd: process.cwd(),
+          nodeVersion: process.version,
+        },
+      });
+    } catch (err) {
+      storeLog.warn("store-open provenance stamp failed during init", {
+        phase: "init:store-open-stamp",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // U12: workflow-columns integrity pass. Audit + re-home any task whose
+    // stored column is no longer valid in its resolved workflow (KTD-1
+    // guarantees zero rewrites for healthy legacy rows, so this is a no-op for
+    // the common case). Idempotent; non-fatal — never blocks startup.
+    /*
+    FNXC:WorkflowColumns 2026-07-12-22:40 (merge port from main):
+    Workflow columns graduated to always-on at runtime, so init must ALWAYS run
+    the workflow-aware integrity pass and must NEVER run the #1409 flag-OFF
+    evacuation: the retired experimental flag reads false for virtually every
+    install, so the old flag-keyed branch ran
+    evacuateCustomColumnsToLegacy("flag-off-init") on EVERY store open — it
+    declared healthy custom intake columns (e.g. Coding (Ideas)) invalid and
+    dumped their cards into "triage", where triage auto-planned and executed
+    work the operator had deliberately parked (FN-7910). The evacuation now
+    runs only on an explicit ON→OFF settings toggle.
+    */
+    try {
+      await store.runWorkflowColumnsIntegrityPass();
+      // #1401: recover any transitionPending markers stranded by a crash
+      // between the in-txn write and the post-commit clear (they otherwise
+      // permanently inflate capacity counts for their target column).
+      await store.recoverStaleTransitionPending();
     } catch (err) {
       storeLog.warn("workflowColumns integrity pass failed during init", {
         phase: "init:workflow-columns-integrity",

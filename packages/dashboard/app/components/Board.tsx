@@ -473,10 +473,32 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
   tasksRef.current = tasks;
   const lastUnmappedTaskSignatureRef = useRef<string | null>(null);
   const unmappedRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+  FNXC:WorkflowBoard 2026-07-12-23:40:
+  The FN-7591 refetch must also fire for a PRESENT-but-unrepresentable mapping, not only an
+  absent one. The server emits a taskWorkflowIds entry for every task (defaulting to the
+  default workflow), so a stale selection row makes e.g. an "ideas"-column card map to plain
+  Coding — an entry that exists but whose workflow does not declare the task's column. The
+  `=== undefined` guard alone never re-fired for those, leaving the card permanently
+  invisible in the aggregate view. A mapping is "suspect" when the resolved workflow's
+  column set does not contain the task's stored column. The signature guard still prevents
+  refetch loops for mappings that stay wrong after a fresh fetch.
+  */
+  const isTaskWorkflowMappingSuspect = useCallback((
+    payload: NonNullable<typeof boardWorkflows>,
+    task: Task,
+  ): boolean => {
+    const assigned = payload.taskWorkflowIds[task.id];
+    if (assigned === undefined) return true;
+    const known = payload.workflows.some((workflow) => workflow.id === assigned);
+    const workflowId = known ? assigned : payload.defaultWorkflowId;
+    const workflow = payload.workflows.find((candidate) => candidate.id === workflowId);
+    return workflow !== undefined && !workflow.columns.some((column) => column.id === task.column);
+  }, []);
   useEffect(() => {
     if (!boardWorkflows || !workflowMode) return;
     const unmapped = tasks
-      .filter((task) => boardWorkflows.taskWorkflowIds[task.id] === undefined)
+      .filter((task) => isTaskWorkflowMappingSuspect(boardWorkflows, task))
       .map((task) => task.id)
       .sort();
     if (unmapped.length === 0) {
@@ -491,10 +513,10 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       unmappedRefetchTimerRef.current = null;
       const latestWorkflows = boardWorkflowsRef.current;
       if (!latestWorkflows) return;
-      const stillUnmapped = tasksRef.current.some((task) => latestWorkflows.taskWorkflowIds[task.id] === undefined);
+      const stillUnmapped = tasksRef.current.some((task) => isTaskWorkflowMappingSuspect(latestWorkflows, task));
       if (stillUnmapped) refreshBoardWorkflows({ forceFresh: true });
     }, 0);
-  }, [boardWorkflows, refreshBoardWorkflows, tasks, workflowMode]);
+  }, [boardWorkflows, isTaskWorkflowMappingSuspect, refreshBoardWorkflows, tasks, workflowMode]);
 
   useEffect(() => () => {
     if (unmappedRefetchTimerRef.current) clearTimeout(unmappedRefetchTimerRef.current);
@@ -782,6 +804,16 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
   const aggregateTasksByColumn = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
     for (const column of aggregateBoardColumns) grouped[column.id] = [];
+    // Column ids some workflow explicitly hides from the board. A column-orphaned
+    // task resting in one of these must stay hidden even when its (mis-)resolved
+    // workflow doesn't declare the column, or the fallback below would surface an
+    // explicitly hidden card in a visible lane.
+    const hiddenAnywhereColumnIds = new Set<string>();
+    for (const workflow of boardWorkflows?.workflows ?? []) {
+      for (const column of workflow.columns) {
+        if (column.flags.hiddenFromBoard) hiddenAnywhereColumnIds.add(column.id);
+      }
+    }
     for (const task of tasks) {
       const workflowId = getEffectiveTaskWorkflowId(task);
       const workflowColumn = workflowId ? workflowColumnsByWorkflowId.get(workflowId)?.get(task.column) : null;
@@ -789,7 +821,32 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       FNXC:WorkflowBoard 2026-06-29-23:59:
       Aggregate Board grouping must resolve the task's effective workflow before using a shared column id. If one workflow hides `qa` while another shows it, tasks assigned to the hidden `qa` column stay hidden instead of leaking into the visible aggregate lane.
       */
-      if (!workflowColumn || workflowColumn.flags.hiddenFromBoard) continue;
+      if (workflowColumn?.flags.hiddenFromBoard) continue;
+      if (!workflowColumn) {
+        /*
+        FNXC:WorkflowBoard 2026-07-12-23:35:
+        Safety net (aggregate twin of the selected-workflow display re-home below/above): a task
+        whose resolved workflow does NOT declare its stored column must not be continue-dropped
+        into invisibility. This happens when a stale/missing task_workflow_selection resolves the
+        task to the default workflow (e.g. an "ideas" card resolving to plain Coding), or when an
+        engine rebound parks a card in a legacy column its workflow never declared. Render the card
+        in its stored column when the aggregate union declares that lane; otherwise re-home it for
+        DISPLAY into the aggregate quick-create intake lane. Display-only — the stored column is
+        untouched.
+
+        FNXC:WorkflowBoard 2026-07-13-11:55:
+        Two carve-outs keep the safety net honest: a stored column that ANY workflow declares
+        hiddenFromBoard stays hidden (the guard above can't see the true workflow's flag when the
+        mapping is stale), and when no rendered fallback lane exists (no quick-create target) the
+        card is skipped rather than pushed into a `grouped` key the render loop never reads.
+        */
+        const laneExists = grouped[task.column] !== undefined;
+        if (!laneExists && hiddenAnywhereColumnIds.has(task.column)) continue;
+        const fallbackColumnId = laneExists ? task.column : aggregateQuickCreateTarget?.columnId;
+        if (fallbackColumnId === undefined || grouped[fallbackColumnId] === undefined) continue;
+        grouped[fallbackColumnId].push(task);
+        continue;
+      }
       (grouped[task.column] ??= []).push(task);
     }
     for (const column of aggregateBoardColumns) {
@@ -799,7 +856,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
         : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true);
     }
     return grouped;
-  }, [aggregateBoardColumns, doneSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);
+  }, [aggregateBoardColumns, aggregateQuickCreateTarget, boardWorkflows, doneSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);
 
   // Drag pre-check (R17): adjacency + capacity from the lane's column metadata.
   // Cross-lane drag → workflow-mismatch. Deterministic rejections return a
@@ -885,6 +942,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   onDuplicateTask={onDuplicateTask}
                   onMergeTask={onMergeTask}
                   onOpenDetail={onOpenDetail}
+                  onPlanningMode={onPlanningMode}
                   onOpenRefine={onOpenRefine}
                   onOpenGroupModal={onOpenGroupModal}
                   addToast={addToast}
@@ -914,7 +972,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   mergeStrategy={mergeStrategy}
                   // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                   {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
+                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask, onSubtaskBreakdown } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                   {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
                   {...(isDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
@@ -969,6 +1027,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 onDuplicateTask={onDuplicateTask}
                 onMergeTask={onMergeTask}
                 onOpenDetail={onOpenDetail}
+                onPlanningMode={onPlanningMode}
                 onOpenRefine={onOpenRefine}
                 onOpenGroupModal={onOpenGroupModal}
                 addToast={addToast}
@@ -996,7 +1055,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 mergeStrategy={mergeStrategy}
                 // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                 {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-                {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
+                {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, onNewTask, onSubtaskBreakdown } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
                 {...(isWorkflowDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
@@ -1027,6 +1086,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               onDuplicateTask={onDuplicateTask}
               onMergeTask={onMergeTask}
               onOpenDetail={onOpenDetail}
+              onPlanningMode={onPlanningMode}
               onOpenRefine={onOpenRefine}
               onOpenGroupModal={onOpenGroupModal}
               addToast={addToast}
@@ -1082,6 +1142,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
             onDuplicateTask={onDuplicateTask}
             onMergeTask={onMergeTask}
             onOpenDetail={onOpenDetail}
+            onPlanningMode={onPlanningMode}
             onOpenRefine={onOpenRefine}
             onOpenGroupModal={onOpenGroupModal}
             addToast={addToast}
@@ -1109,7 +1170,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
             autoMerge={autoMerge}
             mergeStrategy={mergeStrategy}
             {...(col === "triage" ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-            {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
+            {...(col === "triage" ? { onQuickCreate, onNewTask, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone, doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
             {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived: onLoadMoreArchivedTasks } : {})}

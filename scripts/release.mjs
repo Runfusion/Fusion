@@ -35,7 +35,7 @@ import {
 } from "./lib/release-authorization-gate.mjs";
 import { extractVersionNotes, replaceVersionSection } from "./lib/extract-version-notes.mjs";
 import { parseChangesetFile } from "./lib/changeset-schema.mjs";
-import { distillDeterministic } from "./lib/distill-release-notes.mjs";
+import { distillReleaseNotes } from "./lib/distill-release-notes.mjs";
 import { shouldPromptForVersion } from "./lib/release-prompt-gate.mjs";
 import {
   archivePointerLine,
@@ -577,6 +577,23 @@ if (chosenVersion !== proposedVersion) {
 if (DRY_RUN) {
   warn("--dry-run: stopping before version bump. No files modified, no commit, no publish, no tag.");
   info(`Would release v${chosenVersion} (${releases.length} package(s) bumped).`);
+  /*
+   * FNXC:ReleaseScript 2026-07-13-15:25:
+   * Dry-run previews the LLM-authored Highlights + X draft (falls back to
+   * deterministic if no model is reachable) so operators can review the post
+   * without authorizing a real publish.
+   */
+  const dryEntries = changesetSummaries.map(({ file }) => {
+    const raw = readFileSync(join(".changeset", file), "utf8");
+    return parseChangesetFile(raw).parsed;
+  }).filter(Boolean);
+  info("Distilling release notes with Claude (sonnet; soft fallback if unavailable)…");
+  const dryDistilled = await distillReleaseNotes(dryEntries, chosenVersion);
+  console.log("");
+  console.log(color(36, "─── Draft post for X (preview) ───"));
+  console.log(dryDistilled.tweet);
+  console.log(color(90, `(${dryDistilled.tweet.length}/280 chars; source: ${dryDistilled.source})`));
+  console.log(color(36, "──────────────────────────────────"));
   process.exit(0);
 }
 
@@ -648,18 +665,23 @@ syncRootChangelog();
 ok("Root CHANGELOG.md updated.");
 
 /*
- * FNXC:Changelog 2026-06-24-16:30:
- * Distill end-user-facing release notes from the captured changeset entries
- * and replace the raw per-package aggregate in the root CHANGELOG for this
- * version. Historical version sections are preserved untouched.
+ * FNXC:ReleaseScript 2026-07-13-15:45:
+ * Claude CLI (`claude -p --model sonnet`) authors Highlights (top 3–5), full
+ * notes, and an engagement-oriented X draft ≤280 chars. Soft deterministic
+ * fallback only if Claude is unreachable so release never blocks.
  */
-info("Distilling release notes…");
-const { notes: distilledNotes, source: distillSource } = distillDeterministic(capturedEntries, version);
+info("Distilling release notes with Claude (sonnet; soft fallback if unavailable)…");
+const {
+  notes: distilledNotes,
+  source: distillSource,
+  highlights: releaseHighlights,
+  tweet: releaseTweet,
+} = await distillReleaseNotes(capturedEntries, version);
 const changelogBeforeDistill = readFileSync("CHANGELOG.md", "utf8");
 const changelogAfterDistill = replaceVersionSection(changelogBeforeDistill, version, distilledNotes);
 if (changelogAfterDistill !== changelogBeforeDistill) {
   writeFileSync("CHANGELOG.md", changelogAfterDistill);
-  ok(`Root CHANGELOG.md updated with distilled notes (source: ${distillSource}).`);
+  ok(`Root CHANGELOG.md updated with distilled notes (source: ${distillSource}; ${releaseHighlights.length} highlight(s)).`);
 } else {
   warn(`Could not locate version section in CHANGELOG.md for distillation; leaving raw aggregate.`);
 }
@@ -753,3 +775,15 @@ if (githubReleaseStatus === "created") {
 } else {
   ok(`Released v${version}. Published to npm, tag pushed. GitHub Release was not created (see warnings above).`);
 }
+
+/*
+ * FNXC:ReleaseScript 2026-07-13-15:25:
+ * After a successful publish/tag, print the LLM-authored X draft (≤280 chars)
+ * produced during distillation so the operator can copy-paste to X.
+ */
+console.log("");
+console.log(color(36, "─── Draft post for X (copy-paste) ───"));
+console.log(releaseTweet);
+console.log(color(90, `(${releaseTweet.length}/280 chars; source: ${distillSource})`));
+console.log(color(36, "─────────────────────────────────────"));
+

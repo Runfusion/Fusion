@@ -250,6 +250,17 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   border-bottom: 1px solid var(--border);
 }
 
+.chat-room-thinking-level-field {
+  display: flex;
+  align-items: center;
+  flex: 0 1 calc(var(--space-2xl) * 6);
+  min-width: min-content;
+}
+
+.chat-room-thinking-level-select {
+  width: 100%;
+}
+
 .chat-room-thread-members {
   margin-left: auto;
   display: flex;
@@ -1281,12 +1292,24 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   overflow-wrap: anywhere;
 }
 
+.chat-message-thinking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-thinking-row--collapsed {
+  display: none;
+}
+
 .chat-message-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-xs);
-  margin-top: var(--space-xs);
+  margin-left: auto;
 }
 
 .chat-message-copy-action,
@@ -1294,8 +1317,6 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: var(--space-xs);
-  margin-left: auto;
   width: calc(var(--space-lg) * 2);
   height: calc(var(--space-lg) * 2);
   min-width: calc(var(--space-lg) * 2);
@@ -1310,10 +1331,8 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
-.chat-message-actions .chat-message-copy-action,
-.chat-message-actions .chat-message-scroll-to-top-action {
-  margin-top: 0;
-  margin-left: 0;
+.chat-message-scroll-to-top-action--hidden {
+  display: none;
 }
 
 .chat-message-copy-action:hover,
@@ -1339,16 +1358,19 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
 }
 
 /*
-FNXC:ChatMessageEdit 2026-07-07-09:00:
-User messages in direct (model-loop) chat can carry an inline edit affordance mirroring the
-assistant copy/scroll-to-top action row pattern above, plus an inline textarea editor. Editing
-an earlier message resumes the conversation from that point, forgetting everything after it, so
-keep the affordance visually consistent with existing chat-message-actions styling rather than a
-one-off treatment. Rendered only for user messages on direct/model-loop sessions (never rooms,
-CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEditAction`.
+FNXC:ChatMessageEdit 2026-07-12-23:13:
+User messages in direct (model-loop) chat carry a compact edit affordance inline with the timestamp footer instead of a standalone action row. Editing an earlier message still resumes the conversation from that point, forgetting everything after it; the footer placement keeps the affordance discoverable without adding vertical space. Rendered only for user messages on direct/model-loop sessions (never rooms, CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEditAction`.
 */
-.chat-message-actions--user {
-  justify-content: flex-start;
+.chat-message-time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-top: var(--space-2xs);
+}
+
+.chat-message-time-row .chat-message-time {
+  margin-top: 0;
 }
 
 .chat-message-edit-action {
@@ -1367,6 +1389,13 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
   cursor: pointer;
   opacity: 0.85;
   transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.chat-message-edit-action--inline {
+  width: calc(var(--space-lg) * 1.5);
+  height: calc(var(--space-lg) * 1.5);
+  min-width: calc(var(--space-lg) * 1.5);
+  min-height: calc(var(--space-lg) * 1.5);
 }
 
 .chat-message-edit-action:hover {
@@ -1404,11 +1433,15 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
 }
 
 @media (max-width: 768px) {
-  .chat-message-edit-action {
-    width: calc(var(--space-lg) * 2.25);
-    height: calc(var(--space-lg) * 2.25);
-    min-width: calc(var(--space-lg) * 2.25);
-    min-height: calc(var(--space-lg) * 2.25);
+  .chat-message-time-row {
+    align-items: center;
+  }
+
+  .chat-message-edit-action--inline {
+    width: calc(var(--space-lg) * 1.75);
+    height: calc(var(--space-lg) * 1.75);
+    min-width: calc(var(--space-lg) * 1.75);
+    min-height: calc(var(--space-lg) * 1.75);
   }
 
   .chat-message-edit-textarea {
@@ -1474,13 +1507,15 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
 }
 
 .chat-message-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-dim);
-  margin-top: 4px;
+  margin-top: var(--space-2xs);
 }
 
 .chat-message-thinking {
-  margin-top: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
 }
 
 .chat-message-thinking summary {
@@ -1956,10 +1991,225 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
   transform: scale(0.97);
 }
 
+/*
+FNXC:Chat-ComposerAlignment 2026-07-12-10:25:
+Composer attach + model/thinking icon controls must be vertically centered with the single-line text input box on all surfaces (desktop/tablet/mobile). Match their block-size to --chat-input-control-size (== send button == textarea min-height) so align-self: flex-end yields center alignment when single-line and keeps them at the row bottom when the textarea grows multi-line. (FN-7917)
+*/
 .chat-attach-btn {
-  min-width: calc(var(--space-lg) * 2);
-  min-height: calc(var(--space-lg) * 2);
+  min-inline-size: var(--chat-input-control-size);
+  min-block-size: var(--chat-input-control-size);
+  block-size: var(--chat-input-control-size);
   align-self: flex-end;
+}
+
+/*
+FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+FN-7898 adds a Brain-icon trigger next to the attach button so an active model-loop session's
+thinking (reasoning-effort) level can be changed mid-conversation. The root wrapper needs
+position: relative so the popover (mirroring .chat-skill-menu's positioning/z-index) anchors to
+the trigger instead of the whole .chat-input-row.
+
+FNXC:Chat-ModelSwitch 2026-07-12-00:00:
+FN-7908 keeps model/agent retargeting inside the same brain popup. The widened panel uses token-based widths and bounded scroll regions so the CustomModelDropdown trigger and agent list remain usable on desktop and mobile without adding a second composer affordance.
+*/
+.chat-thinking-level-root {
+  position: relative;
+  min-block-size: var(--chat-input-control-size);
+  block-size: var(--chat-input-control-size);
+  align-self: flex-end;
+}
+
+.chat-thinking-btn {
+  min-inline-size: var(--chat-input-control-size);
+  min-block-size: var(--chat-input-control-size);
+  block-size: var(--chat-input-control-size);
+}
+
+.chat-thinking-btn--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-thinking-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--space-xs));
+  width: min(calc(var(--space-xl) * 15), calc(100vw - (var(--space-lg) * 2)));
+  max-width: calc(100vw - (var(--space-lg) * 2));
+  max-inline-size: calc(100vw - (var(--space-lg) * 2));
+  max-height: min(calc(var(--space-xl) * 24), calc(100vh - (var(--space-xl) * 4)));
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+}
+
+/*
+FNXC:Chat-ModelSwitch 2026-07-13-00:00:
+FN-7934: The brain popup must fit the containing chat surface, not only the browser viewport. Key the inset layout on .chat-view--narrow because it reflects surface width for floating Chat windows and compact docks; otherwise a narrow floating Chat window on a wide viewport clips the Model / Agent picker on the right.
+*/
+.chat-view--narrow .chat-thinking-level-root {
+  position: static;
+}
+
+.chat-view--narrow .chat-thinking-popover {
+  left: var(--space-md);
+  right: var(--space-md);
+  width: auto;
+  max-width: none;
+  max-inline-size: none;
+  max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
+}
+
+.chat-view--narrow .chat-thinking-agent-list,
+.chat-view--narrow .chat-thinking-popover-list {
+  max-height: calc(var(--space-xl) * 7);
+}
+
+.chat-thinking-target-section,
+.chat-thinking-level-section {
+  padding: var(--space-sm);
+}
+
+.chat-thinking-target-section {
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-thinking-section-title {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-xs);
+  text-transform: uppercase;
+}
+
+.chat-thinking-mode-toggle {
+  display: flex;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  padding: var(--space-2xs);
+  background: var(--surface-secondary);
+  border-radius: var(--radius-md);
+}
+
+.chat-thinking-mode-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-thinking-mode-btn--active,
+.chat-thinking-mode-btn:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.chat-thinking-mode-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-thinking-model-picker .custom-model-dropdown {
+  width: 100%;
+}
+
+.chat-thinking-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: calc(var(--space-xl) * 8);
+  overflow-y: auto;
+}
+
+.chat-thinking-agent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.chat-thinking-agent-item:hover,
+.chat-thinking-agent-item--selected {
+  background: var(--card-hover);
+  border-color: var(--accent);
+}
+
+.chat-thinking-agent-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.chat-thinking-agent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thinking-agent-role,
+.chat-thinking-current-target,
+.chat-thinking-empty {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.chat-thinking-agent-role {
+  flex: none;
+  text-transform: capitalize;
+}
+
+.chat-thinking-current-target,
+.chat-thinking-empty {
+  margin-top: var(--space-xs);
+}
+
+.chat-thinking-popover-list {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--space-xl) * 8);
+  overflow-y: auto;
+}
+
+.chat-thinking-popover-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: background var(--transition-fast);
+}
+
+.chat-thinking-popover-option:hover,
+.chat-thinking-popover-option.active {
+  background: var(--card-hover);
+}
+
+.chat-thinking-popover-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: var(--card-hover);
 }
 
 .chat-input-wrapper {
@@ -2300,8 +2550,16 @@ Queued-message banners stack above the composer input with a capped scroll area,
     opacity: 1;
   }
 
+  .chat-message-thinking-row {
+    gap: var(--space-xs);
+  }
+
   .chat-message-scroll-to-top-action {
     opacity: 1;
+  }
+
+  .chat-message-scroll-to-top-action--hidden {
+    display: none;
   }
 
   .chat-tool-calls-group-summary,
@@ -2324,10 +2582,34 @@ Queued-message banners stack above the composer input with a capped scroll area,
     margin-left: auto;
   }
 
-  /* primary touch targets per AGENTS.md convention */
-  .chat-attach-btn {
-    min-width: calc(var(--space-lg) * 2.25);
-    min-height: calc(var(--space-lg) * 2.25);
+  /* primary touch targets per AGENTS.md convention; FN-7917 keeps the icon controls in parity with the send/input control size on mobile too. */
+  .chat-attach-btn,
+  .chat-thinking-btn {
+    min-inline-size: var(--chat-input-control-size);
+    min-block-size: var(--chat-input-control-size);
+    block-size: var(--chat-input-control-size);
+  }
+
+  /*
+  FNXC:Chat-ModelSwitch 2026-07-12-22:38:
+  FN-7916: mobile applies a global max-width clamp to every element, so a popover positioned from the small Brain-button wrapper collapsed into an unreadable strip. Let the chat input area own the mobile containing block and inset the panel with tokenized viewport gutters so the model picker, agent list, and thinking levels stay reachable.
+  */
+  .chat-thinking-level-root {
+    position: static;
+  }
+
+  .chat-thinking-popover {
+    left: var(--space-md);
+    right: var(--space-md);
+    width: auto;
+    max-width: none;
+    max-inline-size: none;
+    max-height: min(calc(var(--space-xl) * 20), calc(100vh - (var(--space-xl) * 5)));
+  }
+
+  .chat-thinking-agent-list,
+  .chat-thinking-popover-list {
+    max-height: calc(var(--space-xl) * 7);
   }
 
   .chat-input-send,
@@ -2387,6 +2669,11 @@ Queued-message banners stack above the composer input with a capped scroll area,
 
   .chat-room-thread-header {
     padding: var(--space-sm) var(--space-md);
+  }
+
+  .chat-room-thinking-level-field {
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   .chat-room-thread-header .btn-icon {

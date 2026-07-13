@@ -23,7 +23,7 @@ import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgen
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowValidateTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructionsWithRatings,
@@ -561,7 +561,7 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_artifact_register, fn_artifact_list, and fn_artifact_view (register visual/media outputs so they appear in the dashboard Artifacts gallery: screenshots/wireframes/mockups/diagrams as type="image" via \`path\`; screen recordings as type="video" via \`path\`; HTML mockups as type="document" with mimeType="text/html" — rendered as live previews; PDFs as type="document" with mimeType="application/pdf" via \`path\`. No-task runs have no session workspace directory, so save files under the OS temp directory and pass an absolute \`path\` — relative paths are rejected in this mode)
 - fn_read_evaluations and fn_update_identity (available in no-task runs)
 - fn_reflect_on_performance when reflection is enabled for this run
-- fn_workflow_list, fn_workflow_get, fn_workflow_create, fn_workflow_update, fn_workflow_delete, fn_workflow_settings, and fn_trait_list for workflow discovery/authoring
+- fn_workflow_list, fn_workflow_get, fn_workflow_validate, fn_workflow_create, fn_workflow_update, fn_workflow_delete, fn_workflow_settings, and fn_trait_list for workflow discovery/authoring
 - fn_research_run, fn_research_list, fn_research_get, and fn_research_cancel for bounded research when configured
 - fn_ask_question to ask the dashboard user for structured clarification
 - fn_web_fetch
@@ -3801,6 +3801,7 @@ export class HeartbeatMonitor {
       ...createTaskReadTools(taskStore),
       createWorkflowListTool(taskStore),
       createWorkflowGetTool(taskStore),
+      createWorkflowValidateTool(taskStore),
       createWorkflowCreateTool(taskStore, { stripApprovalFlags: true }),
       createWorkflowUpdateTool(taskStore, { stripApprovalFlags: true }),
       createWorkflowDeleteTool(taskStore),
@@ -4316,6 +4317,8 @@ type HeartbeatTimerRepairMetadata = {
   repairedAt?: string;
   staleAtRepair?: boolean;
   staleRepairReason?: string;
+  consecutiveNonAdvancingRearms?: number;
+  nonAdvancingEscalated?: boolean;
 };
 
 function readHeartbeatTimerRepairMetadata(agent: Agent): HeartbeatTimerRepairMetadata {
@@ -4329,6 +4332,8 @@ function readHeartbeatTimerRepairMetadata(agent: Agent): HeartbeatTimerRepairMet
     repairedAt: typeof candidate.repairedAt === "string" ? candidate.repairedAt : undefined,
     staleAtRepair: typeof candidate.staleAtRepair === "boolean" ? candidate.staleAtRepair : undefined,
     staleRepairReason: typeof candidate.staleRepairReason === "string" ? candidate.staleRepairReason : undefined,
+    consecutiveNonAdvancingRearms: typeof candidate.consecutiveNonAdvancingRearms === "number" ? candidate.consecutiveNonAdvancingRearms : undefined,
+    nonAdvancingEscalated: typeof candidate.nonAdvancingEscalated === "boolean" ? candidate.nonAdvancingEscalated : undefined,
   };
 }
 
@@ -4363,8 +4368,14 @@ export class HeartbeatTriggerScheduler {
    *  Absent (legacy/no executor wiring) → treated as never effectively executing. */
   private isAgentEffectivelyExecuting?: (agentId: string) => boolean;
   private timerAuditIntervalHandle: ReturnType<typeof setInterval> | null = null;
+  private timerAuditWatchdogHandle: ReturnType<typeof setInterval> | null = null;
+  private lastAuditRanAtMs = 0;
+  private nonAdvancingRearmState: Map<string, { lastHeartbeatAt: string | null; count: number }> = new Map();
 
   private static readonly TIMER_AUDIT_INTERVAL_MS = 60_000;
+  private static readonly TIMER_AUDIT_WATCHDOG_INTERVAL_MS = 60_000;
+  private static readonly TIMER_AUDIT_WATCHDOG_STALE_MS = HeartbeatTriggerScheduler.TIMER_AUDIT_INTERVAL_MS * 3;
+  private static readonly NON_ADVANCING_REARM_ESCALATION_THRESHOLD = 3;
   private static readonly DEFAULT_REPAIR_STALE_MULTIPLIER = 2;
   private static readonly DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
 
@@ -4383,13 +4394,59 @@ export class HeartbeatTriggerScheduler {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.lastAuditRanAtMs = Date.now();
     this.watchAssignments();
     this.watchAgentLifecycle();
     void this.auditTimerRegistrations("start");
+    this.armTimerAuditInterval();
+    this.armTimerAuditWatchdog();
+    heartbeatLog.log("HeartbeatTriggerScheduler started");
+  }
+
+  private armTimerAuditInterval(): void {
+    if (this.timerAuditIntervalHandle) {
+      clearInterval(this.timerAuditIntervalHandle);
+      this.timerAuditIntervalHandle = null;
+    }
+    if (!this.running) {
+      return;
+    }
     this.timerAuditIntervalHandle = setInterval(() => {
       void this.auditTimerRegistrations("interval");
     }, HeartbeatTriggerScheduler.TIMER_AUDIT_INTERVAL_MS);
-    heartbeatLog.log("HeartbeatTriggerScheduler started");
+  }
+
+  private armTimerAuditWatchdog(): void {
+    if (this.timerAuditWatchdogHandle) {
+      clearInterval(this.timerAuditWatchdogHandle);
+      this.timerAuditWatchdogHandle = null;
+    }
+    if (!this.running) {
+      return;
+    }
+    /*
+     * FNXC:AgentHeartbeat 2026-07-13-07:38:
+     * FN-7939 — FN-7645's per-agent zombie-timer repair and FN-7718's stop/start invalidation depend on the 60s audit setInterval, but that auditor is itself a live timer that can silently stop firing. Supervise the auditor with an independent liveness timer so a stalled audit driver is re-armed inside a bounded window instead of leaving active agents unrepaired for hours (observed: 62,348s with a timer entry still present).
+     */
+    this.timerAuditWatchdogHandle = setInterval(() => {
+      void this.checkTimerAuditLiveness();
+    }, HeartbeatTriggerScheduler.TIMER_AUDIT_WATCHDOG_INTERVAL_MS);
+  }
+
+  private async checkTimerAuditLiveness(): Promise<void> {
+    if (!this.running) {
+      return;
+    }
+    const now = Date.now();
+    const elapsedMs = this.lastAuditRanAtMs > 0 ? now - this.lastAuditRanAtMs : Number.POSITIVE_INFINITY;
+    if (elapsedMs <= HeartbeatTriggerScheduler.TIMER_AUDIT_WATCHDOG_STALE_MS) {
+      return;
+    }
+    heartbeatLog.warn(
+      `Heartbeat timer audit watchdog re-armed stalled auditor reason=heartbeat-audit-watchdog-rearmed elapsedMs=${elapsedMs} thresholdMs=${HeartbeatTriggerScheduler.TIMER_AUDIT_WATCHDOG_STALE_MS}`,
+    );
+    this.armTimerAuditInterval();
+    await this.auditTimerRegistrations("interval");
   }
 
   /**
@@ -4418,6 +4475,12 @@ export class HeartbeatTriggerScheduler {
       clearInterval(this.timerAuditIntervalHandle);
       this.timerAuditIntervalHandle = null;
     }
+    if (this.timerAuditWatchdogHandle) {
+      clearInterval(this.timerAuditWatchdogHandle);
+      this.timerAuditWatchdogHandle = null;
+    }
+    this.lastAuditRanAtMs = 0;
+    this.nonAdvancingRearmState.clear();
 
     heartbeatLog.log("HeartbeatTriggerScheduler stopped");
   }
@@ -4626,6 +4689,7 @@ export class HeartbeatTriggerScheduler {
   unregisterAgent(agentId: string): void {
     this.registrationEpochs.set(agentId, (this.registrationEpochs.get(agentId) ?? 0) + 1);
     this.pendingAssignments.delete(agentId);
+    this.nonAdvancingRearmState.delete(agentId);
     if (this.timers.has(agentId)) {
       this.clearAgentTimer(agentId);
       heartbeatLog.log(`Unregistered timer for ${agentId}`);
@@ -5044,7 +5108,12 @@ export class HeartbeatTriggerScheduler {
     return { reaped: true, elapsedMs, thresholdMs };
   }
 
-  private async markRepairMetadata(agent: Agent, staleAtRepair: boolean, staleRepairReason?: string): Promise<void> {
+  private async markRepairMetadata(
+    agent: Agent,
+    staleAtRepair: boolean,
+    staleRepairReason?: string,
+    options?: { consecutiveNonAdvancingRearms?: number; nonAdvancingEscalated?: boolean },
+  ): Promise<void> {
     const updater = (this.store as { updateAgent?: (agentId: string, updates: { metadata: Record<string, unknown> }) => Promise<unknown> }).updateAgent;
     if (typeof updater !== "function") {
       return;
@@ -5056,12 +5125,16 @@ export class HeartbeatTriggerScheduler {
       repairedAt,
       staleAtRepair,
       ...(staleAtRepair && staleRepairReason ? { staleRepairReason } : {}),
+      ...(typeof options?.consecutiveNonAdvancingRearms === "number" ? { consecutiveNonAdvancingRearms: options.consecutiveNonAdvancingRearms } : {}),
+      ...(options?.nonAdvancingEscalated ? { nonAdvancingEscalated: true } : {}),
     };
 
     const didChange =
       existing.repairedAt !== nextRepair.repairedAt ||
       existing.staleAtRepair !== nextRepair.staleAtRepair ||
-      existing.staleRepairReason !== nextRepair.staleRepairReason;
+      existing.staleRepairReason !== nextRepair.staleRepairReason ||
+      existing.consecutiveNonAdvancingRearms !== nextRepair.consecutiveNonAdvancingRearms ||
+      existing.nonAdvancingEscalated !== nextRepair.nonAdvancingEscalated;
     if (!didChange) {
       return;
     }
@@ -5073,6 +5146,7 @@ export class HeartbeatTriggerScheduler {
 
   async auditTimerRegistrations(reason: "start" | "interval" = "interval"): Promise<void> {
     if (!this.running) return;
+    this.lastAuditRanAtMs = Date.now();
 
     try {
       const settings = this.taskStore && typeof this.taskStore.getSettings === "function"
@@ -5102,6 +5176,7 @@ export class HeartbeatTriggerScheduler {
          * instead of inheriting a stale/orphaned timer.
          */
         if (!this.isTimerEligibleAgent(agent)) {
+          this.nonAdvancingRearmState.delete(agent.id);
           if (this.timers.has(agent.id)) {
             this.unregisterAgent(agent.id);
             heartbeatLog.log(`Timer audit cleared orphaned timer for non-eligible agent ${agent.id} (audit:${reason})`);
@@ -5128,7 +5203,10 @@ export class HeartbeatTriggerScheduler {
          * fresh (non-stale) present timer is left alone so healthy short-interval agents are never
          * force-re-armed or double-ticked.
          */
-        if (hasTimerEntry && !staleAtRepair) continue;
+        if (hasTimerEntry && !staleAtRepair) {
+          this.nonAdvancingRearmState.delete(agent.id);
+          continue;
+        }
 
         const isZombieRearm = hasTimerEntry && staleAtRepair;
 
@@ -5139,6 +5217,7 @@ export class HeartbeatTriggerScheduler {
         let activeRunThresholdMs = Number.NaN;
         if (activeRun) {
           if (settings?.globalPause || settings?.enginePaused) {
+            this.nonAdvancingRearmState.delete(agent.id);
             heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
             continue;
           }
@@ -5147,9 +5226,28 @@ export class HeartbeatTriggerScheduler {
           activeRunElapsedMs = reapResult.elapsedMs;
           activeRunThresholdMs = reapResult.thresholdMs;
           if (!reapedActiveRun) {
+            this.nonAdvancingRearmState.delete(agent.id);
             heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
             continue;
           }
+        }
+
+        let consecutiveNonAdvancingRearms: number | undefined;
+        let nonAdvancingEscalated = false;
+        let escalationReason: string | undefined;
+        if (isZombieRearm && !settings?.globalPause && !settings?.enginePaused) {
+          const heartbeatMarker = typeof agent.lastHeartbeatAt === "string" ? agent.lastHeartbeatAt : null;
+          const previous = this.nonAdvancingRearmState.get(agent.id);
+          consecutiveNonAdvancingRearms = previous && previous.lastHeartbeatAt === heartbeatMarker
+            ? previous.count + 1
+            : 1;
+          this.nonAdvancingRearmState.set(agent.id, { lastHeartbeatAt: heartbeatMarker, count: consecutiveNonAdvancingRearms });
+          nonAdvancingEscalated = consecutiveNonAdvancingRearms >= HeartbeatTriggerScheduler.NON_ADVANCING_REARM_ESCALATION_THRESHOLD;
+          if (nonAdvancingEscalated) {
+            escalationReason = `heartbeat-rearm-nonadvancing-escalated: ${consecutiveNonAdvancingRearms} consecutive zombie re-arms without lastHeartbeatAt advancing`;
+          }
+        } else {
+          this.nonAdvancingRearmState.delete(agent.id);
         }
 
         // registerAgent() clears any existing (including zombie) timer entry via
@@ -5160,11 +5258,16 @@ export class HeartbeatTriggerScheduler {
         });
 
         const staleRepairReason = staleAtRepair
-          ? isZombieRearm
-            ? `zombie-timer-rearmed: no heartbeat for ${Math.round(elapsedMs / 1000)}s while a timer entry remained present (threshold ${Math.round(staleThresholdMs / 1000)}s)`
-            : `No heartbeat for ${Math.round(elapsedMs / 1000)}s before timer audit repair (threshold ${Math.round(staleThresholdMs / 1000)}s)`
+          ? escalationReason
+            ? `${escalationReason}; zombie-timer-rearmed: no heartbeat for ${Math.round(elapsedMs / 1000)}s while a timer entry remained present (threshold ${Math.round(staleThresholdMs / 1000)}s)`
+            : isZombieRearm
+              ? `zombie-timer-rearmed: no heartbeat for ${Math.round(elapsedMs / 1000)}s while a timer entry remained present (threshold ${Math.round(staleThresholdMs / 1000)}s)`
+              : `No heartbeat for ${Math.round(elapsedMs / 1000)}s before timer audit repair (threshold ${Math.round(staleThresholdMs / 1000)}s)`
           : undefined;
-        await this.markRepairMetadata(agent, staleAtRepair, staleRepairReason);
+        await this.markRepairMetadata(agent, staleAtRepair, staleRepairReason, {
+          consecutiveNonAdvancingRearms,
+          nonAdvancingEscalated,
+        });
 
         rearmedCount++;
         if (isZombieRearm) zombieRearmedCount++;
@@ -5173,7 +5276,15 @@ export class HeartbeatTriggerScheduler {
             `Timer audit re-armed after stale-run reap reason=timer-audit-rearmed agentId=${agent.id} runId=${activeRunId} elapsedMs=${activeRunElapsedMs} thresholdMs=${activeRunThresholdMs}`,
           );
         }
-        if (isZombieRearm) {
+        if (nonAdvancingEscalated) {
+          /*
+           * FNXC:AgentHeartbeat 2026-07-13-07:39:
+           * FN-7939 — a zombie-timer re-arm that never restores delivery must become visible after a bounded count. Persistent skip/parallel guards can otherwise leave lastHeartbeatAt frozen while the audit rewrites `zombie-timer-rearmed` metadata forever, recreating multi-hour silent drift under a nominally active timer entry.
+           */
+          heartbeatLog.warn(
+            `Timer audit escalated non-advancing zombie re-arm reason=heartbeat-rearm-nonadvancing-escalated agentId=${agent.id} count=${consecutiveNonAdvancingRearms} threshold=${HeartbeatTriggerScheduler.NON_ADVANCING_REARM_ESCALATION_THRESHOLD} (audit:${reason}): ${staleRepairReason}`,
+          );
+        } else if (isZombieRearm) {
           heartbeatLog.warn(`Timer audit force re-armed non-advancing agent ${agent.id} reason=zombie-timer-rearmed (audit:${reason}): ${staleRepairReason}`);
         } else if (staleAtRepair) {
           heartbeatLog.warn(`Timer re-armed stale agent ${agent.id} (audit:${reason}): ${staleRepairReason ?? "heartbeat exceeded stale threshold before repair"}`);

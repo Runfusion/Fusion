@@ -16,6 +16,8 @@ interface WorktreeGroupProps {
   allTasks?: Task[];
   projectId?: string;
   onOpenDetail: (task: Task | TaskDetail) => void;
+  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  workflowId?: string | null;
   onOpenRefine?: (task: Task | TaskDetail) => void;
   onMoveTask?: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
@@ -71,6 +73,8 @@ function WorktreeGroupComponent({
   allTasks,
   projectId,
   onOpenDetail,
+  onPlanningMode,
+  workflowId,
   onOpenRefine,
   onMoveTask,
   addToast,
@@ -109,6 +113,7 @@ function WorktreeGroupComponent({
   };
   const getTaskContextMenuColumns = (task: Task) => taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns;
   const getTaskColumnFlags = (task: Task) => getTaskContextMenuColumns(task)?.find((candidate) => candidate.id === task.column)?.flags;
+  const getTaskPlanningWorkflowId = (task: Task) => (task as Task & { workflowId?: string | null }).workflowId ?? taskWorkflowBadges?.get(task.id)?.workflowId ?? workflowId ?? null;
 
   return (
     <div className="worktree-group">
@@ -124,6 +129,8 @@ function WorktreeGroupComponent({
           task={task}
           projectId={projectId}
           onOpenDetail={onOpenDetail}
+          onPlanningMode={onPlanningMode}
+          planningWorkflowId={getTaskPlanningWorkflowId(task)}
           onOpenRefine={onOpenRefine}
           onMoveTask={onMoveTask}
           taskColumnFlags={getTaskColumnFlags(task)}
@@ -161,6 +168,8 @@ function WorktreeGroupComponent({
           projectId={projectId}
           queued
           onOpenDetail={onOpenDetail}
+          onPlanningMode={onPlanningMode}
+          planningWorkflowId={getTaskPlanningWorkflowId(task)}
           onOpenRefine={onOpenRefine}
           onMoveTask={onMoveTask}
           taskColumnFlags={getTaskColumnFlags(task)}

@@ -14,6 +14,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 |------|---------|
 | `fn_workflow_list` | List built-in and custom Fusion workflow definitions available in this project. |
 | `fn_workflow_get` | Fetch a Fusion workflow definition by ID, including its resolved workflow IR. |
+| `fn_workflow_validate` | Dry-run validate a Fusion workflow IR without creating or mutating any workflow. |
 | `fn_workflow_create` | Create a custom Fusion workflow definition from a validated workflow IR. |
 | `fn_workflow_update` | Update a custom Fusion workflow definition's metadata, IR, or layout. |
 | `fn_workflow_delete` | Delete a custom Fusion workflow definition; built-in workflows are protected. |

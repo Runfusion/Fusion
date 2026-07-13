@@ -29,6 +29,7 @@ export interface UseAppSettingsResult {
   capacityRiskTodoThreshold: number;
   openTasksInRightSidebar: boolean;
   openMobileTasksInPopup: boolean;
+  taskPopupsBoardListOnly: boolean;
   showCostBadgeOnCards: boolean;
   modelPricingOverrides?: ModelPricingOverrides;
   taskDetailChatFirst: boolean;
@@ -82,6 +83,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
   const [openTasksInRightSidebar, setOpenTasksInRightSidebar] = useState(false);
   const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
+  const [taskPopupsBoardListOnly, setTaskPopupsBoardListOnly] = useState(false);
   const [showCostBadgeOnCards, setShowCostBadgeOnCards] = useState(false);
   const [modelPricingOverrides, setModelPricingOverrides] = useState<ModelPricingOverrides | undefined>(undefined);
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
@@ -162,6 +164,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
       setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
       setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
+      setTaskPopupsBoardListOnly(settings.taskPopupsBoardListOnly === true);
       /*
       FNXC:TaskCardCostBadge 2026-07-11-12:15:
       The app shell exposes the default-off card cost badge setting to the board context only after settings hydration, preserving the no-badge default for upgraded projects.
@@ -334,6 +337,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
     openMobileTasksInPopup,
+    taskPopupsBoardListOnly,
     showCostBadgeOnCards,
     modelPricingOverrides,
     taskDetailChatFirst,

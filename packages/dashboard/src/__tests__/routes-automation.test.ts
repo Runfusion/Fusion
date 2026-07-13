@@ -990,6 +990,41 @@ describe("Automation routes", () => {
       }));
     });
 
+    it("forwards manual ai-prompt thinkingLevel into session creation and leaves omitted level unset", async () => {
+      vi.mocked(createFnAgent).mockClear();
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "",
+        steps: [
+          {
+            id: "step-ai-high",
+            type: "ai-prompt",
+            name: "High thinking AI",
+            prompt: "Summarize deeply",
+            thinkingLevel: " high ",
+          },
+          {
+            id: "step-ai-default",
+            type: "ai-prompt",
+            name: "Default thinking AI",
+            prompt: "Summarize normally",
+          },
+        ],
+      });
+
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+      expect(res.status).toBe(200);
+      expect(vi.mocked(createFnAgent)).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        defaultThinkingLevel: "high",
+      }));
+      expect(vi.mocked(createFnAgent)).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        defaultThinkingLevel: undefined,
+      }));
+    });
+
     it("streams buffered live events for a completed manual AI prompt run", async () => {
       vi.mocked(createFnAgent).mockClear();
       const mockStore = createMockAutomationStore();
@@ -1095,6 +1130,7 @@ describe("Automation routes", () => {
       expect(vi.mocked(createFnAgent)).toHaveBeenCalledWith(expect.objectContaining({
         tools: "coding",
         toolsAllowlist: undefined,
+        defaultThinkingLevel: undefined,
       }));
     });
 
@@ -1111,6 +1147,7 @@ describe("Automation routes", () => {
             taskTitle: "Weekly report",
             taskDescription: "Create weekly maintenance report",
             taskColumn: "todo",
+            thinkingLevel: " high ",
           },
         ],
       });
@@ -1130,6 +1167,7 @@ describe("Automation routes", () => {
           title: "Weekly report",
           description: "Create weekly maintenance report",
           column: "todo",
+          thinkingLevel: "high",
         }),
       );
       expect(res.body.result.stepResults[0]).toEqual(
@@ -1139,6 +1177,35 @@ describe("Automation routes", () => {
           output: expect.stringContaining("Created task FN-9001"),
         }),
       );
+    });
+
+    it("leaves manual create-task thinkingLevel unset when the step omits it", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "",
+        steps: [
+          {
+            id: "step-task-default",
+            type: "create-task",
+            name: "Create default follow-up",
+            taskDescription: "Create default maintenance report",
+          },
+        ],
+      });
+      const { app, store } = buildApp(mockStore);
+      (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-9005",
+        title: "",
+        description: "Create default maintenance report",
+      });
+
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+      expect(res.status).toBe(200);
+      expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+        thinkingLevel: undefined,
+      }));
     });
 
     it("create-task automation step remains successful without explicit tracking issue creation", async () => {

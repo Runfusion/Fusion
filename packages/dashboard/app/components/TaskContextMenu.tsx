@@ -87,6 +87,11 @@ export interface BuildTaskActionMenuModelOptions {
   isCheckingPrStatus?: boolean;
   onDelete?: () => void;
   onDuplicate?: () => void;
+  /*
+  FNXC:TaskContextMenu 2026-07-13-00:00:
+  Pre-execution task cards can open the same Planning Mode handoff as inline create, but only hosts that wire a planning route should expose the action so dock/plugin/detail surfaces never render a dead Plan item.
+  */
+  onPlan?: () => void;
   onOpenRefine?: () => void;
   onRespecify?: () => void;
   onRetry?: () => void;
@@ -128,6 +133,11 @@ function isDoneOrReview(column: string, flags?: TaskContextMenuColumnFlags): boo
 function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags) return flags.complete !== true && flags.archived !== true;
   return column !== "done" && column !== "archived";
+}
+
+export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
+  if (flags?.complete === true || flags?.archived === true) return false;
+  return column === "triage" || flags?.intake === true || flags?.hold === true;
 }
 
 function isDefaultWorkflowColumnSet(columns: readonly TaskContextMenuColumnMetadata[]): boolean {
@@ -240,6 +250,14 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
 
   if (hasDuplicateHandler) {
     actions.push({ id: "duplicate", label: t("taskDetail.duplicate.btn", "Duplicate"), onSelect: options.onDuplicate });
+  }
+
+  /*
+  FNXC:TaskContextMenu 2026-07-13-00:00:
+  Plan belongs only to pre-execution hold/intake cards and reuses the inline-create Planning Mode handoff. Omit it entirely unless the host injects `onPlan`, because Planning Mode creates a new task and unwired menu hosts must not show a disabled shell.
+  */
+  if (options.onPlan && isPreExecutionHoldColumn(task.column, currentColumnFlags)) {
+    actions.push({ id: "plan", label: t("taskDetail.plan.openPlanningBtn", "Plan"), onSelect: options.onPlan });
   }
 
   if (isDoneOrReview(task.column, currentColumnFlags) && options.onOpenRefine) {

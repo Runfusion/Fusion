@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   error text,
   summary text,
   thinking_level text,
+  validator_thinking_level text,
+  planning_thinking_level text,
   execution_mode text DEFAULT 'standard',
   token_usage_input_tokens integer,
   token_usage_output_tokens integer,
@@ -1425,6 +1427,8 @@ CREATE TABLE IF NOT EXISTS project.chat_rooms (
   project_id text,
   created_by text,
   status text NOT NULL DEFAULT 'active',
+  -- FNXC:Chat-ThinkingLevel 2026-07-13 (merge port): room-level reasoning-effort default.
+  thinking_level text,
   created_at text NOT NULL,
   updated_at text NOT NULL
 );

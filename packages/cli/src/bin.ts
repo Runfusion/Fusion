@@ -127,6 +127,7 @@ async function loadCommandHandlers() {
   const { runSettingsExport } = await import("./commands/settings-export.js");
   const { runSettingsImport } = await import("./commands/settings-import.js");
   const { runMcpList, runMcpAdd, runMcpEdit, runMcpRemove, runMcpEnable, runMcpDisable, runMcpImport, runMcpExport, runMcpValidate } = await import("./commands/mcp.js");
+  const { runWorkflowValidate } = await import("./commands/workflow.js");
   const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
   const { runBranchGroupList, runBranchGroupShow, runBranchGroupPromote, runBranchGroupAbandon } = await import("./commands/branch-group.js");
   const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
@@ -146,6 +147,7 @@ async function loadCommandHandlers() {
   const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable, runPluginSetupStatus, runPluginSetup, runPluginAvailable, runPluginSettings, runPluginRescan } = await import("./commands/plugin.js");
   const { runPluginCreate, runPluginNew } = await import("./commands/plugin-scaffold.js");
   const { runPluginDev } = await import("./commands/plugin-dev.js");
+  const { runPluginPublish } = await import("./commands/plugin-publish.js");
   const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
   const { runResearchCreate, runResearchList, runResearchShow, runResearchExport, runResearchCancel, runResearchRetry } = await import("./commands/research.js");
   const { runExperimentFinalize } = await import("./commands/experiment-finalize.js");
@@ -205,6 +207,7 @@ async function loadCommandHandlers() {
     runMcpImport,
     runMcpExport,
     runMcpValidate,
+    runWorkflowValidate,
     runGitStatus,
     runGitFetch,
     runGitPull,
@@ -272,6 +275,7 @@ async function loadCommandHandlers() {
     runPluginCreate,
     runPluginNew,
     runPluginDev,
+    runPluginPublish,
     runSkillsSearch,
     runSkillsInstall,
     runResearchCreate,
@@ -414,6 +418,8 @@ PR:
                                       Export Fusion MCP JSON with secret references only
   fn mcp validate [--scope <global|project|effective>] [--json]
                                       Validate MCP definitions without revealing secrets
+  fn workflow validate <id> | --file <path> [--json]
+                                      Dry-run validate a workflow IR without creating or mutating it
 
   fn git status              Show current branch, commit, dirty state, ahead/behind
   fn git push                Push current branch
@@ -465,6 +471,8 @@ PR:
   fn plugin create <name>           Scaffold a new plugin project
   fn plugin new <name>              Scaffold a standalone publishable plugin project
   fn plugin dev <path>              Build, install, and hot-reload a plugin locally
+  fn plugin publish <path> [--dry-run] [--previous-version <semver>]
+                                      Preflight a plugin before manual pack/publish
   fn skills search <query>            Search skills.sh for agent skills
   fn skills search <query> --limit 5  Limit results
   fn skills install <owner/repo>      Install skills from a source
@@ -718,6 +726,7 @@ async function main() {
     runMcpImport,
     runMcpExport,
     runMcpValidate,
+    runWorkflowValidate,
     runGitStatus,
     runGitFetch,
     runGitPull,
@@ -785,6 +794,7 @@ async function main() {
     runPluginCreate,
     runPluginNew,
     runPluginDev,
+    runPluginPublish,
     runSkillsSearch,
     runSkillsInstall,
     runResearchCreate,
@@ -1803,6 +1813,23 @@ async function main() {
         break;
       }
 
+      case "workflow": {
+        const subcommand = args[1];
+        switch (subcommand) {
+          case "validate": {
+            const file = getFlagValue(args, "--file");
+            const workflowId = file ? undefined : args[2];
+            await runWorkflowValidate({ workflowId, file, projectName, json: args.includes("--json") });
+            break;
+          }
+          default:
+            console.error(`Unknown subcommand: workflow ${subcommand || ""}`);
+            console.log("Try: fn workflow validate <id> | --file <path> [--json]");
+            process.exit(1);
+        }
+        break;
+      }
+
 
       case "git": {
         const subcommand = args[1];
@@ -2173,9 +2200,24 @@ async function main() {
             });
             break;
           }
+          case "publish": {
+            const publishArgs = args.slice(2);
+            const previousVersion = getFlagValue(publishArgs, "--previous-version");
+            const pluginPath = publishArgs.find((value, index) => {
+              if (value.startsWith("--")) return false;
+              return !(publishArgs[index - 1] === "--previous-version");
+            });
+            if (!pluginPath) { console.error("Usage: fn plugin publish <path> [--dry-run] [--previous-version <semver>]"); process.exit(1); }
+            await runPluginPublish(pluginPath, {
+              dryRun: args.includes("--dry-run"),
+              previousVersion,
+              projectName,
+            });
+            break;
+          }
           default:
             console.error(`Unknown subcommand: plugin ${sub || ""}`);
-            console.log("Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | available | settings | rescan | setup-status | setup | create | new | dev");
+            console.log("Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | available | settings | rescan | setup-status | setup | create | new | dev | publish");
             process.exit(1);
         }
         break;

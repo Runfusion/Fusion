@@ -10,6 +10,9 @@ Agent-facing docs must preserve the workflow movement boundary: agents can assig
 
 FNXC:WorkflowRouting 2026-06-30-09:20:
 Permanent agents and the published extension now have governed workflow authoring, settings, trait-inspection, and selection tools; docs must describe the broad tool surface while preserving the narrow routing permission boundary.
+
+FNXC:WorkflowAuthoringTools 2026-07-12-00:00:
+Workflow validation is a read-only authoring support tool: agents can run the create/update validator and inspect typed failures, but the tool must not persist workflow rows or count as a mutation gate.
 -->
 
 ## CLI session actions
@@ -37,7 +40,7 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
 - Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write` and `fn_task_document_read`; because neither lane has an ambient task, both tools require an explicit `task_id`.
 - Agent workflow-routing tools follow an intent boundary: agents may select or change a task workflow only when the user explicitly requested that workflow or when the agent created the task. Executors must not call `fn_workflow_select` to reroute the task they are executing unless the task instructions or a user steering comment explicitly asks for the workflow change. Lanes without an ambient task, including dashboard chat/planning and published/pi extension calls outside a task, must pass an explicit `task_id`; task-bound executor paths may default to the current task.
 - Executor, heartbeat, and dashboard chat sessions expose artifact registry tools so agents can publish and inspect multi-type deliverables without relying on the dashboard gallery. Planning sessions intentionally exclude artifact tools until they can thread the existing `MessageStore` dependency.
-- Permanent/custom heartbeat agents and the published/pi extension receive the broad coordination and work-discovery tool surface instead of a narrowly curated subset: read-only task discovery (`fn_task_list`, `fn_task_show`, `fn_task_search`) for work discovery and duplicate avoidance, workflow discovery and authoring (`fn_workflow_list`, `fn_workflow_get`, `fn_workflow_create`, `fn_workflow_update`, `fn_workflow_delete`, `fn_workflow_settings`, `fn_trait_list`), governed research (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`), structured clarification (`fn_ask_question`), artifact, memory, messaging, goal, evaluation, identity, and delegation tools. Task-scoped heartbeat sessions also expose current-task workflow selection and promotion (`fn_workflow_select`, `fn_task_promote`); no-task heartbeats omit those because they have no ambient task, while no-task extension/chat/planning lanes expose `fn_workflow_select` but require explicit `task_id`. Workflow creation, updates, settings writes, deletion, and selection remain permission-gated task/agent mutations even when the tools are exposed in the lane. Prompt-injectable lanes strip workflow approval-bypass flags during `fn_workflow_create`/`fn_workflow_update`; executor-owner paths are the only authoring path that may preserve those flags. Executor-only worktree/workspace tools such as `fn_run_verification` and `fn_acquire_repo_worktree` remain out of the ambient heartbeat lane until that lane owns the required worktree/workspace context. The task read tools are store-backed, text-only, and action-gate-recognized as read-only; dangerous actions are controlled at invocation time by each agent's `AgentPermissionPolicy` through the action gate (allow / require approval / block), not by withholding governed tools from the session.
+- Permanent/custom heartbeat agents and the published/pi extension receive the broad coordination and work-discovery tool surface instead of a narrowly curated subset: read-only task discovery (`fn_task_list`, `fn_task_show`, `fn_task_search`) for work discovery and duplicate avoidance, workflow discovery and authoring (`fn_workflow_list`, `fn_workflow_get`, `fn_workflow_validate`, `fn_workflow_create`, `fn_workflow_update`, `fn_workflow_delete`, `fn_workflow_settings`, `fn_trait_list`), governed research (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`), structured clarification (`fn_ask_question`), artifact, memory, messaging, goal, evaluation, identity, and delegation tools. Task-scoped heartbeat sessions also expose current-task workflow selection and promotion (`fn_workflow_select`, `fn_task_promote`); no-task heartbeats omit those because they have no ambient task, while no-task extension/chat/planning lanes expose `fn_workflow_select` but require explicit `task_id`. Workflow creation, updates, settings writes, deletion, and selection remain permission-gated task/agent mutations even when the tools are exposed in the lane. Prompt-injectable lanes strip workflow approval-bypass flags during `fn_workflow_create`/`fn_workflow_update`; executor-owner paths are the only authoring path that may preserve those flags. Executor-only worktree/workspace tools such as `fn_run_verification` and `fn_acquire_repo_worktree` remain out of the ambient heartbeat lane until that lane owns the required worktree/workspace context. The task read tools are store-backed, text-only, and action-gate-recognized as read-only; dangerous actions are controlled at invocation time by each agent's `AgentPermissionPolicy` through the action gate (allow / require approval / block), not by withholding governed tools from the session.
 - `agent.taskId` is an active-execution linkage, not durable ownership. It may legitimately point at a `todo`/`triage` task only while the agent has live run or executor-active proof; task-move sync and self-healing clear stale parked, terminal, or unresolved links otherwise. `fn_list_agents` and `fn_agent_show` therefore include column context in the human-readable `Current Task` line, such as `(triage)`, `(in-progress)`, `(not active — done)`, or `(unresolved)`, so coordinators can distinguish transient planning ownership from drift.
 - `fn_agent_show` prints `Last Error`, `Pause Reason`, and compact `Error Recovery` counter details when present. `fn_list_agents` prints the same diagnostics only for agents currently in `error` or `paused`, keeping healthy rows compact while making durable-agent recovery state inspectable without direct DB/log access.
 
@@ -1272,17 +1275,19 @@ Heartbeat runs from the Agents panel run on a **separate control-plane lane** th
 Cadence:
 - **Immediate startup audit**: runs once in `start()` after lifecycle watchers are attached
 - **Periodic audit**: runs every 60s while the scheduler is active
-- **Cleanup**: periodic sweep interval is cleared in `stop()`
+- **FN-7939 audit watchdog**: an independent watchdog supervises the 60s audit driver and re-arms/runs it when the audit liveness timestamp is stale for a bounded multiple of the cadence
+- **Cleanup**: periodic sweep and watchdog intervals are cleared in `stop()`
 
 Repair eligibility:
 - Durable (non-ephemeral/task-worker) agent
 - `runtimeConfig.enabled !== false`
 - Agent state is tickable: `active`, `running`, or `idle`
-- Agent is missing from the scheduler's in-memory `timers` map
+- Agent is missing from the scheduler's in-memory `timers` map, or has a present timer entry but `lastHeartbeatAt` is stale beyond the repair threshold (zombie timer)
 
 Repair outcomes:
 - **Missing timer, not stale**: timer is re-armed and INFO diagnostics are logged (`agentId`, resolved interval, elapsed time since `lastHeartbeatAt`)
-- **Missing timer, stale**: timer is re-armed, WARN diagnostics are logged, and `agent.metadata.heartbeatTimerRepair` is updated (`repairedAt`, `staleAtRepair`, `elapsedMs`, `staleThresholdMs`)
+- **Missing/present timer, stale**: timer is re-armed, WARN diagnostics are logged, and `agent.metadata.heartbeatTimerRepair` is updated (`repairedAt`, `staleAtRepair`, `staleRepairReason`)
+- **Repeated non-advancing zombie repair**: after the bounded scheduler threshold, metadata includes the consecutive count/escalation flag and logs `reason=heartbeat-rearm-nonadvancing-escalated` instead of silently churning forever
 
 Stale threshold:
 - Repair staleness defaults to **`2 × heartbeatIntervalMs`**

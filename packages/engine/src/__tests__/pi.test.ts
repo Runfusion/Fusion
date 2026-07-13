@@ -75,6 +75,23 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
     inMemory: vi.fn(() => ({})),
   },
 }));
+// FNXC:McpConfig 2026-07-13: Mock connectMcpSessionTools so createFnAgent doesn't attempt real MCP server bootstrap (which fails in tests because the server binary doesn't exist). MAIN-008 made bootstrap failures throw McpSessionBootstrapError; this mock returns a clean toolset so the MCP forwarding path is exercised without a live server.
+vi.mock("../mcp-session-tools.js", () => ({
+  connectMcpSessionTools: vi.fn().mockResolvedValue({
+    tools: [],
+    connected: [],
+    skipped: [],
+    dispose: vi.fn().mockResolvedValue(undefined),
+  }),
+  McpSessionBootstrapError: class McpSessionBootstrapError extends Error {
+    failures: Array<{ name: string; reason: string }>;
+    constructor(failures: Array<{ name: string; reason: string }>) {
+      super("MCP session bootstrap failed");
+      this.name = "McpSessionBootstrapError";
+      this.failures = failures;
+    }
+  },
+}));
 
 // Import mock accessors after mocking (must use dynamic import for hoisted mocks)
 let resolveSessionSkillsMock: ReturnType<typeof vi.fn>;

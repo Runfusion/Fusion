@@ -1385,6 +1385,7 @@
     "stopGeneration": "Stop generation",
     "thinking": "Thinking",
     "thinkingLabel": "Thinking",
+    "thinkingLevelButton": "Thinking level",
     "thinkingStatus": "Thinking…",
     "toolArgsLabel": "args",
     "toolArgsPreview": "args: {{summary}}",
@@ -1397,7 +1398,13 @@
     "unreadMessages": "Unread messages",
     "untitledSession": "Untitled",
     "workingStatus": "Working…",
-    "you": "You"
+    "you": "You",
+    "modelAgentSection": "Model / Agent",
+    "thinkingLevelSection": "Thinking level",
+    "noModelsAvailable": "No models available",
+    "currentAgentTarget": "Current agent: {{name}}",
+    "currentModelTarget": "Current model: {{model}}",
+    "currentDefaultTarget": "Using the default chat target"
   },
   "chatRooms": {
     "error": {
@@ -5685,6 +5692,8 @@
       "title": "Appearance",
       "openTasksInRightSidebarHelp": "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
       "openMobileTasksInPopupHelp": "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
+      "taskPopupsBoardListOnly": "Keep task popups on their Board/List view",
+      "taskPopupsBoardListOnlyHelp": "When enabled, each open task-detail popup appears only on the Board or List view where it was opened. Switching to another view hides it without closing; returning to that view restores it in the same position. Default: disabled.",
       "taskDetailChatFirstHelp": "Off by default: task details list Activity first and omitted non-done opens land on Activity. Turn on to restore Chat-first order/default; explicit Chat links still work either way.",
       "showCostBadgeOnCards": "Show cost badges on task cards",
       "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge."
@@ -6406,7 +6415,25 @@
       "whenEnabledTasksCreatedWithoutATitleBut": " When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title (max 60 characters). The same model is also used to generate fallback merge commit message bodies when the branch's commit log is empty (e.g. squash merges with no unique commits), and GitHub tracking issue titles when a tracked task has no title yet. Default: disabled. ",
       "autoSelectModelPresetHint": "Default: disabled.",
       "prTitlePromptInstructionsHelp": "Guides the AI-generated Create PR title. Leave blank to use the default PR metadata prompt. No default — unset.",
-      "prDescriptionPromptInstructionsHelp": "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default — unset."
+      "prDescriptionPromptInstructionsHelp": "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default — unset.",
+      "chatHeading": "Chat",
+      "chatDescription": "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.",
+      "chatNewSessionMode": "New Chat behavior",
+      "chatNewSessionModePrompt": "Prompt for model each time",
+      "chatNewSessionModeAlwaysDefault": "Always use configured default",
+      "chatNewSessionModeHelp": "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
+      "chatDefaultKind": "Chat default target",
+      "chatDefaultKindModel": "Model",
+      "chatDefaultKindAgent": "Agent",
+      "chatDefaultModel": "Chat Default Model",
+      "selectChatDefaultModel": "Select a chat default model",
+      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.",
+      "chatDefaultAgent": "Chat Default Agent",
+      "loadingAgents": "Loading agents…",
+      "selectChatDefaultAgent": "Select a chat default agent",
+      "chatDefaultAgentEmpty": "No agents are available for this project yet.",
+      "chatDefaultAgentHelp": "Agent-mode New Chat starts a Direct chat with the selected durable agent.",
+      "chatDefaultReset": "Reset Chat default"
     },
     "remote": {
       "acceptRoutes": " Accept routes ",
@@ -8335,7 +8362,6 @@
     "decreaseFontSize": "Decrease terminal font size",
     "exitLabel": "Exit: {{code}}",
     "failedToStartTerminal": "Failed to start terminal: {{error}}",
-    "helpText": "Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close",
     "increaseFontSize": "Increase terminal font size",
     "initializeError": "Terminal UI failed to initialize: {{error}}",
     "newSession": "New Session",

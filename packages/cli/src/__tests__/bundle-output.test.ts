@@ -12,8 +12,16 @@ import {
 } from "./bundle-output-helpers";
 import { resolveClaudeCliExtensionFromModuleUrl } from "../commands/claude-cli-extension";
 import { resolveDroidCliExtensionFromModuleUrl } from "../commands/droid-cli-extension";
+import { RUNTIME_PLUGIN_IDS } from "../plugins/staged-bundled-plugin-ids";
 
 const tsupConfigPath = join(cliRoot, "tsup.config.ts");
+const bundlePluginEntryPluginIds = [
+  ...RUNTIME_PLUGIN_IDS,
+  "fusion-plugin-dependency-graph",
+  "fusion-plugin-roadmap",
+  "fusion-plugin-compound-engineering",
+  "fusion-plugin-linear-import",
+] as const;
 
 describe("CLI bundle output", () => {
   beforeAll(() => {
@@ -220,6 +228,28 @@ describe("CLI bundle output", () => {
     };
     expect(stagedPkg.exports?.["."]?.import).toBe("./bundled.js");
     expect(stagedPkg.dependencies?.["@fusion/core"]).toBeUndefined();
+  });
+
+  it("bundled plugin outputs do not import private @fusion/core at runtime", () => {
+    const inspectedPluginIds: string[] = [];
+
+    for (const pluginId of bundlePluginEntryPluginIds) {
+      const bundledPath = join(cliRoot, "dist", "plugins", pluginId, "bundled.js");
+      if (!existsSync(bundledPath)) {
+        continue;
+      }
+
+      inspectedPluginIds.push(pluginId);
+      const bundled = readFileSync(bundledPath, "utf-8");
+      expect(bundled, `${pluginId} should not keep a bare @fusion/core import`).not.toMatch(
+        /from\s+["']@fusion\/core["']/,
+      );
+      expect(bundled, `${pluginId} should not mention the private @fusion/core package`).not.toContain(
+        '"@fusion/core"',
+      );
+    }
+
+    expect(inspectedPluginIds.length).toBeGreaterThan(0);
   });
 
   it("dist/plugins/fusion-plugin-whatsapp-chat/ is staged with a valid manifest", () => {

@@ -134,12 +134,18 @@ FN-7862 requires the task id, the first badge row, and the right-side controls t
 /*
 FNXC:TaskCardLayout 2026-07-12-00:00:
 FN-7871 requires the mono task id to read optically centered with the first-row header badges and right-side icons/chips. Keep the outer FN-7862 flex-start first-row anchor and FN-7837 middle-badge wrapping intact; use a token-derived visual nudge on the id itself because its line-height: 1 glyph box sits slightly high inside the shared chip-height row.
+
+FNXC:TaskCardLayout 2026-07-13-01:01:
+Lock the id to the same chip-height row as .card-header-actions so the whole right cluster (Actions/⋯/size) shares one optical baseline with FN-#### on desktop and mobile.
 */
 .card-id {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
+  box-sizing: border-box;
+  height: var(--card-chip-height);
   min-height: var(--card-chip-height);
+  max-height: var(--card-chip-height);
   line-height: 1;
   transform: translateY(calc(var(--space-xs) / 4));
   font-size: 0.6875rem;
@@ -1436,6 +1442,9 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
 /*
 FNXC:TaskCardLayout 2026-07-12-00:00:
 FN-7889 requires the right-side size/menu icons and action chips to share the mono task id's optical centerline. Mirror FN-7871's token-derived id nudge on the whole right cluster while preserving FN-7862's flex-start first-row anchor and FN-7837's middle-badge wrap/size-chip-not-orphaned contract.
+
+FNXC:TaskCardLayout 2026-07-13-01:00:
+The whole right cluster (Actions/Send-back, ⋯ menu, size badge) must share the task-id first-row baseline. Lock the cluster to the chip height so a larger touch-target child (28px ⋯) cannot grow the flex line and sink Actions/size below the id; overflow stays visible so the hit box can extend outside the locked row.
 */
 .card-header-actions {
   display: flex;
@@ -1443,8 +1452,12 @@ FN-7889 requires the right-side size/menu icons and action chips to share the mo
   align-self: flex-start;
   flex: 0 0 auto;
   gap: var(--space-xs);
+  box-sizing: border-box;
+  height: var(--card-chip-height);
   min-height: var(--card-chip-height);
+  max-height: var(--card-chip-height);
   margin-left: auto;
+  overflow: visible;
   transform: translateY(calc(var(--space-xs) / 4));
 }
 
@@ -1521,6 +1534,7 @@ short-landscape variant (FN-5751 lesson: never a desktop-only or portrait-only f
   width: 20px;
   height: 20px;
   padding: 0;
+  line-height: 1;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -1547,13 +1561,21 @@ short-landscape variant (FN-5751 lesson: never a desktop-only or portrait-only f
   outline-offset: 1px;
 }
 
-/* FNXC:TaskCardMenu 2026-07-10-12:00: mobile has no hover — the ⋯ affordance must be always visible
-   with a comfortable touch target. Includes short-landscape phones per the project mobile MQ. */
+/*
+FNXC:TaskCardMenu 2026-07-10-12:00:
+Mobile has no hover — the ⋯ affordance must be always visible with a comfortable touch target. Includes short-landscape phones per the project mobile MQ.
+
+FNXC:TaskCardLayout 2026-07-13-00:59:
+The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-actions' flex line. Without a negative vertical margin (same cancel pattern as .card-edit-btn/.card-delete-btn), align-items:center sinks the Actions/Send-back trigger and size badge below the mono task-id baseline on mobile. Keep the 28px hit box; cancel only the layout contribution so the right cluster stays vertically aligned with the task id (follow-up to FN-7933's within-cluster centerline).
+*/
 @media (max-width: 768px), (max-height: 480px) {
   .card-menu-btn {
     opacity: 1;
     width: 28px;
     height: 28px;
+    /* Match edit/delete: cancel 28px layout growth while preserving the larger tap target. */
+    margin: -6px 0;
+    line-height: 1;
     border-radius: var(--radius-md);
   }
 
@@ -1650,21 +1672,31 @@ too so future divergence doesn't have to rediscover the shared selector group.
   position: relative;
 }
 
+/*
+FNXC:TaskCardLayout 2026-07-12-00:00:
+FN-7928 requires the Send-back/Actions trigger, ⋯ menu button, and size badge to share one optical vertical center inside .card-header-actions. Normalize their line boxes while preserving FN-7889's cluster↔id transform nudge, FN-7862's flex-start header anchor, FN-7837's middle-badge wrap/size-chip-not-orphaned contract, and FN-4351's mobile no-min-height rule.
+
+FNXC:TaskCardLayout 2026-07-13-01:03:
+The Actions/Send-back text+chevron chip still reads a little low against the ⋯ icon and single-letter size badge even after the locked chip-height row. Use a quarter-space-xs optical raise (and box-sizing so the 1px border does not inflate the flex cross size) so the three controls share one centerline.
+*/
 .card-send-back-btn {
   display: inline-flex;
   align-items: center;
+  box-sizing: border-box;
   gap: calc(var(--space-xs) / 2);
   padding: calc(var(--space-xs) / 4)
     calc(var(--space-sm) - (var(--space-xs) / 2));
   margin-left: var(--space-xs);
   font-size: 0.625rem;
   font-weight: 500;
+  line-height: 1;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
+  transform: translateY(calc(var(--space-xs) / -4));
   transition: opacity var(--transition-fast), background var(--transition-fast),
     color var(--transition-fast), border-color var(--transition-fast);
 }
@@ -1816,9 +1848,40 @@ too so future divergence doesn't have to rediscover the shared selector group.
     min-height: var(--card-chip-height-mobile);
   }
 
+  /*
+  FNXC:TaskCardLayout 2026-07-13-00:00:
+  FN-7933 follows FN-7928 by keeping the Send-back/Actions trigger, ⋯ menu button, and size badge on one optical vertical center inside the header actions at the mobile breakpoint. Preserve FN-7889's cluster↔id nudge, FN-7862's flex-start header anchor, FN-7837's badge-wrap/size-chip grouping, FN-7928's desktop centering, and FN-4351's no-min-height mobile rule for the send-back/menu buttons.
+
+  FNXC:TaskCardLayout 2026-07-13-01:01:
+  On mobile the entire right row (Actions/Send-back + ⋯ + size) must sit on the same first-row baseline as the task id. Lock the cluster (and the mono id) to the mobile chip height so the 28px ⋯ touch target cannot stretch the row and drop the whole right cluster below FN-#### / DONE. overflow:visible keeps the larger hit boxes paintable outside the locked row.
+  */
+  .card-id {
+    height: var(--card-chip-height-mobile);
+    min-height: var(--card-chip-height-mobile);
+    max-height: var(--card-chip-height-mobile);
+    box-sizing: border-box;
+  }
+
   .card-header-actions {
+    align-items: center;
     gap: calc(var(--space-xs) / 2);
     flex-shrink: 0;
+    height: var(--card-chip-height-mobile);
+    min-height: var(--card-chip-height-mobile);
+    max-height: var(--card-chip-height-mobile);
+    overflow: visible;
+  }
+
+  .card-menu-btn,
+  .card-size-badge {
+    line-height: 1;
+  }
+
+  /* Keep Actions/Send-back on the locked row centerline (no extra vertical box growth). */
+  .card-send-back {
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
   }
 
   /* FN-4351/FN-3965: keep secondary actions visible on touch, but compact per WCAG 2.5.8 because the card tap surface is the primary target for opening task detail. */
@@ -1830,6 +1893,11 @@ too so future divergence doesn't have to rediscover the shared selector group.
 
   .card-send-back-btn {
     opacity: 1;
+    line-height: 1;
+    margin-top: 0;
+    margin-bottom: 0;
+    /* Keep the base optical raise so Actions does not sit below ⋯ / size on the locked mobile row. */
+    transform: translateY(calc(var(--space-xs) / -4));
   }
 
   .card-promote-action.card-send-back-btn {
@@ -1892,6 +1960,10 @@ too so future divergence doesn't have to rediscover the shared selector group.
   .card-oversight-badge {
     font-size: 0.5625rem;
     padding: calc(var(--space-xs) / 4) calc((var(--space-xs) * 3) / 2);
+  }
+
+  .card-size-badge {
+    padding-block: calc((var(--space-xs) / 4) + var(--btn-border-width));
   }
 
   .card-stalled-review-reason {

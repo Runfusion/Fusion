@@ -1,15 +1,19 @@
 import { describe, it, expect } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   createWorkflowAuthoringTools,
   createWorkflowListTool,
   createWorkflowGetTool,
+  createWorkflowValidateTool,
   createWorkflowSelectTool,
   createWorkflowCreateTool,
   createWorkflowUpdateTool,
   createWorkflowDeleteTool,
 } from "../index.js";
 import { createWorkflowSettingsTool } from "../agent-tools.js";
-import type { TaskStore } from "@fusion/core";
+import { parseWorkflowIr, TaskStore } from "@fusion/core";
 
 /**
  * U11 / R12 drift guard (engine half): the workflow-authoring tool surface that
@@ -28,6 +32,7 @@ import type { TaskStore } from "@fusion/core";
 const REQUIRED_WORKFLOW_TOOLS = [
   "fn_workflow_list",
   "fn_workflow_get",
+  "fn_workflow_validate",
   "fn_workflow_select",
   "fn_workflow_create",
   "fn_workflow_update",
@@ -49,6 +54,7 @@ describe("workflow tool exposure (engine factories)", () => {
   it("each fn_workflow_* factory produces a tool with the expected name", () => {
     expect(createWorkflowListTool(fakeStore).name).toBe("fn_workflow_list");
     expect(createWorkflowGetTool(fakeStore).name).toBe("fn_workflow_get");
+    expect(createWorkflowValidateTool(fakeStore).name).toBe("fn_workflow_validate");
     expect(createWorkflowSelectTool(fakeStore, "FN-1").name).toBe("fn_workflow_select");
     expect(createWorkflowCreateTool(fakeStore).name).toBe("fn_workflow_create");
     expect(createWorkflowUpdateTool(fakeStore).name).toBe("fn_workflow_update");
@@ -63,6 +69,68 @@ describe("workflow tool exposure (engine factories)", () => {
  * prompt-injectable agent lane. The executor lane omits the option (project-
  * owner escape hatch) and the flags pass through unchanged.
  */
+describe("fn_workflow_validate dry-run", () => {
+  const run = (tool: { execute: (...a: any[]) => Promise<any> }, params: unknown) =>
+    tool.execute("call-1", params, undefined, undefined, undefined) as Promise<{
+      isError?: boolean; details: any; content: { type: string; text?: string }[];
+    }>;
+
+  const validIr = () => ({
+    version: "v1" as const,
+    name: "Valid",
+    nodes: [
+      { id: "start", kind: "start" },
+      { id: "end", kind: "end" },
+    ],
+    edges: [{ from: "start", to: "end", condition: "success" as const }],
+  });
+
+  async function withStore<T>(fn: (store: TaskStore) => Promise<T>): Promise<T> {
+    const dir = await mkdtemp(join(tmpdir(), "workflow-validate-tool-"));
+    const store = new TaskStore(dir);
+    await store.init();
+    try {
+      return await fn(store);
+    } finally {
+      await store.close?.().catch(() => {});
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("returns valid true for a valid IR and creates no workflow row", async () => {
+    await withStore(async (store) => {
+      const before = await store.listWorkflowDefinitions();
+      const res = await run(createWorkflowValidateTool(store), { ir: validIr() });
+      const after = await store.listWorkflowDefinitions();
+      expect(res.isError).toBeFalsy();
+      expect(res.details).toEqual({ valid: true });
+      expect(after).toHaveLength(before.length);
+    });
+  });
+
+  it("returns valid false with the same WorkflowIrError message create parsing would throw", async () => {
+    await withStore(async (store) => {
+      const malformed = { ...validIr(), nodes: [{ id: "start", kind: "start" }, { id: "start2", kind: "start" }, { id: "end", kind: "end" }] };
+      let expected = "";
+      try { parseWorkflowIr(malformed); } catch (err) { expected = err instanceof Error ? err.message : String(err); }
+      const res = await run(createWorkflowValidateTool(store), { ir: malformed });
+      expect(res.isError).toBeFalsy();
+      expect(res.details.valid).toBe(false);
+      expect(res.details.errors[0]).toMatchObject({ type: "workflow-ir", message: expected });
+    });
+  });
+
+  it("treats missing input and unknown workflow ids as tool errors", async () => {
+    await withStore(async (store) => {
+      const tool = createWorkflowValidateTool(store);
+      expect((await run(tool, {})).isError).toBe(true);
+      const missing = await run(tool, { workflow_id: "WF-NOPE" });
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0].text).toContain("not found");
+    });
+  });
+});
+
 describe("workflow authoring tools approval-flag stripping", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function captureStore(): { store: TaskStore; captured: { ir?: any } } {

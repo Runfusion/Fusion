@@ -233,6 +233,8 @@ export interface ChatSessionUpdateInput {
   modelProvider?: string | null;
   /** Model ID override */
   modelId?: string | null;
+  /** New agent target — switches the session from a model to an agent */
+  agentId?: string;
   /** Thinking/reasoning-effort override */
   thinkingLevel?: string | null;
 }
@@ -269,6 +271,12 @@ export interface ChatRoom {
   projectId: string | null;
   createdBy: string | null;
   status: ChatRoomStatus;
+  /** Optional room-level thinking/reasoning-effort default for all responders; NULL means inherit the resolved project/global default. */
+  /*
+   * FNXC:Chat-ThinkingLevel 2026-07-12-00:00:
+   * Chat Rooms model one conversation-level reasoning-effort default shared by every responder. Per-member thinking overrides are intentionally not represented here so room delivery preserves one predictable setting surface.
+   */
+  thinkingLevel: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -303,12 +311,16 @@ export interface ChatRoomCreateInput {
   description?: string | null;
   projectId?: string | null;
   createdBy?: string | null;
+  /** Optional room-level thinking/reasoning-effort default; undefined/NULL means inherit the resolved project/global default. */
+  thinkingLevel?: string | null;
 }
 
 export interface ChatRoomUpdateInput {
   name?: string;
   description?: string | null;
   status?: ChatRoomStatus;
+  /** Optional room-level thinking/reasoning-effort default; undefined leaves unchanged, NULL clears to inherit the resolved project/global default. */
+  thinkingLevel?: string | null;
 }
 
 export interface ChatRoomMessageCreateInput {

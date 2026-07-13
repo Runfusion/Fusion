@@ -19,13 +19,14 @@ import {
   X,
   Hash,
 } from "lucide-react";
-import { useChat, type ChatMessageInfo } from "../hooks/useChat";
+import { FN_AGENT_ID, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useViewportMode } from "./Header";
-import { updateGlobalSettings, type DiscoveredSkill } from "../api";
-import type { Agent } from "@fusion/core";
+import { fetchSettings, updateGlobalSettings, type DiscoveredSkill } from "../api";
+import { THINKING_LEVELS, type Agent, type Settings, type ThinkingLevel } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { AgentMentionPopup } from "./AgentMentionPopup";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProviderIcon } from "./ProviderIcon";
@@ -135,12 +136,6 @@ function formatRelativeTime(dateStr: string, t: TFunction<"app">): string {
   return date.toLocaleDateString();
 }
 
-/**
- * Constant agent ID for the built-in fn agent.
- * The chat system always uses createFnAgent with CHAT_SYSTEM_PROMPT regardless
- * of the agentId stored on the session. This ID serves as metadata only.
- */
-const FN_AGENT_ID = "__fn_agent__";
 const CHAT_SIDEBAR_DEFAULT_WIDTH = 280;
 const CHAT_SIDEBAR_MIN_WIDTH = 180;
 const CHAT_SIDEBAR_MAX_WIDTH = 500;
@@ -279,15 +274,19 @@ export function resolveSessionProvider(
 interface NewChatDialogProps {
   projectId?: string;
   defaultModel: DefaultModelSelection;
+  defaultKind?: "model" | "agent";
+  defaultAgentId?: string;
+  defaultThinkingLevel?: string;
+  defaultSelectedThinkingLevel?: string;
   onClose: () => void;
   onCreate: (input: { agentId: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }) => void;
 }
 
-function NewChatDialog({ projectId, defaultModel, onClose, onCreate }: NewChatDialogProps) {
+function NewChatDialog({ projectId, defaultModel, defaultKind, defaultAgentId, defaultThinkingLevel, defaultSelectedThinkingLevel, onClose, onCreate }: NewChatDialogProps) {
   const { t } = useTranslation("app");
-  const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
+  const [chatMode, setChatMode] = useState<"agent" | "model">(defaultKind ?? "agent");
   const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(defaultAgentId ?? "");
   const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, loading: modelsLoading, refresh } = useModelsCache();
   const defaultModelValue = defaultModel.provider && defaultModel.modelId
     ? `${defaultModel.provider}/${defaultModel.modelId}`
@@ -297,7 +296,7 @@ function NewChatDialog({ projectId, defaultModel, onClose, onCreate }: NewChatDi
    * FNXC:Chat-ThinkingLevel 2026-07-10-00:00:
    * New model-mode chats expose the shared inline thinking selector; an empty value means Default and is omitted from the create-session payload so the backend resolves project/global reasoning effort.
    */
-  const [thinkingLevel, setThinkingLevel] = useState<string>("");
+  const [thinkingLevel, setThinkingLevel] = useState<string>(defaultSelectedThinkingLevel ?? "");
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>(cachedFavoriteProviders);
   const [favoriteModels, setFavoriteModels] = useState<string[]>(cachedFavoriteModels);
 
@@ -310,11 +309,31 @@ function NewChatDialog({ projectId, defaultModel, onClose, onCreate }: NewChatDi
   }, [cachedFavoriteModels]);
 
   useEffect(() => {
+    if (defaultKind) {
+      setChatMode(defaultKind);
+    }
+  }, [defaultKind]);
+
+  useEffect(() => {
+    if (!defaultAgentId) {
+      return;
+    }
+    setSelectedAgentId((current) => current || defaultAgentId);
+  }, [defaultAgentId]);
+
+  useEffect(() => {
     if (!defaultModelValue) {
       return;
     }
     setSelectedModel((current) => current || defaultModelValue);
   }, [defaultModelValue]);
+
+  useEffect(() => {
+    if (!defaultSelectedThinkingLevel) {
+      return;
+    }
+    setThinkingLevel((current) => current || defaultSelectedThinkingLevel);
+  }, [defaultSelectedThinkingLevel]);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
     const currentFavorites = favoriteProviders;
@@ -446,7 +465,7 @@ function NewChatDialog({ projectId, defaultModel, onClose, onCreate }: NewChatDi
                   showThinkingLevel
                   thinkingLevel={thinkingLevel}
                   onThinkingLevelChange={setThinkingLevel}
-                  defaultThinkingLevel="off"
+                  defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                 />
               )}
             </div>
@@ -501,6 +520,53 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     };
   }, [projectId]);
 
+  const [chatSettings, setChatSettings] = useState<Settings | null>(null);
+  /*
+  FNXC:Chat-ThinkingLevel 2026-07-12-20:05:
+  The chat Default thinking-level labels must surface the same resolved project/global default every dashboard model picker reads from Settings (`defaultThinkingLevel ?? "off"`) instead of hardcoding `off`.
+  This fetch only corrects labels in NewChatDialog and ChatThinkingLevelControl; send-time resolution remains centralized in `resolveExecutorThinkingLevel` in dashboard chat.ts.
+  */
+  useEffect(() => {
+    let cancelled = false;
+    setChatSettings(null);
+    fetchSettings(projectId)
+      .then((settings) => {
+        if (!cancelled) {
+          setChatSettings(settings);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChatSettings(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+  const resolvedDefaultThinkingLevel = chatSettings?.defaultThinkingLevel ?? "off";
+  const chatDefaultTarget = useMemo(() => {
+    /*
+    FNXC:ChatModels 2026-07-12-20:45:
+    New Chat has one project-scoped default target resolver shared by every affordance. A complete agent default wins only when kind=agent; a complete model pair wins only when kind=model; incomplete always-default settings fall back to the picker instead of creating an unroutable session.
+    */
+    if (chatSettings?.chatDefaultKind === "agent" && chatSettings.chatDefaultAgentId) {
+      return {
+        kind: "agent" as const,
+        agentId: chatSettings.chatDefaultAgentId,
+      };
+    }
+    if (chatSettings?.chatDefaultKind === "model" && chatSettings.chatDefaultModelProvider && chatSettings.chatDefaultModelId) {
+      return {
+        kind: "model" as const,
+        modelProvider: chatSettings.chatDefaultModelProvider,
+        modelId: chatSettings.chatDefaultModelId,
+        thinkingLevel: chatSettings.chatDefaultThinkingLevel,
+      };
+    }
+    return null;
+  }, [chatSettings]);
+
   const {
     activeSession,
     sessionsLoading,
@@ -514,6 +580,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     createSession,
     archiveSession,
     renameSession,
+    setSessionModel,
+    setSessionThinkingLevel,
     deleteSession,
     sendMessage,
     editMessageAndResend,
@@ -564,8 +632,14 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const [createRoomOpen, setCreateRoomOpen] = useState(false);
   const { agentsMap: cachedAgentsMap } = useAgentsMapCache(projectId);
   const agentsMap = useMemo(() => (chatAgentsMap.size > 0 ? chatAgentsMap : cachedAgentsMap), [cachedAgentsMap, chatAgentsMap]);
-  const { models, defaultProvider, defaultModelId } = useModelsCache();
+  const { models, favoriteProviders, favoriteModels, defaultProvider, defaultModelId } = useModelsCache();
   const defaultModel = useMemo<DefaultModelSelection>(() => ({ provider: defaultProvider, modelId: defaultModelId }), [defaultModelId, defaultProvider]);
+  const dialogDefaultModel = useMemo<DefaultModelSelection>(() => {
+    if (chatDefaultTarget?.kind === "model") {
+      return { provider: chatDefaultTarget.modelProvider, modelId: chatDefaultTarget.modelId };
+    }
+    return defaultModel;
+  }, [chatDefaultTarget, defaultModel]);
   const { skills: discoveredSkills, loading: skillsLoading } = useDiscoveredSkillsCache(projectId);
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
@@ -630,6 +704,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
+  const clippedMessageFrameRef = useRef<number | null>(null);
+  const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
   // FN-5365: mirror QuickChat's mid-dismiss suppress gate so transient
   // visualViewport shrink samples do not jerk the chat thread/composer.
   const suppressVvShrinkRef = useRef(false);
@@ -904,6 +980,36 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return container.querySelector<HTMLElement>(`.chat-message[data-message-id="${messageId.replace(/"/g, "\\\"")}"]`);
   }, []);
 
+  const updateTopClippedMessages = useCallback(() => {
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+
+    const containerTop = messagesContainer.getBoundingClientRect().top;
+    const nextIds = new Set<string>();
+    messagesContainer.querySelectorAll<HTMLElement>(".chat-message--assistant:not(.chat-message--failure)[data-message-id]").forEach((element) => {
+      const messageId = element.getAttribute("data-message-id");
+      if (!messageId) return;
+      if (element.getBoundingClientRect().top < containerTop) {
+        nextIds.add(messageId);
+      }
+    });
+
+    setTopClippedMessageIds((previousIds) => {
+      if (previousIds.size === nextIds.size && Array.from(previousIds).every((id) => nextIds.has(id))) {
+        return previousIds;
+      }
+      return nextIds;
+    });
+  }, []);
+
+  const scheduleTopClippedMessageUpdate = useCallback(() => {
+    if (!messagesContainerRef.current || clippedMessageFrameRef.current !== null) return;
+    clippedMessageFrameRef.current = window.requestAnimationFrame(() => {
+      clippedMessageFrameRef.current = null;
+      updateTopClippedMessages();
+    });
+  }, [updateTopClippedMessages]);
+
   const captureScrollSnapshot = useCallback(() => {
     const messagesContainer = messagesContainerRef.current;
     const threadId = getActiveThreadId();
@@ -938,7 +1044,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setIsUserScrolling(!atBottom);
     isUserScrollingRef.current = !atBottom;
     captureScrollSnapshot();
-  }, [captureScrollSnapshot]);
+    scheduleTopClippedMessageUpdate();
+  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate]);
 
   const anchorToBottom = useCallback((container: HTMLElement, options?: { force?: boolean }) => {
     if (!container.isConnected) return;
@@ -979,6 +1086,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, []);
 
   const activeThreadMessages = roomThreadActive ? rooms.messages : messages;
+
+  /*
+  FNXC:ChatMessageScrollToTop 2026-07-12-23:16:
+  ChatView owns the `.chat-messages` viewport, so it measures assistant message tops against the container's visible top on scroll/message changes and passes clipped membership down. The go-to-top control remains DOM-mounted by StandardChatSurface but becomes visually available only after the message's top has moved above this container edge.
+  */
+  useLayoutEffect(() => {
+    scheduleTopClippedMessageUpdate();
+    return () => {
+      if (clippedMessageFrameRef.current !== null) {
+        window.cancelAnimationFrame(clippedMessageFrameRef.current);
+        clippedMessageFrameRef.current = null;
+      }
+    };
+  }, [activeThreadMessages, scheduleTopClippedMessageUpdate]);
 
   useLayoutEffect(() => {
     const messagesContainer = messagesContainerRef.current;
@@ -1458,8 +1579,25 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         addToast(t("chat.failedToCreateSession", "Failed to create chat session"), "error");
       }
     },
-    [createSession, addToast, isChatMobile],
+    [createSession, addToast, isChatMobile, t],
   );
+
+  const handleNewChat = useCallback(() => {
+    if (chatSettings?.chatNewSessionMode === "always-default" && chatDefaultTarget) {
+      if (chatDefaultTarget.kind === "agent") {
+        void handleCreateSession({ agentId: chatDefaultTarget.agentId });
+        return;
+      }
+      void handleCreateSession({
+        agentId: FN_AGENT_ID,
+        modelProvider: chatDefaultTarget.modelProvider,
+        modelId: chatDefaultTarget.modelId,
+        thinkingLevel: chatDefaultTarget.thinkingLevel,
+      });
+      return;
+    }
+    setShowNewDialog(true);
+  }, [chatDefaultTarget, chatSettings?.chatNewSessionMode, handleCreateSession]);
 
   const resizeComposer = useCallback((textarea?: HTMLTextAreaElement | null) => {
     const composer = textarea ?? inputRef.current;
@@ -2224,7 +2362,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />
         <h2>{t("chat.startNewConversation", "Start a new conversation")}</h2>
-        <button className="btn btn-primary" onClick={() => setShowNewDialog(true)}>
+        <button className="btn btn-primary" onClick={handleNewChat}>
           <Plus size={16} />
           {t("chat.newChat", "New Chat")}
         </button>
@@ -2486,6 +2624,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               roomContext={null}
               copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
               onScrollToTop={handleScrollMessageToTop}
+              isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
               submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
               onQuestionSubmit={handleQuestionSubmit}
@@ -2530,6 +2669,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               roomContext={null}
               copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
               onScrollToTop={handleScrollMessageToTop}
+              isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
               submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
               onQuestionSubmit={handleQuestionSubmit}
@@ -2668,6 +2808,37 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         >
           <Paperclip size={16} />
         </button>
+        {/*
+        FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+        FN-7898: change the active session's thinking level mid-conversation from the composer.
+        Model-loop (non-CLI) direct sessions only — CLI-backed sessions broker to a live PTY and
+        never receive defaultThinkingLevel (FN-7775), and chat rooms have no thinkingLevel field
+        at all. Gate with the existing cliChatActive boolean already in scope here.
+        */}
+        {!cliChatActive && (
+          <ChatThinkingLevelControl
+            level={activeSession?.thinkingLevel}
+            defaultThinkingLevel={resolvedDefaultThinkingLevel}
+            models={models}
+            favoriteProviders={favoriteProviders}
+            favoriteModels={favoriteModels}
+            agents={Array.from(agentsMap.values())}
+            agentId={activeSession?.agentId}
+            modelProvider={activeSession?.modelProvider}
+            modelId={activeSession?.modelId}
+            onChange={(level) => {
+              if (activeSession) {
+                void setSessionThinkingLevel(activeSession.id, level);
+              }
+            }}
+            onChangeModel={(selection) => {
+              if (activeSession) {
+                void setSessionModel(activeSession.id, selection);
+              }
+            }}
+            disabled={!activeSession}
+          />
+        )}
         <div
           className={`chat-input-wrapper${isDragOver ? " chat-input-wrapper--dragover" : ""}`}
           onDragOver={(event) => {
@@ -2803,7 +2974,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           ))}
           {/*
           FNXC:Chat 2026-06-27-00:00:
-          Mobile Direct-scope quick session switching must let users start a new chat without leaving the open thread. Route this affordance through the same setShowNewDialog(true) / NewChatDialog path as the header and sidebar-footer controls.
+          Mobile Direct-scope quick session switching must let users start a new chat without leaving the open thread. Route this affordance through the same handleNewChat() path as the header and sidebar-footer controls so project chatNewSessionMode is honored everywhere.
           */}
           <button
             type="button"
@@ -2812,7 +2983,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             data-testid="chat-mobile-session-new"
             onClick={() => {
               setMobileSessionMenuOpen(false);
-              setShowNewDialog(true);
+              handleNewChat();
             }}
           >
             <Plus size={16} aria-hidden="true" />
@@ -2878,7 +3049,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             {!isChatMobile ? (
               <button
                 className="btn btn-sm btn-primary chat-view-header-new-chat"
-                onClick={() => setShowNewDialog(true)}
+                onClick={handleNewChat}
                 data-testid="chat-new-btn"
               >
                 <Plus size={14} />
@@ -3164,7 +3335,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             <div className="chat-sidebar-footer">
               <button
                 className="btn btn-sm btn-primary chat-sidebar-footer-btn"
-                onClick={() => setShowNewDialog(true)}
+                onClick={handleNewChat}
                 data-testid="chat-new-btn"
               >
                 <Plus size={14} />
@@ -3375,6 +3546,33 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                     </div>
                   )}
                 </div>
+                <div className="chat-room-thinking-level-field">
+                  {/* FNXC:Chat-ThinkingLevel 2026-07-12-00:00: Room thinking effort is a header-level room setting, not a composer control, because it acts as the default reasoning effort for every responder in the conversation. */}
+                  <label className="sr-only" htmlFor="chat-room-thinking-level">
+                    {t("chat.roomThinkingLevel", "Room thinking effort")}
+                  </label>
+                  <select
+                    id="chat-room-thinking-level"
+                    className="input chat-room-thinking-level-select"
+                    data-testid="chat-room-thinking-level"
+                    aria-label={t("chat.roomThinkingLevel", "Room thinking effort")}
+                    value={rooms.activeRoom.thinkingLevel ?? ""}
+                    onChange={(event) => {
+                      const selectedLevel = event.target.value;
+                      const thinkingLevel = THINKING_LEVELS.includes(selectedLevel as ThinkingLevel) ? selectedLevel : null;
+                      void rooms.updateRoomSettings(rooms.activeRoom!.id, { thinkingLevel }).catch(() => {
+                        addToast(t("chat.failedToUpdateRoomThinkingLevel", "Failed to update room thinking effort"), "error");
+                      });
+                    }}
+                  >
+                    <option value="">{t("models.useDefault", "Use default")}</option>
+                    {THINKING_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {t(`models.options.${level}`, level === "xhigh" ? "Very High" : level.charAt(0).toUpperCase() + level.slice(1))}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="chat-room-thread-members">
                   {rooms.activeRoomMembers.map((member) => (
                     <AgentAvatar
@@ -3425,6 +3623,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                         mentionAgentsByName={mentionAgentsByName}
                         roomContext={roomContext}
                         onScrollToTop={handleScrollMessageToTop}
+                        isTopClipped={topClippedMessageIds.has(message.id)}
                         isAwaitingQuestionAnswer={false}
                         onQuestionSubmit={handleQuestionSubmit}
                       />
@@ -3637,7 +3836,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       {showNewDialog && (
         <NewChatDialog
           projectId={projectId}
-          defaultModel={defaultModel}
+          defaultModel={dialogDefaultModel}
+          defaultKind={chatDefaultTarget?.kind}
+          defaultAgentId={chatDefaultTarget?.kind === "agent" ? chatDefaultTarget.agentId : undefined}
+          defaultThinkingLevel={resolvedDefaultThinkingLevel}
+          defaultSelectedThinkingLevel={chatDefaultTarget?.kind === "model" ? chatDefaultTarget.thinkingLevel : undefined}
           onClose={() => setShowNewDialog(false)}
           onCreate={handleCreateSession}
         />

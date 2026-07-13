@@ -456,6 +456,110 @@ describe("workflow lane visibility for externally-arriving tasks (FN-7591 disapp
     expect(fetchBoardWorkflowsMock.mock.calls.length).toBe(settled);
   });
 
+  /*
+  FNXC:WorkflowBoard 2026-07-12-23:59:
+  Regression coverage for the aggregate "All workflows" twin of the disappearing-card bug.
+  Surface enumeration:
+   - Stale mapping: a task resting in "ideas" whose taskWorkflowIds entry mis-resolves to the
+     default workflow (which declares no "ideas" column) was continue-dropped from the
+     aggregate grouping — present in no lane at all. It must render in its stored column lane.
+   - Present-but-unrepresentable refetch: the FN-7591 refetch used to key on `=== undefined`
+     only; the server always emits a (possibly wrong) entry, so the refetch never fired. A
+     mapping whose workflow does not declare the task's column must force one refetch, and the
+     signature guard still bounds it when the mapping stays wrong.
+  */
+  it("All-workflows view renders a mis-mapped ideas-column task in the ideas lane instead of dropping it", async () => {
+    // FN-mis maps to the DEFAULT workflow (stale selection row), but rests in "ideas",
+    // which only Coding (Ideas) declares. The server keeps returning the wrong mapping.
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ "FN-mis": DEFAULT_WORKFLOW.id }));
+    const misMapped = mkTask({ id: "FN-mis", title: "Mis-mapped ideas card", column: "ideas" });
+
+    render(<Board {...boardProps([misMapped])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow("__all_workflows__");
+
+    await waitFor(() => {
+      const ideasColumn = screen.getByTestId("column-ideas");
+      expect(within(ideasColumn).getByText("Mis-mapped ideas card")).toBeTruthy();
+    });
+  });
+
+  it("a present-but-unrepresentable mapping forces one refetch and renders once corrected", async () => {
+    // First fetches return the stale mapping (default workflow, no "ideas" column);
+    // after the forced refetch the server returns the corrected Coding (Ideas) mapping.
+    let corrected = false;
+    fetchBoardWorkflowsMock.mockImplementation((_projectId: unknown, options?: { forceFresh?: boolean }) => {
+      if (options?.forceFresh) corrected = true;
+      return Promise.resolve(workflowPayload({
+        "FN-stale": corrected ? CODING_IDEAS_WORKFLOW.id : DEFAULT_WORKFLOW.id,
+      }));
+    });
+    const staleTask = mkTask({ id: "FN-stale", title: "Stale mapping card", column: "ideas" });
+
+    render(<Board {...boardProps([staleTask])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow("__all_workflows__");
+
+    await waitFor(() => expect(corrected).toBe(true));
+    await waitFor(() => {
+      const ideasColumn = screen.getByTestId("column-ideas");
+      expect(within(ideasColumn).getByText("Stale mapping card")).toBeTruthy();
+    });
+  });
+
+  it("keeps a mis-mapped card whose stored column is hidden by some workflow OUT of the All-workflows view", async () => {
+    // FN-hid truly belongs to a workflow that hides "internal-qa" from the board, but its
+    // stale mapping resolves to the default workflow (which doesn't declare the column).
+    // The display fallback must not surface the explicitly hidden card in a visible lane.
+    const HIDDEN_WORKFLOW = {
+      id: "wf-hidden",
+      name: "Hidden QA",
+      columns: [
+        { id: "intake", name: "Intake", flags: { intake: true } },
+        { id: "internal-qa", name: "Internal QA", flags: { hiddenFromBoard: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+    fetchBoardWorkflowsMock.mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: DEFAULT_WORKFLOW.id,
+      workflows: [DEFAULT_WORKFLOW, HIDDEN_WORKFLOW],
+      taskWorkflowIds: { "FN-hid": DEFAULT_WORKFLOW.id },
+    } as BoardWorkflowsPayload);
+    const hiddenCard = mkTask({ id: "FN-hid", title: "Hidden QA card", column: "internal-qa" });
+
+    render(<Board {...boardProps([hiddenCard])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow("__all_workflows__");
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    expect(screen.queryByText("Hidden QA card")).toBeNull();
+  });
+
+  it("a persistently-wrong mapping fires a bounded number of refetches (signature guard)", async () => {
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ "FN-stuck": DEFAULT_WORKFLOW.id }));
+    const stuckTask = mkTask({ id: "FN-stuck", title: "Stuck mapping card", column: "ideas" });
+
+    const { rerender } = render(<Board {...boardProps([stuckTask])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow("__all_workflows__");
+
+    await waitFor(() => expect(fetchBoardWorkflowsMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+    const settled = fetchBoardWorkflowsMock.mock.calls.length;
+
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        rerender(<Board {...boardProps([stuckTask])} />);
+      });
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    expect(fetchBoardWorkflowsMock.mock.calls.length).toBe(settled);
+  });
+
   it("renders a selected-workflow task whose column the workflow no longer declares in the intake lane (never dropped)", async () => {
     // FN-orphan is correctly mapped to Coding (Ideas) but sits in a column the workflow does not declare.
     fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ "FN-orphan": CODING_IDEAS_WORKFLOW.id }));

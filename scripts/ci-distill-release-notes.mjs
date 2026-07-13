@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { parseChangesetBody } from "./lib/changeset-schema.mjs";
-import { distillDeterministic } from "./lib/distill-release-notes.mjs";
+import { distillReleaseNotes } from "./lib/distill-release-notes.mjs";
 import { extractVersionNotes, replaceVersionSection } from "./lib/extract-version-notes.mjs";
 
 const args = process.argv.slice(2);
@@ -80,7 +80,12 @@ if (entries.length === 0) {
   process.exit(0);
 }
 
-const { notes: distilledNotes, source } = distillDeterministic(entries, version);
+/*
+ * FNXC:Changelog 2026-07-13-15:45:
+ * Prefer Claude CLI distillation (`claude -p --model sonnet`) when available
+ * in the environment; otherwise soft-fallback deterministic. Never blocks.
+ */
+const { notes: distilledNotes, source } = await distillReleaseNotes(entries, version);
 const changelogContent = readFileSync(CHANGELOG_PATH, "utf8");
 const updated = replaceVersionSection(changelogContent, version, distilledNotes);
 

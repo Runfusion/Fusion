@@ -62,6 +62,7 @@ export {
   askQuestionParams,
   workflowListParams,
   workflowGetParams,
+  workflowValidateParams,
   workflowSelectParams,
   workflowCreateParams,
   workflowUpdateParams,
@@ -69,6 +70,9 @@ export {
   workflowSettingsParams,
   traitListParams,
   executeApprovedAgentProvisioning,
+  createWorkflowValidateTool,
+  validateWorkflowIrDryRun,
+  type WorkflowValidateDryRunError,
 } from "./agent-tools.js";
 export {
   POSTGRES_MIGRATION_HELP_URL,

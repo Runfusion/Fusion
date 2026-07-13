@@ -29,6 +29,7 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
   };
 });
 vi.mock("../../api", () => ({
+  fetchSettings: vi.fn().mockResolvedValue({}),
   fetchModels: vi.fn().mockResolvedValue({
     models: [
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },

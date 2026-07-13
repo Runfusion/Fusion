@@ -164,6 +164,7 @@ export const READONLY_FN_TOOLS: ReadonlySet<string> = new Set([
   // FNXC:ToolGovernance 2026-06-29-23:36: Workflow and trait discovery tools are read-only authoring support. Positively classify list/get/trait vocabulary so newly exposed published and prompt-injectable lanes never rely on unknown-tool fallback.
   "fn_workflow_list",
   "fn_workflow_get",
+  "fn_workflow_validate",
   "fn_trait_list",
   "fn_mission_list",
   "fn_mission_show",
@@ -225,6 +226,7 @@ export const COORDINATION_EXEMPT_TOOLS = [
   "fn_agent_org_chart",
   "fn_workflow_list",
   "fn_workflow_get",
+  "fn_workflow_validate",
   "fn_trait_list",
   /**
    * FNXC:ToolGovernance 2026-06-28-00:00:

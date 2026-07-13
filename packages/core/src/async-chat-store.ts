@@ -78,6 +78,8 @@ function rowToRoom(row: Record<string, unknown>): ChatRoom {
     projectId: (row.projectId as string | null) ?? null,
     createdBy: (row.createdBy as string | null) ?? null,
     status: row.status as ChatRoomStatus,
+    // FNXC:Chat-ThinkingLevel 2026-07-13 (merge port): room-level reasoning-effort default.
+    thinkingLevel: (row.thinkingLevel as ChatRoom["thinkingLevel"] | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
   };
@@ -284,6 +286,7 @@ export async function createChatRoom(
       projectId: room.projectId,
       createdBy: room.createdBy,
       status: room.status,
+      thinkingLevel: room.thinkingLevel ?? null,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
     });
@@ -780,6 +783,7 @@ export async function updateChatRoom(
     slug?: string;
     description?: string | null;
     status?: ChatRoomStatus;
+    thinkingLevel?: ChatRoom["thinkingLevel"] | null;
   },
 ): Promise<ChatRoom | undefined> {
   const existing = await getChatRoom(handle, id);
@@ -790,6 +794,7 @@ export async function updateChatRoom(
   if (input.slug !== undefined) setValues.slug = input.slug;
   if (input.description !== undefined) setValues.description = input.description;
   if (input.status !== undefined) setValues.status = input.status;
+  if (input.thinkingLevel !== undefined) setValues.thinkingLevel = input.thinkingLevel;
 
   await handle
     .update(schema.project.chatRooms)

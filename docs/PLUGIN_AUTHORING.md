@@ -767,6 +767,9 @@ Bundled workspace plugin pattern:
 - Register the lazy dashboard component in host code (currently `packages/dashboard/app/plugins/registerBundledPluginViews.ts`)
 - CLI bundling inlines backend plugin code from workspace packages; dashboard view modules are imported by the dashboard build via the host registry
 
+<!-- FNXC:BundledPlugins 2026-07-13-00:00: FN-7936 requires `@runfusion/fusion` bundled plugin backend outputs to be install-self-contained. The CLI bundler resolves plugin-sdk runtime re-exports from `@fusion/core` through `plugin-sdk-core-runtime-shim.ts`, so `packages/cli/dist/plugins/<id>/bundled.js` must not ship private `@fusion/*` runtime specifiers that npm installs cannot resolve. -->
+Bundled `bundled.js` outputs must be self-contained at runtime. Do not leave private workspace package imports such as `@fusion/core` in emitted bundled plugin code; `@fusion/plugin-sdk` core runtime re-exports are resolved through the CLI runtime shim during packaging.
+
 ### Bundled plugin build-freshness guard
 
 <!-- FNXC:BundledPlugins 2026-06-17-22:31: Bundled plugins can load gitignored compiled artifacts before source during workspace/dev resolution, so plugin authors need a documented recovery path when the generic freshness guard detects stale dist output. -->
@@ -1211,7 +1214,7 @@ This keeps regressions durable while preserving clear ownership boundaries acros
 
 ## 13. Publishing Plugins
 
-For end-to-end standalone packaging, `pnpm pack`, and installing on another machine, follow the [External Plugin Authoring guide](./plugins/external-authoring.md).
+For end-to-end standalone packaging, `pnpm pack`, and installing on another machine, follow the [External Plugin Authoring guide](./plugins/external-authoring.md). Run `fn plugin publish --dry-run .` before packing to validate the manifest, compiled entrypoint, lifecycle hook shape, and optional version bump without installing, uploading, or tagging anything.
 
 ### Package Requirements
 
@@ -1246,7 +1249,12 @@ For end-to-end standalone packaging, `pnpm pack`, and installing on another mach
    pnpm build
    ```
 
-3. Publish to npm:
+3. Run the non-mutating publish preflight:
+   ```bash
+   fn plugin publish --dry-run . --previous-version 0.9.0
+   ```
+
+4. Publish to npm:
    ```bash
    npm publish --access public
    ```

@@ -6,10 +6,33 @@ import type { Task } from "@fusion/core";
 
 vi.mock("lucide-react", () => {
   const Stub = () => null;
+  // FNXC:DashboardMocks 2026-07-13-14:00 (round 11):
+  // TaskCard now imports priorityIndicator.tsx, which reads ArrowDown/ArrowUp/Flag/TriangleAlert
+  // from lucide-react at module-init time. A get-only Proxy is not enough: Vitest validates named
+  // ESM exports via `in`/`getOwnPropertyDescriptor` before reading the binding, so a bare Proxy
+  // over {} reports no exports and throws "No ArrowDown export is defined on the lucide-react mock".
+  // Expose every string key as an own enumerable Stub so any icon resolves to a null stub.
   return new Proxy({}, {
     get: (_target, prop) => prop === "then" ? undefined : Stub,
+    has: (_target, prop) => typeof prop === "string" && prop !== "then",
+    getOwnPropertyDescriptor: (_target, prop) =>
+      typeof prop === "string" && prop !== "then"
+        ? { configurable: true, enumerable: true, value: Stub, writable: true }
+        : undefined,
   });
 });
+// FNXC:DashboardMocks 2026-07-13-14:00 (round 11):
+// TaskCard embeds RuntimeFallbackBadge, which calls the shared useToast() hook
+// directly (not the addToast prop). This file renders <TaskCard> outside a
+// ToastProvider, so mock the hook to avoid "useToast must be used within
+// ToastProvider", matching the TaskCard.test.tsx pattern.
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
 
 vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />,

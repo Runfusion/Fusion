@@ -68,6 +68,9 @@ self-healing — a real import cycle. Importing from the predicate module breaks
 */
 import { isRepoLanded } from "./workspace-land-predicate.js";
 import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./already-merged-detector.js";
+import { getTaskCompletionBlockerForStore } from "./task-completion.js";
+
+export const COMPLETED_BLOCKED_PAUSE_REASON = "completed-work-blocked";
 import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
 import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
@@ -1394,6 +1397,7 @@ export class SelfHealingManager {
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
       { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies().then(() => undefined) },
       { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases().then(() => undefined) },
+      { name: "reconcile-completed-blocked", fn: () => this.reconcileCompletedBlockedTasks().then(() => undefined) },
       { name: "reconcile-in-review-unmet-dependencies", fn: () => this.reconcileInReviewUnmetDependencies().then(() => undefined) },
       { name: "reconcile-engine-downtime-active-timing", fn: () => this.reconcileEngineDowntimeActiveTiming().then(() => undefined) },
       { name: "reconcile-dependency-cycles", fn: () => this.reconcileDependencyCycles().then(() => undefined) },
@@ -2618,6 +2622,7 @@ export class SelfHealingManager {
           { name: "recover-stale-transition-pending", fn: () => this.runStaleTransitionPendingSweep() },
           { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies() },
           { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases() },
+          { name: "reconcile-completed-blocked", fn: () => this.reconcileCompletedBlockedTasks() },
           { name: "reconcile-in-review-unmet-dependencies", fn: () => this.reconcileInReviewUnmetDependencies() },
           // FN-6782: reclaim in-memory worktree slots whose holder is no longer
           // in-progress (defense-in-depth for the pause-abort leak; conservative,
@@ -5603,6 +5608,96 @@ export class SelfHealingManager {
         autoMerge: settings.autoMerge ?? null,
       },
     };
+  }
+
+  async reconcileCompletedBlockedTasks(): Promise<number> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return 0;
+    if (!this.options.recoverCompletedTask) return 0;
+
+    let tasks: Task[] = [];
+    try {
+      tasks = await this.store.listTasks({ includeArchived: false, slim: true });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`reconcileCompletedBlockedTasks: failed to list tasks: ${errorMessage}`);
+      return 0;
+    }
+
+    const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+    let recovered = 0;
+    for (const snapshot of tasks) {
+      if (snapshot.deletedAt) continue;
+      if (snapshot.column !== "todo") continue;
+      if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
+      if (snapshot.userPaused === true) continue;
+      if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
+      if (executingIds.has(snapshot.id) || this.options.isTaskActive?.(snapshot.id) === true) continue;
+      if (snapshot.worktree && activeSessionRegistry.isPathActive(snapshot.worktree)) continue;
+      /*
+      FNXC:WorkflowLifecycle 2026-07-12-23:40:
+      FN-7926: unlike the generic isTaskWorkComplete() convention used elsewhere in self-healing,
+      a zero-step task CAN legitimately reach this parked state — parkCompletedBlockedTask()
+      already accepts `workComplete = taskDone` for a task with no planned steps (explicit
+      fn_task_done() with an empty step list). Since COMPLETED_BLOCKED_PAUSE_REASON is only ever
+      set by that already-validated park path, re-deriving completeness by rejecting empty step
+      arrays here would strand those rows forever (parked but never reconciled — the same
+      indefinite non-terminal stall this task exists to eliminate). Only reject when steps exist
+      and are provably incomplete (defense-in-depth against a concurrent reopen after park).
+      */
+      if (snapshot.steps.length > 0 && !snapshot.steps.every((step) => step.status === "done" || step.status === "skipped")) continue;
+
+      const completionBlocker = await getTaskCompletionBlockerForStore(this.store, snapshot);
+      if (completionBlocker) continue;
+
+      try {
+        await this.store.updateTask(snapshot.id, {
+          paused: false,
+          pausedReason: undefined,
+          status: null,
+          error: null,
+          blockedBy: null,
+          executeRequeueLoopCount: null,
+          executeRequeueLoopSignature: null,
+        });
+        const fresh = await this.store.getTask(snapshot.id);
+        const advanced = await this.options.recoverCompletedTask(fresh);
+        if (!advanced) {
+          await this.store.updateTask(snapshot.id, {
+            paused: true,
+            pausedReason: COMPLETED_BLOCKED_PAUSE_REASON,
+            status: "queued",
+          });
+          continue;
+        }
+        await this.store.logEntry(
+          snapshot.id,
+          "Auto-advanced completed blocked work to review after blocker cleared",
+        );
+        await createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("completed-blocked-advance", snapshot.id),
+          agentId: "self-healing",
+          taskId: snapshot.id,
+          taskLineageId: snapshot.lineageId,
+          phase: "reconcile-completed-blocked",
+        }).database({
+          type: "task:completed-blocked-advanced" as DatabaseMutationType,
+          target: snapshot.id,
+          metadata: {
+            taskId: snapshot.id,
+            priorColumn: snapshot.column,
+            priorStatus: snapshot.status ?? null,
+            source: "self-healing",
+          },
+        });
+        recovered++;
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(`reconcileCompletedBlockedTasks: failed to advance ${snapshot.id}: ${errorMessage}`);
+      }
+    }
+
+    return recovered;
   }
 
   async reconcileInReviewUnmetDependencies(): Promise<number> {

@@ -430,7 +430,8 @@ describe("Workflow Steps Execution", () => {
       await executor.execute(baseTask as any);
 
       expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-5436-D", { workflowStepRetries: undefined, taskDoneRetryCount: null });
+      // FNXC:ExecutorRetry 2026-07-13: Use objectContaining because production now passes additional fields (executeRequeueLoopCount, executeRequeueLoopSignature, branch, worktree, sessionFile) in the same updateTask call.
+      expect(store.updateTask).toHaveBeenCalledWith("FN-5436-D", expect.objectContaining({ workflowStepRetries: undefined, taskDoneRetryCount: null }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-D", {
         status: "failed",
         error: "executor-exit-while-review-pending",

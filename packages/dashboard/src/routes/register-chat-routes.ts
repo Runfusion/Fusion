@@ -475,24 +475,95 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
   /**
    * PATCH /api/chat/sessions/:id
-   * Update a chat session (title, status).
-   * Body: { title?: string, status?: "active" | "archived" }
+   * Update a chat session (title, status, thinkingLevel, model, or agent target).
+   * Body: { title?: string, status?: "active" | "archived", thinkingLevel?: string | null,
+   *         modelProvider?: string | null, modelId?: string | null, agentId?: string }
+   *
+   * FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+   * FN-7775 only let a user pick a session's thinking level at creation time
+   * (POST /chat/sessions). FN-7898 lets an EXISTING model-loop session's
+   * reasoning-effort level be changed mid-conversation from the in-chat
+   * composer control, distinct from that create-time picker. `null`/`""`
+   * is an explicit clear back to the project/global default (mirrors the
+   * create-time semantics where an absent/empty thinkingLevel means
+   * "inherit"); omitting the key entirely leaves the session's stored
+   * value untouched, matching the existing title/status behavior below.
+   *
+   * FNXC:Chat-ModelSwitch 2026-07-12-20:15:
+   * FN-7908 extends this SAME route (rather than adding a new one) so the
+   * brain-icon popup introduced by FN-7898 can also retarget an active
+   * Direct chat's model or switch it to a real agent mid-conversation.
+   * modelProvider/modelId are validated as a pair via the existing
+   * validateModelPair helper (used elsewhere in this file for task-planner
+   * session creation); agentId is validated as a non-empty string. Both are
+   * forwarded to chatStore.updateSession only when present in the body so
+   * omitted keys stay untouched, matching the thinkingLevel/title/status
+   * pattern above.
    */
   router.patch("/chat/sessions/:id", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
       const { chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
 
       const sessionId = String(req.params.id);
-      const { title, status } = req.body as { title?: string; status?: string };
+      const {
+        title,
+        status,
+        thinkingLevel: rawThinkingLevel,
+        modelProvider: rawModelProvider,
+        modelId: rawModelId,
+        agentId: rawAgentId,
+      } = req.body as {
+        title?: string;
+        status?: string;
+        thinkingLevel?: string | null;
+        modelProvider?: string | null;
+        modelId?: string | null;
+        agentId?: string;
+      };
 
       // Validate status if provided
       if (status !== undefined && status !== "active" && status !== "archived") {
         throw badRequest("status must be 'active' or 'archived'");
       }
 
+      // Normalize thinkingLevel before persisting: undefined leaves the field
+      // untouched (key omitted below), null/empty-string is an explicit clear
+      // to inherit the default, and any other value is validated against
+      // THINKING_LEVELS via the existing validateThinkingLevel helper.
+      let normalizedThinkingLevel: string | null | undefined;
+      if (rawThinkingLevel !== undefined) {
+        if (rawThinkingLevel === null || (typeof rawThinkingLevel === "string" && rawThinkingLevel.trim() === "")) {
+          normalizedThinkingLevel = null;
+        } else {
+          const validated = validateThinkingLevel(rawThinkingLevel);
+          normalizedThinkingLevel = validated ?? null;
+        }
+      }
+
+      // FNXC:Chat-ModelSwitch — modelProvider/modelId are only validated (and
+      // therefore only forwarded) when at least one of them is present in the
+      // body, so a PATCH that omits both keys entirely leaves the session's
+      // stored model target untouched instead of tripping the pair-mismatch
+      // check below.
+      const modelPairProvided = rawModelProvider !== undefined || rawModelId !== undefined;
+      const { modelProvider: normalizedModelProvider, modelId: normalizedModelId } = modelPairProvided
+        ? validateModelPair(rawModelProvider, rawModelId)
+        : {};
+
+      let normalizedAgentId: string | undefined;
+      if (rawAgentId !== undefined) {
+        if (typeof rawAgentId !== "string" || rawAgentId.trim() === "") {
+          throw badRequest("agentId must be a non-empty string");
+        }
+        normalizedAgentId = rawAgentId.trim();
+      }
+
       const session = await chatStore.updateSession(sessionId, {
         ...(title !== undefined && { title: title?.trim() || null }),
         ...(status !== undefined && { status }),
+        ...(normalizedThinkingLevel !== undefined && { thinkingLevel: normalizedThinkingLevel }),
+        ...(modelPairProvided && { modelProvider: normalizedModelProvider ?? null, modelId: normalizedModelId ?? null }),
+        ...(normalizedAgentId !== undefined && { agentId: normalizedAgentId }),
       });
 
       if (!session) {

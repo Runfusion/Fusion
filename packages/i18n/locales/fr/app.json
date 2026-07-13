@@ -1373,6 +1373,7 @@
     "stopGeneration": "Arrêter la génération",
     "thinking": "Réflexion",
     "thinkingLabel": "Réflexion",
+    "thinkingLevelButton": "Niveau de réflexion",
     "thinkingStatus": "Réflexion en cours…",
     "toolArgsLabel": "",
     "toolArgsPreview": "",
@@ -1387,7 +1388,13 @@
     "workingStatus": "Traitement en cours…",
     "you": "Vous",
     "contextWindowAria": "Estimated {{used}} of {{total}} context tokens",
-    "noMessage": ""
+    "noMessage": "",
+    "modelAgentSection": "Model / Agent",
+    "thinkingLevelSection": "Thinking level",
+    "noModelsAvailable": "No models available",
+    "currentAgentTarget": "Current agent: {{name}}",
+    "currentModelTarget": "Current model: {{model}}",
+    "currentDefaultTarget": "Using the default chat target"
   },
   "chatRooms": {
     "error": {
@@ -6386,7 +6393,25 @@
       "whenEnabledTasksCreatedWithoutATitleBut": "",
       "autoSelectModelPresetHint": "",
       "prTitlePromptInstructionsHelp": "",
-      "prDescriptionPromptInstructionsHelp": ""
+      "prDescriptionPromptInstructionsHelp": "",
+      "chatHeading": "Chat",
+      "chatDescription": "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.",
+      "chatNewSessionMode": "New Chat behavior",
+      "chatNewSessionModePrompt": "Prompt for model each time",
+      "chatNewSessionModeAlwaysDefault": "Always use configured default",
+      "chatNewSessionModeHelp": "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.",
+      "chatDefaultKind": "Chat default target",
+      "chatDefaultKindModel": "Model",
+      "chatDefaultKindAgent": "Agent",
+      "chatDefaultModel": "Chat Default Model",
+      "selectChatDefaultModel": "Select a chat default model",
+      "chatDefaultModelHelp": "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.",
+      "chatDefaultAgent": "Chat Default Agent",
+      "loadingAgents": "Loading agents…",
+      "selectChatDefaultAgent": "Select a chat default agent",
+      "chatDefaultAgentEmpty": "No agents are available for this project yet.",
+      "chatDefaultAgentHelp": "Agent-mode New Chat starts a Direct chat with the selected durable agent.",
+      "chatDefaultReset": "Reset Chat default"
     },
     "remote": {
       "acceptRoutes": "",
@@ -6700,6 +6725,7 @@
     },
     "reset": {
       "button": "",
+      "buttonShort": "",
       "buttonTitle": "",
       "dialogAriaLabel": "",
       "dialogTitle": "",
@@ -8324,7 +8350,6 @@
     "decreaseFontSize": "Réduire la taille de la police du terminal",
     "exitLabel": "Sortie : {{code}}",
     "failedToStartTerminal": "Impossible de démarrer le terminal : {{error}}",
-    "helpText": "Ctrl++/- zoom • ⌨ Panneau des raccourcis • Esc fermer",
     "increaseFontSize": "Augmenter la taille de la police du terminal",
     "initializeError": "L'interface du terminal n'a pas pu s'initialiser : {{error}}",
     "newSession": "Nouvelle session",

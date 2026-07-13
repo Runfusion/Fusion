@@ -1179,6 +1179,7 @@ Keep logical overflow and tab intrinsic-size declarations beside the physical fa
   left: 0;
   right: 0;
   bottom: 0;
+  /* FNXC:WorkflowEditor 2026-07-12-00:00: Keep this as a static fallback only; WorkflowNodeEditor applies an inline shared floating-stack z-index when the prompt overlay opens so mobile FloatingWindow sheets cannot cover it. */
   z-index: 10000;
   background: var(--surface);
   padding: max(var(--space-lg), env(safe-area-inset-top, 0))

@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/linear-import",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "type": "module",
   "description": "Linear issue import plugin for Fusion",
   "private": true,

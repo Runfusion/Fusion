@@ -29,7 +29,6 @@ vi.mock("lucide-react", () => ({
   GitBranch: () => null,
   Gitlab: () => null,
   Clock: () => null,
-  DollarSign: () => null,
   Pencil: () => null,
   Layers: () => null,
   ChevronDown: () => null,
@@ -510,6 +509,102 @@ describe("TaskCard", () => {
       await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-001"));
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(onOpenDetail).not.toHaveBeenCalled();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  it("opens Planning Mode from eligible pre-execution card menus only when wired", async () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onPlanningMode = vi.fn();
+    try {
+      const { rerender } = render(
+        <TaskCard
+          task={makeTask({ column: "triage", description: "Plan from description", title: "Fallback title" })}
+          onOpenDetail={noop}
+          onPlanningMode={onPlanningMode}
+          planningWorkflowId="WF-intake"
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
+      expect(onPlanningMode).toHaveBeenCalledWith("Plan from description", "WF-intake");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+      rerender(
+        <TaskCard
+          task={makeTask({ column: "ideas" as any, description: "", title: "Custom intake title" })}
+          taskColumnFlags={{ intake: true }}
+          onOpenDetail={noop}
+          onPlanningMode={onPlanningMode}
+          planningWorkflowId="WF-custom"
+          addToast={noop}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
+      expect(onPlanningMode).toHaveBeenLastCalledWith("Custom intake title", "WF-custom");
+
+      rerender(
+        <TaskCard
+          task={makeTask({ column: "todo" })}
+          onOpenDetail={noop}
+          onPlanningMode={onPlanningMode}
+          addToast={noop}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
+      fireEvent.keyDown(document, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+      rerender(
+        <TaskCard
+          task={makeTask({ column: "triage" })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onDeleteTask={vi.fn()}
+        />,
+      );
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  it("opens Planning Mode from the mobile/touch long-press menu for custom hold cards", async () => {
+    vi.useFakeTimers();
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onPlanningMode = vi.fn();
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "waiting" as any, description: "Touch plan seed" })}
+          taskColumnFlags={{ hold: true }}
+          onOpenDetail={noop}
+          onPlanningMode={onPlanningMode}
+          planningWorkflowId="WF-hold"
+          addToast={noop}
+        />,
+      );
+
+      const card = document.querySelector(".card") as HTMLElement;
+      fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 32, clientY: 36 });
+      act(() => vi.advanceTimersByTime(550));
+
+      expectBoardContextMenuPortaled();
+      fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Plan" }), { pointerType: "touch", pointerId: 2 });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(onPlanningMode).toHaveBeenCalledWith("Touch plan seed", "WF-hold");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     } finally {
       cleanupGeometry();
     }
@@ -3929,7 +4024,7 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("provider-icon-github")).toBeDefined();
   });
 
-  it("renders the GitHub tracking link in the unified footer row above queued metadata", () => {
+  it("renders the GitHub tracking link inline with queued metadata when the footer has no leading content", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -3952,13 +4047,14 @@ describe("TaskCard", () => {
     );
 
     const link = screen.getByRole("link", { name: "Linked GitHub issue #42" });
-    const footerRow = container.querySelector(".card-footer-row");
+    const metaRow = container.querySelector(".card-meta");
     const queuedBadge = container.querySelector(".queued-badge");
-    expect(footerRow).not.toBeNull();
-    expect(footerRow?.contains(link)).toBe(true);
+    expect(container.querySelector(".card-footer-row")).toBeNull();
+    expect(link.closest(".card-meta")).toBe(metaRow);
+    expect(link.closest(".card-footer-row-right")?.closest(".card-meta")).toBe(metaRow);
     expect(container.querySelector(".card-bottom-right-row")).toBeNull();
     expect(queuedBadge).not.toBeNull();
-    expect(queuedBadge?.compareDocumentPosition(footerRow as Node) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(queuedBadge?.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
 
@@ -5425,8 +5521,12 @@ describe("TaskCard", () => {
     const costBadge = enabled.container.querySelector(".card-cost-indicator") as HTMLElement | null;
     expect(costBadge).not.toBeNull();
     expect(costBadge?.textContent).toContain("$0.25");
+    expect(costBadge?.querySelector("svg")).toBeNull();
     expect(costBadge?.getAttribute("aria-label")).toBe("Estimated cost $0.25");
+    expect(costBadge?.getAttribute("title")).toBe("Estimated cost $0.25");
     expect(costBadge?.closest(".card-footer-row-right")).toBe(enabled.container.querySelector(".card-footer-row-right"));
+    expect(costBadge?.closest(".card-footer-row")).toBe(enabled.container.querySelector(".card-footer-row"));
+    expect(costBadge?.closest(".card-meta")).toBeNull();
     enabled.unmount();
 
     const noUsage = render(
@@ -5437,12 +5537,50 @@ describe("TaskCard", () => {
     expect(noUsage.container.querySelector(".card-cost-indicator")).toBeNull();
   });
 
-  it("renders the cost badge unavailable sentinel for unpriceable usage", () => {
+  it("places a todo cost badge inside the meta row when the footer has no leading content", () => {
     const { container } = render(
       <CostBadgeProvider value={{ enabled: true }}>
         <TaskCard
           task={makeTask({
-            column: "done",
+            column: "todo",
+            dependencies: ["FN-000"],
+            tokenUsage: {
+              inputTokens: 1_000_000,
+              outputTokens: 0,
+              cachedTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 1_000_000,
+              firstUsedAt: "2026-01-01T00:00:00Z",
+              lastUsedAt: "2026-01-01T00:00:00Z",
+              modelProvider: "openai",
+              modelId: "gpt-5-mini",
+            },
+          } as Partial<Task>)}
+          onOpenDetail={noop}
+          addToast={noop}
+        />
+      </CostBadgeProvider>,
+    );
+
+    const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
+    const metaRow = container.querySelector(".card-meta");
+    const rightCluster = container.querySelector(".card-footer-row-right");
+    expect(costBadge).not.toBeNull();
+    expect(costBadge?.textContent).toContain("$0.25");
+    expect(costBadge?.closest(".card-meta")).toBe(metaRow);
+    expect(costBadge?.closest(".card-footer-row")).toBeNull();
+    expect(rightCluster?.closest(".card-meta")).toBe(metaRow);
+    expect(rightCluster?.contains(costBadge)).toBe(true);
+    expect(container.querySelector(".card-footer-row")).toBeNull();
+  });
+
+  it("places the unavailable cost sentinel inside todo meta without adding an icon", () => {
+    const { container } = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard
+          task={makeTask({
+            column: "todo",
+            dependencies: ["FN-000"],
             tokenUsage: {
               inputTokens: 1,
               outputTokens: 0,
@@ -5464,7 +5602,47 @@ describe("TaskCard", () => {
     const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
     expect(costBadge).not.toBeNull();
     expect(costBadge?.textContent).toContain("—");
+    expect(costBadge?.querySelector("svg")).toBeNull();
+    expect(costBadge?.getAttribute("aria-label")).toBe("Estimated cost —");
     expect(costBadge?.getAttribute("title")).toBe("Estimated cost —");
+    expect(costBadge?.closest(".card-meta")).toBe(container.querySelector(".card-meta"));
+    expect(costBadge?.closest(".card-footer-row")).toBeNull();
+    expect(container.querySelector(".card-footer-row")).toBeNull();
+  });
+
+  it("keeps in-progress cost badges in the footer row with files changed", () => {
+    const { container } = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard
+          task={makeTask({
+            column: "in-progress",
+            modifiedFiles: ["packages/dashboard/app/components/TaskCard.tsx"],
+            tokenUsage: {
+              inputTokens: 1_000_000,
+              outputTokens: 0,
+              cachedTokens: 0,
+              cacheWriteTokens: 0,
+              totalTokens: 1_000_000,
+              firstUsedAt: "2026-01-01T00:00:00Z",
+              lastUsedAt: "2026-01-01T00:00:00Z",
+              modelProvider: "openai",
+              modelId: "gpt-5-mini",
+            },
+          } as Partial<Task>)}
+          onOpenDetail={noop}
+          addToast={noop}
+        />
+      </CostBadgeProvider>,
+    );
+
+    const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
+    const footerRow = container.querySelector(".card-footer-row");
+    const rightCluster = container.querySelector(".card-footer-row-right");
+    expect(container.querySelector(".card-session-files")).not.toBeNull();
+    expect(costBadge).not.toBeNull();
+    expect(costBadge?.closest(".card-footer-row")).toBe(footerRow);
+    expect(costBadge?.closest(".card-footer-row-right")).toBe(rightCluster);
+    expect(costBadge?.closest(".card-meta")).toBeNull();
   });
 
   it.each(["merging", "merging-fix"] as const)("shows live merge elapsed in timer chip while task.status is %s", (status) => {
@@ -6196,7 +6374,8 @@ describe("TaskCard workflow badges", () => {
     expect(workflowRow).toContainElement(badge);
     expect(agentRow.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    [".card-footer-row", ".card-meta", ".card-agent-row"].forEach((selector) => {
+    expect(container.querySelector(".card-footer-row")).toBeNull();
+    [".card-meta", ".card-agent-row"].forEach((selector) => {
       const row = container.querySelector(selector);
       expect(row, `${selector} should render for the placement fixture`).not.toBeNull();
       expect(row!.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

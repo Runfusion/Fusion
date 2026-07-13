@@ -67,6 +67,8 @@ export interface TaskRow {
   error: string | null;
   summary: string | null;
   thinkingLevel: string | null;
+  validatorThinkingLevel: string | null;
+  planningThinkingLevel: string | null;
   executionMode: string | null;
   tokenUsageInputTokens: number | null;
   tokenUsageOutputTokens: number | null;
@@ -223,6 +225,9 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("error", (task) => task.error ?? null),
   defineTaskColumn("summary", (task) => task.summary ?? null),
   defineTaskColumn("thinkingLevel", (task) => task.thinkingLevel ?? null),
+  // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): per-task validator/planning reasoning-effort overrides.
+  defineTaskColumn("validatorThinkingLevel", (task) => task.validatorThinkingLevel ?? null),
+  defineTaskColumn("planningThinkingLevel", (task) => task.planningThinkingLevel ?? null),
   defineTaskColumn("executionMode", (task) => task.executionMode ?? null),
   defineTaskColumn("tokenUsageInputTokens", (task) => task.tokenUsage?.inputTokens ?? null),
   defineTaskColumn("tokenUsageOutputTokens", (task) => task.tokenUsage?.outputTokens ?? null),

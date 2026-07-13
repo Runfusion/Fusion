@@ -1621,6 +1621,7 @@ export class ChatManager {
           roomId,
           roomName: room.name,
           roomProjectId: room.projectId ?? null,
+          roomThinkingLevel: room.thinkingLevel ?? null,
           content: trimmedContent,
           latestUserMessageId: userMessage.id,
           attachments,
@@ -1690,6 +1691,7 @@ export class ChatManager {
     roomId: string;
     roomName: string;
     roomProjectId?: string | null;
+    roomThinkingLevel?: string | null;
     content: string;
     latestUserMessageId: string;
     attachments?: ChatAttachment[];
@@ -1760,6 +1762,11 @@ export class ChatManager {
     const effectiveModelProvider = input.modelProvider ?? responderRuntimeModel.provider ?? chatModelSettings.defaultProvider;
     const effectiveModelId = input.modelId ?? responderRuntimeModel.modelId ?? chatModelSettings.defaultModelId;
     /*
+     * FNXC:Chat-ThinkingLevel 2026-07-12-00:00:
+     * Room responders apply the room-level reasoning-effort default through the engine `defaultThinkingLevel` session option. An unset room value inherits the resolved project/global chat default and every direct or ambient responder in the room receives the same effective level.
+     */
+    const effectiveThinkingLevel = resolveExecutorThinkingLevel(input.roomThinkingLevel ?? undefined, chatModelSettings);
+    /*
      * FNXC:ChatModels 2026-07-01-16:42:
      * Room responders should pass configured fallback models even when the room send chose an explicit model. The engine still swaps only for retryable provider/model-selection failures, so an unavailable Sonnet 5 can recover without making ordinary prompt errors ambiguous.
      */
@@ -1803,6 +1810,7 @@ export class ChatManager {
             defaultModelId: effectiveModelId,
           }
         : {}),
+      ...(effectiveThinkingLevel ? { defaultThinkingLevel: effectiveThinkingLevel } : {}),
       ...(allowFallback && chatModelSettings.fallbackProvider && chatModelSettings.fallbackModelId
         ? {
             fallbackProvider: chatModelSettings.fallbackProvider,

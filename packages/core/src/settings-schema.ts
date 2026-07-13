@@ -193,6 +193,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   titleSummarizerGlobalProvider: undefined,
   titleSummarizerGlobalModelId: undefined,
   /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Global merger baseline lane (provider/model/thinking) is independent of executor/planner/reviewer so operators can pin a merge-capable model under Settings → Global Models without changing other lanes. Undefined falls through to defaultProvider/defaultModelId at resolve time.
+  */
+  mergerGlobalProvider: undefined,
+  mergerGlobalModelId: undefined,
+  /*
   FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
   Global model lanes can override the default thinking effort independently. Undefined preserves the existing inheritance to `defaultThinkingLevel`.
   */
@@ -200,6 +206,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   planningGlobalThinkingLevel: undefined,
   validatorGlobalThinkingLevel: undefined,
   titleSummarizerGlobalThinkingLevel: undefined,
+  mergerGlobalThinkingLevel: undefined,
   // Daemon mode settings
   daemonToken: undefined,
   daemonPort: 4040,
@@ -391,6 +398,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   Default off preserves current board-card task detail behavior. The dashboard only consults this project setting for ordinary board-card clicks without a deep tab across mobile, tablet, and desktop viewports, and reuses the existing task pop-out surface before falling back to right-dock or main-panel routing.
   */
   openMobileTasksInPopup: false,
+  /*
+  FNXC:TaskPopupViewGating 2026-07-13-00:00:
+  Default off preserves current always-visible task-detail popup behavior. When true, the dashboard render gate shows each open task-detail FloatingWindow only on the Board/List view where it was opened without clearing popup snapshots or their shared persisted geometry.
+  */
+  taskPopupsBoardListOnly: false,
   /*
   FNXC:TaskCardCostBadge 2026-07-11-12:15:
   Default off preserves existing board-card density. When true, the dashboard may render a read-time derived cost badge only for tasks with positive token usage; unavailable pricing remains the guess-free “—” sentinel.
@@ -593,6 +605,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   titleSummarizerFallbackProvider: undefined,
   titleSummarizerFallbackModelId: undefined,
   titleSummarizerFallbackThinkingLevel: undefined,
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Merger model lane stays project-scoped (not workflow-moved) like title summarizer: Settings → Project Models can override the global merger baseline without binding the choice to a workflow graph.
+  */
+  mergerProvider: undefined,
+  mergerModelId: undefined,
+  mergerThinkingLevel: undefined,
   prTitlePromptInstructions: undefined,
   prDescriptionPromptInstructions: undefined,
   scripts: undefined,
@@ -641,6 +660,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   showTaskChatsInCommonFeed: false,
   chatAutoCleanupDays: 0,
+  chatNewSessionMode: undefined,
+  chatDefaultKind: undefined,
+  chatDefaultAgentId: undefined,
+  chatDefaultModelProvider: undefined,
+  chatDefaultModelId: undefined,
+  chatDefaultThinkingLevel: undefined,
   mailAutoCleanupDays: 0,
   operationalLogRetentionDays: 30,
   // FNXC:PostgresMigrationBanner 2026-07-12: set by the startup factory after

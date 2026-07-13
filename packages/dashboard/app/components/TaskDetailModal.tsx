@@ -2801,6 +2801,11 @@ export function TaskDetailContent({
     setRefineFeedback("");
     setIsRefining(false);
   }, []);
+  /*
+  FNXC:TaskDetailRefine 2026-07-12-00:00:
+  The nested refine overlay must use the shared overlay-dismiss contract so the click/touch sequence that opens Refine never self-dismisses the freshly mounted composer, and so backdrop presses honor the global default-off modal-dismiss preference like every other dashboard modal.
+  */
+  const refineOverlayDismissProps = useOverlayDismiss(handleCloseRefineModal);
 
   const handleSubmitRefine = useCallback(async () => {
     if (!refineFeedback.trim()) {
@@ -5888,14 +5893,11 @@ export function TaskDetailContent({
         {showRefineModal && (
           <div
             className="modal-overlay open detail-refine-overlay"
-            onClick={handleCloseRefineModal}
+            {...refineOverlayDismissProps}
             role="dialog"
             aria-modal="true"
           >
-            <div
-              className="modal detail-refine-modal"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div className="modal detail-refine-modal">
               <div className="modal-header">
                 <h3 className="detail-refine-title">{t("taskDetail.refine.modalTitle", "Refine")}</h3>
                 <button className="modal-close" onClick={handleCloseRefineModal} aria-label={t("common.close", "Close")}>

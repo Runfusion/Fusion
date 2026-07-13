@@ -189,6 +189,12 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS alone never
   // upgrades an existing table).
   { table: "chat_sessions", column: "thinking_level", type: "text" },
+  // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): sqlite v143-145 additive
+  // columns — validator/planning task overrides + chat-room default; listed so
+  // existing embedded-PG databases self-heal them on boot.
+  { table: "tasks", column: "validator_thinking_level", type: "text" },
+  { table: "tasks", column: "planning_thinking_level", type: "text" },
+  { table: "chat_rooms", column: "thinking_level", type: "text" },
 ];
 
 /**

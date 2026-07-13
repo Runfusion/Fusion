@@ -14,7 +14,7 @@ import {
   PLAN_REVIEW_GROUP_ID,
   TaskDeletedError,
   buildTriageMemoryInstructions,
-  buildBootstrapPrompt,
+  isUnplannedSeedPrompt,
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
   resolveAgentPrompt,
@@ -798,7 +798,12 @@ export class TriageProcessor {
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
       /*
-      Workflows with a manual intake (e.g. Coding (Ideas)) merge the planner and capacity-hold stages into a single "todo" column. The triage service must also discover "todo" tasks whose PROMPT.md is still the bootstrap stub — they have been promoted out of the manual intake but not yet planned in place. Planned todo tasks carry a real spec and are left for the scheduler. The bootstrap-prompt file check is the ground-truth unplanned signal; it is false for every normal-workflow todo task because triage writes a real spec before it ever moves a card into todo.
+      Workflows with a manual intake (e.g. Coding (Ideas)) merge the planner and capacity-hold stages into a single "todo" column. The triage service must also discover "todo" tasks whose PROMPT.md is still an unplanned seed — they have been promoted out of the manual intake but not yet planned in place. Planned todo tasks carry a real spec and are left for the scheduler. The seed-prompt file check is the ground-truth unplanned signal; it is false for every normal-workflow todo task because triage writes a real spec before it ever moves a card into todo.
+
+      FNXC:CodingIdeasWorkflow 2026-07-12-23:05:
+      Two discovery gaps let plan-in-place workflow cards strand or misexecute in "todo":
+      1. `needs-replan` todo tasks carry a REAL PROMPT.md (the failed plan under revision), so the seed check alone never rediscovers them. Workflows without a "triage" column keep replanning tasks in "todo" (the executor's workflow-aware replan rebound targets the planner column), so triage must pick up `needs-replan` todo cards regardless of prompt content — processTask already routes them through the isReplan path.
+      2. Refinement seeds (`# {title}\n\n{description}`, no id prefix) previously failed the strict bootstrap-stub equality, so a promoted refinement skipped planning entirely; isUnplannedSeedPrompt accepts both seed shapes.
       */
       const eligibleTodoTasksRaw = allTasks.filter(
         (t) => t.column === "todo" && !this.processing.has(t.id) && !t.paused
@@ -810,10 +815,14 @@ export class TriageProcessor {
       );
       const eligibleTodoTasks: Task[] = [];
       for (const todoTask of eligibleTodoTasksRaw) {
+        if (todoTask.status === "needs-replan") {
+          eligibleTodoTasks.push(todoTask);
+          continue;
+        }
         try {
           const promptPath = join(this.rootDir, ".fusion", "tasks", todoTask.id, "PROMPT.md");
           const content = await readFile(promptPath, "utf-8");
-          if (content === buildBootstrapPrompt(todoTask.id, todoTask.title, todoTask.description)) {
+          if (isUnplannedSeedPrompt(content, todoTask.id, todoTask.title, todoTask.description)) {
             eligibleTodoTasks.push(todoTask);
           }
         } catch {
@@ -1162,10 +1171,10 @@ export class TriageProcessor {
             ? settings.planningFallbackModelId
             : (hasExplicitGlobalFallback ? settings.fallbackModelId : implicitPlanningFallback.modelId),
           /*
-           * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-           * Planning sessions carry task thinking first, then the workflow-declared planning lane, global planning lane, and default thinking settings into pi.ts' existing thinking fallback path.
+           * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+           * Planning sessions honor the per-task planning override before the shared task thinking level, then the workflow-declared planning lane, global lane, and default thinking settings.
            */
-          defaultThinkingLevel: resolvePlanningThinkingLevel(settings, task.thinkingLevel),
+          defaultThinkingLevel: resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel),
           runAuditor,
           settings,
           // FNXC:McpConfig 2026-06-25-23:17: Primary triage planning is an AI lane, so it receives the store-resolved MCP set while the pi runtime-support guard decides whether to forward it without logging secret material.
@@ -1184,7 +1193,7 @@ export class TriageProcessor {
           }),
         });
 
-        const modelDesc = formatModelMarkerDetails(describeModel(session), resolvePlanningThinkingLevel(settings, task.thinkingLevel));
+        const modelDesc = formatModelMarkerDetails(describeModel(session), resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel));
         planLog.log(`${task.id}: using model ${modelDesc}`);
         await this.store.logEntry(task.id, `Triage using model: ${modelDesc}`);
         await this.store.appendAgentLog(

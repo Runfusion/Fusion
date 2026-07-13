@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "../ChatView";
 import * as useChatModule from "../../hooks/useChat";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
@@ -42,6 +42,12 @@ async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
     result = rtlRender(ui);
   });
   return result!;
+}
+
+async function flushAnimationFrame() {
+  await act(async () => {
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  });
 }
 
 const mockUseChat = vi.mocked(useChatModule.useChat);
@@ -204,6 +210,45 @@ describe("ChatView scroll-to-top message affordance", () => {
     expect(container.scrollTo).toHaveBeenCalledWith({ top: 120, behavior: "auto" });
   });
 
+  it("shows the affordance only when the direct-session assistant message top is clipped", async () => {
+    await setup({
+      messages: [
+        { id: "assistant-ok", sessionId: activeSession.id, role: "assistant", content: "hello", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    const target = screen.getByTestId("chat-message-assistant-ok") as HTMLDivElement;
+    const button = screen.getByTestId("chat-message-scroll-to-top-assistant-ok");
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+    const targetRect = vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+
+    fireEvent.scroll(container);
+    await flushAnimationFrame();
+    expect(button).toHaveClass("chat-message-scroll-to-top-action--hidden");
+
+    targetRect.mockReturnValue({ top: 80 } as DOMRect);
+    fireEvent.scroll(container);
+    await flushAnimationFrame();
+    await waitFor(() => expect(button).not.toHaveClass("chat-message-scroll-to-top-action--hidden"));
+  });
+
+  it("renders the affordance inline with the Thinking row when thinking output exists", async () => {
+    await setup({
+      messages: [
+        { id: "assistant-thinking", sessionId: activeSession.id, role: "assistant", content: "hello", thinkingOutput: "reasoning", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    const message = screen.getByTestId("chat-message-assistant-thinking");
+    const row = message.querySelector(".chat-message-thinking-row");
+    const thinking = message.querySelector(".chat-message-thinking");
+    const button = screen.getByTestId("chat-message-scroll-to-top-assistant-thinking");
+
+    expect(row).toContainElement(thinking as HTMLElement);
+    expect(row).toContainElement(button);
+  });
+
   it("renders the affordance for room assistant messages", async () => {
     await setup(
       {
@@ -221,6 +266,34 @@ describe("ChatView scroll-to-top message affordance", () => {
     fireEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
 
     expect(screen.getByTestId("chat-message-scroll-to-top-room-assistant-1")).toBeInTheDocument();
+  });
+
+  it("shows the affordance only when a room assistant message top is clipped", async () => {
+    await setup(
+      { sessions: [activeSession], activeSession },
+      {
+        messages: [
+          { id: "room-assistant-1", roomId: roomA.id, role: "assistant", content: "Room response", createdAt: "2026-04-08T00:00:00.000Z", senderAgentId: "agent-1", mentions: [] },
+        ],
+      },
+      { chatRooms: true },
+    );
+
+    fireEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    const target = screen.getByTestId("chat-message-room-assistant-1") as HTMLDivElement;
+    const button = screen.getByTestId("chat-message-scroll-to-top-room-assistant-1");
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+    const targetRect = vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 120 } as DOMRect);
+
+    fireEvent.scroll(container);
+    await flushAnimationFrame();
+    expect(button).toHaveClass("chat-message-scroll-to-top-action--hidden");
+
+    targetRect.mockReturnValue({ top: 90 } as DOMRect);
+    fireEvent.scroll(container);
+    await flushAnimationFrame();
+    await waitFor(() => expect(button).not.toHaveClass("chat-message-scroll-to-top-action--hidden"));
   });
 
   it("does not reset to top when a stale zero snapshot is captured while user is reading older messages", async () => {

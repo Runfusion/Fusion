@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/grok-runtime",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "type": "module",
   "description": "Grok CLI runtime plugin for Fusion (ACP agent stdio)",
   "keywords": [

@@ -1,5 +1,19 @@
 # @fusion-plugin-examples/acp-runtime
 
+## 0.1.25
+
+### Patch Changes
+
+- @fusion/core@0.60.0
+- @fusion/plugin-sdk@0.60.0
+
+## 0.1.24
+
+### Patch Changes
+
+- @fusion/core@0.59.0
+- @fusion/plugin-sdk@0.59.0
+
 ## 0.1.23
 
 ### Patch Changes

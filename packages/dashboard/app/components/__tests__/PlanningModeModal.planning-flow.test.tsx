@@ -942,17 +942,31 @@ describe("PlanningModeModal", () => {
       expect(streamHandlers).toBeDefined();
     });
 
-    it("shows error message when planning fails", async () => {
-      // Override the default mock to simulate an error
-      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        setTimeout(() => {
-          handlers.onError?.("Rate limit exceeded");
-        }, 10);
-        
+    it("auto-retries a persisted stream error three times before showing the permanent error", async () => {
+      const streamHandlers: any[] = [];
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers.push(handlers);
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
         };
+      });
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-123",
+        type: "planning",
+        status: "error",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "Rate limit exceeded",
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
       });
 
       render(
@@ -962,34 +976,68 @@ describe("PlanningModeModal", () => {
           onTaskCreated={mockOnTaskCreated}
           onTasksCreated={vi.fn()}
           tasks={mockTasks}
-        />
+        />,
       );
 
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
       fireEvent.change(textarea, { target: { value: "Build auth system" } });
-
       fireEvent.click(screen.getByText("Start Planning"));
 
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+      await act(async () => {
+        streamHandlers[0].onError?.("Rate limit exceeded");
+      });
+      await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledTimes(1));
+      expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
+
+      await act(async () => {
+        streamHandlers[1].onError?.("Rate limit exceeded");
+      });
+      await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledTimes(2));
+      expect(screen.getByText("Retrying… (attempt 2 of 3)")).toBeDefined();
+
+      await act(async () => {
+        streamHandlers[2].onError?.("Rate limit exceeded");
+      });
+      await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledTimes(3));
+      expect(screen.getByText("Retrying… (attempt 3 of 3)")).toBeDefined();
+
+      await act(async () => {
+        streamHandlers[3].onError?.("Rate limit exceeded");
+      });
       await waitFor(() => {
         expect(screen.getByText("Rate limit exceeded")).toBeDefined();
       });
+      expect(mockRetryPlanningSession).toHaveBeenCalledTimes(3);
       expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
     });
 
-    it("retries from error state and reconnects stream", async () => {
-      let streamAttempt = 0;
+    it("manual retry still starts a fresh retry after the auto-retry budget is exhausted", async () => {
+      const streamHandlers: any[] = [];
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
-        streamAttempt += 1;
-        if (streamAttempt === 1) {
-          setTimeout(() => handlers.onError?.("Temporary failure"), 10);
-        } else {
-          setTimeout(() => handlers.onQuestion?.(mockQuestion), 10);
-        }
-
+        streamHandlers.push(handlers);
         return {
           close: vi.fn(),
           isConnected: vi.fn().mockReturnValue(true),
         };
+      });
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-123",
+        type: "planning",
+        status: "error",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "Temporary failure",
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
       });
 
       render(
@@ -1007,19 +1055,260 @@ describe("PlanningModeModal", () => {
       });
       fireEvent.click(screen.getByText("Start Planning"));
 
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+      for (let index = 0; index < 4; index += 1) {
+        await act(async () => {
+          streamHandlers[index].onError?.("Temporary failure");
+        });
+      }
+
       await waitFor(() => {
         expect(screen.getByText("Temporary failure")).toBeDefined();
       });
+      expect(mockRetryPlanningSession).toHaveBeenCalledTimes(3);
 
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-123",
+        type: "planning",
+        status: "generating",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
       await waitFor(() => {
-        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockRetryPlanningSession).toHaveBeenCalledTimes(4);
+      });
+      await act(async () => {
+        streamHandlers[4].onQuestion?.(mockQuestion);
       });
       await waitFor(() => {
         expect(screen.getByText("What is the scope?")).toBeDefined();
       });
-      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
+    });
+
+    it("resets the auto-retry budget after successful question progress", async () => {
+      const streamHandlers: any[] = [];
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers.push(handlers);
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-123",
+        type: "planning",
+        status: "error",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "Temporary failure",
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+      await act(async () => {
+        streamHandlers[0].onError?.("Temporary failure");
+      });
+      await waitFor(() => expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined());
+
+      await act(async () => {
+        streamHandlers[1].onQuestion?.(mockQuestion);
+      });
+      await waitFor(() => expect(screen.getByText("What is the scope?")).toBeDefined());
+
+      await act(async () => {
+        streamHandlers[1].onError?.("Temporary failure");
+      });
+      await waitFor(() => expect(mockRetryPlanningSession).toHaveBeenCalledTimes(2));
+      expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
+      expect(screen.queryByText("Temporary failure")).toBeNull();
+    });
+
+    it("single-flights overlapping SSE error and stuck-poll retry signals", async () => {
+      const streamHandlers: any[] = [];
+      let pollTick: (() => void | Promise<void>) | undefined;
+      const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((callback: TimerHandler, timeout?: number) => {
+        if (timeout === 8000) {
+          pollTick = callback as () => void | Promise<void>;
+        }
+        return 1 as unknown as ReturnType<typeof setInterval>;
+      });
+      let resolveRetry!: (value: { success: boolean; sessionId: string }) => void;
+      const retryPromise = new Promise<{ success: boolean; sessionId: string }>((resolve) => {
+        resolveRetry = resolve;
+      });
+      mockRetryPlanningSession.mockReturnValue(retryPromise);
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers.push(handlers);
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-123",
+        type: "planning",
+        status: "error",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "Temporary failure",
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+          target: { value: "Build auth system" },
+        });
+        fireEvent.click(screen.getByText("Start Planning"));
+        await waitFor(() => expect(streamHandlers).toHaveLength(1));
+        await waitFor(() => expect(pollTick).toBeDefined());
+
+        await act(async () => {
+          void streamHandlers[0].onError?.("Temporary failure");
+          await Promise.resolve();
+          await pollTick?.();
+        });
+
+        expect(mockRetryPlanningSession).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
+
+        await act(async () => {
+          resolveRetry({ success: true, sessionId: "session-123" });
+        });
+      } finally {
+        setIntervalSpy.mockRestore();
+      }
+    });
+
+    it("surfaces the permanent error view once the stuck-poll fallback exhausts the auto-retry budget without any SSE onError signal", async () => {
+      // FN-7946 regression: if the SSE connection never invokes onError (e.g. a
+      // dropped event) and the 8s watchdog poll is the only signal that discovers
+      // a terminal session error, the poll path must still surface the permanent
+      // error view once MAX_PLANNING_AUTO_RETRIES is exhausted — not leave the
+      // modal stuck on the loading spinner forever.
+      const streamHandlers: any[] = [];
+      const pollTicks: Array<() => void | Promise<void>> = [];
+      const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((callback: TimerHandler, timeout?: number) => {
+        if (timeout === 8000) {
+          pollTicks.push(callback as () => void | Promise<void>);
+        }
+        return 1 as unknown as ReturnType<typeof setInterval>;
+      });
+      mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers.push(handlers);
+        return {
+          close: vi.fn(),
+          isConnected: vi.fn().mockReturnValue(true),
+        };
+      });
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-123",
+        type: "planning",
+        status: "error",
+        title: "Build auth system",
+        inputPayload: JSON.stringify({ initialPlan: "Build auth system" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "Watchdog aborted a stalled turn",
+        projectId: null,
+        lockedByTab: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lockedAt: null,
+      });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+          target: { value: "Build auth system" },
+        });
+        fireEvent.click(screen.getByText("Start Planning"));
+        await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+        // Drive every retry attempt purely through the watchdog poll — the SSE
+        // handlers never call onError, simulating a missed/dropped SSE event.
+        // The interval is registered once while the view stays "loading" across
+        // retries (lockSessionId/session id do not change), so the same captured
+        // tick callback is re-invoked on each simulated 8s beat, exactly as the
+        // real setInterval would re-invoke it.
+        await waitFor(() => expect(pollTicks.length).toBeGreaterThan(0));
+        for (let index = 0; index < 4; index += 1) {
+          await act(async () => {
+            await pollTicks[0]?.();
+          });
+        }
+
+        await waitFor(() => {
+          expect(screen.getByText("Watchdog aborted a stalled turn")).toBeDefined();
+        });
+        expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
+        expect(mockRetryPlanningSession).toHaveBeenCalledTimes(3);
+      } finally {
+        setIntervalSpy.mockRestore();
+      }
     });
 
     it("auto-recovers from a stream error when server session is still generating", async () => {
@@ -1966,7 +2255,7 @@ describe("PlanningModeModal", () => {
       expect(screen.getByRole("button", { name: "Start Planning" })).toBeDefined();
     });
 
-    it("shows retry panel when resuming an errored session and retries the same session", async () => {
+    it("auto-retries when resuming an errored session", async () => {
       mockFetchAiSession.mockResolvedValueOnce({
         id: "session-error-1",
         type: "planning",
@@ -1996,18 +2285,14 @@ describe("PlanningModeModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole("alert")).toHaveTextContent("Session interrupted");
-      });
-      expect(screen.queryByRole("button", { name: "Start Planning" })).toBeNull();
-
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-      await waitFor(() => {
         expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-error-1", undefined, expect.any(String));
       });
+      expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Start Planning" })).toBeNull();
     });
 
-    it("shows retry panel when selecting an errored session from the sidebar", async () => {
+    it("auto-retries when selecting an errored session from the sidebar", async () => {
       mockFetchAiSessions.mockResolvedValueOnce([
         {
           id: "session-sidebar-error",
@@ -2055,15 +2340,11 @@ describe("PlanningModeModal", () => {
 
       await waitFor(() => {
         expect(mockFetchAiSession).toHaveBeenCalledWith("session-sidebar-error");
-        expect(screen.getByRole("alert")).toHaveTextContent("Sidebar session interrupted");
-      });
-      expect(screen.queryByRole("button", { name: "Start Planning" })).toBeNull();
-
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-      await waitFor(() => {
         expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-sidebar-error", undefined, expect.any(String));
       });
+      expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Start Planning" })).toBeNull();
     });
 
     it("routes malformed persisted result data from sidebar selection to the recoverable error view", async () => {

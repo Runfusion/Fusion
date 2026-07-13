@@ -141,7 +141,7 @@ describe("permanent-agent-gating", () => {
     expect(decision).toMatchObject({ category, recognized: true, disposition: "block" });
   });
 
-  it.each(["fn_workflow_list", "fn_workflow_get", "fn_trait_list"] as const)("classifies %s as recognized readonly", (toolName) => {
+  it.each(["fn_workflow_list", "fn_workflow_get", "fn_workflow_validate", "fn_trait_list"] as const)("classifies %s as recognized readonly", (toolName) => {
     expect(classifyPermanentAgentToolCall(toolName)).toEqual({ category: "none", recognized: true });
   });
 

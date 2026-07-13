@@ -9,6 +9,7 @@ import {
   fetchChatRoomMessages,
   fetchChatRooms,
   postChatRoomMessage,
+  updateChatRoom,
   uploadChatRoomAttachment,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
@@ -46,6 +47,7 @@ export interface UseChatRoomsResult {
   messagesLoading: boolean;
   selectRoom: (roomId: string | null) => void;
   createRoom: (input: { name: string; memberAgentIds: string[] }) => Promise<ChatRoom>;
+  updateRoomSettings: (roomId: string, updates: { thinkingLevel?: string | null }) => Promise<ChatRoom>;
   deleteRoom: (roomId: string) => Promise<void>;
   sendRoomMessage: (content: string, opts?: { attachments?: ChatAttachment[]; files?: File[] }) => Promise<void>;
   clearRoom: (roomId: string) => Promise<void>;
@@ -287,6 +289,18 @@ export function useChatRooms(
     return nextRoom;
   }, [activeRoomCacheKey, loadRoomData, projectId]);
 
+  const updateRoomSettings = useCallback(async (roomId: string, updates: { thinkingLevel?: string | null }) => {
+    const response = await updateChatRoom(roomId, updates, projectId);
+    const nextRoom = response.room;
+
+    setRooms((previous) => upsertRoom(previous, nextRoom));
+    if (activeRoomRef.current?.id === nextRoom.id) {
+      activeRoomRef.current = nextRoom;
+      setActiveRoom(nextRoom);
+    }
+    return nextRoom;
+  }, [projectId]);
+
   const deleteRoomLocal = useCallback(async (roomId: string) => {
     await deleteChatRoom(roomId, projectId);
     setRooms((previous) => previous.filter((room) => room.id !== roomId));
@@ -474,6 +488,7 @@ export function useChatRooms(
           if (!room) return;
           setRooms((previous) => upsertRoom(previous, room));
           if (activeRoomRef.current?.id === room.id) {
+            activeRoomRef.current = room;
             setActiveRoom(room);
           }
         },
@@ -607,6 +622,7 @@ export function useChatRooms(
     messagesLoading,
     selectRoom,
     createRoom: createRoomLocal,
+    updateRoomSettings,
     deleteRoom: deleteRoomLocal,
     sendRoomMessage,
     clearRoom,

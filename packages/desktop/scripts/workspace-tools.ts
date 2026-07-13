@@ -168,6 +168,14 @@ export async function stageDesktopDeploy(): Promise<void> {
 }
 
 export async function buildDashboardClient(): Promise<void> {
+  // FNXC:DesktopBuild 2026-07-13-12:15:
+  // Clean the dashboard client output directory before building. Vite generates
+  // content-hashed chunk filenames; if a previous build left stale assets, the
+  // rollup write queue can hit ENOENT on stale-hashed paths. A clean outDir
+  // ensures the new build owns all filenames deterministically.
+  const clientDir = resolve(workspaceRoot, "packages", "dashboard", "dist", "client");
+  await rm(clientDir, { recursive: true, force: true });
+
   // Desktop loads index.html via file:// from inside the asar, so absolute
   // asset paths (/assets/...) resolve to the filesystem root and fail. Build
   // with a relative base so the bundled HTML references ./assets/... instead.

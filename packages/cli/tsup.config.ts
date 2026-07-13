@@ -49,6 +49,7 @@ const compoundEngineeringPluginSrc = join(__dirname, "..", "..", "plugins", "fus
 const compoundEngineeringPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-compound-engineering");
 const linearImportPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-linear-import");
 const linearImportPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-linear-import");
+const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.ts");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
@@ -181,9 +182,14 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     platform: "node",
     target: "node22",
     outfile: join(destDir, "bundled.js"),
-    external: ["@fusion/core", "@fusion/engine"],
+    external: ["@fusion/engine"],
     alias: {
       "@fusion/plugin-sdk": join(__dirname, "..", "plugin-sdk", "src", "index.ts"),
+      /*
+       * FNXC:BundledPlugins 2026-07-13-00:00:
+       * FN-7936 / issue #2059 requires every published bundled.js to be self-contained. The plugin-sdk source re-exports WORKFLOW_EXTENSION_SCHEMA_VERSION, workflowExtensionRegistryId, and createBoardActionServices from private @fusion/core; resolve those runtime values to the shared shim here so npm-installed bundled plugins never crash with Cannot find package '@fusion/core'.
+       */
+      "@fusion/core": pluginSdkCoreRuntimeShim,
     },
     logLevel: "warning",
   });
@@ -281,7 +287,6 @@ function assertAllStagedBundledPluginsLoadable() {
 }
 
 const pluginSdkEntry = join(__dirname, "..", "plugin-sdk", "src", "index.ts");
-const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.ts");
 
 const cliBuildConfig = {
   entry: ["src/bin.ts", "src/extension.ts"],

@@ -37,6 +37,7 @@ import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-r
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID, resolveWorkflowIrForTask } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
+import { moveTaskToReplanColumn } from "./replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./task-agent-sync.js";
 
 function shouldRunWorkflowColumnScheduler(_settings: Settings): boolean {
@@ -1665,20 +1666,30 @@ export class Scheduler {
         const validation = await this.validateTaskFilesystem(task.id);
         if (!validation.valid) {
           schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
-          await this.store.moveTask(task.id, "triage");
-          await this.store.logEntry(task.id, "Task moved to triage — filesystem validation failed", validation.reason);
+          /*
+          FNXC:WorkflowScheduling 2026-07-13-11:25:
+          The filesystem-validation rebound must set `needs-replan`, not just move. For a
+          plan-in-place workflow the replan column IS "todo", so the move is a no-op — without
+          the status write triage cannot rediscover the card (its PROMPT.md is missing or
+          unreadable, so the seed check throws and skips it) and this branch re-fires every
+          scheduler tick forever, appending a misleading log line each time.
+          */
+          const replanColumn = await moveTaskToReplanColumn(this.store, task);
+          await this.store.updateTask(task.id, { status: "needs-replan" });
+          await this.store.logEntry(task.id, `Task rebounded to ${replanColumn} for re-specification — filesystem validation failed`, validation.reason);
           continue;
         }
 
         // Stale spec enforcement: check if PROMPT.md has aged beyond the configured threshold.
-        // When enabled, stale tasks are moved back to triage with status "needs-replan"
-        // so they receive fresh specification before execution. This guard runs after
-        // filesystem validation so missing/unreadable files skip staleness checks entirely.
+        // When enabled, stale tasks are rebounded to the workflow-aware replan column with
+        // status "needs-replan" so they receive fresh specification before execution
+        // (workflows without a "triage" column replan in place in todo). This guard runs
+        // after filesystem validation so missing/unreadable files skip staleness checks entirely.
         const promptPath = getPromptPath(this.store.getTasksDir(), task.id);
         const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
         if (staleness.isStale) {
           schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-          await this.store.moveTask(task.id, "triage");
+          await moveTaskToReplanColumn(this.store, task);
           await this.store.updateTask(task.id, { status: "needs-replan" });
           await this.store.logEntry(task.id, staleness.reason);
           continue;
@@ -2326,8 +2337,12 @@ export class Scheduler {
           const validation = await this.validateTaskFilesystem(task.id);
           if (!validation.valid) {
             schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
-            await this.store.moveTask(task.id, "triage");
-            await this.store.logEntry(task.id, "Task moved to triage — filesystem validation failed", validation.reason);
+            // See the FNXC:WorkflowScheduling 2026-07-13-11:25 note in the legacy loop: the
+            // status write is what makes triage rediscover a card whose replan column equals
+            // its current column.
+            const replanColumn = await moveTaskToReplanColumn(this.store, task);
+            await this.store.updateTask(task.id, { status: "needs-replan" });
+            await this.store.logEntry(task.id, `Task rebounded to ${replanColumn} for re-specification — filesystem validation failed`, validation.reason);
             return null;
           }
 
@@ -2336,7 +2351,7 @@ export class Scheduler {
             const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
             if (staleness.isStale) {
               schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-              await this.store.moveTask(task.id, "triage");
+              await moveTaskToReplanColumn(this.store, task);
               await this.store.updateTask(task.id, { status: "needs-replan" });
               await this.store.logEntry(task.id, staleness.reason);
               return null;

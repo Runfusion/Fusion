@@ -20,6 +20,11 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import type { Agent, ChatInFlightGenerationState, ChatMessage } from "@fusion/core";
 
 const ACTIVE_SESSION_STORAGE_KEY = "kb-chat-active-session";
+/**
+ * FNXC:Chat-ModelSwitch 2026-07-12-00:00:
+ * Model-loop direct sessions store this sentinel agent id so the UI and hook share one target-mode check instead of duplicating the literal in each composer surface.
+ */
+export const FN_AGENT_ID = "__fn_agent__";
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
 
 function isTaskPlannerSession(session: ChatSessionInfo): boolean {
@@ -97,6 +102,18 @@ export interface UseChatReturn {
   ) => Promise<ChatSessionInfo>;
   archiveSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
+  setSessionModel: (
+    id: string,
+    selection: { agentId?: string; modelProvider?: string | null; modelId?: string | null },
+  ) => Promise<void>;
+  /**
+   * FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+   * Change an existing (already-created) session's reasoning-effort level mid-conversation via
+   * PATCH /api/chat/sessions/:id; distinct from the create-time picker in NewChatDialog
+   * (FN-7775). `level: ""` clears the override back to inherit the project/global default.
+   * Mirrors renameSession's optimistic-update-with-rollback contract.
+   */
+  setSessionThinkingLevel: (id: string, level: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
 
   // Message operations
@@ -1018,6 +1035,102 @@ export function useChat(
     [activeSession, addToast, projectId, sessions],
   );
 
+  /**
+   * FNXC:Chat-ModelSwitch 2026-07-12-00:00:
+   * The brain-icon popup can retarget an active direct conversation to either a model pair or a real agent mid-conversation. Optimistically patch both session collections so the next send and visible header use the new persisted target without creating a replacement chat.
+   *
+   * FNXC:Chat-ModelSwitch 2026-07-12-21:40:
+   * The PATCH payload must explicitly clear the field the user is switching AWAY from (agentId
+   * when picking a model; modelProvider/modelId when picking an agent), not just the optimistic
+   * local patch. Forwarding only the caller's partial `selection` would leave a stale agentId
+   * (or stale modelProvider/modelId) persisted server-side, so the next send could still resolve
+   * against the PREVIOUS target — silently breaking the retarget this control exists for.
+   */
+  const setSessionModel = useCallback(
+    async (id: string, selection: { agentId?: string; modelProvider?: string | null; modelId?: string | null }) => {
+      const previousSessions = sessions;
+      const previousActiveSession = activeSession;
+      const isAgentSwitch = selection.agentId !== undefined;
+      const optimisticPatch = isAgentSwitch
+        ? { agentId: selection.agentId!, modelProvider: null, modelId: null }
+        : { agentId: FN_AGENT_ID, modelProvider: selection.modelProvider ?? null, modelId: selection.modelId ?? null };
+
+      setSessions((prev) => prev.map((session) => (session.id === id ? { ...session, ...optimisticPatch } : session)));
+      setActiveSession((prev) => (prev?.id === id ? { ...prev, ...optimisticPatch } : prev));
+
+      try {
+        const data = await updateChatSession(id, optimisticPatch, projectId);
+        const updatedSession = data.session;
+        const reconciledPatch = {
+          agentId: updatedSession.agentId,
+          modelProvider: updatedSession.modelProvider,
+          modelId: updatedSession.modelId,
+          updatedAt: updatedSession.updatedAt,
+        };
+        setSessions((prev) =>
+          prev.map((session) => (session.id === id ? { ...session, ...reconciledPatch } : session)),
+        );
+        setActiveSession((prev) => (prev?.id === id ? { ...prev, ...reconciledPatch } : prev));
+      } catch (error) {
+        setSessions(previousSessions);
+        setActiveSession(previousActiveSession);
+        addToast?.("Failed to update chat model", "error");
+        throw error;
+      }
+    },
+    [activeSession, addToast, projectId, sessions],
+  );
+
+  /**
+   * FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
+   * Lets a user change an already-created direct chat session's thinking (reasoning-effort)
+   * level from the in-chat composer control, mid-conversation — FN-7775 only supported picking
+   * it once at session creation. Mirrors renameSession's optimistic-update-with-rollback
+   * contract exactly: update both `sessions` and `activeSession` immediately, reconcile with the
+   * server response, and roll back both on failure with an error toast.
+   */
+  const setSessionThinkingLevel = useCallback(
+    async (id: string, level: string) => {
+      const normalizedLevel = level.trim() || null;
+      const previousSessions = sessions;
+      const previousActiveSession = activeSession;
+
+      setSessions((prev) => prev.map((session) => (session.id === id ? { ...session, thinkingLevel: normalizedLevel } : session)));
+      setActiveSession((prev) => (prev?.id === id ? { ...prev, thinkingLevel: normalizedLevel } : prev));
+
+      try {
+        const data = await updateChatSession(id, { thinkingLevel: normalizedLevel }, projectId);
+        const updatedSession = data.session;
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === id
+              ? {
+                  ...session,
+                  thinkingLevel: updatedSession.thinkingLevel,
+                  updatedAt: updatedSession.updatedAt,
+                }
+              : session,
+          ),
+        );
+        setActiveSession((prev) =>
+          prev?.id === id
+            ? {
+                ...prev,
+                thinkingLevel: updatedSession.thinkingLevel,
+                updatedAt: updatedSession.updatedAt,
+              }
+            : prev,
+        );
+      } catch (error) {
+        setSessions(previousSessions);
+        setActiveSession(previousActiveSession);
+        addToast?.("Failed to update thinking level", "error");
+        throw error;
+      }
+    },
+    [activeSession, addToast, projectId, sessions],
+  );
+
   // Delete a session
   const deleteSession = useCallback(
     async (id: string) => {
@@ -1693,6 +1806,8 @@ export function useChat(
     createSession,
     archiveSession,
     renameSession,
+    setSessionModel,
+    setSessionThinkingLevel,
     deleteSession,
     sendMessage,
     editMessageAndResend,

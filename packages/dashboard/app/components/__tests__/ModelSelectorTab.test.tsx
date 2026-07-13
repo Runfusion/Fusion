@@ -131,6 +131,14 @@ describe("ModelSelectorTab", () => {
       .mockResolvedValueOnce({
         ...task,
         thinkingLevel: "high",
+      })
+      .mockResolvedValueOnce({
+        ...task,
+        validatorThinkingLevel: "high",
+      })
+      .mockResolvedValueOnce({
+        ...task,
+        planningThinkingLevel: "high",
       });
 
     render(
@@ -168,11 +176,27 @@ describe("ModelSelectorTab", () => {
       }, "project-alpha");
     });
 
-    await user.click(screen.getByRole("button", { name: "Executor Model" }));
+    await user.click(screen.getByRole("button", { name: /Executor Model/ }));
     await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
     await waitFor(() => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(4, "FN-7398", {
         thinkingLevel: "high",
+      }, "project-alpha");
+    });
+
+    await user.click(screen.getByRole("button", { name: /Reviewer Model/ }));
+    await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(5, "FN-7398", {
+        validatorThinkingLevel: "high",
+      }, "project-alpha");
+    });
+
+    await user.click(screen.getByRole("button", { name: /Planning Model/ }));
+    await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(6, "FN-7398", {
+        planningThinkingLevel: "high",
       }, "project-alpha");
     });
     expect(addToast).toHaveBeenCalledWith(expect.stringContaining("set to"), "success");
@@ -208,6 +232,30 @@ describe("ModelSelectorTab", () => {
         modelId: null,
       }, "project-alpha");
     });
+  });
+
+  it("renders reviewer and planning thinking badges with default fallback and concrete overrides", async () => {
+    const task = makeTask({
+      thinkingLevel: "medium",
+      validatorThinkingLevel: "high",
+      planningThinkingLevel: undefined,
+    });
+
+    render(
+      <ModelSelectorTab
+        task={task}
+        addToast={vi.fn()}
+        settings={{ defaultThinkingLevel: "low" } as any}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Executor Model")).toBeInTheDocument());
+
+    const badges = screen.getAllByTestId("custom-model-dropdown-thinking-badge");
+    expect(badges).toHaveLength(3);
+    expect(badges[0]).toHaveTextContent("Medium");
+    expect(badges[1]).toHaveTextContent("High");
+    expect(badges[2]).toHaveTextContent("Default (low)");
   });
 
   it("updates from a cached empty catalog to populated Claude CLI rows without remounting", async () => {

@@ -1,6 +1,6 @@
 import type { WorkflowDefinition, WorkflowDefinitionKind, WorkflowIr, WorkflowIrNode, WorkflowSettingDefinition, TaskStore } from "@fusion/core";
 import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon } from "@fusion/core";
-import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, validateCodeNodeSources } from "@fusion/engine";
+import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, validateCodeNodeSources, validateWorkflowIrDryRun } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
 import { emitWorkflowSseEvent } from "../sse.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -301,6 +301,31 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
           includeDisabledBuiltins: req.query.includeDisabledBuiltins === "true",
         }),
       );
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * FNXC:WorkflowRoutes 2026-07-12-00:00:
+   * Workflow validation callers need the create/update validator as a read-only dry run: invalid IR returns a typed validation payload, while persistence and workflow SSE events are forbidden.
+   */
+  router.post("/workflows/validate", async (req, res) => {
+    try {
+      const { store } = await getProjectContext(req);
+      const body = req.body ?? {};
+      const workflowId = typeof body.workflowId === "string" ? body.workflowId.trim() : "";
+      let ir: unknown;
+      if (workflowId) {
+        const def = await store.getWorkflowDefinition(workflowId);
+        if (!def) throw notFound(`Workflow '${workflowId}' not found`);
+        ir = def.ir;
+      } else {
+        ir = requireIr(body);
+      }
+      const result = await validateWorkflowIrDryRun(store, ir, body.confirmPolicyEscalation === true);
+      res.status(200).json(result.valid ? { valid: true } : { valid: false, errors: result.errors });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);

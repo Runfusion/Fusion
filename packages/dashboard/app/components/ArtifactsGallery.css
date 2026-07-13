@@ -369,11 +369,16 @@ Viewers live inside the shared FloatingWindow (draggable by the viewer header, r
   padding: var(--space-md);
 }
 
+/*
+FNXC:ArtifactsGallery 2026-07-12-21:10:
+The artifacts viewer is a headerless FloatingWindow, so this header is the delegated drag handle on tablet and coarse-pointer floating layouts. Keep its effective `touch-action: none` so a single-finger drag is delivered through FloatingWindow's captured pointermove stream instead of being intersected back into page pan; the mobile sheet override below still disables the desktop drag affordance at <=768px.
+*/
 .artifacts-gallery-viewer-header {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   cursor: grab;
+  touch-action: none;
 }
 
 .artifacts-gallery-viewer-header:active {

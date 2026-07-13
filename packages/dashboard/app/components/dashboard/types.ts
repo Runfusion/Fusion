@@ -116,6 +116,7 @@ export interface MainContentProps {
   mergeStrategy: string;
   planAutoApproveEnabled: boolean;
   settingsLoaded: boolean;
+  openMobileTasksInPopup: boolean;
   taskDetailChatFirst: boolean;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;

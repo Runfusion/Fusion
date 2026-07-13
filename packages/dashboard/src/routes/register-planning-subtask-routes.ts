@@ -2,9 +2,11 @@ import {
   DEFAULT_TASK_PRIORITY,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
+  THINKING_LEVELS,
   type PlanningSummary,
   type TaskPriority,
   type TaskStore,
+  type ThinkingLevel,
 } from "@fusion/core";
 import { normalizePlanningSummaryPayload } from "../planning.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
@@ -543,9 +545,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     }
   });
 
+  /**
+   * POST /api/planning/create-draft
+   * Body: { initialPlan: string, planningModelProvider?: string, planningModelId?: string, thinkingLevel?: ThinkingLevel }
+   */
   router.post("/planning/create-draft", async (req, res) => {
     try {
-      const { initialPlan, planningModelProvider, planningModelId } = req.body;
+      const { initialPlan, planningModelProvider, planningModelId, thinkingLevel } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string" || initialPlan.trim().length === 0) {
         throw badRequest("initialPlan is required and must be a string");
@@ -558,6 +564,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (planningModelId !== undefined && typeof planningModelId !== "string") {
         throw badRequest("planningModelId must be a string when provided");
       }
+
+      if (thinkingLevel !== undefined && !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
+        throw badRequest("thinkingLevel must be one of: " + THINKING_LEVELS.join(", "));
+      }
+      const validatedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
 
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
@@ -574,15 +585,26 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         resolvedPlanningSettings.modelId;
 
       const { createDraftSession } = await import("../planning.js");
-      const draft = await createDraftSession(
-        ip,
-        initialPlan,
-        rootDir,
-        resolvedPlanningProvider,
-        resolvedPlanningModelId,
-        settings.promptOverrides,
-        { projectId },
-      );
+      const draft = validatedThinkingLevel
+        ? await createDraftSession(
+            ip,
+            initialPlan,
+            rootDir,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            validatedThinkingLevel,
+            settings.promptOverrides,
+            { projectId },
+          )
+        : await createDraftSession(
+            ip,
+            initialPlan,
+            rootDir,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            settings.promptOverrides,
+            { projectId },
+          );
       res.status(201).json(draft);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -598,7 +620,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
   /**
    * POST /api/planning/start-streaming
    * Start a new planning session with AI agent streaming.
-   * Body: { initialPlan: string }
+   * Body: { initialPlan: string, planningModelProvider?: string, planningModelId?: string, thinkingLevel?: ThinkingLevel }
    * Returns: { sessionId: string }
    *
    * After receiving sessionId, connect to GET /api/planning/:sessionId/stream
@@ -615,6 +637,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         planningDepth,
         customQuestionCount,
         existingSessionId,
+        thinkingLevel,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -648,6 +671,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (existingSessionId !== undefined && typeof existingSessionId !== "string") {
         throw badRequest("existingSessionId must be a string when provided");
       }
+
+      if (thinkingLevel !== undefined && !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
+        throw badRequest("thinkingLevel must be one of: " + THINKING_LEVELS.join(", "));
+      }
+      const validatedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
 
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
@@ -683,6 +711,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
               // chose; pass undefined to clear any half-set state otherwise.
               modelProvider: planningModelProvider && planningModelId ? planningModelProvider : undefined,
               modelId: planningModelProvider && planningModelId ? planningModelId : undefined,
+              thinkingLevel: validatedThinkingLevel,
             });
           } catch (error) {
             planningLogger.warn(
@@ -692,41 +721,67 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           }
         }
         const { startExistingSession } = await import("../planning.js");
-        await startExistingSession(
-          existingSessionId,
-          rootDir,
-          scopedStore,
-          resolvedPlanningProvider,
-          resolvedPlanningModelId,
-          settings.promptOverrides,
-          ctx.options?.pluginRunner as SkillPluginRunner,
-        );
+        if (validatedThinkingLevel) {
+          await startExistingSession(
+            existingSessionId,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            validatedThinkingLevel,
+            settings.promptOverrides,
+            ctx.options?.pluginRunner as SkillPluginRunner,
+          );
+        } else {
+          await startExistingSession(
+            existingSessionId,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            settings.promptOverrides,
+            ctx.options?.pluginRunner as SkillPluginRunner,
+          );
+        }
         res.status(201).json({ sessionId: existingSessionId });
         return;
       }
 
       const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
-      const sessionId = await createSessionWithAgent(
-        ip,
-        initialPlan,
-        rootDir,
-        scopedStore,
-        resolvedPlanningProvider,
-        resolvedPlanningModelId,
-        settings.promptOverrides,
-        {
-          projectId,
-          ntfyConfig: {
-            enabled: settings.ntfyEnabled ?? false,
-            topic: settings.ntfyTopic,
-            dashboardHost: settings.ntfyDashboardHost,
-            events: settings.ntfyEvents,
-          },
-          planningDepth,
-          customQuestionCount,
-          pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
+      const planningOptions = {
+        projectId,
+        ntfyConfig: {
+          enabled: settings.ntfyEnabled ?? false,
+          topic: settings.ntfyTopic,
+          dashboardHost: settings.ntfyDashboardHost,
+          events: settings.ntfyEvents,
         },
-      );
+        planningDepth,
+        customQuestionCount,
+        pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
+      };
+      const sessionId = validatedThinkingLevel
+        ? await createSessionWithAgent(
+            ip,
+            initialPlan,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            validatedThinkingLevel,
+            settings.promptOverrides,
+            planningOptions,
+          )
+        : await createSessionWithAgent(
+            ip,
+            initialPlan,
+            rootDir,
+            scopedStore,
+            resolvedPlanningProvider,
+            resolvedPlanningModelId,
+            settings.promptOverrides,
+            planningOptions,
+          );
       res.status(201).json({ sessionId });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

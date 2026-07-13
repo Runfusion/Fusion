@@ -221,6 +221,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
       const expected = [
         "fn_workflow_list",
         "fn_workflow_get",
+        "fn_workflow_validate",
         "fn_workflow_create",
         "fn_workflow_update",
         "fn_workflow_delete",

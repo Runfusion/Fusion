@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, type TaskDependencyMutation} from "../store.js";
+import {buildRefinementSeedPrompt} from "../mesh-task-replication.js";
 import {SelfDefeatingDependencyError, detectSelfDefeatingDependency} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -88,7 +89,9 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
 
         const newDir = store.taskDir(newId);
         await store.atomicCreateTaskJson(newDir, newTask, "refineTask");
-        const prompt = `# ${newTask.title}\n\n${newTask.description}\n`;
+        // Shared builder: isUnplannedSeedPrompt detects this exact shape so promoted
+        // refinements are planned instead of executing the feedback text as a spec.
+        const prompt = buildRefinementSeedPrompt(newTask.title ?? newId, newTask.description);
         const sanitizedPrompt = sanitizeFileScopeInPromptContent(prompt);
         await mkdir(newDir, { recursive: true });
         await writeFile(join(newDir, "PROMPT.md"), sanitizedPrompt.sanitized);

@@ -43,7 +43,7 @@ import {
   DEFAULT_WORKFLOW_POOL_ID,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
-  buildBootstrapPrompt,
+  isUnplannedSeedPrompt,
   type TaskStore,
   type Task,
   type WorkflowIr,
@@ -150,6 +150,16 @@ function columnHasIntakeTrait(ir: WorkflowIr, columnId: string): boolean {
  */
 export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<boolean> {
   if (task.status === "planning") return true;
+  /*
+  FNXC:WorkflowScheduling 2026-07-13-11:20:
+  `needs-replan` is unplanned-by-decree: Plan Review rejected the current PROMPT.md and the
+  plan-in-place rebound parks the card in "todo" awaiting the triage service's replan. Without
+  this check the capacity-hold sweep read the real (rejected) prompt, judged the card planned,
+  and released it into execution — re-running the plan the reviewer just rejected and racing
+  triage, which only flips the dispatch-blocking `planning` status after acquiring its
+  semaphore slot.
+  */
+  if (task.status === "needs-replan") return true;
 
   const isLegacyTodoColumn = task.column === "todo";
   const isIntakeColumn = columnHasIntakeTrait(ir, task.column);
@@ -158,7 +168,10 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   if (typeof store.getTasksDir !== "function") return false;
   try {
     const promptContent = await readFile(getPromptPath(store.getTasksDir(), task.id), "utf-8");
-    return promptContent === buildBootstrapPrompt(task.id, task.title, task.description);
+    // isUnplannedSeedPrompt also matches the refineTask seed shape (no task-id prefix),
+    // so an unplanned refinement promoted out of a manual intake is held for planning
+    // instead of releasing into execution with a feedback-only prompt.
+    return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
   } catch {
     // Missing prompt is handled by filesystem validation elsewhere; do not block on it here.
     return false;

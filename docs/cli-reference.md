@@ -10,6 +10,9 @@ The published CLI/pi extension must document its agent-facing workflow authoring
 
 FNXC:AgentTools 2026-06-30-09:25:
 The extension docs must list workflow selection and task-creation forwarding alongside CRUD/settings tools so operators do not assume only discovery and selection exist or that agents may reroute arbitrary tasks.
+
+FNXC:WorkflowCli 2026-07-12-00:00:
+Workflow authors need a published CLI dry-run that validates the same IR contract as create/update while performing zero persistence, so scripts can fail before attempting a save.
 -->
 
 ## Published agent extension workflow tools
@@ -17,6 +20,7 @@ The extension docs must list workflow selection and task-creation forwarding alo
 The published `@runfusion/fusion` CLI bundle also exposes the pi extension tool surface used by external agents. Alongside task and coordination helpers, agents can now author and manage workflow definitions:
 
 - `fn_workflow_list` / `fn_workflow_get` — discover built-in and custom workflows and inspect a workflow's IR before editing.
+- `fn_workflow_validate` — dry-run validate a workflow IR without creating or mutating it. It accepts an existing workflow id or inline IR through the tool surface and returns the same typed validation errors that create/update would reject.
 - `fn_workflow_create` / `fn_workflow_update` — create or revise custom workflow definitions through Fusion's central workflow validator. Built-in definitions are read-only, and broader-than-default column permission bindings require explicit policy-escalation confirmation.
 - `fn_workflow_settings` — read and write typed per-project values for a workflow's declared settings. `get` returns stored and engine-effective values; `set` validates atomically and treats `null` as deleting a stored override.
 - `fn_workflow_delete` — delete custom workflows; built-in workflows remain protected.
@@ -25,6 +29,15 @@ The published `@runfusion/fusion` CLI bundle also exposes the pi extension tool 
 - `workflow_id` on task creation/delegation tools — create or delegate a task onto a real workflow id from the start.
 
 Agents should still use `fn_workflow_select` only when the user explicitly requested that workflow or when assigning a workflow to a task they created; they must not reroute arbitrary existing tasks just because another workflow appears more suitable. Prompt-injectable lanes strip workflow approval-bypass flags during `fn_workflow_create` / `fn_workflow_update`; executor-owner paths are the only authoring path that may preserve those flags.
+
+## Workflow commands
+
+```bash
+fn workflow validate <id> [--json]
+fn workflow validate --file <path> [--json]
+```
+
+`fn workflow validate` runs the server-side workflow IR dry run without creating, updating, deleting, or emitting workflow events. The command exits `0` when the IR is valid, exits non-zero for invalid IR or usage errors, and `--json` prints `{ "valid": true }` or `{ "valid": false, "errors": [...] }` for automation.
 
 ## Global Usage
 
@@ -1203,9 +1216,10 @@ fn plugin disable <id>
 fn plugin create <name>
 fn plugin new <name> [--output <dir>] [--scope <scope>]
 fn plugin dev <path> [--once] [--ai-scan]
+fn plugin publish <path> [--dry-run] [--previous-version <semver>]
 ```
 
-Subcommands: `list|ls`, `install`, `rescan`, `trust`, `untrust`, `verify`, `uninstall`, `enable`, `disable`, `create`, `new`, `dev`.
+Subcommands: `list|ls`, `install`, `rescan`, `trust`, `untrust`, `verify`, `uninstall`, `enable`, `disable`, `create`, `new`, `dev`, `publish`.
 
 Scope semantics:
 - `fn plugin install <path>` accepts a built plugin directory or installed package name, not a packed `.tgz` tarball; extract tarballs before installing.
@@ -1214,6 +1228,8 @@ Scope semantics:
 - `fn plugin list` shows globally installed plugins plus enabled/disabled state for the current project context
 
 `fn plugin install --ai-scan` enables AI security scanning on plugin load. `fn plugin rescan <id>` runs a fresh scan/reload cycle and prints plugin name, verdict, summary, and finding count. It exits non-zero for `blocked`, `error`, or `unavailable` verdicts.
+
+`fn plugin publish --dry-run <path>` runs an offline, non-mutating publish preflight for external authors. It validates `manifest.json`, the compiled JavaScript entrypoint, declared lifecycle hooks, and the optional version bump (`--previous-version <semver>`), then prints manual `pnpm build` → `pnpm pack` → `npm publish --access public` next steps without installing, uploading, or tagging anything.
 
 ---
 

@@ -12,47 +12,43 @@
  */
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { AgentStore } from "../agent-store.js";
-import { TaskStore } from "../store.js";
 import { AgentTaskRoutingPolicyError } from "../agent-role-policy.js";
-import { installInMemoryDbSnapshot, clearInMemoryDbSnapshot } from "./store-test-helpers.js";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  createTaskStoreForTest,
+  type SharedPgTaskStoreHarness,
+} from "../__test-utils__/pg-test-harness.js";
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-agent-routing-policy-test-"));
-}
+const pgTest = pgDescribe;
 
-beforeAll(() => installInMemoryDbSnapshot());
-afterAll(() => clearInMemoryDbSnapshot());
+pgTest("task→agent routing policy (issue #2015)", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_agent_routing",
+  });
 
-describe("task→agent routing policy (issue #2015)", () => {
-  let rootDir: string;
-  let taskStore: TaskStore;
+  beforeAll(h.beforeAll);
+  afterAll(h.afterAll);
   let agentStore: AgentStore;
 
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"), { inMemoryDb: true });
-    await taskStore.init();
-    agentStore = new AgentStore({ rootDir, inMemoryDb: true, taskStore });
+    await h.beforeEach();
+    agentStore = new AgentStore({ rootDir: h.rootDir(), asyncLayer: h.layer(), taskStore: h.store() });
     await agentStore.init();
   });
 
   afterEach(async () => {
-    agentStore.close();
-    taskStore.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    try { agentStore?.close(); } catch { /* best-effort */ }
+    await h.afterEach();
   });
 
   describe("checkoutTask guard (previously unguarded)", () => {
     it("rejects a fresh checkout by a role-incompatible agent", async () => {
       const liaison = await agentStore.createAgent({ name: "Liaison", role: "custom" });
-      const task = await taskStore.createTask({ description: "product-code work" });
+      const task = await h.store().createTask({ description: "product-code work" });
 
       await expect(agentStore.checkoutTask(liaison.id, task.id)).rejects.toBeInstanceOf(AgentTaskRoutingPolicyError);
-      const after = await taskStore.getTask(task.id);
+      const after = await h.store().getTask(task.id);
       expect(after?.checkedOutBy).toBeUndefined();
     });
 
@@ -62,7 +58,7 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "none" },
       });
-      const task = await taskStore.createTask({ description: "backend healthcheck fix" });
+      const task = await h.store().createTask({ description: "backend healthcheck fix" });
 
       await expect(agentStore.checkoutTask(liaison.id, task.id)).rejects.toBeInstanceOf(AgentTaskRoutingPolicyError);
     });
@@ -73,23 +69,23 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "explicit-only" },
       });
-      const task = await taskStore.createTask({ description: "implementation work" });
+      const task = await h.store().createTask({ description: "implementation work" });
 
       await expect(agentStore.checkoutTask(explicitOnly.id, task.id)).rejects.toBeInstanceOf(AgentTaskRoutingPolicyError);
 
-      await taskStore.updateTask(task.id, { assignedAgentId: explicitOnly.id });
+      await h.store().updateTask(task.id, { assignedAgentId: explicitOnly.id });
       const updated = await agentStore.checkoutTask(explicitOnly.id, task.id);
       expect(updated.checkedOutBy).toBe(explicitOnly.id);
     });
 
     it("still allows lease renewal by the existing holder", async () => {
       const executor = await agentStore.createAgent({ name: "Exec", role: "executor" });
-      const task = await taskStore.createTask({ description: "work" });
+      const task = await h.store().createTask({ description: "work" });
       await agentStore.checkoutTask(executor.id, task.id, { nodeId: "node-a", runId: "run-1", leaseEpoch: 0 });
 
       // Simulate policy tightened AFTER the hold was acquired — renewal must not strand the run.
       await agentStore.updateAgent(executor.id, { runtimeConfig: { assignmentPolicy: "none" } });
-      const held = await taskStore.getTask(task.id);
+      const held = await h.store().getTask(task.id);
       const renewed = await agentStore.checkoutTask(executor.id, task.id, {
         nodeId: "node-a",
         runId: "run-2",
@@ -100,11 +96,11 @@ describe("task→agent routing policy (issue #2015)", () => {
 
     it("honors executorRoleOverride for explicitly assigned tasks but never for policy 'none'", async () => {
       const custom = await agentStore.createAgent({ name: "Custom Override", role: "custom" });
-      const task = await taskStore.createTask({
+      const task = await h.store().createTask({
         description: "override-delegated work",
         source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
       });
-      await taskStore.updateTask(task.id, { assignedAgentId: custom.id });
+      await h.store().updateTask(task.id, { assignedAgentId: custom.id });
       const updated = await agentStore.checkoutTask(custom.id, task.id);
       expect(updated.checkedOutBy).toBe(custom.id);
 
@@ -113,11 +109,11 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "none" },
       });
-      const overrideTask = await taskStore.createTask({
+      const overrideTask = await h.store().createTask({
         description: "override-delegated liaison work",
         source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
       });
-      await taskStore.updateTask(overrideTask.id, { assignedAgentId: liaison.id });
+      await h.store().updateTask(overrideTask.id, { assignedAgentId: liaison.id });
       await expect(agentStore.checkoutTask(liaison.id, overrideTask.id)).rejects.toBeInstanceOf(AgentTaskRoutingPolicyError);
     });
   });
@@ -125,7 +121,7 @@ describe("task→agent routing policy (issue #2015)", () => {
   describe("assignTask guard (previously unguarded)", () => {
     it("rejects binding an implementation task to a role-incompatible agent", async () => {
       const reviewer = await agentStore.createAgent({ name: "Reviewer", role: "reviewer" });
-      const task = await taskStore.createTask({ description: "implementation work" });
+      const task = await h.store().createTask({ description: "implementation work" });
 
       await expect(agentStore.assignTask(reviewer.id, task.id)).rejects.toBeInstanceOf(AgentTaskRoutingPolicyError);
       const after = await agentStore.getAgent(reviewer.id);
@@ -138,7 +134,7 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "none" },
       });
-      const task = await taskStore.createTask({
+      const task = await h.store().createTask({
         description: "work",
         source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
       });
@@ -153,7 +149,7 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "explicit-only" },
       });
-      const task = await taskStore.createTask({ description: "work" });
+      const task = await h.store().createTask({ description: "work" });
 
       await expect(agentStore.assignTask(executor.id, task.id)).resolves.toMatchObject({ taskId: task.id });
       await agentStore.assignTask(executor.id, undefined);
@@ -166,7 +162,7 @@ describe("task→agent routing policy (issue #2015)", () => {
         runtimeConfig: { assignmentPolicy: "none" },
       });
       // Hosts WITHOUT a TaskStore stay fail-open (display-only linkage; cannot resolve the column).
-      const bareStore = new AgentStore({ rootDir, inMemoryDb: true });
+      const bareStore = new AgentStore({ rootDir: h.rootDir(), asyncLayer: h.layer() });
       await bareStore.init();
       try {
         const bareLiaison = await bareStore.createAgent({
@@ -193,7 +189,7 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "none" },
       });
-      const unassigned = await taskStore.createTask({ description: "backlog work" });
+      const unassigned = await h.store().createTask({ description: "backlog work" });
 
       const autoClaim = await agentStore.claimTaskForAgent(explicitOnly.id, unassigned.id);
       expect(autoClaim.ok).toBe(false);
@@ -201,8 +197,8 @@ describe("task→agent routing policy (issue #2015)", () => {
       const liaisonClaim = await agentStore.claimTaskForAgent(liaison.id, unassigned.id);
       expect(liaisonClaim.ok).toBe(false);
 
-      const assigned = await taskStore.createTask({ description: "assigned work" });
-      await taskStore.updateTask(assigned.id, { assignedAgentId: explicitOnly.id });
+      const assigned = await h.store().createTask({ description: "assigned work" });
+      await h.store().updateTask(assigned.id, { assignedAgentId: explicitOnly.id });
       const explicitClaim = await agentStore.claimTaskForAgent(explicitOnly.id, assigned.id);
       expect(explicitClaim.ok).toBe(true);
     });
@@ -213,11 +209,11 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "none" },
       });
-      const task = await taskStore.createTask({
+      const task = await h.store().createTask({
         description: "override work",
         source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
       });
-      await taskStore.updateTask(task.id, { assignedAgentId: liaison.id });
+      await h.store().updateTask(task.id, { assignedAgentId: liaison.id });
 
       const claim = await agentStore.claimTaskForAgent(liaison.id, task.id);
       expect(claim.ok).toBe(false);
@@ -230,12 +226,12 @@ describe("task→agent routing policy (issue #2015)", () => {
   describe("selectNextTaskForAgent bind compatibility", () => {
     it("does not re-select a mis-bound in-progress implementation task for a role-incompatible agent", async () => {
       const liaison = await agentStore.createAgent({ name: "Liaison", role: "custom" });
-      const task = await taskStore.createTask({ description: "mis-bound work" });
-      await taskStore.updateTask(task.id, { assignedAgentId: liaison.id });
-      await taskStore.moveTask(task.id, "todo");
-      await taskStore.moveTask(task.id, "in-progress");
+      const task = await h.store().createTask({ description: "mis-bound work" });
+      await h.store().updateTask(task.id, { assignedAgentId: liaison.id });
+      await h.store().moveTask(task.id, "todo");
+      await h.store().moveTask(task.id, "in-progress");
 
-      const selection = await taskStore.selectNextTaskForAgent(liaison.id, { id: liaison.id, role: liaison.role });
+      const selection = await h.store().selectNextTaskForAgent(liaison.id, { id: liaison.id, role: liaison.role });
       expect(selection).toBeNull();
     });
 
@@ -245,15 +241,15 @@ describe("task→agent routing policy (issue #2015)", () => {
         role: "executor",
         runtimeConfig: { assignmentPolicy: "none" },
       });
-      const task = await taskStore.createTask({
+      const task = await h.store().createTask({
         description: "override mis-bound work",
         source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
       });
-      await taskStore.updateTask(task.id, { assignedAgentId: liaison.id });
-      await taskStore.moveTask(task.id, "todo");
-      await taskStore.moveTask(task.id, "in-progress");
+      await h.store().updateTask(task.id, { assignedAgentId: liaison.id });
+      await h.store().moveTask(task.id, "todo");
+      await h.store().moveTask(task.id, "in-progress");
 
-      const selection = await taskStore.selectNextTaskForAgent(liaison.id, {
+      const selection = await h.store().selectNextTaskForAgent(liaison.id, {
         id: liaison.id,
         role: liaison.role,
         runtimeConfig: liaison.runtimeConfig,
@@ -263,38 +259,36 @@ describe("task→agent routing policy (issue #2015)", () => {
 
     it("still resumes in-progress work for a legitimate executor and honors executorRoleOverride for auto-policy agents", async () => {
       const executor = await agentStore.createAgent({ name: "Exec", role: "executor" });
-      const task = await taskStore.createTask({ description: "real work" });
-      await taskStore.updateTask(task.id, { assignedAgentId: executor.id });
-      await taskStore.moveTask(task.id, "todo");
-      await taskStore.moveTask(task.id, "in-progress");
+      const task = await h.store().createTask({ description: "real work" });
+      await h.store().updateTask(task.id, { assignedAgentId: executor.id });
+      await h.store().moveTask(task.id, "todo");
+      await h.store().moveTask(task.id, "in-progress");
 
-      const selection = await taskStore.selectNextTaskForAgent(executor.id, { id: executor.id, role: executor.role });
+      const selection = await h.store().selectNextTaskForAgent(executor.id, { id: executor.id, role: executor.role });
       expect(selection?.task.id).toBe(task.id);
       expect(selection?.priority).toBe("in_progress");
 
       const custom = await agentStore.createAgent({ name: "Custom", role: "custom" });
-      const overrideTask = await taskStore.createTask({
+      const overrideTask = await h.store().createTask({
         description: "override-delegated",
         source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
       });
-      await taskStore.updateTask(overrideTask.id, { assignedAgentId: custom.id });
-      await taskStore.moveTask(overrideTask.id, "todo");
-      const overrideSelection = await taskStore.selectNextTaskForAgent(custom.id, { id: custom.id, role: custom.role });
+      await h.store().updateTask(overrideTask.id, { assignedAgentId: custom.id });
+      await h.store().moveTask(overrideTask.id, "todo");
+      const overrideSelection = await h.store().selectNextTaskForAgent(custom.id, { id: custom.id, role: custom.role });
       expect(overrideSelection?.task.id).toBe(overrideTask.id);
     });
   });
 
   describe("project isolation", () => {
     it("an agent registered in another project's store can never be bound to this project's tasks", async () => {
-      const otherRoot = makeTmpDir();
-      const otherTaskStore = new TaskStore(otherRoot, join(otherRoot, ".fusion-global-settings"), { inMemoryDb: true });
-      await otherTaskStore.init();
-      const otherAgentStore = new AgentStore({ rootDir: otherRoot, inMemoryDb: true, taskStore: otherTaskStore });
+      const otherHarness = await createTaskStoreForTest({ prefix: "fusion_agent_routing_other" });
+      const otherAgentStore = new AgentStore({ rootDir: otherHarness.rootDir, asyncLayer: otherHarness.layer, taskStore: otherHarness.store });
       await otherAgentStore.init();
 
       try {
         const foreignAgent = await otherAgentStore.createAgent({ name: "Foreign Executor", role: "executor" });
-        const task = await taskStore.createTask({ description: "this project's work" });
+        const task = await h.store().createTask({ description: "this project's work" });
 
         // Every binding primitive resolves the agent against THIS project's store — a foreign agent id
         // must be rejected outright, never bound.
@@ -302,13 +296,12 @@ describe("task→agent routing policy (issue #2015)", () => {
         await expect(agentStore.assignTask(foreignAgent.id, task.id)).rejects.toThrow(`Agent ${foreignAgent.id} not found`);
         await expect(agentStore.claimTaskForAgent(foreignAgent.id, task.id)).rejects.toThrow(`Agent ${foreignAgent.id} not found`);
 
-        const after = await taskStore.getTask(task.id);
+        const after = await h.store().getTask(task.id);
         expect(after?.assignedAgentId).toBeUndefined();
         expect(after?.checkedOutBy).toBeUndefined();
       } finally {
         otherAgentStore.close();
-        otherTaskStore.close();
-        await rm(otherRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        await otherHarness.teardown();
       }
     });
   });

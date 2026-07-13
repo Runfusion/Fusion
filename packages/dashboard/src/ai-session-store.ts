@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import type { Database, AsyncDataLayer } from "@fusion/core";
+import { THINKING_LEVELS, type Database, type AsyncDataLayer, type ThinkingLevel } from "@fusion/core";
 import {
   upsertAiSession,
   getAiSession,
@@ -373,22 +373,28 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Also persists an optional model override paired together (provider+id);
    * passing one without the other clears the persisted override so we never
    * end up with a half-configured selection that the start path would
-   * silently reject.
+   * silently reject. The optional thinkingLevel is independent of the model pair
+   * and is preserved when omitted so draft syncs do not erase reopen state.
    */
   async updateDraft(
     id: string,
-    draft: { initialPlan: string; modelProvider?: string; modelId?: string },
+    draft: { initialPlan: string; modelProvider?: string; modelId?: string; thinkingLevel?: ThinkingLevel },
   ): Promise<boolean> {
     if (this.backendMode) {
       const existing = await this.get(id);
       let preservedSummarizedFor: string | undefined;
+      let preservedThinkingLevel: ThinkingLevel | undefined;
       if (existing?.inputPayload) {
         try {
           const prev = JSON.parse(existing.inputPayload) as {
             summarizedFor?: unknown;
             modelProvider?: unknown;
             modelId?: unknown;
+            thinkingLevel?: unknown;
           };
+          if (THINKING_LEVELS.includes(prev.thinkingLevel as ThinkingLevel)) {
+            preservedThinkingLevel = prev.thinkingLevel as ThinkingLevel;
+          }
           const trimmedPlan = draft.initialPlan.trim();
           const hasModelOverride = Boolean(draft.modelProvider && draft.modelId);
           const prevProvider = typeof prev.modelProvider === "string" ? prev.modelProvider : undefined;
@@ -405,6 +411,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
         initialPlan: draft.initialPlan.trim(),
         ...(draft.modelProvider && draft.modelId ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
         ...(preservedSummarizedFor ? { summarizedFor: preservedSummarizedFor } : {}),
+        ...((draft.thinkingLevel ?? preservedThinkingLevel) ? { thinkingLevel: draft.thinkingLevel ?? preservedThinkingLevel } : {}),
       });
       const changed = await updateDraftAsync(this.dbAsync, id, inputPayload);
       if (changed) {
@@ -425,18 +432,23 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     // under a model the user just abandoned.
     const existing = await this.get(id);
     let preservedSummarizedFor: string | undefined;
+    let preservedThinkingLevel: ThinkingLevel | undefined;
     if (existing?.inputPayload) {
       try {
         const prev = JSON.parse(existing.inputPayload) as {
           summarizedFor?: unknown;
           modelProvider?: unknown;
           modelId?: unknown;
+          thinkingLevel?: unknown;
         };
         const prevProvider = typeof prev.modelProvider === "string" ? prev.modelProvider : undefined;
         const prevModelId = typeof prev.modelId === "string" ? prev.modelId : undefined;
         const newProvider = hasModelOverride ? draft.modelProvider : undefined;
         const newModelId = hasModelOverride ? draft.modelId : undefined;
         const modelUnchanged = prevProvider === newProvider && prevModelId === newModelId;
+        if (THINKING_LEVELS.includes(prev.thinkingLevel as ThinkingLevel)) {
+          preservedThinkingLevel = prev.thinkingLevel as ThinkingLevel;
+        }
         if (
           typeof prev.summarizedFor === "string"
           && prev.summarizedFor === trimmedPlan
@@ -452,6 +464,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     const inputPayload = JSON.stringify({
       initialPlan: trimmedPlan,
       ...(hasModelOverride ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
+      ...((draft.thinkingLevel ?? preservedThinkingLevel) ? { thinkingLevel: draft.thinkingLevel ?? preservedThinkingLevel } : {}),
       ...(preservedSummarizedFor ? { summarizedFor: preservedSummarizedFor } : {}),
     });
     const result = this.db

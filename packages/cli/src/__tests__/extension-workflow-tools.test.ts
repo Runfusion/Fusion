@@ -97,6 +97,7 @@ pgTest("pi extension workflow authoring tools", () => {
     expect([...api.tools.keys()].sort()).toEqual(expect.arrayContaining([
       "fn_workflow_list",
       "fn_workflow_get",
+        "fn_workflow_validate",
       "fn_workflow_create",
       "fn_workflow_update",
       "fn_workflow_delete",

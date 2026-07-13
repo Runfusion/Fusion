@@ -458,8 +458,12 @@ export class RoutineRunner {
         return { stepId: step.id, stepName: step.name, stepIndex, success: false, output: "", error: "AI execution is not configured", startedAt, completedAt: new Date().toISOString() };
       }
       try {
+        /*
+        FNXC:Automations 2026-07-12-20:30:
+        Routine AI-prompt steps share the CronRunner AiPromptExecutor seam. Pass the persisted per-step thinking level before live callbacks so explicit reasoning effort applies and omitted/blank values inherit defaults.
+        */
         const output = await Promise.race([
-          this.options.aiPromptExecutor(step.prompt, step.modelProvider, step.modelId, step.allowedTools, liveCallbacks),
+          this.options.aiPromptExecutor(step.prompt, step.modelProvider, step.modelId, step.allowedTools, step.thinkingLevel?.trim() || undefined, liveCallbacks),
           new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error(`AI prompt step timed out after ${timeoutMs / 1000}s`)), timeoutMs)),
         ]);
         return { stepId: step.id, stepName: step.name, stepIndex, success: true, output: truncateOutput(output, ""), startedAt, completedAt: new Date().toISOString() };
@@ -476,12 +480,17 @@ export class RoutineRunner {
         return { stepId: step.id, stepName: step.name, stepIndex, success: false, output: "", error: "Create-task step has no task description specified", startedAt, completedAt: new Date().toISOString() };
       }
 
+      /*
+      FNXC:Automations 2026-07-12-20:30:
+      Routine create-task steps map their persisted thinking level onto the spawned task. Blank values remain undefined to keep the task's normal thinking-level inheritance.
+      */
       const taskInput: TaskCreateInput = {
         title: step.taskTitle?.trim() || undefined,
         description: step.taskDescription.trim(),
         column: (step.taskColumn as Column) || "triage",
         modelProvider: step.modelProvider?.trim() || undefined,
         modelId: step.modelId?.trim() || undefined,
+        thinkingLevel: (step.thinkingLevel?.trim() || undefined) as TaskCreateInput["thinkingLevel"],
         source: {
           sourceType: "automation",
           sourceMetadata: { routineId: routine.id, stepId: step.id },

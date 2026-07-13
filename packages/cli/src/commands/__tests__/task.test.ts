@@ -113,6 +113,13 @@ vi.mock("@fusion/dashboard", () => ({
   }),
   generatePrMetadata: vi.fn(),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
+  // FNXC:CliTests 2026-07-13-09:40: Missing dashboard barrel exports added for mock completeness (scripts/check-mock-completeness.mjs gate).
+  registerGithubTrackingHook: vi.fn(),
+  GitLabClient: vi.fn(),
+  resolveGitlabAuth: vi.fn(() => ({})),
+  buildGitLabTaskProvenance: vi.fn(() => ({})),
+  isGitLabAlreadyImported: vi.fn(),
+  buildGitLabTaskDescription: vi.fn(),
 }));
 
 vi.mock("@fusion/dashboard/planning", () => ({
@@ -2610,6 +2617,8 @@ describe("runTaskRetry", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
       completionHandoffLimboRecoveryCount: 0,
+      // FNXC:TaskRetry 2026-07-13-08:15: executeRequeueLoopCount added to TaskResetField set; retry must zero it alongside other recovery counters.
+      executeRequeueLoopCount: 0,
       graphResumeRetryCount: 0,
       mergeAuditBounceCount: 0,
       mergeRetries: 0,
@@ -2685,6 +2694,8 @@ describe("runTaskRetry", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
       completionHandoffLimboRecoveryCount: 0,
+      // FNXC:TaskRetry 2026-07-13-08:15: executeRequeueLoopCount added to TaskResetField set; retry must zero it alongside other recovery counters.
+      executeRequeueLoopCount: 0,
       graphResumeRetryCount: 0,
       mergeAuditBounceCount: 0,
       mergeRetries: 0,

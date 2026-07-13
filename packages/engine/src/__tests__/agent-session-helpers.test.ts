@@ -8,6 +8,7 @@ import {
   resolveHeartbeatSessionModels,
   resolveImplicitPlanningFallbackModel,
   resolveMergerSessionModel,
+  resolveMergerThinkingLevel,
   resolveMergerFallbackThinkingLevel,
   resolvePlanningSessionModel,
   resolvePlanningThinkingLevel,
@@ -65,6 +66,21 @@ describe("resolve model-lane thinking levels", () => {
     })).toBe("medium");
   });
 
+  it("documents caller precedence for per-task planning and validator thinking overrides", () => {
+    const settings = { planningThinkingLevel: "minimal", validatorThinkingLevel: "low", defaultThinkingLevel: "off" } as const;
+    const task = { thinkingLevel: "medium", planningThinkingLevel: "high", validatorThinkingLevel: "xhigh" } as const;
+
+    expect(resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel)).toBe("high");
+    expect(resolveValidatorThinkingLevel(task.validatorThinkingLevel ?? task.thinkingLevel, settings)).toBe("xhigh");
+
+    const legacyTask = { thinkingLevel: "medium", planningThinkingLevel: undefined, validatorThinkingLevel: undefined } as const;
+    expect(resolvePlanningThinkingLevel(settings, legacyTask.planningThinkingLevel ?? legacyTask.thinkingLevel)).toBe("medium");
+    expect(resolveValidatorThinkingLevel(legacyTask.validatorThinkingLevel ?? legacyTask.thinkingLevel, settings)).toBe("medium");
+
+    const nodeThinkingLevel = "minimal" as const;
+    expect(resolveValidatorThinkingLevel(nodeThinkingLevel ?? task.validatorThinkingLevel ?? task.thinkingLevel, settings)).toBe("minimal");
+  });
+
   it("resolves fallback thinking through fallback key then executor lane then defaults", () => {
     expect(resolveExecutorFallbackThinkingLevel("task", { fallbackThinkingLevel: "high", executionThinkingLevel: "low" })).toBe("high");
     expect(resolveExecutorFallbackThinkingLevel(undefined, { executionThinkingLevel: "minimal", defaultThinkingLevel: "low" })).toBe("minimal");
@@ -96,6 +112,25 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveMergerFallbackThinkingLevel({ fallbackThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");
+  });
+
+  it("applies project merger thinking > global merger thinking > default thinking for merger sessions", () => {
+    expect(resolveMergerThinkingLevel({
+      mergerThinkingLevel: "xhigh",
+      mergerGlobalThinkingLevel: "high",
+      defaultThinkingLevelOverride: "medium",
+      defaultThinkingLevel: "low",
+    })).toBe("xhigh");
+    expect(resolveMergerThinkingLevel({
+      mergerGlobalThinkingLevel: "high",
+      defaultThinkingLevelOverride: "medium",
+      defaultThinkingLevel: "low",
+    })).toBe("high");
+    expect(resolveMergerThinkingLevel({
+      defaultThinkingLevelOverride: "medium",
+      defaultThinkingLevel: "low",
+    })).toBe("medium");
+    expect(resolveMergerThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");
   });
 });
 
@@ -277,6 +312,36 @@ describe("resolve session model parity", () => {
       defaultProvider: "anthropic",
       defaultModelId: "claude-sonnet-4-5",
     }, staleRuntimeConfig)).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+  });
+
+  it("prefers the dedicated merger lane over default and other AI role lanes", () => {
+    const staleRuntimeConfig = { model: "stale-provider/stale-model" };
+
+    expect(resolveMergerSessionModel({
+      mergerProvider: "merger-project-provider",
+      mergerModelId: "merger-project-model",
+      mergerGlobalProvider: "merger-global-provider",
+      mergerGlobalModelId: "merger-global-model",
+      executionProvider: "openai",
+      executionModelId: "gpt-4.1",
+      defaultProviderOverride: "google",
+      defaultModelIdOverride: "gemini-2.5-pro",
+    }, staleRuntimeConfig)).toEqual({
+      provider: "merger-project-provider",
+      modelId: "merger-project-model",
+    });
+
+    expect(resolveMergerSessionModel({
+      mergerGlobalProvider: "merger-global-provider",
+      mergerGlobalModelId: "merger-global-model",
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+      defaultProviderOverride: "google",
+      defaultModelIdOverride: "gemini-2.5-pro",
+    }, staleRuntimeConfig)).toEqual({
+      provider: "merger-global-provider",
+      modelId: "merger-global-model",
+    });
   });
 
   it("uses a complete runtime model only when no lane/task/default model is configured", () => {

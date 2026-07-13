@@ -13,6 +13,7 @@ vi.mock("../../api", () => ({
   fetchChatRoomMessages: vi.fn(),
   deleteChatRoom: vi.fn(),
   postChatRoomMessage: vi.fn(),
+  updateChatRoom: vi.fn(),
   uploadChatRoomAttachment: vi.fn(),
   clearChatRoomMessages: vi.fn(),
 }));
@@ -33,6 +34,7 @@ const mockFetchChatRoomMembers = vi.mocked(apiModule.fetchChatRoomMembers);
 const mockFetchChatRoomMessages = vi.mocked(apiModule.fetchChatRoomMessages);
 const mockDeleteChatRoom = vi.mocked(apiModule.deleteChatRoom);
 const mockPostChatRoomMessage = vi.mocked(apiModule.postChatRoomMessage);
+const mockUpdateChatRoom = vi.mocked(apiModule.updateChatRoom);
 const mockUploadChatRoomAttachment = vi.mocked(apiModule.uploadChatRoomAttachment);
 const mockClearChatRoomMessages = vi.mocked(apiModule.clearChatRoomMessages);
 const mockSubscribeSse = vi.mocked(sseBusModule.subscribeSse);
@@ -46,6 +48,7 @@ function room(id: string, name: string, updatedAt: string): ChatRoom {
     projectId: "proj-1",
     createdBy: null,
     status: "active",
+    thinkingLevel: null,
     createdAt: updatedAt,
     updatedAt,
   };
@@ -88,6 +91,7 @@ describe("useChatRooms", () => {
     mockCreateChatRoom.mockResolvedValue({ room: room("room-new", "new", "2026-05-09T01:00:00.000Z") });
     mockDeleteChatRoom.mockResolvedValue({ success: true });
     mockPostChatRoomMessage.mockResolvedValue({ message: roomMessage("msg-posted", "room-new", "posted") });
+    mockUpdateChatRoom.mockResolvedValue({ room: { ...room("room-new", "new", "2026-05-09T02:00:00.000Z"), thinkingLevel: "high" } });
     mockUploadChatRoomAttachment.mockResolvedValue({
       attachment: {
         id: "att-uploaded",
@@ -160,6 +164,24 @@ describe("useChatRooms", () => {
     expect(result.current.activeRoom?.id).toBe("room-new");
     expect(result.current.activeRoomMembers).toHaveLength(1);
     expect(result.current.messages).toHaveLength(1);
+  });
+
+  it("updateRoomSettings upserts returned room and refreshes active room thinkingLevel", async () => {
+    const existing = room("room-new", "new", "2026-05-09T01:00:00.000Z");
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [existing] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+
+    await waitFor(() => expect(result.current.rooms).toHaveLength(1));
+    act(() => result.current.selectRoom("room-new"));
+    await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-new"));
+
+    await act(async () => {
+      await result.current.updateRoomSettings("room-new", { thinkingLevel: "high" });
+    });
+
+    expect(mockUpdateChatRoom).toHaveBeenCalledWith("room-new", { thinkingLevel: "high" }, "proj-1");
+    expect(result.current.activeRoom?.thinkingLevel).toBe("high");
+    expect(result.current.rooms.find((candidate) => candidate.id === "room-new")?.thinkingLevel).toBe("high");
   });
 
   it("selectRoom loads messages and clears previous messages", async () => {

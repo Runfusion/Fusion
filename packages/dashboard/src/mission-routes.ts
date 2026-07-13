@@ -14,8 +14,8 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TaskStore, resolvePlanningSettingsModel, AgentStore } from "@fusion/core";
-import type { Goal } from "@fusion/core";
+import { TaskStore, resolvePlanningSettingsModel, AgentStore, THINKING_LEVELS } from "@fusion/core";
+import type { Goal, ThinkingLevel } from "@fusion/core";
 import { listEligibleExecutorAgents } from "@fusion/engine";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import type {
@@ -533,7 +533,7 @@ export function createMissionRouter(
   /**
    * POST /api/missions/interview/start
    * Start a mission interview session with AI agent streaming.
-   * Body: { missionTitle: string, modelProvider?: string, modelId?: string }
+   * Body: { missionTitle: string, modelProvider?: string, modelId?: string, thinkingLevel?: ThinkingLevel }
    * Returns: { sessionId: string }
    *
    * UTILITY PATH: Independent of task-lane saturation.
@@ -541,7 +541,7 @@ export function createMissionRouter(
   router.post(
     "/interview/start",
     catchTypedHandler(async (req, res) => {
-      const { missionTitle, modelProvider, modelId } = req.body;
+      const { missionTitle, modelProvider, modelId, thinkingLevel } = req.body;
 
       if (!missionTitle || typeof missionTitle !== "string" || !missionTitle.trim()) {
         throw badRequest("missionTitle is required and must be a non-empty string");
@@ -559,6 +559,11 @@ export function createMissionRouter(
       if ((modelProvider && !modelId) || (!modelProvider && modelId)) {
         throw badRequest("Both modelProvider and modelId must be provided together, or neither should be provided");
       }
+
+      if (thinkingLevel !== undefined && !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel)) {
+        throw badRequest("thinkingLevel must be one of: " + THINKING_LEVELS.join(", "));
+      }
+      const validatedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
 
       try {
         const ip = req.ip || req.socket.remoteAddress || "unknown";
@@ -582,6 +587,7 @@ export function createMissionRouter(
           settings.promptOverrides,
           resolvedProvider,
           resolvedModelId,
+          validatedThinkingLevel,
           projectId ?? null,
           pluginRunner,
         );

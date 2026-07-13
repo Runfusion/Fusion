@@ -48,6 +48,38 @@ describe("TaskContextMenu shared task action model", () => {
     expect(actionIds(makeTask({ column: "archived" }), { hasResetHandler: true })).toEqual(["respecify", "delete"]);
   });
 
+  it("exposes Plan only for pre-execution hold columns with a host callback", () => {
+    const onPlan = vi.fn();
+    const eligibleCases: Array<[string, Partial<Parameters<typeof buildTaskActionMenuModel>[0]>]> = [
+      ["triage", {}],
+      ["custom intake", { currentColumnFlags: { intake: true } }],
+      ["custom hold", { currentColumnFlags: { hold: true } }],
+    ];
+
+    for (const [label, overrides] of eligibleCases) {
+      const column = label === "triage" ? "triage" : label;
+      const model = buildTaskActionMenuModel({
+        task: makeTask({ column: column as any }),
+        t,
+        columnLabel: columnLabel as any,
+        onPlan,
+        ...overrides,
+      });
+      expect(model.actions.map((action) => action.id), label).toContain("plan");
+      expect(model.actions.find((action) => action.id === "plan")?.label).toBe("Plan");
+    }
+
+    for (const column of ["todo", "in-progress", "in-review", "done"] as const) {
+      expect(actionIds(makeTask({ column }), { onPlan })).not.toContain("plan");
+    }
+    expect(actionIds(makeTask({ column: "complete" as any }), { onPlan, currentColumnFlags: { hold: true, complete: true } })).not.toContain("plan");
+    expect(actionIds(makeTask({ column: "cold-storage" as any }), { onPlan, currentColumnFlags: { hold: true, archived: true } })).not.toContain("plan");
+    expect(actionIds(makeTask({ column: "triage" }))).not.toContain("plan");
+
+    buildTaskActionMenuModel({ task: makeTask({ column: "triage" }), t, columnLabel: columnLabel as any, onPlan }).actions.find((action) => action.id === "plan")?.onSelect?.();
+    expect(onPlan).toHaveBeenCalledTimes(1);
+  });
+
   it("exposes GitHub tracking enablement only for untracked tasks with a host callback", () => {
     const onEnableGithubTracking = vi.fn();
     const untracked = buildTaskActionMenuModel({

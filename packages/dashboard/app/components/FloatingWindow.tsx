@@ -74,6 +74,23 @@ type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const RESIZE_DIRECTIONS: ResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 export const FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT = "fusion:floating-window-geometry-change";
 
+const FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR = [
+  ".floating-window",
+  ".modal-overlay",
+  "[role=\"dialog\"]",
+  ".model-combobox-dropdown--portal",
+  ".model-nested-menu--portal",
+  ".dep-dropdown--portal",
+  ".node-picker-dropdown--portal",
+  ".agent-picker-dropdown--portal",
+  ".priority-picker-dropdown--portal",
+].join(", ");
+
+/*
+FNXC:FloatingWindow 2026-07-13-08:01:
+FN-7943: Quick Chat's outside-pointer dismissal must treat body-portaled dropdowns as logical children of the FloatingWindow. Keep this selector in sync with the sibling FN-7916 ChatThinkingLevelControl and FN-2860 QuickEntryBox portal guards so model, thinking-level, agent, dependency, node, and priority selections do not dismiss the host chat window while bare-page clicks still close it.
+*/
+
 /** Hash a windowKey into a small bounded cascade index so stacked default windows do not perfectly overlap. */
 function cascadeIndexFor(windowKey: string): number {
   let hash = 0;
@@ -368,7 +385,7 @@ export function FloatingWindow({
       if (panel?.contains(target)) return;
 
       const targetElement = target instanceof Element ? target : target.parentNode instanceof Element ? target.parentNode : null;
-      if (targetElement?.closest(".floating-window, .modal-overlay, [role=\"dialog\"]")) return;
+      if (targetElement?.closest(FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR)) return;
 
       onClose();
     };

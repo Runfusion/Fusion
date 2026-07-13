@@ -48,6 +48,7 @@ describe("workflow documentation current behavior", () => {
     for (const tool of [
       "fn_workflow_list",
       "fn_workflow_get",
+        "fn_workflow_validate",
       "fn_workflow_create",
       "fn_workflow_update",
       "fn_workflow_delete",

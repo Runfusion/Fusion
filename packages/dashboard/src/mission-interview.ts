@@ -15,8 +15,8 @@
  * - Prompt override support for project-level customization
  */
 
-import type { PlanningQuestion, PromptOverrideMap, TaskStore } from "@fusion/core";
-import { resolvePrompt } from "@fusion/core";
+import type { PlanningQuestion, PromptOverrideMap, TaskStore, ThinkingLevel } from "@fusion/core";
+import { resolvePrompt, THINKING_LEVELS } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow, AiSessionStatus, AiSessionSummary } from "./ai-session-store.js";
@@ -267,6 +267,11 @@ interface MissionInterviewSession {
   modelProvider?: string;
   modelId?: string;
   /**
+   * FNXC:MissionInterview 2026-07-12-00:00:
+   * Mission interview sessions carry a validated per-session reasoning effort in inputPayload so reopened interviews can rebuild agents with the same thinking level without a SQLite schema change.
+   */
+  thinkingLevel?: ThinkingLevel;
+  /**
    * Captured at session creation so rehydrated sessions can rebuild their
    * agent without the caller threading context through every API.
    */
@@ -358,6 +363,7 @@ function persistMissionSession(session: MissionInterviewSession, status: "genera
       missionId: session.missionId,
       modelProvider: session.modelProvider,
       modelId: session.modelId,
+      thinkingLevel: session.thinkingLevel,
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -384,11 +390,14 @@ function unpersistMissionSession(sessionId: string): void {
 }
 
 function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionInterviewSession {
-  const payload = safeParseJson<{ ip?: string; projectId?: string | null; missionId?: string; missionTitle?: string; modelProvider?: string; modelId?: string }>(
+  const payload = safeParseJson<{ ip?: string; projectId?: string | null; missionId?: string; missionTitle?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }>(
     row.inputPayload,
     {},
     { throwOnError: true, fieldName: "inputPayload" },
   );
+  const thinkingLevel = THINKING_LEVELS.includes(payload.thinkingLevel as ThinkingLevel)
+    ? (payload.thinkingLevel as ThinkingLevel)
+    : undefined;
 
   const createdAt = new Date(row.createdAt);
   const updatedAt = new Date(row.updatedAt);
@@ -425,6 +434,7 @@ function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionIntervie
     error: row.error ?? undefined,
     modelProvider: payload.modelProvider,
     modelId: payload.modelId,
+    thinkingLevel,
     createdAt,
     updatedAt,
     agent: undefined,
@@ -894,6 +904,7 @@ export async function createMissionInterviewAgent(
           defaultModelId: session.modelId,
         }
       : {}),
+    ...(session.thinkingLevel ? { defaultThinkingLevel: session.thinkingLevel } : {}),
     onThinking: (delta: string) => {
       session.thinkingOutput += delta;
       persistMissionThinking(session.id, session.thinkingOutput);
@@ -1217,9 +1228,17 @@ export async function createMissionInterviewSession(
   promptOverrides?: PromptOverrideMap,
   modelProvider?: string,
   modelId?: string,
-  projectId?: string | null,
-  pluginRunner?: SkillPluginRunner,
+  thinkingLevelOrProjectId?: ThinkingLevel | string | null,
+  projectIdOrPluginRunner?: string | null | SkillPluginRunner,
+  pluginRunnerMaybe?: SkillPluginRunner,
 ): Promise<string> {
+  const thinkingLevel = THINKING_LEVELS.includes(thinkingLevelOrProjectId as ThinkingLevel)
+    ? (thinkingLevelOrProjectId as ThinkingLevel)
+    : undefined;
+  const projectId = thinkingLevel
+    ? (projectIdOrPluginRunner as string | null | undefined)
+    : (thinkingLevelOrProjectId as string | null | undefined);
+  const pluginRunner = (thinkingLevel ? pluginRunnerMaybe : projectIdOrPluginRunner) as SkillPluginRunner | undefined;
   if (!checkRateLimit(ip)) {
     const resetTime = getRateLimitResetTime(ip);
     throw new RateLimitError(
@@ -1241,6 +1260,7 @@ export async function createMissionInterviewSession(
     lastGeneratedThinking: "",
     modelProvider,
     modelId,
+    thinkingLevel,
     store,
     rootDir,
     pluginRunner,

@@ -688,7 +688,20 @@ describe("Planning Mode Routes", () => {
         expect(res.body.error).toContain("customQuestionCount");
       });
 
-      it("accepts optional model params in request body", async () => {
+      it("rejects invalid thinkingLevel", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Build a user auth system", thinkingLevel: "maximum" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("thinkingLevel");
+      });
+
+      it("accepts optional model params and thinkingLevel in request body", async () => {
         const messages: Array<{ role: string; content: string }> = [];
         const mockAgent = {
           session: {
@@ -722,6 +735,7 @@ describe("Planning Mode Routes", () => {
             initialPlan: "Build a user auth system",
             planningModelProvider: "google",
             planningModelId: "gemini-2.5-pro",
+            thinkingLevel: "high",
           }),
           { "Content-Type": "application/json" },
         );
@@ -735,6 +749,7 @@ describe("Planning Mode Routes", () => {
             expect.objectContaining({
               defaultProvider: "google",
               defaultModelId: "gemini-2.5-pro",
+              defaultThinkingLevel: "high",
             }),
           );
         });

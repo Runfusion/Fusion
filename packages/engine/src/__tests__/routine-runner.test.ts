@@ -346,9 +346,75 @@ describe("RoutineRunner", () => {
       const result = await runner.executeRoutine("routine-ai", "api", undefined, liveCallbacks);
 
       expect(result.success).toBe(true);
-      expect(aiPromptExecutor).toHaveBeenCalledWith("Analyze this", undefined, undefined, ["Read", "Grep"], liveCallbacks);
+      expect(aiPromptExecutor).toHaveBeenCalledWith("Analyze this", undefined, undefined, ["Read", "Grep"], undefined, liveCallbacks);
       expect(liveCallbacks.onStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: "step-ai", status: "started" }));
       expect(liveCallbacks.onStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: "step-ai", status: "completed", success: true }));
+    });
+
+    it("forwards explicit and omitted ai-prompt thinking levels to the AI executor", async () => {
+      const routine = createMockRoutine({
+        id: "routine-ai-thinking",
+        agentId: undefined,
+        steps: [
+          {
+            id: "step-ai-high",
+            type: "ai-prompt",
+            name: "Analyze deeply",
+            prompt: "Analyze deeply",
+            thinkingLevel: "high",
+          },
+          {
+            id: "step-ai-default",
+            type: "ai-prompt",
+            name: "Analyze normally",
+            prompt: "Analyze normally",
+          },
+        ],
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const aiPromptExecutor = vi.fn().mockResolvedValue("ai output");
+      const runner = createRoutineRunner({ routineStore, aiPromptExecutor });
+
+      const result = await runner.executeRoutine("routine-ai-thinking", "api");
+
+      expect(result.success).toBe(true);
+      expect(aiPromptExecutor).toHaveBeenNthCalledWith(1, "Analyze deeply", undefined, undefined, undefined, "high", undefined);
+      expect(aiPromptExecutor).toHaveBeenNthCalledWith(2, "Analyze normally", undefined, undefined, undefined, undefined, undefined);
+    });
+
+    it("maps explicit and omitted create-task thinking levels onto spawned task input", async () => {
+      const routine = createMockRoutine({
+        id: "routine-task-thinking",
+        agentId: undefined,
+        steps: [
+          {
+            id: "step-task-high",
+            type: "create-task",
+            name: "Create high effort task",
+            taskDescription: "Investigate deeply",
+            thinkingLevel: "high",
+          },
+          {
+            id: "step-task-default",
+            type: "create-task",
+            name: "Create default task",
+            taskDescription: "Investigate normally",
+          },
+        ],
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const createTask = vi
+        .fn()
+        .mockResolvedValueOnce({ id: "FN-7001", title: "", description: "Investigate deeply" })
+        .mockResolvedValueOnce({ id: "FN-7002", title: "", description: "Investigate normally" });
+      const taskStore = { ...createMockTaskStore(), createTask } as unknown as TaskStore;
+      const runner = createRoutineRunner({ routineStore, taskStore });
+
+      const result = await runner.executeRoutine("routine-task-thinking", "api");
+
+      expect(result.success).toBe(true);
+      expect(createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }));
+      expect(createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
     });
 
     it("cleans up inFlightExecutions map even on error", async () => {

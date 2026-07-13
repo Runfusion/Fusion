@@ -8,6 +8,8 @@ export interface MailboxArtifactAttachmentProps {
   title?: unknown;
   mimeType?: unknown;
   projectId?: string;
+  taskId?: unknown;
+  onOpenTask?: (taskId: string) => void;
 }
 
 function readString(value: unknown): string | undefined {
@@ -23,6 +25,9 @@ function readArtifactType(value: unknown): ArtifactType | "unknown" {
 /**
  * FNXC:ArtifactRegistry 2026-07-12-00:00:
  * Artifact-registration mail messages must expose the artifact announced by message.metadata. Render image artifacts inline, keep every type reachable through artifactMediaUrl(projectId-aware), and render nothing when metadata has no artifactId so ordinary messages keep their exact layout.
+ *
+ * FNXC:ArtifactRegistry 2026-07-12-00:00:
+ * Artifact-registration mail messages must also expose the producing task when message.metadata.taskId is paired with an onOpenTask handler. Render no task affordance when either side is absent so artifact-only and ordinary messages do not gain empty shells.
  */
 export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment({
   artifactId,
@@ -30,11 +35,14 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
   title,
   mimeType,
   projectId,
+  taskId,
+  onOpenTask,
 }: MailboxArtifactAttachmentProps) {
   const id = readString(artifactId);
   const type = readArtifactType(artifactType);
   const label = readString(title) ?? "artifact";
   const mediaMimeType = readString(mimeType);
+  const task = readString(taskId);
   const [imageFailed, setImageFailed] = useState(false);
   const mediaUrl = useMemo(() => id ? artifactMediaUrl(id, projectId) : "", [id, projectId]);
 
@@ -51,6 +59,17 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
       Open artifact
     </a>
   );
+  const taskLink = task && onOpenTask ? (
+    <button
+      type="button"
+      className="mailbox-artifact-attachment__link btn"
+      aria-label={`View task: ${task}`}
+      data-testid="mailbox-artifact-view-task"
+      onClick={() => onOpenTask(task)}
+    >
+      View task
+    </button>
+  ) : null;
 
   let preview: ReactNode = null;
   if (type === "image" && !imageFailed) {
@@ -97,6 +116,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
       {preview}
       <div className="mailbox-artifact-attachment__actions">
         {openLink}
+        {taskLink}
       </div>
     </div>
   );

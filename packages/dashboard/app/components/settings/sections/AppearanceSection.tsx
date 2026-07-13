@@ -45,12 +45,20 @@ export function AppearanceSection({ scopeBanner, form, setForm, themeMode, color
         <small className="form-text text-muted">{t("settings.appearance.openTasksInRightSidebarHelp", "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.")}</small>
       </div>
       <div className="form-group">
-        {/* FNXC:MobileTaskPopups 2026-07-01-12:00: Keep the stored openMobileTasksInPopup key for compatibility, but present the setting as all-viewport ordinary task popup routing because desktop operators also need the board or right-dock Tasks list visible behind task detail. */}
+        {/* FNXC:MobileTaskPopups 2026-07-13-00:00 (FN-7945): Keep the stored openMobileTasksInPopup key for compatibility, but present the setting as all-viewport ordinary task popup routing because desktop operators also need the board, List view, or right-dock Tasks list visible behind task detail. */}
         <label className="checkbox-label">
           <input type="checkbox" checked={form.openMobileTasksInPopup === true} onChange={(e) => setForm((f) => ({ ...f, openMobileTasksInPopup: e.target.checked }))}/>
           <span>{t("settings.appearance.openMobileTasksInPopup", "Open tasks as popups")}</span>
         </label>
-        <small className="form-text text-muted">{t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.")}</small>
+        <small className="form-text text-muted">{t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, ordinary board task-card, List row/card, and right-dock Tasks-list clicks open the existing movable task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.")}</small>
+      </div>
+      <div className="form-group">
+        {/* FNXC:TaskPopupViewGating 2026-07-13-00:00: This project-scoped setting is opt-in because existing task popups float globally by default. When enabled, each popup stays attached to the Board/List view where it was opened, hiding on other views without closing or clearing geometry. */}
+        <label className="checkbox-label">
+          <input type="checkbox" checked={form.taskPopupsBoardListOnly === true} onChange={(e) => setForm((f) => ({ ...f, taskPopupsBoardListOnly: e.target.checked }))}/>
+          <span>{t("settings.appearance.taskPopupsBoardListOnly", "Keep task popups on their Board/List view")}</span>
+        </label>
+        <small className="form-text text-muted">{t("settings.appearance.taskPopupsBoardListOnlyHelp", "When enabled, each open task-detail popup appears only on the Board or List view where it was opened. Switching to another view hides it without closing; returning to that view restores it in the same position. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         {/* FNXC:TaskCardCostBadge 2026-07-11-12:15: This project setting is opt-in because board cards are already dense; when enabled, only tasks with recorded positive token usage render a read-time derived spend badge. */}

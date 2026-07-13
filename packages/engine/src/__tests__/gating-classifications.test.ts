@@ -160,6 +160,7 @@ describe("gating-classifications parity", () => {
         "fn_update_identity",
         "fn_workflow_get",
         "fn_workflow_list",
+        "fn_workflow_validate",
         "grep",
         "ls",
         "read",
@@ -467,7 +468,7 @@ describe("gating-classifications parity", () => {
     expect(permanent).toMatchObject({ category, disposition: "block", recognized: true });
   });
 
-  it.each(["fn_workflow_list", "fn_workflow_get", "fn_trait_list"] as const)("recognizes %s as read-only coordination instead of an unknown fallback", (toolName) => {
+  it.each(["fn_workflow_list", "fn_workflow_get", "fn_workflow_validate", "fn_trait_list"] as const)("recognizes %s as read-only coordination instead of an unknown fallback", (toolName) => {
     const permanent = classifyPermanentAgentToolCall(toolName);
     const action = evaluateAgentActionGate({
       agentId: "a1",

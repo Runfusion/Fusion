@@ -121,6 +121,8 @@ export function rowToTask(row: TaskRow): Task {
     error: row.error || undefined,
     summary: row.summary || undefined,
     thinkingLevel: (row.thinkingLevel || undefined) as Task["thinkingLevel"],
+    validatorThinkingLevel: (row.validatorThinkingLevel || undefined) as Task["validatorThinkingLevel"],
+    planningThinkingLevel: (row.planningThinkingLevel || undefined) as Task["planningThinkingLevel"],
     executionMode: (row.executionMode || undefined) as Task["executionMode"],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

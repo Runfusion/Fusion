@@ -232,6 +232,8 @@ interface ListViewProps {
   onPopOut pops the split-pane task detail into a movable, resizable, non-blocking FloatingWindow managed at App level. Wired to the Maximize2 "Pop out" button in TaskDetailContent's header.
   */
   onPopOut?: (task: Task | TaskDetail) => void;
+  /** Mirrors the Board/right-dock "Open tasks as popups" routing for ordinary List row/card opens. */
+  openMobileTasksInPopup?: boolean;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: () => void;
@@ -320,6 +322,7 @@ export function ListView({
   onResetTask,
   onDuplicateTask,
   onPopOut,
+  openMobileTasksInPopup = false,
   onOpenDetail,
   addToast,
   globalPaused,
@@ -678,6 +681,15 @@ export function ListView({
     if (!workflowMode) return undefined;
     return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags }));
   }, [listColumns, workflowMode]);
+
+  const getTaskPlanningWorkflowId = useCallback((task: Task): string | null => {
+    const taskWorkflowId = (task as Task & { workflowId?: string | null }).workflowId;
+    if (taskWorkflowId) return taskWorkflowId;
+    if (workflowMode && boardWorkflows) {
+      return boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId ?? null;
+    }
+    return null;
+  }, [boardWorkflows, workflowMode]);
 
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
     return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
@@ -1711,6 +1723,10 @@ export function ListView({
       mergeStrategy,
       prAutomationLabel: getTaskPrAutomationLabel(t, task.status),
       onDelete: () => void handleListTaskDelete(task),
+      onPlan: onPlanningMode ? () => {
+        const seed = (task.description ?? "").trim() || task.title || task.id;
+        onPlanningMode(seed, getTaskPlanningWorkflowId(task));
+      } : undefined,
       onDuplicate: onDuplicateTask ? async () => {
         const shouldDuplicate = await confirm({
           title: t("taskDetail.duplicate.title", "Duplicate Task"),
@@ -1814,7 +1830,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -1849,20 +1865,6 @@ export function ListView({
       openContextMenuAt(task, event.clientX, event.clientY);
     }, LIST_TOUCH_CONTEXT_MENU_DELAY_MS);
   }, [clearLongPressTimer, isMobile, openContextMenuAt]);
-
-  const handleListKeyDown = useCallback((event: React.KeyboardEvent, task: Task) => {
-    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
-    if (isListContextInteractiveTarget(event.target)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    suppressNextRowClickRef.current = true;
-    openContextMenuAt(
-      task,
-      rect.left + Math.min(rect.width - LIST_CONTEXT_MENU_VIEWPORT_MARGIN, LIST_KEYBOARD_CONTEXT_MENU_OFFSET),
-      rect.top + Math.min(rect.height - LIST_CONTEXT_MENU_VIEWPORT_MARGIN, LIST_KEYBOARD_CONTEXT_MENU_OFFSET),
-    );
-  }, [openContextMenuAt]);
 
   const handleListPointerMove = useCallback((event: React.PointerEvent) => {
     const start = longPressStartRef.current;
@@ -1936,6 +1938,14 @@ export function ListView({
         return;
       }
       closeContextMenu();
+      /*
+      FNXC:ListView 2026-07-13-00:00 (FN-7945):
+      When "Open tasks as popups" is on, ordinary List row/card and keyboard opens route to the shared movable/resizable popped-out FloatingWindow (`onPopOut` → `popOutTaskDetail`) for Board parity and navigate-while-open behavior. When off, preserve the existing docked split-pane on desktop and docked modal on mobile/tablet.
+      */
+      if (openMobileTasksInPopup && onPopOut) {
+        onPopOut(task);
+        return;
+      }
       if (useSinglePaneList) {
         onOpenDetail(task, { origin: "list-mobile" });
         return;
@@ -1944,8 +1954,29 @@ export function ListView({
       setSelectedTaskId(task.id);
       setSelectedTaskSnapshot(task);
     },
-    [closeContextMenu, onOpenDetail, useSinglePaneList]
+    [closeContextMenu, onOpenDetail, onPopOut, openMobileTasksInPopup, useSinglePaneList]
   );
+
+  const handleListKeyDown = useCallback((event: React.KeyboardEvent, task: Task) => {
+    if (event.key === "Enter" || event.key === " ") {
+      if (isListContextInteractiveTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleRowClick(task);
+      return;
+    }
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    if (isListContextInteractiveTarget(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    suppressNextRowClickRef.current = true;
+    openContextMenuAt(
+      task,
+      rect.left + Math.min(rect.width - LIST_CONTEXT_MENU_VIEWPORT_MARGIN, LIST_KEYBOARD_CONTEXT_MENU_OFFSET),
+      rect.top + Math.min(rect.height - LIST_CONTEXT_MENU_VIEWPORT_MARGIN, LIST_KEYBOARD_CONTEXT_MENU_OFFSET),
+    );
+  }, [handleRowClick, openContextMenuAt]);
 
   // Debounce detail fetches so rapid keyboard/mouse navigation through a
   // long task list doesn't issue a heavy /tasks/:id request (with log +

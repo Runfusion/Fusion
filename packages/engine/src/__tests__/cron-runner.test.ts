@@ -223,6 +223,21 @@ describe("CronRunner", () => {
       expect(capturedOptions.toolsAllowlist).toBeUndefined();
     });
 
+    it("forwards thinkingLevel as createFnAgent defaultThinkingLevel and omits blank values", async () => {
+      const capturedOptions: any[] = [];
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions.push(options);
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Think deeply", undefined, undefined, undefined, "high");
+      await executor("Inherit defaults", undefined, undefined, undefined, "   ");
+
+      expect(capturedOptions[0].defaultThinkingLevel).toBe("high");
+      expect(capturedOptions[1].defaultThinkingLevel).toBeUndefined();
+    });
+
     it("forwards store-resolved MCP servers to scheduled AI prompt sessions", async () => {
       let capturedOptions: any;
       piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
@@ -1034,6 +1049,7 @@ describe("CronRunner", () => {
         "anthropic",
         "claude-sonnet-4-5",
         undefined,
+        undefined,
       );
     });
 
@@ -1224,7 +1240,37 @@ describe("CronRunner", () => {
 
       await runner.executeSchedule(schedule);
 
-      expect(mockExecutor).toHaveBeenCalledWith("Use selected tools", "anthropic", "claude-sonnet-4-5", ["Read", "Grep"]);
+      expect(mockExecutor).toHaveBeenCalledWith("Use selected tools", "anthropic", "claude-sonnet-4-5", ["Read", "Grep"], undefined);
+    });
+
+    it("passes explicit step thinkingLevel to executor and leaves omitted level unset", async () => {
+      const store = createMockStore();
+      const mockExecutor = createAiMockExecutor("response");
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "ai-prompt",
+            name: "High thinking",
+            prompt: "Think deeply",
+            thinkingLevel: "high",
+            command: undefined,
+          }),
+          makeStep({
+            type: "ai-prompt",
+            name: "Default thinking",
+            prompt: "Use default",
+            command: undefined,
+          }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: mockExecutor });
+
+      await runner.executeSchedule(schedule);
+
+      expect(mockExecutor).toHaveBeenNthCalledWith(1, "Think deeply", "anthropic", "claude-sonnet-4-5", undefined, "high");
+      expect(mockExecutor).toHaveBeenNthCalledWith(2, "Use default", "anthropic", "claude-sonnet-4-5", undefined, undefined);
     });
 
     it("passes step model provider and model ID to executor", async () => {
@@ -1248,7 +1294,7 @@ describe("CronRunner", () => {
 
       await runner.executeSchedule(schedule);
 
-      expect(mockExecutor).toHaveBeenCalledWith("Do something", "openai", "gpt-4o", undefined);
+      expect(mockExecutor).toHaveBeenCalledWith("Do something", "openai", "gpt-4o", undefined, undefined);
     });
 
     it("falls back to settings defaults when step has no model", async () => {
@@ -1273,7 +1319,7 @@ describe("CronRunner", () => {
 
       await runner.executeSchedule(schedule);
 
-      expect(mockExecutor).toHaveBeenCalledWith("Use defaults", "anthropic", "claude-sonnet-4-5", undefined);
+      expect(mockExecutor).toHaveBeenCalledWith("Use defaults", "anthropic", "claude-sonnet-4-5", undefined, undefined);
     });
 
     it("returns configuration error when no executor is provided", async () => {
@@ -1514,11 +1560,34 @@ describe("CronRunner", () => {
         column: "todo",
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
+        thinkingLevel: undefined,
         source: {
           sourceType: "cron",
           sourceMetadata: { scheduleId: "test-schedule-id", stepId: expect.any(String) },
         },
       });
+    });
+
+    it("maps explicit create-task thinkingLevel and leaves omitted level unset", async () => {
+      const mockTask = { id: "FN-7788", title: "", description: "Some task" };
+      const createTaskMock = vi.fn().mockResolvedValue(mockTask);
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeCreateTaskStep({ taskDescription: "High effort task", thinkingLevel: "high" }),
+          makeCreateTaskStep({ taskDescription: "Inherited effort task" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ thinkingLevel: "high" }));
+      expect(createTaskMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
     });
 
     it("defaults column to triage when taskColumn is not set", async () => {

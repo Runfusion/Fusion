@@ -2507,6 +2507,107 @@ describe("TriageProcessor", () => {
         await cleanupTriageFixtureRoot(tempRoot);
       }
     });
+
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-12-23:50:
+    Plan-in-place workflows replan in "todo" (the workflow-aware replan rebound keeps them
+    there instead of orphaning them in an undeclared "triage" column), so a `needs-replan`
+    todo card must be rediscovered even though its PROMPT.md is a real failed plan, not a
+    seed.
+    */
+    it("discovers a needs-replan todo-column task even though its PROMPT.md is a real spec", async () => {
+      const tempRoot = await createTriageFixtureRoot("fusion-triage-ideas-replan-");
+      const replanId = "FN-IDEAS-REPLAN";
+      try {
+        const replanTask = createTriageTask({
+          id: replanId,
+          title: "Replanning in place",
+          description: "Plan Review sent this back for revision",
+          column: "todo",
+          status: "needs-replan",
+          priority: "urgent",
+        });
+        await mkdir(join(tempRoot, ".fusion", "tasks", replanId), { recursive: true });
+        await writeFile(
+          join(tempRoot, ".fusion", "tasks", replanId, "PROMPT.md"),
+          `# Task: ${replanId} - Replanning in place\n\n## Mission\n\nA real spec under revision.\n`,
+          "utf-8",
+        );
+
+        const triageStore = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([replanTask]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 10,
+            maxTriageConcurrent: 10,
+            pollIntervalMs: 10_000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+          }),
+        });
+        const triageProcessor = new TriageProcessor(triageStore, tempRoot);
+        const specifySpy = vi
+          .spyOn(triageProcessor, "specifyTask")
+          .mockResolvedValue(undefined);
+
+        (triageProcessor as any).running = true;
+        await (triageProcessor as any).poll();
+
+        expect(specifySpy).toHaveBeenCalledTimes(1);
+        expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: replanId }));
+      } finally {
+        await cleanupTriageFixtureRoot(tempRoot);
+      }
+    });
+
+    /*
+    FNXC:TaskRefinementWorkflow 2026-07-12-23:50:
+    A refinement's seed PROMPT.md has no task-id prefix (`# {title}\n\n{description}`), so the
+    strict bootstrap-stub equality used to treat a promoted refinement as already planned and
+    skip specification; isUnplannedSeedPrompt must accept the refinement seed shape.
+    */
+    it("discovers a promoted refinement whose PROMPT.md is the refinement seed (no id prefix)", async () => {
+      const tempRoot = await createTriageFixtureRoot("fusion-triage-ideas-refine-");
+      const refineId = "FN-IDEAS-REFINE";
+      try {
+        const refineTask = createTriageTask({
+          id: refineId,
+          title: "FN-100: tighten the header spacing",
+          description: "tighten the header spacing\n\nRefines: FN-100",
+          column: "todo",
+          sourceType: "task_refine",
+          priority: "urgent",
+        });
+        await mkdir(join(tempRoot, ".fusion", "tasks", refineId), { recursive: true });
+        await writeFile(
+          join(tempRoot, ".fusion", "tasks", refineId, "PROMPT.md"),
+          `# ${refineTask.title}\n\n${refineTask.description}\n`,
+          "utf-8",
+        );
+
+        const triageStore = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([refineTask]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 10,
+            maxTriageConcurrent: 10,
+            pollIntervalMs: 10_000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+          }),
+        });
+        const triageProcessor = new TriageProcessor(triageStore, tempRoot);
+        const specifySpy = vi
+          .spyOn(triageProcessor, "specifyTask")
+          .mockResolvedValue(undefined);
+
+        (triageProcessor as any).running = true;
+        await (triageProcessor as any).poll();
+
+        expect(specifySpy).toHaveBeenCalledTimes(1);
+        expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: refineId }));
+      } finally {
+        await cleanupTriageFixtureRoot(tempRoot);
+      }
+    });
   });
 
   it("runs deterministic validation without calling the spec reviewer", async () => {

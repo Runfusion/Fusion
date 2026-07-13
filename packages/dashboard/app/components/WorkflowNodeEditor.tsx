@@ -108,6 +108,7 @@ import { WorkflowSettingsPanel } from "./WorkflowSettingsPanel";
 import type { WorkflowFieldDefinition, WorkflowSettingDefinition } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FloatingWindow } from "./FloatingWindow";
+import { nextFloatingZ } from "./floatingWindowStack";
 import { MobileWorkflowGraphView } from "./MobileWorkflowGraphView";
 import {
   buildMobileWorkflowGraph,
@@ -2412,14 +2413,29 @@ function InnerEditor({
   const mobileNodeDetailStage = isMobileMode && selectedNodeHasInspector && !inspectorCollapsed;
   const mobileEdgeDetailStage = isMobileMode && selectedEdge !== null;
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
+  const [promptFullscreenZ, setPromptFullscreenZ] = useState<number | null>(null);
   const handleTogglePromptExpand = useCallback(() => {
-    setIsPromptExpanded((prev) => !prev);
-  }, []);
+    if (isPromptExpanded) {
+      setIsPromptExpanded(false);
+      setPromptFullscreenZ(null);
+      return;
+    }
+    setPromptFullscreenZ(nextFloatingZ());
+    setIsPromptExpanded(true);
+  }, [isPromptExpanded]);
+  useEffect(() => {
+    if (!isPromptExpanded) {
+      if (promptFullscreenZ !== null) setPromptFullscreenZ(null);
+      return;
+    }
+    if (promptFullscreenZ === null) setPromptFullscreenZ(nextFloatingZ());
+  }, [isPromptExpanded, promptFullscreenZ]);
   const handlePromptFullscreenKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!isPromptExpanded || e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
     setIsPromptExpanded(false);
+    setPromptFullscreenZ(null);
   }, [isPromptExpanded]);
   const selectedNodePromptValue =
     selectedNode && (selectedNode.data.kind === "prompt" || selectedNode.data.kind === "gate")
@@ -2725,11 +2741,16 @@ function InnerEditor({
     };
   }, [overrideColumnBinding, agents.length, projectId, addToast, t]);
 
+  /*
+  FNXC:WorkflowEditor 2026-07-12-00:00:
+  The fullscreen prompt editor is portaled beside the FloatingWindow that launched it, so it must claim a fresh shared floating-stack z-index when opened. A static z-index of 10000 is below the workflow editor's 10100+ full-screen mobile FloatingWindow sheet and makes the mobile Expand button appear inert because the sheet covers the overlay.
+  */
   const promptFullscreenOverlay =
     isPromptExpanded && (selectedNode?.data.kind === "prompt" || selectedNode?.data.kind === "gate")
       ? createPortal(
           <div
             className="wf-prompt-editor wf-prompt-editor--fullscreen"
+            style={promptFullscreenZ !== null ? { zIndex: promptFullscreenZ } : undefined}
             onKeyDown={handlePromptFullscreenKeyDown}
           >
             <div className="wf-prompt-fullscreen-header">

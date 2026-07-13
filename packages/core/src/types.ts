@@ -2576,6 +2576,12 @@ export interface Task {
   approvedPlanFingerprint?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+   * Validator and planning task fields are optional per-lane reasoning-effort overrides. When unset, those lanes inherit the shared task `thinkingLevel`, then existing settings and lane fallbacks.
+   */
+  validatorThinkingLevel?: ThinkingLevel;
+  planningThinkingLevel?: ThinkingLevel;
   /** Execution mode for task implementation.
    *  - "standard": Full execution with complete review workflow (default)
    *  - "fast": Expedited execution with minimal overhead for simple tasks
@@ -2847,6 +2853,12 @@ export interface TaskCreateInput {
   planningModelId?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
+   * Validator and planning task fields are optional per-lane reasoning-effort overrides. When unset, those lanes inherit the shared task `thinkingLevel`, then existing settings and lane fallbacks.
+   */
+  validatorThinkingLevel?: ThinkingLevel;
+  planningThinkingLevel?: ThinkingLevel;
   /** When true, trigger AI title summarization if description is long and no title provided */
   summarize?: boolean;
   /** Mission ID to link this task to (for mission hierarchy) */
@@ -3482,6 +3494,17 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for title summarization.
    *  Must be set together with `titleSummarizerGlobalProvider`. */
   titleSummarizerGlobalModelId?: string;
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Merger AI sessions (conflict resolution, clean-room merge, stash-conflict, PR-response helpers, merge commit agent) need a dedicated global baseline lane so operators can pin a merge-capable model without forcing the same choice onto executor/planner/reviewer. Project `mergerProvider`/`mergerModelId` override this pair; unset falls through to project/global default.
+  */
+  /** Global baseline AI model provider for merger agent sessions.
+   *  Must be set together with `mergerGlobalModelId`. Falls back to
+   *  `defaultProvider`/`defaultModelId` when undefined. */
+  mergerGlobalProvider?: string;
+  /** Global baseline AI model ID for merger agent sessions.
+   *  Must be set together with `mergerGlobalProvider`. */
+  mergerGlobalModelId?: string;
   /** Optional global execution-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   executionGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global planning-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
@@ -3490,6 +3513,8 @@ export interface GlobalSettings {
   validatorGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   titleSummarizerGlobalThinkingLevel?: ThinkingLevel;
+  /** Optional global merger-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  mergerGlobalThinkingLevel?: ThinkingLevel;
   /** The daemon authentication token (format: fn_<32 hex chars>).
    *  Used for authenticating CLI clients to the daemon server. */
   daemonToken?: string;
@@ -4017,6 +4042,13 @@ export interface ProjectSettings {
    */
   openMobileTasksInPopup?: boolean;
   /**
+   * When true, open task-detail popups render only on the Board/List view where they were opened. Default: false.
+   *
+   * FNXC:TaskPopupViewGating 2026-07-13-00:00:
+   * This project-scoped setting is default-off so currently opened task-detail FloatingWindows remain visible across all main-content views unless operators opt in. When true, open task-detail popups attach to the Board/List view where they were opened; popup state is preserved across view switches and never cleared, so returning to that view restores the same popups and persisted position.
+   */
+  taskPopupsBoardListOnly?: boolean;
+  /**
    * FNXC:TaskCardCostBadge 2026-07-11-12:15:
    * Default-off project setting that lets operators opt board cards into showing derived read-time task cost next to the execution-time badge. Missing/false preserves existing card density and no badge shell renders unless a task has positive token usage.
    */
@@ -4105,6 +4137,21 @@ export interface ProjectSettings {
    * Optional project default-lane thinking override used when a task does not set its own thinking level.
    */
   defaultThinkingLevelOverride?: ThinkingLevel;
+  /**
+   * FNXC:ChatModels 2026-07-12-20:45:
+   * Projects can pin a default Direct-chat target as either a model pair with optional thinking level or a durable agent, then choose whether New Chat prompts with that default preselected or creates the session immediately.
+   */
+  chatNewSessionMode?: "prompt" | "always-default";
+  /** Which configured default target kind New Chat should use or preselect. */
+  chatDefaultKind?: "model" | "agent";
+  /** Durable agent id used when `chatDefaultKind === "agent"`. */
+  chatDefaultAgentId?: string;
+  /** Model provider used when `chatDefaultKind === "model"`; must be paired with `chatDefaultModelId`. */
+  chatDefaultModelProvider?: string;
+  /** Model id used when `chatDefaultKind === "model"`; must be paired with `chatDefaultModelProvider`. */
+  chatDefaultModelId?: string;
+  /** Optional thinking-level override for the model chat default; undefined inherits the resolved project/global default. */
+  chatDefaultThinkingLevel?: ThinkingLevel;
   /** Project-level AI model provider for task execution (executor agent).
    *  This is the execution lane that overrides the global `executionGlobalProvider`.
    *  Must be set together with `executionModelId`. Falls back to
@@ -4644,6 +4691,19 @@ export interface ProjectSettings {
   titleSummarizerModelId?: string;
   /** Optional project summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   titleSummarizerThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Project-scoped merger lane overrides the global merger baseline for conflict resolution and related merge-agent sessions. Both provider and model id must be set together; partial pairs are ignored and fall through. Unset inherits global merger lane then project/global default.
+  */
+  /** Project AI model provider for merger agent sessions.
+   *  Must be set together with `mergerModelId`. Falls back to
+   *  `mergerGlobalProvider`/`mergerGlobalModelId`, then project/global default. */
+  mergerProvider?: string;
+  /** Project AI model ID for merger agent sessions.
+   *  Must be set together with `mergerProvider`. */
+  mergerModelId?: string;
+  /** Optional project merger-lane thinking override. Inherits through global merger thinking then default thinking when unset. */
+  mergerThinkingLevel?: ThinkingLevel;
   /** Fallback model provider for title summarization. When unset, falls back to
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackModelId`. */

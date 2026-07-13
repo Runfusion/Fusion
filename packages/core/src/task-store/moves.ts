@@ -472,7 +472,24 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         options?.recoveryRehome === true &&
         sourceIsLegacy &&
         (COLUMNS as readonly string[]).includes(toColumn);
-      if (!isEvacuation && !isLegacyRecoveryRehome) {
+      /*
+      FNXC:WorkflowColumns 2026-07-13-11:50 (merge port from main):
+      Third recoveryRehome carve-out: a recovery move INTO a custom column the task's OWN
+      workflow declares (e.g. the integrity pass re-homing a workflow-edit orphan to a custom
+      entry column). The two carve-outs above only cover legacy targets, so every
+      custom-target repair threw the legacy "Invalid transition" Error, which rehomeOccupant
+      swallowed as moved:false — the repair silently no-oped on every store open.
+      Recovery-only, so normal moves keep the characterization contract byte-identical.
+      */
+      // Backend-aware IR resolution (resolveTaskWorkflowIrForMove): upstream's
+      // sync resolver falls back to builtin:coding in PG mode, which would make
+      // this carve-out silently never fire for custom columns on the default
+      // backend — the exact bug it exists to fix.
+      const isWorkflowDeclaredRecoveryRehome =
+        options?.recoveryRehome === true &&
+        !(COLUMNS as readonly string[]).includes(toColumn) &&
+        workflowHasColumn(await resolveTaskWorkflowIrForMove(store, id), toColumn);
+      if (!isEvacuation && !isLegacyRecoveryRehome && !isWorkflowDeclaredRecoveryRehome) {
         /*
         FNXC:WorkflowColumns 2026-07-05-19:30:
         Workflow columns graduated to always-on (no experimental flag emitted), so this "flag-OFF"

@@ -46,7 +46,7 @@ When changesets are merged to `main`, the `version.yml` workflow automatically o
 - Consumes all pending changeset files
 - Bumps package versions according to the changeset declarations
 - Generates/updates `CHANGELOG.md` files for affected packages
-- Distills the version's changeset summaries into grouped, end-user-facing release notes in the root `CHANGELOG.md`
+- Distills the version's changeset summaries into grouped, end-user-facing release notes in the root `CHANGELOG.md` via Claude (`claude -p --model sonnet`): a **Highlights** section (top 3–5) plus category groups, and prints an engagement-oriented X draft (≤280 chars) after a local release
 
 ### 3. Merge the Version PR to release
 
@@ -125,9 +125,9 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 |--------|-------------|
 | `pnpm changeset` | Add a new changeset |
 | `pnpm changeset status` | Check pending changesets |
-| `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then bumps + builds + publishes + tags |
+| `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then bumps + builds + publishes + tags; Claude authors Highlights + a ≤280-char engagement X draft (soft deterministic fallback if Claude is offline) |
 | `pnpm release --yes` | Same, but auto-accepts the proposed version and skips the final confirmation |
-| `pnpm release --dry-run` | Preview only — show changesets, proposed version, and prompt for override, then exit before any file/git/npm changes |
+| `pnpm release --dry-run` | Preview only — show changesets, proposed version, and Claude-authored X draft preview, then exit before any file/git/npm changes |
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
 | `pnpm --filter @runfusion/fusion build:exe` | Build binary for current platform |
 | `pnpm --filter @runfusion/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { PlanningQuestion } from "@fusion/core";
-import { getErrorMessage } from "@fusion/core";
+import type { PlanningQuestion, ThinkingLevel } from "@fusion/core";
+import { getErrorMessage, THINKING_LEVELS } from "@fusion/core";
 import {
   startMissionInterview,
   respondToMissionInterview,
@@ -158,6 +158,7 @@ export function MissionInterviewModal({
   // Model selection state
   const [modelProvider, setModelProvider] = useState<string | undefined>(undefined);
   const [modelId, setModelId] = useState<string | undefined>(undefined);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | "">("");
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -425,10 +426,11 @@ export function MissionInterviewModal({
       setView({ type: "loading" });
 
       try {
+        const modelOverride = modelProvider && modelId ? { modelProvider, modelId, thinkingLevel: thinkingLevel || undefined } : (thinkingLevel ? { thinkingLevel } : undefined);
         const { sessionId } = await startMissionInterview(
           goal.trim(),
           projectId,
-          modelProvider && modelId ? { modelProvider, modelId } : undefined,
+          modelOverride,
         );
         currentSessionIdRef.current = sessionId;
         setLockSessionId(sessionId);
@@ -444,7 +446,7 @@ export function MissionInterviewModal({
         setLockSessionId(null);
       }
     },
-    [connectToMissionInterviewStream, missionGoal, modelProvider, modelId, projectId]
+    [connectToMissionInterviewStream, missionGoal, modelProvider, modelId, thinkingLevel, projectId]
   );
 
   // Focus textarea when opening
@@ -499,6 +501,12 @@ export function MissionInterviewModal({
 
       const parsedHistory = parseConversationHistory(session.conversationHistory);
       setConversationHistory(parsedHistory);
+      try {
+        const payload = session.inputPayload ? JSON.parse(session.inputPayload) : null;
+        setThinkingLevel(THINKING_LEVELS.includes(payload?.thinkingLevel as ThinkingLevel) ? payload.thinkingLevel : "");
+      } catch {
+        setThinkingLevel("");
+      }
       setLockSessionId(session.id);
       setResponseHistory(
         parsedHistory
@@ -954,6 +962,10 @@ export function MissionInterviewModal({
                     onToggleFavorite={handleToggleFavoriteProvider}
                     favoriteModels={favoriteModels}
                     onToggleModelFavorite={handleToggleFavoriteModel}
+                    showThinkingLevel
+                    thinkingLevel={thinkingLevel}
+                    onThinkingLevelChange={(level) => setThinkingLevel(THINKING_LEVELS.includes(level as ThinkingLevel) ? (level as ThinkingLevel) : "")}
+                    defaultThinkingLevel="off"
                   />
                   {modelsError && (
                     <div className="form-hint form-hint-error">
@@ -982,6 +994,7 @@ export function MissionInterviewModal({
                       </button>
                     </div>
                   )}
+                  {/* FNXC:MissionInterview 2026-07-12-00:00: The planning model selector exposes the same inline per-session thinking control as chat and sends it only because mission-interview inputPayload now persists and restores that reasoning-effort field. */}
                   <div className="model-selector-current model-selector-current--spaced">
                     <span
                       className={`model-badge ${

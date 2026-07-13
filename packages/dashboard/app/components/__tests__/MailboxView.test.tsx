@@ -819,13 +819,15 @@ describe("MailboxView", () => {
         artifactType: "image",
         title: "Mailbox Screenshot",
         mimeType: "image/png",
+        taskId: "FN-1234",
       },
     };
+    const onOpenTask = vi.fn();
     mockFetchInbox.mockResolvedValue(makeInboxResponse([artifactMessage], 1));
     mockFetchConversation.mockResolvedValue([artifactMessage]);
     mockMarkMessageRead.mockResolvedValue({ ...artifactMessage, read: true });
 
-    render(<MailboxView {...defaultProps} projectId="project-a" />);
+    render(<MailboxView {...defaultProps} projectId="project-a" onOpenTask={onOpenTask} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
@@ -840,6 +842,39 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "Mailbox Screenshot" })).toHaveAttribute("src", "/api/artifacts/art-mailbox-image/media?projectId=project-a");
       expect(screen.getByRole("link", { name: "Open artifact: Mailbox Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-mailbox-image/media?projectId=project-a");
+      expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("mailbox-artifact-view-task"));
+    expect(onOpenTask).toHaveBeenCalledWith("FN-1234");
+  });
+
+  it("does not render a View task affordance for artifact messages without task metadata", async () => {
+    const artifactMessage: Message = {
+      ...mockMessage,
+      metadata: {
+        artifactId: "art-mailbox-image",
+        artifactType: "image",
+        title: "Mailbox Screenshot",
+      },
+    };
+    mockFetchInbox.mockResolvedValue(makeInboxResponse([artifactMessage], 1));
+    mockFetchConversation.mockResolvedValue([artifactMessage]);
+    mockMarkMessageRead.mockResolvedValue({ ...artifactMessage, read: true });
+
+    render(<MailboxView {...defaultProps} onOpenTask={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mailbox-item-msg-001"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
+      expect(screen.queryByTestId("mailbox-artifact-view-task")).toBeNull();
     });
   });
 
@@ -879,14 +914,16 @@ describe("MailboxView", () => {
         artifactId: "art-thread-image",
         artifactType: "image",
         title: "Thread Image",
+        taskId: "FN-5678",
       },
       read: true,
     };
+    const onOpenTask = vi.fn();
     mockFetchInbox.mockResolvedValue(makeInboxResponse([rootMessage], 1));
     mockFetchConversation.mockResolvedValue([rootMessage, artifactReply]);
     mockMarkMessageRead.mockResolvedValue({ ...rootMessage, read: true });
 
-    render(<MailboxView {...defaultProps} />);
+    render(<MailboxView {...defaultProps} onOpenTask={onOpenTask} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-item-msg-artifact-root")).toBeDefined();
@@ -900,7 +937,11 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument();
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "Thread Image" })).toHaveAttribute("src", "/api/artifacts/art-thread-image/media");
+      expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByTestId("mailbox-artifact-view-task"));
+    expect(onOpenTask).toHaveBeenCalledWith("FN-5678");
   });
 
   it("keeps list pane visible alongside detail pane on desktop/tablet", async () => {

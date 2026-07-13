@@ -130,6 +130,9 @@ export const tasks = projectSchema.table("tasks", {
   error: text("error"),
   summary: text("summary"),
   thinkingLevel: text("thinking_level"),
+  // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): validator/planning reasoning-effort overrides.
+  validatorThinkingLevel: text("validator_thinking_level"),
+  planningThinkingLevel: text("planning_thinking_level"),
   executionMode: text("execution_mode").default("standard"),
   tokenUsageInputTokens: integer("token_usage_input_tokens"),
   tokenUsageOutputTokens: integer("token_usage_output_tokens"),
@@ -1427,6 +1430,9 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   // FNXC:ChatThinkingLevel 2026-07-10: FN-7775 per-chat thinking-level override
   // persisted alongside the session's model selection.
   thinkingLevel: text("thinking_level"),
+  // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): validator/planning reasoning-effort overrides.
+  validatorThinkingLevel: text("validator_thinking_level"),
+  planningThinkingLevel: text("planning_thinking_level"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   cliSessionFile: text("cli_session_file"),
@@ -1645,6 +1651,8 @@ export const chatRooms = projectSchema.table("chat_rooms", {
   projectId: text("project_id"),
   createdBy: text("created_by"),
   status: text("status").notNull().default("active"),
+  // FNXC:Chat-ThinkingLevel 2026-07-13 (merge port): room-level reasoning-effort default.
+  thinkingLevel: text("thinking_level"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [

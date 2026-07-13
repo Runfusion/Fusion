@@ -8,6 +8,7 @@ import { applyPresetToSelection } from "../../../utils/modelPresets";
 import type { ToastType } from "../../../hooks/useToast";
 import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
+import { useAgentsMapCache } from "../../../hooks/useAgentsMapCache";
 type LaneStatus = "inherited" | "overridden";
 type WorkflowModelPair = {
     id: "planning" | "execution" | "validator" | "planning-fallback" | "validator-fallback";
@@ -135,6 +136,7 @@ export interface ProjectModelsSectionProps extends SectionBaseProps {
 }
 export function ProjectModelsSection({ scopeBanner, form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
     const { t } = useTranslation("app");
+    const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
     const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
     const presets = form.modelPresets || [];
     const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
@@ -269,13 +271,17 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         registerWorkflowLaneSaver?.(saveWorkflowLanes);
         return () => registerWorkflowLaneSaver?.(null);
     }, [registerWorkflowLaneSaver, saveWorkflowLanes]);
-    // The project DEFAULT lane and restored title-summarizer lane remain editable
+    // The project DEFAULT, title-summarizer, and merger lanes remain editable
     // here. Execution/planning/validator workflow-specific lanes still redirect to
     // workflow settings below.
-    const projectModelLanes = modelLanes.filter((lane) => ["default", "summarization"].includes(lane.laneId));
+    // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
+    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "summarization"].includes(lane.laneId));
     const getProjectLaneLabel = (lane: ModelLane) => {
         if (lane.laneId === "default") {
             return "Project Default Model";
+        }
+        if (lane.laneId === "merger") {
+            return "Project Merger Model";
         }
         if (lane.laneId === "summarization") {
             return "Project Summarization Model";
@@ -285,6 +291,9 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
     const getProjectLaneHelperText = (lane: ModelLane) => {
         if (lane.laneId === "default") {
             return "Project-wide default AI model used when no more specific task or project lane override is set.";
+        }
+        if (lane.laneId === "merger") {
+            return "Model used for merge conflict resolution, clean-room merge, stash-conflict recovery, and related merger agent sessions.";
         }
         if (lane.laneId === "summarization") {
             return "Model used for title auto-summarization, merge commit summaries, GitHub tracking issue titles, and PR title/body generation.";
@@ -315,6 +324,36 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
     };
     const resetTitleSummarizerFallbackValue = () => {
         setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined } as SettingsFormState));
+    };
+    const chatDefaultKind = form.chatDefaultKind ?? "model";
+    const chatDefaultModelValue = form.chatDefaultModelProvider && form.chatDefaultModelId
+        ? `${form.chatDefaultModelProvider}/${form.chatDefaultModelId}`
+        : "";
+    const chatDefaultThinkingValue = typeof form.chatDefaultThinkingLevel === "string"
+        ? form.chatDefaultThinkingLevel
+        : "";
+    const chatDefaultCustomized = Boolean(form.chatNewSessionMode || form.chatDefaultKind || form.chatDefaultAgentId || chatDefaultModelValue || chatDefaultThinkingValue);
+    const setChatDefaultModelValue = (value: string) => {
+        if (!value) {
+            setForm((f) => ({ ...f, chatDefaultKind: "model", chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState));
+            return;
+        }
+        const slashIdx = value.indexOf("/");
+        if (slashIdx <= 0)
+            return;
+        setForm((f) => ({
+            ...f,
+            chatDefaultKind: "model",
+            chatDefaultAgentId: undefined,
+            chatDefaultModelProvider: value.slice(0, slashIdx),
+            chatDefaultModelId: value.slice(slashIdx + 1),
+        } as SettingsFormState));
+    };
+    const setChatDefaultThinkingValue = (value: string) => {
+        setForm((f) => ({ ...f, chatDefaultThinkingLevel: value || undefined } as SettingsFormState));
+    };
+    const resetChatDefaultValue = () => {
+        setForm((f) => ({ ...f, chatNewSessionMode: undefined, chatDefaultKind: undefined, chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState));
     };
     return (<>
       {scopeBanner}
@@ -378,6 +417,51 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
             <small>{t("settings.projectModels.titleSummarizerFallbackHelp", "Fallback provider and model used when the primary Title Summarizer model cannot be used. Falls back to the global summarization lane and then the default model chain.")}</small>
           </div>
         </>)}
+
+      {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
+      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
+      <p className="settings-description">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</p>
+      <div className="form-group" data-testid="project-models-chat-mode">
+        <label htmlFor="chatNewSessionMode">{t("settings.projectModels.chatNewSessionMode", "New Chat behavior")}</label>
+        <select id="chatNewSessionMode" value={form.chatNewSessionMode ?? "prompt"} onChange={(event) => setForm((f) => ({ ...f, chatNewSessionMode: event.target.value === "always-default" ? "always-default" : undefined } as SettingsFormState))}>
+          <option value="prompt">{t("settings.projectModels.chatNewSessionModePrompt", "Prompt for model each time")}</option>
+          <option value="always-default">{t("settings.projectModels.chatNewSessionModeAlwaysDefault", "Always use configured default")}</option>
+        </select>
+        <small>{t("settings.projectModels.chatNewSessionModeHelp", "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.")}</small>
+      </div>
+      <div className="form-group" data-testid="project-models-chat-kind">
+        <label>{t("settings.projectModels.chatDefaultKind", "Chat default target")}</label>
+        <div className="chat-new-dialog-mode-toggle" data-testid="project-models-chat-kind-toggle">
+          <button type="button" className={`chat-new-dialog-mode-btn${chatDefaultKind === "model" ? " chat-new-dialog-mode-btn--active" : ""}`} onClick={() => setForm((f) => ({ ...f, chatDefaultKind: "model", chatDefaultAgentId: undefined } as SettingsFormState))}>
+            {t("settings.projectModels.chatDefaultKindModel", "Model")}
+          </button>
+          <button type="button" className={`chat-new-dialog-mode-btn${chatDefaultKind === "agent" ? " chat-new-dialog-mode-btn--active" : ""}`} onClick={() => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState))}>
+            {t("settings.projectModels.chatDefaultKindAgent", "Agent")}
+          </button>
+        </div>
+      </div>
+      {chatDefaultKind === "model" ? (<div className="form-group" data-testid="project-models-chat-model">
+          <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
+          <div className="settings-model-lane-control-row">
+            <div className="settings-model-lane-control-main">
+              <CustomModelDropdown id="chatDefaultModel" label={t("settings.projectModels.chatDefaultModel", "Chat Default Model")} models={availableModels} value={chatDefaultModelValue} onChange={setChatDefaultModelValue} placeholder={t("settings.projectModels.selectChatDefaultModel", "Select a chat default model")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={chatDefaultThinkingValue} onThinkingLevelChange={setChatDefaultThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
+            </div>
+            {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+          </div>
+          <small>{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</small>
+        </div>) : (<div className="form-group" data-testid="project-models-chat-agent">
+          <label htmlFor="chatDefaultAgentId">{t("settings.projectModels.chatDefaultAgent", "Chat Default Agent")}</label>
+          <div className="settings-model-lane-control-row">
+            <div className="settings-model-lane-control-main">
+              <select id="chatDefaultAgentId" value={form.chatDefaultAgentId ?? ""} disabled={agentsLoading || agents.length === 0} onChange={(event) => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultAgentId: event.target.value || undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState))}>
+                <option value="">{agentsLoading ? t("settings.projectModels.loadingAgents", "Loading agents…") : t("settings.projectModels.selectChatDefaultAgent", "Select a chat default agent")}</option>
+                {agents.map((agent) => (<option key={agent.id} value={agent.id}>{agent.name} ({agent.role})</option>))}
+              </select>
+            </div>
+            {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+          </div>
+          <small>{agents.length === 0 && !agentsLoading ? t("settings.projectModels.chatDefaultAgentEmpty", "No agents are available for this project yet.") : t("settings.projectModels.chatDefaultAgentHelp", "Agent-mode New Chat starts a Direct chat with the selected durable agent.")}</small>
+        </div>)}
 
       {/* --- Default workflow model lanes --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>

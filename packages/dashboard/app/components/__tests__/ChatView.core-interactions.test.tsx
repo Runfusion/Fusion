@@ -115,6 +115,7 @@ vi.mock("../CustomModelDropdown", () => ({
 
 // Mock fetchAgents for new chat dialog
 vi.mock("../../api", () => ({
+  fetchSettings: vi.fn().mockResolvedValue({}),
   fetchModels: vi.fn().mockResolvedValue({
     models: [
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },

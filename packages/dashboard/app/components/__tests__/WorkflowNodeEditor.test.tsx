@@ -113,6 +113,23 @@ function getPromptFullscreenTextarea() {
   return within(overlay!).getByLabelText("Prompt") as HTMLTextAreaElement;
 }
 
+function getWorkflowEditorFloatingOverlay() {
+  return document.body.querySelector('[data-testid="floating-window-overlay-workflow-node-editor"]') as HTMLElement | null;
+}
+
+function zIndexOf(element: HTMLElement) {
+  const value = element.style.zIndex || window.getComputedStyle(element).zIndex;
+  return Number.parseInt(value, 10);
+}
+
+function expectPromptOverlayAboveWorkflowWindow() {
+  const workflowWindow = getWorkflowEditorFloatingOverlay();
+  const promptOverlay = getPromptFullscreenOverlay();
+  expect(workflowWindow).toBeInTheDocument();
+  expect(promptOverlay).toBeInTheDocument();
+  expect(zIndexOf(promptOverlay!)).toBeGreaterThan(zIndexOf(workflowWindow!));
+}
+
 function defineElementMetric(element: Element, property: "clientWidth" | "scrollWidth", value: number) {
   Object.defineProperty(element, property, { configurable: true, value });
 }
@@ -1395,6 +1412,53 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getByRole("button", { name: "Expand prompt editor" })).toBeInTheDocument();
   });
 
+  it("stacks the fullscreen prompt editor above the workflow floating window on desktop", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    const workflowWindow = getWorkflowEditorFloatingOverlay();
+    expect(workflowWindow).toBeInTheDocument();
+    expect(zIndexOf(workflowWindow!)).toBeGreaterThan(10000);
+
+    fireEvent.click(await screen.findByTestId("wf-node-prompt"));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand prompt editor" }));
+
+    expectPromptOverlayAboveWorkflowWindow();
+  });
+
+  it("stacks the fullscreen prompt editor above the mobile workflow sheet for prompt nodes", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Custom" }));
+    fireEvent.click(await screen.findByTestId("wf-node-prompt"));
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    fireEvent.click(within(inspector).getByRole("button", { name: "Expand prompt editor" }));
+
+    expectPromptOverlayAboveWorkflowWindow();
+  });
+
+  it("stacks the fullscreen prompt editor above the mobile workflow sheet for empty gate prompts", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "QA" }));
+    fireEvent.click(await screen.findByTestId("wf-node-gate"));
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    fireEvent.click(within(inspector).getByRole("button", { name: "Expand prompt editor" }));
+
+    expect(within(getPromptFullscreenOverlay()!).getByLabelText("Prompt")).toHaveValue("");
+    expectPromptOverlayAboveWorkflowWindow();
+  });
+
   it("collapses the fullscreen prompt editor on Escape", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
 
@@ -1571,6 +1635,7 @@ describe("WorkflowNodeEditor", () => {
     const fullscreenPromptEditor = getPromptFullscreenOverlay();
     expect(fullscreenPromptEditor).toBeInTheDocument();
     expect(fullscreenPromptEditor).toHaveClass("wf-prompt-editor--fullscreen");
+    expectPromptOverlayAboveWorkflowWindow();
 
     fireEvent.click(within(fullscreenPromptEditor!).getByRole("button", { name: "Collapse prompt editor" }));
 
@@ -1662,6 +1727,22 @@ describe("WorkflowNodeEditor — embedded presentation", () => {
     expect(container.querySelector(".wf-editor-overlay")).toBeNull();
     expect(document.body.querySelector(".floating-window--workflow-editor")).toBeNull();
     expect(document.body.querySelector(".floating-window__resize-handle")).toBeNull();
+  });
+
+  it("opens the prompt fullscreen editor from embedded workflows without floating chrome", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} presentation="embedded" />);
+
+    await screen.findByText("Save");
+    expect(getWorkflowEditorFloatingOverlay()).toBeNull();
+
+    fireEvent.click(await screen.findByTestId("wf-node-prompt"));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand prompt editor" }));
+
+    const fullscreenPromptEditor = getPromptFullscreenOverlay();
+    expect(fullscreenPromptEditor).toBeInTheDocument();
+    expect(zIndexOf(fullscreenPromptEditor!)).toBeGreaterThan(10000);
   });
 
   it("does not dismiss on Escape in embedded mode", async () => {

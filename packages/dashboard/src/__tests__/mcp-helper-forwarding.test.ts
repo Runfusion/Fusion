@@ -30,6 +30,12 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: mockCreateFnAgent,
   promptWithFallback: mockPromptWithFallback,
   resolveMcpServersForStore: mockResolveMcpServersForStore,
+  // FNXC:DashboardMocks 2026-07-13-14:00 (round 11):
+  // Insight extraction now resolves a per-run thinking level via resolvePlanningThinkingLevel
+  // (imported from @fusion/engine) before reaching resolveMcpServersForStore. Without this mock
+  // export the call throws TypeError, the run is marked failed (still HTTP 201), and the MCP
+  // forwarding assertion sees 0 calls. Mirror the insights-routes.test.ts mock shape.
+  resolvePlanningThinkingLevel: vi.fn((_settings: unknown, thinkingLevel?: string) => thinkingLevel),
 }));
 
 const resolvedMcpServers = [

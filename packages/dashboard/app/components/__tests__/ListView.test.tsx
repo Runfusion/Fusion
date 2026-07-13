@@ -623,13 +623,15 @@ describe("ListView", () => {
     const viewportSpy = mockDesktopViewport();
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
+    const onPopOut = vi.fn();
 
-    renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
+    renderListView({ tasks, onOpenDetail: mockOnOpenDetail, onPopOut });
 
     const row = screen.getByText("FN-001").closest("tr");
     fireEvent.click(row!);
 
     expect(mockOnOpenDetail).not.toHaveBeenCalled();
+    expect(onPopOut).not.toHaveBeenCalled();
     expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-001");
     expect(row?.className).toContain("list-row--selected");
     await waitFor(() => {
@@ -640,20 +642,94 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  it("routes desktop List row clicks and keyboard opens to the task popup when enabled", () => {
+    const viewportSpy = mockDesktopViewport();
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
+    const onOpenDetail = vi.fn();
+    const onPopOut = vi.fn();
+
+    renderListView({ tasks, onOpenDetail, onPopOut, openMobileTasksInPopup: true });
+
+    const row = screen.getByText("FN-001").closest("tr") as HTMLElement;
+    fireEvent.click(row);
+
+    expect(onPopOut).toHaveBeenCalledWith(tasks[0]);
+    expect(onPopOut).toHaveBeenCalledTimes(1);
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
+    expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBeNull();
+
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(onPopOut).toHaveBeenCalledTimes(2);
+    expect(onPopOut).toHaveBeenLastCalledWith(tasks[0]);
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
+    viewportSpy.mockRestore();
+  });
+
+  it("falls back to desktop docked detail when popup routing is enabled without onPopOut", async () => {
+    const viewportSpy = mockDesktopViewport();
+    const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
+    const onOpenDetail = vi.fn();
+
+    renderListView({ tasks, onOpenDetail, openMobileTasksInPopup: true });
+
+    const row = screen.getByText("FN-001").closest("tr") as HTMLElement;
+    fireEvent.click(row);
+
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-001");
+    await waitFor(() => {
+      expect(screen.getByTestId("list-split-detail-content")).toBeInTheDocument();
+    });
+    viewportSpy.mockRestore();
+  });
+
   it("calls onOpenDetail on mobile row click", () => {
     const viewportSpy = mockMobileViewport();
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task" })];
     const mockOnOpenDetail = vi.fn();
+    const onPopOut = vi.fn();
 
-    renderListView({ tasks, onOpenDetail: mockOnOpenDetail });
+    renderListView({ tasks, onOpenDetail: mockOnOpenDetail, onPopOut });
 
     const card = document.querySelector('.list-card[data-id="FN-001"]');
     fireEvent.click(card!);
 
     expect(mockOnOpenDetail).toHaveBeenCalledWith(tasks[0], { origin: "list-mobile" });
     expect(mockOnOpenDetail).toHaveBeenCalledTimes(1);
+    expect(onPopOut).not.toHaveBeenCalled();
     expect(fetchTaskDetail).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
+  });
+
+  it("routes mobile and tablet List cards to the task popup when enabled", () => {
+    const mobileViewportSpy = mockMobileViewport();
+    const mobileTasks = [createMockTask({ id: "FN-001", title: "Mobile popup" })];
+    const mobileOnOpenDetail = vi.fn();
+    const mobileOnPopOut = vi.fn();
+
+    const mobileRender = renderListView({ tasks: mobileTasks, onOpenDetail: mobileOnOpenDetail, onPopOut: mobileOnPopOut, openMobileTasksInPopup: true });
+    fireEvent.click(document.querySelector('.list-card[data-id="FN-001"]') as HTMLElement);
+
+    expect(mobileOnPopOut).toHaveBeenCalledWith(mobileTasks[0]);
+    expect(mobileOnOpenDetail).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
+    mobileRender.unmount();
+    mobileViewportSpy.mockRestore();
+
+    const tabletViewportSpy = mockTabletViewport();
+    const tabletTasks = [createMockTask({ id: "FN-002", title: "Tablet popup" })];
+    const tabletOnOpenDetail = vi.fn();
+    const tabletOnPopOut = vi.fn();
+
+    renderListView({ tasks: tabletTasks, onOpenDetail: tabletOnOpenDetail, onPopOut: tabletOnPopOut, openMobileTasksInPopup: true });
+    fireEvent.click(document.querySelector('.list-card[data-id="FN-002"]') as HTMLElement);
+
+    expect(tabletOnPopOut).toHaveBeenCalledWith(tabletTasks[0]);
+    expect(tabletOnOpenDetail).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
+    tabletViewportSpy.mockRestore();
   });
 
   it("opens the task context menu from desktop row right-click without selecting or opening detail", async () => {
@@ -730,6 +806,27 @@ describe("ListView", () => {
     expect(onPauseTask).not.toHaveBeenCalled();
     expect(onRetryTask).not.toHaveBeenCalled();
     expect(onArchiveTask).not.toHaveBeenCalled();
+    viewportSpy.mockRestore();
+  });
+
+  it("opens Planning Mode from eligible list row menus and omits it for executing rows", async () => {
+    const viewportSpy = mockDesktopViewport();
+    const onPlanningMode = vi.fn();
+    const onOpenDetail = vi.fn();
+    const tasks = [
+      createMockTask({ id: "FN-030", title: "Planning row", description: "Seed from list", column: "triage" }),
+      createMockTask({ id: "FN-031", title: "Executing row", description: "Do not plan", column: "in-progress", status: "executing" }),
+    ];
+
+    renderListView({ tasks, onOpenDetail, onPlanningMode });
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-030"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
+    expect(onPlanningMode).toHaveBeenCalledWith("Seed from list", null);
+    expect(onOpenDetail).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-031"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
     viewportSpy.mockRestore();
   });
 

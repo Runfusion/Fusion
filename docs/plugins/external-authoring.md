@@ -60,7 +60,17 @@ If you prefer npm for a scaffold that supports it:
 npm test
 ```
 
-## 4. Package
+## 4. Preflight publish readiness
+
+Before packing, run the offline publish preflight against the built plugin directory:
+
+```bash
+fn plugin publish --dry-run .
+```
+
+The preflight validates `manifest.json`, rejects missing builds or `.ts` source entrypoints by resolving the compiled JavaScript entry the same way `fn plugin install` does, verifies the default-exported plugin manifest and declared lifecycle hooks, and reports the version bump class when you pass `--previous-version <semver>`. It does not install, upload, publish, tag, or contact a registry.
+
+## 5. Package
 
 Build first, then create an npm tarball:
 
@@ -94,7 +104,7 @@ Before sharing the tarball, confirm the artifact does not include private monore
 - no `workspace:*` dependency ranges
 - SDK imports come from `@runfusion/fusion/plugin-sdk`
 
-## 5. Install elsewhere
+## 6. Install elsewhere
 
 On another machine with Fusion installed, extract or install the tarball, then point Fusion at the extracted plugin directory:
 
