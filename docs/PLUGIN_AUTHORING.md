@@ -1211,7 +1211,7 @@ This keeps regressions durable while preserving clear ownership boundaries acros
 
 ## 13. Publishing Plugins
 
-For end-to-end standalone packaging, `pnpm pack`, and installing on another machine, follow the [External Plugin Authoring guide](./plugins/external-authoring.md).
+For end-to-end standalone packaging, `pnpm pack`, and installing on another machine, follow the [External Plugin Authoring guide](./plugins/external-authoring.md). Run `fn plugin publish --dry-run .` before packing to validate the manifest, compiled entrypoint, lifecycle hook shape, and optional version bump without installing, uploading, or tagging anything.
 
 ### Package Requirements
 
@@ -1246,7 +1246,12 @@ For end-to-end standalone packaging, `pnpm pack`, and installing on another mach
    pnpm build
    ```
 
-3. Publish to npm:
+3. Run the non-mutating publish preflight:
+   ```bash
+   fn plugin publish --dry-run . --previous-version 0.9.0
+   ```
+
+4. Publish to npm:
    ```bash
    npm publish --access public
    ```

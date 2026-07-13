@@ -1203,9 +1203,10 @@ fn plugin disable <id>
 fn plugin create <name>
 fn plugin new <name> [--output <dir>] [--scope <scope>]
 fn plugin dev <path> [--once] [--ai-scan]
+fn plugin publish <path> [--dry-run] [--previous-version <semver>]
 ```
 
-Subcommands: `list|ls`, `install`, `rescan`, `trust`, `untrust`, `verify`, `uninstall`, `enable`, `disable`, `create`, `new`, `dev`.
+Subcommands: `list|ls`, `install`, `rescan`, `trust`, `untrust`, `verify`, `uninstall`, `enable`, `disable`, `create`, `new`, `dev`, `publish`.
 
 Scope semantics:
 - `fn plugin install <path>` accepts a built plugin directory or installed package name, not a packed `.tgz` tarball; extract tarballs before installing.
@@ -1214,6 +1215,8 @@ Scope semantics:
 - `fn plugin list` shows globally installed plugins plus enabled/disabled state for the current project context
 
 `fn plugin install --ai-scan` enables AI security scanning on plugin load. `fn plugin rescan <id>` runs a fresh scan/reload cycle and prints plugin name, verdict, summary, and finding count. It exits non-zero for `blocked`, `error`, or `unavailable` verdicts.
+
+`fn plugin publish --dry-run <path>` runs an offline, non-mutating publish preflight for external authors. It validates `manifest.json`, the compiled JavaScript entrypoint, declared lifecycle hooks, and the optional version bump (`--previous-version <semver>`), then prints manual `pnpm build` → `pnpm pack` → `npm publish --access public` next steps without installing, uploading, or tagging anything.
 
 ---
 

@@ -599,7 +599,7 @@ describe("bin command routing and fallbacks", () => {
     await expect(runBin(["plugin", "oops"])).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith("Unknown subcommand: plugin oops");
     expect(logSpy).toHaveBeenCalledWith(
-      "Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | available | settings | rescan | setup-status | setup | create | new | dev",
+      "Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | available | settings | rescan | setup-status | setup | create | new | dev | publish",
     );
   });
 
