@@ -28,12 +28,26 @@ export const VALID_SETTINGS = [
   "defaultModel",
   "defaultNodeId",
   "unavailableNodePolicy",
+  "owningNodeHandoffPolicy",
   "integrationBranch",
+  "mergeStrategy",
+  "directMergeCommitStrategy",
+  "mergeAdvanceAutoSync",
+  "pushAfterMerge",
+  "pushRemote",
+  "autoResolveReviewComments",
   "worktrunk.enabled",
   "worktrunk.binaryPath",
   "worktrunk.onFailure",
   "language",
 ] as const;
+
+// NOTE: `requirePrApproval` (a boolean ProjectSettings field, per types.ts) was
+// evaluated for this whitelist and intentionally EXCLUDED — it was hard-MOVED
+// to workflow settings in U4 (see `MovedProjectSettingsKey` in
+// packages/core/src/settings-schema.ts) and has no default in
+// `DEFAULT_PROJECT_SETTINGS`. It must never be added back here as a project
+// setting; use fn_workflow_settings instead.
 
 // One-line redirect surfaced wherever the CLI lists/validates settings keys, so
 // users who reach for a moved key learn where it lives now (U5/KTD-8).
@@ -51,7 +65,14 @@ const PROJECT_ONLY_SETTINGS = [
   "smartConflictResolution",
   "defaultNodeId",
   "unavailableNodePolicy",
+  "owningNodeHandoffPolicy",
   "integrationBranch",
+  "mergeStrategy",
+  "directMergeCommitStrategy",
+  "mergeAdvanceAutoSync",
+  "pushAfterMerge",
+  "pushRemote",
+  "autoResolveReviewComments",
 ] as const;
 
 type ValidSettingKey = (typeof VALID_SETTINGS)[number];
@@ -62,6 +83,8 @@ const BOOLEAN_SETTINGS: readonly string[] = [
   "smartConflictResolution",
   "ntfyEnabled",
   "worktrunk.enabled",
+  "pushAfterMerge",
+  "autoResolveReviewComments",
 ];
 
 const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees"];
@@ -69,6 +92,10 @@ const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees"];
 const ENUM_SETTINGS: Record<string, readonly string[]> = {
   worktreeNaming: ["random", "task-id", "task-title"],
   unavailableNodePolicy: ["block", "fallback-local"],
+  owningNodeHandoffPolicy: ["block", "reassign-to-local", "reassign-any-healthy"],
+  mergeStrategy: ["direct", "pull-request"],
+  directMergeCommitStrategy: ["auto", "always-squash", "always-rebase"],
+  mergeAdvanceAutoSync: ["off", "ff-only", "stash-and-ff"],
   "worktrunk.onFailure": ["fail", "fallback-native"],
   // "auto" clears the persisted locale and reverts to runtime detection.
   language: [...SUPPORTED_LOCALES, "auto"],
@@ -82,6 +109,7 @@ const STRING_SETTINGS: readonly string[] = [
   "worktreesDir",
   "worktrunk.binaryPath",
   "integrationBranch",
+  "pushRemote",
 ];
 
 // Validation ranges for numeric settings
@@ -274,11 +302,19 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
     },
     {
       title: "Node Routing",
-      keys: ["defaultNodeId", "unavailableNodePolicy"],
+      keys: ["defaultNodeId", "unavailableNodePolicy", "owningNodeHandoffPolicy"],
     },
     {
       title: "Merge",
-      keys: ["integrationBranch"],
+      keys: [
+        "integrationBranch",
+        "mergeStrategy",
+        "directMergeCommitStrategy",
+        "mergeAdvanceAutoSync",
+        "pushAfterMerge",
+        "pushRemote",
+        "autoResolveReviewComments",
+      ],
     },
     {
       title: "Notifications",
