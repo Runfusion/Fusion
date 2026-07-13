@@ -164,10 +164,69 @@ instead. A permanent regression test
 this being mistakenly re-added later, alongside an explicit
 `runSettingsSet("requirePrApproval", ...)` rejection test.
 
-### Not in scope (deliberately deferred)
+### Resolved: `mergeIntegrationWorktree` (AIWO-041)
 
-`mergeIntegrationWorktree` (`MergeIntegrationWorktreeMode`) sits adjacent to
-these fields in `types.ts` and looks like it would fit the same enum pattern,
-but it was not named in AIWO-040's candidate list, so it was intentionally
-left out of this diff and filed separately as follow-up task AIWO-041 rather
-than folded in silently.
+`mergeIntegrationWorktree` (`MergeIntegrationWorktreeMode`,
+`packages/core/src/types.ts`) sat adjacent to the AIWO-040 fields in
+`types.ts` and fit the same enum pattern, but it was not named in AIWO-040's
+candidate list, so it was intentionally left out of that diff and filed
+separately as a follow-up task (AIWO-041) rather than folded in silently.
+
+AIWO-041 closed that gap. `fn settings set mergeIntegrationWorktree <value>
+--project <name>` now works end-to-end. `mergeIntegrationWorktree` was:
+
+- a real, live, unmoved `ProjectSettings` field — confirmed absent from
+  `MovedProjectSettingsKey` in `packages/core/src/settings-schema.ts`
+- already defaulted at the settings-schema layer
+  (`DEFAULT_PROJECT_SETTINGS.mergeIntegrationWorktree = "reuse-task-worktree"`)
+- already consumed by the merge engine (`packages/engine/src/merger.ts`,
+  `packages/engine/src/merger-integration-worktree.ts`) via
+  `normalizeMergeIntegrationWorktreeMode(settings.mergeIntegrationWorktree)`
+
+**Accepted CLI values:** `ENUM_SETTINGS.mergeIntegrationWorktree` whitelists
+only the two canonical, non-deprecated values:
+
+```
+["reuse-task-worktree", "cwd-integration-branch"]
+```
+
+**Design decision — the deprecated `cwd-main` legacy alias is intentionally
+excluded from the CLI whitelist.** `MergeIntegrationWorktreeMode` has a third
+member, `"cwd-main"`, explicitly commented in `types.ts` as `// legacy alias
+for cwd-integration-branch; deprecated. Normalized at read time.` None of the
+other enum settings already whitelisted in this file
+(`unavailableNodePolicy`, `owningNodeHandoffPolicy`, `mergeStrategy`,
+`directMergeCommitStrategy`, `mergeAdvanceAutoSync`, `worktrunk.onFailure`)
+expose a deprecated alias through `ENUM_SETTINGS`, and doing so here would
+actively encourage new usage of a value the type intentionally deprecated —
+working against the reason `normalizeMergeIntegrationWorktreeMode()` exists
+(to quietly migrate legacy config, not to keep issuing it). As a result:
+
+```
+fn settings set mergeIntegrationWorktree cwd-main
+# Error: Invalid value for mergeIntegrationWorktree: "cwd-main".
+# Valid options: reuse-task-worktree, cwd-integration-branch
+```
+
+This is enforced by the CLI's existing `parseValue()` `ENUM_SETTINGS`
+throw-on-invalid branch — no engine or normalizer code was touched.
+`normalizeMergeIntegrationWorktreeMode()` in `packages/core/src/types.ts`
+remains the engine's read-time safety net: any project config that already
+has `mergeIntegrationWorktree: "cwd-main"` (written before this fix, or via
+hand-edited JSON through `fn settings import`) continues to be silently
+normalized to `"cwd-integration-branch"` at read time in the merger, with a
+one-time `console.warn`. The CLI simply refuses to let anyone author a new
+`"cwd-main"` value going forward.
+
+Deliberately **not** done: `normalizeMergeIntegrationWorktreeMode()` is not
+called from inside `parseValue()`/`runSettingsSet()`. Doing so would silently
+coerce a typo'd or otherwise unrecognized value to the default
+(`"reuse-task-worktree"`) instead of rejecting it with a clear error — worse
+UX than, and inconsistent with, every other enum setting in this file. Only
+the normalizer's *accepted-value list* was reused; its *coercion behavior*
+was deliberately left engine-side.
+
+`mergeIntegrationWorktree` was also added to `VALID_SETTINGS`,
+`PROJECT_ONLY_SETTINGS` (it is meaningless as a global setting), and the
+`runSettingsShow()` "Merge" display group, alongside `mergeStrategy` /
+`directMergeCommitStrategy` / `mergeAdvanceAutoSync`.
