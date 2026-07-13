@@ -280,16 +280,19 @@ export function resolveSessionProvider(
 interface NewChatDialogProps {
   projectId?: string;
   defaultModel: DefaultModelSelection;
+  defaultKind?: "model" | "agent";
+  defaultAgentId?: string;
   defaultThinkingLevel?: string;
+  defaultSelectedThinkingLevel?: string;
   onClose: () => void;
   onCreate: (input: { agentId: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }) => void;
 }
 
-function NewChatDialog({ projectId, defaultModel, defaultThinkingLevel, onClose, onCreate }: NewChatDialogProps) {
+function NewChatDialog({ projectId, defaultModel, defaultKind, defaultAgentId, defaultThinkingLevel, defaultSelectedThinkingLevel, onClose, onCreate }: NewChatDialogProps) {
   const { t } = useTranslation("app");
-  const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
+  const [chatMode, setChatMode] = useState<"agent" | "model">(defaultKind ?? "agent");
   const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(defaultAgentId ?? "");
   const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, loading: modelsLoading, refresh } = useModelsCache();
   const defaultModelValue = defaultModel.provider && defaultModel.modelId
     ? `${defaultModel.provider}/${defaultModel.modelId}`
@@ -299,7 +302,7 @@ function NewChatDialog({ projectId, defaultModel, defaultThinkingLevel, onClose,
    * FNXC:Chat-ThinkingLevel 2026-07-10-00:00:
    * New model-mode chats expose the shared inline thinking selector; an empty value means Default and is omitted from the create-session payload so the backend resolves project/global reasoning effort.
    */
-  const [thinkingLevel, setThinkingLevel] = useState<string>("");
+  const [thinkingLevel, setThinkingLevel] = useState<string>(defaultSelectedThinkingLevel ?? "");
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>(cachedFavoriteProviders);
   const [favoriteModels, setFavoriteModels] = useState<string[]>(cachedFavoriteModels);
 
@@ -312,11 +315,31 @@ function NewChatDialog({ projectId, defaultModel, defaultThinkingLevel, onClose,
   }, [cachedFavoriteModels]);
 
   useEffect(() => {
+    if (defaultKind) {
+      setChatMode(defaultKind);
+    }
+  }, [defaultKind]);
+
+  useEffect(() => {
+    if (!defaultAgentId) {
+      return;
+    }
+    setSelectedAgentId((current) => current || defaultAgentId);
+  }, [defaultAgentId]);
+
+  useEffect(() => {
     if (!defaultModelValue) {
       return;
     }
     setSelectedModel((current) => current || defaultModelValue);
   }, [defaultModelValue]);
+
+  useEffect(() => {
+    if (!defaultSelectedThinkingLevel) {
+      return;
+    }
+    setThinkingLevel((current) => current || defaultSelectedThinkingLevel);
+  }, [defaultSelectedThinkingLevel]);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
     const currentFavorites = favoriteProviders;
@@ -511,6 +534,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   */
   useEffect(() => {
     let cancelled = false;
+    setChatSettings(null);
     fetchSettings(projectId)
       .then((settings) => {
         if (!cancelled) {
@@ -527,6 +551,27 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     };
   }, [projectId]);
   const resolvedDefaultThinkingLevel = chatSettings?.defaultThinkingLevel ?? "off";
+  const chatDefaultTarget = useMemo(() => {
+    /*
+    FNXC:ChatModels 2026-07-12-20:45:
+    New Chat has one project-scoped default target resolver shared by every affordance. A complete agent default wins only when kind=agent; a complete model pair wins only when kind=model; incomplete always-default settings fall back to the picker instead of creating an unroutable session.
+    */
+    if (chatSettings?.chatDefaultKind === "agent" && chatSettings.chatDefaultAgentId) {
+      return {
+        kind: "agent" as const,
+        agentId: chatSettings.chatDefaultAgentId,
+      };
+    }
+    if (chatSettings?.chatDefaultKind === "model" && chatSettings.chatDefaultModelProvider && chatSettings.chatDefaultModelId) {
+      return {
+        kind: "model" as const,
+        modelProvider: chatSettings.chatDefaultModelProvider,
+        modelId: chatSettings.chatDefaultModelId,
+        thinkingLevel: chatSettings.chatDefaultThinkingLevel,
+      };
+    }
+    return null;
+  }, [chatSettings]);
 
   const {
     activeSession,
@@ -594,6 +639,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const agentsMap = useMemo(() => (chatAgentsMap.size > 0 ? chatAgentsMap : cachedAgentsMap), [cachedAgentsMap, chatAgentsMap]);
   const { models, defaultProvider, defaultModelId } = useModelsCache();
   const defaultModel = useMemo<DefaultModelSelection>(() => ({ provider: defaultProvider, modelId: defaultModelId }), [defaultModelId, defaultProvider]);
+  const dialogDefaultModel = useMemo<DefaultModelSelection>(() => {
+    if (chatDefaultTarget?.kind === "model") {
+      return { provider: chatDefaultTarget.modelProvider, modelId: chatDefaultTarget.modelId };
+    }
+    return defaultModel;
+  }, [chatDefaultTarget, defaultModel]);
   const { skills: discoveredSkills, loading: skillsLoading } = useDiscoveredSkillsCache(projectId);
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
@@ -1486,8 +1537,25 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         addToast(t("chat.failedToCreateSession", "Failed to create chat session"), "error");
       }
     },
-    [createSession, addToast, isChatMobile],
+    [createSession, addToast, isChatMobile, t],
   );
+
+  const handleNewChat = useCallback(() => {
+    if (chatSettings?.chatNewSessionMode === "always-default" && chatDefaultTarget) {
+      if (chatDefaultTarget.kind === "agent") {
+        void handleCreateSession({ agentId: chatDefaultTarget.agentId });
+        return;
+      }
+      void handleCreateSession({
+        agentId: FN_AGENT_ID,
+        modelProvider: chatDefaultTarget.modelProvider,
+        modelId: chatDefaultTarget.modelId,
+        thinkingLevel: chatDefaultTarget.thinkingLevel,
+      });
+      return;
+    }
+    setShowNewDialog(true);
+  }, [chatDefaultTarget, chatSettings?.chatNewSessionMode, handleCreateSession]);
 
   const resizeComposer = useCallback((textarea?: HTMLTextAreaElement | null) => {
     const composer = textarea ?? inputRef.current;
@@ -2252,7 +2320,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       <div className="chat-empty-state">
         <MessageSquare size={48} strokeWidth={1.5} />
         <h2>{t("chat.startNewConversation", "Start a new conversation")}</h2>
-        <button className="btn btn-primary" onClick={() => setShowNewDialog(true)}>
+        <button className="btn btn-primary" onClick={handleNewChat}>
           <Plus size={16} />
           {t("chat.newChat", "New Chat")}
         </button>
@@ -2850,7 +2918,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           ))}
           {/*
           FNXC:Chat 2026-06-27-00:00:
-          Mobile Direct-scope quick session switching must let users start a new chat without leaving the open thread. Route this affordance through the same setShowNewDialog(true) / NewChatDialog path as the header and sidebar-footer controls.
+          Mobile Direct-scope quick session switching must let users start a new chat without leaving the open thread. Route this affordance through the same handleNewChat() path as the header and sidebar-footer controls so project chatNewSessionMode is honored everywhere.
           */}
           <button
             type="button"
@@ -2859,7 +2927,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             data-testid="chat-mobile-session-new"
             onClick={() => {
               setMobileSessionMenuOpen(false);
-              setShowNewDialog(true);
+              handleNewChat();
             }}
           >
             <Plus size={16} aria-hidden="true" />
@@ -2925,7 +2993,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             {!isChatMobile ? (
               <button
                 className="btn btn-sm btn-primary chat-view-header-new-chat"
-                onClick={() => setShowNewDialog(true)}
+                onClick={handleNewChat}
                 data-testid="chat-new-btn"
               >
                 <Plus size={14} />
@@ -3211,7 +3279,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             <div className="chat-sidebar-footer">
               <button
                 className="btn btn-sm btn-primary chat-sidebar-footer-btn"
-                onClick={() => setShowNewDialog(true)}
+                onClick={handleNewChat}
                 data-testid="chat-new-btn"
               >
                 <Plus size={14} />
@@ -3684,8 +3752,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       {showNewDialog && (
         <NewChatDialog
           projectId={projectId}
-          defaultModel={defaultModel}
+          defaultModel={dialogDefaultModel}
+          defaultKind={chatDefaultTarget?.kind}
+          defaultAgentId={chatDefaultTarget?.kind === "agent" ? chatDefaultTarget.agentId : undefined}
           defaultThinkingLevel={resolvedDefaultThinkingLevel}
+          defaultSelectedThinkingLevel={chatDefaultTarget?.kind === "model" ? chatDefaultTarget.thinkingLevel : undefined}
           onClose={() => setShowNewDialog(false)}
           onCreate={handleCreateSession}
         />

@@ -641,6 +641,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   showTaskChatsInCommonFeed: false,
   chatAutoCleanupDays: 0,
+  chatNewSessionMode: undefined,
+  chatDefaultKind: undefined,
+  chatDefaultAgentId: undefined,
+  chatDefaultModelProvider: undefined,
+  chatDefaultModelId: undefined,
+  chatDefaultThinkingLevel: undefined,
   mailAutoCleanupDays: 0,
   operationalLogRetentionDays: 30,
   agentLogFileRetentionDays: 0,

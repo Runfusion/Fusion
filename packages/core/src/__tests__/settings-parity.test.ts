@@ -170,6 +170,26 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("chatAutoCleanupDays")).toBe(false);
   });
 
+  it("keeps Direct-chat default target settings project-scoped with unset defaults", () => {
+    const chatDefaultKeys = [
+      "chatNewSessionMode",
+      "chatDefaultKind",
+      "chatDefaultAgentId",
+      "chatDefaultModelProvider",
+      "chatDefaultModelId",
+      "chatDefaultThinkingLevel",
+    ] as const;
+
+    for (const key of chatDefaultKeys) {
+      expect(DEFAULT_PROJECT_SETTINGS[key]).toBeUndefined();
+      expect(isProjectSettingsKey(key)).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain(key);
+      expect(isGlobalSettingsKey(key)).toBe(false);
+      expect(isGlobalOnlySettingsKey(key)).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain(key);
+    }
+  });
+
   it("keeps room compaction defaults project-scoped with expanded retention", () => {
     expect(DEFAULT_PROJECT_SETTINGS.chatRoomRecentVerbatimMessages).toBe(25);
     expect(DEFAULT_PROJECT_SETTINGS.chatRoomCompactionFetchLimit).toBe(200);

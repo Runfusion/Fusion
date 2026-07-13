@@ -4119,6 +4119,21 @@ export interface ProjectSettings {
    * Optional project default-lane thinking override used when a task does not set its own thinking level.
    */
   defaultThinkingLevelOverride?: ThinkingLevel;
+  /**
+   * FNXC:ChatModels 2026-07-12-20:45:
+   * Projects can pin a default Direct-chat target as either a model pair with optional thinking level or a durable agent, then choose whether New Chat prompts with that default preselected or creates the session immediately.
+   */
+  chatNewSessionMode?: "prompt" | "always-default";
+  /** Which configured default target kind New Chat should use or preselect. */
+  chatDefaultKind?: "model" | "agent";
+  /** Durable agent id used when `chatDefaultKind === "agent"`. */
+  chatDefaultAgentId?: string;
+  /** Model provider used when `chatDefaultKind === "model"`; must be paired with `chatDefaultModelId`. */
+  chatDefaultModelProvider?: string;
+  /** Model id used when `chatDefaultKind === "model"`; must be paired with `chatDefaultModelProvider`. */
+  chatDefaultModelId?: string;
+  /** Optional thinking-level override for the model chat default; undefined inherits the resolved project/global default. */
+  chatDefaultThinkingLevel?: ThinkingLevel;
   /** Project-level AI model provider for task execution (executor agent).
    *  This is the execution lane that overrides the global `executionGlobalProvider`.
    *  Must be set together with `executionModelId`. Falls back to
