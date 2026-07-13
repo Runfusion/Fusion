@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { AsyncDataLayer, Database, PluginContext } from "@fusion/core";
-import { postgresSchema } from "@fusion/core";
+import { cePipelineLinks as cePipelineLinksShape, cePipelineState as cePipelineStateShape, cePipelineSyncQueue as cePipelineSyncQueueShape } from "./pg-schema.js";
 import { ensureCeSchema } from "../schema.js";
 
 /**
@@ -164,9 +164,9 @@ function rowToLink(row: CePipelineLinkRow): CePipelineLink {
 
 // Drizzle table refs (CE plugin tables live in the project schema; see
 // packages/core/src/postgres/schema/plugin.ts and cePluginSchemaInit).
-const cePipelineLinksTable = postgresSchema.plugin.cePipelineLinks;
-const cePipelineStateTable = postgresSchema.plugin.cePipelineState;
-const cePipelineSyncQueueTable = postgresSchema.plugin.cePipelineSyncQueue;
+const cePipelineLinksTable = cePipelineLinksShape;
+const cePipelineStateTable = cePipelineStateShape;
+const cePipelineSyncQueueTable = cePipelineSyncQueueShape;
 
 export class CePipelineStore {
   // FNXC:PostgresCutover 2026-07-04-00:00 RESOLVED:
