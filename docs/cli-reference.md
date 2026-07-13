@@ -1111,6 +1111,13 @@ fn settings set defaultNodeId node_abc123
 fn settings set unavailableNodePolicy fallback-local
 fn settings set worktrunk.enabled true
 fn settings set integrationBranch master --project my-project
+fn settings set mergeStrategy pull-request --project my-project
+fn settings set directMergeCommitStrategy always-rebase --project my-project
+fn settings set mergeAdvanceAutoSync ff-only --project my-project
+fn settings set pushAfterMerge true --project my-project
+fn settings set pushRemote upstream --project my-project
+fn settings set autoResolveReviewComments false --project my-project
+fn settings set owningNodeHandoffPolicy reassign-any-healthy --project my-project
 fn settings export [--scope global|project|both] [--output <file>]
 fn settings import <file> [--scope global|project|both] [--merge] [--yes]
 ```
@@ -1123,6 +1130,8 @@ fn settings import <file> [--scope global|project|both] [--merge] [--yes]
 | `--yes` | Skip confirmation prompt during `settings import`. |
 
 `integrationBranch` (project-only, string) sets the preferred merge-target branch for a project — the first entry read by the engine's `resolveIntegrationBranch()` resolution chain (`settings.integrationBranch` → `settings.baseBranch` → `origin/HEAD` → `"main"`). Note that `baseBranch` is **not** a settable `ProjectSettings` key: it only exists as a per-`Task`/`Mission` field, so `fn settings set baseBranch ...` is intentionally unsupported and reports `Unknown setting "baseBranch"`. See [`integration-branch-cli-setting.md`](./integration-branch-cli-setting.md) for the full defect writeup.
+
+Seven more project-only merge/handoff settings are also directly settable (AIWO-040): `mergeStrategy` (enum: `direct` | `pull-request`), `directMergeCommitStrategy` (enum: `auto` | `always-squash` | `always-rebase`), `mergeAdvanceAutoSync` (enum: `off` | `ff-only` | `stash-and-ff`), `pushAfterMerge` (boolean), `pushRemote` (string), `autoResolveReviewComments` (boolean), and `owningNodeHandoffPolicy` (enum: `block` | `reassign-to-local` | `reassign-any-healthy`). All seven were already defaulted in `DEFAULT_PROJECT_SETTINGS` and consumed by the merge engine but were previously rejected by `fn settings set` as `Unknown setting`. Note that `requirePrApproval` is **not** settable here — it was hard-moved to workflow settings in U4 and has no `DEFAULT_PROJECT_SETTINGS` entry; use `fn_workflow_settings` (or the workflow editor) instead. `mergeIntegrationWorktree` is also not yet supported (tracked separately). See [`integration-branch-cli-setting.md`](./integration-branch-cli-setting.md) for the full writeup.
 
 ---
 
