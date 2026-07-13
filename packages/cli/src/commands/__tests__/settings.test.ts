@@ -101,13 +101,25 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).toContain("worktrunk.binaryPath");
     expect(VALID_SETTINGS).toContain("worktrunk.onFailure");
     expect(VALID_SETTINGS).toContain("integrationBranch");
+    expect(VALID_SETTINGS).toContain("owningNodeHandoffPolicy");
+    expect(VALID_SETTINGS).toContain("mergeStrategy");
+    expect(VALID_SETTINGS).toContain("directMergeCommitStrategy");
+    expect(VALID_SETTINGS).toContain("mergeAdvanceAutoSync");
+    expect(VALID_SETTINGS).toContain("pushAfterMerge");
+    expect(VALID_SETTINGS).toContain("pushRemote");
+    expect(VALID_SETTINGS).toContain("autoResolveReviewComments");
     // baseBranch is a per-Task/Mission field, NOT a ProjectSettings key — it must
     // never be added to VALID_SETTINGS/PROJECT_ONLY_SETTINGS/STRING_SETTINGS.
     expect(VALID_SETTINGS).not.toContain("baseBranch");
+    // mergeIntegrationWorktree is tracked separately by AIWO-041; not in scope here.
+    expect(VALID_SETTINGS).not.toContain("mergeIntegrationWorktree");
     // Moved keys are NOT settable via the CLI (they live in workflow settings).
     expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
     expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
     expect(VALID_SETTINGS).not.toContain("requirePlanApproval");
+    // requirePrApproval was hard-MOVED to workflow settings in U4 and has no
+    // DEFAULT_PROJECT_SETTINGS entry — it must never be whitelisted here.
+    expect(VALID_SETTINGS).not.toContain("requirePrApproval");
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);
     expect(parseValue("worktreeNaming", "task-id")).toBe("task-id");
@@ -126,6 +138,44 @@ describe("settings commands", () => {
     expect(parseValue("worktrunk.onFailure", "fail" as any)).toBe("fail");
     expect(parseValue("worktrunk.onFailure", "fallback-native" as any)).toBe("fallback-native");
     expect(() => parseValue("worktrunk.onFailure", "crash" as any)).toThrow(/fail, fallback-native/);
+
+    // pushAfterMerge / autoResolveReviewComments (boolean)
+    expect(parseValue("pushAfterMerge", "true")).toBe(true);
+    expect(parseValue("pushAfterMerge", "yes")).toBe(true);
+    expect(parseValue("pushAfterMerge", "false")).toBe(false);
+    expect(parseValue("pushAfterMerge", "no")).toBe(false);
+    expect(() => parseValue("pushAfterMerge", "maybe")).toThrow(/Invalid boolean value/);
+    expect(parseValue("autoResolveReviewComments", "true")).toBe(true);
+    expect(parseValue("autoResolveReviewComments", "yes")).toBe(true);
+    expect(parseValue("autoResolveReviewComments", "false")).toBe(false);
+    expect(parseValue("autoResolveReviewComments", "no")).toBe(false);
+    expect(() => parseValue("autoResolveReviewComments", "nope")).toThrow(/Invalid boolean value/);
+
+    // pushRemote (string, trimmed)
+    expect(parseValue("pushRemote", "  upstream  ")).toBe("upstream");
+
+    // mergeStrategy (enum)
+    expect(parseValue("mergeStrategy", "direct")).toBe("direct");
+    expect(parseValue("mergeStrategy", "pull-request")).toBe("pull-request");
+    expect(() => parseValue("mergeStrategy", "invalid")).toThrow(/direct, pull-request/);
+
+    // directMergeCommitStrategy (enum)
+    expect(parseValue("directMergeCommitStrategy", "auto")).toBe("auto");
+    expect(parseValue("directMergeCommitStrategy", "always-squash")).toBe("always-squash");
+    expect(parseValue("directMergeCommitStrategy", "always-rebase")).toBe("always-rebase");
+    expect(() => parseValue("directMergeCommitStrategy", "invalid")).toThrow(/auto, always-squash, always-rebase/);
+
+    // mergeAdvanceAutoSync (enum)
+    expect(parseValue("mergeAdvanceAutoSync", "off")).toBe("off");
+    expect(parseValue("mergeAdvanceAutoSync", "ff-only")).toBe("ff-only");
+    expect(parseValue("mergeAdvanceAutoSync", "stash-and-ff")).toBe("stash-and-ff");
+    expect(() => parseValue("mergeAdvanceAutoSync", "invalid")).toThrow(/off, ff-only, stash-and-ff/);
+
+    // owningNodeHandoffPolicy (enum)
+    expect(parseValue("owningNodeHandoffPolicy", "block")).toBe("block");
+    expect(parseValue("owningNodeHandoffPolicy", "reassign-to-local")).toBe("reassign-to-local");
+    expect(parseValue("owningNodeHandoffPolicy", "reassign-any-healthy")).toBe("reassign-any-healthy");
+    expect(() => parseValue("owningNodeHandoffPolicy", "invalid")).toThrow(/block, reassign-to-local, reassign-any-healthy/);
   });
 
   it("runSettingsShow without project uses global settings even if a project could resolve", async () => {
@@ -324,6 +374,73 @@ describe("settings commands", () => {
     await expect(runSettingsSet("integrationBranch", "master")).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith('Error: Setting "integrationBranch" is project-only. Use --project or run from a project directory.');
     expect(resolveProject).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["owningNodeHandoffPolicy", "reassign-any-healthy"],
+    ["mergeStrategy", "pull-request"],
+    ["directMergeCommitStrategy", "always-rebase"],
+    ["mergeAdvanceAutoSync", "ff-only"],
+    ["pushAfterMerge", "true", true],
+    ["pushRemote", "upstream"],
+    ["autoResolveReviewComments", "false", false],
+  ] as const)(
+    "runSettingsSet with project updates %s",
+    async (key, rawValue, expected) => {
+      const parsed = expected !== undefined ? expected : rawValue;
+      const updateSettings = vi.fn().mockResolvedValue(makeSettings({ [key]: parsed }));
+      const getSettings = vi.fn().mockResolvedValue(makeSettings({ [key]: parsed }));
+      vi.mocked(resolveProject).mockResolvedValue({
+        projectId: "proj-1",
+        projectName: "demo-project",
+        projectPath: "/projects/demo",
+        isRegistered: true,
+        store: { updateSettings, getSettings } as any,
+      });
+
+      await runSettingsSet(key, rawValue, "demo-project");
+
+      expect(resolveProject).toHaveBeenCalledWith("demo-project");
+      expect(updateSettings).toHaveBeenCalledWith({ [key]: parsed });
+    }
+  );
+
+  it.each([
+    "owningNodeHandoffPolicy",
+    "mergeStrategy",
+    "directMergeCommitStrategy",
+    "mergeAdvanceAutoSync",
+    "pushAfterMerge",
+    "pushRemote",
+    "autoResolveReviewComments",
+  ] as const)(
+    "rejects setting %s without explicit project scope",
+    async (key) => {
+      const value = key === "pushAfterMerge" ? "true" : key === "pushRemote" ? "upstream" : "block";
+      await expect(runSettingsSet(key, value)).rejects.toThrow("process.exit:1");
+      expect(errorSpy).toHaveBeenCalledWith(
+        `Error: Setting "${key}" is project-only. Use --project or run from a project directory.`
+      );
+      expect(resolveProject).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects setting requirePrApproval — hard-MOVED to workflow settings (U4), never a project setting', async () => {
+    const updateSettings = vi.fn();
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettings: vi.fn() } as any,
+    });
+
+    await expect(runSettingsSet("requirePrApproval" as any, "true", "demo-project")).rejects.toThrow(
+      "process.exit:1"
+    );
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith('Error: Unknown setting "requirePrApproval"');
   });
 
   it("rejects values outside range for a still-valid numeric setting (maxWorktrees)", async () => {
