@@ -642,6 +642,126 @@ describe("TerminalModal", () => {
     expect(createTab).toHaveBeenCalledWith({ cwd: "/repo/.worktrees/duplicate", title: "FN-9998" });
   });
 
+  function mockPopulatedTerminalWorkspaces(): void {
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-7253", label: "FN-7253", title: "Add worktree picker", worktree: "/repo/.worktrees/fn-7253", kind: "task" },
+        { id: "FN-0000", label: "FN-0000", title: "Missing worktree", kind: "task" },
+      ],
+      loading: false,
+      error: null,
+    });
+  }
+
+  function mockWorkspaceTriggerRect(trigger: Element, rect: Partial<DOMRect> = {}): void {
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 220,
+      y: 18,
+      top: 18,
+      left: 220,
+      right: 352,
+      bottom: 54,
+      width: 132,
+      height: 36,
+      toJSON: () => ({}),
+      ...rect,
+    } as DOMRect);
+  }
+
+  it("layers the floating workspace picker above the terminal and positions it before the rAF fallback", async () => {
+    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 123);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    mockPopulatedTerminalWorkspaces();
+    window.localStorage.setItem("fusion:terminal-display-mode-floating-layering", "floating");
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="floating-layering" />);
+
+    const modal = await screen.findByTestId("terminal-modal");
+    expect(modal).toHaveClass("terminal-modal--floating");
+    const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
+    mockWorkspaceTriggerRect(trigger);
+
+    fireEvent.click(trigger);
+
+    const listbox = screen.getByRole("listbox", { name: "Select terminal workspace" });
+    expect(listbox.parentElement).toBe(document.body);
+    expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    expect(Number.parseFloat(listbox.style.zIndex)).toBeGreaterThan(Number.parseFloat(modal.style.zIndex));
+    expect(listbox.style.top).not.toBe("");
+    expect(listbox.style.left).not.toBe("");
+    expect(listbox.style.width).not.toBe("");
+    expect(listbox.style.maxHeight).not.toBe("");
+    expect(listbox).not.toHaveStyle({ visibility: "hidden" });
+    expect(listbox).not.toHaveStyle({ pointerEvents: "none" });
+    expect(listbox).toHaveTextContent("Project Root");
+    expect(listbox).toHaveTextContent("FN-7253");
+    expect(screen.getByText("No worktree").closest("button")).toBeDisabled();
+  });
+
+  it.each([
+    ["docked", { projectId: "workspace-picker-docked", displayMode: "docked", embedded: false, mobile: false }],
+    ["below", { projectId: "workspace-picker-below", displayMode: "below", embedded: false, mobile: false }],
+    ["embedded", { projectId: "workspace-picker-embedded", displayMode: "docked", embedded: true, mobile: false }],
+    ["mobile", { projectId: "workspace-picker-mobile", displayMode: "docked", embedded: false, mobile: true }],
+  ])("keeps the workspace picker positioned in %s terminal mode", async (_label, config) => {
+    mockPopulatedTerminalWorkspaces();
+    const previousInnerWidth = window.innerWidth;
+    const previousInnerHeight = window.innerHeight;
+    const previousOntouchstart = window.ontouchstart;
+    window.localStorage.setItem(`fusion:terminal-display-mode-${config.projectId}`, config.displayMode);
+    if (config.mobile) {
+      Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: 720, configurable: true });
+      Object.defineProperty(window, "ontouchstart", { value: null, configurable: true });
+      _resetInitialViewportHeight();
+    }
+
+    try {
+      render(
+        <TerminalModal
+          isOpen={true}
+          onClose={mockOnClose}
+          projectId={config.projectId}
+          embedded={config.embedded}
+          scopeId={config.embedded ? "FN-7253" : undefined}
+        />,
+      );
+
+      const modal = await screen.findByTestId("terminal-modal");
+      if (config.displayMode === "below" && !config.mobile && !config.embedded) {
+        expect(modal).toHaveClass("terminal-modal--below");
+      } else if (config.embedded) {
+        expect(screen.getByTestId("terminal-embedded-host")).toBeInTheDocument();
+      } else if (config.mobile) {
+        expect(modal).not.toHaveClass("terminal-modal--floating");
+        expect(modal).not.toHaveClass("terminal-modal--docked");
+      } else {
+        expect(modal).toHaveClass("terminal-modal--docked");
+      }
+
+      const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
+      mockWorkspaceTriggerRect(trigger, config.mobile ? { right: 360, width: 140 } : {});
+      fireEvent.click(trigger);
+      const listbox = screen.getByRole("listbox", { name: "Select terminal workspace" });
+      expect(listbox.parentElement).toBe(document.body);
+      expect(listbox.style.top).not.toBe("");
+      expect(listbox.style.left).not.toBe("");
+      expect(listbox).not.toHaveStyle({ visibility: "hidden" });
+      expect(listbox).toHaveTextContent("Project Root");
+      expect(listbox).toHaveTextContent("FN-7253");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: previousInnerHeight, configurable: true });
+      if (previousOntouchstart === undefined) {
+        delete (window as any).ontouchstart;
+      } else {
+        Object.defineProperty(window, "ontouchstart", { value: previousOntouchstart, configurable: true });
+      }
+      _resetInitialViewportHeight();
+    }
+  });
+
   it("keeps floating and mobile worktree menus reachable and dismissible without orphaned controls", async () => {
     const createTab = vi.fn().mockResolvedValue(defaultTab);
     mockUseTerminalSessions.mockReturnValue({

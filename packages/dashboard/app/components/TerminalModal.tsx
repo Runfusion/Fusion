@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
@@ -1272,6 +1273,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     setTerminalWorkspaceMenuPosition({ top, left, width, maxHeight: constrainedHeight });
   }, [getEffectiveViewport]);
 
+  useLayoutEffect(() => {
+    if (!terminalWorkspaceMenuOpen) {
+      return;
+    }
+    updateTerminalWorkspaceMenuPosition();
+  }, [terminalWorkspaceMenuOpen, terminalWorkspaces.length, updateTerminalWorkspaceMenuPosition]);
+
   useEffect(() => {
     if (!terminalWorkspaceMenuOpen) {
       setTerminalWorkspaceMenuPosition(null);
@@ -2438,6 +2446,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
   const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
   const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
+  /*
+  FNXC:TerminalWorkspaces 2026-07-13-00:00:
+  The workspace picker menu is portaled to `document.body`, so floating terminal mode must compare it in the same root stacking context as the panel. Keep the menu one layer above the panel's shared `floatingZ`; otherwise the fixed CSS fallback band sits below the 10100+ floating stack and the menu appears invisible behind the modal.
+
+  FNXC:TerminalWorkspaces 2026-07-13-00:00:
+  The portaled listbox has CSS fallback coordinates for non-JS resilience, but it must never paint there during the open-frame measurement pass. Position in a layout effect and keep the menu invisible/non-interactive until the computed trigger-relative coordinates are applied.
+  */
+  const terminalWorkspaceMenuFloatingZ = isFloatingMode ? Math.max(5000, floatingZ + 1) : undefined;
+
   const modalStyle = {
     ...(keyboardOverlap > 0
       ? {
@@ -2739,14 +2756,18 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                   className="terminal-workspace-picker-menu"
                   role="listbox"
                   aria-label={t("terminal.selectWorkspace", "Select terminal workspace")}
-                  style={terminalWorkspaceMenuPosition
-                    ? {
-                        top: terminalWorkspaceMenuPosition.top,
-                        left: terminalWorkspaceMenuPosition.left,
-                        width: terminalWorkspaceMenuPosition.width,
-                        maxHeight: terminalWorkspaceMenuPosition.maxHeight,
-                      }
-                    : undefined}
+                  style={{
+                    ...(terminalWorkspaceMenuPosition
+                      ? {
+                          top: terminalWorkspaceMenuPosition.top,
+                          left: terminalWorkspaceMenuPosition.left,
+                          width: terminalWorkspaceMenuPosition.width,
+                          maxHeight: terminalWorkspaceMenuPosition.maxHeight,
+                        }
+                      : {}),
+                    ...(terminalWorkspaceMenuFloatingZ ? { zIndex: terminalWorkspaceMenuFloatingZ } : {}),
+                    ...(!terminalWorkspaceMenuPosition ? { visibility: "hidden", pointerEvents: "none" } : {}),
+                  }}
                   onPointerDown={(event) => event.stopPropagation()}
                 >
                   <button
