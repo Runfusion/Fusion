@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { DASHBOARD_USER_ID, Database, MessageStore, type MessageStore as MessageStoreType } from "@fusion/core";
+import { DASHBOARD_USER_ID, type MessageStore as MessageStoreType, type Message } from "@fusion/core";
 import {
   POSTGRES_MIGRATION_HELP_URL,
   POSTGRES_MIGRATION_NOTICE_KIND,
@@ -10,22 +7,37 @@ import {
   isPostgresMigrationNoticeVersion,
 } from "../postgres-migration-notice.js";
 
+/*
+FNXC:PostgresCutover 2026-07-12 (merge port from main):
+Upstream's harness built the removed sqlite Database + MessageStore
+(SqliteFinalRemoval — the stub throws on init). The notice only touches the
+getInbox/sendMessage seam, so a minimal in-memory fake with the async
+MessageStore shape preserves upstream's full coverage (delivery, idempotency,
+version gate, failure swallowing) without a database.
+*/
+function makeFakeMessageStore() {
+  const messages: Array<Partial<Message>> = [];
+  const fake = {
+    getInbox: vi.fn(async (_ownerId: string, _ownerType: string, filter?: { type?: string }) =>
+      messages.filter((m) => !filter?.type || m.type === filter.type)),
+    sendMessage: vi.fn(async (input: Partial<Message>) => {
+      const message = { ...input, id: `msg-${messages.length + 1}` };
+      messages.push(message);
+      return message;
+    }),
+  };
+  return fake as unknown as MessageStoreType & typeof fake;
+}
+
 describe("postgres migration notice", () => {
-  let db: Database;
-  let store: MessageStore;
-  let tempDir: string;
+  let store: ReturnType<typeof makeFakeMessageStore>;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "kb-postgres-notice-test-"));
-    db = new Database(tempDir, { inMemory: true });
-    db.init();
-    store = new MessageStore(db);
+    store = makeFakeMessageStore();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    db.close();
-    rmSync(tempDir, { recursive: true, force: true });
   });
 
   it("matches only the 0.59 release line", () => {
@@ -50,7 +62,7 @@ describe("postgres migration notice", () => {
     });
 
     expect(result).toBe("delivered");
-    const inbox = store.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
+    const inbox = await store.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
     expect(inbox).toHaveLength(1);
     expect(inbox[0]).toEqual(expect.objectContaining({
       fromType: "system",
@@ -78,7 +90,7 @@ describe("postgres migration notice", () => {
       version: "0.59.0",
     })).resolves.toBe("already-delivered");
 
-    const inbox = store.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
+    const inbox = await store.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
     expect(inbox).toHaveLength(1);
   });
 
@@ -92,7 +104,7 @@ describe("postgres migration notice", () => {
       version: undefined,
     })).resolves.toBe("version-mismatch");
 
-    expect(store.getInbox(DASHBOARD_USER_ID, "user", { type: "system" })).toHaveLength(0);
+    expect(await store.getInbox(DASHBOARD_USER_ID, "user", { type: "system" })).toHaveLength(0);
   });
 
   it("returns no-store when the message store is unavailable", async () => {

@@ -79,12 +79,15 @@ export async function deliverPostgresMigrationNoticeIfNeeded({
     }
     fallbackResult = "already-delivered";
 
-    const inbox = messageStore.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
+    // FNXC:PostgresCutover 2026-07-12: the MessageStore is async on the
+    // PostgreSQL backend — await the inbox read and the send (upstream wrote
+    // this against the sync sqlite store).
+    const inbox = await messageStore.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
     if (inbox.some((message) => message.metadata?.kind === POSTGRES_MIGRATION_NOTICE_KIND)) {
       return "already-delivered";
     }
 
-    messageStore.sendMessage({
+    await messageStore.sendMessage({
       fromType: "system",
       toType: "user",
       toId: DASHBOARD_USER_ID,
