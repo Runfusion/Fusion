@@ -1326,7 +1326,7 @@ describe("reviewStep — user comments in spec review", () => {
 });
 
 describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", () => {
-  // Mock session-skill-context to control skill selection behavior
+  // FNXC:SessionSkillContext 2026-07-13: buildSessionSkillContext mockResolvedValue objects MUST include additionalSkillPaths: [] — the production code (reviewer.ts:429) reads skillContext.additionalSkillPaths.length unconditionally when skillContext is truthy; omitting the field crashes with TypeError before createFnAgent is reached.
   vi.mock("../session-skill-context.js", () => ({
     buildSessionSkillContext: vi.fn(),
   }));
@@ -1337,15 +1337,11 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
 
   it("passes skillSelection to createFnAgent when agentStore and rootDir are provided", async () => {
     const { buildSessionSkillContext } = await import("../session-skill-context.js");
-    vi.mocked(buildSessionSkillContext).mockResolvedValue({
-      skillSelectionContext: {
-        projectRootDir: "/tmp/project",
-        requestedSkillNames: ["fusion"],
-        sessionPurpose: "reviewer",
-      },
-      resolvedSkillNames: ["fusion"],
-      skillSource: "role-fallback",
-    });
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
+      projectRootDir: "/tmp/project",
+      requestedSkillNames: ["fusion"],
+      sessionPurpose: "reviewer",
+    }, resolvedSkillNames: ["fusion"], skillSource: "role-fallback", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
@@ -1374,15 +1370,11 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
 
   it("uses assigned agent skills when available", async () => {
     const { buildSessionSkillContext } = await import("../session-skill-context.js");
-    vi.mocked(buildSessionSkillContext).mockResolvedValue({
-      skillSelectionContext: {
-        projectRootDir: "/tmp/project",
-        requestedSkillNames: ["custom-skill", "another-skill"],
-        sessionPurpose: "reviewer",
-      },
-      resolvedSkillNames: ["custom-skill", "another-skill"],
-      skillSource: "assigned-agent",
-    });
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
+      projectRootDir: "/tmp/project",
+      requestedSkillNames: ["custom-skill", "another-skill"],
+      sessionPurpose: "reviewer",
+    }, resolvedSkillNames: ["custom-skill", "another-skill"], skillSource: "assigned-agent", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
@@ -1411,11 +1403,7 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
 
   it("does not pass skillSelection when buildSessionSkillContext returns undefined context", async () => {
     const { buildSessionSkillContext } = await import("../session-skill-context.js");
-    vi.mocked(buildSessionSkillContext).mockResolvedValue({
-      skillSelectionContext: undefined,
-      resolvedSkillNames: [],
-      skillSource: "none",
-    });
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: undefined, resolvedSkillNames: [], skillSource: "none", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
@@ -1489,15 +1477,11 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
   it("records resolved skill names in skill context result", async () => {
     const { buildSessionSkillContext } = await import("../session-skill-context.js");
     const resolvedNames = ["skill-a", "skill-b", "skill-c"];
-    vi.mocked(buildSessionSkillContext).mockResolvedValue({
-      skillSelectionContext: {
-        projectRootDir: "/tmp/project",
-        requestedSkillNames: resolvedNames,
-        sessionPurpose: "reviewer",
-      },
-      resolvedSkillNames: resolvedNames,
-      skillSource: "assigned-agent",
-    });
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
+      projectRootDir: "/tmp/project",
+      requestedSkillNames: resolvedNames,
+      sessionPurpose: "reviewer",
+    }, resolvedSkillNames: resolvedNames, skillSource: "assigned-agent", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood."),
@@ -1524,15 +1508,11 @@ describe("reviewStep — skill selection resolver contract (FN-1510/FN-1511)", (
 
   it("uses sessionPurpose='reviewer' in skill selection context", async () => {
     const { buildSessionSkillContext } = await import("../session-skill-context.js");
-    vi.mocked(buildSessionSkillContext).mockResolvedValue({
-      skillSelectionContext: {
-        projectRootDir: "/tmp/project",
-        requestedSkillNames: ["fusion"],
-        sessionPurpose: "reviewer",
-      },
-      resolvedSkillNames: ["fusion"],
-      skillSource: "role-fallback",
-    });
+    vi.mocked(buildSessionSkillContext).mockResolvedValue({ skillSelectionContext: {
+      projectRootDir: "/tmp/project",
+      requestedSkillNames: ["fusion"],
+      sessionPurpose: "reviewer",
+    }, resolvedSkillNames: ["fusion"], skillSource: "role-fallback", additionalSkillPaths: [] });
 
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood."),

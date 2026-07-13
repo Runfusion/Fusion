@@ -742,8 +742,9 @@ describe("Budget Governance", () => {
     });
 
     expect(store.getBudgetStatus).not.toHaveBeenCalled();
-    // FNXC:HeartbeatTests 2026-07-12-FN7835: FN-7835/FN-7859 park non-recoverable run failures as "paused" (pauseReason: error-unrecoverable) instead of bare "error". Budget governance still does not engage on failure (assertion below: never paused with budget-exhausted reason).
-    expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "paused");
+    // FNXC:HeartbeatTests 2026-07-13: FN-7878 changed generic run failures (status=failed without unrecoverable auth/model/billing signal) from "paused" (FN-7835/FN-7859) to bare "error" so the bounded retry budget can run. Budget governance still does not engage on failure (assertion below: never paused with budget-exhausted reason). See agent-heartbeat.ts:1829-1831 else-branch.
+    expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "error");
+    expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "paused");
     expect(store.updateAgent).not.toHaveBeenCalledWith("agent-001", { pauseReason: "budget-exhausted" });
   });
 

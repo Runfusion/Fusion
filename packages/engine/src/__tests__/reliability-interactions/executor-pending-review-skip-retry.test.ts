@@ -105,7 +105,8 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
     const executor = new TaskExecutor(store as any, "/repo");
     await executor.execute(task);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-5436-RI-D", { workflowStepRetries: undefined, taskDoneRetryCount: null });
+    // FNXC:ExecutorRetry 2026-07-13: Use objectContaining because production now passes additional fields (executeRequeueLoopCount, executeRequeueLoopSignature, branch, worktree, sessionFile) in the same updateTask call.
+    expect(store.updateTask).toHaveBeenCalledWith("FN-5436-RI-D", expect.objectContaining({ workflowStepRetries: undefined, taskDoneRetryCount: null }));
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-RI-D", {
       status: "failed",
       error: "executor-exit-while-review-pending",

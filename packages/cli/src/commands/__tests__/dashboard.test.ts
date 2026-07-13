@@ -431,7 +431,7 @@ resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
   refreshAllCustomProviderModels: mockRefreshAllCustomProviderModels,
   stopAllDevServers: vi.fn().mockResolvedValue(undefined),
-  // FNXC:CliTests 2026-07-13-09:40: Missing dashboard barrel exports added for mock completeness (scripts/check-cli-dashboard-mock-completeness.mjs gate).
+  // FNXC:CliTests 2026-07-13-09:40: Missing dashboard barrel exports added for mock completeness (scripts/check-mock-completeness.mjs gate).
   AttachTicketStore: vi.fn(),
   CliInputAttributionLog: vi.fn(),
   CliConfirmAdvanceRegistry: vi.fn(),

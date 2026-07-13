@@ -53,7 +53,7 @@ vi.mock("@fusion/core", () => ({
 
 vi.mock("@fusion/dashboard", () => ({
   registerGithubTrackingHook: vi.fn(),
-  // FNXC:CliTests 2026-07-13-09:40: Missing dashboard barrel exports added for mock completeness (scripts/check-cli-dashboard-mock-completeness.mjs gate).
+  // FNXC:CliTests 2026-07-13-09:40: Missing dashboard barrel exports added for mock completeness (scripts/check-mock-completeness.mjs gate).
   GitLabClient: vi.fn(),
   resolveGitlabAuth: vi.fn(() => ({})),
   buildGitLabTaskProvenance: vi.fn(() => ({})),
