@@ -1202,6 +1202,7 @@ fn settings set maxConcurrent 4
 fn settings set defaultNodeId node_abc123
 fn settings set unavailableNodePolicy fallback-local
 fn settings set worktrunk.enabled true
+fn settings set integrationBranch master --project my-project
 fn settings export [--scope global|project|both] [--output <file>]
 fn settings import <file> [--scope global|project|both] [--merge] [--yes]
 ```
@@ -1212,6 +1213,8 @@ fn settings import <file> [--scope global|project|both] [--merge] [--yes]
 | `--output` | Custom output file path for `settings export`. |
 | `--merge` | Merge imported values with existing settings (used by `settings import`). |
 | `--yes` | Skip confirmation prompt during `settings import`. |
+
+`integrationBranch` (project-only, string) sets the preferred merge-target branch for a project — the first entry read by the engine's `resolveIntegrationBranch()` resolution chain (`settings.integrationBranch` → `settings.baseBranch` → `origin/HEAD` → `"main"`). Note that `baseBranch` is **not** a settable `ProjectSettings` key: it only exists as a per-`Task`/`Mission` field, so `fn settings set baseBranch ...` is intentionally unsupported and reports `Unknown setting "baseBranch"`. See [`integration-branch-cli-setting.md`](./integration-branch-cli-setting.md) for the full defect writeup.
 
 ---
 
