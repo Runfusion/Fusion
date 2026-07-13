@@ -27,6 +27,7 @@ vi.mock("@fusion/engine", () => ({
   createWorkflowAuthoringTools: vi.fn(() => ({})),
   workflowListParams: {},
   workflowGetParams: {},
+  workflowValidateParams: {}, // FNXC:Round10 FN-7911 added this export to @fusion/engine barrel
   workflowSelectParams: {},
   workflowCreateParams: {},
   workflowUpdateParams: {},

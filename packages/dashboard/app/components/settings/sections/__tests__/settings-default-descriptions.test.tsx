@@ -489,6 +489,14 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   prerebaseDivergenceThreshold: "internal pre-rebase tuning constant, no UI field",
   maxSpawnedAgentsPerParent: "internal spawn-limit constant, no UI field",
   maxSpawnedAgentsGlobal: "internal spawn-limit constant, no UI field",
+  // FNXC:Round10 2026-07-13: FN-7907/FN-7908 added chat default model/agent/session settings.
+  // These are configured via the chat New Session defaults picker, not plain description fields.
+  chatNewSessionMode: "chat new-session default mode, configured via the chat defaults picker, not a plain description field",
+  chatDefaultKind: "chat default agent kind, configured via the chat defaults picker, not a plain description field",
+  chatDefaultAgentId: "chat default agent id, configured via the chat defaults picker, not a plain description field",
+  chatDefaultModelProvider: "chat default model provider, configured via the chat defaults picker, not a plain description field",
+  chatDefaultModelId: "chat default model id, configured via the chat defaults picker, not a plain description field",
+  chatDefaultThinkingLevel: "chat default thinking level, configured via the chat defaults picker, not a plain description field",
 };
 
 describe("FN-7505 settings default-value description guard", () => {

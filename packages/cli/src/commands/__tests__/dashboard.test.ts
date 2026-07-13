@@ -396,6 +396,12 @@ const mockListen = vi.fn((port: number) => {
 });
 
 vi.mock("@fusion/dashboard", () => ({
+  // FNXC:TestInfrastructure 2026-07-13-10:25: Source files named-import these from @fusion/dashboard barrel; mock must surface them.
+  registerGithubTrackingHook: vi.fn(),
+  AttachTicketStore: vi.fn(),
+  CliInputAttributionLog: vi.fn(),
+  CliConfirmAdvanceRegistry: vi.fn(),
+  CliRelaunchRegistry: vi.fn(),
   // FNXC:CliTests 2026-07-13-08:10: @fusion/dashboard barrel re-exports cli-package-version helpers; mock must surface them for startup model sync.
 isUnresolvedCliPackageVersion: vi.fn(() => false),
 resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved: false })),

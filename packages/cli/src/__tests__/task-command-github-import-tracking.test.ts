@@ -54,6 +54,8 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
+  // FNXC:TestInfrastructure 2026-07-13-10:25: extension.ts named-imports this from @fusion/engine.
+  isInReviewMissingWorktreeSessionStartFailure: vi.fn(),
 }));
 
 vi.mock("@fusion/dashboard/planning", () => ({
