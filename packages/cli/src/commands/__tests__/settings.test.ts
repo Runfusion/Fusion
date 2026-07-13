@@ -100,6 +100,10 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).toContain("worktrunk.enabled");
     expect(VALID_SETTINGS).toContain("worktrunk.binaryPath");
     expect(VALID_SETTINGS).toContain("worktrunk.onFailure");
+    expect(VALID_SETTINGS).toContain("integrationBranch");
+    // baseBranch is a per-Task/Mission field, NOT a ProjectSettings key — it must
+    // never be added to VALID_SETTINGS/PROJECT_ONLY_SETTINGS/STRING_SETTINGS.
+    expect(VALID_SETTINGS).not.toContain("baseBranch");
     // Moved keys are NOT settable via the CLI (they live in workflow settings).
     expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
     expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
@@ -109,6 +113,7 @@ describe("settings commands", () => {
     expect(parseValue("worktreeNaming", "task-id")).toBe("task-id");
     expect(parseValue("worktreesDir", "~/.fn-worktrees/{repo}")).toBe("~/.fn-worktrees/{repo}");
     expect(parseValue("defaultNodeId", "node-abc-123")).toBe("node-abc-123");
+    expect(parseValue("integrationBranch", "  master  ")).toBe("master");
     expect(parseValue("unavailableNodePolicy", "block")).toBe("block");
     expect(parseValue("unavailableNodePolicy", "fallback-local")).toBe("fallback-local");
     expect(() => parseValue("unavailableNodePolicy", "invalid")).toThrow(/block, fallback-local/);
@@ -296,6 +301,29 @@ describe("settings commands", () => {
 
     expect(updateSettings).toHaveBeenNthCalledWith(1, { defaultNodeId: "my-node" });
     expect(updateSettings).toHaveBeenNthCalledWith(2, { unavailableNodePolicy: "fallback-local" });
+  });
+
+  it("runSettingsSet with project updates integrationBranch", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ integrationBranch: "master" }));
+    const getSettings = vi.fn().mockResolvedValue(makeSettings({ integrationBranch: "master" }));
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettings } as any,
+    });
+
+    await runSettingsSet("integrationBranch", "master", "demo-project");
+
+    expect(resolveProject).toHaveBeenCalledWith("demo-project");
+    expect(updateSettings).toHaveBeenCalledWith({ integrationBranch: "master" });
+  });
+
+  it("rejects setting integrationBranch without explicit project scope", async () => {
+    await expect(runSettingsSet("integrationBranch", "master")).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith('Error: Setting "integrationBranch" is project-only. Use --project or run from a project directory.');
+    expect(resolveProject).not.toHaveBeenCalled();
   });
 
   it("rejects values outside range for a still-valid numeric setting (maxWorktrees)", async () => {
