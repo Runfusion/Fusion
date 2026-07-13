@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {detectDependencyCycle, TaskDeletedError} from "./errors.js";
+import {TaskDeletedError} from "./errors.js";
 import type {LegacyAutoMergeStampReconcileResult} from "../store.js";
 import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
@@ -22,8 +22,6 @@ import "../builtin-traits.js";
 import {validateBranchGroupBranchName} from "../branch-assignment.js";
 import {toJson} from "../db.js";
 import {findSameAgentDuplicates} from "../duplicate-intake.js";
-import {replicationCollisionError, taskMatchesReplicatedCreate} from "../mesh-task-replication.js";
-import type {MeshReplicatedTaskApplyResult, MeshReplicatedTaskCreatePayload} from "../types.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
@@ -242,47 +240,6 @@ export async function _maybeAutoArchiveSameAgentDuplicateBackendImpl(store: Task
     } catch {
       // Best-effort; never fail task creation on dedup check.
     }
-  }
-
-export async function applyReplicatedTaskCreateImpl(store: TaskStore, payload: MeshReplicatedTaskCreatePayload): Promise<MeshReplicatedTaskApplyResult> {
-    // Intentionally does not invoke the post-create hook. Replicated tasks mirror
-    // state from an origin node; rerunning side effects here (e.g. GitHub issue
-    // creation) would duplicate external artifacts.
-    // FN-4898: replicated creates route via _createTaskInternal so drift normalization
-    // is applied exactly once (same behavior as user-originated writes).
-    const existing = store.readTaskFromDb(payload.taskId);
-    if (existing) {
-      const existingDetail = await store.getTask(payload.taskId);
-      if (taskMatchesReplicatedCreate(existingDetail, payload)) {
-        return { task: existingDetail, applied: false };
-      }
-      throw replicationCollisionError(payload.taskId);
-    }
-
-    if (payload.input.dependencies?.includes(payload.taskId)) {
-      store.recordDependencyCycleRejectedAudit(payload.taskId, [payload.taskId, payload.taskId], "replication");
-      storeLog.warn("Skipping replicated task create due to self dependency", { taskId: payload.taskId });
-      return { task: payload.input as Task, applied: false };
-    }
-
-    const lookup = await store.buildActiveTaskDependencyLookup(new Map([[payload.taskId, payload.input.dependencies ?? []]]));
-    const replicationCycle = detectDependencyCycle(payload.taskId, payload.input.dependencies ?? [], (candidateId) => lookup.get(candidateId));
-    if (replicationCycle) {
-      store.recordDependencyCycleRejectedAudit(payload.taskId, replicationCycle, "replication");
-      storeLog.warn("Skipping replicated task create due to dependency cycle", { taskId: payload.taskId, cyclePath: replicationCycle });
-      return { task: payload.input as Task, applied: false };
-    }
-
-    const task = await store.createTaskWithReservedId(payload.input, {
-      taskId: payload.taskId,
-      createdAt: payload.createdAt,
-      updatedAt: payload.updatedAt,
-      prompt: payload.prompt,
-      applyDefaultWorkflowSteps: false,
-      invokeTaskCreatedHook: false,
-    });
-
-    return { task, applied: true };
   }
 
 export async function updateBranchGroupImpl(store: TaskStore, id: string, patch: BranchGroupUpdate): Promise<BranchGroup> {

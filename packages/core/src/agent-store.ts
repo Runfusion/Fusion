@@ -85,8 +85,6 @@ import {
   getRunById as getRunByIdAsync,
   listActiveHeartbeatRuns as listActiveHeartbeatRunsAsync,
   getRunStatusCounts as getRunStatusCountsAsync,
-  insertRunIfAbsent as insertRunIfAbsentAsync,
-  listAllAgentRuns as listAllAgentRunsAsync,
   getTaskSession as getTaskSessionAsync,
   upsertTaskSession as upsertTaskSessionAsync,
   deleteTaskSession as deleteTaskSessionAsync,
@@ -96,9 +94,7 @@ import {
   getLastBlockedState as getLastBlockedStateAsync,
   setLastBlockedState as setLastBlockedStateAsync,
   clearLastBlockedState as clearLastBlockedStateAsync,
-  getAllBlockedStates as getAllBlockedStatesAsync,
 } from "./async-agent-store.js";
-import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
 import { createLogger } from "./logger.js";
 import { FsWatchPollController } from "./fs-watch-poll-controller.js";
 
@@ -2759,124 +2755,9 @@ export class AgentStore extends EventEmitter {
     });
   }
 
-  getAgentSnapshot(): Promise<AgentSnapshot> {
-    return (async () => {
-      const agents = await this.listAgents({ includeEphemeral: true });
-      // FNXC:PostgresCutover 2026-07-04: read blocked states via async helper in backend mode.
-      const blockedStates = this.backendMode
-        ? await getAllBlockedStatesAsync(this.asyncLayer!.db)
-        : (this.db.prepare("SELECT agentId, data FROM agentBlockedStates ORDER BY updatedAt ASC").all() as Array<{ agentId: string; data: string }>)
-            .map((row) => ({ agentId: row.agentId, state: this.parseJson<BlockedStateSnapshot | null>(row.data, null) }))
-            .filter((row): row is { agentId: string; state: BlockedStateSnapshot } => row.state !== null);
-      return createAgentSnapshot({ agents, blockedStates });
-    })();
-  }
 
-  async applyAgentSnapshot(snapshot: AgentSnapshot): Promise<{ appliedAgents: number; appliedBlockedStates: number }> {
-    validateSnapshotEnvelope(snapshot);
-    let appliedAgents = 0;
-    let appliedBlockedStates = 0;
 
-    // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helpers in backend mode.
-    if (this.backendMode) {
-      const handle = this.asyncLayer!.db;
-      for (const agent of snapshot.payload.agents) {
-        await writeAgentAsync(handle, agent);
-        appliedAgents++;
-      }
-      for (const blocked of snapshot.payload.blockedStates) {
-        await setLastBlockedStateAsync(handle, blocked.agentId, blocked.state);
-        appliedBlockedStates++;
-      }
-      return { appliedAgents, appliedBlockedStates };
-    }
 
-    for (const agent of snapshot.payload.agents) {
-      this.db.prepare(`INSERT INTO agents (id, name, role, state, taskId, createdAt, updatedAt, lastHeartbeatAt, metadata, data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name=excluded.name, role=excluded.role, state=excluded.state, taskId=excluded.taskId, updatedAt=excluded.updatedAt,
-          lastHeartbeatAt=excluded.lastHeartbeatAt, metadata=excluded.metadata, data=excluded.data`)
-        .run(
-          agent.id,
-          agent.name,
-          agent.role,
-          agent.state,
-          agent.taskId ?? null,
-          agent.createdAt,
-          agent.updatedAt,
-          agent.lastHeartbeatAt ?? null,
-          JSON.stringify(agent.metadata ?? {}),
-          JSON.stringify(agent),
-        );
-      appliedAgents++;
-    }
-
-    for (const blocked of snapshot.payload.blockedStates) {
-      this.db.prepare(`INSERT INTO agentBlockedStates (agentId, data, updatedAt)
-        VALUES (?, ?, ?)
-        ON CONFLICT(agentId) DO UPDATE SET data=excluded.data, updatedAt=excluded.updatedAt`)
-        .run(blocked.agentId, JSON.stringify(blocked.state), blocked.state.recordedAt);
-      appliedBlockedStates++;
-    }
-
-    this.db.bumpLastModified();
-    return { appliedAgents, appliedBlockedStates };
-  }
-
-  async getAgentRunSnapshot(limit?: number): Promise<AgentRunSnapshot> {
-    const normalizedLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined;
-    // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helper in backend mode.
-    if (this.backendMode) {
-      const runs = await listAllAgentRunsAsync(this.asyncLayer!.db, normalizedLimit);
-      const orderedRuns = normalizedLimit ? runs.reverse() : runs;
-      return createAgentRunSnapshot(orderedRuns);
-    }
-    const query = normalizedLimit
-      ? "SELECT data FROM agentRuns ORDER BY startedAt DESC, rowid DESC LIMIT ?"
-      : "SELECT data FROM agentRuns ORDER BY startedAt ASC, rowid ASC";
-    const rows = normalizedLimit
-      ? (this.db.prepare(query).all(normalizedLimit) as Array<{ data: string }>)
-      : (this.db.prepare(query).all() as Array<{ data: string }>);
-    const parsed = rows
-      .map((row) => this.parseJson<AgentHeartbeatRun | null>(row.data, null))
-      .filter((run): run is AgentHeartbeatRun => run !== null);
-    const orderedRuns = normalizedLimit ? parsed.reverse() : parsed;
-    return createAgentRunSnapshot(orderedRuns);
-  }
-
-  async applyAgentRunSnapshot(snapshot: AgentRunSnapshot): Promise<{ applied: number; skipped: number }> {
-    validateSnapshotEnvelope(snapshot);
-    let applied = 0;
-    let skipped = 0;
-
-    // FNXC:PostgresCutover 2026-07-04: delegate to async Drizzle helper in backend mode.
-    // insertRunIfAbsent mirrors the SQLite "skip if id exists" guard atomically.
-    if (this.backendMode) {
-      const handle = this.asyncLayer!.db;
-      for (const run of snapshot.payload.runs) {
-        const inserted = await insertRunIfAbsentAsync(handle, run);
-        if (inserted) {
-          applied++;
-        } else {
-          skipped++;
-        }
-      }
-      return { applied, skipped };
-    }
-
-    for (const run of snapshot.payload.runs) {
-      const exists = this.db.prepare("SELECT 1 FROM agentRuns WHERE id = ?").get(run.id);
-      if (exists) {
-        skipped++;
-        continue;
-      }
-      await this.saveRun(run);
-      applied++;
-    }
-
-    return { applied, skipped };
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers

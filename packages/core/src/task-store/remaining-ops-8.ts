@@ -22,14 +22,13 @@ import { AsyncMissionStore } from "../async-mission-store.js";
 import { type PluginGateVerdict } from "../plugin-gate-verdict.js";
 import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
-import { type ActivityLogSnapshot, type TaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope } from "../shared-mesh-state.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async-allocator.js";
 import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
 import { ActivityLogRow } from "./row-types.js";
-import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings, Task } from "../types.js";
+import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { eq } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { WorkflowDefinition, WorkflowDefinitionInput, WorkflowNodeLayout } from "../workflow-definition-types.js";
@@ -1002,109 +1001,3 @@ export function recordVerificationCachePassImpl(store: TaskStore,
       )
       .run(treeSha, normalizedTest, normalizedBuild, recordedAt, taskId);
 }
-
-export async function applyTaskMetadataSnapshotImpl(store: TaskStore, snapshot: TaskMetadataSnapshot): Promise<{ applied: number; skipped: number }> {
-    validateSnapshotEnvelope(snapshot);
-    const existingTasks = new Map((await store.listTasks({ slim: false, includeArchived: true })).map((task) => [task.id, task]));
-    let applied = 0;
-    let skipped = 0;
-
-    for (const incoming of snapshot.payload.tasks) {
-      const current = existingTasks.get(incoming.id);
-      const currentMetadata = current ? toTaskMetadataRecord(current) : undefined;
-      if (currentMetadata && JSON.stringify(currentMetadata) === JSON.stringify(incoming)) {
-        skipped++;
-        continue;
-      }
-      const toUpsert: Task = {
-        ...(incoming as unknown as Task),
-        worktree: current?.worktree,
-        executionStartBranch: current?.executionStartBranch,
-        sessionFile: current?.sessionFile,
-      };
-      store.upsertTaskWithFtsRecovery(toUpsert);
-      applied++;
-    }
-
-    return { applied, skipped };
-}
-
-export function applyActivityLogSnapshotImpl(store: TaskStore, snapshot: ActivityLogSnapshot): { applied: number; skipped: number } {
-    validateSnapshotEnvelope(snapshot);
-    /*
-    FNXC:PostgresCutover 2026-07-04:
-    Synchronous mesh state-apply for activity_log cannot run against PostgreSQL
-    (Drizzle is async). This sync entry point is consumed by the dashboard mesh
-    route (owned by another batch), so converting the signature is out of scope.
-    In backend mode we surface the snapshot as fully skipped — the authoritative
-    async write path is recordActivityLogEntry (async-audit.ts), used by the
-    mesh-apply route. Mirrors applyRunAuditSnapshot's backend degradation.
-    */
-    if (store.backendMode) {
-      return { applied: 0, skipped: snapshot.payload.entries.length };
-    }
-    let applied = 0;
-    let skipped = 0;
-
-    for (const entry of snapshot.payload.entries) {
-      const exists = store.db.prepare("SELECT 1 FROM activityLog WHERE id = ?").get(entry.id);
-      if (exists) {
-        skipped++;
-        continue;
-      }
-      store.db.prepare(
-        `INSERT INTO activityLog (id, timestamp, type, taskId, taskTitle, details, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        entry.id,
-        entry.timestamp,
-        entry.type,
-        entry.taskId ?? null,
-        entry.taskTitle ?? null,
-        entry.details,
-        entry.metadata ? JSON.stringify(entry.metadata) : null,
-      );
-      applied++;
-    }
-
-    return { applied, skipped };
-}
-
-/*
-FNXC:PostgresCutover 2026-07-04-00:00:
-Async mesh state-apply for activity_log. Uses Drizzle INSERT ... ON CONFLICT (id) DO NOTHING
-with .returning() to count applied vs skipped — preserves the snapshot's id/timestamp/type
-(NOT recordActivityLogEntry which generates new ids). Idempotent: re-applying the same
-snapshot is a no-op (all skipped).
-*/
-export async function applyActivityLogSnapshotAsyncImpl(store: TaskStore, snapshot: ActivityLogSnapshot): Promise<{ applied: number; skipped: number }> {
-  validateSnapshotEnvelope(snapshot);
-  if (!store.backendMode) return store.applyActivityLogSnapshot(snapshot);
-  const entries = snapshot.payload.entries;
-  if (entries.length === 0) return { applied: 0, skipped: 0 };
-  const layer = store.asyncLayer!;
-  let applied = 0;
-  let skipped = 0;
-  for (const entry of entries) {
-    const inserted = await layer.db
-      .insert(schema.project.activityLog)
-      .values({
-        id: entry.id,
-        timestamp: entry.timestamp,
-        type: entry.type,
-        taskId: entry.taskId ?? null,
-        taskTitle: entry.taskTitle ?? null,
-        details: entry.details,
-        metadata: entry.metadata ?? null,
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.project.activityLog.id });
-    if (inserted.length > 0) {
-      applied++;
-    } else {
-      skipped++;
-    }
-  }
-  return { applied, skipped };
-}
-

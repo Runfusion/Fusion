@@ -2,25 +2,22 @@ import { createHash } from "node:crypto";
 export { SHARED_STATE_SNAPSHOT_VERSION } from "./types.js";
 import { SHARED_STATE_SNAPSHOT_VERSION } from "./types.js";
 import type {
-  ActivityLogEntry,
-  Agent,
-  AgentHeartbeatRun,
-  BlockedStateSnapshot,
   GlobalSettings,
   ProjectSettings,
   ProviderAuthEntry,
-  RunAuditEvent,
-  Task,
 } from "./types.js";
-import type {
-  FeatureAssertionLink,
-  Milestone,
-  Mission,
-  MissionContractAssertion,
-  MissionEvent,
-  MissionFeature,
-  Slice,
-} from "./mission-types.js";
+
+/*
+FNXC:PostgresCutover 2026-07-12:
+Task/state mesh replication is REMOVED — all replication is handled at the
+PostgreSQL level (nodes share the database). The task-metadata, agent,
+agent-run, activity-log, run-audit, and mission-hierarchy snapshot types and
+creators that used to live here are gone with it. What remains is the
+settings-adjacent pair still exchanged over the mesh: projectSettings (legacy
+sqlite topology settings sync) and authMaterial (auth.json is per-machine
+file state — the one domain that does not live in the database), plus the
+shared envelope/checksum plumbing they ride on.
+*/
 
 export const SHARED_STATE_DEFAULT_LIMIT = 10_000;
 
@@ -31,33 +28,6 @@ export interface SharedSnapshotEnvelope<TPayload> {
   payload: TPayload;
 }
 
-/** Excludes file/blob/runtime state: no PROMPT.md body, task documents, attachment bytes, or worktree/runtime handles. */
-export type TaskMetadataRecord = Omit<Task, "worktree" | "executionStartBranch" | "sessionFile">;
-export type TaskMetadataSnapshot = SharedSnapshotEnvelope<{ tasks: TaskMetadataRecord[] }>;
-
-/** Excludes instruction-bundle file contents and other node-local runtime handles. */
-export interface AgentBlockedStateRecord {
-  agentId: string;
-  state: BlockedStateSnapshot;
-}
-export type AgentSnapshot = SharedSnapshotEnvelope<{ agents: Agent[]; blockedStates: AgentBlockedStateRecord[] }>;
-
-/** Excludes agent.log/run-log JSONL content; structured run rows only. */
-export type AgentRunSnapshot = SharedSnapshotEnvelope<{ runs: AgentHeartbeatRun[] }>;
-
-export type ActivityLogSnapshot = SharedSnapshotEnvelope<{ entries: ActivityLogEntry[] }>;
-export type RunAuditSnapshot = SharedSnapshotEnvelope<{ entries: RunAuditEvent[] }>;
-
-export type MissionHierarchySnapshot = SharedSnapshotEnvelope<{
-  missions: Mission[];
-  milestones: Milestone[];
-  slices: Slice[];
-  features: MissionFeature[];
-  missionEvents: MissionEvent[];
-  assertions: MissionContractAssertion[];
-  featureAssertionLinks: FeatureAssertionLink[];
-}>;
-
 export type ProjectSettingsSnapshot = SharedSnapshotEnvelope<{
   global: GlobalSettings;
   projects?: Record<string, ProjectSettings>;
@@ -67,26 +37,13 @@ export type AuthMaterialSnapshot = SharedSnapshotEnvelope<{
   providerAuth?: Record<string, ProviderAuthEntry>;
 }>;
 
-export type SharedMeshStateSnapshot =
-  | TaskMetadataSnapshot
-  | MissionHierarchySnapshot
-  | AgentSnapshot
-  | AgentRunSnapshot
-  | ActivityLogSnapshot
-  | RunAuditSnapshot
-  | ProjectSettingsSnapshot
-  | AuthMaterialSnapshot;
-
 function withChecksum<TPayload>(payload: TPayload, exportedAt?: string): SharedSnapshotEnvelope<TPayload> {
-  const withoutChecksum = {
+  const envelope = {
     version: SHARED_STATE_SNAPSHOT_VERSION,
     exportedAt: exportedAt ?? new Date().toISOString(),
     payload,
   };
-  return {
-    ...withoutChecksum,
-    checksum: createHash("sha256").update(JSON.stringify(withoutChecksum)).digest("hex"),
-  };
+  return { ...envelope, checksum: computeSnapshotChecksum(envelope) };
 }
 
 export function computeSnapshotChecksum(snapshotWithoutChecksum: Omit<SharedSnapshotEnvelope<unknown>, "checksum">): string {
@@ -95,45 +52,16 @@ export function computeSnapshotChecksum(snapshotWithoutChecksum: Omit<SharedSnap
 
 export function validateSnapshotEnvelope(snapshot: SharedSnapshotEnvelope<unknown>, expectedVersion = SHARED_STATE_SNAPSHOT_VERSION): void {
   if (snapshot.version !== expectedVersion) {
-    throw new Error(`Unsupported shared-state snapshot version: ${snapshot.version}`);
+    throw new Error(`Unsupported shared-state snapshot version ${snapshot.version} (expected ${expectedVersion})`);
   }
-  const expected = computeSnapshotChecksum({
+  const expectedChecksum = computeSnapshotChecksum({
     version: snapshot.version,
     exportedAt: snapshot.exportedAt,
     payload: snapshot.payload,
   });
-  if (snapshot.checksum !== expected) {
+  if (snapshot.checksum !== expectedChecksum) {
     throw new Error("Shared-state snapshot checksum mismatch");
   }
-}
-
-export function toTaskMetadataRecord(task: Task): TaskMetadataRecord {
-  const { worktree: _worktree, executionStartBranch: _executionStartBranch, sessionFile: _sessionFile, ...rest } = task;
-  return rest;
-}
-
-export function createTaskMetadataSnapshot(tasks: Task[], exportedAt?: string): TaskMetadataSnapshot {
-  return withChecksum({ tasks: tasks.map((task) => toTaskMetadataRecord(task)) }, exportedAt);
-}
-
-export function createMissionHierarchySnapshot(payload: MissionHierarchySnapshot["payload"], exportedAt?: string): MissionHierarchySnapshot {
-  return withChecksum(payload, exportedAt);
-}
-
-export function createAgentSnapshot(payload: AgentSnapshot["payload"], exportedAt?: string): AgentSnapshot {
-  return withChecksum(payload, exportedAt);
-}
-
-export function createAgentRunSnapshot(runs: AgentHeartbeatRun[], exportedAt?: string): AgentRunSnapshot {
-  return withChecksum({ runs }, exportedAt);
-}
-
-export function createActivityLogSnapshot(entries: ActivityLogEntry[], exportedAt?: string): ActivityLogSnapshot {
-  return withChecksum({ entries }, exportedAt);
-}
-
-export function createRunAuditSnapshot(entries: RunAuditEvent[], exportedAt?: string): RunAuditSnapshot {
-  return withChecksum({ entries }, exportedAt);
 }
 
 export function createProjectSettingsSnapshot(payload: ProjectSettingsSnapshot["payload"], exportedAt?: string): ProjectSettingsSnapshot {

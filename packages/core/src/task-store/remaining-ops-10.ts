@@ -11,7 +11,6 @@ import { TaskStore } from "../store.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
 import { InsightStore } from "../insight-store.js";
 import { ResearchStore } from "../research-store.js";
-import { type ActivityLogSnapshot, type TaskMetadataSnapshot, createActivityLogSnapshot, createTaskMetadataSnapshot } from "../shared-mesh-state.js";
 import { type TaskRow } from "./persistence.js";
 import { eq } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
@@ -325,13 +324,5 @@ export function getTodoStoreImpl(store: TaskStore): TodoStore | AsyncTodoStore {
     return store.todoStore;
 }
 
-export async function getTaskMetadataSnapshotImpl(store: TaskStore): Promise<TaskMetadataSnapshot> {
-    const tasks = await store.listTasks({ slim: false, includeArchived: true });
-    return createTaskMetadataSnapshot(tasks as unknown as TaskMetadataSnapshot["payload"]["tasks"]);
-}
 
-export async function getActivityLogSnapshotImpl(store: TaskStore, limit = 10_000): Promise<ActivityLogSnapshot> {
-    const entries = await store.getActivityLog({ limit });
-    return createActivityLogSnapshot([...entries].reverse());
-}
 

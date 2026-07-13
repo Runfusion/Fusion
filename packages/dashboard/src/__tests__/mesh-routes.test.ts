@@ -903,7 +903,9 @@ describe("/api/mesh/task-ids routes", () => {
   });
 });
 
-describe("/api/mesh/tasks/create", () => {
+
+
+describe("GET /api/mesh/state", () => {
   let app: ReturnType<typeof createServer>;
 
   beforeEach(async () => {
@@ -911,89 +913,7 @@ describe("/api/mesh/tasks/create", () => {
     mockInit.mockResolvedValue(undefined);
     mockClose.mockResolvedValue(undefined);
     mockGetNode.mockResolvedValue(undefined);
-    mockApplyReplicatedTaskCreate.mockResolvedValue({
-      task: {
-        id: "FN-001",
-        description: "replicated",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-05-05T00:00:00.000Z",
-        updatedAt: "2026-05-05T00:00:00.000Z",
-      },
-      applied: true,
-    });
     app = createServer(new MockStore() as unknown as TaskStore);
-  });
-
-  it("applies replicated task create payload", async () => {
-    const payload = {
-      replicationVersion: 1,
-      reservationId: "res-1",
-      taskId: "FN-001",
-      sourceNodeId: "node_remote_1",
-      createdAt: "2026-05-05T00:00:00.000Z",
-      updatedAt: "2026-05-05T00:00:00.000Z",
-      prompt: "# FN-001\n\nreplicated\n",
-      input: { description: "replicated" },
-    };
-
-    const response = await request(app, "POST", "/api/mesh/tasks/create", JSON.stringify(payload), { "Content-Type": "application/json" });
-    expect(response.status).toBe(201);
-    expect(mockApplyReplicatedTaskCreate).toHaveBeenCalledWith(payload);
-  });
-
-  it("returns 200 when replicated task create is an idempotent replay", async () => {
-    mockApplyReplicatedTaskCreate.mockResolvedValue({
-      task: {
-        id: "FN-001",
-        description: "replicated",
-        column: "triage",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-05-05T00:00:00.000Z",
-        updatedAt: "2026-05-05T00:00:00.000Z",
-      },
-      applied: false,
-    });
-
-    const payload = {
-      replicationVersion: 1,
-      reservationId: "res-1",
-      taskId: "FN-001",
-      sourceNodeId: "node_remote_1",
-      createdAt: "2026-05-05T00:00:00.000Z",
-      updatedAt: "2026-05-05T00:00:00.000Z",
-      prompt: "# FN-001\n\nreplicated\n",
-      input: { description: "replicated" },
-    };
-
-    const response = await request(app, "POST", "/api/mesh/tasks/create", JSON.stringify(payload), { "Content-Type": "application/json" });
-    expect(response.status).toBe(200);
-  });
-
-  it("rejects unauthorized replicated create", async () => {
-    mockGetNode.mockResolvedValue(makeNodeConfig({ id: "node_remote_1", apiKey: "secret" }));
-    const payload = {
-      replicationVersion: 1,
-      reservationId: "res-1",
-      taskId: "FN-001",
-      sourceNodeId: "node_remote_1",
-      createdAt: "2026-05-05T00:00:00.000Z",
-      updatedAt: "2026-05-05T00:00:00.000Z",
-      prompt: "# FN-001\n\nreplicated\n",
-      input: { description: "replicated" },
-    };
-
-    const response = await request(app, "POST", "/api/mesh/tasks/create", JSON.stringify(payload), {
-      "Content-Type": "application/json",
-      Authorization: "Bearer wrong",
-    });
-    expect(response.status).toBe(401);
   });
 
   it("returns local-only mesh snapshot when includeRemote=false", async () => {
@@ -1116,7 +1036,6 @@ describe("PostgreSQL backend mode: task mesh replication disabled", () => {
       return true;
     }
 
-    applyTaskMetadataSnapshot = vi.fn();
   }
 
   let app: ReturnType<typeof createServer>;
@@ -1144,7 +1063,7 @@ describe("PostgreSQL backend mode: task mesh replication disabled", () => {
     app = createServer(store as unknown as TaskStore);
   });
 
-  it("POST /api/mesh/tasks/create answers 409 without applying the replicated create", async () => {
+  it("POST /api/mesh/tasks/create no longer exists (route removed — replication is the database)", async () => {
     const response = await request(
       app,
       "POST",
@@ -1162,8 +1081,7 @@ describe("PostgreSQL backend mode: task mesh replication disabled", () => {
       { "Content-Type": "application/json" }
     );
 
-    expect(response.status).toBe(409);
-    expect(response.body).toMatchObject({ code: "task-replication-disabled-postgres" });
+    expect(response.status).toBe(404);
     expect(mockApplyReplicatedTaskCreate).not.toHaveBeenCalled();
   });
 
@@ -1183,8 +1101,6 @@ describe("PostgreSQL backend mode: task mesh replication disabled", () => {
     );
 
     expect(response.status).toBe(200);
-    // Inbound task metadata is ignored — never applied to the shared database.
-    expect(store.applyTaskMetadataSnapshot).not.toHaveBeenCalled();
     // Peer topology exchange still works (discovery is not replication).
     expect(mockMergePeers).toHaveBeenCalled();
     // No database-backed domains are offered back to the peer.

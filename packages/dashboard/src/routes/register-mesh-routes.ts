@@ -316,49 +316,14 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
     }
   });
 
-  router.post("/mesh/tasks/create", async (req, res) => {
-    const payload = req.body;
-    try {
-      /*
-      FNXC:PostgresCutover 2026-07-12:
-      Replicated task creates are REMOVED on the PostgreSQL backend: nodes
-      share the database, so the originating node's create is already visible
-      to every peer — applying the replicated copy would double-create (or
-      collide on the shared reservation). 409 with a stable code so callers
-      stop replicating to this node (mirrors settings-sync-disabled-postgres).
-      */
-      if (store.backendMode) {
-        res.status(409).json({
-          error: "Task replication is disabled on the PostgreSQL backend — nodes share the database, so tasks are already visible to every peer",
-          code: "task-replication-disabled-postgres",
-        });
-        return;
-      }
-      const senderNodeId = typeof payload?.sourceNodeId === "string" ? payload.sourceNodeId : undefined;
-      if (!(await requireMeshAuth(req, res, senderNodeId))) return;
-      if (payload?.replicationVersion !== 1) throw badRequest("replicationVersion must be 1");
-      if (typeof payload?.reservationId !== "string" || payload.reservationId.trim().length === 0) throw badRequest("reservationId is required");
-      if (typeof payload?.taskId !== "string" || payload.taskId.trim().length === 0) throw badRequest("taskId is required");
-      if (typeof payload?.sourceNodeId !== "string" || payload.sourceNodeId.trim().length === 0) throw badRequest("sourceNodeId is required");
-      if (typeof payload?.createdAt !== "string" || typeof payload?.updatedAt !== "string") throw badRequest("createdAt and updatedAt are required");
-      if (typeof payload?.prompt !== "string") throw badRequest("prompt is required");
-      if (!payload?.input || typeof payload.input !== "object") throw badRequest("input is required");
-
-      const result = await store.applyReplicatedTaskCreate(payload);
-      res.status(result.applied ? 201 : 200).json(result);
-    } catch (err: unknown) {
-      emitRemoteRouteDiagnostic({
-        route: "mesh-task-create",
-        message: "Failed to apply replicated task create",
-        nodeId: typeof payload?.sourceNodeId === "string" ? payload.sourceNodeId : undefined,
-        upstreamPath: "/api/mesh/tasks/create",
-        operationStage: "apply-replicated-create",
-        error: err,
-      });
-      if (err instanceof ApiError) throw err;
-      rethrowAsApiError(err);
-    }
-  });
+  /*
+  FNXC:PostgresCutover 2026-07-12:
+  POST /mesh/tasks/create (replicated task creates) is REMOVED entirely: all
+  replication is handled at the PostgreSQL level — nodes share the database,
+  so the originating node's create is already visible to every peer. The
+  legacy sqlite Database on this branch is a throwing stub, so there is no
+  topology left that needs mesh task replication.
+  */
 
   router.post("/mesh/sync", async (req, res) => {
     try {
@@ -495,51 +460,42 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
 
-      // ── Shared state sync: apply inbound domain snapshots independently ──
-      const { AgentStore, SHARED_STATE_DEFAULT_LIMIT, validateSnapshotEnvelope, MissionStore } = await import("@fusion/core");
+      // ── Shared state sync (settings/auth only) ──
+      const { validateSnapshotEnvelope } = await import("@fusion/core");
       /*
       FNXC:PostgresCutover 2026-07-12:
-      Task/state mesh replication is REMOVED on the PostgreSQL backend: nodes
-      connect to the same shared database, so replicating task metadata,
-      missions, agents, agent runs, activity log, run audit, or project
-      settings over the mesh is redundant and can only clobber the shared
-      rows with a peer's stale snapshot. Inbound sharedState is reduced to the
-      ONE domain that does not live in PostgreSQL — authMaterial (auth.json is
-      per-machine file state; kept, consistent with the settings-sync removal
-      keeping auth sync). Everything else is ignored with a diagnostic. Peer
-      registry exchange (mergePeers/node status) above is topology discovery,
-      not data replication, and stays. The legacy SQLite topology (one DB file
-      per node) keeps full shared-state sync unchanged.
+      Task/state mesh replication is REMOVED: the task-metadata,
+      mission-hierarchy, agents, agent-runs, activity-log, and run-audit
+      shared-state domains (and the store snapshot machinery behind them) are
+      gone — all replication is handled at the PostgreSQL level (nodes share
+      the database). What remains of sharedState is the settings-adjacent
+      pair: projectSettings (legacy sqlite settings sync only; ignored on the
+      PostgreSQL backend like the rest of settings sync) and authMaterial
+      (auth.json is per-machine file state — the one domain not in the
+      database, kept on both backends).
       */
       const rawSharedState = req.body?.sharedState;
       let sharedState = rawSharedState;
-      if (store.backendMode && rawSharedState && typeof rawSharedState === "object") {
-        const ignoredDomains = Object.keys(rawSharedState).filter((domain) => domain !== "authMaterial");
+      if (rawSharedState && typeof rawSharedState === "object") {
+        const allowedDomains = store.backendMode ? ["authMaterial"] : ["projectSettings", "authMaterial"];
+        const ignoredDomains = Object.keys(rawSharedState).filter((domain) => !allowedDomains.includes(domain));
         if (ignoredDomains.length > 0) {
           emitRemoteRouteDiagnostic({
             route: "mesh-sync",
-            message: `Ignored inbound shared-state domains [${ignoredDomains.join(", ")}] — task/state mesh replication is disabled on the PostgreSQL backend (nodes share the database)`,
+            message: `Ignored inbound shared-state domains [${ignoredDomains.join(", ")}] — task/state mesh replication is removed (replication is handled at the PostgreSQL level)`,
             nodeId: senderNodeId,
             upstreamPath: "/api/mesh/sync",
             operationStage: "shared-state-sync",
             level: "info",
           });
         }
-        sharedState = rawSharedState.authMaterial ? { authMaterial: rawSharedState.authMaterial } : undefined;
+        const filtered: Record<string, unknown> = {};
+        for (const domain of allowedDomains) {
+          if (rawSharedState[domain]) filtered[domain] = rawSharedState[domain];
+        }
+        sharedState = Object.keys(filtered).length > 0 ? filtered : undefined;
       }
       if (sharedState && typeof sharedState === "object") {
-        const missionStore = store.getMissionStore();
-        const fusionDir = store.getFusionDir();
-        let agentStore: InstanceType<typeof AgentStore> | null = null;
-
-        const ensureAgentStore = async (): Promise<InstanceType<typeof AgentStore>> => {
-          if (agentStore) return agentStore;
-          const newStore = new AgentStore({ rootDir: fusionDir, taskStore: store, asyncLayer: store.getAsyncLayer() ?? undefined });
-          await newStore.init();
-          agentStore = newStore;
-          return agentStore;
-        };
-
         const applyDomain = async (domain: string, fn: () => Promise<void> | void): Promise<void> => {
           try {
             await fn();
@@ -555,51 +511,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
             });
           }
         };
-
-        await applyDomain("task-metadata", async () => {
-          if (!sharedState.taskMetadata) return;
-          validateSnapshotEnvelope(sharedState.taskMetadata);
-          await store.applyTaskMetadataSnapshot(sharedState.taskMetadata as Parameters<typeof store.applyTaskMetadataSnapshot>[0]);
-        });
-
-        await applyDomain("mission-hierarchy", async () => {
-          if (!sharedState.missionHierarchy) return;
-          validateSnapshotEnvelope(sharedState.missionHierarchy);
-          // FNXC:MissionStore 2026-06-27-15:45:
-          // applyMissionHierarchySnapshot is sync-only (mesh replication). In PG
-          // backend mode getMissionStore() returns the AsyncMissionStore which does
-          // not implement it; guard with instanceof and skip — mission mesh sync is
-          // a sync-mode-only capability this unit.
-          if (missionStore instanceof MissionStore) {
-            missionStore.applyMissionHierarchySnapshot(sharedState.missionHierarchy as Parameters<typeof missionStore.applyMissionHierarchySnapshot>[0]);
-          }
-        });
-
-        await applyDomain("agents", async () => {
-          if (!sharedState.agents) return;
-          validateSnapshotEnvelope(sharedState.agents);
-          const activeAgentStore = await ensureAgentStore();
-          await activeAgentStore.applyAgentSnapshot(sharedState.agents as Parameters<typeof activeAgentStore.applyAgentSnapshot>[0]);
-        });
-
-        await applyDomain("agent-runs", async () => {
-          if (!sharedState.agentRuns) return;
-          validateSnapshotEnvelope(sharedState.agentRuns);
-          const activeAgentStore = await ensureAgentStore();
-          await activeAgentStore.applyAgentRunSnapshot(sharedState.agentRuns as Parameters<typeof activeAgentStore.applyAgentRunSnapshot>[0]);
-        });
-
-        await applyDomain("activity-log", async () => {
-          if (!sharedState.activityLog) return;
-          validateSnapshotEnvelope(sharedState.activityLog);
-          await store.applyActivityLogSnapshotAsync(sharedState.activityLog as Parameters<typeof store.applyActivityLogSnapshotAsync>[0]);
-        });
-
-        await applyDomain("run-audit", async () => {
-          if (!sharedState.runAudit) return;
-          validateSnapshotEnvelope(sharedState.runAudit);
-          await store.applyRunAuditSnapshotAsync(sharedState.runAudit as Parameters<typeof store.applyRunAuditSnapshotAsync>[0]);
-        });
 
         await applyDomain("project-settings", async () => {
           if (!sharedState.projectSettings) return;
@@ -641,9 +552,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
           }
         });
 
-        // Intentionally do not close this per-request AgentStore wrapper.
-        // AgentStore uses a process-wide DB cache by rootDir; closing here would
-        // invalidate shared connections used by long-lived runtime stores.
       }
 
       // Build shared-state response from fresh local snapshots per request.
@@ -678,28 +586,11 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
 
       /*
       FNXC:PostgresCutover 2026-07-12:
-      Outbound shared-state snapshots mirror the inbound gate: on the
-      PostgreSQL backend only authMaterial is offered to peers — the
-      database-backed domains are already shared, and handing a peer a
-      snapshot invites it to re-apply stale rows.
+      Outbound shared-state mirrors the inbound surface: the database-backed
+      domain snapshots are removed; projectSettings is offered only on the
+      legacy sqlite topology; authMaterial is offered on both backends.
       */
       if (!store.backendMode) {
-        await collectSnapshot("taskMetadata", async () => store.getTaskMetadataSnapshot());
-        await collectSnapshot("missionHierarchy", async () => {
-          // FNXC:MissionStore 2026-06-27-15:45: getMissionHierarchySnapshot is sync-only;
-          // skip (undefined snapshot) when the PG AsyncMissionStore is active.
-          const { MissionStore: MissionStoreClass } = await import("@fusion/core");
-          const ms = store.getMissionStore();
-          return ms instanceof MissionStoreClass ? ms.getMissionHierarchySnapshot() : undefined;
-        });
-        await collectSnapshot("activityLog", async () => store.getActivityLogSnapshot(SHARED_STATE_DEFAULT_LIMIT));
-        await collectSnapshot("runAudit", async () => store.getRunAuditSnapshot({ limit: SHARED_STATE_DEFAULT_LIMIT }));
-
-        const responseAgentStore = new AgentStore({ rootDir: store.getFusionDir(), taskStore: store, asyncLayer: store.getAsyncLayer() ?? undefined });
-        await responseAgentStore.init();
-        await collectSnapshot("agents", async () => responseAgentStore.getAgentSnapshot());
-        await collectSnapshot("agentRuns", async () => responseAgentStore.getAgentRunSnapshot(SHARED_STATE_DEFAULT_LIMIT));
-
         await collectSnapshot("projectSettings", async () => {
           const localGlobal = await store.getGlobalSettingsStore().getSettings();
           return central.getProjectSettingsSnapshot(localGlobal);
