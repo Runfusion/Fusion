@@ -220,7 +220,8 @@ describe("CLI package.json publishing config", () => {
       "cpu-features": "transitive dep of dockerode (via ssh2)",
       "@homebridge/node-pty-prebuilt-multiarch":
         "aliased as node-pty in dependencies; the alias entry satisfies the import",
-      "@fusion/core": "plugin-entry bundling external only; not a runtime dep of the CLI bin",
+      // FNXC:BuildConfig 2026-07-13-12:00: FN-7936 aliased @fusion/core to a runtime shim in bundled plugin outputs; it's no longer a tsup external, so this allowlist entry is stale.
+      // "@fusion/core": REMOVED — was "plugin-entry bundling external only; not a runtime dep of the CLI bin",
       "@fusion/engine": "plugin-entry bundling external only; not a runtime dep of the CLI bin",
     };
 
