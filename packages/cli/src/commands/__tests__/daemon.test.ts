@@ -576,6 +576,8 @@ resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
   refreshAllCustomProviderModels: mocks.refreshAllCustomProviderModels,
+  // FNXC:CliTests 2026-07-13-09:40: Missing dashboard barrel exports added for mock completeness (scripts/check-cli-dashboard-mock-completeness.mjs gate).
+  registerGithubTrackingHook: vi.fn(),
 }));
 
 vi.mock("@fusion/engine", async (importOriginal) => {
