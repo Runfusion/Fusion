@@ -358,6 +358,12 @@ export function MainContent({
         <MailboxView
           projectId={currentProject?.id}
           addToast={addToast}
+          /* FNXC:ArtifactRegistry 2026-07-12-00:00: Artifact-registration mail notifications open their producing task through the shared task-detail fetch path so the mailbox does not invent a separate deep-link scheme. */
+          onOpenTask={(taskId) => {
+            void fetchTaskDetail(taskId, currentProject?.id)
+              .then((task) => openDetailTask(task as TaskDetail))
+              .catch(() => addToast?.("Failed to open task", "error"));
+          }}
           onUnreadCountChange={setMailboxUnreadCount}
         />
       </PageErrorBoundary>

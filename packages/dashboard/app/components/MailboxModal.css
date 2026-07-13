@@ -323,7 +323,7 @@
 
 /*
 FNXC:ArtifactRegistry 2026-07-12-00:00:
-Artifact-registration mail messages now render metadata-driven media affordances directly below the markdown body. The block must share mailbox spacing/radius tokens and collapse entirely for messages without artifactId metadata.
+Artifact-registration mail messages now render metadata-driven media and producing-task affordances directly below the markdown body. The Open artifact link and View task button share the same mailbox action styling, spacing/radius tokens, and collapse entirely for messages without artifactId metadata.
 */
 .mailbox-artifact-attachment {
   display: flex;
