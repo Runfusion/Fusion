@@ -1094,8 +1094,10 @@ describe("subtask generation timeout / abort", () => {
     vi.useFakeTimers();
 
     let resolveHungPrompt: (() => void) | undefined;
+    let promptSignal: AbortSignal | undefined;
     const dispose = vi.fn();
-    const hungPromptCallable = vi.fn(async () => {
+    const hungPromptCallable = vi.fn(async (_message: string, options?: { signal?: AbortSignal }) => {
+      promptSignal = options?.signal;
       // Simulate a stalled provider stream that never terminates on its own.
       await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
       return undefined;
@@ -1131,6 +1133,8 @@ describe("subtask generation timeout / abort", () => {
     expect(after?.status).toBe("error");
     expect(after?.error).toMatch(/timed out/i);
     expect(events).toContainEqual(expect.objectContaining({ type: "error", data: expect.stringMatching(/timed out/i) }));
+    expect(promptSignal?.aborted).toBe(true);
+    expect(dispose).toHaveBeenCalledTimes(1);
 
     // The hung prompt is still pending; release it so its microtask completes.
     resolveHungPrompt?.();
@@ -1270,13 +1274,16 @@ describe("subtask generation timeout / abort", () => {
     vi.useFakeTimers();
 
     let resolveHungPrompt: (() => void) | undefined;
+    let promptSignal: AbortSignal | undefined;
+    const dispose = vi.fn();
     mockCreateFnAgent.mockImplementation(async () => ({
       session: {
         state: { messages: [] },
-        prompt: vi.fn(async () => {
+        prompt: vi.fn(async (_message: string, options?: { signal?: AbortSignal }) => {
+          promptSignal = options?.signal;
           await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
         }),
-        dispose: vi.fn(),
+        dispose,
       },
     }));
 
@@ -1285,7 +1292,11 @@ describe("subtask generation timeout / abort", () => {
       undefined,
       "/tmp/project",
     );
-    await Promise.resolve();
+    for (let i = 0; i < 10 && !promptSignal; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+    }
+    expect(promptSignal).toBeDefined();
 
     expect(stopSubtaskGeneration(created.sessionId)).toBe(true);
     await vi.advanceTimersByTimeAsync(0);
@@ -1293,6 +1304,8 @@ describe("subtask generation timeout / abort", () => {
     const after = getSubtaskSession(created.sessionId);
     expect(after?.status).toBe("error");
     expect(after?.error).toMatch(/stopped by user/i);
+    expect(promptSignal?.aborted).toBe(true);
+    expect(dispose).toHaveBeenCalledTimes(1);
 
     // Stop is idempotent — no in-flight generation after first call.
     expect(stopSubtaskGeneration(created.sessionId)).toBe(false);

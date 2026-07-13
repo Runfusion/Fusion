@@ -433,6 +433,8 @@ interface ActivePlanningGeneration {
   abortController: AbortController;
   timer: NodeJS.Timeout;
   abortReason?: PlanningGenerationAbortReason;
+  abortTeardownFired: boolean;
+  abortTeardown: () => void;
   markProgress: (output: string) => void;
 }
 
@@ -736,6 +738,9 @@ function cleanupInMemorySession(sessionId: string): boolean {
   const activeGeneration = activeGenerations.get(sessionId);
   if (activeGeneration) {
     clearTimeout(activeGeneration.timer);
+    activeGeneration.abortReason = "user-stop";
+    activeGeneration.abortTeardown();
+    activeGeneration.abortController.abort();
     activeGenerations.delete(sessionId);
   }
 
@@ -1896,7 +1901,21 @@ async function ensureSessionAgent(
   }
 
   const contextMessage = buildHistoryReplayPrompt(historyForReplay);
-  await session.agent.session.prompt(contextMessage);
+  await runGenerationWithTimeout(session, async (abortSignal) => {
+    /*
+    FNXC:AiSessionCancellation 2026-07-13-00:00:
+    Planning history replay is an agent prompt surface too. Forward the generation AbortSignal and rely on runGenerationWithTimeout to tear down the in-flight session because Promise.race alone cannot cancel prompt() work.
+    */
+    if (abortSignal.aborted) {
+      throw createAbortError();
+    }
+    await (session.agent!.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(contextMessage, {
+      signal: abortSignal,
+    });
+    if (abortSignal.aborted) {
+      throw createAbortError();
+    }
+  });
 }
 
 async function maybeNotifyPlanningAwaitingInput(session: Session, question: PlanningQuestion): Promise<void> {
@@ -1997,6 +2016,7 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   if (existing) {
     clearTimeout(existing.timer);
     existing.abortReason = "displaced";
+    existing.abortTeardown();
     existing.abortController.abort();
   }
 
@@ -2017,8 +2037,8 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
         operation: "planning-generation-watchdog",
       });
       setSessionError(session, message);
-      disposeSessionAgentForRetry(session);
     }
+    generationRecord.abortTeardown();
     abortController.abort();
   };
 
@@ -2029,6 +2049,18 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   const generationRecord: ActivePlanningGeneration = {
     abortController,
     timer: scheduleInactivityTimer(),
+    abortTeardownFired: false,
+    abortTeardown: () => {
+      if (generationRecord.abortTeardownFired) {
+        return;
+      }
+      generationRecord.abortTeardownFired = true;
+      /*
+      FNXC:AiSessionCancellation 2026-07-13-00:00:
+      Planning has a local generation runner instead of GenerationGuard. Abort teardown must run once for timeout, user-stop, displacement, stuck, and loop aborts so an abandoned prompt cannot continue after the Promise.race waiter rejects.
+      */
+      disposeSessionAgentForRetry(session);
+    },
     markProgress: (output: string) => {
       const signature = normalizeGenerationProgress(output);
       if (!signature) {
@@ -2139,11 +2171,19 @@ async function continueAgentConversation(session: Session, message: string): Pro
       // Clear thinking output for this turn
       session.thinkingOutput = "";
 
-      // Send message to agent using .prompt() - it will stream thinking via onThinking callback.
-      // Pass abort signal so timeout/user-stop can cancel the underlying prompt when supported.
+      /*
+      FNXC:AiSessionCancellation 2026-07-13-00:00:
+      Planning turns and parse-retry prompts must pass the active AbortSignal to prompt() and short-circuit after abort. The local generation runner also tears down the agent session because provider SDKs may ignore the signal.
+      */
+      if (abortSignal.aborted) {
+        throw createAbortError();
+      }
       await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(message, {
         signal: abortSignal,
       });
+      if (abortSignal.aborted) {
+        throw createAbortError();
+      }
 
     // Get the response text from the agent's state
     interface AgentMessage {
@@ -2209,12 +2249,18 @@ async function continueAgentConversation(session: Session, message: string): Pro
           );
           try {
             session.thinkingOutput = "";
+            if (abortSignal.aborted) {
+              throw createAbortError();
+            }
             await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
               "Your previous response could not be parsed as JSON. " +
                 'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
                 'or {"type":"complete","data":{...}}. No markdown, no explanation, just the JSON.',
               { signal: abortSignal },
             );
+            if (abortSignal.aborted) {
+              throw createAbortError();
+            }
             
             // Get the new response text
             const retryMessage = (session.agent.session.state.messages as AgentMessage[])
@@ -2238,6 +2284,9 @@ async function continueAgentConversation(session: Session, message: string): Pro
             responseText = retryText;
             markPlanningGenerationProgress(session.id, responseText);
           } catch (retryErr) {
+            if (retryErr instanceof Error && retryErr.name === "AbortError") {
+              throw retryErr;
+            }
             // Retry prompt itself failed — give up
             diagnostics.errorFromException(
               "Retry prompt failed for session",
@@ -2738,19 +2787,10 @@ export function stopGeneration(sessionId: string): boolean {
   }
 
   activeGeneration.abortReason = "user-stop";
-  activeGeneration.abortController.abort();
   clearTimeout(activeGeneration.timer);
+  activeGeneration.abortTeardown();
+  activeGeneration.abortController.abort();
   activeGenerations.delete(sessionId);
-
-  if (session.agent) {
-    nonfatal(
-      () => session.agent?.session.dispose?.(),
-      diagnostics,
-      "Error disposing agent for stop-generation",
-      { sessionId, operation: "stop-generation-dispose" },
-    );
-    session.agent = undefined;
-  }
 
   setSessionError(session, PLANNING_USER_STOP_ERROR_MESSAGE);
   return true;

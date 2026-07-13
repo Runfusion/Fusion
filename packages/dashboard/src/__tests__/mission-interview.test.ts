@@ -37,6 +37,7 @@ import {
   getMissionInterviewSummary,
   getRateLimitResetTime,
   listMissionInterviewDrafts,
+  GenerationInProgressError,
   InvalidSessionStateError,
   missionInterviewStreamManager,
   parseMissionAgentResponse,
@@ -1175,13 +1176,16 @@ describe("mission-interview module", () => {
       vi.useFakeTimers();
 
       let resolveHungPrompt: (() => void) | undefined;
+      let promptSignal: AbortSignal | undefined;
+      const dispose = vi.fn();
       mockCreateFnAgent.mockImplementationOnce(async () => ({
         session: {
           state: { messages: [] },
-          prompt: vi.fn(async () => {
+          prompt: vi.fn(async (_message: string, options?: { signal?: AbortSignal }) => {
+            promptSignal = options?.signal;
             await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
           }),
-          dispose: vi.fn(),
+          dispose,
         },
       }));
 
@@ -1200,6 +1204,8 @@ describe("mission-interview module", () => {
 
       const session = getMissionInterviewSession(sessionId);
       expect(session?.error).toMatch(/timed out/i);
+      expect(promptSignal?.aborted).toBe(true);
+      expect(dispose).toHaveBeenCalledTimes(1);
 
       resolveHungPrompt?.();
       await vi.advanceTimersByTimeAsync(0);
@@ -1211,13 +1217,16 @@ describe("mission-interview module", () => {
       // Real timers — we want the guard.run() registration to actually happen
       // through normal microtask scheduling without us racing it.
       let resolveHungPrompt: (() => void) | undefined;
+      let promptSignal: AbortSignal | undefined;
+      const dispose = vi.fn();
       mockCreateFnAgent.mockImplementationOnce(async () => ({
         session: {
           state: { messages: [] },
-          prompt: vi.fn(async () => {
+          prompt: vi.fn(async (_message: string, options?: { signal?: AbortSignal }) => {
+            promptSignal = options?.signal;
             await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
           }),
-          dispose: vi.fn(),
+          dispose,
         },
       }));
 
@@ -1242,12 +1251,59 @@ describe("mission-interview module", () => {
 
       const session = getMissionInterviewSession(sessionId);
       expect(session?.error).toMatch(/stopped by user/i);
+      expect(promptSignal?.aborted).toBe(true);
+      expect(dispose).toHaveBeenCalledTimes(1);
 
       // Stop is idempotent — no in-flight generation after first call.
       expect(stopMissionInterviewGeneration(sessionId)).toBe(false);
 
       resolveHungPrompt?.();
       await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    it("rejects an overlapping submit instead of crashing when it races the prior generation's displaced-abort teardown", async () => {
+      /*
+      FNXC:AiSessionCancellation 2026-07-13-00:10:
+      Regression test for the onAbort teardown disposing the shared session.agent
+      on EVERY abort cause, including "displaced" (a re-entrant generationGuard.run()
+      call for the same session id). Before the GenerationInProgressError guard, a
+      second overlapping submitMissionInterviewResponse call would observe
+      session.agent === undefined (cleared by the first call's displaced-abort
+      teardown) and crash with a TypeError instead of a clean, recoverable error.
+      */
+      let promptCallIndex = 0;
+      let resolveHungPrompt: (() => void) | undefined;
+      const agent = {
+        session: {
+          state: { messages: [] as Array<{ role: string; content: string }> },
+          prompt: vi.fn(async () => {
+            promptCallIndex += 1;
+            if (promptCallIndex === 1) {
+              agent.session.state.messages.push({ role: "assistant", content: createQuestionJson("q-init") });
+              return;
+            }
+            // Second call (the first submit's turn): hang so it is still
+            // registered in the guard when the second submit races in.
+            await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+      mockCreateFnAgent.mockImplementationOnce(async () => agent);
+
+      const sessionId = await createMissionInterviewSession("10.0.0.12", "Racing mission interview", "/tmp/project", MOCK_TASK_STORE);
+      await waitForCurrentQuestion(sessionId);
+
+      const first = submitMissionInterviewResponse(sessionId, { "q-init": "answer-1" });
+      // Give the first submit's generationGuard.run() a tick to register and
+      // reach the hung prompt() call before the second submit races in.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      await expect(submitMissionInterviewResponse(sessionId, { "q-init": "answer-2" }))
+        .rejects.toThrow(GenerationInProgressError);
+
+      resolveHungPrompt?.();
+      await expect(first).resolves.toBeDefined();
     });
   });
 });

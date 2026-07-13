@@ -638,6 +638,8 @@ export function createMissionRouter(
           throw notFound(errMsg);
         } else if (errName === "InvalidSessionStateError") {
           throw badRequest(errMsg);
+        } else if (errName === "GenerationInProgressError") {
+          throw conflict(errMsg);
         } else {
           throw internalError(errMsg || "Failed to process response");
         }
@@ -689,6 +691,8 @@ export function createMissionRouter(
           throw notFound(errMsg);
         } else if (errName === "InvalidSessionStateError") {
           throw badRequest(errMsg);
+        } else if (errName === "GenerationInProgressError") {
+          throw conflict(errMsg);
         } else {
           throw internalError(errMsg || "Failed to retry interview session");
         }
@@ -3383,6 +3387,8 @@ export function createMissionRouter(
           throw notFound(errMsg);
         } else if (errName === "TargetInvalidSessionStateError") {
           throw badRequest(errMsg);
+        } else if (errName === "TargetGenerationInProgressError") {
+          throw conflict(errMsg);
         } else {
           throw internalError(errMsg || "Failed to process response");
         }
@@ -3547,6 +3553,8 @@ export function createMissionRouter(
           throw notFound(errMsg);
         } else if (errName === "TargetInvalidSessionStateError") {
           throw badRequest(errMsg);
+        } else if (errName === "TargetGenerationInProgressError") {
+          throw conflict(errMsg);
         } else {
           throw internalError(errMsg || "Failed to retry interview session");
         }
@@ -3732,6 +3740,8 @@ export function createMissionRouter(
           throw notFound(errMsg);
         } else if (errName === "TargetInvalidSessionStateError") {
           throw badRequest(errMsg);
+        } else if (errName === "TargetGenerationInProgressError") {
+          throw conflict(errMsg);
         } else {
           throw internalError(errMsg || "Failed to process response");
         }
@@ -3896,6 +3906,8 @@ export function createMissionRouter(
           throw notFound(errMsg);
         } else if (errName === "TargetInvalidSessionStateError") {
           throw badRequest(errMsg);
+        } else if (errName === "TargetGenerationInProgressError") {
+          throw conflict(errMsg);
         } else {
           throw internalError(errMsg || "Failed to retry interview session");
         }

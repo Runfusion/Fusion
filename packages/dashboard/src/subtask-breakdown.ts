@@ -517,19 +517,18 @@ async function generateSubtasks(
       GENERATION_TIMEOUT_MS,
       {
         onTimeout: () => {
-          disposeSubtaskAgentForRetry(session);
           setSubtaskError(
             sessionId,
             "AI generation timed out. You can retry or start a new session.",
           );
         },
         onUserStop: () => {
-          disposeSubtaskAgentForRetry(session);
           setSubtaskError(
             sessionId,
             "Generation stopped by user. You can retry or start a new session.",
           );
         },
+        onAbort: () => disposeSubtaskAgentForRetry(session),
       },
       async (abortSignal) => {
         /*
@@ -582,6 +581,13 @@ async function generateSubtasks(
         }
         session.agent = agent;
 
+        /*
+        FNXC:AiSessionCancellation 2026-07-13-00:00:
+        Subtask generation already forwarded the AbortSignal; keep the explicit pre/post abort checks and pair them with guard-level session teardown because Promise.race alone cannot cancel agent.session.prompt().
+        */
+        if (abortSignal.aborted) {
+          throw createAbortError();
+        }
         await agent.session.prompt(session.initialDescription, { signal: abortSignal });
 
         if (abortSignal.aborted) {

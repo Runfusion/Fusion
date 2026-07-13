@@ -24,12 +24,17 @@ describe("GenerationGuard", () => {
     expect(guard.has("s1")).toBe(false);
   });
 
-  it("fires onTimeout, aborts the operation, and rejects with AbortError when the timer fires", async () => {
+  it("fires onTimeout, tears down, aborts the operation, and rejects with AbortError when the timer fires", async () => {
     const guard = new GenerationGuard();
     const onTimeout = vi.fn();
+    const onAbort = vi.fn();
 
     let opSettled = false;
-    const promise = guard.run("s1", 1_000, { onTimeout }, async () => {
+    let promptSignalAborted = false;
+    const promise = guard.run("s1", 1_000, { onTimeout, onAbort }, async (abortSignal) => {
+      abortSignal.addEventListener("abort", () => {
+        promptSignalAborted = true;
+      }, { once: true });
       // Simulate a hung prompt() that never resolves on its own.
       await new Promise<void>(() => { /* intentionally never resolves */ });
       opSettled = true;
@@ -48,6 +53,8 @@ describe("GenerationGuard", () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.ok ? null : outcome.err).toSatisfy((err: unknown) => isAbortError(err));
     expect(onTimeout).toHaveBeenCalledTimes(1);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(promptSignalAborted).toBe(true);
     expect(opSettled).toBe(false);
     expect(guard.has("s1")).toBe(false);
   });
@@ -56,8 +63,13 @@ describe("GenerationGuard", () => {
     const guard = new GenerationGuard();
     const onTimeout = vi.fn();
     const onUserStop = vi.fn();
+    const onAbort = vi.fn();
+    let promptSignalAborted = false;
 
-    const promise = guard.run("s1", 10_000, { onTimeout, onUserStop }, async () => {
+    const promise = guard.run("s1", 10_000, { onTimeout, onUserStop, onAbort }, async (abortSignal) => {
+      abortSignal.addEventListener("abort", () => {
+        promptSignalAborted = true;
+      }, { once: true });
       await new Promise<void>(() => { /* hang */ });
     });
     const settled = promise.then(
@@ -72,6 +84,8 @@ describe("GenerationGuard", () => {
     expect(outcome.ok).toBe(false);
     expect(onTimeout).not.toHaveBeenCalled();
     expect(onUserStop).toHaveBeenCalledTimes(1);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(promptSignalAborted).toBe(true);
 
     // Subsequent stop is a no-op.
     expect(guard.stop("s1")).toBe(false);
@@ -80,12 +94,19 @@ describe("GenerationGuard", () => {
   it("re-entrant run for the same id aborts the prior generation", async () => {
     const guard = new GenerationGuard();
     const firstUserStop = vi.fn();
+    const firstAbort = vi.fn();
+    let firstPromptSignalAborted = false;
 
     const first = guard.run(
       "s1",
       10_000,
-      { onTimeout: vi.fn(), onUserStop: firstUserStop },
-      async () => { await new Promise<void>(() => { /* hang */ }); },
+      { onTimeout: vi.fn(), onUserStop: firstUserStop, onAbort: firstAbort },
+      async (abortSignal) => {
+        abortSignal.addEventListener("abort", () => {
+          firstPromptSignalAborted = true;
+        }, { once: true });
+        await new Promise<void>(() => { /* hang */ });
+      },
     );
     const firstSettled = first.then(
       () => ({ ok: true as const }),
@@ -101,16 +122,20 @@ describe("GenerationGuard", () => {
     // user-facing stop, so onUserStop is intentionally not fired for the
     // displaced generation. The displaced caller still observes AbortError.
     expect(firstUserStop).not.toHaveBeenCalled();
+    expect(firstAbort).toHaveBeenCalledTimes(1);
+    expect(firstPromptSignalAborted).toBe(true);
     expect(guard.has("s1")).toBe(false);
   });
 
   it("reset() aborts every active generation", async () => {
     const guard = new GenerationGuard();
 
-    const a = guard.run("a", 10_000, { onTimeout: vi.fn() }, async () => {
+    const abortA = vi.fn();
+    const abortB = vi.fn();
+    const a = guard.run("a", 10_000, { onTimeout: vi.fn(), onAbort: abortA }, async () => {
       await new Promise<void>(() => { /* hang */ });
     });
-    const b = guard.run("b", 10_000, { onTimeout: vi.fn() }, async () => {
+    const b = guard.run("b", 10_000, { onTimeout: vi.fn(), onAbort: abortB }, async () => {
       await new Promise<void>(() => { /* hang */ });
     });
     const aSettled = a.catch((err) => err);
@@ -120,6 +145,8 @@ describe("GenerationGuard", () => {
 
     expect(isAbortError(await aSettled)).toBe(true);
     expect(isAbortError(await bSettled)).toBe(true);
+    expect(abortA).toHaveBeenCalledTimes(1);
+    expect(abortB).toHaveBeenCalledTimes(1);
     expect(guard.has("a")).toBe(false);
     expect(guard.has("b")).toBe(false);
   });
