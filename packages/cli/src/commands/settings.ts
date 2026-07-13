@@ -28,6 +28,7 @@ export const VALID_SETTINGS = [
   "defaultModel",
   "defaultNodeId",
   "unavailableNodePolicy",
+  "integrationBranch",
   "worktrunk.enabled",
   "worktrunk.binaryPath",
   "worktrunk.onFailure",
@@ -50,6 +51,7 @@ const PROJECT_ONLY_SETTINGS = [
   "smartConflictResolution",
   "defaultNodeId",
   "unavailableNodePolicy",
+  "integrationBranch",
 ] as const;
 
 type ValidSettingKey = (typeof VALID_SETTINGS)[number];
@@ -79,6 +81,7 @@ const STRING_SETTINGS: readonly string[] = [
   "defaultNodeId",
   "worktreesDir",
   "worktrunk.binaryPath",
+  "integrationBranch",
 ];
 
 // Validation ranges for numeric settings
@@ -272,6 +275,10 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
     {
       title: "Node Routing",
       keys: ["defaultNodeId", "unavailableNodePolicy"],
+    },
+    {
+      title: "Merge",
+      keys: ["integrationBranch"],
     },
     {
       title: "Notifications",
