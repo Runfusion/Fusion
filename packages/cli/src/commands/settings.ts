@@ -33,6 +33,7 @@ export const VALID_SETTINGS = [
   "mergeStrategy",
   "directMergeCommitStrategy",
   "mergeAdvanceAutoSync",
+  "mergeIntegrationWorktree",
   "pushAfterMerge",
   "pushRemote",
   "autoResolveReviewComments",
@@ -70,6 +71,7 @@ const PROJECT_ONLY_SETTINGS = [
   "mergeStrategy",
   "directMergeCommitStrategy",
   "mergeAdvanceAutoSync",
+  "mergeIntegrationWorktree",
   "pushAfterMerge",
   "pushRemote",
   "autoResolveReviewComments",
@@ -96,6 +98,12 @@ const ENUM_SETTINGS: Record<string, readonly string[]> = {
   mergeStrategy: ["direct", "pull-request"],
   directMergeCommitStrategy: ["auto", "always-squash", "always-rebase"],
   mergeAdvanceAutoSync: ["off", "ff-only", "stash-and-ff"],
+  // "cwd-main" is intentionally excluded: it's a deprecated legacy alias for
+  // "cwd-integration-branch" (see MergeIntegrationWorktreeMode in
+  // packages/core/src/types.ts). normalizeMergeIntegrationWorktreeMode() still
+  // coerces any pre-existing "cwd-main" config at read time in the engine, but
+  // the CLI should not accept it as new input.
+  mergeIntegrationWorktree: ["reuse-task-worktree", "cwd-integration-branch"],
   "worktrunk.onFailure": ["fail", "fallback-native"],
   // "auto" clears the persisted locale and reverts to runtime detection.
   language: [...SUPPORTED_LOCALES, "auto"],
@@ -311,6 +319,7 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
         "mergeStrategy",
         "directMergeCommitStrategy",
         "mergeAdvanceAutoSync",
+        "mergeIntegrationWorktree",
         "pushAfterMerge",
         "pushRemote",
         "autoResolveReviewComments",
