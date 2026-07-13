@@ -75,6 +75,7 @@ import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { isTransientError } from "./transient-error-detector.js";
 import { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
+import { deliverPostgresMigrationNoticeIfNeeded } from "./postgres-migration-notice.js";
 import type {
   ExternalTunnelInfo,
   TunnelProvider,
@@ -261,6 +262,11 @@ export interface ProjectEngineOptions {
   projectId?: string;
   /** Base URL for ntfy.sh notifications */
   ntfyBaseUrl?: string;
+  /**
+   * FNXC:StorageMigrationNotice 2026-07-12-00:00:
+   * The CLI layer injects the resolved published @runfusion/fusion version so startup-only operator notices can be gated to release lines without importing dashboard/CLI code into the engine. When absent or unresolved, the Postgres-migration inbox notice is skipped safely.
+   */
+  cliPackageVersion?: string;
   /**
    * An already-initialized TaskStore to use instead of creating a new one.
    * When provided, InProcessRuntime will skip TaskStore construction and init().
@@ -612,6 +618,12 @@ export class ProjectEngine {
 
     // 1. Start the core runtime (TaskStore, Scheduler, Executor, Triage, etc.)
     await this.runtime.start();
+
+    await deliverPostgresMigrationNoticeIfNeeded({
+      messageStore: this.runtime.getMessageStore(),
+      version: this.options.cliPackageVersion,
+      log: runtimeLog,
+    });
 
     const store = this.runtime.getTaskStore();
     const cwd = this.config.workingDirectory;

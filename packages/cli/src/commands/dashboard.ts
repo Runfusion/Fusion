@@ -42,6 +42,7 @@ import {
   GitHubClient,
   createSkillsAdapter,
   getCliPackageVersion,
+  isUnresolvedCliPackageVersion,
   getProjectSettingsPath,
   loadTlsCredentialsFromEnv,
   registerGithubTrackingHook,
@@ -1854,7 +1855,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       // Some tests partially mock @fusion/dashboard and omit this export.
     }
 
+    const resolvedCliPackageVersion = getCliPackageVersion(import.meta.url);
+    const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
+
     const engineManager = new ProjectEngineManager(centralCoreForEngine, {
+      cliPackageVersion,
       getMergeStrategy,
       processPullRequestMerge: (s, wd, taskId, pool) =>
         processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool),

@@ -49,6 +49,7 @@ Artifact tools operate on the shared artifact registry, so artifacts are visible
 - `fn_artifact_list` lists artifacts across agents and tasks with optional `type`, `authorId`, `taskId`, `search`, `limit`, and `offset` filters. Dashboard chat's scoped variant requires `task_id` and otherwise supports `type`, `authorId`, `search`, `limit`, and `offset` for that task.
 - `fn_artifact_view` fetches one artifact by `id`, returning registry metadata plus inline `content` when present or the stored `uri`/path reference for media artifacts.
 - Successful registration emits a best-effort `system` → `user` inbox notification to `DASHBOARD_USER_ID` with `artifactId`, `artifactType`, `title`, `authorId`, and optional `taskId` metadata. Notification delivery failures are logged and must never fail or roll back the artifact registration.
+- On first startup under Fusion `0.59.x`, the engine also sends one best-effort `system` → `user` inbox notice per project about the upcoming embedded-Postgres storage migration, keyed by `metadata.kind = "postgres-migration-notice"` so restarts do not duplicate it.
 
 For the user-facing gallery and notification UX, see [Artifacts View](./dashboard-guide.md#artifacts-view) and [Mailbox View](./dashboard-guide.md#mailbox-view). For storage layout and hydration semantics, see [Artifact registry](./storage.md#artifact-registry-fn-6777).
 

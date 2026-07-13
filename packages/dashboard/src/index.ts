@@ -112,7 +112,7 @@ export {
 export { GitHubTrackingCommentService, formatTrackingComment } from "./github-tracking-comments.js";
 export { GitHubTrackingStateService, decideIssueAction } from "./github-tracking-state.js";
 export { GitHubTrackingReconciler, RECONCILE_CONCURRENCY_LIMIT, RECONCILE_SCAN_LIMIT } from "./github-tracking-reconciler.js";
-export { getCliPackageVersion, resolveCliPackageVersionInfo, type CliPackageVersionInfo } from "./cli-package-version.js";
+export { getCliPackageVersion, isUnresolvedCliPackageVersion, resolveCliPackageVersionInfo, type CliPackageVersionInfo } from "./cli-package-version.js";
 export {
   ApiError,
   type ApiErrorResponse,
