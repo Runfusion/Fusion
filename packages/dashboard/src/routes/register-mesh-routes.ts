@@ -24,6 +24,18 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
   };
 
   const resolveAllocator = async (coordinatorNodeId?: string) => {
+    /*
+    FNXC:PostgresCutover 2026-07-12:
+    Task mesh replication is REMOVED on the PostgreSQL backend: every node
+    connects to the same shared database, so the shared
+    `distributed_task_id_state` rows ARE the coordinator. Never forward a
+    reservation to a remote coordinator node — the local allocator commits
+    atomically against the shared rows, and a remote hop only adds a failure
+    mode (and double-reservation risk against the same table).
+    */
+    if (store.backendMode) {
+      return { mode: "local" as const };
+    }
     return withCentralCore(async (central) => {
       if (!coordinatorNodeId) {
         return { mode: "local" as const };
@@ -307,6 +319,21 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
   router.post("/mesh/tasks/create", async (req, res) => {
     const payload = req.body;
     try {
+      /*
+      FNXC:PostgresCutover 2026-07-12:
+      Replicated task creates are REMOVED on the PostgreSQL backend: nodes
+      share the database, so the originating node's create is already visible
+      to every peer — applying the replicated copy would double-create (or
+      collide on the shared reservation). 409 with a stable code so callers
+      stop replicating to this node (mirrors settings-sync-disabled-postgres).
+      */
+      if (store.backendMode) {
+        res.status(409).json({
+          error: "Task replication is disabled on the PostgreSQL backend — nodes share the database, so tasks are already visible to every peer",
+          code: "task-replication-disabled-postgres",
+        });
+        return;
+      }
       const senderNodeId = typeof payload?.sourceNodeId === "string" ? payload.sourceNodeId : undefined;
       if (!(await requireMeshAuth(req, res, senderNodeId))) return;
       if (payload?.replicationVersion !== 1) throw badRequest("replicationVersion must be 1");
@@ -470,7 +497,36 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
 
       // ── Shared state sync: apply inbound domain snapshots independently ──
       const { AgentStore, SHARED_STATE_DEFAULT_LIMIT, validateSnapshotEnvelope, MissionStore } = await import("@fusion/core");
-      const sharedState = req.body?.sharedState;
+      /*
+      FNXC:PostgresCutover 2026-07-12:
+      Task/state mesh replication is REMOVED on the PostgreSQL backend: nodes
+      connect to the same shared database, so replicating task metadata,
+      missions, agents, agent runs, activity log, run audit, or project
+      settings over the mesh is redundant and can only clobber the shared
+      rows with a peer's stale snapshot. Inbound sharedState is reduced to the
+      ONE domain that does not live in PostgreSQL — authMaterial (auth.json is
+      per-machine file state; kept, consistent with the settings-sync removal
+      keeping auth sync). Everything else is ignored with a diagnostic. Peer
+      registry exchange (mergePeers/node status) above is topology discovery,
+      not data replication, and stays. The legacy SQLite topology (one DB file
+      per node) keeps full shared-state sync unchanged.
+      */
+      const rawSharedState = req.body?.sharedState;
+      let sharedState = rawSharedState;
+      if (store.backendMode && rawSharedState && typeof rawSharedState === "object") {
+        const ignoredDomains = Object.keys(rawSharedState).filter((domain) => domain !== "authMaterial");
+        if (ignoredDomains.length > 0) {
+          emitRemoteRouteDiagnostic({
+            route: "mesh-sync",
+            message: `Ignored inbound shared-state domains [${ignoredDomains.join(", ")}] — task/state mesh replication is disabled on the PostgreSQL backend (nodes share the database)`,
+            nodeId: senderNodeId,
+            upstreamPath: "/api/mesh/sync",
+            operationStage: "shared-state-sync",
+            level: "info",
+          });
+        }
+        sharedState = rawSharedState.authMaterial ? { authMaterial: rawSharedState.authMaterial } : undefined;
+      }
       if (sharedState && typeof sharedState === "object") {
         const missionStore = store.getMissionStore();
         const fusionDir = store.getFusionDir();
@@ -620,26 +676,35 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         }
       };
 
-      await collectSnapshot("taskMetadata", async () => store.getTaskMetadataSnapshot());
-      await collectSnapshot("missionHierarchy", async () => {
-        // FNXC:MissionStore 2026-06-27-15:45: getMissionHierarchySnapshot is sync-only;
-        // skip (undefined snapshot) when the PG AsyncMissionStore is active.
-        const { MissionStore: MissionStoreClass } = await import("@fusion/core");
-        const ms = store.getMissionStore();
-        return ms instanceof MissionStoreClass ? ms.getMissionHierarchySnapshot() : undefined;
-      });
-      await collectSnapshot("activityLog", async () => store.getActivityLogSnapshot(SHARED_STATE_DEFAULT_LIMIT));
-      await collectSnapshot("runAudit", async () => store.getRunAuditSnapshot({ limit: SHARED_STATE_DEFAULT_LIMIT }));
+      /*
+      FNXC:PostgresCutover 2026-07-12:
+      Outbound shared-state snapshots mirror the inbound gate: on the
+      PostgreSQL backend only authMaterial is offered to peers — the
+      database-backed domains are already shared, and handing a peer a
+      snapshot invites it to re-apply stale rows.
+      */
+      if (!store.backendMode) {
+        await collectSnapshot("taskMetadata", async () => store.getTaskMetadataSnapshot());
+        await collectSnapshot("missionHierarchy", async () => {
+          // FNXC:MissionStore 2026-06-27-15:45: getMissionHierarchySnapshot is sync-only;
+          // skip (undefined snapshot) when the PG AsyncMissionStore is active.
+          const { MissionStore: MissionStoreClass } = await import("@fusion/core");
+          const ms = store.getMissionStore();
+          return ms instanceof MissionStoreClass ? ms.getMissionHierarchySnapshot() : undefined;
+        });
+        await collectSnapshot("activityLog", async () => store.getActivityLogSnapshot(SHARED_STATE_DEFAULT_LIMIT));
+        await collectSnapshot("runAudit", async () => store.getRunAuditSnapshot({ limit: SHARED_STATE_DEFAULT_LIMIT }));
 
-      const responseAgentStore = new AgentStore({ rootDir: store.getFusionDir(), taskStore: store, asyncLayer: store.getAsyncLayer() ?? undefined });
-      await responseAgentStore.init();
-      await collectSnapshot("agents", async () => responseAgentStore.getAgentSnapshot());
-      await collectSnapshot("agentRuns", async () => responseAgentStore.getAgentRunSnapshot(SHARED_STATE_DEFAULT_LIMIT));
+        const responseAgentStore = new AgentStore({ rootDir: store.getFusionDir(), taskStore: store, asyncLayer: store.getAsyncLayer() ?? undefined });
+        await responseAgentStore.init();
+        await collectSnapshot("agents", async () => responseAgentStore.getAgentSnapshot());
+        await collectSnapshot("agentRuns", async () => responseAgentStore.getAgentRunSnapshot(SHARED_STATE_DEFAULT_LIMIT));
 
-      await collectSnapshot("projectSettings", async () => {
-        const localGlobal = await store.getGlobalSettingsStore().getSettings();
-        return central.getProjectSettingsSnapshot(localGlobal);
-      });
+        await collectSnapshot("projectSettings", async () => {
+          const localGlobal = await store.getGlobalSettingsStore().getSettings();
+          return central.getProjectSettingsSnapshot(localGlobal);
+        });
+      }
       await collectSnapshot("authMaterial", async () => {
         const authPathsModule = await import("./register-settings-sync-helpers.js");
         const allProviders = await authPathsModule.readStoredAuthProvidersFromDisk();

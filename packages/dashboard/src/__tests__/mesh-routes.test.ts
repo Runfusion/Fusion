@@ -1100,3 +1100,112 @@ describe("/api/mesh/tasks/create", () => {
     expect((response.body as { nodes: Array<{ nodeId: string }> }).nodes.map((node) => node.nodeId)).toContain("node_local");
   });
 });
+
+/*
+FNXC:PostgresCutover 2026-07-12:
+Task mesh replication is REMOVED on the PostgreSQL backend — nodes share the
+database, so replication is handled at the PostgreSQL level. These tests pin
+the three gates: replicated task creates 409 (stable code), inbound/outbound
+/mesh/sync shared-state is reduced to authMaterial only (the one domain not in
+the database), and task-ID reservations never forward to a remote coordinator
+(the shared distributed_task_id_state rows ARE the coordinator).
+*/
+describe("PostgreSQL backend mode: task mesh replication disabled", () => {
+  class BackendModeMockStore extends MockStore {
+    override get backendMode(): boolean {
+      return true;
+    }
+
+    applyTaskMetadataSnapshot = vi.fn();
+  }
+
+  let app: ReturnType<typeof createServer>;
+  let store: BackendModeMockStore;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInit.mockResolvedValue(undefined);
+    mockClose.mockResolvedValue(undefined);
+    mockMergePeers.mockResolvedValue({ added: [], updated: [] });
+    mockGetAllKnownPeerInfo.mockResolvedValue([]);
+    mockGetLocalPeerInfo.mockResolvedValue({
+      nodeId: "node_local",
+      nodeName: "local",
+      nodeUrl: "",
+      status: "online",
+      metrics: null,
+      lastSeen: "2026-04-01T12:00:00.000Z",
+      maxConcurrent: 4,
+    });
+    mockGetNode.mockResolvedValue(undefined);
+    mockUpdateNode.mockResolvedValue({ id: "node_remote", status: "online" });
+    mockReserveDistributedTaskId.mockResolvedValue({ reservationId: "res-1", taskId: "FN-001", sequence: 1, expiresAt: "2030-01-01T00:00:00.000Z", committedClusterTaskCount: 0 });
+    store = new BackendModeMockStore();
+    app = createServer(store as unknown as TaskStore);
+  });
+
+  it("POST /api/mesh/tasks/create answers 409 without applying the replicated create", async () => {
+    const response = await request(
+      app,
+      "POST",
+      "/api/mesh/tasks/create",
+      JSON.stringify({
+        replicationVersion: 1,
+        reservationId: "res-9",
+        taskId: "FN-900",
+        sourceNodeId: "node_remote",
+        createdAt: "2026-07-12T00:00:00.000Z",
+        updatedAt: "2026-07-12T00:00:00.000Z",
+        prompt: "# FN-900",
+        input: { description: "replicated" },
+      }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ code: "task-replication-disabled-postgres" });
+    expect(mockApplyReplicatedTaskCreate).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/mesh/sync ignores inbound task-state domains and offers no database-backed snapshots", async () => {
+    const response = await request(
+      app,
+      "POST",
+      "/api/mesh/sync",
+      JSON.stringify({
+        senderNodeId: "node_remote",
+        knownPeers: [],
+        sharedState: {
+          taskMetadata: { domain: "task-metadata", version: 1, entries: [] },
+        },
+      }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(response.status).toBe(200);
+    // Inbound task metadata is ignored — never applied to the shared database.
+    expect(store.applyTaskMetadataSnapshot).not.toHaveBeenCalled();
+    // Peer topology exchange still works (discovery is not replication).
+    expect(mockMergePeers).toHaveBeenCalled();
+    // No database-backed domains are offered back to the peer.
+    const shared = (response.body as { sharedState?: Record<string, unknown> }).sharedState ?? {};
+    for (const domain of ["taskMetadata", "missionHierarchy", "agents", "agentRuns", "activityLog", "runAudit", "projectSettings"]) {
+      expect(shared[domain]).toBeUndefined();
+    }
+  });
+
+  it("POST /api/mesh/task-ids/reserve resolves locally even when a remote coordinator is named", async () => {
+    const response = await request(
+      app,
+      "POST",
+      "/api/mesh/task-ids/reserve",
+      JSON.stringify({ prefix: "FN", nodeId: "node_remote", coordinatorNodeId: "node_other_coordinator" }),
+      { "Content-Type": "application/json" }
+    );
+
+    expect(response.status).toBe(200);
+    // The shared-database allocator handled it; no coordinator lookup/forward.
+    expect(mockReserveDistributedTaskId).toHaveBeenCalledWith({ prefix: "FN", nodeId: "node_remote", ttlMs: undefined });
+    expect(mockGetNode).not.toHaveBeenCalled();
+  });
+});
