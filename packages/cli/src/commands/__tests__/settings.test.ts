@@ -111,8 +111,7 @@ describe("settings commands", () => {
     // baseBranch is a per-Task/Mission field, NOT a ProjectSettings key — it must
     // never be added to VALID_SETTINGS/PROJECT_ONLY_SETTINGS/STRING_SETTINGS.
     expect(VALID_SETTINGS).not.toContain("baseBranch");
-    // mergeIntegrationWorktree is tracked separately by AIWO-041; not in scope here.
-    expect(VALID_SETTINGS).not.toContain("mergeIntegrationWorktree");
+    expect(VALID_SETTINGS).toContain("mergeIntegrationWorktree");
     // Moved keys are NOT settable via the CLI (they live in workflow settings).
     expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
     expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
@@ -176,6 +175,21 @@ describe("settings commands", () => {
     expect(parseValue("owningNodeHandoffPolicy", "reassign-to-local")).toBe("reassign-to-local");
     expect(parseValue("owningNodeHandoffPolicy", "reassign-any-healthy")).toBe("reassign-any-healthy");
     expect(() => parseValue("owningNodeHandoffPolicy", "invalid")).toThrow(/block, reassign-to-local, reassign-any-healthy/);
+
+    // AIWO-041: mergeIntegrationWorktree — real, unmoved ProjectSettings key
+    // that was still missing from the CLI whitelist.
+    expect(parseValue("mergeIntegrationWorktree", "reuse-task-worktree")).toBe("reuse-task-worktree");
+    expect(parseValue("mergeIntegrationWorktree", "cwd-integration-branch")).toBe("cwd-integration-branch");
+    // The deprecated "cwd-main" legacy alias must be REJECTED by the CLI, not
+    // silently coerced — normalizeMergeIntegrationWorktreeMode()'s coercion
+    // behavior is reserved for the engine's read-time normalization, not new
+    // CLI input.
+    expect(() => parseValue("mergeIntegrationWorktree", "cwd-main")).toThrow(
+      /reuse-task-worktree, cwd-integration-branch/
+    );
+    expect(() => parseValue("mergeIntegrationWorktree", "bogus")).toThrow(
+      /reuse-task-worktree, cwd-integration-branch/
+    );
   });
 
   it("runSettingsShow without project uses global settings even if a project could resolve", async () => {
@@ -405,6 +419,23 @@ describe("settings commands", () => {
     }
   );
 
+  it("runSettingsSet updates mergeIntegrationWorktree (AIWO-041)", async () => {
+    const overrides = { mergeIntegrationWorktree: "cwd-integration-branch" };
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings(overrides));
+    const getSettings = vi.fn().mockResolvedValue(makeSettings(overrides));
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettings } as any,
+    });
+
+    await runSettingsSet("mergeIntegrationWorktree", "cwd-integration-branch", "demo-project");
+
+    expect(updateSettings).toHaveBeenCalledWith({ mergeIntegrationWorktree: "cwd-integration-branch" });
+  });
+
   it.each([
     "owningNodeHandoffPolicy",
     "mergeStrategy",
@@ -413,10 +444,11 @@ describe("settings commands", () => {
     "pushAfterMerge",
     "pushRemote",
     "autoResolveReviewComments",
+    "mergeIntegrationWorktree",
   ] as const)(
     "rejects setting %s without explicit project scope",
     async (key) => {
-      const value = key === "pushAfterMerge" ? "true" : key === "pushRemote" ? "upstream" : "block";
+      const value = key === "pushAfterMerge" ? "true" : key === "pushRemote" ? "upstream" : key === "mergeIntegrationWorktree" ? "reuse-task-worktree" : "block";
       await expect(runSettingsSet(key, value)).rejects.toThrow("process.exit:1");
       expect(errorSpy).toHaveBeenCalledWith(
         `Error: Setting "${key}" is project-only. Use --project or run from a project directory.`
