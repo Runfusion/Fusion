@@ -29,6 +29,11 @@ export interface StandardChatMessageItemProps {
   roomContext?: StandardRoomContext | null;
   copyAction?: ReactNode;
   onScrollToTop?: (messageId: string) => void;
+  /**
+   * FNXC:ChatMessageScrollToTop 2026-07-12-23:09:
+   * ChatView owns scroll-container measurement and sets this when the message top is clipped above the visible container top. StandardChatSurface keeps eligible go-to-top controls mounted for tests/accessibility wiring but hides them until this state is true, and renders the control inline with the Thinking row instead of a standalone action line.
+   */
+  isTopClipped?: boolean;
   isAwaitingQuestionAnswer?: boolean;
   submittedQuestionAnswer?: string;
   onQuestionSubmit?: (answerText: string, structured: Record<string, unknown>) => void;
@@ -351,6 +356,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   toolCallRenderer,
   onEditMessage,
   canEdit = false,
+  isTopClipped = false,
 }: StandardChatMessageItemProps) {
   const { t } = useTranslation("app");
   const isAssistantMessage = message.role === "assistant";
@@ -360,7 +366,8 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
    * Edit affordance is scoped strictly to user messages on surfaces that opt in via both
    * `canEdit` and `onEditMessage`; absent either, `showEditAction` is false and nothing renders
    * (no dead button, no empty shell) — e.g. assistant/system messages, Rooms, CLI-agent chat, or
-   * while a generation is streaming.
+   * while a generation is streaming. The compact pencil renders in the timestamp footer so user
+   * bubbles do not grow an extra action row above their time metadata.
    */
   const showEditAction = isUserMessage && canEdit && Boolean(onEditMessage);
   const [isEditing, setIsEditing] = useState(false);
@@ -451,6 +458,9 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     }
     return renderStandardAssistantContent(message.content, forcePlain);
   }, [failureInfo, forcePlain, isAssistantMessage, isEmptyAssistantMessage, message.content, t]);
+  const hasAssistantFooterRow = isAssistantMessage && !failureInfo && Boolean(message.thinkingOutput || copyAction || onScrollToTop);
+  const hasVisibleAssistantFooterContent = Boolean(message.thinkingOutput || copyAction || (onScrollToTop && isTopClipped));
+  const messageTime = <div className="chat-message-time">{formatRelativeTime(message.createdAt, t)}</div>;
   return (
     <div className={`chat-message chat-message--${message.role}${failureInfo ? " chat-message--failure" : ""}${isEditing ? " chat-message--editing" : ""}`} data-testid={`chat-message-${message.id}`} data-message-id={message.id}>
       {showAssistantIdentity && <div className="chat-message-avatar">{activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}<span>{agentName}</span>{showAssistantModelTag && activeModelTag && <span className="chat-model-tag">{activeModelTag}</span>}</div>}
@@ -480,12 +490,25 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
       ) : (
         isAssistantMessage ? assistantBody : <div className="chat-message-content">{renderedUserContent}</div>
       )}
-      {isAssistantMessage && !failureInfo && (copyAction || onScrollToTop) && <div className="chat-message-actions">{copyAction}{onScrollToTop && <button type="button" className="btn-icon chat-message-scroll-to-top-action" aria-label={t("chat.scrollMessageToTop", "Scroll message to top")} data-testid={`chat-message-scroll-to-top-${message.id}`} onClick={() => onScrollToTop(message.id)}><ArrowUpToLine size={14} /></button>}</div>}
-      {showEditAction && !isEditing && <div className="chat-message-actions chat-message-actions--user"><button type="button" className="btn-icon chat-message-edit-action" aria-label={t("chat.editMessage", "Edit message")} data-testid={`chat-message-edit-${message.id}`} onClick={startEditing}><Pencil size={14} /></button></div>}
+      {hasAssistantFooterRow && (
+        <div className={`chat-message-thinking-row${hasVisibleAssistantFooterContent ? "" : " chat-message-thinking-row--collapsed"}`}>
+          {message.thinkingOutput && <details className="chat-message-thinking"><summary>{t("chat.thinking", "Thinking")}</summary><pre className="chat-message-thinking-content">{linkifyFilePaths(message.thinkingOutput)}</pre></details>}
+          {(copyAction || onScrollToTop) && (
+            <div className="chat-message-actions">
+              {copyAction}
+              {onScrollToTop && <button type="button" className={`btn-icon chat-message-scroll-to-top-action${isTopClipped ? "" : " chat-message-scroll-to-top-action--hidden"}`} aria-label={t("chat.scrollMessageToTop", "Scroll message to top")} data-testid={`chat-message-scroll-to-top-${message.id}`} onClick={() => onScrollToTop(message.id)}><ArrowUpToLine size={14} /></button>}
+            </div>
+          )}
+        </div>
+      )}
       {renderStandardToolCalls(message.toolCalls, t, { isAwaitingAnswer: isAwaitingQuestionAnswer, submittedAnswer: submittedQuestionAnswer, onQuestionSubmit, toolCallRenderer })}
-      {message.thinkingOutput && <details className="chat-message-thinking"><summary>{t("chat.thinking", "Thinking")}</summary><pre className="chat-message-thinking-content">{linkifyFilePaths(message.thinkingOutput)}</pre></details>}
       {renderedAttachments}
-      <div className="chat-message-time">{formatRelativeTime(message.createdAt, t)}</div>
+      {isUserMessage ? (
+        <div className="chat-message-time-row">
+          {messageTime}
+          {showEditAction && !isEditing && <button type="button" className="btn-icon chat-message-edit-action chat-message-edit-action--inline" aria-label={t("chat.editMessage", "Edit message")} data-testid={`chat-message-edit-${message.id}`} onClick={startEditing}><Pencil size={14} /></button>}
+        </div>
+      ) : messageTime}
     </div>
   );
 });

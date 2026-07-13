@@ -704,6 +704,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const chatThreadRef = useRef<HTMLDivElement | null>(null);
+  const clippedMessageFrameRef = useRef<number | null>(null);
+  const [topClippedMessageIds, setTopClippedMessageIds] = useState<Set<string>>(() => new Set());
   // FN-5365: mirror QuickChat's mid-dismiss suppress gate so transient
   // visualViewport shrink samples do not jerk the chat thread/composer.
   const suppressVvShrinkRef = useRef(false);
@@ -978,6 +980,36 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     return container.querySelector<HTMLElement>(`.chat-message[data-message-id="${messageId.replace(/"/g, "\\\"")}"]`);
   }, []);
 
+  const updateTopClippedMessages = useCallback(() => {
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+
+    const containerTop = messagesContainer.getBoundingClientRect().top;
+    const nextIds = new Set<string>();
+    messagesContainer.querySelectorAll<HTMLElement>(".chat-message--assistant:not(.chat-message--failure)[data-message-id]").forEach((element) => {
+      const messageId = element.getAttribute("data-message-id");
+      if (!messageId) return;
+      if (element.getBoundingClientRect().top < containerTop) {
+        nextIds.add(messageId);
+      }
+    });
+
+    setTopClippedMessageIds((previousIds) => {
+      if (previousIds.size === nextIds.size && Array.from(previousIds).every((id) => nextIds.has(id))) {
+        return previousIds;
+      }
+      return nextIds;
+    });
+  }, []);
+
+  const scheduleTopClippedMessageUpdate = useCallback(() => {
+    if (!messagesContainerRef.current || clippedMessageFrameRef.current !== null) return;
+    clippedMessageFrameRef.current = window.requestAnimationFrame(() => {
+      clippedMessageFrameRef.current = null;
+      updateTopClippedMessages();
+    });
+  }, [updateTopClippedMessages]);
+
   const captureScrollSnapshot = useCallback(() => {
     const messagesContainer = messagesContainerRef.current;
     const threadId = getActiveThreadId();
@@ -1012,7 +1044,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     setIsUserScrolling(!atBottom);
     isUserScrollingRef.current = !atBottom;
     captureScrollSnapshot();
-  }, [captureScrollSnapshot]);
+    scheduleTopClippedMessageUpdate();
+  }, [captureScrollSnapshot, scheduleTopClippedMessageUpdate]);
 
   const anchorToBottom = useCallback((container: HTMLElement, options?: { force?: boolean }) => {
     if (!container.isConnected) return;
@@ -1053,6 +1086,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   }, []);
 
   const activeThreadMessages = roomThreadActive ? rooms.messages : messages;
+
+  /*
+  FNXC:ChatMessageScrollToTop 2026-07-12-23:16:
+  ChatView owns the `.chat-messages` viewport, so it measures assistant message tops against the container's visible top on scroll/message changes and passes clipped membership down. The go-to-top control remains DOM-mounted by StandardChatSurface but becomes visually available only after the message's top has moved above this container edge.
+  */
+  useLayoutEffect(() => {
+    scheduleTopClippedMessageUpdate();
+    return () => {
+      if (clippedMessageFrameRef.current !== null) {
+        window.cancelAnimationFrame(clippedMessageFrameRef.current);
+        clippedMessageFrameRef.current = null;
+      }
+    };
+  }, [activeThreadMessages, scheduleTopClippedMessageUpdate]);
 
   useLayoutEffect(() => {
     const messagesContainer = messagesContainerRef.current;
@@ -2577,6 +2624,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               roomContext={null}
               copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
               onScrollToTop={handleScrollMessageToTop}
+              isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
               submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
               onQuestionSubmit={handleQuestionSubmit}
@@ -2621,6 +2669,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               roomContext={null}
               copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
               onScrollToTop={handleScrollMessageToTop}
+              isTopClipped={topClippedMessageIds.has(message.id)}
               isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
               submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
               onQuestionSubmit={handleQuestionSubmit}
@@ -3574,6 +3623,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                         mentionAgentsByName={mentionAgentsByName}
                         roomContext={roomContext}
                         onScrollToTop={handleScrollMessageToTop}
+                        isTopClipped={topClippedMessageIds.has(message.id)}
                         isAwaitingQuestionAnswer={false}
                         onQuestionSubmit={handleQuestionSubmit}
                       />

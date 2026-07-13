@@ -1292,12 +1292,24 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   overflow-wrap: anywhere;
 }
 
+.chat-message-thinking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-thinking-row--collapsed {
+  display: none;
+}
+
 .chat-message-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-xs);
-  margin-top: var(--space-xs);
+  margin-left: auto;
 }
 
 .chat-message-copy-action,
@@ -1305,8 +1317,6 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: var(--space-xs);
-  margin-left: auto;
   width: calc(var(--space-lg) * 2);
   height: calc(var(--space-lg) * 2);
   min-width: calc(var(--space-lg) * 2);
@@ -1321,10 +1331,8 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
-.chat-message-actions .chat-message-copy-action,
-.chat-message-actions .chat-message-scroll-to-top-action {
-  margin-top: 0;
-  margin-left: 0;
+.chat-message-scroll-to-top-action--hidden {
+  display: none;
 }
 
 .chat-message-copy-action:hover,
@@ -1350,16 +1358,19 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
 }
 
 /*
-FNXC:ChatMessageEdit 2026-07-07-09:00:
-User messages in direct (model-loop) chat can carry an inline edit affordance mirroring the
-assistant copy/scroll-to-top action row pattern above, plus an inline textarea editor. Editing
-an earlier message resumes the conversation from that point, forgetting everything after it, so
-keep the affordance visually consistent with existing chat-message-actions styling rather than a
-one-off treatment. Rendered only for user messages on direct/model-loop sessions (never rooms,
-CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEditAction`.
+FNXC:ChatMessageEdit 2026-07-12-23:13:
+User messages in direct (model-loop) chat carry a compact edit affordance inline with the timestamp footer instead of a standalone action row. Editing an earlier message still resumes the conversation from that point, forgetting everything after it; the footer placement keeps the affordance discoverable without adding vertical space. Rendered only for user messages on direct/model-loop sessions (never rooms, CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEditAction`.
 */
-.chat-message-actions--user {
-  justify-content: flex-start;
+.chat-message-time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-top: var(--space-2xs);
+}
+
+.chat-message-time-row .chat-message-time {
+  margin-top: 0;
 }
 
 .chat-message-edit-action {
@@ -1378,6 +1389,13 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
   cursor: pointer;
   opacity: 0.85;
   transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.chat-message-edit-action--inline {
+  width: calc(var(--space-lg) * 1.5);
+  height: calc(var(--space-lg) * 1.5);
+  min-width: calc(var(--space-lg) * 1.5);
+  min-height: calc(var(--space-lg) * 1.5);
 }
 
 .chat-message-edit-action:hover {
@@ -1415,11 +1433,15 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
 }
 
 @media (max-width: 768px) {
-  .chat-message-edit-action {
-    width: calc(var(--space-lg) * 2.25);
-    height: calc(var(--space-lg) * 2.25);
-    min-width: calc(var(--space-lg) * 2.25);
-    min-height: calc(var(--space-lg) * 2.25);
+  .chat-message-time-row {
+    align-items: center;
+  }
+
+  .chat-message-edit-action--inline {
+    width: calc(var(--space-lg) * 1.75);
+    height: calc(var(--space-lg) * 1.75);
+    min-width: calc(var(--space-lg) * 1.75);
+    min-height: calc(var(--space-lg) * 1.75);
   }
 
   .chat-message-edit-textarea {
@@ -1485,13 +1507,15 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
 }
 
 .chat-message-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-dim);
-  margin-top: 4px;
+  margin-top: var(--space-2xs);
 }
 
 .chat-message-thinking {
-  margin-top: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
 }
 
 .chat-message-thinking summary {
@@ -2504,8 +2528,16 @@ Queued-message banners stack above the composer input with a capped scroll area,
     opacity: 1;
   }
 
+  .chat-message-thinking-row {
+    gap: var(--space-xs);
+  }
+
   .chat-message-scroll-to-top-action {
     opacity: 1;
+  }
+
+  .chat-message-scroll-to-top-action--hidden {
+    display: none;
   }
 
   .chat-tool-calls-group-summary,

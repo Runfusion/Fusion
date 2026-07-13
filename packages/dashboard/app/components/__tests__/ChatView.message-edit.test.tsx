@@ -9,6 +9,7 @@ editMessageAndResend wiring.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import { ChatView } from "../ChatView";
+import { StandardChatMessageItem } from "../StandardChatSurface";
 import * as useChatModule from "../../hooks/useChat";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
 import type { ChatSessionInfo, UseChatReturn } from "../../hooks/useChat";
@@ -155,7 +156,15 @@ describe("ChatView message edit affordance", () => {
 
     await renderWithAct(<ChatView addToast={vi.fn()} />);
 
-    expect(screen.getByTestId("chat-message-edit-user-1")).toHaveAttribute("aria-label", "Edit message");
+    const editButton = screen.getByTestId("chat-message-edit-user-1");
+    const userMessage = screen.getByTestId("chat-message-user-1");
+    const timeRow = userMessage.querySelector(".chat-message-time-row");
+
+    expect(editButton).toHaveAttribute("aria-label", "Edit message");
+    expect(editButton).toHaveClass("chat-message-edit-action--inline");
+    expect(timeRow).toContainElement(userMessage.querySelector(".chat-message-time") as HTMLElement);
+    expect(timeRow).toContainElement(editButton);
+    expect(userMessage.querySelector(".chat-message-actions--user")).toBeNull();
     expect(screen.queryByTestId("chat-message-edit-assistant-1")).toBeNull();
   });
 
@@ -246,6 +255,29 @@ describe("ChatView message edit affordance", () => {
     expect(editMessageAndResend).not.toHaveBeenCalled();
     expect(screen.queryByTestId("chat-message-edit-editor-user-1")).toBeNull();
     expect(screen.getByTestId("chat-message-user-1")).toHaveTextContent("hello");
+  });
+
+  it("renders inline edit without a go-to-top control for non-scroll-to-top consumers", () => {
+    rtlRender(
+      <StandardChatMessageItem
+        message={{ id: "planner-user-1", sessionId: "task-planner:FN-1", role: "user", content: "planner request", createdAt: "2026-04-08T00:00:00.000Z" }}
+        forcePlain={false}
+        agentName="Planner"
+        hideAssistantIdentity={false}
+        showAssistantModelTag={false}
+        activeModelTag={null}
+        activeModelProvider={null}
+        activeSessionId="task-planner:FN-1"
+        onEditMessage={vi.fn()}
+        canEdit={true}
+      />,
+    );
+
+    const editButton = screen.getByTestId("chat-message-edit-planner-user-1");
+    const message = screen.getByTestId("chat-message-planner-user-1");
+    expect(editButton).toHaveClass("chat-message-edit-action--inline");
+    expect(message.querySelector(".chat-message-time-row")).toContainElement(editButton);
+    expect(message.querySelector("[data-testid^='chat-message-scroll-to-top-']")).toBeNull();
   });
 
   it("does not leave an empty edit-action shell for assistant messages", async () => {
