@@ -41,11 +41,17 @@ import type { GlobalSettings, Settings } from "@fusion/core";
  * The project-scoped title-summarizer fallback thinking companion must travel
  * with its provider/model pair so clearing the inline selector serializes as
  * null-as-delete instead of being dropped as an unchanged inherited value.
+ *
+ * FNXC:Settings-MergerModel 2026-07-13-07:52:
+ * Merger project lane (provider/model/thinking) is project-scoped like
+ * title summarizer — not workflow-moved — so it participates in the same
+ * changed-only/null-as-delete project-branch write path.
  */
 export const MODEL_LANE_KEYS = [
   "defaultProviderOverride", "defaultModelIdOverride",
   "titleSummarizerProvider", "titleSummarizerModelId",
   "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackThinkingLevel",
+  "mergerProvider", "mergerModelId", "mergerThinkingLevel",
 ] as const;
 
 const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
@@ -148,6 +154,9 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "validatorGlobalModelId",
     "titleSummarizerGlobalProvider",
     "titleSummarizerGlobalModelId",
+    "mergerGlobalProvider",
+    "mergerGlobalModelId",
+    "mergerGlobalThinkingLevel",
   ]),
   "project-models": new Set([
     "defaultProvider",
@@ -172,6 +181,9 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "validatorGlobalModelId",
     "titleSummarizerGlobalProvider",
     "titleSummarizerGlobalModelId",
+    "mergerGlobalProvider",
+    "mergerGlobalModelId",
+    "mergerGlobalThinkingLevel",
   ]),
   "node-sync": new Set([
     "settingsSyncEnabled",

@@ -3508,6 +3508,17 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for title summarization.
    *  Must be set together with `titleSummarizerGlobalProvider`. */
   titleSummarizerGlobalModelId?: string;
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Merger AI sessions (conflict resolution, clean-room merge, stash-conflict, PR-response helpers, merge commit agent) need a dedicated global baseline lane so operators can pin a merge-capable model without forcing the same choice onto executor/planner/reviewer. Project `mergerProvider`/`mergerModelId` override this pair; unset falls through to project/global default.
+  */
+  /** Global baseline AI model provider for merger agent sessions.
+   *  Must be set together with `mergerGlobalModelId`. Falls back to
+   *  `defaultProvider`/`defaultModelId` when undefined. */
+  mergerGlobalProvider?: string;
+  /** Global baseline AI model ID for merger agent sessions.
+   *  Must be set together with `mergerGlobalProvider`. */
+  mergerGlobalModelId?: string;
   /** Optional global execution-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   executionGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global planning-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
@@ -3516,6 +3527,8 @@ export interface GlobalSettings {
   validatorGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   titleSummarizerGlobalThinkingLevel?: ThinkingLevel;
+  /** Optional global merger-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  mergerGlobalThinkingLevel?: ThinkingLevel;
   /** The daemon authentication token (format: fn_<32 hex chars>).
    *  Used for authenticating CLI clients to the daemon server. */
   daemonToken?: string;
@@ -4685,6 +4698,19 @@ export interface ProjectSettings {
   titleSummarizerModelId?: string;
   /** Optional project summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   titleSummarizerThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Project-scoped merger lane overrides the global merger baseline for conflict resolution and related merge-agent sessions. Both provider and model id must be set together; partial pairs are ignored and fall through. Unset inherits global merger lane then project/global default.
+  */
+  /** Project AI model provider for merger agent sessions.
+   *  Must be set together with `mergerModelId`. Falls back to
+   *  `mergerGlobalProvider`/`mergerGlobalModelId`, then project/global default. */
+  mergerProvider?: string;
+  /** Project AI model ID for merger agent sessions.
+   *  Must be set together with `mergerProvider`. */
+  mergerModelId?: string;
+  /** Optional project merger-lane thinking override. Inherits through global merger thinking then default thinking when unset. */
+  mergerThinkingLevel?: ThinkingLevel;
   /** Fallback model provider for title summarization. When unset, falls back to
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackModelId`. */

@@ -536,13 +536,14 @@ Fusion supports OAuth-based authentication for AI providers configured via **Set
 
 ### Model system
 
-Fusion uses a dual-scope model hierarchy with five independent lanes. Global settings define baseline defaults; project settings provide per-project overrides.
+Fusion uses a dual-scope model hierarchy with independent lanes. Global settings define baseline defaults; project settings provide per-project overrides.
 
 | Lane | Purpose | Global Baseline Keys | Project Override Keys |
 |------|---------|---------------------|----------------------|
 | Executor | Task execution agent | `executionGlobalProvider` + `executionGlobalModelId` | `executionProvider` + `executionModelId` |
 | Planning | Task planning agent | `planningGlobalProvider` + `planningGlobalModelId` | `planningProvider` + `planningModelId` |
 | Validator | Plan/code reviewer | `validatorGlobalProvider` + `validatorGlobalModelId` | `validatorProvider` + `validatorModelId` |
+| Merger | Merge conflict / clean-room merge agent | `mergerGlobalProvider` + `mergerGlobalModelId` | `mergerProvider` + `mergerModelId` |
 | Title Summarization | Auto-title generation | `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId` | `titleSummarizerProvider` + `titleSummarizerModelId` |
 | Workflow Step Refinement | AI prompt refinement | (uses `defaultProvider`/`defaultModelId`) | (uses `modelProvider`/`modelId` on WorkflowStep) |
 

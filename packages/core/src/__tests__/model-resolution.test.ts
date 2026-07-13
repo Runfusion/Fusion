@@ -7,6 +7,7 @@ import {
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
+  resolveMergerSettingsModel,
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
   TEST_MODE_RESOLVED,
@@ -132,6 +133,15 @@ describe("model-resolution", () => {
       defaultProviderOverride: "project-default-provider",
       defaultModelIdOverride: "project-default-model",
     })).toEqual({ provider: "project-title-provider", modelId: "project-title-model" });
+
+    expect(resolveMergerSettingsModel({
+      mergerProvider: "project-merger-provider",
+      mergerModelId: "project-merger-model",
+      mergerGlobalProvider: "global-merger-provider",
+      mergerGlobalModelId: "global-merger-model",
+      defaultProviderOverride: "project-default-provider",
+      defaultModelIdOverride: "project-default-model",
+    })).toEqual({ provider: "project-merger-provider", modelId: "project-merger-model" });
   });
 
   it("does not mix partial project lane pairs with lower precedence model fields", () => {
@@ -160,6 +170,12 @@ describe("model-resolution", () => {
       planningProvider: "project-plan-provider",
       planningModelId: "project-plan-model",
     })).toEqual({ provider: "global-title-provider", modelId: "global-title-model" });
+
+    expect(resolveMergerSettingsModel({
+      mergerProvider: "project-merger-provider",
+      mergerGlobalProvider: "global-merger-provider",
+      mergerGlobalModelId: "global-merger-model",
+    })).toEqual({ provider: "global-merger-provider", modelId: "global-merger-model" });
   });
 
   it("keeps global lane and default fallback order intact when project lanes are unset", () => {
@@ -190,6 +206,33 @@ describe("model-resolution", () => {
       defaultProviderOverride: "project-default-provider",
       defaultModelIdOverride: "project-default-model",
     })).toEqual({ provider: "global-title-provider", modelId: "global-title-model" });
+
+    expect(resolveMergerSettingsModel({
+      mergerGlobalProvider: "global-merger-provider",
+      mergerGlobalModelId: "global-merger-model",
+      defaultProviderOverride: "project-default-provider",
+      defaultModelIdOverride: "project-default-model",
+    })).toEqual({ provider: "global-merger-provider", modelId: "global-merger-model" });
+
+    expect(resolveMergerSettingsModel({
+      defaultProviderOverride: "project-default-provider",
+      defaultModelIdOverride: "project-default-model",
+      defaultProvider: "global-default-provider",
+      defaultModelId: "global-default-model",
+    })).toEqual({ provider: "project-default-provider", modelId: "project-default-model" });
+  });
+
+  it("does not inherit execution/planning/validator lanes for the merger model", () => {
+    expect(resolveMergerSettingsModel({
+      executionProvider: "project-exec-provider",
+      executionModelId: "project-exec-model",
+      planningProvider: "project-plan-provider",
+      planningModelId: "project-plan-model",
+      validatorProvider: "project-validator-provider",
+      validatorModelId: "project-validator-model",
+      defaultProvider: "global-default-provider",
+      defaultModelId: "global-default-model",
+    })).toEqual({ provider: "global-default-provider", modelId: "global-default-model" });
   });
 
   it("uses task overrides before settings fallbacks", () => {
@@ -397,6 +440,8 @@ describe("model-resolution", () => {
       validatorModelId: "claude-sonnet-4-5",
       titleSummarizerProvider: "anthropic",
       titleSummarizerModelId: "claude-sonnet-4-5",
+      mergerProvider: "anthropic",
+      mergerModelId: "claude-sonnet-4-5",
       defaultProviderOverride: "anthropic",
       defaultModelIdOverride: "claude-sonnet-4-5",
     };
@@ -414,6 +459,7 @@ describe("model-resolution", () => {
     expect(resolvePlanningSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
     expect(resolveValidatorSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
     expect(resolveTitleSummarizerSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveMergerSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
     expect(resolveTaskExecutionModel(taskOverrides, settings)).toEqual(TEST_MODE_RESOLVED);
     expect(resolveTaskValidatorModel(taskOverrides, settings)).toEqual(TEST_MODE_RESOLVED);
     expect(resolveTaskPlanningModel(taskOverrides, settings)).toEqual(TEST_MODE_RESOLVED);

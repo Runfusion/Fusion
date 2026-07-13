@@ -330,6 +330,10 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   titleSummarizerFallbackModelId: "configured via the model-lane picker, not a plain description field",
   titleSummarizerGlobalProvider: "configured via the model-lane picker, not a plain description field",
   titleSummarizerGlobalModelId: "configured via the model-lane picker, not a plain description field",
+  mergerProvider: "configured via the model-lane picker, not a plain description field",
+  mergerModelId: "configured via the model-lane picker, not a plain description field",
+  mergerGlobalProvider: "configured via the model-lane picker, not a plain description field",
+  mergerGlobalModelId: "configured via the model-lane picker, not a plain description field",
   executionGlobalProvider: "configured via the model-lane picker, not a plain description field",
   executionGlobalModelId: "configured via the model-lane picker, not a plain description field",
   planningGlobalProvider: "configured via the model-lane picker, not a plain description field",
@@ -343,13 +347,16 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   // model-lane pickers (GlobalModelsSection / ProjectModelsSection). They are NOT standalone
   // description fields — they ride alongside their provider/model lane pair, exactly like
   // executionGlobalProvider / titleSummarizerProvider etc. above.
+  // FNXC:Settings-MergerModel 2026-07-13-07:52: merger lane thinking companions follow the same picker pattern.
   executionGlobalThinkingLevel: "inline thinking companion for the global execution lane, configured via the model-lane picker, not a plain description field",
   planningGlobalThinkingLevel: "inline thinking companion for the global planning lane, configured via the model-lane picker, not a plain description field",
   validatorGlobalThinkingLevel: "inline thinking companion for the global validator lane, configured via the model-lane picker, not a plain description field",
   titleSummarizerGlobalThinkingLevel: "inline thinking companion for the global title-summarizer lane, configured via the model-lane picker, not a plain description field",
+  mergerGlobalThinkingLevel: "inline thinking companion for the global merger lane, configured via the model-lane picker, not a plain description field",
   defaultThinkingLevelOverride: "project-scoped Default-lane inline thinking companion, configured via the model-lane picker, not a plain description field",
   titleSummarizerThinkingLevel: "project title-summarizer inline thinking companion, configured via the model-lane picker, not a plain description field",
   titleSummarizerFallbackThinkingLevel: "project title-summarizer fallback inline thinking companion, configured via the model-lane picker, not a plain description field",
+  mergerThinkingLevel: "project merger inline thinking companion, configured via the model-lane picker, not a plain description field",
   fallbackThinkingLevel: "global fallback model inline thinking companion, configured via the model-lane picker, not a plain description field",
   agentPrompts2: "not a real key (placeholder guard)",
   promptOverrides2: "not a real key (placeholder guard)",

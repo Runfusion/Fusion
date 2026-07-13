@@ -16,6 +16,7 @@ import {
   isGrokApiKeyFusionVisible,
   isTestModeActive,
   resolveExecutionSettingsModel,
+  resolveMergerSettingsModel,
   resolvePhaseThinkingLevel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
@@ -257,15 +258,22 @@ export function resolveTitleSummarizerThinkingLevel(settings: Partial<Settings> 
 
 /**
  * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
- * `resolveMergerSessionModel` intentionally resolves the merger's model from the
- * project/global DEFAULT lane, not the title-summarizer lane. The thinking level
- * threaded into merger sessions (mutating merge agent, stash-conflict resolver,
- * commit agent, PR-response agent) must follow that same default-lane precedence
- * so a `titleSummarizerThinkingLevel` override (meant only for title/commit-message
- * summarization sessions) does not leak into full merge-agent runs.
+ * Merger thinking must not inherit title-summarizer thinking (commit-message
+ * summarization is a different session purpose).
+ *
+ * FNXC:Settings-MergerModel 2026-07-13-07:52:
+ * After the merger model lane became configurable under Global/Project Models,
+ * thinking follows the same precedence as other dedicated lanes: project merger
+ * thinking → global merger thinking → project default thinking override → global
+ * default thinking. Unset at every level preserves prior default-only behavior.
  */
 export function resolveMergerThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
-  return firstThinkingLevel(settings?.defaultThinkingLevelOverride, settings?.defaultThinkingLevel);
+  return firstThinkingLevel(
+    settings?.mergerThinkingLevel,
+    settings?.mergerGlobalThinkingLevel,
+    settings?.defaultThinkingLevelOverride,
+    settings?.defaultThinkingLevel,
+  );
 }
 
 /**
@@ -559,11 +567,14 @@ export function resolveMergerSessionModel(
     };
   }
 
-  // Merger intentionally uses the default lane rather than execution/validator
-  // lanes. Validator-specific callers resolve `resolveValidatorSettingsModel`
-  // before falling back here; generic merger work uses project/global defaults.
-  const defaultModel = resolveProjectDefaultModel(settings);
-  return pickSettingsThenRuntimeModel(defaultModel, assignedAgentRuntimeConfig);
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Merger sessions use the dedicated merger settings lane (project → global → default),
+  not execution/planning/validator. Session fallback still uses the shared global
+  fallbackProvider/fallbackModelId pair at createResolvedAgentSession call sites.
+  */
+  const mergerModel = resolveMergerSettingsModel(settings);
+  return pickSettingsThenRuntimeModel(mergerModel, assignedAgentRuntimeConfig);
 }
 
 /**

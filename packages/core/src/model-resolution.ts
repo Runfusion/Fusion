@@ -186,6 +186,29 @@ export function resolveTitleSummarizerSettingsModel(settings?: Partial<Settings>
   );
 }
 
+/**
+ * FNXC:Settings-MergerModel 2026-07-13-07:52:
+ * Merger sessions resolve project merger lane → global merger lane → project/global default.
+ * They intentionally do not inherit execution/planning/validator lanes so a merge-specific
+ * model can be configured under Global/Project Models without changing other AI roles.
+ */
+export function resolveMergerSettingsModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.mergerProvider,
+        modelId: settings?.mergerModelId,
+      },
+      {
+        provider: settings?.mergerGlobalProvider,
+        modelId: settings?.mergerGlobalModelId,
+      },
+      resolveProjectDefaultModel(settings),
+    ),
+    settings,
+  );
+}
+
 export function resolveTaskExecutionModel(
   task: TaskModelLike,
   settings?: Partial<Settings>,

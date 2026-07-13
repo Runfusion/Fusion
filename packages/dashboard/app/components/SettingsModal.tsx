@@ -2633,7 +2633,11 @@ export function SettingsModal({
     fallbackOrder: string;
   }
 
-  /** All five model lanes with their global and project override keys */
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  MODEL_LANES drives Global Models + Project Models pickers. Merger is a sixth dedicated lane (project-scoped like summarization, not workflow-moved) so conflict/merge agents can use a different model from executor/planner/reviewer without a separate settings surface.
+  */
+  /** All model lanes with their global and project override keys */
   const MODEL_LANES: ModelLane[] = [
     {
       laneId: "default",
@@ -2678,6 +2682,18 @@ export function SettingsModal({
       projectModelKey: "validatorModelId",
       helperText: "AI model used for code and specification review.",
       fallbackOrder: "Project override → Global reviewer lane → Global default lane → Automatic resolution",
+    },
+    {
+      laneId: "merger",
+      label: "Merger Model",
+      globalProviderKey: "mergerGlobalProvider",
+      globalModelKey: "mergerGlobalModelId",
+      globalThinkingKey: "mergerGlobalThinkingLevel",
+      projectProviderKey: "mergerProvider",
+      projectModelKey: "mergerModelId",
+      projectThinkingKey: "mergerThinkingLevel",
+      helperText: "AI model used for merge conflict resolution, clean-room merge, stash-conflict recovery, and related merger agent sessions.",
+      fallbackOrder: "Project override → Global merger lane → Project default lane → Global default lane → Automatic resolution",
     },
     {
       laneId: "summarization",

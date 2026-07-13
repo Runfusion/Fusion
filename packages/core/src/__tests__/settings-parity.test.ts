@@ -105,15 +105,18 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.defaultThinkingLevelOverride).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.titleSummarizerThinkingLevel).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.titleSummarizerFallbackThinkingLevel).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.mergerThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.fallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.executionGlobalThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.planningGlobalThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.validatorGlobalThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.titleSummarizerGlobalThinkingLevel).toBeUndefined();
+    expect(DEFAULT_GLOBAL_SETTINGS.mergerGlobalThinkingLevel).toBeUndefined();
 
     expect(isProjectSettingsKey("defaultThinkingLevelOverride")).toBe(true);
     expect(isProjectSettingsKey("titleSummarizerThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("titleSummarizerFallbackThinkingLevel")).toBe(true);
+    expect(isProjectSettingsKey("mergerThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("fallbackThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("planningFallbackThinkingLevel")).toBe(false);
     expect(isGlobalSettingsKey("planningFallbackThinkingLevel")).toBe(false);
@@ -123,6 +126,7 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("planningGlobalThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("validatorGlobalThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("titleSummarizerGlobalThinkingLevel")).toBe(true);
+    expect(isGlobalSettingsKey("mergerGlobalThinkingLevel")).toBe(true);
   });
 
   it("defaults persisted thinking logs to disabled", () => {
@@ -573,6 +577,9 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId", expectedScope: "project" },
     { provider: "titleSummarizerGlobalProvider", modelId: "titleSummarizerGlobalModelId", expectedScope: "global" },
     { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId", expectedScope: "project" },
+    // Merger lane (project-scoped like summarizer; not workflow-moved)
+    { provider: "mergerProvider", modelId: "mergerModelId", expectedScope: "project" },
+    { provider: "mergerGlobalProvider", modelId: "mergerGlobalModelId", expectedScope: "global" },
   ] as const;
 
   it.each(allModelLanePairs)(

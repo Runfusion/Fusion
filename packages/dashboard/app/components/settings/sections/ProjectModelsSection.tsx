@@ -271,13 +271,17 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         registerWorkflowLaneSaver?.(saveWorkflowLanes);
         return () => registerWorkflowLaneSaver?.(null);
     }, [registerWorkflowLaneSaver, saveWorkflowLanes]);
-    // The project DEFAULT lane and restored title-summarizer lane remain editable
+    // The project DEFAULT, title-summarizer, and merger lanes remain editable
     // here. Execution/planning/validator workflow-specific lanes still redirect to
     // workflow settings below.
-    const projectModelLanes = modelLanes.filter((lane) => ["default", "summarization"].includes(lane.laneId));
+    // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
+    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "summarization"].includes(lane.laneId));
     const getProjectLaneLabel = (lane: ModelLane) => {
         if (lane.laneId === "default") {
             return "Project Default Model";
+        }
+        if (lane.laneId === "merger") {
+            return "Project Merger Model";
         }
         if (lane.laneId === "summarization") {
             return "Project Summarization Model";
@@ -287,6 +291,9 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
     const getProjectLaneHelperText = (lane: ModelLane) => {
         if (lane.laneId === "default") {
             return "Project-wide default AI model used when no more specific task or project lane override is set.";
+        }
+        if (lane.laneId === "merger") {
+            return "Model used for merge conflict resolution, clean-room merge, stash-conflict recovery, and related merger agent sessions.";
         }
         if (lane.laneId === "summarization") {
             return "Model used for title auto-summarization, merge commit summaries, GitHub tracking issue titles, and PR title/body generation.";

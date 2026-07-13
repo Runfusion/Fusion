@@ -193,6 +193,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   titleSummarizerGlobalProvider: undefined,
   titleSummarizerGlobalModelId: undefined,
   /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Global merger baseline lane (provider/model/thinking) is independent of executor/planner/reviewer so operators can pin a merge-capable model under Settings → Global Models without changing other lanes. Undefined falls through to defaultProvider/defaultModelId at resolve time.
+  */
+  mergerGlobalProvider: undefined,
+  mergerGlobalModelId: undefined,
+  /*
   FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
   Global model lanes can override the default thinking effort independently. Undefined preserves the existing inheritance to `defaultThinkingLevel`.
   */
@@ -200,6 +206,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   planningGlobalThinkingLevel: undefined,
   validatorGlobalThinkingLevel: undefined,
   titleSummarizerGlobalThinkingLevel: undefined,
+  mergerGlobalThinkingLevel: undefined,
   // Daemon mode settings
   daemonToken: undefined,
   daemonPort: 4040,
@@ -593,6 +600,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   titleSummarizerFallbackProvider: undefined,
   titleSummarizerFallbackModelId: undefined,
   titleSummarizerFallbackThinkingLevel: undefined,
+  /*
+  FNXC:Settings-MergerModel 2026-07-13-07:52:
+  Merger model lane stays project-scoped (not workflow-moved) like title summarizer: Settings → Project Models can override the global merger baseline without binding the choice to a workflow graph.
+  */
+  mergerProvider: undefined,
+  mergerModelId: undefined,
+  mergerThinkingLevel: undefined,
   prTitlePromptInstructions: undefined,
   prDescriptionPromptInstructions: undefined,
   scripts: undefined,
