@@ -470,7 +470,7 @@ The `tasks.cumulativeActiveMs` and `tasks.executionCompletedAt` columns are the 
 | `project_insight_run_events` | Append-only per-run lifecycle trail (`seq`, `type`, `message`, optional `status`/`classification`/`metadata`) used by cancel/retry/timeout auditing and API inspection. |
 | `todo_lists` | Project-scoped todo list metadata (`projectId`, title, created/updated timestamps). |
 | `todo_items` | Todo list items (`listId` FK) with completion state, completion timestamp, and deterministic `sortOrder`. |
-| `ai_sessions` *(migration-created)* | Persisted AI interactive sessions (planning/interview/subtask) with status and conversation history. |
+| `ai_sessions` *(migration-created)* | Persisted AI interactive sessions (planning/interview/subtask) with status and conversation history. Deletion is final within a bounded tombstone window (FN-7949) — see below. |
 | `messages` *(migration-created)* | Inter-agent/user message mailbox storage. |
 | `agentRatings` *(migration-created)* | Agent performance ratings (1-5), optional reviewer metadata, and run/task attribution. |
 | `chat_sessions` *(migration-created)* | Chat session metadata (agent/project/model/status/title timestamps). |
@@ -492,6 +492,16 @@ The `tasks.cumulativeActiveMs` and `tasks.executionCompletedAt` columns are the 
 | `eval_runs` | Eval run lifecycle state (status, trigger, scope, evaluation window boundaries, evaluated task IDs/counts, aggregate scores, provenance). |
 | `eval_task_results` | Per-task eval outcomes linked to runs (`runId` FK cascade), including durable task snapshots and structured score payloads. `categoryScores[]` stores canonical per-category fields (`category`, `deterministicScore`, `aiScore`, `finalScore`, `weight`, `band`, `rationale`, `evidence[]`), plus `overallScore` derived from category finals. Also stores deterministic/AI signal payloads, summary rationale, structured follow-up suggestions (`suggestionId`, `dedupeKey`, recommendation, lifecycle state, suppression fields, optional `createdTaskId` linkage), and a bounded `TaskEvaluationEvidenceBundle` (fixed source-order groups, capped entry counts, max 500-char excerpts with truncation marker) embedded in result metadata for backward-compatible persistence. |
 | `eval_run_events` | Append-only eval run event trail (`runId` FK cascade, ordered by `seq`) for orchestration/debug auditing and downstream API/UI drill-down. |
+
+### AI session delete tombstones (FN-7949)
+
+/*
+FNXC:AiSessionStore 2026-07-13-00:00: Deleting a Planning Mode session while its background generation was still in flight let the session silently reappear moments later. Root cause: `runGenerationWithTimeout`'s `Promise.race` (in `planning.ts`, and the equivalent wrappers in `subtask-breakdown.ts`/`mission-interview.ts`/`milestone-slice-interview.ts`) only stops the *caller* from awaiting the in-flight `session.agent.session.prompt()` call — it does not cancel it. A straggling `persistSession(...)`-style `upsert()` call landing after the row was deleted would silently re-INSERT it and re-broadcast `ai_session:updated`.
+*/
+
+`AiSessionStore.delete()` / `deleteByIdAndType()` / the bulk `cleanupOld()` / `cleanupStaleSessions()` paths now record a delete tombstone (`id -> deletion timestamp`) alongside removing the row. `AiSessionStore.upsert()` checks that tombstone first: a write for an id deleted within the last `DELETE_TOMBSTONE_TTL_MS` (10 minutes — generously longer than any realistic straggling generation write) is dropped without touching SQLite and without emitting `ai_session:updated`. This closes the resurrection race for every `AiSessionType` producer that shares the store (`planning`, `subtask`, `mission_interview`, `milestone_interview`, `slice_interview`), not just the originally reported Planning Mode case.
+
+A normal delete with no in-flight generation, and a genuinely new session that reuses a brand-new distinct id, are both unaffected — the guard only applies to writes for the *exact* id that was just deleted. Tombstone entries are pruned lazily (on tombstone check) and piggyback pruning on the existing `cleanupStaleSessions()` cadence, so the in-memory tombstone map cannot grow unbounded on a long-running server. See `packages/dashboard/src/ai-session-store.ts` (`upsert()`, `isTombstoned()`, `pruneExpiredTombstones()`).
 
 ### Central SQLite Tables Inventory (`packages/core/src/central-db.ts`)
 

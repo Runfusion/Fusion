@@ -14,11 +14,18 @@ export interface TimeoutHandlers {
   onTimeout: () => void;
   /** Fired when abort happens for a non-timeout reason (e.g. manual stop). */
   onUserStop?: () => void;
+  /**
+   * FNXC:AiSessionCancellation 2026-07-13-00:00:
+   * FN-7951 requires aborting generation to stop the underlying prompt work, not just reject the Promise.race waiter. Producers use this once-only hook to dispose the in-flight agent session for timeout, user-stop, displacement, and reset because provider SDKs may ignore AbortSignal.
+   */
+  onAbort?: () => void;
 }
 
 interface ActiveEntry {
   abort: AbortController;
   timer: ReturnType<typeof setTimeout>;
+  onAbort?: () => void;
+  onAbortFired: boolean;
 }
 
 type AbortCause = "timeout" | "user-stop" | "displaced";
@@ -47,17 +54,22 @@ export class GenerationGuard {
     this.cancelInternal(sessionId, "displaced");
 
     const abort = new AbortController();
-    const timer = setTimeout(() => {
+    const entry: ActiveEntry = {
+      abort,
+      timer: undefined as unknown as ReturnType<typeof setTimeout>,
+      onAbort: handlers.onAbort,
+      onAbortFired: false,
+    };
+    entry.timer = setTimeout(() => {
       this.abortCause.set(abort, "timeout");
       try {
         handlers.onTimeout();
       } catch {
         // swallow — handler errors must not prevent abort
       }
+      this.fireAbortTeardown(entry);
       abort.abort();
     }, timeoutMs);
-
-    const entry: ActiveEntry = { abort, timer };
     this.active.set(sessionId, entry);
 
     const abortPromise = new Promise<never>((_, reject) => {
@@ -83,7 +95,7 @@ export class GenerationGuard {
       }
       throw err;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(entry.timer);
       this.abortCause.delete(abort);
       if (this.active.get(sessionId) === entry) {
         this.active.delete(sessionId);
@@ -121,9 +133,22 @@ export class GenerationGuard {
     if (!entry) return false;
     clearTimeout(entry.timer);
     this.abortCause.set(entry.abort, cause);
+    this.fireAbortTeardown(entry);
     entry.abort.abort();
     this.active.delete(sessionId);
     return true;
+  }
+
+  private fireAbortTeardown(entry: ActiveEntry): void {
+    if (entry.onAbortFired) {
+      return;
+    }
+    entry.onAbortFired = true;
+    try {
+      entry.onAbort?.();
+    } catch {
+      // swallow — teardown errors must not prevent abort propagation
+    }
   }
 }
 

@@ -27,7 +27,7 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
-import { GenerationGuard, isAbortError } from "./ai-session-timeout.js";
+import { createAbortError, GenerationGuard, isAbortError } from "./ai-session-timeout.js";
 
 import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, resolveMcpServersForStore } from "@fusion/engine";
 import { createPlanningBoardTools } from "./planning-board-tools.js";
@@ -832,6 +832,36 @@ function disposeMissionAgentForRetry(session: MissionInterviewSession): void {
   session.agent = undefined;
 }
 
+/*
+FNXC:AiSessionCancellation 2026-07-13-00:10:
+guard.run()'s onAbort teardown fires for EVERY abort cause, including "displaced" (a re-entrant
+generationGuard.run() call for the same session id triggers cancelInternal("displaced") on the
+prior entry before the new op runs). Retry/rewind flows call disposeMissionAgentForRetry(session)
+themselves and then assign a brand-new session.agent BEFORE the retry's own generationGuard.run()
+call displaces the stale (already-forgotten) entry from session creation/history-replay. If the
+stale entry's onAbort teardown reads session.agent dynamically at teardown time (as
+disposeMissionAgentForRetry does), it disposes the FRESH agent the retry just installed — not the
+stale one — and the retry's own operation then crashes on `session.agent!` being undefined.
+Capture the exact agent instance a generation started with and only tear down / clear that
+specific instance, so a later displacement can never dispose an agent installed by a newer call.
+*/
+function disposeMissionAgentGeneration(session: MissionInterviewSession, agent: AgentResult | undefined): void {
+  if (!agent) {
+    return;
+  }
+
+  nonfatal(
+    () => agent.session.dispose?.(),
+    diagnostics,
+    "Error disposing agent for retry",
+    { sessionId: session.id, operation: "dispose-retry" }
+  );
+
+  if (session.agent === agent) {
+    session.agent = undefined;
+  }
+}
+
 // ── AI Agent Integration ───────────────────────────────────────────────────
 
 /**
@@ -1024,6 +1054,7 @@ async function ensureMissionInterviewAgent(
     return;
   }
 
+  const replayAgent = session.agent;
   await generationGuard.run(
     session.id,
     GENERATION_TIMEOUT_MS,
@@ -1036,14 +1067,28 @@ async function ensureMissionInterviewAgent(
         session,
         "Generation stopped by user. You can retry or start a new session.",
       ),
+      onAbort: () => disposeMissionAgentGeneration(session, replayAgent),
     },
-    () => session.agent!.session.prompt(
-      [
-        "Previous conversation summary:",
-        historySummary,
-        "Use this context when handling the next user response.",
-      ].join("\n\n"),
-    ),
+    async (abortSignal) => {
+      /*
+      FNXC:AiSessionCancellation 2026-07-13-00:00:
+      FN-7951 requires every mission-interview prompt, including history replay, to receive the generation AbortSignal. Promise.race only stops the caller from awaiting; signal forwarding plus guard-level session teardown is the cancellation contract.
+      */
+      if (abortSignal.aborted) {
+        throw createAbortError();
+      }
+      await session.agent!.session.prompt(
+        [
+          "Previous conversation summary:",
+          historySummary,
+          "Use this context when handling the next user response.",
+        ].join("\n\n"),
+        { signal: abortSignal },
+      );
+      if (abortSignal.aborted) {
+        throw createAbortError();
+      }
+    },
   );
 }
 
@@ -1078,6 +1123,7 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
     throw new InvalidSessionStateError("AI agent not initialized");
   }
 
+  const generationAgent = session.agent;
   try {
     await generationGuard.run(
       session.id,
@@ -1091,12 +1137,23 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
           session,
           "Generation stopped by user. You can retry or start a new session.",
         ),
+        onAbort: () => disposeMissionAgentGeneration(session, generationAgent),
       },
-      async () => {
+      async (abortSignal) => {
         const agent = session.agent!;
         session.thinkingOutput = "";
 
-        await agent.session.prompt(message);
+        /*
+        FNXC:AiSessionCancellation 2026-07-13-00:00:
+        Mission interview turns and parse-retry prompts must pass the active AbortSignal to prompt() and short-circuit after abort. The GenerationGuard also tears down the agent session because provider SDKs may ignore the signal.
+        */
+        if (abortSignal.aborted) {
+          throw createAbortError();
+        }
+        await agent.session.prompt(message, { signal: abortSignal });
+        if (abortSignal.aborted) {
+          throw createAbortError();
+        }
 
         // Get the response text from the agent's state
         interface AgentMessage {
@@ -1137,12 +1194,19 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
               );
               try {
                 session.thinkingOutput = "";
+                if (abortSignal.aborted) {
+                  throw createAbortError();
+                }
                 await agent.session.prompt(
                   "Your previous response could not be parsed as JSON. " +
                   'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
                   'or {"type":"complete","data":{"missionTitle":"...","missionDescription":"...","milestones":[...]}}. ' +
-                  "No markdown, no explanation, just the JSON."
+                  "No markdown, no explanation, just the JSON.",
+                  { signal: abortSignal },
                 );
+                if (abortSignal.aborted) {
+                  throw createAbortError();
+                }
 
                 const retryMessage = (agent.session.state.messages as AgentMessage[])
                   .filter((m: AgentMessage) => m.role === "assistant")
@@ -1161,6 +1225,9 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
                 }
                 responseText = retryText;
               } catch (retryErr) {
+                if (isAbortError(retryErr)) {
+                  throw retryErr;
+                }
                 diagnostics.errorFromException("Retry prompt failed for session", retryErr, { sessionId: session.id, operation: "retry-prompt" });
                 break;
               }
@@ -1303,6 +1370,14 @@ export async function submitMissionInterviewResponse(
   if (store && !session.store) session.store = store;
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
+  /*
+  FNXC:AiSessionCancellation 2026-07-13-00:10:
+  Reject an overlapping submit instead of letting generationGuard.run()'s displaced-abort teardown dispose the shared session.agent out from under this call (see GenerationInProgressError doc).
+  */
+  if (generationGuard.has(sessionId)) {
+    throw new GenerationInProgressError("Generation already in progress for this response");
+  }
+
   if (!session.currentQuestion) {
     throw new InvalidSessionStateError("No active question in session");
   }
@@ -1366,6 +1441,17 @@ export async function retryMissionInterviewSession(
   const inErrorState = persisted ? persisted.status === "error" : Boolean(session.error);
   if (!inErrorState) {
     throw new InvalidSessionStateError(`Mission interview session ${sessionId} is not in an error state`);
+  }
+
+  /*
+  FNXC:AiSessionCancellation 2026-07-13-00:10:
+  A session can be observed in "error" (persisted status) while its original fire-and-forget
+  initializeAgent() first turn is still actually in flight (createMissionInterviewSession never
+  awaits it). Retrying while that generation is still registered would race two concurrent
+  continueAgentConversation calls over the single shared session.agent slot. Reject cleanly instead.
+  */
+  if (generationGuard.has(sessionId)) {
+    throw new GenerationInProgressError("Generation already in progress for this session");
   }
 
   disposeMissionAgentForRetry(session);
@@ -1571,5 +1657,16 @@ export class InvalidSessionStateError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "InvalidSessionStateError";
+  }
+}
+
+/*
+FNXC:AiSessionCancellation 2026-07-13-00:10:
+FN-7951's onAbort teardown disposes the single shared session.agent on every abort cause, including "displaced" (a re-entrant generationGuard.run() call for the same session id). continueAgentConversation's operation reads session.agent synchronously at the start of its op closure, so a second overlapping call for the same session would observe session.agent === undefined (cleared by the first call's displaced-abort teardown) and crash with a TypeError instead of a clean, recoverable error. Reject overlapping generations up front so the shared agent handle is never raced.
+*/
+export class GenerationInProgressError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GenerationInProgressError";
   }
 }

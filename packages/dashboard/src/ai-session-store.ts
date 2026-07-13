@@ -106,6 +106,32 @@ export const SESSION_CLEANUP_DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Default scheduled interval for stale session cleanup runs (6 hours). */
 export const SESSION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * FNXC:AiSessionStore 2026-07-13-00:00:
+ * FN-7949 — deleting a Planning Mode session while its background generation
+ * is still in flight let the session silently reappear. Root cause:
+ * `runGenerationWithTimeout` (planning.ts) and the equivalent wrappers in
+ * subtask-breakdown.ts/mission-interview.ts/milestone-slice-interview.ts use
+ * `Promise.race([operation(...), abortPromise])` to abort generation — that
+ * only stops the *caller* from awaiting `operation`, it does NOT cancel the
+ * underlying `session.agent.session.prompt()` call. If the session is deleted
+ * while that promise is still pending, the abandoned call later resolves and
+ * calls `persistSession(...)` -> `upsert()`, which used to unconditionally
+ * re-INSERT the row and re-emit `ai_session:updated`, resurrecting a session
+ * the user explicitly deleted.
+ *
+ * Fix: `AiSessionStore` remembers deleted ids in a bounded-TTL tombstone map.
+ * `upsert()` drops (no-ops) any write for an id tombstoned within the TTL
+ * window, so a straggling write can never resurrect a deleted session. This
+ * lives here — the single shared store — rather than being duplicated in each
+ * producer, so the invariant holds for every AiSessionType (planning, subtask,
+ * mission_interview, milestone_interview, slice_interview) without forking
+ * the fix per-producer. 10 minutes is generously longer than any realistic
+ * straggling generation write (session ids are UUIDs, never legitimately
+ * reused), so id-reuse racing past the TTL is not an expected production path.
+ */
+export const DELETE_TOMBSTONE_TTL_MS = 10 * 60 * 1000;
+
 export interface AiSessionCleanupSummary {
   terminalDeleted: number;
   orphanedDeleted: number;
@@ -128,6 +154,13 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * pattern for the AI session system.
    */
   private readonly asyncLayer: AsyncDataLayer | null;
+  /**
+   * FN-7949 delete tombstones: id -> deletion timestamp (ms since epoch).
+   * Consulted by `upsert()` to drop straggling writes for ids deleted within
+   * `DELETE_TOMBSTONE_TTL_MS`. See the FNXC:AiSessionStore comment above.
+   */
+  private deletedIds = new Map<string, number>();
+
 
   constructor(private db: Database, options?: { asyncLayer?: AsyncDataLayer | null }) {
     super();
@@ -155,6 +188,18 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Emits `ai_session:updated` after writing.
    */
   async upsert(session: AiSessionRow): Promise<void> {
+    // FNXC:AiSessionStore 2026-07-13-00:00: FN-7949 tombstone guard — drop any
+    // upsert for an id that was deleted within the TTL window (both backends),
+    // so a straggling post-delete generation write can never resurrect a
+    // deleted session.
+    if (this.isTombstoned(session.id)) {
+      diagnostics.warn("Dropped upsert for tombstoned (deleted) session", {
+        sessionId: session.id,
+        operation: "upsert-tombstoned",
+      });
+      return;
+    }
+
     if (this.backendMode) {
       this.clearThinkingTimer(session.id);
       const row = await upsertAiSession(this.dbAsync, session as import("@fusion/core").AsyncAiSessionRow);
@@ -827,6 +872,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       return;
     }
     this.db.prepare("DELETE FROM ai_sessions WHERE id = ?").run(id);
+    this.deletedIds.set(id, Date.now());
     this.emit("ai_session:deleted", id);
   }
 
@@ -852,6 +898,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
     const removed = Number(result.changes ?? 0) > 0;
     if (removed) {
+      this.deletedIds.set(id, Date.now());
       this.emit("ai_session:deleted", id);
     }
     return removed;
@@ -939,6 +986,9 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * - Orphaned active sessions (`generating`, `awaiting_input`) are deleted directly.
    */
   async cleanupStaleSessions(maxAgeMs = SESSION_CLEANUP_DEFAULT_MAX_AGE_MS): Promise<AiSessionCleanupSummary> {
+    // FN-7949: piggyback tombstone-map pruning on the existing cleanup cadence.
+    this.pruneExpiredTombstones();
+
     if (this.backendMode) {
       const result = await cleanupStaleAiSessions(this.dbAsync, maxAgeMs);
       this.emitDeletedSessions([
@@ -1033,10 +1083,44 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   // ── Internal ────────────────────────────────────────────────────────
 
   private emitDeletedSessions(rows: Array<{ id: string }>): void {
+    const now = Date.now();
     for (const { id } of rows) {
       this.clearThinkingTimer(id);
+      this.deletedIds.set(id, now);
       this.emit("ai_session:deleted", id);
     }
+  }
+
+  /**
+   * Returns true when `id` was deleted within the tombstone TTL window.
+   * Lazily prunes the specific entry when it has expired so the map does not
+   * hold expired entries indefinitely for ids that are never re-upserted.
+   */
+  private isTombstoned(id: string): boolean {
+    const deletedAt = this.deletedIds.get(id);
+    if (deletedAt === undefined) return false;
+    if (Date.now() - deletedAt < DELETE_TOMBSTONE_TTL_MS) return true;
+    this.deletedIds.delete(id);
+    return false;
+  }
+
+  /**
+   * Prune expired tombstone entries. Piggybacks on the existing scheduled
+   * cleanup cadence (`startScheduledCleanup`/`cleanupStaleSessions`) so the
+   * `deletedIds` map cannot grow unbounded over a long-running server
+   * process. Safe to call at any time; also invoked lazily via
+   * `isTombstoned` for individually-checked ids.
+   */
+  private pruneExpiredTombstones(): number {
+    const now = Date.now();
+    let pruned = 0;
+    for (const [id, deletedAt] of this.deletedIds) {
+      if (now - deletedAt >= DELETE_TOMBSTONE_TTL_MS) {
+        this.deletedIds.delete(id);
+        pruned++;
+      }
+    }
+    return pruned;
   }
 
   private async writeThinking(sessionId: string, thinkingOutput: string): Promise<void> {

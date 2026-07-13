@@ -5,6 +5,7 @@ import express from "express";
 import http from "node:http";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -38,7 +39,7 @@ import {
 import * as planningModule from "../planning.js";
 import { __resetSubtaskBreakdownState, subtaskStreamManager } from "../subtask-breakdown.js";
 import * as subtaskBreakdownModule from "../subtask-breakdown.js";
-import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionRow } from "../ai-session-store.js";
+import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS, type AiSessionRow } from "../ai-session-store.js";
 import * as usageModule from "../usage.js";
 import * as claudeCliProbeModule from "../claude-cli-probe.js";
 import * as droidCliProbeModule from "../droid-cli-probe.js";
@@ -4015,6 +4016,203 @@ describe("DELETE /api/ai-sessions/cleanup", () => {
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: "Session store not available" });
   });
+});
+
+// ── FN-7949: delete-mid-generation resurrection race ──────────────────────
+// Reproduces the exact reported bug: deleting a Planning Mode session while
+// its background generation is still in flight must not let a straggling
+// write resurrect it. Uses a REAL AiSessionStore (backed by a temp SQLite
+// db) wired the same way server.ts wires it — via setAiSessionStore() for
+// planning.ts's internal persistSession() calls AND via the routes.ts
+// aiSessionStore option for the DELETE endpoint — so the tombstone guard
+// added to AiSessionStore.upsert() is exercised end-to-end, not mocked out.
+describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
+  let store: TaskStore;
+  let db: InstanceType<typeof Database>;
+  let realAiSessionStore: AiSessionStore;
+  let tmpRoot: string;
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { aiSessionStore: realAiSessionStore as any }));
+    return app;
+  }
+
+  /**
+   * Deferred-prompt mock agent: the FIRST prompt() call (triggered by
+   * POST /api/planning/start) resolves immediately with a question, so the
+   * session reaches `awaiting_input` normally. The SECOND prompt() call
+   * (triggered by POST /api/planning/respond) does not resolve until the
+   * test explicitly calls `resolveSecondPrompt()` — modeling the abandoned
+   * `session.agent.session.prompt()` call that `runGenerationWithTimeout`'s
+   * `Promise.race` only stops *awaiting*, not actually cancels.
+   */
+  function setupDeferredRespondAgent() {
+    const messages: Array<{ role: string; content: string }> = [];
+    let callIndex = 0;
+    let resolveSecondPrompt: (() => void) | undefined;
+    const secondPromptStarted = new Promise<void>((resolveStarted) => {
+      const mockAgent = {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async (msg: string) => {
+            messages.push({ role: "user", content: msg });
+            if (callIndex === 0) {
+              callIndex++;
+              messages.push({
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "question",
+                  data: { id: "q-scope", type: "text", question: "What is the scope?" },
+                }),
+              });
+              return;
+            }
+            callIndex++;
+            await new Promise<void>((resolve) => {
+              resolveSecondPrompt = resolve;
+              resolveStarted();
+            });
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "complete",
+                data: { title: "Late-landing plan", description: "Should never be seen", suggestedSize: "S" },
+              }),
+            });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+      __setCreateFnAgent(async () => mockAgent);
+    });
+
+    return {
+      secondPromptStarted,
+      resolveSecondPrompt: () => resolveSecondPrompt?.(),
+    };
+  }
+
+  beforeEach(() => {
+    store = createMockStore();
+    __resetPlanningState();
+    tmpRoot = mkdtempSync(join(tmpdir(), "kb-fn7949-ai-session-"));
+    db = new Database(join(tmpRoot, ".fusion"));
+    db.init();
+    realAiSessionStore = new AiSessionStore(db as any);
+    setAiSessionStore(realAiSessionStore);
+  });
+
+  afterEach(async () => {
+    __setCreateFnAgent(undefined as any);
+    __resetPlanningState();
+    realAiSessionStore.stopScheduledCleanup();
+    try {
+      db.close();
+    } catch {
+      // no-op
+    }
+    await rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("does not resurrect a session deleted while a generation is still in flight", async () => {
+    const { secondPromptStarted, resolveSecondPrompt } = setupDeferredRespondAgent();
+
+    const startRes = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/start",
+      JSON.stringify({ initialPlan: "Deleted mid-generation planning session" }),
+      { "Content-Type": "application/json" },
+    );
+    expect(startRes.status).toBe(201);
+    const sessionId = startRes.body.sessionId as string;
+    expect(realAiSessionStore.get(sessionId)).not.toBeNull();
+    expect(realAiSessionStore.get(sessionId)?.status).toBe("awaiting_input");
+
+    // Fire the respond call WITHOUT awaiting it — its underlying prompt()
+    // call is deferred and will not resolve until we explicitly release it
+    // below, simulating the straggling in-flight generation from FN-7949.
+    const respondPromise = REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/respond",
+      JSON.stringify({ sessionId, responses: { "q-scope": "medium" } }),
+      { "Content-Type": "application/json" },
+    );
+
+    // Wait for the second prompt() call to actually start (i.e. respond's
+    // synchronous persistSession(session, "generating") has already run and
+    // execution is now parked awaiting the deferred prompt).
+    await secondPromptStarted;
+
+    // Delete the session while that generation is still in flight — the
+    // exact FN-7949 reproduction step.
+    const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body).toEqual({ ok: true });
+    expect(realAiSessionStore.get(sessionId)).toBeNull();
+
+    const updatedEventIds: string[] = [];
+    realAiSessionStore.on("ai_session:updated", (summary) => updatedEventIds.push(summary.id));
+
+    // Let the abandoned prompt() call resolve — the straggling write lands
+    // after the session was already deleted.
+    resolveSecondPrompt();
+    await respondPromise.catch(() => {
+      // The request may resolve or reject depending on how far the aborted
+      // in-memory session state got; either is fine — what matters is the
+      // store-level assertion below.
+    });
+
+    // The deleted session must not have been resurrected, and no
+    // ai_session:updated event should have fired for it.
+    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(updatedEventIds).not.toContain(sessionId);
+  });
+
+  it("a normal delete with no in-flight generation continues to work exactly as before", async () => {
+    setupPlanningMockAgentForFn7949();
+
+    const startRes = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/planning/start",
+      JSON.stringify({ initialPlan: "Ordinary planning session, deleted cleanly" }),
+      { "Content-Type": "application/json" },
+    );
+    expect(startRes.status).toBe(201);
+    const sessionId = startRes.body.sessionId as string;
+    expect(realAiSessionStore.get(sessionId)).not.toBeNull();
+
+    const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
+
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body).toEqual({ ok: true });
+    expect(realAiSessionStore.get(sessionId)).toBeNull();
+  });
+
+  function setupPlanningMockAgentForFn7949() {
+    const messages: Array<{ role: string; content: string }> = [];
+    const mockAgent = {
+      session: {
+        state: { messages },
+        prompt: vi.fn(async (msg: string) => {
+          messages.push({ role: "user", content: msg });
+          messages.push({
+            role: "assistant",
+            content: JSON.stringify({
+              type: "question",
+              data: { id: "q-scope", type: "text", question: "What is the scope?" },
+            }),
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    };
+    __setCreateFnAgent(async () => mockAgent);
+  }
 });
 
 describe("POST /api/ai-sessions/:id/ping", () => {
