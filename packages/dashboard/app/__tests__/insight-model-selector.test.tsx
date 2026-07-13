@@ -20,6 +20,8 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 import { InsightsView } from "../components/InsightsView";
 
+const mockRunInsights = vi.hoisted(() => vi.fn());
+
 // Register jest-dom matchers (setup files not running in this environment)
 expect.extend(jestDomMatchers);
 
@@ -50,6 +52,7 @@ beforeAll(() => {
 // Mock useInsights hook
 vi.mock("../hooks/useInsights", () => ({
   useInsights: () => ({
+
     sections: [],
     loading: false,
     error: null,
@@ -57,7 +60,7 @@ vi.mock("../hooks/useInsights", () => ({
     isRunInFlight: false,
     runError: null,
     refresh: vi.fn(),
-    runInsights: vi.fn(),
+    runInsights: mockRunInsights,
     dismiss: vi.fn(),
     createTask: vi.fn(),
     archive: vi.fn(),
@@ -76,10 +79,17 @@ vi.mock("../hooks/useInsights", () => ({
 
 // Mock CustomModelDropdown since it has complex portal behavior
 vi.mock("../components/CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ value, onChange, placeholder }: any) => (
-    <div data-testid="model-dropdown">
+  CustomModelDropdown: ({ value, onChange, placeholder, thinkingLevel, onThinkingLevelChange, showThinkingLevel, disabled }: any) => (
+    <div data-testid="model-dropdown" data-disabled={disabled ? "true" : "false"}>
       <span data-testid="model-value">{value || placeholder}</span>
       <button data-testid="model-change" onClick={() => onChange("openai/gpt-4o")} />
+      {showThinkingLevel && (
+        <div data-testid="thinking-control">
+          <span data-testid="thinking-value">{thinkingLevel || "default"}</span>
+          <button data-testid="thinking-change" onClick={() => onThinkingLevelChange("high")} />
+          <button data-testid="thinking-clear" onClick={() => onThinkingLevelChange("")} />
+        </div>
+      )}
     </div>
   ),
 }));
@@ -89,6 +99,7 @@ const mockAddToast = vi.fn();
 describe("Insight model selector", () => {
   beforeEach(() => {
     localStorage.clear();
+    mockRunInsights.mockReset();
   });
 
   afterEach(() => {
@@ -142,5 +153,29 @@ describe("Insight model selector", () => {
     expect(
       screen.getByTestId("toggle-model-config").querySelector(".insights-model-indicator"),
     ).toBeInTheDocument();
+  });
+
+  it("persists selected thinking level to localStorage", () => {
+    render(<InsightsView addToast={mockAddToast} />);
+    fireEvent.click(screen.getByTestId("toggle-model-config"));
+    expect(screen.getByTestId("thinking-control")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("thinking-change"));
+    expect(localStorage.getItem("fusion-insight-thinking")).toBe("high");
+    expect(screen.getByTestId("thinking-value")).toHaveTextContent("high");
+
+    fireEvent.click(screen.getByTestId("thinking-clear"));
+    expect(localStorage.getItem("fusion-insight-thinking")).toBeNull();
+  });
+
+  it("forwards persisted thinking level when generating insights", () => {
+    render(<InsightsView addToast={mockAddToast} />);
+    fireEvent.click(screen.getByTestId("toggle-model-config"));
+    fireEvent.click(screen.getByTestId("model-change"));
+    fireEvent.click(screen.getByTestId("thinking-change"));
+
+    fireEvent.click(screen.getByTestId("run-insights"));
+
+    expect(mockRunInsights).toHaveBeenCalledWith("openai", "gpt-4o", "high");
   });
 });

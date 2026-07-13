@@ -31,6 +31,7 @@ import {
 } from "../../../api/legacy";
 import { subscribeSse } from "../../../sse-bus";
 import type { ToastType } from "../../../hooks/useToast";
+import { copyTextToClipboard } from "../../../utils/copyToClipboard";
 import "./SystemControlsArea.css";
 
 /*
@@ -57,8 +58,33 @@ const BACK_ONLINE_RELOAD_DELAY_MS = 3000;
 // respawn, unsupervised restart that stopped) doesn't leave the panel polling
 // forever with every control disabled.
 const RESTART_WAIT_TIMEOUT_MS = 90_000;
-const BUG_URL_BODY_CAP = 5500;
+export const BUG_URL_MAX_ENCODED = 8000;
+const BUG_URL_TRUNCATION_MARKER = "\n…(truncated)";
+const BUG_URL_BODY_QUERY_PREFIX = "?body=";
 const GITHUB_NEW_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
+
+function buildBugReportIssueUrl(body: string): string {
+  const prefix = `${GITHUB_NEW_ISSUE_URL}${BUG_URL_BODY_QUERY_PREFIX}`;
+  const toUrl = (candidate: string) => `${prefix}${encodeURIComponent(candidate)}`;
+  const fullUrl = toUrl(body);
+  if (fullUrl.length <= BUG_URL_MAX_ENCODED) return fullUrl;
+
+  const encodedBudget = BUG_URL_MAX_ENCODED - prefix.length;
+  const codePoints = Array.from(body);
+  let low = 0;
+  let high = codePoints.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const candidate = `${codePoints.slice(0, mid).join("")}${BUG_URL_TRUNCATION_MARKER}`;
+    if (encodeURIComponent(candidate).length <= encodedBudget) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return toUrl(`${codePoints.slice(0, low).join("")}${BUG_URL_TRUNCATION_MARKER}`);
+}
 
 type RestartPhase = null | "waiting" | "back" | "timeout";
 
@@ -356,36 +382,51 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
     () =>
       runAction("diagnostics", async () => {
         const diagnostics = await buildDiagnostics();
-        await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
-        toast(t("systemControls.diagnosticsCopied", "Diagnostics copied to clipboard"), "success");
+        /*
+        FNXC:SystemPanel 2026-07-12-00:00:
+        Diagnostics copy must use copyTextToClipboard because navigator.clipboard is undefined on non-secure origins such as mobile http://fusionstudio:4040. Calling writeText directly previously crashed with reading 'writeText' instead of surfacing a clear copy failure.
+        */
+        const copied = await copyTextToClipboard(JSON.stringify(diagnostics, null, 2));
+        if (copied) {
+          toast(t("systemControls.diagnosticsCopied", "Diagnostics copied to clipboard"), "success");
+          return;
+        }
+        toast(t("systemControls.diagnosticsCopyFailed", "Could not copy diagnostics to clipboard"), "error");
       }),
     [buildDiagnostics, runAction, t, toast],
   );
 
+  /*
+  FNXC:SystemPanel 2026-07-12-15:30:
+  Requirement change (FN-7883): the bug-report flow previously offered only the
+  last 5 error log lines behind confirmation. That gave maintainers too little
+  context for a first triage pass. Now doReportBug reuses the exact same
+  buildDiagnostics() bundle that "Copy diagnostics" produces (health,
+  runtime/system info, recent logs) and asks a single confirmation question
+  covering that whole bundle.
+
+  FNXC:SystemPanel 2026-07-12-18:41:
+  Requirement change (FN-7890): truncation is budgeted against the full URL that
+  GitHub receives: base issue URL + ?body= + encodeURIComponent(body). FN-7883's
+  diagnostics JSON includes quotes, braces, and newlines that expand during
+  percent-encoding, so the old raw body-length cap could still emit a request
+  URL too long for GitHub. The confirm gate, fenceSafe neutralization, and body
+  sections remain unchanged while the final window.open URL is kept under the
+  encoded ceiling.
+  */
   const doReportBug = useCallback(
     () =>
       runAction("report-bug", async () => {
         const health = await fetchDashboardHealth().catch(() => null);
-        const recentErrors = info?.logsSupported
-          ? await fetchSystemLogs(200)
-              .then((r) => r.entries.filter((entry) => entry.level === "error").slice(-5))
-              .catch(() => [])
-          : [];
-        // FNXC:SystemPanel 2026-07-12-14:05: The recent-errors excerpt is
-        // server log content sent to github.com. Require explicit confirmation
-        // before including it (operator may not want internal logs public), and
-        // neutralize embedded ``` so a log line can't break out of the fence.
-        const includeErrors =
-          recentErrors.length > 0 &&
-          window.confirm(
-            t(
-              "systemControls.reportBugConfirm",
-              "Include the last {{count}} server error log line(s) in the GitHub issue? They will be sent to github.com — review after the issue opens.",
-              { count: recentErrors.length },
-            ),
-          );
         const fenceSafe = (text: string) => text.replace(/`/g, "'");
-        let body = [
+        const includeDiagnostics = window.confirm(
+          t(
+            "systemControls.reportBugConfirm",
+            "Include diagnostic info and recent logs (health, runtime info, recent server logs) in the GitHub issue? They will be sent to github.com — review after the issue opens.",
+          ),
+        );
+        const diagnostics = includeDiagnostics ? await buildDiagnostics() : null;
+        const body = [
           "### What happened",
           "",
           "<!-- Describe the bug -->",
@@ -395,14 +436,22 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           `- Platform: ${info?.platform ?? "unknown"} (${info?.arch ?? "?"}), Node ${info?.nodeVersion ?? "?"}`,
           `- Uptime: ${info?.uptimeSeconds ?? "?"}s, supervised: ${info?.supervised ?? false}`,
           "",
-          ...(includeErrors
-            ? ["### Recent server errors", "```", ...recentErrors.map((entry) => fenceSafe(`${entry.prefix ? `[${entry.prefix}] ` : ""}${entry.message}`)), "```"]
+          ...(diagnostics
+            ? [
+                "### Diagnostics",
+                "<details><summary>Diagnostics</summary>",
+                "",
+                "```json",
+                fenceSafe(JSON.stringify(diagnostics, null, 2)),
+                "```",
+                "",
+                "</details>",
+              ]
             : []),
         ].join("\n");
-        if (body.length > BUG_URL_BODY_CAP) body = `${body.slice(0, BUG_URL_BODY_CAP)}\n…(truncated)`;
-        window.open(`${GITHUB_NEW_ISSUE_URL}?body=${encodeURIComponent(body)}`, "_blank", "noopener");
+        window.open(buildBugReportIssueUrl(body), "_blank", "noopener");
       }),
-    [info, runAction],
+    [buildDiagnostics, info, runAction, t],
   );
 
   // ── Control definitions ───────────────────────────────────────────────────

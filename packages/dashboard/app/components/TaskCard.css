@@ -1433,7 +1433,10 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
   cursor: not-allowed;
 }
 
-/* Card header actions container - groups size badge and buttons on the right */
+/*
+FNXC:TaskCardLayout 2026-07-12-00:00:
+FN-7889 requires the right-side size/menu icons and action chips to share the mono task id's optical centerline. Mirror FN-7871's token-derived id nudge on the whole right cluster while preserving FN-7862's flex-start first-row anchor and FN-7837's middle-badge wrap/size-chip-not-orphaned contract.
+*/
 .card-header-actions {
   display: flex;
   align-items: center;
@@ -1442,6 +1445,7 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
   gap: var(--space-xs);
   min-height: var(--card-chip-height);
   margin-left: auto;
+  transform: translateY(calc(var(--space-xs) / 4));
 }
 
 /* Edit button - visible on hover */

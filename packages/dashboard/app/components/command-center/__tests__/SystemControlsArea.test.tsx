@@ -1,14 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { CommandCenter } from "../CommandCenter";
+import { BUG_URL_MAX_ENCODED } from "../areas/SystemControlsArea";
 
 const apiMock = vi.fn();
 const mockFetchSystemInfo = vi.fn();
 const mockFetchCurrentSystemRebuild = vi.fn();
 const mockFetchSystemStats = vi.fn();
+const mockFetchSystemLogs = vi.fn();
 const mockFetchNodeSystemStats = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
 const mockFetchNodes = vi.fn();
@@ -26,7 +28,7 @@ vi.mock("../../../api/legacy", () => ({
   fetchDashboardHealth: vi.fn().mockResolvedValue({ ok: true }),
   fetchCurrentSystemRebuild: (...args: unknown[]) => mockFetchCurrentSystemRebuild(...args),
   fetchSystemInfo: (...args: unknown[]) => mockFetchSystemInfo(...args),
-  fetchSystemLogs: vi.fn().mockResolvedValue({ entries: [] }),
+  fetchSystemLogs: (...args: unknown[]) => mockFetchSystemLogs(...args),
   reloadAllSystemPlugins: vi.fn().mockResolvedValue({ ok: true }),
   requestSystemRestart: vi.fn().mockResolvedValue({ ok: true }),
   restartAllSystemAgents: vi.fn().mockResolvedValue({ ok: true }),
@@ -114,15 +116,56 @@ function systemStatsFixture() {
 }
 
 describe("SystemControlsArea layout integration", () => {
+  const originalClipboard = navigator.clipboard;
+  const originalExecCommand = document.execCommand;
+
+  function mockClipboard(value: unknown) {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value,
+    });
+  }
+
+  function mockExecCommand(result: boolean) {
+    const execCommand = vi.fn().mockReturnValue(result);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    return execCommand;
+  }
+
+  async function renderSystemTab(addToast = vi.fn()) {
+    render(<CommandCenter projectId="proj-1" addToast={addToast} />);
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const diagnosticsCard = await screen.findByTestId("cc-syscontrol-diagnostics");
+    return { addToast, diagnosticsCard };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.mockImplementation((path: string) => Promise.resolve(emptyOverviewResponse(path)));
     mockFetchSystemInfo.mockResolvedValue(systemInfoFixture());
+    mockFetchSystemLogs.mockResolvedValue({
+      entries: [{ timestamp: "2026-07-12T00:00:00.000Z", level: "info", message: "ready" }],
+    });
     mockFetchCurrentSystemRebuild.mockResolvedValue({ job: null });
     mockFetchSystemStats.mockResolvedValue(systemStatsFixture());
     mockFetchNodeSystemStats.mockResolvedValue(systemStatsFixture());
     mockFetchGlobalSettings.mockResolvedValue({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
     mockFetchNodes.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: originalClipboard,
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: originalExecCommand,
+    });
+    document.body.innerHTML = "";
   });
 
   it("wraps System controls, Server logs, and Live system health in the shared gap owner", async () => {
@@ -160,6 +203,143 @@ describe("SystemControlsArea layout integration", () => {
     expect(header).toHaveClass("cc-area-section-header", "cc-system-controls-header");
     expect(title.parentElement).toBe(header);
     expect(refresh.parentElement).toBe(header);
+  });
+
+  it("copies diagnostics through the execCommand fallback when Clipboard API is unavailable", async () => {
+    mockClipboard(undefined);
+    const execCommand = mockExecCommand(true);
+    const { addToast, diagnosticsCard } = await renderSystemTab();
+
+    fireEvent.click(within(diagnosticsCard).getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(addToast).toHaveBeenCalledWith("Diagnostics copied to clipboard", "success");
+    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("writeText"), "error");
+  });
+
+  it("copies diagnostics through navigator.clipboard.writeText in secure contexts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    mockClipboard({ writeText });
+    const { addToast, diagnosticsCard } = await renderSystemTab();
+
+    fireEvent.click(within(diagnosticsCard).getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText.mock.calls[0]?.[0]).toContain('"recentLogs"');
+    expect(addToast).toHaveBeenCalledWith("Diagnostics copied to clipboard", "success");
+    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("writeText"), "error");
+  });
+
+  it("shows a failure toast when diagnostics cannot be copied by either clipboard path", async () => {
+    mockFetchSystemInfo.mockResolvedValue({ ...systemInfoFixture(), logsSupported: false });
+    mockClipboard(undefined);
+    const execCommand = mockExecCommand(false);
+    const { addToast, diagnosticsCard } = await renderSystemTab();
+
+    fireEvent.click(within(diagnosticsCard).getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(addToast).toHaveBeenCalledWith("Could not copy diagnostics to clipboard", "error");
+    expect(addToast).not.toHaveBeenCalledWith("Diagnostics copied to clipboard", "success");
+    expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("writeText"), "error");
+  });
+
+  it("embeds the full diagnostics bundle in the bug report body when the operator confirms", async () => {
+    mockFetchSystemLogs.mockResolvedValue({
+      entries: [{ timestamp: "2026-07-12T00:00:00.000Z", level: "error", message: "boom" }],
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    await renderSystemTab();
+
+    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
+    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    const url = openSpy.mock.calls[0]?.[0] as string;
+    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
+    expect(url).toContain("github.com");
+    expect(url).toContain("/issues/new");
+    expect(body).toContain("### What happened");
+    expect(body).toContain("### Environment");
+    expect(body).toContain("### Diagnostics");
+    expect(body).toContain("<details><summary>Diagnostics</summary>");
+    expect(body).toContain('"recentLogs"');
+    expect(body).toContain("boom");
+    expect(body).not.toContain("\u2026(truncated)");
+    expect(url.length).toBeLessThanOrEqual(BUG_URL_MAX_ENCODED);
+
+    confirmSpy.mockRestore();
+    openSpy.mockRestore();
+  });
+
+  it("omits the diagnostics block from the bug report body when the operator declines", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    await renderSystemTab();
+
+    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
+    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
+    const url = openSpy.mock.calls[0]?.[0] as string;
+    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
+    expect(body).toContain("### What happened");
+    expect(body).toContain("### Environment");
+    expect(body).not.toContain("### Diagnostics");
+
+    confirmSpy.mockRestore();
+    openSpy.mockRestore();
+  });
+
+  it("neutralizes embedded code fences in log messages so they cannot break out of the diagnostics fence", async () => {
+    mockFetchSystemLogs.mockResolvedValue({
+      entries: [{ timestamp: "2026-07-12T00:00:00.000Z", level: "error", message: "```oops``` breakout" }],
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    await renderSystemTab();
+
+    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
+    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
+    const url = openSpy.mock.calls[0]?.[0] as string;
+    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
+    // The fenced JSON block should contain no raw ``` other than the fence delimiters themselves.
+    const jsonBlockMatch = body.match(/```json\n([\s\S]*?)\n```/);
+    expect(jsonBlockMatch).not.toBeNull();
+    expect(jsonBlockMatch?.[1]).not.toContain("```");
+    expect(jsonBlockMatch?.[1]).toContain("'''oops''' breakout");
+
+    confirmSpy.mockRestore();
+    openSpy.mockRestore();
+  });
+
+  it("truncates an oversized diagnostics bundle against the encoded GitHub URL ceiling", async () => {
+    mockFetchSystemLogs.mockResolvedValue({
+      entries: Array.from({ length: 100 }, (_, i) => ({
+        timestamp: "2026-07-12T00:00:00.000Z",
+        level: "error" as const,
+        message: `error-line-${i}-{\"quoted\":\"${"x".repeat(100)}\",\"nested\":{\"value\":\"${"y".repeat(100)}\"}}`,
+      })),
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    await renderSystemTab();
+
+    const reportCard = await screen.findByTestId("cc-syscontrol-report-bug");
+    fireEvent.click(within(reportCard).getByRole("button", { name: "Report" }));
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
+    const url = openSpy.mock.calls[0]?.[0] as string;
+    const body = decodeURIComponent(url.split("?body=")[1] ?? "");
+    expect(url.length).toBeLessThanOrEqual(BUG_URL_MAX_ENCODED);
+    expect(body).toContain("\u2026(truncated)");
+
+    confirmSpy.mockRestore();
+    openSpy.mockRestore();
   });
 
   it("keeps the System controls header row override active on mobile", () => {

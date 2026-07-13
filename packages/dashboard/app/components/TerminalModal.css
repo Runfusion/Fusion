@@ -141,6 +141,9 @@ Larger grab target for the docked terminal top resize handle: it straddles the p
 /*
 FNXC:TerminalLayout 2026-07-04-19:22:
 Pinned terminal mode is an in-flow project-shell child instead of a portaled overlay. Reserve a smaller, clamped panel below the application so the board, chat, and right dock stay visible and usable above it.
+
+FNXC:TerminalLayout 2026-07-12-18:50:
+FN-7897 fixed the pinned terminal rendering underneath the fixed ExecutorStatusBar footer. .terminal-below-host is a sibling of .dashboard-project-shell inside .dashboard-project-stack (not a descendant), so unlike .left-sidebar-nav--with-footer/.right-dock--with-footer it cannot rely on --executor-footer-height inherited from the shell; the --with-footer modifier below redeclares the token at this consumer, matching the .project-content--with-footer precedent.
 */
 .terminal-below-host {
   display: flex;
@@ -149,6 +152,15 @@ Pinned terminal mode is an in-flow project-shell child instead of a portaled ove
   width: 100%;
   border-top: 1px solid var(--border);
   background: var(--surface);
+}
+
+/*
+FNXC:TerminalLayout 2026-07-12-18:50:
+FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendered (footerVisible prop), so the pinned/below terminal's own bottom .terminal-status-bar action row stays fully visible above the footer instead of being painted over. --executor-footer-height is redeclared here (not inherited — see comment above) to match the .project-content--with-footer precedent; --icb-bottom-offset mirrors the same Android Chrome ICB compensation already applied to .terminal-modal--docked's bottom calc.
+*/
+.terminal-below-host--with-footer {
+  --executor-footer-height: 36px;
+  padding-bottom: calc(var(--icb-bottom-offset, 0px) + var(--executor-footer-height));
 }
 
 .modal.terminal-modal.terminal-modal--below {

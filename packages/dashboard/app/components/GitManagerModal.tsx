@@ -12,6 +12,7 @@ import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import type {
   GitStatus,
   GitCommit,
@@ -149,14 +150,23 @@ function FileStatusBadge({ status }: { status: GitFileChange["status"] }) {
   return <span className={`gm-file-badge gm-file-badge-${status}`}>{label}</span>;
 }
 
-/** Copy text to clipboard with toast feedback */
+/**
+ * Copy text to clipboard with toast feedback.
+ *
+ * FNXC:Clipboard 2026-07-12-00:00:
+ * Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback.
+ */
 function useCopyToClipboard(addToast: (msg: string, type?: ToastType) => void) {
   const { t } = useTranslation("app");
   return useCallback(
     async (text: string, label?: string) => {
       try {
-        await navigator.clipboard.writeText(text);
-        addToast(label ? t("git.copiedLabel", "Copied {{label}}", { label }) : t("git.copiedToClipboard", "Copied to clipboard"), "success");
+        const copied = await copyTextToClipboard(text);
+        if (copied) {
+          addToast(label ? t("git.copiedLabel", "Copied {{label}}", { label }) : t("git.copiedToClipboard", "Copied to clipboard"), "success");
+        } else {
+          addToast(t("git.failedToCopy", "Failed to copy"), "error");
+        }
       } catch {
         addToast(t("git.failedToCopy", "Failed to copy"), "error");
       }

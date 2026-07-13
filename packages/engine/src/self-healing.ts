@@ -51,6 +51,7 @@ import {
   HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
   isHeartbeatErrorRecoverable,
   readHeartbeatErrorRetryCount,
+  resetHeartbeatErrorRecoveryMetadata,
   resolveErrorRecoveryLimit,
 } from "./agent-heartbeat.js";
 import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
@@ -1373,6 +1374,7 @@ export class SelfHealingManager {
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
       { name: "recover-starved-refinement", fn: () => this.recoverStarvedRefinementTriageTasks().then(() => undefined) },
       { name: "orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks().then(() => undefined) },
+      { name: "reset-durable-agent-error-state-on-startup", fn: () => this.resetDurableAgentErrorStateOnStartup().then(() => undefined) },
       { name: "recover-orphaned-agents", fn: () => this.recoverOrphanedAgents().then(() => undefined) },
       { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns().then(() => undefined) },
       { name: "reattach-orphaned-assigned-executions", fn: () => this.reattachOrphanedAssignedExecutions().then(() => undefined) },
@@ -10275,10 +10277,12 @@ export class SelfHealingManager {
 
   private async emitDurableAgentErrorRecoveryAudit(options: {
     agentId: string;
-    type: "agent:auto-recover-error-state" | "agent:error-retry-exhausted" | "agent:error-parked-unrecoverable";
+    type: "agent:auto-recover-error-state" | "agent:reset-error-state-on-startup" | "agent:error-retry-exhausted" | "agent:error-parked-unrecoverable";
     attempt?: number;
     attempts?: number;
-    limit: number;
+    limit?: number;
+    priorState?: Agent["state"];
+    priorPauseReason?: string;
     source: "self-healing";
   }): Promise<void> {
     try {
@@ -10294,7 +10298,9 @@ export class SelfHealingManager {
           agentId: options.agentId,
           ...(options.attempt !== undefined ? { attempt: options.attempt } : {}),
           ...(options.attempts !== undefined ? { attempts: options.attempts } : {}),
-          limit: options.limit,
+          ...(options.limit !== undefined ? { limit: options.limit } : {}),
+          ...(options.priorState !== undefined ? { priorState: options.priorState } : {}),
+          ...(options.priorPauseReason !== undefined ? { priorPauseReason: options.priorPauseReason } : {}),
           source: options.source,
         },
       });
@@ -10465,6 +10471,82 @@ export class SelfHealingManager {
 
     log.log(`Recovered ${clearedAgentIds.size} drifted durable agent task link(s)`);
     return clearedAgentIds.size;
+  }
+
+  /*
+  FNXC:AgentHeartbeat 2026-07-12-17:26:
+  FN-7884: Engine restart is an explicit operator retry boundary for durable heartbeat agents. Startup recovery must immediately clear recoverable `error` and `error-retry-exhausted` parks, reset shared heartbeatErrorRecovery/durableErrorRecovery budget state, and re-arm heartbeats without steady-state staleness/cooldown/exhaustion gates; operator-actionable, stale-module, user-paused, error-unrecoverable, disabled, ephemeral, and actively executing agents remain suppressed.
+  */
+  async resetDurableAgentErrorStateOnStartup(): Promise<number> {
+    const agentStore = this.options.agentStore;
+    if (!agentStore) {
+      return 0;
+    }
+
+    let resetCount = 0;
+    try {
+      const allAgents = await agentStore.listAgents({ includeEphemeral: true });
+      for (const agent of allAgents) {
+        const isErrorRetryExhaustedPark =
+          agent.state === "paused" && agent.pauseReason === HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON;
+        if (agent.state !== "error" && !isErrorRetryExhaustedPark) {
+          continue;
+        }
+        if (isEphemeralAgent(agent)) {
+          continue;
+        }
+        const runtimeConfig = (agent.runtimeConfig ?? {}) as Record<string, unknown>;
+        if (runtimeConfig.enabled === false) {
+          continue;
+        }
+        if (this.options.hasActiveAgentExecution?.(agent.id) === true) {
+          continue;
+        }
+        if (!isHeartbeatErrorRecoverable(agent) || isStaleWorktreeModuleResolutionError(agent.lastError ?? "")) {
+          log.warn(`Startup durable-agent error reset suppressed for ${agent.id}: unrecoverable or stale-module error requires existing recovery path`);
+          continue;
+        }
+
+        const priorState = agent.state;
+        const priorPauseReason = agent.pauseReason;
+        const resetMetadata = resetHeartbeatErrorRecoveryMetadata(agent);
+        try {
+          await agentStore.updateAgentState(agent.id, "active");
+          await agentStore.updateAgent(agent.id, {
+            lastError: undefined,
+            pauseReason: undefined,
+            metadata: resetMetadata,
+          });
+          await this.emitDurableAgentErrorRecoveryAudit({
+            agentId: agent.id,
+            type: "agent:reset-error-state-on-startup",
+            priorState,
+            ...(priorPauseReason ? { priorPauseReason } : {}),
+            source: "self-healing",
+          });
+          if (!this.options.restartDurableAgentHeartbeat) {
+            log.log(`Durable-agent startup error reset heartbeat restart unavailable for ${agent.id}; state reset only`);
+          } else {
+            const restartOk = await this.options.restartDurableAgentHeartbeat(agent.id, {
+              reason: "startup-error-reset",
+              attempt: 1,
+            });
+            if (!restartOk) {
+              log.warn(`Durable-agent startup error reset heartbeat restart skipped for ${agent.id}`);
+            }
+          }
+          resetCount++;
+          log.log(`Startup reset durable-agent error state for ${agent.id}; heartbeat re-armed when available`);
+        } catch (error) {
+          log.warn(`Failed to reset durable-agent error state on startup for ${agent.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } catch (error) {
+      log.warn(`Startup durable-agent error reset failed: ${error instanceof Error ? error.message : String(error)}`);
+      return resetCount;
+    }
+
+    return resetCount;
   }
 
   async recoverOrphanedAgents(): Promise<number> {

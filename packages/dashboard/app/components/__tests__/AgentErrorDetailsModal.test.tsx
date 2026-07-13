@@ -17,6 +17,8 @@ const issueContext = {
 
 describe("AgentErrorDetailsModal", () => {
   const originalClipboard = navigator.clipboard;
+  const originalExecCommand = document.execCommand;
+  const originalSecureContext = window.isSecureContext;
   const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
   beforeEach(() => {
     Object.defineProperty(navigator, "clipboard", {
@@ -28,6 +30,8 @@ describe("AgentErrorDetailsModal", () => {
 
   afterEach(() => {
     Object.defineProperty(navigator, "clipboard", { value: originalClipboard, configurable: true });
+    Object.defineProperty(document, "execCommand", { value: originalExecCommand, configurable: true });
+    Object.defineProperty(window, "isSecureContext", { value: originalSecureContext, configurable: true });
   });
 
   it("does not render when closed", () => {
@@ -50,6 +54,20 @@ describe("AgentErrorDetailsModal", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Copied error to clipboard" })).toBeInTheDocument();
     });
+  });
+
+  it("copies error text through execCommand when Clipboard API is unavailable", async () => {
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    Object.defineProperty(window, "isSecureContext", { value: false, configurable: true });
+    Object.defineProperty(document, "execCommand", { value: execCommand, configurable: true });
+    const user = userEvent.setup();
+    render(<AgentErrorDetailsModal open={true} onClose={vi.fn()} errorText="copy me" issueContext={issueContext} />);
+
+    await user.click(screen.getByRole("button", { name: "Copy error to clipboard" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(screen.getByRole("button", { name: "Copied error to clipboard" })).toBeInTheDocument();
   });
 
   it("gates backdrop dismissal behind the global modal dismiss preference", () => {

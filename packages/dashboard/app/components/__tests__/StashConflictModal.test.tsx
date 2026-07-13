@@ -1,9 +1,19 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StashConflictModal from "../StashConflictModal";
 import { ApiRequestError } from "../../api";
+
+const originalClipboard = navigator.clipboard;
+const originalExecCommand = document.execCommand;
+
+function mockClipboardFallback(result: boolean) {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  const execCommand = vi.fn().mockReturnValue(result);
+  Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand });
+  return execCommand;
+}
 
 const mocked = vi.hoisted(() => ({
   api: vi.fn(),
@@ -41,6 +51,11 @@ function renderModal(overrides: Partial<ComponentProps<typeof StashConflictModal
 }
 
 describe("StashConflictModal", () => {
+  afterEach(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: originalExecCommand });
+  });
+
   beforeEach(() => {
     mocked.api.mockReset();
     mocked.openFile.mockReset();
@@ -146,6 +161,14 @@ describe("StashConflictModal", () => {
     expect(screen.getByText(/Stash ref: 1234567 \(fusion-auto-stash-FN-1\)/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Copy stash reference" }));
     await waitFor(() => expect(mocked.writeText).toHaveBeenCalledWith("1234567890abcdef"));
+  });
+
+  it("copies the stash sha through execCommand when Clipboard API is unavailable", async () => {
+    const execCommand = mockClipboardFallback(true);
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: "Copy stash reference" }));
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(screen.getByRole("status")).toHaveTextContent("Stash SHA copied.");
   });
 
   it("supports Escape close, initial focus, focus return, and tab wrapping", async () => {

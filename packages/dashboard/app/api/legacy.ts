@@ -602,6 +602,7 @@ export function updateTask(
  * @param modelId - Executor model ID (optional, null to clear)
  * @param validatorModelProvider - Validator model provider (optional, null to clear)
  * @param validatorModelId - Validator model ID (optional, null to clear)
+ * @param thinkingLevel - Executor thinking level (optional, null to clear)
  * @returns Promise with updated tasks and count
  */
 export function batchUpdateTaskModels(
@@ -613,6 +614,7 @@ export function batchUpdateTaskModels(
   planningModelProvider?: string | null,
   planningModelId?: string | null,
   nodeId?: string | null,
+  thinkingLevel?: string | null,
   projectId?: string,
 ): Promise<{ updated: Task[]; count: number }> {
   return api<{ updated: Task[]; count: number }>(withProjectId("/tasks/batch-update-models", projectId), {
@@ -626,6 +628,7 @@ export function batchUpdateTaskModels(
       planningModelProvider,
       planningModelId,
       nodeId,
+      ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
     }),
   });
 }
@@ -11193,10 +11196,12 @@ export function triggerInsightRun(
   projectId?: string,
   modelProvider?: string,
   modelId?: string,
+  thinkingLevel?: string,
 ): Promise<InsightRun> {
   const body: Record<string, unknown> = { trigger, inputMetadata };
   if (modelProvider) body.modelProvider = modelProvider;
   if (modelId) body.modelId = modelId;
+  if (thinkingLevel) body.thinkingLevel = thinkingLevel;
   return api<InsightRun>(withProjectId("/insights/run", projectId), {
     method: "POST",
     body: JSON.stringify(body),

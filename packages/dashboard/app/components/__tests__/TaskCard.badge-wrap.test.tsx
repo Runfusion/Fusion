@@ -76,6 +76,7 @@ function expectSharedHeaderBaseline(container: HTMLElement) {
   expect(idStyles.transform).toMatch(centeredIdNudgePattern);
   expect(actionsStyles.display).toBe("flex");
   expect(actionsStyles.alignItems).toBe("center");
+  expect(actionsStyles.transform).toBe(idStyles.transform);
   expect(actionsStyles.minHeight).toMatch(resolvedChipHeightPattern);
   expect(actionsStyles.marginLeft).toBe("auto");
   expect(actionsStyles.flex).toBe("0 0 auto");
@@ -271,10 +272,13 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
 
   it("keeps the centered-id nudge and mobile header rhythm tokenized with the badge-wrap contract", () => {
     const cardIdRule = loadedCss.match(/\.card-id\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+    const actionsRule = loadedCss.match(/\.card-header-actions\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
     expect(cardIdRule).toContain("min-height: var(--card-chip-height);");
     expect(cardIdRule).toContain("line-height: 1;");
     expect(cardIdRule).toContain("transform: translateY(calc(var(--space-xs) / 4));");
     expect(cardIdRule).not.toMatch(/translateY\(\d/);
+    expect(actionsRule).toContain("transform: translateY(calc(var(--space-xs) / 4));");
+    expect(actionsRule).not.toMatch(/translateY\(\d/);
     expect(loadedCss).toContain(".card-id,\n  .card-header-badges,\n  .card-header-actions");
     expect(loadedCss).toContain("min-height: var(--card-chip-height-mobile);");
   });

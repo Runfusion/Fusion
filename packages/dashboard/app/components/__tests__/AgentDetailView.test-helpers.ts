@@ -109,7 +109,7 @@ vi.mock("../AgentLogViewer", () => ({
 }));
 
 vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ models, value, onChange, disabled, label, placeholder, id, favoriteProviders = [], onToggleFavorite, favoriteModels = [], onToggleModelFavorite }: {
+  CustomModelDropdown: ({ models, value, onChange, disabled, label, placeholder, id, favoriteProviders = [], onToggleFavorite, favoriteModels = [], onToggleModelFavorite, thinkingLevel, onThinkingLevelChange, defaultThinkingLevel }: {
     models: Array<{ provider: string; id: string }>;
     value: string;
     onChange: (v: string) => void;
@@ -121,14 +121,19 @@ vi.mock("../CustomModelDropdown", () => ({
     onToggleFavorite?: (provider: string) => void;
     favoriteModels?: string[];
     onToggleModelFavorite?: (modelId: string) => void;
+    thinkingLevel?: string;
+    onThinkingLevelChange?: (level: string) => void;
+    defaultThinkingLevel?: string;
   }) => {
     const selectId = id ?? "custom-model-dropdown";
+    const thinkingSelectId = `${selectId}-thinking-level`;
     return createElement(
       "div",
       {
         "data-testid": "custom-model-dropdown",
         "data-favorite-providers": favoriteProviders.join(","),
         "data-favorite-models": favoriteModels.join(","),
+        "data-default-thinking-level": defaultThinkingLevel ?? "",
       },
       createElement("label", { htmlFor: selectId }, label),
       createElement(
@@ -146,6 +151,18 @@ vi.mock("../CustomModelDropdown", () => ({
           return createElement("option", { key: modelValue, value: modelValue }, modelValue);
         }),
       ),
+      onThinkingLevelChange
+        ? createElement(
+          "select",
+          {
+            id: thinkingSelectId,
+            "aria-label": `${label} thinking level`,
+            value: thinkingLevel ?? "",
+            onChange: (e: Event) => onThinkingLevelChange((e.target as HTMLSelectElement).value),
+          },
+          ...["off", "minimal", "low", "medium", "high", "xhigh"].map((level) => createElement("option", { key: level, value: level }, level)),
+        )
+        : null,
       ...Array.from(new Set(models.map((model) => model.provider))).map((provider) => createElement(
         "button",
         {

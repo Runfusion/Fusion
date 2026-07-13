@@ -528,6 +528,8 @@ interface TerminalModalProps {
   defaultCwd?: string;
   /** Optional terminal-session namespace, usually the owning task id. */
   scopeId?: string;
+  /** Whether the fixed ExecutorStatusBar footer is currently rendered; reserves space for it in below-mode. */
+  footerVisible?: boolean;
 }
 
 /**
@@ -545,7 +547,7 @@ interface TerminalModalProps {
  * 
  * The terminal spawns a real shell (bash/zsh/powershell based on platform).
  */
-export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId }: TerminalModalProps) {
+export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId, footerVisible = false }: TerminalModalProps) {
   const { t } = useTranslation("app");
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -3256,8 +3258,19 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   }
 
   if (isBelowMode) {
+    /*
+    FNXC:TerminalLayout 2026-07-12-18:50:
+    FN-7897 fixed the pinned terminal rendering underneath the fixed ExecutorStatusBar footer.
+    .terminal-below-host is a sibling of .dashboard-project-shell inside .dashboard-project-stack
+    (not a descendant), so it cannot rely on --executor-footer-height inherited from the shell — it
+    must reserve the footer's height itself via the --with-footer modifier, following the same
+    footerVisible-prop convention used by .project-content--with-footer/.left-sidebar-nav--with-footer/.right-dock--with-footer.
+    */
     return (
-      <div className="terminal-below-host" data-testid="terminal-below-host">
+      <div
+        className={`terminal-below-host${footerVisible ? " terminal-below-host--with-footer" : ""}`}
+        data-testid="terminal-below-host"
+      >
         {terminalPanel}
       </div>
     );

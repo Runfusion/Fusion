@@ -47,6 +47,7 @@ import {
   getPlannerInterventionTimeline,
   isBuiltinWorkflowId,
   type NearDuplicateCandidate,
+  type ThinkingLevel,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { githubRateLimiter } from "../github-poll.js";
@@ -2694,7 +2695,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   /**
    * POST /api/tasks/batch-update-models
    * Batch update AI model configuration for multiple tasks.
-   * Body: { taskIds: string[], modelProvider?: string | null, modelId?: string | null, validatorModelProvider?: string | null, validatorModelId?: string | null, planningModelProvider?: string | null, planningModelId?: string | null }
+   * Body: { taskIds: string[], modelProvider?: string | null, modelId?: string | null, validatorModelProvider?: string | null, validatorModelId?: string | null, planningModelProvider?: string | null, planningModelId?: string | null, thinkingLevel?: ThinkingLevel | null }
    * Returns: { updated: Task[], count: number }
    */
   router.post("/tasks/batch-update-models", async (req, res) => {
@@ -2709,6 +2710,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         planningModelProvider,
         planningModelId,
         nodeId,
+        thinkingLevel,
       } = req.body;
 
       // Validate taskIds
@@ -2722,17 +2724,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest("taskIds must contain non-empty strings");
       }
 
-      // Validate that at least one model field or node override is being updated
+      // Validate that at least one model field, thinking level, or node override is being updated
       const hasExecutorModel = modelProvider !== undefined || modelId !== undefined;
       const hasValidatorModel = validatorModelProvider !== undefined || validatorModelId !== undefined;
       const hasPlanningModel = planningModelProvider !== undefined || planningModelId !== undefined;
       const hasNodeId = nodeId !== undefined;
-      if (!hasExecutorModel && !hasValidatorModel && !hasPlanningModel && !hasNodeId) {
-        throw badRequest("At least one model field or nodeId must be provided");
+      const hasThinkingLevel = thinkingLevel !== undefined;
+      if (!hasExecutorModel && !hasValidatorModel && !hasPlanningModel && !hasNodeId && !hasThinkingLevel) {
+        throw badRequest("At least one model field, thinkingLevel, or nodeId must be provided");
       }
 
       if (nodeId !== undefined && nodeId !== null && typeof nodeId !== "string") {
         throw badRequest("nodeId must be a string, null, or undefined");
+      }
+      if (thinkingLevel !== undefined && thinkingLevel !== null && (typeof thinkingLevel !== "string" || !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel))) {
+        throw badRequest(`thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}, null, or undefined`);
       }
 
       // Validate model field pairs (both provider and modelId must be provided together or neither)
@@ -2793,6 +2799,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         planningModelProvider?: string | null;
         planningModelId?: string | null;
         nodeId?: string | null;
+        thinkingLevel?: ThinkingLevel | null;
       } = {};
       if (validatedExecutor.provider !== undefined) {
         updates.modelProvider = validatedExecutor.provider;
@@ -2814,6 +2821,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
       if (nodeId !== undefined) {
         updates.nodeId = nodeId;
+      }
+      /*
+      FNXC:Settings-ThinkingLevel 2026-07-12-00:00:
+      Bulk task model edits can now set or clear one executor-scoped thinkingLevel across the selected tasks, reusing the existing batch route instead of inventing a dashboard-only control that persists nowhere.
+      */
+      if (thinkingLevel !== undefined) {
+        updates.thinkingLevel = thinkingLevel as ThinkingLevel | null;
       }
 
       // Update all tasks in parallel

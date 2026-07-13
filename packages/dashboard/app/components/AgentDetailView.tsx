@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
 import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
-import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission } from "@fusion/core";
+import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission, ThinkingLevel } from "@fusion/core";
 import { AGENT_PERMISSIONS, getErrorMessage, isEphemeralAgent } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { LoadingSpinner } from "./LoadingSpinner";
@@ -36,6 +36,7 @@ import { AgentTaskBadge } from "./AgentTaskBadge";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 import { AgentPermissionPolicyEditor } from "./AgentPermissionPolicyEditor";
 import { useFavorites } from "../hooks/useFavorites";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -642,10 +643,19 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
     return getAgentHealthStatus(agent);
   };
 
-  const copyAgentId = () => {
+  /*
+  FNXC:Clipboard 2026-07-12-00:00:
+  Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback.
+  */
+  const copyAgentId = async () => {
     if (agent) {
-      navigator.clipboard.writeText(agent.id);
-      addToast(t("agents.idCopied", "Agent ID copied to clipboard"), "success");
+      const copied = await copyTextToClipboard(agent.id);
+      addToast(
+        copied
+          ? t("agents.idCopied", "Agent ID copied to clipboard")
+          : t("agents.idCopyFailed", "Failed to copy agent ID"),
+        copied ? "success" : "error"
+      );
     }
   };
 
@@ -3699,6 +3709,7 @@ function ConfigTab({
         initial[field.key] = String(raw);
       }
     }
+    initial.thinkingLevel = typeof agent.runtimeConfig?.thinkingLevel === "string" ? agent.runtimeConfig.thinkingLevel : "off";
     return initial;
   });
 
@@ -4074,6 +4085,7 @@ function ConfigTab({
     if (runtimeMode !== (initialRuntimeHint ? "runtime" : "model")) return true;
     if (modelValue !== initialModelValue) return true;
     if (selectedRuntimeId !== initialRuntimeHint) return true;
+    if ((formValues.thinkingLevel || "off") !== (typeof rc.thinkingLevel === "string" ? rc.thinkingLevel : "off")) return true;
 
     return false;
   })();
@@ -4120,6 +4132,10 @@ function ConfigTab({
     setSkipHeartbeatWhenIdle(deriveSkipHeartbeatWhenIdle(agent.runtimeConfig));
     setHeartbeatScopeDiscipline(deriveHeartbeatScopeDiscipline(agent.runtimeConfig));
     setBudgetValues(deriveBudgetValues(agent.runtimeConfig));
+    setFormValues((prev) => ({
+      ...prev,
+      thinkingLevel: typeof agent.runtimeConfig?.thinkingLevel === "string" ? agent.runtimeConfig.thinkingLevel : "off",
+    }));
     setModelValue(initialModelValue);
     setSelectedRuntimeId(initialRuntimeHint);
     setRuntimeMode(initialRuntimeHint ? "runtime" : "model");
@@ -4310,6 +4326,9 @@ function ConfigTab({
     } else {
       newRuntimeConfig.heartbeatPromptTemplate = heartbeatPromptTemplate;
     }
+
+    const selectedThinkingLevel = (formValues.thinkingLevel || "off") as ThinkingLevel;
+    newRuntimeConfig.thinkingLevel = selectedThinkingLevel;
 
     if (runtimeMode === "runtime") {
       if (selectedRuntimeId.trim()) {
@@ -4713,6 +4732,10 @@ function ConfigTab({
 
           {runtimeMode === "model" ? (
             <div className="config-field">
+              {/*
+              FNXC:Settings-ThinkingLevel 2026-07-12-00:00:
+              Agent Detail now lets operators change a built-in agent's persisted runtimeConfig.thinkingLevel after creation through the shared inline model-dropdown control, matching NewAgentDialog's concrete-only agent semantics.
+              */}
               <CustomModelDropdown
                 models={availableModels}
                 value={modelValue}
@@ -4727,6 +4750,11 @@ function ConfigTab({
                 onToggleFavorite={toggleFavoriteProvider}
                 favoriteModels={favoriteModels}
                 onToggleModelFavorite={toggleFavoriteModel}
+                thinkingLevel={formValues.thinkingLevel ?? ""}
+                onThinkingLevelChange={(level) => {
+                  setFormValues((prev) => ({ ...prev, thinkingLevel: level as ThinkingLevel }));
+                  void scheduleAutoSave();
+                }}
               />
             </div>
           ) : (

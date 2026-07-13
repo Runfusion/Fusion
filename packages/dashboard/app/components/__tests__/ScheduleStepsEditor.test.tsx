@@ -45,20 +45,34 @@ vi.mock("../CustomModelDropdown", () => ({
     // Store the last value for debugging
     (window as any).__lastModelDropdownProps = props;
     return (
-      <select
-        data-testid="model-dropdown"
-        value={props.value ?? ""}
-        onChange={(e) => props.onChange?.(e.target.value)}
-        disabled={props.disabled}
-        data-value={props.value}
-      >
-        <option value="">Use default</option>
-        {props.models?.map((m: any) => (
-          <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-            {m.name}
-          </option>
-        ))}
-      </select>
+      <div data-testid={`${props.id}-mock`}>
+        <select
+          data-testid="model-dropdown"
+          value={props.value ?? ""}
+          onChange={(e) => props.onChange?.(e.target.value)}
+          disabled={props.disabled}
+          data-value={props.value}
+        >
+          <option value="">Use default</option>
+          {props.models?.map((m: any) => (
+            <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+        {props.showThinkingLevel && (
+          <select
+            aria-label={`${props.id} thinking level`}
+            data-testid={`${props.id}-thinking-level`}
+            value={props.thinkingLevel || ""}
+            onChange={(e) => props.onThinkingLevelChange?.(e.target.value)}
+          >
+            <option value="">Default (off)</option>
+            <option value="off">Off</option>
+            <option value="high">High</option>
+          </select>
+        )}
+      </div>
     );
   },
 }));
@@ -467,6 +481,33 @@ describe("ScheduleStepsEditor", () => {
       // but we can verify the callback is properly wired
     });
 
+    it("saves AI prompt step with default, explicit, and cleared thinkingLevel", async () => {
+      const steps = [makeStep({ id: "s1", name: "AI Step", type: "ai-prompt", prompt: "Test prompt" })];
+      const { unmount } = render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
+
+      fireEvent.click(screen.getByLabelText("Edit AI Step"));
+      await waitFor(() => expect(screen.getByTestId("step-model-s1-thinking-level")).toBeDefined());
+      expect(screen.getByTestId("step-model-s1-thinking-level")).toHaveValue("");
+      fireEvent.click(screen.getByText("Save Step"));
+      expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ thinkingLevel: undefined })]);
+
+      onChange.mockClear();
+      fireEvent.click(screen.getByLabelText("Edit AI Step"));
+      fireEvent.change(screen.getByTestId("step-model-s1-thinking-level"), { target: { value: "high" } });
+      fireEvent.click(screen.getByText("Save Step"));
+      expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ thinkingLevel: "high" })]);
+
+      onChange.mockClear();
+      unmount();
+      const stepsWithThinking = [makeStep({ id: "s1", name: "AI Step", type: "ai-prompt", prompt: "Test prompt", thinkingLevel: "high" })];
+      render(<ScheduleStepsEditor steps={stepsWithThinking} onChange={onChange} />);
+      fireEvent.click(screen.getByLabelText("Edit AI Step"));
+      await waitFor(() => expect(screen.getByTestId("step-model-s1-thinking-level")).toHaveValue("high"));
+      fireEvent.change(screen.getByTestId("step-model-s1-thinking-level"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save Step"));
+      expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ thinkingLevel: undefined })]);
+    });
+
     it("shows model dropdown for create-task step type", async () => {
       const steps = [makeStep({ id: "s1", type: "create-task", name: "Create Task", taskDescription: "Test description" })];
       render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
@@ -477,6 +518,20 @@ describe("ScheduleStepsEditor", () => {
       await waitFor(() => expect(screen.getByTestId("model-dropdown")).toBeDefined());
       
       expect(screen.getByTestId("model-dropdown")).toBeDefined();
+      expect(screen.getByTestId("step-task-model-s1-thinking-level")).toBeDefined();
+    });
+
+    it("saves create-task step with explicit thinkingLevel", async () => {
+      const steps = [makeStep({ id: "s1", type: "create-task", name: "Create Task", taskDescription: "Test description" })];
+      render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
+
+      fireEvent.click(screen.getByLabelText("Edit Create Task"));
+      await waitFor(() => expect(screen.getByTestId("step-task-model-s1-thinking-level")).toBeDefined());
+      expect(screen.getByTestId("step-task-model-s1-thinking-level")).toHaveValue("");
+      fireEvent.change(screen.getByTestId("step-task-model-s1-thinking-level"), { target: { value: "high" } });
+      fireEvent.click(screen.getByText("Save Step"));
+
+      expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ type: "create-task", thinkingLevel: "high" })]);
     });
 
     it("pre-populates model dropdown when editing create-task step with existing model", async () => {

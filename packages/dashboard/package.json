@@ -35,6 +35,10 @@
       "types": "./app/utils/taskStuck.ts",
       "import": "./app/utils/taskStuck.ts"
     },
+    "./app/utils/copyToClipboard": {
+      "types": "./app/utils/copyToClipboard.ts",
+      "import": "./app/utils/copyToClipboard.ts"
+    },
     "./app/utils/projectStorage": {
       "types": "./app/utils/projectStorage.ts",
       "import": "./app/utils/projectStorage.ts"

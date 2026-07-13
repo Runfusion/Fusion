@@ -77,6 +77,16 @@ vi.mock("../../api", async () => {
   };
 });
 
+const originalClipboard = navigator.clipboard;
+const originalExecCommand = document.execCommand;
+
+function mockClipboardFallback(result: boolean) {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  const execCommand = vi.fn().mockReturnValue(result);
+  Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand });
+  return execCommand;
+}
+
 const mockConfirm = vi.fn();
 
 vi.mock("../../hooks/useConfirm", () => ({
@@ -190,6 +200,8 @@ const mockTasks: Task[] = [
 
 describe("GitManagerModal", () => {
   afterEach(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: originalExecCommand });
     vi.useRealTimers();
   });
 
@@ -580,6 +592,17 @@ describe("GitManagerModal", () => {
       expect(screen.getByText("main")).toBeInTheDocument();
       expect(screen.getByText("Clean")).toBeInTheDocument();
     });
+  });
+
+  it("copies status commit hash through execCommand when Clipboard API is unavailable", async () => {
+    const execCommand = mockClipboardFallback(true);
+    render(<GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />);
+
+    await waitFor(() => expect(screen.getByText("main")).toBeInTheDocument());
+    fireEvent.click(screen.getByTitle("Copy short commit hash"));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(mockAddToast).toHaveBeenCalledWith("Copied commit hash", "success");
   });
 
   it("shows dirty status when working tree is modified", async () => {

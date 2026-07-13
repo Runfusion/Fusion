@@ -11,7 +11,7 @@ import {
   Monitor,
   type LucideProps,
 } from "lucide-react";
-import type { Task, TaskDetail, WorkflowStep } from "@fusion/core";
+import type { GithubIssueAction, Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import type { PluginDashboardViewEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
@@ -79,6 +79,7 @@ export interface OverflowViewRenderProps {
   onOpenSettings?: (section?: string) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenTaskInDock?: (task: Task | TaskDetail) => void;
+  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onOpenDetail?: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onSendSelectionToTask?: (description: string) => void;
   onCreateTaskFromInsight?: (payload: { insightId: string; title: string; description: string }) => Promise<void> | void;
@@ -157,6 +158,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         tasks={props.tasks ?? []}
         projectId={props.projectId}
         onOpenTask={props.onOpenTaskInDock}
+        onDeleteTask={props.onDeleteTask}
         addToast={props.addToast}
         prAuthAvailable={false}
         autoMergeEnabled={false}

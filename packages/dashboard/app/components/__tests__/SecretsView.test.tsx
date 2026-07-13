@@ -29,6 +29,21 @@ function removeAllCss() {
   document.head.querySelector('[data-test-all-app-css="true"]')?.remove();
 }
 
+const originalClipboard = navigator.clipboard;
+const originalExecCommand = document.execCommand;
+
+function mockClipboardFallback(result: boolean) {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  const execCommand = vi.fn().mockReturnValue(result);
+  Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand });
+  return execCommand;
+}
+
+function restoreClipboardMocks() {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: originalExecCommand });
+}
+
 function expectVisibleActionIcon(button: HTMLElement) {
   const svg = button.querySelector("svg");
   expect(svg).not.toBeNull();
@@ -57,6 +72,7 @@ describe("SecretsView", () => {
   });
 
   afterEach(() => {
+    restoreClipboardMocks();
     removeAllCss();
     delete document.documentElement.dataset.theme;
   });
@@ -236,6 +252,72 @@ describe("SecretsView", () => {
     expectVisibleActionIcon(screen.getByRole("button", { name: "Copy" }));
     expectVisibleActionIcon(screen.getByRole("button", { name: "Edit" }));
     expectVisibleActionIcon(screen.getByRole("button", { name: "Delete" }));
+  });
+
+  it("copies revealed secrets through the execCommand fallback when Clipboard API is unavailable", async () => {
+    const execCommand = mockClipboardFallback(true);
+    const addToast = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            ok: true,
+            body: {
+              secrets: [
+                { id: "secret-1", key: "VISIBLE", scope: "project", description: null, accessPolicy: "prompt", envExportable: false, envExportKey: null, lastReadAt: null },
+              ],
+            },
+          }),
+        )
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } }))
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { key: "VISIBLE", value: "super-secret-value" } })),
+    );
+
+    render(<SecretsView addToast={addToast} />);
+    await screen.findByText("VISIBLE");
+    await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
+    expect(await screen.findByText("super-secret-value")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(addToast).toHaveBeenCalledWith("Copied", "success");
+    expect(screen.getByRole("button", { name: "Copy" }).querySelector(".lucide-check")).toBeInTheDocument();
+  });
+
+  it("shows a failure toast without marking a secret copied when both clipboard paths fail", async () => {
+    const execCommand = mockClipboardFallback(false);
+    const addToast = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            ok: true,
+            body: {
+              secrets: [
+                { id: "secret-1", key: "VISIBLE", scope: "project", description: null, accessPolicy: "prompt", envExportable: false, envExportKey: null, lastReadAt: null },
+              ],
+            },
+          }),
+        )
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } }))
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { key: "VISIBLE", value: "super-secret-value" } })),
+    );
+
+    render(<SecretsView addToast={addToast} />);
+    await screen.findByText("VISIBLE");
+    await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
+    expect(await screen.findByText("super-secret-value")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(addToast).toHaveBeenCalledWith("Failed to copy secret", "error");
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 
   it("revealed secret can be hidden again from the row toggle", async () => {

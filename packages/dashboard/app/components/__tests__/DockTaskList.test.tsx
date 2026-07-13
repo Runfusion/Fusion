@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import { DockTaskList } from "../DockTaskList";
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, onOpenDetail, disableDrag }: { task: Task | TaskDetail; onOpenDetail: (task: Task | TaskDetail) => void; disableDrag?: boolean }) => (
+  TaskCard: ({ task, onOpenDetail, onDeleteTask, disableDrag }: { task: Task | TaskDetail; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; disableDrag?: boolean }) => (
     <button
       type="button"
       data-testid={`mock-task-card-${task.id}`}
       data-disable-drag={String(disableDrag)}
+      data-has-delete={String(Boolean(onDeleteTask))}
       onClick={() => onOpenDetail(task)}
     >
       {task.title ?? task.id}
@@ -23,6 +24,19 @@ DockTaskList must route TaskCard's own open action to the dock snapshot setter. 
 const makeTask = (id: string, title: string, column: string) => ({ id, title, column }) as Task;
 
 describe("DockTaskList", () => {
+  /*
+  FNXC:TaskDeletion 2026-07-12-00:00:
+  The reported inert delete localized to the right-dock Tasks list host: it rendered TaskCard without onDeleteTask, so that surface could not enter the shared confirm→delete flow while board/list/detail hosts were wired.
+  */
+  it("threads delete into right-dock TaskCards so the delete affordance can enter the shared flow", () => {
+    const task = makeTask("FN-DELETE", "Delete from right dock", "triage");
+    const onDeleteTask = vi.fn(async () => task);
+
+    render(<DockTaskList tasks={[task]} onOpenTask={vi.fn()} onDeleteTask={onDeleteTask} addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("mock-task-card-FN-DELETE")).toHaveAttribute("data-has-delete", "true");
+  });
+
   it("renders populated active task rows and routes TaskCard opens to onOpenTask", () => {
     const first = makeTask("FN-1", "First task", "todo");
     const second = makeTask("FN-2", "Second task", "in-progress");

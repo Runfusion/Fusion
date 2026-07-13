@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { copyTextToClipboard } from "@fusion/dashboard/app/utils/copyToClipboard";
 import { getShareBlocks } from "../api.js";
 import type { ReportRecord } from "../types.js";
 import type { ShareBlocks } from "../../share-blocks.js";
@@ -35,7 +36,9 @@ export function ShareBlocksPanel({ report }: { report: ReportRecord }) {
     </div>
     <textarea className="input share-blocks-panel__content" readOnly value={value} />
     <button className="btn btn-sm" onClick={async () => {
-      await navigator.clipboard.writeText(value);
+      /* FNXC:Clipboard 2026-07-12-00:00: Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback. */
+      const copiedToClipboard = await copyTextToClipboard(value);
+      if (!copiedToClipboard) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1000);
     }}>{copied ? "Copied" : "Copy"}</button>

@@ -15,11 +15,40 @@ vi.mock("lucide-react", () => ({
 
 // Mock API
 vi.mock("../api", () => ({
-  fetchModels: vi.fn(() => new Promise(() => {})),
+  fetchModels: vi.fn(() => Promise.resolve({
+    models: [
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet", reasoning: false, contextWindow: 200000 },
+    ],
+    favoriteProviders: [],
+    favoriteModels: [],
+  })),
 }));
 
 // Mock @fusion/core
-vi.mock("@fusion/core", () => ({}));
+vi.mock("@fusion/core", () => ({
+  AUTOMATION_SELECTABLE_TOOLS: ["Read", "Bash", "Edit", "Write", "Grep", "Find", "Ls"],
+}));
+
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({ id, value, onChange, disabled, models, showThinkingLevel, thinkingLevel, onThinkingLevelChange }: any) => (
+    <div data-testid={`${id}-mock`}>
+      <select data-testid="model-dropdown" value={value || ""} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        <option value="">Use default</option>
+        {models?.map((m: any) => (
+          <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>{m.name}</option>
+        ))}
+      </select>
+      {showThinkingLevel && (
+        <select data-testid={`${id}-thinking-level`} aria-label={`${id} thinking level`} value={thinkingLevel || ""} onChange={(e) => onThinkingLevelChange?.(e.target.value)}>
+          <option value="">Default (off)</option>
+          <option value="off">Off</option>
+          <option value="high">High</option>
+        </select>
+      )}
+    </div>
+  ),
+}));
 
 function makeRoutine(overrides: Partial<Routine> = {}): Routine {
   return {
@@ -411,6 +440,72 @@ describe("RoutineEditor", () => {
             catchUpPolicy: "run_one",
             enabled: true,
           })
+        );
+      });
+    });
+
+    it("omits thinkingLevel by default for simple AI Prompt routines", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "AI Routine" } });
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      expect(screen.getByTestId("routine-model-thinking-level")).toBeDefined();
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Summarize recent activity" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ type: "ai-prompt", thinkingLevel: undefined })],
+          }),
+        );
+      });
+    });
+
+    it("submits explicit thinkingLevel and shares it with simple Create Task routines", async () => {
+      render(<RoutineEditor onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Task Routine" } });
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      fireEvent.change(screen.getByTestId("routine-model-thinking-level"), { target: { value: "high" } });
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      expect(screen.getByTestId("routine-task-model-thinking-level")).toHaveValue("high");
+      fireEvent.change(screen.getByLabelText("Task Description"), { target: { value: "Review dependencies" } });
+      fireEvent.click(screen.getByText("Create Routine"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ type: "create-task", thinkingLevel: "high" })],
+          }),
+        );
+      });
+    });
+
+    it("clears thinkingLevel when editing a simple AI Prompt routine", async () => {
+      const routine = makeRoutine({
+        command: undefined,
+        steps: [
+          {
+            id: "step-1",
+            type: "ai-prompt",
+            name: "AI Routine",
+            prompt: "Summarize recent activity",
+            thinkingLevel: "high",
+          },
+        ],
+      });
+      render(<RoutineEditor routine={routine} onSubmit={onSubmit} onCancel={onCancel} />);
+
+      expect(screen.getByTestId("routine-model-thinking-level")).toHaveValue("high");
+      fireEvent.change(screen.getByTestId("routine-model-thinking-level"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save Changes"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ thinkingLevel: undefined })],
+          }),
         );
       });
     });

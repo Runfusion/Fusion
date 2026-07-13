@@ -20,6 +20,7 @@ import {
   type PiExtensionSettings,
   AutomationStore,
   AUTOMATION_SELECTABLE_TOOLS,
+  THINKING_LEVELS,
   MemoryBackendError,
   RoutineStore,
   discoverPiExtensions,
@@ -4978,6 +4979,15 @@ function validateAutomationSteps(steps: unknown[]): string | null {
     const hasModelId = step.modelId && typeof step.modelId === "string";
     if ((hasProvider && !hasModelId) || (!hasProvider && hasModelId)) {
       return `Step ${i + 1}: modelProvider and modelId must both be present or both absent`;
+    }
+    /*
+    FNXC:Automations 2026-07-12-19:14:
+    Schedule and routine AI-capable steps can persist an optional reasoning-effort override. Validate it against the central THINKING_LEVELS set so routes accept omission/inherit plus known levels and reject drift before JSON step storage.
+    */
+    if (step.thinkingLevel !== undefined) {
+      if (typeof step.thinkingLevel !== "string" || !THINKING_LEVELS.includes(step.thinkingLevel as (typeof THINKING_LEVELS)[number])) {
+        return `Step ${i + 1}: thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`;
+      }
     }
   }
   return null;

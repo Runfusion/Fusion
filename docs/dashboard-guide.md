@@ -142,8 +142,9 @@ On mobile viewports, the Right Dock never renders. The compact Header actions an
 
 <!-- FNXC:AutomationTools 2026-06-26-00:00: Automation AI-prompt steps now default to the full coding tool set and expose per-step restrictions so operators can intentionally narrow tool access without breaking legacy schedules. -->
 <!-- FNXC:AutomationLiveOutput 2026-06-26-00:00: Manual automation runs stream step, text, and tool activity into the Automations card while preserving the final run-result history after completion. -->
+<!-- FNXC:Automations 2026-07-12-19:14: Schedule and routine AI-capable model selectors persist an optional Thinking Level on each step. Default/inherit stays empty, concrete off..xhigh values are stored with the JSON step configuration; runtime application is tracked separately. -->
 
-Open **Automations** from the left sidebar (or the mobile More surfaces) to create cron, webhook, API, or manual routines. AI Prompt steps now run with all selectable coding tools by default: **Read**, **Bash**, **Edit**, **Write**, **Grep**, **Find**, and **Ls**. In the routine editor, use **Allowed tools** on a simple AI Prompt action or any multi-step AI Prompt step to clear or re-select tools. Leaving every tool selected stores the legacy default, so existing schedules continue to run with full tool access; clearing every box is an explicit no-tools configuration.
+Open **Automations** from the left sidebar (or the mobile More surfaces) to create cron, webhook, API, or manual routines. AI Prompt steps now run with all selectable coding tools by default: **Read**, **Bash**, **Edit**, **Write**, **Grep**, **Find**, and **Ls**. In the routine editor, use **Allowed tools** on a simple AI Prompt action or any multi-step AI Prompt step to clear or re-select tools. Leaving every tool selected stores the legacy default, so existing schedules continue to run with full tool access; clearing every box is an explicit no-tools configuration. AI Prompt and Create Task action model selectors also include **Thinking Level**: leave it on **Default** to inherit the project setting, or choose a concrete reasoning effort to save it with that step.
 
 When you choose **Run now**, the routine card opens a **Live output** panel while the manual run is active. The panel appends step status, AI text deltas, and tool start/finish activity as the run executes, then the card falls back to the persisted final run output and run history once the server records the result. The same `RoutineCard` surface is used by the floating modal and embedded Automations view, so live output appears in both presentations and collapses into a single-column card layout on mobile.
 
@@ -268,7 +269,7 @@ Features:
 - Sectioned task table grouped by lifecycle column
 - Sortable columns (ID/title/status/column)
 - Column visibility toggles and optional hide-done filtering
-- Bulk selection + batch model updates
+- Bulk selection + batch model, node, and task thinking-level updates
 - Bulk Pause / Unpause / Archive actions from the selection toolbar (`Pause selected`, `Unpause selected`, `Archive selected`) for fast batch task state management.
 - Bulk delete from the selection toolbar (`Delete selected`): archived selections are skipped automatically, and dependency-conflict failures can be force-deleted per task after a danger confirmation that removes dependency references.
 - Desktop List view keeps the two-pane table/detail split. Tablet-width and mobile viewports use the single-pane card layout so list controls and quick-add stay full-width; tapping a task opens detail instead of selecting an embedded split pane.
@@ -500,7 +501,7 @@ Rules:
 - `auto-new` creates a branch after task creation using `fusion/{task-id}-{short-name}` (for example `fusion/fn-5671-branch-strategy-dropdown`).
 - `Merge target / base branch` stays optional for all modes and uses the same branch-dropdown + `Custom…` fallback behavior as Planning Mode.
 - In **More options → Model Configuration**, **Auto-merge** is a per-task override with three states: **Default** (follow project setting), **Enabled**, or **Disabled**.
-- In **More options → Model Configuration**, task and agent model pickers expose **Thinking Level** inside the same model dropdown panel instead of as a separate adjacent selector. Task pickers offer **Default (project setting)** plus **Off**, **Minimal**, **Low**, **Medium**, **High**, and **Very High**; agent creation is concrete-only and starts at **Off**.
+- In **More options → Model Configuration**, task and agent model pickers expose **Thinking Level** inside the same model dropdown panel instead of as a separate adjacent selector. Task pickers offer **Default (project setting)** plus **Off**, **Minimal**, **Low**, **Medium**, **High**, and **Very High**; agent creation, Agent Onboarding review, and Agent Detail built-in-model settings are concrete-only and start/fall back to **Off**.
 - In **More options → Model Configuration**, **Planner oversight** is a per-task override of the workflow-native `plannerOversightLevel` setting (FN-7508): **Inherit from workflow** (default) plus **Off**, **Observe**, **Steer**, and **Autonomous recovery**. This selector appears in both the New Task dialog and the Task Detail edit form (same shared control). Selecting **Inherit from workflow** clears the per-task override (sent as `null` on edit, omitted on create) so the task falls back to the effective `plannerOversightLevel` configured on its workflow — set project/global defaults for this in the **Workflow Editor → Values** tab, not in Project Settings; it is workflow-native, not a project setting.
 
 The dialog also exposes AI handoffs that quick-add no longer shows: **Plan** opens Planning Mode with the current description, and **Subtask** opens Subtask Breakdown with the current description when **Settings → Experimental Features → Subtask Breakdown** is enabled. The Subtask handoff is hidden by default; visible handoff buttons remain disabled until the description has content, matching the quick-add row behavior for Subtask. **Execution mode** and optional workflow-step selection are available in the New Task dialog as well as quick entry, so users can choose Fast or standard execution and opt into workflow-specific creation-time steps before creating a task from either surface.
@@ -651,7 +652,7 @@ Use the terminal on desktop/tablet:
 1. Select the **Terminal** button in the footer executor status bar.
    Expected outcome: the terminal opens as a bottom-docked overlay panel with the active shell session and a draggable top resize handle. The font size / clear / shortcuts / preferences controls, connection status, pin, and pop-out controls render in the terminal's bottom action-control footer at every desktop/tablet width, so the header only has to carry the tab affordance, title/status, workspace picker, and close button.
 2. Select **Pin terminal (push content)** from the bottom action-control footer.
-   Expected outcome: the terminal moves into a persisted below-application panel that reserves space instead of covering the board, chat, or right sidebar. Select **Unpin terminal (overlay content)** to return to the overlay docked panel.
+   Expected outcome: the terminal moves into a persisted below-application panel that reserves space instead of covering the board, chat, or right sidebar. The pinned panel also reserves space above the fixed status footer (the executor status bar), so the terminal's own bottom action-control footer (font size, Clear, Shortcuts, Preferences, connection status, pin/pop-out) stays fully visible instead of being covered by it. Select **Unpin terminal (overlay content)** to return to the overlay docked panel.
 3. Drag the top edge of the docked or pinned panel.
    Expected outcome: the panel height changes within its viewport-safe bounds and persists per project, with pinned mode clamped shorter so the application remains usable.
 4. Select **Pop out** from the bottom action-control footer.
@@ -994,6 +995,7 @@ Features:
 - First-run setup asks whether to create an optional project agent after project registration. The default template is **CEO**; users can choose another preset, use the AI interview when `experimentalFeatures.agentOnboarding` is enabled, or skip it. Fusion can still build tasks without an agent by starting temporary agents to plan, code, review, and merge task work.
 - Start, pause, stop, and trigger agent runs from the view and from detail panels
 - In **Agent detail**, use the kebab **Bulk agent actions** button in the header utility cluster (next to **Refresh** and **Close**) to run project-wide lifecycle transitions for non-ephemeral agents in the current project — **Pause All Agents** targets agents in the `active` or `running` state, while **Resume All Agents** targets agents in the `paused` state only
+- In **Agent detail → Settings → Configuration**, the built-in-model picker includes a concrete **Thinking Level** selector; changing it autosaves to the agent's `runtimeConfig.thinkingLevel` alongside the provider/model choice.
 - Bulk menu items stay disabled when nothing is eligible and show an inline hint (`Loading eligible agents...`, `No active agents eligible`, `No paused agents eligible`, or the current eligible count such as `Pause 2 active/running agents`)
 - Bulk lifecycle flow: open **Bulk agent actions**, review the eligibility hint, confirm the modal, then use the success or partial-failure toast to verify paused/resumed counts plus skipped/failed agents
 - Open agent detail tabs for runs, logs, read-only mail (agent inbox/outbox), settings/config, tasks, memory, and chain-of-command relationships
@@ -1106,6 +1108,7 @@ Navigation:
 Features:
 - Category-based insight browser with run metadata and status indicators
 - Manual insight generation plus refresh actions for latest insight runs
+- The model gear beside **Generate Insights** opens a model picker with an inline **Thinking Level** selector. Both the model override and reasoning-effort choice persist in the browser, and each insight run records the selected reasoning effort so retries reuse the same setting.
 - Dismiss/archive/unarchive insight records as they age
 - Create triage tasks from selected insights directly from the view
 

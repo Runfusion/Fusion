@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Copy } from "lucide-react";
 import { ApiRequestError, api } from "../api";
 import { useFileBrowser } from "../context/FileBrowserContext";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import "./StashConflictModal.css";
 
 interface ResolveResponse {
@@ -222,13 +223,13 @@ export default function StashConflictModal({
     }
   };
 
+  /*
+  FNXC:Clipboard 2026-07-12-00:00:
+  Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback.
+  */
   const copyRef = async () => {
-    try {
-      await navigator.clipboard.writeText(stashSha);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
+    const copied = await copyTextToClipboard(stashSha);
+    setCopyState(copied ? "copied" : "failed");
   };
 
   return (

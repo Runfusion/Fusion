@@ -379,11 +379,45 @@ describe("useInsights", () => {
         await result.current.runInsights();
       });
 
-      expect(mockTriggerInsightRun).toHaveBeenCalledWith("manual", undefined, "project-1", undefined, undefined);
+      expect(mockTriggerInsightRun).toHaveBeenCalledWith("manual", undefined, "project-1", undefined, undefined, undefined);
       expect(result.current.latestRun?.status).toBe("completed");
       expect(result.current.isRunInFlight).toBe(false);
       expect(mockFetchInsights.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(mockFetchInsightRuns.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("should forward a selected thinking level into manual insight runs", async () => {
+      const runningRun = {
+        id: "RUN-THINKING",
+        projectId: "project-1",
+        trigger: "manual" as const,
+        status: "running" as const,
+        summary: null,
+        error: null,
+        insightsCreated: 0,
+        insightsUpdated: 0,
+        inputMetadata: {},
+        outputMetadata: {},
+        createdAt: "2024-01-01T00:00:00Z",
+        startedAt: "2024-01-01T00:00:10Z",
+        completedAt: null,
+      };
+
+      mockFetchInsights.mockResolvedValue({ insights: [], count: 0 });
+      mockFetchInsightRuns.mockResolvedValue({ runs: [] });
+      mockTriggerInsightRun.mockResolvedValue(runningRun);
+
+      const { result } = renderHook(() => useInsights("project-1"));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.runInsights("anthropic", "claude-sonnet-4-5", "high");
+      });
+
+      expect(mockTriggerInsightRun).toHaveBeenCalledWith("manual", undefined, "project-1", "anthropic", "claude-sonnet-4-5", "high");
     });
 
     it("should surface failed run errors from triggerInsightRun response", async () => {

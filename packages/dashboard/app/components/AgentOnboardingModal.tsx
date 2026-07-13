@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { ThinkingLevel } from "@fusion/core";
 import type { AgentCapability, ConversationHistoryEntry } from "../api";
 import {
   startAgentOnboardingStreaming,
@@ -227,8 +228,6 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
             <div className="agent-onboarding-summary">
               <p><strong>{t("agents.name", "Name")}:</strong> {summary.name}</p>
               <p><strong>{t("agents.role", "Role")}:</strong> {summary.role}</p>
-              <label htmlFor="thinking-level">{t("agents.thinkingLevel", "Thinking level")}</label>
-              <input id="thinking-level" className="input" value={summary.thinkingLevel} onChange={() => {}} readOnly />
               <label htmlFor="max-turns">{t("agents.maxTurns", "Max turns")}</label>
               <input id="max-turns" className="input" type="number" value={summary.maxTurns} onChange={() => {}} readOnly />
               <label htmlFor="runtime-mode">{t("agents.runtimeMode", "Runtime mode")}</label>
@@ -239,6 +238,10 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
               {runtimeMode === "model" && (
                 <>
                   <label>{t("agents.selectModel", "Model")}</label>
+                  {/*
+                  FNXC:Settings-ThinkingLevel 2026-07-12-00:00:
+                  Agent onboarding's model picker owns the generated runtimeConfig.thinkingLevel so operators can edit the concrete reasoning effort before creating the agent, matching NewAgentDialog without an inherit/default lane.
+                  */}
                   <CustomModelDropdown
                     id="agent-onboarding-model"
                     label={t("agents.selectModel", "Model")}
@@ -246,6 +249,10 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
                     onChange={setModel}
                     models={availableModels}
                     placeholder={t("agents.selectModelPlaceholder", "Select a model…")}
+                    thinkingLevel={summary.thinkingLevel}
+                    onThinkingLevelChange={(level) => {
+                      setSummary((current) => current ? { ...current, thinkingLevel: level as ThinkingLevel } : current);
+                    }}
                   />
                 </>
               )}

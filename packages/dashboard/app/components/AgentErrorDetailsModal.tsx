@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { AlertCircle, Check, Copy, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 
 const DEFAULT_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
 
@@ -78,7 +79,9 @@ export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext 
             type="button"
             className="btn btn-sm"
             onClick={() => {
-              void navigator.clipboard.writeText(errorText).then(() => {
+              /* FNXC:Clipboard 2026-07-12-00:00: Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback. */
+              void copyTextToClipboard(errorText).then((copiedToClipboard) => {
+                if (!copiedToClipboard) return;
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               });

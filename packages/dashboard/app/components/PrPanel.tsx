@@ -7,6 +7,7 @@ import { usePrChecksStream } from "../hooks/usePrChecksStream";
 import { PrChecksList } from "./PrChecksList";
 import type { ToastType } from "../hooks/useToast";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import "./PrPanel.css";
 
 interface PrPanelProps {
@@ -289,7 +290,13 @@ function PrCard({
       {conflictDiagnostics && (prInfo.mergeable === "conflicting" || hasConflictBlockingReason) ? (
         <div className="pr-conflict-section">
           <div className="pr-conflict-section__header"><button type="button" className="btn btn-sm" onClick={() => setConflictsExpanded((value) => !value)}>{conflictsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {t("git.conflictsButton", "Conflicts")}</button><button type="button" className="btn btn-sm" onClick={() => void handleRefresh()} disabled={isRefreshing}>{t("git.reCheckConflicts", "Re-check conflicts")}</button></div>
-          {conflictsExpanded ? <><ul className="pr-conflict-files">{conflictDiagnostics.conflictingFiles.map((file) => <li key={file}>{linkifyFilePaths(file, { keyPrefix: `pr-conflict-${file}` })}</li>)}</ul><pre className="pr-conflict-commands"><code>{conflictDiagnostics.suggestedCommands.join("\n")}</code></pre><div className="pr-conflict-section__header"><button type="button" className="btn btn-sm" onClick={async () => { await navigator.clipboard.writeText(conflictDiagnostics.suggestedCommands.join("\n")); setCopiedConflicts(true); setTimeout(() => setCopiedConflicts(false), 1200); }}>{copiedConflicts ? t("git.copiedButton", "Copied") : t("git.copyButton", "Copy")}</button><span className="pr-panel-tone-muted">{t("git.capturedAt", "Captured:")} {new Date(conflictDiagnostics.capturedAt).toLocaleString()}</span></div></> : null}
+          {conflictsExpanded ? <><ul className="pr-conflict-files">{conflictDiagnostics.conflictingFiles.map((file) => <li key={file}>{linkifyFilePaths(file, { keyPrefix: `pr-conflict-${file}` })}</li>)}</ul><pre className="pr-conflict-commands"><code>{conflictDiagnostics.suggestedCommands.join("\n")}</code></pre><div className="pr-conflict-section__header"><button type="button" className="btn btn-sm" onClick={async () => {
+                    /* FNXC:Clipboard 2026-07-12-00:00: Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback. */
+                    const copied = await copyTextToClipboard(conflictDiagnostics.suggestedCommands.join("\n"));
+                    if (!copied) return;
+                    setCopiedConflicts(true);
+                    setTimeout(() => setCopiedConflicts(false), 1200);
+                  }}>{copiedConflicts ? t("git.copiedButton", "Copied") : t("git.copyButton", "Copy")}</button><span className="pr-panel-tone-muted">{t("git.capturedAt", "Captured:")} {new Date(conflictDiagnostics.capturedAt).toLocaleString()}</span></div></> : null}
         </div>
       ) : null}
 

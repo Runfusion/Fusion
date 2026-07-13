@@ -2,14 +2,35 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { AgentOnboardingModal } from "../AgentOnboardingModal";
+import { createAgent } from "../../api";
 
 let streamHandlers: any;
 let respondCount = 0;
 const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
 
+vi.mock("../CustomModelDropdown", () => ({
+  CustomModelDropdown: ({ value, onChange, label, id, models, thinkingLevel, onThinkingLevelChange }: any) => (
+    <div data-testid="custom-model-dropdown" data-default-thinking-level="">
+      <label htmlFor={id}>{label}</label>
+      <select id={id} aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Use default</option>
+        {models.map((model: any) => {
+          const modelValue = `${model.provider}/${model.id}`;
+          return <option key={modelValue} value={modelValue}>{modelValue}</option>;
+        })}
+      </select>
+      {onThinkingLevelChange ? (
+        <select aria-label={`${label} thinking level`} value={thinkingLevel ?? ""} onChange={(event) => onThinkingLevelChange(event.target.value)}>
+          {["off", "minimal", "low", "medium", "high", "xhigh"].map((level) => <option key={level} value={level}>{level}</option>)}
+        </select>
+      ) : null}
+    </div>
+  ),
+}));
+
 vi.mock("../../api", () => ({
   startAgentOnboardingStreaming: vi.fn().mockResolvedValue({ sessionId: "onb-1" }),
-  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
+  fetchModels: vi.fn().mockResolvedValue({ models: [{ provider: "openai", id: "gpt-4o", name: "GPT-4o" }], favoriteProviders: [], favoriteModels: [] }),
   connectAgentOnboardingStream: vi.fn().mockImplementation((_sessionId, _projectId, handlers) => {
     streamHandlers = handlers;
     setTimeout(() => handlers.onQuestion?.({ id: "q1", type: "text", question: "What should this agent primarily help with?" }), 0);
@@ -39,6 +60,7 @@ vi.mock("../../api", () => ({
 afterEach(() => {
   respondCount = 0;
   streamHandlers = undefined;
+  vi.mocked(createAgent).mockClear();
   if (originalScrollHeightDescriptor) {
     Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeightDescriptor);
   } else {
@@ -71,7 +93,24 @@ describe("AgentOnboardingModal", () => {
     fireEvent.click(screen.getByText("Continue"));
 
     await screen.findByText("Review generated configuration");
+    expect(screen.queryByLabelText("Thinking level")).not.toBeInTheDocument();
+    const thinkingSelect = screen.getByLabelText("Model thinking level");
+    expect(thinkingSelect).toHaveValue("medium");
+    fireEvent.change(thinkingSelect, { target: { value: "high" } });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "openai/gpt-4o" } });
     fireEvent.click(screen.getByText("Create agent"));
+
+    await waitFor(() => {
+      expect(createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimeConfig: expect.objectContaining({
+            thinkingLevel: "high",
+            model: "openai/gpt-4o",
+          }),
+        }),
+        undefined,
+      );
+    });
 
     await waitFor(() => {
       expect(onCreated).toHaveBeenCalled();

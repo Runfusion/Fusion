@@ -6,6 +6,7 @@ import {
   type FnBinaryInstallResult,
   type FnBinaryStatus,
 } from "../api/legacy";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import "./CliBinaryPanel.css";
 
 interface Props {
@@ -87,14 +88,15 @@ export function CliBinaryPanel({ defer = false }: Props) {
     }
   }, []);
 
+  /*
+  FNXC:Clipboard 2026-07-12-00:00:
+  Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback.
+  */
   const copy = useCallback(async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(label);
-      setTimeout(() => setCopied((c) => (c === label ? null : c)), 1500);
-    } catch {
-      // Clipboard API unavailable — leave button silent rather than throwing.
-    }
+    const copiedToClipboard = await copyTextToClipboard(value);
+    if (!copiedToClipboard) return;
+    setCopied(label);
+    setTimeout(() => setCopied((c) => (c === label ? null : c)), 1500);
   }, []);
 
   const stateMeta = status ? getStateLabel(status.state) : null;

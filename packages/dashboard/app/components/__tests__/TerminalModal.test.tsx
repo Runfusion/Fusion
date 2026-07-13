@@ -879,6 +879,111 @@ describe("TerminalModal", () => {
     });
   });
 
+  // FN-7897: below-mode is reachable at both true desktop (>1024px) and tablet
+  // (769-1024px) widths — isBelowMode has no additional breakpoint gating beyond
+  // "not mobile". Exercise both explicitly (rather than relying on jsdom's default
+  // 1024px width, which sits exactly on the tablet/desktop boundary) so the fix is
+  // proven at a clearly-desktop viewport, not just the ambiguous default.
+  it.each([
+    ["desktop", 1440],
+    ["tablet", 900],
+  ])(
+    "reserves executor footer height on the pinned terminal host when footerVisible is true (%s width, FN-7897)",
+    async (_label, width) => {
+      const previousInnerWidth = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+      try {
+        const projectId = `below-pin-footer-visible-${width}`;
+        render(
+          <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
+        );
+
+        const pin = await screen.findByTestId("terminal-pin-toggle");
+        fireEvent.click(pin);
+
+        await waitFor(() => {
+          const host = screen.getByTestId("terminal-below-host");
+          expect(host).toHaveClass("terminal-below-host");
+          expect(host).toHaveClass("terminal-below-host--with-footer");
+        });
+      } finally {
+        Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      }
+    },
+  );
+
+  it("does not reserve executor footer height on the pinned terminal host when footerVisible is false or omitted (FN-7897)", async () => {
+    // Default width (no explicit resize) — the negative-case default/omitted-prop path.
+    const projectId = "below-pin-footer-hidden";
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
+
+    const pin = await screen.findByTestId("terminal-pin-toggle");
+    fireEvent.click(pin);
+
+    await waitFor(() => {
+      const host = screen.getByTestId("terminal-below-host");
+      expect(host).toHaveClass("terminal-below-host");
+      expect(host).not.toHaveClass("terminal-below-host--with-footer");
+    });
+
+    // Explicit footerVisible={false} behaves identically to the omitted-prop default.
+    const explicitFalseProjectId = "below-pin-footer-explicit-false";
+    render(
+      <TerminalModal
+        isOpen={true}
+        onClose={mockOnClose}
+        projectId={explicitFalseProjectId}
+        footerVisible={false}
+      />,
+    );
+    const pins = await screen.findAllByTestId("terminal-pin-toggle");
+    fireEvent.click(pins[pins.length - 1]);
+
+    await waitFor(() => {
+      const hosts = screen.getAllByTestId("terminal-below-host");
+      const lastHost = hosts[hosts.length - 1];
+      expect(lastHost).not.toHaveClass("terminal-below-host--with-footer");
+    });
+  });
+
+  it("tracks footerVisible across re-renders with no stale --with-footer class (pin \u2192 unpin \u2192 re-pin, FN-7897)", async () => {
+    const projectId = "below-pin-footer-toggle-sequence";
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
+    );
+
+    const pin = await screen.findByTestId("terminal-pin-toggle");
+    fireEvent.click(pin);
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-below-host")).toHaveClass("terminal-below-host--with-footer");
+    });
+
+    // Simulate navigating away from "project" view mode while pinned: footerVisible flips to false.
+    rerender(
+      <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={false} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-below-host")).not.toHaveClass("terminal-below-host--with-footer");
+    });
+
+    // Unpin (back to overlay docked mode), then re-pin with footerVisible restored to true.
+    fireEvent.click(screen.getByTestId("terminal-pin-toggle"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+    });
+
+    rerender(
+      <TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} footerVisible={true} />,
+    );
+    fireEvent.click(screen.getByTestId("terminal-pin-toggle"));
+    await waitFor(() => {
+      const host = screen.getByTestId("terminal-below-host");
+      expect(host).toHaveClass("terminal-below-host--with-footer");
+      // No stale/duplicate class fragments from prior mount/unmount cycles.
+      expect(host.className.match(/terminal-below-host--with-footer/g)?.length ?? 0).toBe(1);
+    });
+  });
+
   it("keeps floating and mobile modes out of the below-layout shell", async () => {
     const floatingProjectId = "floating-no-below-shell";
     window.localStorage.setItem(`fusion:terminal-display-mode-${floatingProjectId}`, "floating");
@@ -893,7 +998,16 @@ describe("TerminalModal", () => {
     Object.defineProperty(window, "ontouchstart", { value: null, configurable: true });
     try {
       window.localStorage.setItem("fusion:terminal-display-mode-mobile-no-below-shell", "below");
-      render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="mobile-no-below-shell" />);
+      // FN-7897: footerVisible={true} must not resurrect the below-layout shell (or its
+      // --with-footer reservation) on the mobile fullscreen-sheet fallback path.
+      render(
+        <TerminalModal
+          isOpen={true}
+          onClose={mockOnClose}
+          projectId="mobile-no-below-shell"
+          footerVisible={true}
+        />,
+      );
       expect(await screen.findByTestId("terminal-modal")).not.toHaveClass("terminal-modal--below");
       expect(screen.queryByTestId("terminal-below-host")).toBeNull();
       expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
@@ -922,6 +1036,25 @@ describe("TerminalModal", () => {
     expect(footerRule).toContain("min-width: 0;");
     expect(footerRule).toContain("overflow-x: auto;");
     expect(footerRule).toContain("touch-action: pan-x pan-y;");
+
+    // FN-7897: the base .terminal-below-host rule must NOT reserve footer space unconditionally
+    // (that would leave a dead gap when the footer is not visible) — only the --with-footer
+    // modifier below reserves it.
+    expect(hostRule).not.toContain("padding-bottom");
+  });
+
+  it("reserves executor footer height on the pinned terminal host only when footerVisible (FN-7897)", () => {
+    // .terminal-below-host is a SIBLING of .dashboard-project-shell inside .dashboard-project-stack
+    // (not a descendant), so it cannot rely on --executor-footer-height being inherited from the
+    // shell the way .left-sidebar-nav--with-footer/.right-dock--with-footer do — it must redeclare
+    // the token at this consumer, matching the .project-content--with-footer precedent.
+    const withFooterRule =
+      terminalModalCss.match(/\.terminal-below-host--with-footer\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(withFooterRule).toContain("--executor-footer-height: 36px;");
+    expect(withFooterRule).toContain(
+      "padding-bottom: calc(var(--icb-bottom-offset, 0px) + var(--executor-footer-height));",
+    );
   });
 
   it("exposes floating drag and resize handles and refits after floating resize", async () => {

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, EyeOff, Lock, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { ViewHeader } from "./ViewHeader";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 
 type ToastKind = "info" | "success" | "error";
 type SecretScope = "project" | "global";
@@ -254,10 +255,18 @@ export const SecretsView = ({ addToast }: SecretsViewProps) => {
     revealTimersRef.current.set(secret.id, timer);
   };
 
+  /*
+  FNXC:Clipboard 2026-07-12-00:00:
+  Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback.
+  */
   const copySecret = async (secret: SecretRecord) => {
     const revealed = revealedValues[secret.id];
     if (!revealed) return;
-    await navigator.clipboard.writeText(revealed);
+    const copied = await copyTextToClipboard(revealed);
+    if (!copied) {
+      addToast?.(t("secrets.copyFailed", "Failed to copy secret"), "error");
+      return;
+    }
     setCopiedId(secret.id);
     addToast?.(t("secrets.copied", "Copied"), "success");
     const timer = setTimeout(() => {

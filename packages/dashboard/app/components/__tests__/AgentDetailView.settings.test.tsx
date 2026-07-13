@@ -146,6 +146,51 @@ describe("Budget Settings", () => {
     });
   });
 
+  it("renders editable built-in-model thinking control and saves runtimeConfig.thinkingLevel", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({
+      runtimeConfig: {
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        model: "openai/gpt-4o",
+        thinkingLevel: "medium",
+      },
+    }));
+    mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
+
+    const user = userEvent.setup();
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await navigateToSettings(user);
+
+    const thinkingSelect = await screen.findByLabelText("Agent Model thinking level");
+    expect(thinkingSelect).toHaveValue("medium");
+    expect(screen.getByTestId("custom-model-dropdown")).toHaveAttribute("data-default-thinking-level", "");
+
+    fireEvent.change(thinkingSelect, { target: { value: "high" } });
+    await user.click(screen.getByText("Save Settings"));
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        "agent-001",
+        expect.objectContaining({
+          runtimeConfig: expect.objectContaining({
+            modelProvider: "openai",
+            modelId: "gpt-4o",
+            model: "openai/gpt-4o",
+            thinkingLevel: "high",
+          }),
+        }),
+        undefined,
+      );
+    });
+  });
+
   it("calls updateAgent with correct budgetConfig in runtimeConfig on save", async () => {
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
 

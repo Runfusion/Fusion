@@ -168,6 +168,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       task={task}
       projectId={input.projectId}
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
+      onDeleteTask={input.onDeleteTask}
       addToast={input.addToast}
       disableDrag={true}
       prAuthAvailable={input.prAuthAvailable}
@@ -212,6 +213,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     DockTaskList rows must open through the controller's ordinary right-dock task route, not TaskCard's canonical full task modal. Thread one controller-level handler into registry render props so both compact and expanded Tasks lists share popup-setting routing and setting-off dock-detail behavior.
     */
     onOpenTaskInDock: openTaskFromDockList,
+    onDeleteTask: input.onDeleteTask,
     onOpenDetail: input.openDetailTask,
     onSendSelectionToTask: input.onSendSelectionToTask,
     onCreateTaskFromInsight: input.onCreateTaskFromInsight,

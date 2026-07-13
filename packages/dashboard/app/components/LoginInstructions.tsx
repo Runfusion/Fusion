@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Check } from "lucide-react";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import "./LoginInstructions.css";
 
 interface LoginInstructionsProps {
@@ -49,14 +50,14 @@ export function LoginInstructions({ instructions, "data-testid": testId }: Login
     setTimeout(() => setCopied(false), 2000);
   }, []);
 
+  /*
+  FNXC:Clipboard 2026-07-12-00:00:
+  Direct navigator.clipboard.writeText crashes or mis-reports on non-secure origins such as mobile http://fusionstudio:4040; copyTextToClipboard centralizes the secure-context guard and execCommand fallback.
+  */
   const handleCopy = useCallback(async () => {
     const textToCopy = deviceCode ?? instructions;
-    try {
-      await navigator.clipboard.writeText(textToCopy);
-      markCopied();
-    } catch {
-      // Ignore copy failures
-    }
+    const copiedToClipboard = await copyTextToClipboard(textToCopy);
+    if (copiedToClipboard) markCopied();
   }, [deviceCode, instructions, markCopied]);
 
   useEffect(() => {
@@ -68,12 +69,8 @@ export function LoginInstructions({ instructions, "data-testid": testId }: Login
     }
 
     const autoCopy = async () => {
-      try {
-        await navigator.clipboard.writeText(deviceCode);
-        markCopied();
-      } catch {
-        // Ignore copy failures
-      }
+      const copiedToClipboard = await copyTextToClipboard(deviceCode);
+      if (copiedToClipboard) markCopied();
     };
 
     void autoCopy();

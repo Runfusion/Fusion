@@ -1,3 +1,5 @@
+import type { ThinkingLevel } from "./types.js";
+
 /** Schedule type presets plus a custom cron option. */
 export type ScheduleType = "hourly" | "daily" | "weekly" | "monthly" | "custom" | "every15Minutes" | "every30Minutes" | "every2Hours" | "every6Hours" | "every12Hours" | "weekdays";
 
@@ -47,6 +49,13 @@ export interface AutomationStep {
   modelProvider?: string;
   /** AI model ID (for ai-prompt steps). */
   modelId?: string;
+  /**
+   * Optional reasoning-effort override for AI-capable steps.
+   *
+   * FNXC:Automations 2026-07-12-19:14:
+   * Schedule and routine AI-capable steps share this persisted override through AutomationStep. Undefined means inherit the resolved default thinking level, and the value rides the JSON steps blob so no DB migration is needed. Runtime application is intentionally deferred to a follow-up.
+   */
+  thinkingLevel?: ThinkingLevel;
   /**
    * Optional tool allowlist for ai-prompt steps.
    *

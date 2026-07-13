@@ -81,6 +81,11 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
   const [modelProvider, setModelProvider] = useState(step.modelProvider ?? "");
   const [modelId, setModelId] = useState(step.modelId ?? "");
   /*
+  FNXC:Automations 2026-07-12-19:14:
+  Multi-step schedule and routine AI-capable model selectors capture an optional per-step thinking level. Empty string means inherit the default; concrete values persist on the AutomationStep JSON payload.
+  */
+  const [thinkingLevel, setThinkingLevel] = useState(step.thinkingLevel ?? "");
+  /*
   FNXC:AutomationTools 2026-06-26-00:00:
   Multi-step AI prompts share the simple form's default-all contract: undefined means every selectable coding tool, while [] intentionally removes all tools for the step.
   */
@@ -140,7 +145,7 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, type, command, prompt, taskDescription, modelProvider, modelId, timeoutMs, t]);
+  }, [name, type, command, prompt, taskDescription, modelProvider, modelId, thinkingLevel, timeoutMs, t]);
 
   // Compute combined model value from separate fields
   const modelValue = (modelProvider && modelId) ? `${modelProvider}/${modelId}` : "";
@@ -174,6 +179,7 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
       taskColumn: type === "create-task" ? taskColumn : undefined,
       modelProvider: (type === "ai-prompt" || type === "create-task") && modelProvider.trim() ? modelProvider.trim() : undefined,
       modelId: (type === "ai-prompt" || type === "create-task") && modelId.trim() ? modelId.trim() : undefined,
+      thinkingLevel: (type === "ai-prompt" || type === "create-task") && thinkingLevel.trim() ? thinkingLevel.trim() : undefined,
       allowedTools: type === "ai-prompt" ? normalizeAllowedTools(allowedTools) : undefined,
       timeoutMs: timeoutMs || undefined,
       continueOnFailure,
@@ -189,9 +195,12 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
       delete baseStep.taskDescription;
       delete baseStep.taskColumn;
     }
+    if (type !== "ai-prompt" && type !== "create-task") {
+      delete baseStep.thinkingLevel;
+    }
 
     onSave(baseStep as AutomationStep);
-  }, [validate, onSave, step, name, type, command, prompt, taskTitle, taskDescription, taskColumn, modelProvider, modelId, allowedTools, timeoutMs, continueOnFailure]);
+  }, [validate, onSave, step, name, type, command, prompt, taskTitle, taskDescription, taskColumn, modelProvider, modelId, thinkingLevel, allowedTools, timeoutMs, continueOnFailure]);
 
   return (
     <div className="step-editor">
@@ -261,6 +270,10 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
               onChange={handleModelChange}
               placeholder={t("schedule.useDefault", "Use default")}
               disabled={modelsLoading}
+              thinkingLevel={thinkingLevel}
+              onThinkingLevelChange={setThinkingLevel}
+              defaultThinkingLevel="off"
+              showThinkingLevel
             />
             {modelsError && <small className="field-error">{modelsError}</small>}
             <small>{t("schedule.modelHelp", "AI model for this step. Uses default if not selected.")}</small>
@@ -347,6 +360,10 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
               onChange={handleModelChange}
               placeholder={t("schedule.useDefault", "Use default")}
               disabled={modelsLoading}
+              thinkingLevel={thinkingLevel}
+              onThinkingLevelChange={setThinkingLevel}
+              defaultThinkingLevel="off"
+              showThinkingLevel
             />
             {modelsError && <small className="field-error">{modelsError}</small>}
             {errors.modelProvider && <small className="field-error">{errors.modelProvider}</small>}

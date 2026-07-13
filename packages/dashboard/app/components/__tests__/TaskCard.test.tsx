@@ -1079,6 +1079,50 @@ describe("TaskCard", () => {
     });
   });
 
+  it("runs the delete flow from the desktop task context menu", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+
+    render(
+      <TaskCard
+        task={makeTask({ column: "todo", githubTracking: { enabled: false }, sourceIssue: undefined } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Delete Task" }));
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001");
+    });
+  });
+
+  it("runs the delete flow from the mobile pointer-up task context menu", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+
+    render(
+      <TaskCard
+        task={makeTask({ column: "todo", githubTracking: { enabled: false }, sourceIssue: undefined } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Delete" }), { pointerType: "touch", pointerId: 7 });
+
+    await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Delete Task" }));
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001");
+    });
+  });
+
   it("preserves githubIssueAction on dependency-conflict retry", async () => {
     const conflict = new Error("Cannot delete task FN-001: still referenced as a dependency by FN-002.") as Error & { status: number; details: { code: string; dependentIds: string[] } };
     conflict.status = 409;

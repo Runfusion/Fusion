@@ -23,8 +23,8 @@ vi.mock("../TaskDetailModal", () => ({
 }));
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, onOpenDetail }: { task: { id: string; title?: string }; onOpenDetail: (task: { id: string; title?: string }) => void }) => (
-    <button type="button" data-testid={`mock-task-card-${task.id}`} onClick={() => onOpenDetail(task)}>
+  TaskCard: ({ task, onOpenDetail, onDeleteTask }: { task: { id: string; title?: string }; onOpenDetail: (task: { id: string; title?: string }) => void; onDeleteTask?: (id: string) => Promise<unknown> }) => (
+    <button type="button" data-testid={`mock-task-card-${task.id}`} data-has-delete={String(Boolean(onDeleteTask))} onClick={() => onOpenDetail(task)}>
       {task.title ?? task.id}
     </button>
   ),
@@ -162,6 +162,18 @@ describe("RightDock", () => {
     window.localStorage.setItem(RIGHT_DOCK_WIDTH_STORAGE_KEY, "900");
     render(<TestRightDock open={true} renderProps={renderProps} />);
     expect(screen.getByTestId("right-dock-files-view")).toHaveAttribute("data-layout", "two-pane");
+  });
+
+  it("threads delete into the compact Tasks tab cards", () => {
+    const tasks = [
+      { id: "FN-DELETE", title: "Right dock delete", column: "triage" },
+    ];
+    const onDeleteTask = vi.fn();
+
+    render(<TestRightDock open={true} renderProps={{ ...renderProps, tasks, onDeleteTask }} />);
+    fireEvent.click(screen.getByTestId("right-dock-tab-tasks"));
+
+    expect(screen.getByTestId("mock-task-card-FN-DELETE")).toHaveAttribute("data-has-delete", "true");
   });
 
   it("renders the filtered Tasks tab list at both narrow and wide dock widths", () => {

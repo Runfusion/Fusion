@@ -858,6 +858,7 @@ export {
   describeAgentModel,
   resolveExecutorThinkingLevel,
   resolveExecutorFallbackThinkingLevel,
+  resolvePlanningThinkingLevel,
   resolvePlanningFallbackThinkingLevel,
   resolveValidatorFallbackThinkingLevel,
   resolveTitleSummarizerFallbackThinkingLevel,

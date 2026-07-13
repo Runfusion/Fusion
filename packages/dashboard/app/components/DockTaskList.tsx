@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { Task, TaskDetail } from "@fusion/core";
+import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { TaskCard } from "./TaskCard";
 import "./DockTaskList.css";
@@ -8,6 +8,7 @@ export interface DockTaskListProps {
   tasks: Array<Task | TaskDetail>;
   projectId?: string;
   onOpenTask?: (task: Task | TaskDetail) => void;
+  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   addToast?: (message: string, type?: ToastType) => void;
   prAuthAvailable?: boolean;
   autoMergeEnabled?: boolean;
@@ -24,6 +25,7 @@ export function DockTaskList({
   tasks,
   projectId,
   onOpenTask,
+  onDeleteTask,
   addToast = () => {},
   prAuthAvailable = false,
   autoMergeEnabled = false,
@@ -75,6 +77,11 @@ export function DockTaskList({
             task={task as Task}
             projectId={projectId}
             onOpenDetail={handleOpenTask}
+            /*
+            FNXC:TaskDeletion 2026-07-12-18:04:
+            Every task Delete affordance must reach the shared confirm→delete flow. The right-dock Tasks list is a TaskCard host, so it must pass onDeleteTask instead of rendering cards that silently lack/delete-disable the destructive path.
+            */
+            onDeleteTask={onDeleteTask}
             addToast={addToast}
             disableDrag={true}
             prAuthAvailable={prAuthAvailable}

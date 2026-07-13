@@ -13,6 +13,26 @@ const baseQuestion: PlanningQuestion = {
   ],
 };
 
+const multiSelectQuestion: PlanningQuestion = {
+  id: "q-tags",
+  type: "multi_select",
+  question: "Which tags apply?",
+  options: [
+    { id: "frontend", label: "Frontend" },
+    { id: "backend", label: "Backend" },
+  ],
+};
+
+const confirmQuestion: PlanningQuestion = {
+  id: "q-confirm",
+  type: "confirm",
+  question: "Should Fusion continue?",
+};
+
+function expectNoObjectObject() {
+  expect(screen.queryByText(/\[object Object\]/)).toBeNull();
+}
+
 describe("ConversationHistory", () => {
   it("renders question and formatted response pairs", () => {
     render(
@@ -29,6 +49,103 @@ describe("ConversationHistory", () => {
     expect(screen.getByText("Q1")).toBeDefined();
     expect(screen.getByText("What is the project scope?")).toBeDefined();
     expect(screen.getByText("Medium")).toBeDefined();
+  });
+
+  it("renders single-select Other responses as the user's own answer", () => {
+    render(
+      <ConversationHistory
+        entries={[
+          {
+            question: baseQuestion,
+            response: { _other: "my own framing" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("my own framing (user's own answer)")).toBeDefined();
+    expectNoObjectObject();
+  });
+
+  it("renders confirm Other responses as the user's own answer", () => {
+    render(
+      <ConversationHistory
+        entries={[
+          {
+            question: confirmQuestion,
+            response: { _other: "Continue only after review" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Continue only after review (user's own answer)")).toBeDefined();
+    expectNoObjectObject();
+  });
+
+  it("renders multi-select selected labels plus the user's Other answer", () => {
+    render(
+      <ConversationHistory
+        entries={[
+          {
+            question: multiSelectQuestion,
+            response: { "q-tags": ["frontend"], _other: "CLI polish" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Frontend, CLI polish (user's own answer)")).toBeDefined();
+    expectNoObjectObject();
+  });
+
+  it("renders multi-select Other-only responses as the user's own answer", () => {
+    render(
+      <ConversationHistory
+        entries={[
+          {
+            question: multiSelectQuestion,
+            response: { _other: "Docs only" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Docs only (user's own answer)")).toBeDefined();
+    expectNoObjectObject();
+  });
+
+  it("renders Other responses and comments together without treating comments as answers", () => {
+    render(
+      <ConversationHistory
+        entries={[
+          {
+            question: baseQuestion,
+            response: { _other: "custom direction", _comment: "Need this done by next sprint" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("custom direction (user's own answer)")).toBeDefined();
+    expect(screen.getByText("💬 Need this done by next sprint")).toBeDefined();
+    expectNoObjectObject();
+  });
+
+  it("renders arbitrary object response values as JSON defensively", () => {
+    render(
+      <ConversationHistory
+        entries={[
+          {
+            question: baseQuestion,
+            response: { "q-scope": { nested: "value" } },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('{"nested":"value"}')).toBeDefined();
+    expectNoObjectObject();
   });
 
   it("shows thinking output when expanded", () => {

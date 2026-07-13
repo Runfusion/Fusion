@@ -42,20 +42,34 @@ vi.mock("../api", () => ({
 
 // Mock CustomModelDropdown
 vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ value, onChange, disabled, models }: any) => (
-    <select
-      data-testid="model-dropdown"
-      value={value || ""}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-    >
-      <option value="">Use default</option>
-      {models?.map((m: any) => (
-        <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
-          {m.name}
-        </option>
-      ))}
-    </select>
+  CustomModelDropdown: ({ id, value, onChange, disabled, models, showThinkingLevel, thinkingLevel, onThinkingLevelChange }: any) => (
+    <div data-testid={`${id}-mock`}>
+      <select
+        data-testid="model-dropdown"
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      >
+        <option value="">Use default</option>
+        {models?.map((m: any) => (
+          <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+      {showThinkingLevel && (
+        <select
+          aria-label={`${id} thinking level`}
+          data-testid={`${id}-thinking-level`}
+          value={thinkingLevel || ""}
+          onChange={(e) => onThinkingLevelChange?.(e.target.value)}
+        >
+          <option value="">Default (off)</option>
+          <option value="off">Off</option>
+          <option value="high">High</option>
+        </select>
+      )}
+    </div>
   ),
 }));
 
@@ -182,6 +196,80 @@ describe("ScheduleForm", () => {
           }),
         );
       });
+    });
+
+    it("omits thinkingLevel by default in simple AI Prompt mode", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "AI Job" } });
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      expect(screen.getByTestId("schedule-model-thinking-level")).toBeDefined();
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Summarize recent commits" } });
+      fireEvent.click(screen.getByText("Create Schedule"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ thinkingLevel: undefined })],
+          }),
+        );
+      });
+    });
+
+    it("submits explicit thinkingLevel from simple AI Prompt mode", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "AI Job" } });
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      fireEvent.change(screen.getByTestId("schedule-model-thinking-level"), { target: { value: "high" } });
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Summarize recent commits" } });
+      fireEvent.click(screen.getByText("Create Schedule"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ thinkingLevel: "high" })],
+          }),
+        );
+      });
+    });
+
+    it("clears inherited thinkingLevel when editing a simple AI Prompt schedule", async () => {
+      const schedule = makeSchedule({
+        command: "",
+        steps: [
+          {
+            id: "step-1",
+            type: "ai-prompt",
+            name: "AI Job",
+            prompt: "Summarize recent commits",
+            thinkingLevel: "high",
+          },
+        ],
+      });
+      render(<ScheduleForm schedule={schedule} onSubmit={onSubmit} onCancel={onCancel} />);
+
+      expect(screen.getByTestId("schedule-model-thinking-level")).toHaveValue("high");
+      fireEvent.change(screen.getByTestId("schedule-model-thinking-level"), { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save Changes"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ thinkingLevel: undefined })],
+          }),
+        );
+      });
+    });
+
+    it("shares thinkingLevel state between simple AI Prompt and Create Task selectors", () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.click(screen.getByRole("radio", { name: "AI Prompt" }));
+      fireEvent.change(screen.getByTestId("schedule-model-thinking-level"), { target: { value: "high" } });
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+
+      expect(screen.getByTestId("schedule-task-model-thinking-level")).toHaveValue("high");
     });
 
     it("shows all automation tools checked by default in simple AI Prompt mode", () => {
@@ -988,6 +1076,27 @@ describe("ScheduleForm", () => {
       // Should show description validation error
       expect(screen.getByText("Task description is required")).toBeDefined();
       expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("submits default and explicit thinkingLevel in simple Create Task mode", async () => {
+      render(<ScheduleForm onSubmit={onSubmit} onCancel={onCancel} />);
+
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Create Task Schedule" } });
+      fireEvent.click(screen.getByRole("radio", { name: "Create Task" }));
+      expect(screen.getByTestId("schedule-task-model-thinking-level")).toHaveValue("");
+      fireEvent.change(screen.getByTestId("schedule-task-model-thinking-level"), { target: { value: "high" } });
+      fireEvent.change(screen.getByLabelText("Task Description (required)"), {
+        target: { value: "Check npm dependencies for security vulnerabilities" },
+      });
+      fireEvent.click(screen.getByText("Create Schedule"));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            steps: [expect.objectContaining({ type: "create-task", thinkingLevel: "high" })],
+          }),
+        );
+      });
     });
 
     it("submits single create-task step when simple mode uses Create Task", async () => {

@@ -129,6 +129,10 @@ function generateStepId(): string {
   return `step-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
+function normalizeThinkingLevel(value: string): AutomationStep["thinkingLevel"] {
+  return (value.trim() || undefined) as AutomationStep["thinkingLevel"];
+}
+
 type ActionMode = "simple" | "advanced";
 type SimpleActionType = "command" | "ai-prompt" | "create-task";
 
@@ -223,6 +227,13 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
   );
   const [modelId, setModelId] = useState(
     isSimpleAiPrompt || isSimpleCreateTask ? routine.steps?.[0]?.modelId ?? "" : ""
+  );
+  /*
+  FNXC:Automations 2026-07-12-19:14:
+  Simple routine AI-capable model selectors also capture an optional per-step thinking level. Empty string means inherit the default; concrete values persist on the AutomationStep JSON payload.
+  */
+  const [thinkingLevel, setThinkingLevel] = useState(
+    isSimpleAiPrompt || isSimpleCreateTask ? routine.steps?.[0]?.thinkingLevel ?? "" : ""
   );
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -323,7 +334,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
     if (timeoutMs < 1000) e.timeoutMs = t("schedule.errorTimeoutMin", "Timeout must be at least 1 second (1000ms)");
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, triggerType, cronExpression, cronPreset, webhookPath, endpoint, localScope, projectId, actionMode, simpleActionType, command, prompt, taskDescription, modelProvider, modelId, steps, hasEditingSteps, timeoutMs]);
+  }, [name, triggerType, cronExpression, cronPreset, webhookPath, endpoint, localScope, projectId, actionMode, simpleActionType, command, prompt, taskDescription, modelProvider, modelId, thinkingLevel, steps, hasEditingSteps, timeoutMs]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -352,6 +363,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               prompt: prompt.trim(),
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
+              thinkingLevel: normalizeThinkingLevel(thinkingLevel),
             }];
           } else {
             actionSteps = [{
@@ -363,6 +375,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               taskColumn,
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
+              thinkingLevel: normalizeThinkingLevel(thinkingLevel),
             }];
           }
         } else {
@@ -388,7 +401,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
         }
       }
     },
-    [validate, onSubmit, name, description, triggerType, cronExpression, webhookPath, webhookSecret, endpoint, actionMode, simpleActionType, command, prompt, modelProvider, modelId, taskTitle, taskDescription, taskColumn, steps, timeoutMs, executionPolicy, catchUpPolicy, enabled, localScope, projectId, routine?.scope, routine?.agentId],
+    [validate, onSubmit, name, description, triggerType, cronExpression, webhookPath, webhookSecret, endpoint, actionMode, simpleActionType, command, prompt, modelProvider, modelId, thinkingLevel, taskTitle, taskDescription, taskColumn, steps, timeoutMs, executionPolicy, catchUpPolicy, enabled, localScope, projectId, routine?.scope, routine?.agentId],
   );
 
   const nameErrorId = "routine-name-error";
@@ -684,7 +697,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               </div>
               <div className="form-group">
                 <label htmlFor="routine-model">{t("schedule.modelLabel", "Model (optional)")}</label>
-                <CustomModelDropdown id="routine-model" label={t("schedule.modelDropdownLabel", "Model")} models={models} value={modelValue} onChange={handleModelChange} placeholder={t("schedule.modelPlaceholder", "Use default")} disabled={modelsLoading} />
+                <CustomModelDropdown id="routine-model" label={t("schedule.modelDropdownLabel", "Model")} models={models} value={modelValue} onChange={handleModelChange} placeholder={t("schedule.modelPlaceholder", "Use default")} disabled={modelsLoading} thinkingLevel={thinkingLevel} onThinkingLevelChange={setThinkingLevel} defaultThinkingLevel="off" showThinkingLevel />
                 {modelsError && <small className="field-error">{modelsError}</small>}
                 {errors.model && <small id={modelErrorId} className="field-error">{errors.model}</small>}
               </div>
@@ -709,7 +722,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               </div>
               <div className="form-group">
                 <label htmlFor="routine-task-model">{t("schedule.executorModelLabel", "Executor Model (optional)")}</label>
-                <CustomModelDropdown id="routine-task-model" label={t("schedule.executorModelDropdownLabel", "Executor Model")} models={models} value={modelValue} onChange={handleModelChange} placeholder={t("schedule.modelPlaceholder", "Use default")} disabled={modelsLoading} />
+                <CustomModelDropdown id="routine-task-model" label={t("schedule.executorModelDropdownLabel", "Executor Model")} models={models} value={modelValue} onChange={handleModelChange} placeholder={t("schedule.modelPlaceholder", "Use default")} disabled={modelsLoading} thinkingLevel={thinkingLevel} onThinkingLevelChange={setThinkingLevel} defaultThinkingLevel="off" showThinkingLevel />
                 {modelsError && <small className="field-error">{modelsError}</small>}
                 {errors.model && <small id={modelErrorId} className="field-error">{errors.model}</small>}
               </div>

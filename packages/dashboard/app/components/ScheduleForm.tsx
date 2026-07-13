@@ -68,6 +68,10 @@ function normalizeAllowedTools(selectedTools: string[]): string[] | undefined {
   return selectedTools.length === ALL_AUTOMATION_TOOLS.length ? undefined : selectedTools;
 }
 
+function normalizeThinkingLevel(value: string): AutomationStep["thinkingLevel"] {
+  return (value.trim() || undefined) as AutomationStep["thinkingLevel"];
+}
+
 function resolveAllowedToolSelection(step?: AutomationStep): string[] {
   return step?.allowedTools === undefined ? ALL_AUTOMATION_TOOLS : step.allowedTools;
 }
@@ -154,6 +158,16 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     }
     if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
       return schedule.steps[0].modelId ?? "";
+    }
+    return "";
+  });
+  /*
+  FNXC:Automations 2026-07-12-19:14:
+  Simple schedule AI-capable model selectors also capture an optional per-step thinking level. Empty string means inherit the default; concrete values persist on the AutomationStep JSON payload.
+  */
+  const [thinkingLevel, setThinkingLevel] = useState(() => {
+    if (schedule?.steps && schedule.steps.length === 1 && (schedule.steps[0].type === "ai-prompt" || schedule.steps[0].type === "create-task") && !schedule.command) {
+      return schedule.steps[0].thinkingLevel ?? "";
     }
     return "";
   });
@@ -325,7 +339,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     }
     setErrors(e);
     return Object.keys(e).length === 0;
-  }, [name, command, prompt, modelProvider, modelId, mode, simpleType, steps, scheduleType, cronExpression, timeoutMs, hasEditingSteps, taskDescription, localScope]);
+  }, [name, command, prompt, modelProvider, modelId, thinkingLevel, mode, simpleType, steps, scheduleType, cronExpression, timeoutMs, hasEditingSteps, taskDescription, localScope]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -364,6 +378,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
               prompt: prompt.trim(),
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
+              thinkingLevel: normalizeThinkingLevel(thinkingLevel),
               allowedTools: normalizeAllowedTools(simpleAllowedTools),
             };
             submitData = {
@@ -388,6 +403,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
               taskColumn: taskColumn,
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
+              thinkingLevel: normalizeThinkingLevel(thinkingLevel),
             };
             submitData = {
               name: name.trim(),
@@ -420,7 +436,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
         setSubmitting(false);
       }
     },
-    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, simpleAllowedTools, enabled, timeoutMs, mode, simpleType, steps, localScope, projectId, schedule?.scope, taskTitle, taskDescription, taskColumn],
+    [validate, onSubmit, name, description, scheduleType, cronExpression, command, prompt, modelProvider, modelId, thinkingLevel, simpleAllowedTools, enabled, timeoutMs, mode, simpleType, steps, localScope, projectId, schedule?.scope, taskTitle, taskDescription, taskColumn],
   );
 
   const cronFieldId = "schedule-cron";
@@ -663,6 +679,10 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
                   onChange={handleModelChange}
                   placeholder={t("schedule.modelPlaceholder", "Use default")}
                   disabled={modelsLoading}
+                  thinkingLevel={thinkingLevel}
+                  onThinkingLevelChange={setThinkingLevel}
+                  defaultThinkingLevel="off"
+                  showThinkingLevel
                 />
                 {modelsError && <small className="field-error">{modelsError}</small>}
                 {errors.model ? (
@@ -754,6 +774,10 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
                   onChange={handleModelChange}
                   placeholder={t("schedule.executorModelPlaceholder", "Use default")}
                   disabled={modelsLoading}
+                  thinkingLevel={thinkingLevel}
+                  onThinkingLevelChange={setThinkingLevel}
+                  defaultThinkingLevel="off"
+                  showThinkingLevel
                 />
                 {modelsError && <small className="field-error">{modelsError}</small>}
                 {errors.model ? (

@@ -4044,7 +4044,7 @@ describe("ListView - Bulk Selection", () => {
     const checkbox = screen.getByLabelText("Select FN-001");
     clickInAct(checkbox);
 
-    expect(screen.getByText("Bulk Edit Models & Node:")).toBeDefined();
+    expect(screen.getByText("Bulk Edit Models, Thinking & Node:")).toBeDefined();
   });
 
   it("shows bulk edit toolbar when tasks are selected", () => {
@@ -4067,7 +4067,7 @@ describe("ListView - Bulk Selection", () => {
     const checkbox = screen.getByLabelText("Select FN-001");
     clickInAct(checkbox);
 
-    expect(screen.getByText("Bulk Edit Models & Node:")).toBeDefined();
+    expect(screen.getByText("Bulk Edit Models, Thinking & Node:")).toBeDefined();
   });
 
   it("disables apply button when no model changes selected", () => {
@@ -4129,7 +4129,7 @@ describe("ListView - Bulk Selection", () => {
     enterBulkEditMode();
     await user.click(screen.getByLabelText("Select FN-001"));
 
-    expect(screen.getByText("Bulk Edit Models & Node:")).toBeInTheDocument();
+    expect(screen.getByText("Bulk Edit Models, Thinking & Node:")).toBeInTheDocument();
     const applyButton = screen.getByRole("button", { name: "Apply" });
     expect(applyButton).toBeDisabled();
 
@@ -4665,6 +4665,7 @@ describe("ListView - Bulk Selection", () => {
       expect(firstApplyArgs?.[2]).toBe("gpt-4o");
       expect(firstApplyArgs?.[3]).toBeUndefined();
       expect(firstApplyArgs?.[4]).toBeUndefined();
+      expect(firstApplyArgs?.[8]).toBeUndefined();
     });
 
     // After a successful apply, controls reset to No change and disable Apply again.
@@ -4699,7 +4700,43 @@ describe("ListView - Bulk Selection", () => {
       expect(clearApplyArgs?.[2]).toBeNull();
       expect(clearApplyArgs?.[3]).toBeUndefined();
       expect(clearApplyArgs?.[4]).toBeUndefined();
+      expect(clearApplyArgs?.[8]).toBeUndefined();
     });
+  });
+
+  it("forwards bulk thinking-level selections and omits the field for no-change", async () => {
+    const user = userEvent.setup();
+    const availableModels = [
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+    ];
+    const tasks = [createMockTask({ id: "FN-001" })];
+    const mockedBatchUpdateTaskModels = vi.mocked(batchUpdateTaskModels);
+    mockedBatchUpdateTaskModels.mockResolvedValue({ updated: [{ ...tasks[0], thinkingLevel: "high" }], count: 1 });
+
+    render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+    enterBulkEditMode();
+    await user.click(screen.getByLabelText("Select FN-001"));
+
+    const thinkingSelect = screen.getByLabelText("Thinking Level");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+
+    await user.selectOptions(thinkingSelect, "high");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      const args = mockedBatchUpdateTaskModels.mock.calls.at(-1);
+      expect(args?.[0]).toEqual(["FN-001"]);
+      expect(args?.[1]).toBeUndefined();
+      expect(args?.[2]).toBeUndefined();
+      expect(args?.[7]).toBeUndefined();
+      expect(args?.[8]).toBe("high");
+      expect(args?.[9]).toBe(TEST_PROJECT_ID);
+    });
+
+    await user.click(screen.getByLabelText("Select FN-001"));
+    expect(screen.getByLabelText("Thinking Level")).toHaveValue("__no_change__");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
   });
 
   describe("Bulk node override", () => {

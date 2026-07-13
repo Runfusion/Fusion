@@ -728,6 +728,84 @@ describe("Automation routes", () => {
       expect(automationStore.createSchedule).toHaveBeenCalledTimes(1);
     });
 
+    it("accepts and forwards valid step thinkingLevel for schedules", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.createSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "",
+        steps: [
+          {
+            id: "step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+            thinkingLevel: "high",
+          },
+        ],
+      });
+      const { app, automationStore } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        command: "",
+        scheduleType: "hourly",
+        steps: [
+          {
+            id: "step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+            thinkingLevel: "high",
+          },
+        ],
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(201);
+      expect(automationStore.createSchedule).toHaveBeenCalledWith(expect.objectContaining({
+        steps: [expect.objectContaining({ thinkingLevel: "high" })],
+      }));
+      expect(res.body.steps[0].thinkingLevel).toBe("high");
+    });
+
+    it("accepts schedule steps without thinkingLevel", async () => {
+      const { app, automationStore } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        command: "",
+        scheduleType: "hourly",
+        steps: [
+          {
+            id: "step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+          },
+        ],
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(201);
+      expect(automationStore.createSchedule).toHaveBeenCalledWith(expect.objectContaining({
+        steps: [expect.not.objectContaining({ thinkingLevel: expect.anything() })],
+      }));
+    });
+
+    it("returns 400 for invalid schedule step thinkingLevel", async () => {
+      const { app } = buildApp();
+      const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
+        name: "Test",
+        command: "",
+        scheduleType: "hourly",
+        steps: [
+          {
+            id: "step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+            thinkingLevel: "maximum",
+          },
+        ],
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("thinkingLevel must be one of off, minimal, low, medium, high, xhigh");
+    });
+
     it("returns 400 for missing name", async () => {
       const { app } = buildApp();
       const res = await REQUEST(app, "POST", "/api/automations", JSON.stringify({
@@ -1853,6 +1931,80 @@ describe("Routine routes", () => {
         name: "Test",
         trigger: { type: "cron", cronExpression: "0 * * * *" },
       }));
+    });
+
+    it("accepts and forwards valid step thinkingLevel for routines", async () => {
+      const mockStore = createMockRoutineStore();
+      mockStore.createRoutine.mockResolvedValue({
+        ...FAKE_ROUTINE,
+        steps: [
+          {
+            id: "routine-step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+            thinkingLevel: "high",
+          },
+        ],
+      });
+      const { app, routineStore } = buildRoutineApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/routines", JSON.stringify({
+        name: "Test",
+        trigger: { type: "manual" },
+        steps: [
+          {
+            id: "routine-step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+            thinkingLevel: "high",
+          },
+        ],
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(201);
+      expect(routineStore.createRoutine).toHaveBeenCalledWith(expect.objectContaining({
+        steps: [expect.objectContaining({ thinkingLevel: "high" })],
+      }));
+      expect(res.body.steps[0].thinkingLevel).toBe("high");
+    });
+
+    it("accepts routine steps without thinkingLevel", async () => {
+      const { app, routineStore } = buildRoutineApp();
+      const res = await REQUEST(app, "POST", "/api/routines", JSON.stringify({
+        name: "Test",
+        trigger: { type: "manual" },
+        steps: [
+          {
+            id: "routine-step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+          },
+        ],
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(201);
+      expect(routineStore.createRoutine).toHaveBeenCalledWith(expect.objectContaining({
+        steps: [expect.not.objectContaining({ thinkingLevel: expect.anything() })],
+      }));
+    });
+
+    it("returns 400 for invalid routine step thinkingLevel", async () => {
+      const { app } = buildRoutineApp();
+      const res = await REQUEST(app, "POST", "/api/routines", JSON.stringify({
+        name: "Test",
+        trigger: { type: "manual" },
+        steps: [
+          {
+            id: "routine-step-ai",
+            type: "ai-prompt",
+            name: "AI",
+            prompt: "Summarize",
+            thinkingLevel: "maximum",
+          },
+        ],
+      }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("thinkingLevel must be one of off, minimal, low, medium, high, xhigh");
     });
 
     it("creates a routine with webhook trigger (requires secret)", async () => {

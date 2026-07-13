@@ -42,6 +42,7 @@ import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { estimateChatTokens, formatTokenCount } from "../utils/estimateChatTokens";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ViewHeader } from "./ViewHeader";
@@ -2396,16 +2397,13 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     copyFeedbackTimeoutsRef.current.set(messageId, timeoutId);
   }, []);
 
+  /*
+  FNXC:Chat 2026-07-12-17:50:
+  Direct Clipboard API calls mis-report "Copy failed" on non-secure origins such as mobile http://fusionstudio:4040, where navigator.clipboard is undefined. Route provider-response copies through copyTextToClipboard so the secure-context guard and execCommand fallback drive the existing success/error feedback.
+  */
   const handleCopyResponse = useCallback(async (messageId: string, content: string) => {
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("Clipboard API unavailable");
-      }
-      await navigator.clipboard.writeText(content);
-      setCopyFeedback(messageId, "success");
-    } catch {
-      setCopyFeedback(messageId, "error");
-    }
+    const copied = await copyTextToClipboard(content);
+    setCopyFeedback(messageId, copied ? "success" : "error");
   }, [setCopyFeedback]);
 
   const showProviderResponseCopy = activeSession?.agentId === FN_AGENT_ID;

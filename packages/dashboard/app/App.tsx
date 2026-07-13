@@ -1635,6 +1635,7 @@ function AppInner() {
           initialCommand={modalManager.terminalInitialCommand}
           initialCommandGeneration={modalManager.terminalInitialCommandGeneration}
           projectId={currentProject.id}
+          footerVisible={executorFooterVisible}
         />
       )}
       </div>
