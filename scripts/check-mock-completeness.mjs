@@ -46,6 +46,8 @@ const BARRELS = [
       join(root, "packages/cli/src/__tests__"),
       join(root, "packages/cli/src/commands/__tests__"),
       join(root, "packages/cli/src/plugins/__tests__"),
+      // FNXC:TestInfrastructure 2026-07-13-11:00: Dashboard API tests also mock @fusion/engine; include them to prevent the same barrel-export drift.
+      join(root, "packages/dashboard/src/__tests__"),
     ],
     cliSrc: join(root, "packages/cli/src"),
   },
@@ -124,9 +126,9 @@ function resolveSourceFiles(testPath, cliSrc) {
     if (existsSync(resolved)) sources.add(resolved);
   }
 
-  // Convention: __tests__/foo.test.ts → ../foo.ts
+  // Convention: __tests__/foo.test.ts → ../foo.ts, __tests__/foo.test.tsx → ../foo.tsx
   const noTests = testPath.replace(/__tests\//, "");
-  const convPath = noTests.replace(/\.test\.ts$/, ".ts");
+  const convPath = noTests.replace(/\.test\.ts$/, ".ts").replace(/\.test\.tsx$/, ".tsx");
   if (existsSync(convPath)) sources.add(convPath);
 
   // bin.test.ts special case
@@ -165,7 +167,8 @@ function extractMockKeys(testSrc, moduleName, testPath) {
   const body = testSrc.slice(bodyStart, i - 1);
 
   const keys = new Set();
-  const keyRe = /(?:^|\n)\s*([A-Za-z_$][\w$]*)\s*(?::)/g;
+  // Match both regular properties (key: value) and shorthand (key, or key}).
+  const keyRe = /(?:^|\n)\s*([A-Za-z_$][\w$]*)\s*(?::|[,}])/g;
   let km;
   while ((km = keyRe.exec(body)) !== null) {
     keys.add(km[1]);
@@ -216,7 +219,7 @@ function collectTs(dir) {
       const full = join(dir, entry);
       const st = statSync(full);
       if (st.isDirectory()) out = out.concat(collectTs(full));
-      else if (entry.endsWith(".ts")) out.push(full);
+      else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) out.push(full);
     }
   } catch { /* dir may not exist */ }
   return out;
@@ -235,7 +238,7 @@ for (const cfg of BARRELS) {
   const testFiles = new Set();
   for (const dir of cfg.testDirs) {
     for (const f of collectTs(dir)) {
-      if (f.endsWith(".test.ts")) testFiles.add(f);
+      if (f.endsWith(".test.ts") || f.endsWith(".test.tsx")) testFiles.add(f);
     }
   }
 

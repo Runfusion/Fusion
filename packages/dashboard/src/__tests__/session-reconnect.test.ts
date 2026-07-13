@@ -46,6 +46,16 @@ const { mockCreateFnAgent } = vi.hoisted(() => ({
 }));
 
 vi.mock("@fusion/engine", () => ({
+  // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
+  getExemptToolNames: vi.fn(() => []),
+  reloadExemptTools: vi.fn(),
+  resolveIntegrationBranch: vi.fn(),
+  discoverMcpServers: vi.fn(() => []),
+  resolveMcpServersForRuntime: vi.fn(() => []),
+  validateMcpServer: vi.fn(),
+  isInProcessBackupCommand: vi.fn(),
+  isInProcessMemoryBackupCommand: vi.fn(),
+  formatInProcessBackupError: vi.fn(),
   listCliAdapterDescriptors: () => [],
   // FNXC:DashboardSessionTests 2026-06-14-09:06: planning.ts spreads createWorkflowAuthoringTools into agent customTools; this focused engine mock must export it to keep AI-session tests aligned with production planning setup.
   createWorkflowAuthoringTools: vi.fn(() => []),

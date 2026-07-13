@@ -33,6 +33,18 @@ vi.mock("@fusion/core", async () => {
 });
 
 vi.mock("@fusion/engine", () => ({
+  // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
+  getExemptToolNames: vi.fn(() => []),
+  promptWithFallback: vi.fn(),
+  reloadExemptTools: vi.fn(),
+  resolveIntegrationBranch: vi.fn(),
+  discoverMcpServers: vi.fn(() => []),
+  resolveMcpServersForRuntime: vi.fn(() => []),
+  resolveMcpServersForStore: vi.fn(() => []),
+  validateMcpServer: vi.fn(),
+  isInProcessBackupCommand: vi.fn(),
+  isInProcessMemoryBackupCommand: vi.fn(),
+  formatInProcessBackupError: vi.fn(),
   listCliAdapterDescriptors: () => [],
   createFnAgent: vi.fn(async () => ({
     session: {

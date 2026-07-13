@@ -16,6 +16,8 @@ vi.mock("../routes/resolve-diff-base.js", () => ({
 }));
 
 vi.mock("@fusion/engine", () => ({
+  // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
+  resolveMcpServersForStore: vi.fn(() => []),
   createResolvedAgentSession: mockCreateResolvedAgentSession,
 }));
 

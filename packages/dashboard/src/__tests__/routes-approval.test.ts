@@ -87,6 +87,10 @@ vi.mock("@fusion/core", async (importOriginal) => ({
 const executeApprovedWorktrunkInstall = vi.fn(async () => ({ binaryPath: "~/.fusion/bin/wt", source: "installed-release" }));
 
 vi.mock("@fusion/engine", () => ({
+  // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
+  assertNoSecretPlaintext: vi.fn(),
+  executeApprovedAgentProvisioning: vi.fn(),
+  executeApprovedWorktrunkInstall: vi.fn(),
   listCliAdapterDescriptors: () => [],
   executeApprovedAgentProvisioning,
   executeApprovedWorktrunkInstall,
