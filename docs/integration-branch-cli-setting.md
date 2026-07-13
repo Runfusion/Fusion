@@ -94,4 +94,80 @@ guards against this being mistakenly re-attempted later.
 `secretsEnv`, `worktreeCopyFiles`, etc.) unsuited to the CLI's single-string
 `settings set` form. This task stayed scoped to `integrationBranch` only —
 see the linked follow-up task (filed via `fn_task_create`) for any other
-simple scalar `ProjectSettings` keys worth whitelisting later.
+simple scalar `ProjectSettings` keys worth whitelisting later. That follow-up
+work landed as AIWO-040 (below).
+
+## AIWO-040: seven more merge/handoff scalar settings whitelisted
+
+Following on directly from the `integrationBranch` fix above, AIWO-040
+whitelisted seven more genuine single-value `ProjectSettings` fields that were
+still rejected by `fn settings set` as "Unknown setting" despite being fully
+wired at the `settings-schema.ts` default layer and consumed by the merge
+engine:
+
+| Key | Type | Default (`DEFAULT_PROJECT_SETTINGS`) | Array added to |
+|---|---|---|---|
+| `pushAfterMerge` | `boolean` | `false` | `BOOLEAN_SETTINGS` |
+| `pushRemote` | `string` | `"origin"` | `STRING_SETTINGS` |
+| `autoResolveReviewComments` | `boolean` | `true` | `BOOLEAN_SETTINGS` |
+| `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | `ENUM_SETTINGS` |
+| `directMergeCommitStrategy` | `"auto" \| "always-squash" \| "always-rebase"` | `"always-squash"` | `ENUM_SETTINGS` |
+| `mergeAdvanceAutoSync` | `"off" \| "ff-only" \| "stash-and-ff"` | `"stash-and-ff"` | `ENUM_SETTINGS` |
+| `owningNodeHandoffPolicy` | `"block" \| "reassign-to-local" \| "reassign-any-healthy"` | `"reassign-to-local"` | `ENUM_SETTINGS` |
+
+All seven are project-only (added to `PROJECT_ONLY_SETTINGS`) — none are
+meaningful as global settings since they all govern per-project merge/handoff
+behavior, matching the existing pattern for `integrationBranch`,
+`unavailableNodePolicy`, and `defaultNodeId`.
+
+The four enum values were hardcoded inline in `ENUM_SETTINGS` (rather than
+imported from `@fusion/core`) to match the existing `unavailableNodePolicy`
+convention: the `MergeStrategy`/`DirectMergeCommitStrategy`/
+`MergeAdvanceAutoSyncMode`/`OwningNodeHandoffPolicy` literal unions are not
+exported as reusable const arrays from `packages/core/src/index.ts`, so the
+literal tuples are duplicated in the CLI file, matching how
+`unavailableNodePolicy`'s `["block", "fallback-local"]` values are already
+hardcoded there rather than imported.
+
+All seven were added to the `runSettingsShow()` display groups: the six
+merge-related keys joined `integrationBranch` in the existing "Merge" group,
+and `owningNodeHandoffPolicy` joined `defaultNodeId`/`unavailableNodePolicy`
+in "Node Routing" (a closer conceptual fit than "Merge", since it governs
+node handoff rather than merge strategy). No special-case labels were needed
+— the existing camelCase-to-title-case fallback in `getSettingLabel()`
+produces readable output for all seven (e.g. "Push After Merge", "Owning Node
+Handoff Policy").
+
+### Explicit exclusion: `requirePrApproval` is NOT missing — it was MOVED
+
+`requirePrApproval` looks like an obvious eighth candidate (it's a `boolean`
+field still declared on the `ProjectSettings` TypeScript type in `types.ts`),
+but it is **intentionally excluded** from this whitelist. It was hard-MOVED
+to workflow settings in U4:
+
+- It has **no default** in `DEFAULT_PROJECT_SETTINGS`
+  (`packages/core/src/settings-schema.ts`) — the corresponding line is a
+  comment noting the MOVE, not a live default.
+- It is listed in the `MovedProjectSettingsKey` union
+  (`settings-schema.ts`, near the top of the file) alongside the other U4-era
+  moved keys (`runStepsInNewSessions`, `maxParallelSteps`,
+  `requirePlanApproval`, etc.) that are already excluded from `VALID_SETTINGS`.
+- The field still exists on the raw `ProjectSettings` TS interface only for
+  the engine's flat-read compatibility shim, not as a live per-project
+  setting.
+
+`fn settings set requirePrApproval <value>` must continue to reject with
+`Error: Unknown setting "requirePrApproval"`, and use
+`fn_workflow_settings` (or the workflow editor's review-gate settings)
+instead. A permanent regression test
+(`expect(VALID_SETTINGS).not.toContain("requirePrApproval")`) guards against
+this being mistakenly re-added later, alongside an explicit
+`runSettingsSet("requirePrApproval", ...)` rejection test.
+
+### Not in scope (deliberately deferred)
+
+`mergeIntegrationWorktree` (`MergeIntegrationWorktreeMode`) sits adjacent to
+these fields in `types.ts` and looks like it would fit the same enum pattern,
+but it was not named in AIWO-040's candidate list, so it was intentionally
+left out of this diff and filed separately as follow-up task AIWO-041 rather
+than folded in silently.
