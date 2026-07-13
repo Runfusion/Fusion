@@ -623,6 +623,11 @@ vi.mock("@fusion/core", async (importOriginal) => {
 });
 
 vi.mock("@fusion/dashboard", () => ({
+  // FNXC:CliTests 2026-07-13-08:10: @fusion/dashboard barrel re-exports cli-package-version helpers; mock must surface them for startup model sync.
+isUnresolvedCliPackageVersion: vi.fn(() => false),
+resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved: false })),
+  getCliPackageVersion: vi.fn(() => "0.0.0"),
+  // FNXC:CliTests 2026-07-13-08:00: getCliPackageVersion added to @fusion/dashboard barrel export; mock must surface it for daemon/serve startup model sync.
   createServer: mocks.createServerMock,
   GitHubClient: vi.fn().mockImplementation(function () {
     return {};

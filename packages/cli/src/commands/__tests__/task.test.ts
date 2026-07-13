@@ -2594,6 +2594,8 @@ describe("runTaskRetry", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
       completionHandoffLimboRecoveryCount: 0,
+      // FNXC:TaskRetry 2026-07-13-08:15: executeRequeueLoopCount added to TaskResetField set; retry must zero it alongside other recovery counters.
+      executeRequeueLoopCount: 0,
       graphResumeRetryCount: 0,
       mergeAuditBounceCount: 0,
       mergeRetries: 0,
@@ -2669,6 +2671,8 @@ describe("runTaskRetry", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
       completionHandoffLimboRecoveryCount: 0,
+      // FNXC:TaskRetry 2026-07-13-08:15: executeRequeueLoopCount added to TaskResetField set; retry must zero it alongside other recovery counters.
+      executeRequeueLoopCount: 0,
       graphResumeRetryCount: 0,
       mergeAuditBounceCount: 0,
       mergeRetries: 0,

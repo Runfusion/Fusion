@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 const commandMocks = vi.hoisted(() => ({
   runDashboard: vi.fn(),
+  runDashboardSupervised: vi.fn(),
   runServe: vi.fn(),
   runDaemon: vi.fn(),
   runDesktop: vi.fn(),
@@ -151,7 +152,12 @@ vi.mock("../commands/dashboard-tui/index.js", () => ({
 
 vi.mock("../commands/onboard.js", () => ({ runOnboard: commandMocks.runOnboard }));
 
-vi.mock("../commands/dashboard.js", () => ({ runDashboard: commandMocks.runDashboard }));
+vi.mock("../commands/dashboard.js", () => ({
+  runDashboard: commandMocks.runDashboard,
+  // FNXC:CliTests 2026-07-13-08:20: bin.ts now imports shouldSuperviseDashboard (supervision is the default) and runDashboardSupervised from dashboard.js; mock must surface both so the no-args dashboard launch test reaches runDashboard instead of failing on an undefined import.
+  shouldSuperviseDashboard: vi.fn(() => false),
+  runDashboardSupervised: commandMocks.runDashboardSupervised,
+}));
 vi.mock("../commands/serve.js", () => ({ runServe: commandMocks.runServe }));
 vi.mock("../commands/daemon.js", () => ({ runDaemon: commandMocks.runDaemon }));
 vi.mock("../commands/desktop.js", () => ({ runDesktop: commandMocks.runDesktop }));
