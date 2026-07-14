@@ -390,7 +390,11 @@ async function aggregatePostgresActivityAnalytics(
       GROUP BY left(ts, 10) ORDER BY day
     `),
     layer.db.execute(sql`SELECT status, count(*)::int AS count FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY status`),
-    layer.db.execute(sql`SELECT left(started_at, 10) AS day, count(*)::int AS count, array_agg(DISTINCT agent_id) AS agent_ids FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY left(started_at, 10) ORDER BY day`),
+    /*
+    FNXC:ActivityAnalyticsPostgres 2026-07-14-01:41:
+    Null agent IDs may survive in legacy or schema-drift run rows. Count those rows as runs, but remove NULL from the daily identity set so daily active agents and stickiness use the same non-null population as the range summary.
+    */
+    layer.db.execute(sql`SELECT left(started_at, 10) AS day, count(*)::int AS count, array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY left(started_at, 10) ORDER BY day`),
     layer.db.execute(sql`SELECT DISTINCT agent_id FROM project.agent_runs WHERE agent_id IS NOT NULL ${analyticsProject} ${runFrom} ${runTo}`),
     aggregateMonitorMetrics(layer, query),
     aggregatePostgresSdlcFunnel(layer, query),

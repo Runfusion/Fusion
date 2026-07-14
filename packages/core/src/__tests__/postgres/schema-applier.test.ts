@@ -32,6 +32,7 @@ import {
   SCHEMA_BASELINE_VERSION,
   roadmapPluginSchemaInit,
 } from "../../postgres/index.js";
+import { MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION } from "../../postgres/schema-applier.js";
 
 const PG_ADMIN_URL =
   process.env.FUSION_PG_TEST_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
@@ -41,6 +42,14 @@ const PG_AVAILABLE =
   process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL_BASE);
 
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
+
+describe("schema-applier: immutable migration identities", () => {
+  it("keeps monitor and approval isolation assigned to version 0003", () => {
+    expect(MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION).toBe("0003");
+    expect(Number(SCHEMA_BASELINE_VERSION))
+      .toBeGreaterThanOrEqual(Number(MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION));
+  });
+});
 
 /**
  * FNXC:PostgresSchema 2026-06-24-04:00:

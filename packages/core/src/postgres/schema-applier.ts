@@ -31,6 +31,11 @@ export const SCHEMA_BASELINE_VERSION = "0003";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
+/**
+ * FNXC:PostgresMigrationIdentity 2026-07-14-01:41:
+ * Each migration keeps an immutable bookkeeping identity even as SCHEMA_BASELINE_VERSION advances to newer migrations. Upgrade checks and inserts must use this dedicated 0003 identifier so a later latest-version marker cannot make an unrecorded monitor/approval migration look applied.
+ */
+export const MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION = "0003";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -111,7 +116,7 @@ export async function applySchemaBaseline(
     const baselineAlreadyApplied = applied.includes(INITIAL_SCHEMA_VERSION);
     const automationIsolationAlreadyApplied = applied.includes(AUTOMATION_ISOLATION_SCHEMA_VERSION);
     const analyticsIsolationAlreadyApplied = applied.includes(ANALYTICS_ISOLATION_SCHEMA_VERSION);
-    const monitorApprovalIsolationAlreadyApplied = applied.includes(SCHEMA_BASELINE_VERSION);
+    const monitorApprovalIsolationAlreadyApplied = applied.includes(MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -160,7 +165,7 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(MONITOR_APPROVAL_ISOLATION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
-        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SCHEMA_BASELINE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

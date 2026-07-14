@@ -433,15 +433,20 @@ export class AsyncEvalStore {
   }
 
   /*
-  FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
-  PostgreSQL scheduled batches require the same guarded lifecycle mutation as EvalStore. Preserve terminal immutability, transition validation, nullable clears, and metadata/provenance merge semantics before persisting the async row.
+  FNXC:ScheduledEvalsPostgres 2026-07-14-01:41:
+  PostgreSQL scheduled batches require one serialized lifecycle mutation per run. Hold a transaction-scoped run lock across the authoritative read, applyEvalRunUpdate validation, and persistence so concurrent terminal transitions cannot both validate a stale active row and the later writer cannot overwrite the committed terminal state. Preserve terminal immutability, transition validation, nullable clears, and metadata/provenance merge semantics through the shared helper.
   */
   async updateRun(id: string, input: EvalRunUpdateInput): Promise<EvalRun | undefined> {
-    const existing = await this.getRun(id);
-    if (!existing) return undefined;
-    const updated = applyEvalRunUpdate(existing, input);
-    await persistEvalRun(this.layer.db, updated);
-    return updated;
+    return this.layer.transactionImmediate(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:eval-run-update:${id}`}, 0))`,
+      );
+      const existing = await getEvalRun(tx, id);
+      if (!existing) return undefined;
+      const updated = applyEvalRunUpdate(existing, input);
+      await persistEvalRun(tx, updated);
+      return updated;
+    });
   }
 
   async getTaskResult(id: string): Promise<EvalTaskResult | undefined> {
