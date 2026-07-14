@@ -2,6 +2,7 @@ import type { PluginContext } from "@fusion/plugin-sdk";
 import { sql } from "drizzle-orm";
 
 export type ChatTurn = { role: "user" | "assistant"; text: string; createdAt: string };
+export type AuthKeyBatch = Record<string, Record<string, string | null>>;
 export type PluginDb = {
   exec(sql: string): void;
   prepare(sql: string): { get(...args: unknown[]): unknown; run(...args: unknown[]): unknown };
@@ -18,7 +19,7 @@ export interface WhatsAppPersistence {
   loadCredentials(): Promise<string | null>;
   saveCredentials(value: string): Promise<void>;
   loadAuthKeys(category: string, ids: string[]): Promise<Record<string, string>>;
-  writeAuthKeys(category: string, values: Record<string, string | null>): Promise<void>;
+  writeAuthKeys(batch: AuthKeyBatch): Promise<void>;
   clearAuthState(): Promise<void>;
 }
 
@@ -134,19 +135,21 @@ export function createSqliteWhatsAppPersistence(db: PluginDb): WhatsAppPersisten
       }
       return result;
     },
-    async writeAuthKeys(category, values) {
+    async writeAuthKeys(batch) {
       /**
-       * FNXC:WhatsAppAuthKeyAtomicity 2026-07-14-00:42:
-       * A Baileys Signal-key update is one logical batch. Commit every delete/upsert together so a failed statement cannot leave a partially rotated key set that is unusable on the next connection.
+       * FNXC:WhatsAppAuthKeyAtomicity 2026-07-14-01:21:
+       * A Baileys Signal-key update can rotate several categories in one logical batch. Commit every category's deletes and upserts together so a later category failure cannot leave an earlier category partially rotated.
        */
       withImmediateTransaction(db, () => {
         const upsert = db.prepare(`INSERT INTO whatsapp_auth_keys(category, keyId, value, updatedAt) VALUES(?, ?, ?, ?)
           ON CONFLICT(category, keyId) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`);
         const remove = db.prepare("DELETE FROM whatsapp_auth_keys WHERE category = ? AND keyId = ?");
         const now = new Date().toISOString();
-        for (const [id, value] of Object.entries(values)) {
-          if (value === null) remove.run(category, id);
-          else upsert.run(category, id, value, now);
+        for (const [category, values] of Object.entries(batch)) {
+          for (const [id, value] of Object.entries(values)) {
+            if (value === null) remove.run(category, id);
+            else upsert.run(category, id, value, now);
+          }
         }
       });
     },
@@ -244,20 +247,22 @@ export function createWhatsAppPersistence(ctx: PluginContext): WhatsAppPersisten
       for (const row of rows) result[row.key_id] = row.value;
       return result;
     },
-    async writeAuthKeys(category, values) {
+    async writeAuthKeys(batch) {
       const now = new Date().toISOString();
-      const removals = Object.entries(values).filter(([, value]) => value === null).map(([id]) => id);
-      const upserts = Object.entries(values).filter((entry): entry is [string, string] => entry[1] !== null);
       await layer.transactionImmediate(async (tx) => {
-        if (removals.length > 0) {
-          await tx.execute(sql`DELETE FROM project.whatsapp_auth_keys WHERE project_id = ${projectId} AND category = ${category}
-            AND key_id IN (${sql.join(removals.map((id) => sql`${id}`), sql`, `)})`);
-        }
-        if (upserts.length > 0) {
-          const rows = upserts.map(([id, value]) => sql`(${projectId}, ${category}, ${id}, ${value}, ${now})`);
-          await tx.execute(sql`INSERT INTO project.whatsapp_auth_keys(project_id, category, key_id, value, updated_at)
-            VALUES ${sql.join(rows, sql`, `)} ON CONFLICT(project_id, category, key_id)
-            DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+        for (const [category, values] of Object.entries(batch)) {
+          const removals = Object.entries(values).filter(([, value]) => value === null).map(([id]) => id);
+          const upserts = Object.entries(values).filter((entry): entry is [string, string] => entry[1] !== null);
+          if (removals.length > 0) {
+            await tx.execute(sql`DELETE FROM project.whatsapp_auth_keys WHERE project_id = ${projectId} AND category = ${category}
+              AND key_id IN (${sql.join(removals.map((id) => sql`${id}`), sql`, `)})`);
+          }
+          if (upserts.length > 0) {
+            const rows = upserts.map(([id, value]) => sql`(${projectId}, ${category}, ${id}, ${value}, ${now})`);
+            await tx.execute(sql`INSERT INTO project.whatsapp_auth_keys(project_id, category, key_id, value, updated_at)
+              VALUES ${sql.join(rows, sql`, `)} ON CONFLICT(project_id, category, key_id)
+              DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+          }
         }
       });
     },

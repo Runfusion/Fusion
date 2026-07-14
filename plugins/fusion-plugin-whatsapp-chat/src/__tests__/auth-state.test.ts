@@ -98,23 +98,24 @@ describe("auth-state", () => {
     expect((removed as any).alpha).toBeUndefined();
   });
 
-  it("rolls back the whole SQLite auth-key batch when one write fails", async () => {
+  it("rolls back every SQLite auth-key category when a later category write fails", async () => {
     const db = createInMemoryDb();
     const auth = await createPluginDbAuthState(db as any);
     await auth.state.keys.set({ session: { alpha: { version: "old" } as any } });
     db.failAuthKeyWrite("beta");
 
     await expect(auth.state.keys.set({
-      session: {
-        alpha: { version: "new" } as any,
+      session: { alpha: { version: "new" } as any },
+      "sender-key": {
         beta: { version: "new" } as any,
       },
     })).rejects.toThrow("injected auth-key write failure");
 
     db.failAuthKeyWrite(null);
-    const loaded = await auth.state.keys.get("session", ["alpha", "beta"]);
-    expect((loaded as any).alpha).toEqual({ version: "old" });
-    expect((loaded as any).beta).toBeUndefined();
+    const session = await auth.state.keys.get("session", ["alpha"]);
+    const senderKey = await auth.state.keys.get("sender-key", ["beta"]);
+    expect((session as any).alpha).toEqual({ version: "old" });
+    expect((senderKey as any).beta).toBeUndefined();
   });
 
   it("clears auth state", async () => {

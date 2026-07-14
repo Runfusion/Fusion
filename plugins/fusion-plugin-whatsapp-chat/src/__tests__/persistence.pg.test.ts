@@ -41,9 +41,13 @@ pgDescribe("WhatsAppPersistence PostgreSQL", () => {
 
       await a.saveCredentials("a-creds");
       await b.saveCredentials("b-creds");
-      await a.writeAuthKeys("session", { keep: "a-key", remove: "old-key" });
-      await a.writeAuthKeys("session", { remove: null });
+      await a.writeAuthKeys({
+        session: { keep: "a-key", remove: "old-key" },
+        "sender-key": { sender: "sender-key-value" },
+      });
+      await a.writeAuthKeys({ session: { remove: null } });
       expect(await a.loadAuthKeys("session", ["keep", "remove"])).toEqual({ keep: "a-key" });
+      expect(await a.loadAuthKeys("sender-key", ["sender"])).toEqual({ sender: "sender-key-value" });
       expect(await b.loadCredentials()).toBe("b-creds");
 
       await a.clearAuthState();

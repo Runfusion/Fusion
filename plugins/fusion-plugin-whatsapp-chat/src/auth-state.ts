@@ -49,6 +49,7 @@ export async function createPersistenceAuthState(persistence: WhatsAppPersistenc
         return result;
       },
       set: async (data: SignalDataSet) => {
+        const batch: Record<string, Record<string, string | null>> = {};
         for (const category of Object.keys(data) as Array<keyof SignalDataSet>) {
           const entries = data[category];
           if (!entries) continue;
@@ -56,8 +57,9 @@ export async function createPersistenceAuthState(persistence: WhatsAppPersistenc
           for (const [id, value] of Object.entries(entries)) {
             values[id] = value == null ? null : serialize(value);
           }
-          await persistence.writeAuthKeys(category, values);
+          batch[category] = values;
         }
+        await persistence.writeAuthKeys(batch);
       },
     },
   };
