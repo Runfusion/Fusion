@@ -4,10 +4,12 @@ import {
   vacuumAnalyze,
   resolveBackend,
   migrateSqliteToPostgres,
+  completeSqliteMigration,
   defaultMigrationSources,
   stampMigratedProjectRows,
   lookupRegisteredProjectIdByPath,
   resolveGlobalDir,
+  DatabaseSync,
   type MigrationReport,
 } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
@@ -230,10 +232,52 @@ export async function runDbMigrate(
   }
 
   // 5. Run the migrator.
+  /*
+   * FNXC:PostgresMigration 2026-07-14-00:05:
+   * Manual cutover must know the central project identity before copying any
+   * project-owned table. Resolve it from the target registry or the legacy
+   * central source and fail closed when ownership is ambiguous; post-copy
+   * stamping cannot repair plugin and automation rows that were imported
+   * without their required project partition.
+   */
+  let registeredProjectId: string | undefined;
+  try {
+    registeredProjectId = await lookupRegisteredProjectIdByPath(connections.migration, projectRoot);
+  } catch {
+    // A fresh target has no schema until the migrator applies the baseline.
+  }
+  if (!registeredProjectId) {
+    const centralSource = presentSources.find((source) => source.pgSchema === "central");
+    if (centralSource) {
+      const legacyCentral = new DatabaseSync(centralSource.sqlitePath);
+      try {
+        registeredProjectId = (legacyCentral
+          .prepare("SELECT id FROM projects WHERE path = ? LIMIT 1")
+          .get(projectRoot) as { id?: string } | undefined)?.id;
+      } catch {
+        registeredProjectId = undefined;
+      } finally {
+        legacyCentral.close();
+      }
+    }
+  }
+  if (!registeredProjectId) {
+    console.error(
+      `fn db migrate: cannot resolve project ownership for "${projectRoot}". ` +
+        "Register exactly this project in the legacy or PostgreSQL central registry before migrating.",
+    );
+    await connections.close().catch(() => undefined);
+    process.exit(1);
+    return;
+  }
+
   let report: MigrationReport;
   try {
     report = await migrateSqliteToPostgres(connections.migration, presentSources, {
       dryRun,
+      projectId: registeredProjectId,
+      migrationKey: `project:${registeredProjectId}`,
+      deferCompletion: true,
     });
   } catch (error) {
     console.error(`fn db migrate: migration failed: ${(error as Error).message}`);
@@ -244,45 +288,29 @@ export async function runDbMigrate(
 
   /*
    * FNXC:CentralProjectIdentity 2026-07-13-23:10:
-   * The migrator (migrateSqliteToPostgres) is partition-unaware: it copies
-   * legacy rows verbatim, so migrated rows land with NULL project_id, a '' config
-   * key, and rootDir-path-keyed workflow settings — all invisible to bound
-   * readers (engine, dashboard project-store-resolver, configScope,
-   * workflow-settings resolver). The first-boot auto-migration stamps these; the
-   * manual `fn db migrate` path stamped NOTHING, so an operator cutover left the
-   * board/settings empty. Resolve the registered project id for this cwd by
-   * matching central.projects.path (the migration just populated central.projects,
-   * so query AFTER the copy) and re-key the migrated rows. If the project was
-   * never registered centrally, leave rows unstamped and tell the operator how to
-   * fix it (unregistered single-project setups use an unbound, unfiltered layer).
+   * The migrator now receives project identity before copying so every
+   * project-owned table, including plugins and automations, is partitioned at
+   * insert time. This final stamp remains necessary for legacy key shapes
+   * (NULL task/archive ids, empty config key, and rootDir-keyed workflow
+   * settings) and is a hard failure rather than an invisible partial cutover.
    */
   if (!dryRun) {
     try {
-      const registeredProjectId = await lookupRegisteredProjectIdByPath(
-        connections.migration,
-        projectRoot,
-      );
-      if (registeredProjectId) {
-        await stampMigratedProjectRows(connections.migration, {
-          projectId: registeredProjectId,
-          rootDir: projectRoot,
-        });
-        console.log(
-          `fn db migrate: stamped migrated rows with central-registry project id "${registeredProjectId}" (tasks, archived tasks, config, workflow settings).`,
-        );
-      } else {
-        console.warn(
-          `fn db migrate: WARNING — no registered project matches path "${projectRoot}" in central.projects; ` +
-            `migrated rows were left UNSTAMPED (NULL project_id / '' config key / rootDir-keyed workflow settings) ` +
-            `and will be invisible to project-bound readers. To fix: register the project (e.g. open it once via the ` +
-            `dashboard/CLI so it is added to central.projects), then re-run \`fn db migrate\` to stamp the rows.`,
-        );
+      await stampMigratedProjectRows(connections.migration, {
+        projectId: registeredProjectId,
+        rootDir: projectRoot,
+      });
+      if (report.tables.every((table) => table.skipped || table.verified)) {
+        await completeSqliteMigration(connections.migration, `project:${registeredProjectId}`);
       }
-    } catch (error) {
-      console.warn(
-        `fn db migrate: WARNING — post-migration row stamping failed: ${(error as Error).message}. ` +
-          `Migrated rows may be invisible to project-bound readers; re-run \`fn db migrate\` after confirming the project is registered.`,
+      console.log(
+        `fn db migrate: stamped migrated rows with central-registry project id "${registeredProjectId}" (tasks, archived tasks, config, workflow settings).`,
       );
+    } catch (error) {
+      console.error(`fn db migrate: post-migration project stamping failed: ${(error as Error).message}`);
+      await connections.close().catch(() => undefined);
+      process.exit(1);
+      return;
     }
   }
 

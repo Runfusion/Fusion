@@ -1126,6 +1126,7 @@ describe("fast-mode triage", () => {
         expect(capturedTools.some((tool: any) => tool.name === "fn_research_list")).toBe(true);
         expect(capturedTools.some((tool: any) => tool.name === "fn_research_get")).toBe(true);
         expect(capturedTools.some((tool: any) => tool.name === "fn_research_cancel")).toBe(true);
+        expect(capturedTools.some((tool: any) => tool.name === "fn_research_retry")).toBe(true);
         expect(capturedTools.some((tool: any) => tool.name === "fn_review_spec")).toBe(false);
         await writeFile(promptPath, "# Task: FN-FAST-004 - Fast\n\n## Mission\n\nShip it.");
       });
@@ -1177,6 +1178,7 @@ describe("fast-mode triage", () => {
     expect(capturedTools.some((tool: any) => tool.name === "fn_research_list")).toBe(false);
     expect(capturedTools.some((tool: any) => tool.name === "fn_research_get")).toBe(false);
     expect(capturedTools.some((tool: any) => tool.name === "fn_research_cancel")).toBe(false);
+    expect(capturedTools.some((tool: any) => tool.name === "fn_research_retry")).toBe(false);
     expect(capturedSystemPrompt).not.toContain("fn_research_run");
   });
 

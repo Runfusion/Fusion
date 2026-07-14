@@ -58,8 +58,10 @@ export interface CeDerivedTaskSpec {
  */
 const DEFAULT_TURN_TIMEOUT_MS = 120000;
 
-/** Throttle for progress-driven SSE emits + lastActivityAt bumps. */
+/** Throttle for progress-driven SSE emits. */
 const PROGRESS_EMIT_INTERVAL_MS = 500;
+/** Durable liveness writes are intentionally coarser than live UI events. */
+const PROGRESS_PERSIST_INTERVAL_MS = 5000;
 
 /** Caps so a runaway turn cannot grow the live buffer unbounded. */
 const MAX_ACTIVITY_TURNS = 200;
@@ -267,8 +269,11 @@ export class CeOrchestrator {
   private readonly lastProgressAt = new Map<string, number>();
   /** Last progress-driven emit per session (throttling). */
   private readonly lastProgressEmitAt = new Map<string, number>();
+  /** Last liveness timestamp queued for durable persistence per session. */
+  private readonly lastProgressPersistAt = new Map<string, number>();
   /** Sessions currently REPLAYING history (rehydrate) — progress suppressed. */
   private readonly replaying = new Set<string>();
+  private readonly progressPersistence = new Map<string, Promise<void>>();
 
   constructor(deps: OrchestratorDeps) {
     this.ctx = deps.ctx;
@@ -298,18 +303,18 @@ export class CeOrchestrator {
    * bundled skill (closing the U2/U5 skill-discovery carry-forward). Model
    * provider/model are setting-gated (U9); omitted keys let the host pick defaults.
    */
-  private buildSessionOptions(
+  private async buildSessionOptions(
     stage: CeStageDefinition,
     sessionId: string,
     opts: Pick<CreateInteractiveAiSessionOptions, "allowAnswerQuestionIdDrift"> = {},
-  ): Parameters<CreateInteractiveAiSessionFactory>[0] {
+  ): Promise<Parameters<CreateInteractiveAiSessionFactory>[0]> {
     const defaultProvider = getDefaultProvider(this.ctx.settings);
     const defaultModelId = getDefaultModelId(this.ctx.settings);
     const additionalSkillPaths = resolveStageSkillPaths();
     warnIfStageSkillMissing(this.ctx.logger, stage, additionalSkillPaths);
     return {
       cwd: this.projectRoot,
-      systemPrompt: this.buildSystemPrompt(stage, sessionId),
+      systemPrompt: await this.buildSystemPrompt(stage, sessionId),
       tools: "coding",
       requestedSkillNames: [stage.skillId],
       additionalSkillPaths,
@@ -324,9 +329,9 @@ export class CeOrchestrator {
     };
   }
 
-  private buildSystemPrompt(stage: CeStageDefinition, sessionId: string): string {
+  private async buildSystemPrompt(stage: CeStageDefinition, sessionId: string): Promise<string> {
     const base = buildStageSystemPrompt(stage);
-    const artifactPath = this.store.get(sessionId)?.artifactPath;
+    const artifactPath = (await this.store.getAsync(sessionId))?.artifactPath;
     if (stage.stageId !== PLAN_STAGE_ID || !artifactPath) return base;
     return `${base}\n\nThe requirements-only unified plan is at ${artifactPath}. Read it and enrich that exact artifact in place to artifact_readiness: implementation-ready; do not create a sibling plan.`;
   }
@@ -376,11 +381,40 @@ export class CeOrchestrator {
     const nowMs = Date.now();
     if (nowMs - (this.lastProgressEmitAt.get(sessionId) ?? 0) >= PROGRESS_EMIT_INTERVAL_MS) {
       this.lastProgressEmitAt.set(sessionId, nowMs);
-      // Bump lastActivityAt so the staleness rubric sees an actively-working
-      // turn as alive; emit so push clients refetch (GET attaches the buffer).
-      this.store.update(sessionId, {});
       this.ctx.emitEvent(CE_EVENTS.turn, { sessionId, kind: "progress" });
     }
+    /*
+     * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:20:
+     * Keep streamed UI progress responsive at 500 ms while coalescing PostgreSQL liveness writes to five seconds. The durable write touches timestamps only and every settling path drains the queue, preventing a late heartbeat from reverting history or terminal state.
+     */
+    if (nowMs - (this.lastProgressPersistAt.get(sessionId) ?? 0) >= PROGRESS_PERSIST_INTERVAL_MS) {
+      this.queueProgressPersistence(sessionId, nowMs);
+    }
+  }
+
+  private queueProgressPersistence(sessionId: string, at: number, force = false): void {
+    if (!force && at - (this.lastProgressPersistAt.get(sessionId) ?? 0) < PROGRESS_PERSIST_INTERVAL_MS) return;
+    if (at <= (this.lastProgressPersistAt.get(sessionId) ?? 0)) return;
+    this.lastProgressPersistAt.set(sessionId, at);
+    const previous = this.progressPersistence.get(sessionId) ?? Promise.resolve();
+    const pending = previous
+      .then(async () => {
+        await this.store.touchActivityAsync(sessionId, at);
+      })
+      .catch((error: unknown) => {
+        this.ctx.logger.warn(`Compound Engineering progress persistence failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        if (this.progressPersistence.get(sessionId) === pending) this.progressPersistence.delete(sessionId);
+      });
+    this.progressPersistence.set(sessionId, pending);
+  }
+
+  /** Flush the newest liveness timestamp before history/status changes or disposal. */
+  private async drainProgressPersistence(sessionId: string): Promise<void> {
+    const latest = this.lastProgressAt.get(sessionId);
+    if (latest !== undefined) this.queueProgressPersistence(sessionId, latest, true);
+    await (this.progressPersistence.get(sessionId) ?? Promise.resolve());
   }
 
   /** Read the in-flight working output for a session (route accessor). */
@@ -392,7 +426,8 @@ export class CeOrchestrator {
    * Persist a condensed copy of the live activity buffer into history (so the
    * transcript keeps the working trace after the turn settles), then clear it.
    */
-  private flushActivity(sessionId: string): void {
+  private async flushActivity(sessionId: string): Promise<void> {
+    await this.drainProgressPersistence(sessionId);
     const turns = this.activity.get(sessionId);
     this.activity.delete(sessionId);
     if (!turns || turns.length === 0) return;
@@ -400,7 +435,7 @@ export class CeOrchestrator {
       ...t,
       text: t.text.slice(0, MAX_PERSISTED_ACTIVITY_TURN_CHARS),
     }));
-    this.store.appendHistory(sessionId, {
+    await this.store.appendHistoryAsync(sessionId, {
       role: "agent",
       text: JSON.stringify({ activity: { turns: condensed } }),
       at: new Date().toISOString(),
@@ -468,7 +503,7 @@ export class CeOrchestrator {
      * Brainstorm creates the requirements-only unified plan. A same-project Plan session must carry the selected completed predecessor's safe docs/plans artifact path, accept it only while it remains requirements-only, and atomically claim it with row creation so concurrent starts cannot enrich the same file; absent a compatible handoff, legacy new-file behavior remains available.
      */
     const handoffArtifactPath = stageId === PLAN_STAGE_ID
-      ? this.findBrainstormHandoffArtifact(opts.projectId ?? null, opts.sourceSessionId)
+      ? await this.findBrainstormHandoffArtifact(opts.projectId ?? null, opts.sourceSessionId)
       : null;
     const sessionInput = {
       stage: stageId,
@@ -477,24 +512,25 @@ export class CeOrchestrator {
       turnIntervalMs: this.turnTimeoutMs,
     };
     const session = handoffArtifactPath
-      ? this.store.createWithPlanHandoffClaim(sessionInput, handoffArtifactPath)
-      : this.store.create(sessionInput);
-    this.store.appendHistory(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
+      ? await this.store.createWithPlanHandoffClaimAsync(sessionInput, handoffArtifactPath)
+      : await this.store.createAsync(sessionInput);
+    await this.store.appendHistoryAsync(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
 
-    const turn = this.runOpeningTurn(session.id, stage, opts.openingMessage);
+    const turn = opts.detach
+      ? Promise.resolve().then(() => this.runOpeningTurn(session.id, stage, opts.openingMessage))
+      : this.runOpeningTurn(session.id, stage, opts.openingMessage);
     if (opts.detach) {
-      // runOpeningTurn never rejects (all failures persist into session state).
-      void turn;
-      return { session: this.requireSession(session.id) };
+      this.detachTurn(session.id, "opening turn", turn);
+      return { session: await this.requireSession(session.id) };
     }
     return turn;
   }
 
   /** Resolve the newest durable same-project Brainstorm handoff accepted for in-place Plan enrichment. */
-  private findBrainstormHandoffArtifact(projectId: string | null, sourceSessionId?: string): string | null {
+  private async findBrainstormHandoffArtifact(projectId: string | null, sourceSessionId?: string): Promise<string | null> {
     const candidates = sourceSessionId
-      ? [this.store.get(sourceSessionId)].filter((session): session is CeSession => Boolean(session))
-      : this.store.list({ stage: BRAINSTORM_STAGE_ID });
+      ? [await this.store.getAsync(sourceSessionId)].filter((session): session is CeSession => Boolean(session))
+      : await this.store.listAsync({ stage: BRAINSTORM_STAGE_ID });
     const candidate = candidates.find((session) => (
       session.stage === BRAINSTORM_STAGE_ID
       && session.status === "completed"
@@ -538,12 +574,12 @@ export class CeOrchestrator {
   ): Promise<CeStepResult> {
     let interactive;
     try {
-      interactive = await this.factory!(this.buildSessionOptions(stage, sessionId));
+      interactive = await this.factory!(await this.buildSessionOptions(stage, sessionId));
     } catch (err) {
-      return { session: this.failSession(sessionId, err), event: undefined };
+      return { session: await this.failSession(sessionId, err), event: undefined };
     }
     this.live.set(sessionId, interactive.session);
-    this.store.update(sessionId, { status: "active" });
+    await this.store.updateAsync(sessionId, { status: "active" });
     return this.runTurn(sessionId, () => interactive.session.prompt(openingMessage), interactive.session);
   }
 
@@ -554,7 +590,7 @@ export class CeOrchestrator {
     response: unknown,
     opts: { detach?: boolean } = {},
   ): Promise<CeStepResult> {
-    const session = this.requireSession(sessionId);
+    const session = await this.requireSession(sessionId);
     if (session.status !== "awaiting_input") {
       throw new Error(`Session ${sessionId} is not awaiting input (status=${session.status}).`);
     }
@@ -573,20 +609,16 @@ export class CeOrchestrator {
       throw new Error(INTERACTIVE_AI_UNAVAILABLE_MESSAGE);
     }
 
-    const turn = this.runAnswerTurn(session, questionId, response);
     if (opts.detach) {
       // If the process lost its live handle, rehydration can take time. Mirror
       // resume(detach): mark the row active immediately while the background
       // turn re-creates the handle and converges through persisted state.
-      if (!live) {
-        this.store.update(sessionId, { status: "active", error: null });
-      }
-      // runAnswerTurn never rejects after the preflight guards above (failures
-      // persist into session state).
-      void turn;
-      return { session: this.requireSession(sessionId) };
+      const accepted = await this.store.updateAsync(sessionId, { status: "active", currentQuestion: null, error: null }) ?? session;
+      const turn = Promise.resolve().then(() => this.runAnswerTurn(accepted, questionId, response));
+      this.detachTurn(sessionId, "answer turn", turn);
+      return { session: accepted };
     }
-    return turn;
+    return this.runAnswerTurn(session, questionId, response);
   }
 
   private async runAnswerTurn(session: CeSession, questionId: string, response: unknown): Promise<CeStepResult> {
@@ -600,7 +632,7 @@ export class CeOrchestrator {
           throw new Error(`Session ${sessionId} could not be rehydrated with a live handle.`);
         }
       } catch (err) {
-        const interrupted = this.interruptSession(sessionId, err);
+        const interrupted = await this.interruptSession(sessionId, err);
         return {
           session: interrupted,
           event: { type: "error", data: { message: interrupted.error ?? "interrupted", cause: err } },
@@ -608,12 +640,12 @@ export class CeOrchestrator {
       }
     }
 
-    this.store.appendHistory(sessionId, {
+    await this.store.appendHistoryAsync(sessionId, {
       role: "user",
       text: JSON.stringify({ answer: response, questionId }),
       at: new Date().toISOString(),
     });
-    this.store.update(sessionId, { status: "active", currentQuestion: null });
+    await this.store.updateAsync(sessionId, { status: "active", currentQuestion: null });
     return this.runTurn(sessionId, () => live.answer(questionId, response), live);
   }
 
@@ -636,7 +668,7 @@ export class CeOrchestrator {
    * left `interrupted` with a clear error explaining it can't be continued here.
    */
   async resume(sessionId: string, opts: { detach?: boolean } = {}): Promise<CeStepResult> {
-    const session = this.requireSession(sessionId);
+    const session = await this.requireSession(sessionId);
 
     // Terminal / already-answerable-with-a-live-handle cases need no rehydration.
     if (session.status === "completed") return { session };
@@ -647,14 +679,14 @@ export class CeOrchestrator {
     // No pending question → nothing to re-prime to. Mark active so the caller can
     // re-run the turn with fresh input (retry for `error`, resume for others).
     if (!session.currentQuestion) {
-      const next = this.store.update(sessionId, { status: "active", error: null }) ?? session;
+      const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
       return { session: next };
     }
 
     // A live handle already exists (e.g. interrupted but not disposed) — just
     // restore the answerable status.
     if (this.live.has(sessionId)) {
-      const next = this.store.update(sessionId, { status: "awaiting_input", error: null }) ?? session;
+      const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
       return { session: next };
     }
 
@@ -664,7 +696,7 @@ export class CeOrchestrator {
       // Honest status: we cannot back an answerable state in this process, so do
       // not pretend the session is resumable here. Surface a clear error.
       const next =
-        this.store.update(sessionId, {
+        await this.store.updateAsync(sessionId, {
           status: "interrupted",
           error: INTERACTIVE_AI_UNAVAILABLE_MESSAGE,
         }) ?? session;
@@ -677,18 +709,18 @@ export class CeOrchestrator {
       } catch (err) {
         // Rehydration failed — keep progress, surface the failure, do not
         // advertise an answerable status we can't back.
-        return { session: this.interruptSession(sessionId, err) };
+        return { session: await this.interruptSession(sessionId, err) };
       }
-      const next = this.store.update(sessionId, { status: "awaiting_input", error: null }) ?? session;
+      const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
       return { session: next };
     })();
 
     if (opts.detach) {
       // Rehydration replays the conversation against the live model and can be
       // slow; the route posture marks the session active and converges via
-      // push/poll. The IIFE never rejects (failures persist into state).
-      const next = this.store.update(sessionId, { status: "active", error: null }) ?? session;
-      void rehydration;
+      // push/poll.
+      const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
+      this.detachTurn(sessionId, "rehydration", rehydration);
       return { session: next };
     }
     return rehydration;
@@ -717,7 +749,7 @@ export class CeOrchestrator {
 
   private async rehydrateReplay(session: CeSession, stage: CeStageDefinition): Promise<void> {
     const interactive = await this.factory!(
-      this.buildSessionOptions(stage, session.id, { allowAnswerQuestionIdDrift: true }),
+      await this.buildSessionOptions(stage, session.id, { allowAnswerQuestionIdDrift: true }),
     );
     const live = interactive.session;
 
@@ -770,8 +802,8 @@ export class CeOrchestrator {
   }
 
   /** Read-through accessor for routes. */
-  getState(sessionId: string): CeSession | undefined {
-    return this.store.get(sessionId);
+  async getState(sessionId: string): Promise<CeSession | undefined> {
+    return this.store.getAsync(sessionId);
   }
 
   /**
@@ -780,8 +812,8 @@ export class CeOrchestrator {
    * preserves the conversation and progress; discard stops the handle AND deletes
    * the row. Terminal sessions are idempotent no-ops.
    */
-  cancel(sessionId: string): CeSession | undefined {
-    const session = this.store.get(sessionId);
+  async cancel(sessionId: string): Promise<CeSession | undefined> {
+    const session = await this.store.getAsync(sessionId);
     if (!session) return undefined;
     if (session.status === "completed" || session.status === "error" || session.status === "interrupted") {
       return session;
@@ -789,7 +821,7 @@ export class CeOrchestrator {
 
     // Preserve no-silent-loss ordering: interruptSession flushes live activity
     // before disposeLive clears the transient buffers (same as runTurn failure).
-    const interrupted = this.interruptSession(sessionId, new Error("Cancelled by user"));
+    const interrupted = await this.interruptSession(sessionId, new Error("Cancelled by user"));
     this.disposeLive(sessionId);
     return interrupted;
   }
@@ -800,9 +832,10 @@ export class CeOrchestrator {
    * Returns false when the session doesn't exist. Pipeline-link rows are NOT
    * touched — board tasks the session landed keep their provenance records.
    */
-  discard(sessionId: string): boolean {
+  async discard(sessionId: string): Promise<boolean> {
+    await this.drainProgressPersistence(sessionId);
     this.disposeLive(sessionId);
-    return this.store.delete(sessionId);
+    return this.store.deleteAsync(sessionId);
   }
 
   /**
@@ -829,7 +862,7 @@ export class CeOrchestrator {
       // Timeout or driver throw → auto-save as interrupted (progress preserved)
       // and emit an observable event. Never silent loss.
       watchdog.cancel();
-      const session = this.interruptSession(sessionId, err);
+      const session = await this.interruptSession(sessionId, err);
       this.disposeLive(sessionId);
       return { session, event: { type: "error", data: { message: session.error ?? "interrupted", cause: err } } };
     }
@@ -837,9 +870,9 @@ export class CeOrchestrator {
 
     let session: CeSession;
     try {
-      session = this.applyEvent(sessionId, event);
+      session = await this.applyEvent(sessionId, event);
     } catch (error) {
-      session = this.failSession(sessionId, error);
+      session = await this.failSession(sessionId, error);
       this.disposeLive(sessionId);
       return {
         session,
@@ -859,41 +892,42 @@ export class CeOrchestrator {
   }
 
   /** Persist a seam event onto the session row + emit the matching observable event. */
-  private applyEvent(sessionId: string, event: InteractiveAiSessionEvent): CeSession {
+  private async applyEvent(sessionId: string, event: InteractiveAiSessionEvent): Promise<CeSession> {
+    await this.drainProgressPersistence(sessionId);
     // The turn settled — persist its working trace into history (so the
     // transcript keeps it) BEFORE the settling record, then clear the buffer.
     if (event.type === "question" || event.type === "complete" || event.type === "error") {
-      this.flushActivity(sessionId);
+      await this.flushActivity(sessionId);
     }
     switch (event.type) {
       case "thinking":
       case "text": {
-        this.store.appendHistory(sessionId, { role: "agent", text: event.data, at: new Date().toISOString() });
-        const s = this.store.update(sessionId, { status: "active" }) ?? this.requireSession(sessionId);
+        await this.store.appendHistoryAsync(sessionId, { role: "agent", text: event.data, at: new Date().toISOString() });
+        const s = await this.store.updateAsync(sessionId, { status: "active" }) ?? await this.requireSession(sessionId);
         this.ctx.emitEvent(CE_EVENTS.turn, { sessionId, kind: event.type });
         return s;
       }
       case "question": {
         const q: PlanningQuestion = event.data;
-        this.store.appendHistory(sessionId, {
+        await this.store.appendHistoryAsync(sessionId, {
           role: "agent",
           text: JSON.stringify({ question: q }),
           at: new Date().toISOString(),
         });
-        const s = this.store.update(sessionId, { status: "awaiting_input", currentQuestion: q }) ?? this.requireSession(sessionId);
+        const s = await this.store.updateAsync(sessionId, { status: "awaiting_input", currentQuestion: q }) ?? await this.requireSession(sessionId);
         this.ctx.emitEvent(CE_EVENTS.question, { sessionId, questionId: q.id });
         return s;
       }
       case "complete": {
-        const artifactPath = this.writeArtifact(sessionId, event.data);
-        this.store.appendHistory(sessionId, {
+        const artifactPath = await this.writeArtifact(sessionId, event.data);
+        await this.store.appendHistoryAsync(sessionId, {
           role: "agent",
           text: JSON.stringify({ complete: true }),
           at: new Date().toISOString(),
         });
         const s =
-          this.store.update(sessionId, { status: "completed", currentQuestion: null, artifactPath }) ??
-          this.requireSession(sessionId);
+          await this.store.updateAsync(sessionId, { status: "completed", currentQuestion: null, artifactPath }) ??
+          await this.requireSession(sessionId);
         this.ctx.emitEvent(CE_EVENTS.completed, { sessionId, artifactPath });
         return s;
       }
@@ -901,7 +935,7 @@ export class CeOrchestrator {
         const message = event.data.message;
         // Error preserves progress (currentQuestion/history untouched) so retry
         // can resume. Status error; observable event emitted.
-        const s = this.store.update(sessionId, { status: "error", error: message }) ?? this.requireSession(sessionId);
+        const s = await this.store.updateAsync(sessionId, { status: "error", error: message }) ?? await this.requireSession(sessionId);
         this.ctx.emitEvent(CE_EVENTS.error, { sessionId, message });
         return s;
       }
@@ -973,21 +1007,22 @@ export class CeOrchestrator {
   }
 
   /** Persist `interrupted` with progress preserved and emit. */
-  private interruptSession(sessionId: string, cause: unknown): CeSession {
+  private async interruptSession(sessionId: string, cause: unknown): Promise<CeSession> {
     // Keep the working trace: an interrupted turn's output is exactly what the
     // user needs to see to understand where it stopped.
-    this.flushActivity(sessionId);
+    await this.flushActivity(sessionId);
     const message = cause instanceof Error ? cause.message : String(cause);
     const s =
-      this.store.update(sessionId, { status: "interrupted", error: message }) ?? this.requireSession(sessionId);
+      await this.store.updateAsync(sessionId, { status: "interrupted", error: message }) ?? await this.requireSession(sessionId);
     this.ctx.emitEvent(CE_EVENTS.interrupted, { sessionId, message });
     return s;
   }
 
   /** Persist `error` (session-create failure path) and emit. */
-  private failSession(sessionId: string, cause: unknown): CeSession {
+  private async failSession(sessionId: string, cause: unknown): Promise<CeSession> {
+    await this.drainProgressPersistence(sessionId);
     const message = cause instanceof Error ? cause.message : String(cause);
-    const s = this.store.update(sessionId, { status: "error", error: message }) ?? this.requireSession(sessionId);
+    const s = await this.store.updateAsync(sessionId, { status: "error", error: message }) ?? await this.requireSession(sessionId);
     this.ctx.emitEvent(CE_EVENTS.error, { sessionId, message });
     return s;
   }
@@ -996,8 +1031,8 @@ export class CeOrchestrator {
    * Write the stage artifact to its conventional location (R10). Accepts either
    * a `{ artifact: string }` payload or a raw string. Returns the absolute path.
    */
-  private writeArtifact(sessionId: string, data: unknown): string {
-    const session = this.requireSession(sessionId);
+  private async writeArtifact(sessionId: string, data: unknown): Promise<string> {
+    const session = await this.requireSession(sessionId);
     const stage = getStage(session.stage);
     const location = stage?.artifactLocation ?? `docs/ce/${session.stage}/`;
     const content = this.extractArtifactContent(data);
@@ -1038,10 +1073,29 @@ export class CeOrchestrator {
     return JSON.stringify(data, null, 2);
   }
 
-  private requireSession(sessionId: string): CeSession {
-    const s = this.store.get(sessionId);
+  private async requireSession(sessionId: string): Promise<CeSession> {
+    const s = await this.store.getAsync(sessionId);
     if (!s) throw new Error(`CE session not found: ${sessionId}`);
     return s;
+  }
+
+  /**
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:22:
+   * Route-detached model work must always terminate its rejection chain. Unexpected failures are logged and persisted best-effort so the process never receives an unhandled rejection and polling clients still observe a failed session.
+   */
+  private detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void {
+    void operation.catch(async (cause: unknown) => {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      this.ctx.logger.error(`Compound Engineering detached ${label} failed for ${sessionId}: ${message}`);
+      try {
+        const session = await this.store.getAsync(sessionId);
+        if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
+          await this.failSession(sessionId, cause);
+        }
+      } catch (persistError) {
+        this.ctx.logger.error(`Compound Engineering could not persist detached ${label} failure for ${sessionId}: ${persistError instanceof Error ? persistError.message : String(persistError)}`);
+      }
+    });
   }
 
   private disposeLive(sessionId: string): void {
@@ -1057,5 +1111,6 @@ export class CeOrchestrator {
     this.activity.delete(sessionId);
     this.lastProgressAt.delete(sessionId);
     this.lastProgressEmitAt.delete(sessionId);
+    this.lastProgressPersistAt.delete(sessionId);
   }
 }

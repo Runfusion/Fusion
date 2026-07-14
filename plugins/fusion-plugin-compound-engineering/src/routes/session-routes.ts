@@ -112,7 +112,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       description: "Cancel an in-flight CE session (stops the agent, keeps the row as interrupted).",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const id = (req as RouteRequest).params.id;
-        const session = getOrchestrator(ctx).cancel(id);
+        const session = await getOrchestrator(ctx).cancel(id);
         if (!session) return { status: 404, body: { error: `Session ${id} not found` } };
         return { status: 200, body: { session } };
       },
@@ -123,8 +123,8 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       description: "Get current session state, including in-flight working output (liveActivity).",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const id = (req as RouteRequest).params.id;
-        recoverStaleSessionsForContext(ctx, { reason: "route" });
-        const session = getCeSessionStore(ctx).get(id);
+        await recoverStaleSessionsForContext(ctx, { reason: "route" });
+        const session = await getCeSessionStore(ctx).getAsync(id);
         if (!session) return { status: 404, body: { error: `Session ${id} not found` } };
         // Attach the orchestrator's transient mid-turn buffer so a polling
         // client can watch the agent work while the turn runs.
@@ -140,7 +140,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       path: "/sessions",
       description: "List CE sessions (optionally filtered by project/status/stage).",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
-        recoverStaleSessionsForContext(ctx, { reason: "route" });
+        await recoverStaleSessionsForContext(ctx, { reason: "route" });
         const query = (req as RouteRequest).query ?? {};
         const status = asCeSessionStatus(typeof query.status === "string" ? query.status : undefined);
         const stage = typeof query.stage === "string" ? query.stage : undefined;
@@ -149,7 +149,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
         FNXC:CompoundEngineering 2026-07-10-23:40:
         Dashboard session collections must be scoped at the route/store boundary so resume, URL restoration, stage state, and history cannot expose another project's Compound Engineering runs.
         */
-        const sessions = getCeSessionStore(ctx).list({ status, stage, projectId });
+        const sessions = await getCeSessionStore(ctx).listAsync({ status, stage, projectId });
         return { status: 200, body: { sessions } };
       },
     },
@@ -162,7 +162,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
         // Go through the orchestrator so an in-flight live handle is disposed,
         // not just the row removed (a bare store.delete would leave the agent
         // running unobserved in this process).
-        const removed = getOrchestrator(ctx).discard(id);
+        const removed = await getOrchestrator(ctx).discard(id);
         if (!removed) return { status: 404, body: { error: `Session ${id} not found` } };
         return { status: 200, body: { deleted: true } };
       },

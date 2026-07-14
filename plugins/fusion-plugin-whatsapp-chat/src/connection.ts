@@ -2,18 +2,14 @@ import { DisconnectReason, makeWASocket, type ConnectionState, type WAMessage, t
 import type { PluginContext } from "@fusion/plugin-sdk";
 import pino from "pino";
 import qrcode from "qrcode";
-import { clearAuthState, createPluginDbAuthState } from "./auth-state.js";
+import { createPersistenceAuthState } from "./auth-state.js";
 import {
   getAllowedSenders,
   getDedupeRetentionDays,
   getHistoryTurnLimit,
-  loadHistory,
-  markProcessed,
-  saveHistory,
-  wasProcessed,
   type ChatTurn,
-  type PluginDb,
 } from "./index.js";
+import type { WhatsAppPersistence } from "./persistence.js";
 
 export type ConnectionStatus = {
   state: "starting" | "awaiting-qr" | "awaiting-code" | "connected" | "disconnected" | "error";
@@ -71,18 +67,18 @@ export class WhatsAppConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private stopped = true;
-  private authState: ReturnType<typeof createPluginDbAuthState>;
+  private authState: Awaited<ReturnType<typeof createPersistenceAuthState>> | null = null;
 
   public constructor(
     private readonly ctx: PluginContext,
     private readonly fusionVersion: string,
     private readonly generateReply: ReplyGenerator,
-    private readonly db: PluginDb,
-  ) {
-    this.authState = createPluginDbAuthState(this.db);
-  }
+    private readonly persistence: WhatsAppPersistence,
+  ) {}
+
 
   public async start(): Promise<void> {
+    this.authState = await createPersistenceAuthState(this.persistence);
     this.stopped = false;
     this.status = { state: "starting" };
     await this.connect();
@@ -98,7 +94,7 @@ export class WhatsAppConnection {
     this.status = { state: "disconnected" };
 
     if (socket) {
-      socket.ev.off("creds.update", this.authState.saveCreds);
+      socket.ev.off("creds.update", this.onCredsUpdate);
       socket.ev.off("connection.update", this.onConnectionUpdate);
       socket.ev.off("messages.upsert", this.onMessagesUpsert);
       await socket.end(undefined);
@@ -120,14 +116,15 @@ export class WhatsAppConnection {
     try {
       await this.sock?.logout();
     } finally {
-      clearAuthState(this.db);
-      this.authState = createPluginDbAuthState(this.db);
+      await this.persistence.clearAuthState();
+      this.authState = await createPersistenceAuthState(this.persistence);
       this.status = { state: "disconnected" };
     }
   }
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    if (!this.authState) this.authState = await createPersistenceAuthState(this.persistence);
 
     this.status = { state: "starting" };
     const socket = makeWASocket({
@@ -138,12 +135,34 @@ export class WhatsAppConnection {
     });
 
     this.sock = socket;
-    socket.ev.on("creds.update", this.authState.saveCreds);
+    socket.ev.on("creds.update", this.onCredsUpdate);
     socket.ev.on("connection.update", this.onConnectionUpdate);
     socket.ev.on("messages.upsert", this.onMessagesUpsert);
   }
 
-  private readonly onConnectionUpdate = async (update: Partial<ConnectionState>): Promise<void> => {
+  /*
+   * FNXC:WhatsAppAsyncListeners 2026-07-13-23:40:
+   * Baileys uses EventEmitter, which does not observe rejected async listener promises. Every registered callback attaches its own rejection handler so QR/auth/persistence failures are logged and cannot become process-level unhandled rejections.
+   */
+  private readonly onCredsUpdate = async (): Promise<void> => {
+    try {
+      await this.authState?.saveCreds();
+    } catch (error) {
+      this.ctx.logger.error("WhatsApp credential persistence failed", error);
+    }
+  };
+
+  private readonly onConnectionUpdate = (
+    update: Partial<ConnectionState>,
+  ): Promise<void> => this.handleConnectionUpdate(update).catch((error: unknown) => {
+    this.status = {
+      state: "error",
+      lastError: error instanceof Error ? error.message : String(error),
+    };
+    this.ctx.logger.error("WhatsApp connection update failed", error);
+  });
+
+  private async handleConnectionUpdate(update: Partial<ConnectionState>): Promise<void> {
     if (update.qr) {
       const qrDataUrl = await qrcode.toDataURL(update.qr);
       this.ctx.logger.info("WhatsApp pairing QR updated", update.qr);
@@ -158,8 +177,8 @@ export class WhatsAppConnection {
 
     if (update.connection === "close") {
       if (isLoggedOutDisconnect(update.lastDisconnect?.error)) {
-        clearAuthState(this.db);
-        this.authState = createPluginDbAuthState(this.db);
+        await this.persistence.clearAuthState();
+        this.authState = await createPersistenceAuthState(this.persistence);
         this.status = { state: "disconnected", lastError: "loggedOut" };
         return;
       }
@@ -171,9 +190,17 @@ export class WhatsAppConnection {
       };
       this.scheduleReconnect();
     }
-  };
+  }
 
-  private readonly onMessagesUpsert = async (upsert: { type?: string; messages?: WAMessage[] }): Promise<void> => {
+  private readonly onMessagesUpsert = (
+    upsert: { type?: string; messages?: WAMessage[] },
+  ): Promise<void> => this.handleMessagesUpsert(upsert).catch((error: unknown) => {
+    this.ctx.logger.error("WhatsApp inbound listener failed", error);
+  });
+
+  private async handleMessagesUpsert(
+    upsert: { type?: string; messages?: WAMessage[] },
+  ): Promise<void> {
     if (upsert.type !== "notify") return;
 
     for (const message of upsert.messages ?? []) {
@@ -189,12 +216,14 @@ export class WhatsAppConnection {
       const sender = normalizeSender(jid);
       const allowedSenders = getAllowedSenders(this.ctx.settings);
       if (allowedSenders.size === 0 || (!allowedSenders.has(sender) && !allowedSenders.has(jid))) continue;
-      if (wasProcessed(this.db, messageId)) continue;
-
-      markProcessed(this.db, messageId, sender, getDedupeRetentionDays(this.ctx.settings));
+      if (!(await this.persistence.claimMessage(
+        messageId,
+        sender,
+        getDedupeRetentionDays(this.ctx.settings),
+      ))) continue;
 
       try {
-        const history = loadHistory(this.db, sender);
+        const history = await this.persistence.loadHistory(sender);
         const reply = await this.generateReply(this.ctx, sender, text, history);
         const now = new Date().toISOString();
         const nextHistory: ChatTurn[] = [
@@ -202,7 +231,7 @@ export class WhatsAppConnection {
           { role: "user" as const, text, createdAt: now },
           { role: "assistant" as const, text: reply, createdAt: now },
         ].slice(-getHistoryTurnLimit(this.ctx.settings));
-        saveHistory(this.db, sender, nextHistory);
+        await this.persistence.saveHistory(sender, nextHistory);
 
         for (const chunk of splitMessageForWhatsapp(reply)) {
           await this.sock?.sendMessage(jid, { text: chunk });
@@ -216,16 +245,27 @@ export class WhatsAppConnection {
         }
       }
     }
-  };
+  }
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
     const delay = BACKOFF_MS[Math.min(this.reconnectAttempt, BACKOFF_MS.length - 1)] ?? 30000;
     this.reconnectAttempt += 1;
 
-    this.reconnectTimer = setTimeout(async () => {
+    this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      await this.connect();
+      /*
+       * FNXC:WhatsAppReconnectErrors 2026-07-13-23:40:
+       * Timer callbacks have no promise consumer. Attach failure handling at scheduling time, expose the error through connection status/logs, and continue bounded backoff unless the plugin was stopped.
+       */
+      void this.connect().catch((error: unknown) => {
+        this.status = {
+          state: "error",
+          lastError: error instanceof Error ? error.message : String(error),
+        };
+        this.ctx.logger.error("WhatsApp reconnect failed", error);
+        this.scheduleReconnect();
+      });
     }, delay);
   }
 

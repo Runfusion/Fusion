@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CreateInteractiveAiSessionFactory, InteractiveAiSessionEvent, PlanningQuestion, PluginContext, PluginRouteResponse } from "@fusion/core";
 import { createSessionRoutes } from "../routes/session-routes.js";
-import { makeHarness, makeScriptedSession, scriptedFactory, type TestHarness } from "./_harness.js";
+import { makeHarness, makeScriptedSession, pgDescribe, scriptedFactory, type TestHarness } from "./_harness.js";
 
 /**
  * Routes-level smoke test for the POLLING transport. Exercises validation and
@@ -25,8 +25,8 @@ const QUESTION: PlanningQuestion = {
 };
 
 let h: TestHarness;
-beforeEach(() => {
-  h = makeHarness();
+beforeEach(async () => {
+  h = await makeHarness();
 });
 afterEach(() => {
   h.close();
@@ -56,7 +56,7 @@ async function call(method: string, path: string, req: unknown, ctx: PluginConte
   return (await route(method, path).handler(req, ctx)) as PluginRouteResponse;
 }
 
-describe("session routes (polling transport)", () => {
+pgDescribe("session routes (polling transport)", () => {
   it("exposes start / answer / resume / get-session-state / list", () => {
     const paths = createSessionRoutes().map((r) => `${r.method} ${r.path}`);
     expect(paths).toEqual(
@@ -75,22 +75,22 @@ describe("session routes (polling transport)", () => {
   it("DELETE /sessions/:id discards a session (404 for unknown, gone afterwards, others kept)", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const keep = store.create({ stage: "brainstorm" });
-    const drop = store.create({ stage: "plan" });
+    const keep = await store.createAsync({ stage: "brainstorm" });
+    const drop = await store.createAsync({ stage: "plan" });
 
     const missing = await call("DELETE", "/sessions/:id", { params: { id: "nope" } }, h.ctx);
     expect(missing.status).toBe(404);
 
     const deleted = await call("DELETE", "/sessions/:id", { params: { id: drop.id } }, h.ctx);
     expect(deleted.status).toBe(200);
-    expect(store.get(drop.id)).toBeUndefined();
-    expect(store.get(keep.id)).toBeDefined();
+    expect(await store.getAsync(drop.id)).toBeUndefined();
+    expect(await store.getAsync(keep.id)).toBeDefined();
   });
 
   it("POST /sessions/:id/cancel interrupts an in-flight session", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const created = store.update(store.create({ stage: "brainstorm" }).id, { status: "active" })!;
+    const created = (await store.updateAsync((await store.createAsync({ stage: "brainstorm" })).id, { status: "active" }))!;
 
     const res = await call("POST", "/sessions/:id/cancel", { params: { id: created.id } }, h.ctx);
 
@@ -110,7 +110,7 @@ describe("session routes (polling transport)", () => {
   it("POST /sessions/:id/cancel is idempotent for terminal sessions", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const created = store.update(store.create({ stage: "brainstorm" }).id, { status: "completed" })!;
+    const created = (await store.updateAsync((await store.createAsync({ stage: "brainstorm" })).id, { status: "completed" }))!;
 
     const res = await call("POST", "/sessions/:id/cancel", { params: { id: created.id } }, h.ctx);
 
@@ -118,14 +118,14 @@ describe("session routes (polling transport)", () => {
     const session = (res.body as { session: { status: string; error: string | null } }).session;
     expect(session.status).toBe("completed");
     expect(session.error).toBeNull();
-    expect(store.get(created.id)!.status).toBe("completed");
+    expect((await store.getAsync(created.id))!.status).toBe("completed");
   });
 
   it("GET /sessions lists every session so a client can manage multiple concurrently", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    store.create({ stage: "brainstorm" });
-    store.create({ stage: "plan" });
+    await store.createAsync({ stage: "brainstorm" });
+    await store.createAsync({ stage: "plan" });
 
     const res = await call("GET", "/sessions", { params: {}, query: {} }, h.ctx);
     expect(res.status).toBe(200);
@@ -133,37 +133,39 @@ describe("session routes (polling transport)", () => {
     expect(sessions.map((s) => s.stage).sort()).toEqual(["brainstorm", "plan"]);
   });
 
-  it("GET /sessions scopes every session consumer to the requested project", async () => {
+  it("GET /sessions enforces the task store's bound project over caller-supplied row ownership", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const projectA = store.create({ stage: "brainstorm", projectId: "project-a" });
-    store.create({ stage: "plan", projectId: "project-b" });
-    store.create({ stage: "debug" });
+    const projectA = await store.createAsync({ stage: "brainstorm", projectId: "project-a" });
+    await store.createAsync({ stage: "plan", projectId: "project-b" });
+    await store.createAsync({ stage: "debug" });
 
-    const res = await call("GET", "/sessions", { params: {}, query: { projectId: "project-a" } }, h.ctx);
+    const res = await call("GET", "/sessions", { params: {}, query: { projectId: h.layer.projectId } }, h.ctx);
 
     expect(res.status).toBe(200);
     const sessions = (res.body as { sessions: Array<{ id: string; projectId: string | null }> }).sessions;
-    expect(sessions).toEqual([expect.objectContaining({ id: projectA.id, projectId: "project-a" })]);
+    expect(sessions).toHaveLength(3);
+    expect(sessions).toContainEqual(expect.objectContaining({ id: projectA.id, projectId: h.layer.projectId }));
+    expect(sessions.every((session) => session.projectId === h.layer.projectId)).toBe(true);
   });
 
   it("GET /sessions keeps error, interrupted, awaiting_input, active, and completed rows independently manageable", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const error = store.update(store.create({ stage: "debug" }).id, {
+    const error = (await store.updateAsync((await store.createAsync({ stage: "debug" })).id, {
       status: "error",
       error: "Failed to parse agent response: AI returned no valid JSON.",
-    })!;
-    const interrupted = store.update(store.create({ stage: "plan" }).id, {
+    }))!;
+    const interrupted = (await store.updateAsync((await store.createAsync({ stage: "plan" })).id, {
       status: "interrupted",
       error: "Cancelled by user",
-    })!;
-    const awaiting = store.update(store.create({ stage: "brainstorm" }).id, {
+    }))!;
+    const awaiting = (await store.updateAsync((await store.createAsync({ stage: "brainstorm" })).id, {
       status: "awaiting_input",
       currentQuestion: QUESTION,
-    })!;
-    const active = store.update(store.create({ stage: "strategy", turnIntervalMs: 60_000 }).id, { status: "active" })!;
-    const completed = store.update(store.create({ stage: "work" }).id, { status: "completed" })!;
+    }))!;
+    const active = (await store.updateAsync((await store.createAsync({ stage: "strategy", turnIntervalMs: 60_000 })).id, { status: "active" }))!;
+    const completed = (await store.updateAsync((await store.createAsync({ stage: "work" })).id, { status: "completed" }))!;
 
     const res = await call("GET", "/sessions", { params: {}, query: {} }, h.ctx);
 
@@ -181,15 +183,15 @@ describe("session routes (polling transport)", () => {
 
     const deleted = await call("DELETE", "/sessions/:id", { params: { id: error.id } }, h.ctx);
     expect(deleted.status).toBe(200);
-    expect(store.get(error.id)).toBeUndefined();
-    expect(store.get(completed.id)).toBeDefined();
+    expect(await store.getAsync(error.id)).toBeUndefined();
+    expect(await store.getAsync(completed.id)).toBeDefined();
   });
 
   it("GET /sessions recovers stale active rows that have no live route handle", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const zombie = store.create({ stage: "strategy", turnIntervalMs: 1 });
-    store.update(zombie.id, {
+    const zombie = await store.createAsync({ stage: "strategy", turnIntervalMs: 1 });
+    await store.updateAsync(zombie.id, {
       status: "active",
       currentQuestion: null,
       lastActivityAt: Date.now() - 10_000,
@@ -203,7 +205,7 @@ describe("session routes (polling transport)", () => {
       status: "interrupted",
       error: "Session interrupted — progress preserved, resume to continue",
     });
-    expect(store.get(zombie.id)).toMatchObject({
+    expect(await store.getAsync(zombie.id)).toMatchObject({
       status: "interrupted",
       error: "Session interrupted — progress preserved, resume to continue",
     });
@@ -212,8 +214,8 @@ describe("session routes (polling transport)", () => {
   it("GET /sessions/:id recovers a stale active row before returning it", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const zombie = store.create({ stage: "strategy", turnIntervalMs: 1 });
-    store.update(zombie.id, {
+    const zombie = await store.createAsync({ stage: "strategy", turnIntervalMs: 1 });
+    await store.updateAsync(zombie.id, {
       status: "active",
       currentQuestion: null,
       lastActivityAt: Date.now() - 10_000,
@@ -226,7 +228,7 @@ describe("session routes (polling transport)", () => {
       status: "interrupted",
       error: "Session interrupted — progress preserved, resume to continue",
     });
-    expect(store.get(zombie.id)).toMatchObject({
+    expect(await store.getAsync(zombie.id)).toMatchObject({
       status: "interrupted",
       error: "Session interrupted — progress preserved, resume to continue",
     });
@@ -256,9 +258,11 @@ describe("session routes (polling transport)", () => {
     const sessionId = (started.body as { session: { id: string; status: string; error: string | null } }).session.id;
     expect((started.body as { session: { status: string } }).session.status).toBe("launching");
 
-    await new Promise((resolve) => setImmediate(resolve));
-
-    const polled = await call("GET", "/sessions/:id", { params: { id: sessionId } }, h.ctx);
+    let polled = await call("GET", "/sessions/:id", { params: { id: sessionId } }, h.ctx);
+    await vi.waitFor(async () => {
+      polled = await call("GET", "/sessions/:id", { params: { id: sessionId } }, h.ctx);
+      expect((polled.body as { session: { status: string } }).session.status).toBe("awaiting_input");
+    });
     expect(polled.status).toBe(200);
     expect((polled.body as { session: { status: string; error: string | null; currentQuestion: PlanningQuestion } }).session).toMatchObject({
       status: "awaiting_input",
@@ -282,7 +286,7 @@ describe("session routes (polling transport)", () => {
 
     // Seed a session directly so the poll route has something to return.
     const { getCeSessionStore } = await import("../session/session-store.js");
-    const seeded = getCeSessionStore(h.ctx).create({ stage: "brainstorm" });
+    const seeded = await getCeSessionStore(h.ctx).createAsync({ stage: "brainstorm" });
     const found = await call("GET", "/sessions/:id", { params: { id: seeded.id } }, h.ctx);
     expect(found.status).toBe(200);
     expect((found.body as { session: { id: string } }).session.id).toBe(seeded.id);
@@ -296,14 +300,14 @@ describe("session routes (polling transport)", () => {
   it("POST /sessions/:id/answer rehydrates an old awaiting_input session instead of returning call-resume-first", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm" });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm" });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
 
     h.ctx.createInteractiveAiSession = scriptedFactory(
       makeScriptedSession([
@@ -321,21 +325,20 @@ describe("session routes (polling transport)", () => {
     expect(res.status).toBe(200);
     expect((res.body as { session: { status: string } }).session.status).toBe("active");
 
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(store.get(created.id)!.status).toBe("completed");
+    await vi.waitFor(async () => expect((await store.getAsync(created.id))?.status).toBe("completed"));
   });
 
   it("POST /sessions/:id/answer returns an honest no-factory error without corrupting an old awaiting_input session", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm" });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm" });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
 
     const res = await call(
       "POST",
@@ -346,7 +349,7 @@ describe("session routes (polling transport)", () => {
     expect(res.status).toBe(409);
     expect((res.body as { error: string }).error).toMatch(/cannot be continued in this process/i);
     expect((res.body as { error: string }).error).not.toMatch(/call resume\(\) first/i);
-    const after = store.get(created.id)!;
+    const after = (await store.getAsync(created.id))!;
     expect(after.status).toBe("awaiting_input");
     expect(after.currentQuestion?.id).toBe("q1");
   });

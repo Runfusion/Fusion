@@ -562,7 +562,7 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_read_evaluations and fn_update_identity (available in no-task runs)
 - fn_reflect_on_performance when reflection is enabled for this run
 - fn_workflow_list, fn_workflow_get, fn_workflow_validate, fn_workflow_create, fn_workflow_update, fn_workflow_delete, fn_workflow_settings, and fn_trait_list for workflow discovery/authoring
-- fn_research_run, fn_research_list, fn_research_get, and fn_research_cancel for bounded research when configured
+- fn_research_run, fn_research_list, fn_research_get, fn_research_cancel, and fn_research_retry for bounded research when configured
 - fn_ask_question to ask the dashboard user for structured clarification
 - fn_web_fetch
 - fn_memory_search, fn_memory_get, and fn_memory_append

@@ -49,17 +49,17 @@ function createInMemoryDb() {
 describe("auth-state", () => {
   it("round-trips creds", async () => {
     const db = createInMemoryDb();
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
     auth.state.creds.me = { id: "123@s.whatsapp.net", name: "Fusion" } as any;
     await auth.saveCreds();
 
-    const next = createPluginDbAuthState(db as any);
+    const next = await createPluginDbAuthState(db as any);
     expect(next.state.creds.me?.id).toBe("123@s.whatsapp.net");
   });
 
   it("sets, gets, and deletes key categories", async () => {
     const db = createInMemoryDb();
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
 
     await auth.state.keys.set({
       session: { alpha: { foo: "bar" } as any },
@@ -77,12 +77,12 @@ describe("auth-state", () => {
 
   it("clears auth state", async () => {
     const db = createInMemoryDb();
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
     auth.state.creds.me = { id: "123@s.whatsapp.net", name: "Fusion" } as any;
     await auth.saveCreds();
     await auth.state.keys.set({ session: { alpha: { ok: true } as any } });
 
-    clearAuthState(db as any);
+    await clearAuthState(db as any);
 
     expect(db._creds.size).toBe(0);
     expect(db._keys.size).toBe(0);
@@ -92,7 +92,7 @@ describe("auth-state", () => {
     const db = createInMemoryDb();
     db._keys.set("session:bad", "not-json");
 
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
     const loaded = await auth.state.keys.get("session", ["bad"]);
     expect((loaded as any).bad).toBeUndefined();
   });
