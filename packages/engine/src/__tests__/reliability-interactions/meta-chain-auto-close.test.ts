@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
-describe("reliability interactions: meta chain auto-close", () => {
+const canRun = hasGit && hasPg;
+(canRun ? describe : describe.skip)("reliability interactions: meta chain auto-close", () => {
   it("replays FN-4890 incident shape across two maintenance ticks", async () => {
     const now = Date.now();
     const fixture = await makeReliabilityFixture({

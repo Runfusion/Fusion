@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { type TaskStore } from "@fusion/core";
 import { aiMergeTask } from "../../merger.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: string, fileName: string): Promise<void> {
   const task = await store.getTask(taskId);
@@ -40,7 +41,7 @@ function findGateEvent(store: TaskStore, groupId: string) {
 }
 
 describe("FN-5783 reliability interactions: branch group automerge precedence", () => {
-  it.skipIf(!hasGit)("records eligible when group autoMerge=true even if task autoMerge=false", async () => {
+  it.skipIf(!hasGit || !hasPg)("records eligible when group autoMerge=true even if task autoMerge=false", async () => {
     const fixture = await makeReliabilityFixture({ settings: { autoMerge: true, testMode: true } as any });
     try {
       const { rootDir, store, task } = fixture;
@@ -58,7 +59,7 @@ describe("FN-5783 reliability interactions: branch group automerge precedence", 
     }
   }, 30_000);
 
-  it.skipIf(!hasGit)("records disabled when group autoMerge=false even if task autoMerge=true", async () => {
+  it.skipIf(!hasGit || !hasPg)("records disabled when group autoMerge=false even if task autoMerge=true", async () => {
     const fixture = await makeReliabilityFixture({ settings: { autoMerge: true, testMode: true } as any });
     try {
       const { rootDir, store, task } = fixture;

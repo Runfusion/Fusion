@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { makeReliabilityFixture, type ReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { hasGit, hasPg, makeReliabilityFixture, type ReliabilityFixture } from "./_helpers.js";
 
 const FULL_SPEC = `# Task: FN-7000 - Example\n\n## Mission\nThis spec mentions duplicate handling, but it is not a redirect marker.\n`;
 
@@ -27,7 +28,8 @@ async function createPromptTask(
   return task;
 }
 
-describe("reliability interactions: explicit duplicate marker sweep", () => {
+const canRun = hasGit && hasPg;
+(canRun ? describe : describe.skip)("reliability interactions: explicit duplicate marker sweep", () => {
   const fixtures: ReliabilityFixture[] = [];
 
   afterEach(async () => {

@@ -16,7 +16,8 @@ vi.mock("../../pi.js", () => ({
 }));
 
 import { aiMergeTask } from "../../merger.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
   const fixture = await makeReliabilityFixture({
@@ -53,7 +54,7 @@ async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
 }
 
 describe("reliability interaction: integration-worktree-state telemetry", () => {
-  it.skipIf(!hasGit)("captures dirty user checkout while successful reuse merge leaves user files untouched", async () => {
+  it.skipIf(!hasGit || !hasPg)("captures dirty user checkout while successful reuse merge leaves user files untouched", async () => {
     const { fixture } = await setupReuseTask("FN-5351-RI-STATE-1", "main");
     try {
       const { rootDir, store, task } = fixture;
@@ -85,7 +86,7 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
     }
   }, 30_000);
 
-  it.skipIf(!hasGit)("emits autostash audit and continues merging when reused task worktree is dirty", async () => {
+  it.skipIf(!hasGit || !hasPg)("emits autostash audit and continues merging when reused task worktree is dirty", async () => {
     const { fixture, worktreePath } = await setupReuseTask("FN-5351-RI-STATE-2", "main");
     try {
       const { rootDir, store, task } = fixture;
@@ -110,7 +111,7 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
     }
   }, 30_000);
 
-  it.skipIf(!hasGit)("uses resolved master branch names in all new telemetry payloads", async () => {
+  it.skipIf(!hasGit || !hasPg)("uses resolved master branch names in all new telemetry payloads", async () => {
     const { fixture } = await setupReuseTask("FN-5351-RI-STATE-3", "master");
     try {
       const { rootDir, store, task } = fixture;

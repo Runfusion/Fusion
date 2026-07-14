@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { type TaskStore } from "@fusion/core";
 import { aiMergeTask } from "../../merger.js";
 import type { SyncGroupPrFn } from "../../group-merge-coordinator.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 /**
  * U6 (R6): keep the single managed group PR in sync as members land. These tests
@@ -36,7 +37,7 @@ async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: strin
 }
 
 describe("U6: group PR sync on member landing", () => {
-  it.skipIf(!hasGit)("pushes an updated body when a member lands and the group PR is open", async () => {
+  it.skipIf(!hasGit || !hasPg)("pushes an updated body when a member lands and the group PR is open", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-U6-SYNC-A", settings: { testMode: true, autoMerge: true } as any });
     try {
       const { rootDir, store, task } = fixture;
@@ -96,7 +97,7 @@ describe("U6: group PR sync on member landing", () => {
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("does not call sync when the group has no persisted PR", async () => {
+  it.skipIf(!hasGit || !hasPg)("does not call sync when the group has no persisted PR", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-U6-SYNC-NOPR", settings: { testMode: true, autoMerge: true } as any });
     try {
       const { rootDir, store, task } = fixture;
@@ -120,7 +121,7 @@ describe("U6: group PR sync on member landing", () => {
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("a sync failure is non-fatal: the landing still succeeds and prState is unchanged", async () => {
+  it.skipIf(!hasGit || !hasPg)("a sync failure is non-fatal: the landing still succeeds and prState is unchanged", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-U6-SYNC-FAIL", settings: { testMode: true, autoMerge: true } as any });
     try {
       const { rootDir, store, task } = fixture;
@@ -157,7 +158,7 @@ describe("U6: group PR sync on member landing", () => {
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("reconciles prState when the persisted PR is closed/merged out-of-band", async () => {
+  it.skipIf(!hasGit || !hasPg)("reconciles prState when the persisted PR is closed/merged out-of-band", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-U6-SYNC-OOB", settings: { testMode: true, autoMerge: true } as any });
     try {
       const { rootDir, store, task } = fixture;

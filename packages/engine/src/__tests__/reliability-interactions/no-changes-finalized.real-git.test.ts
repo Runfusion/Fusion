@@ -2,10 +2,11 @@
 // without re-measuring under pnpm test:full. (FN-4839)
 import { describe, it, expect, vi } from "vitest";
 import { classifyOwnedLandedEvidence } from "../../merger.js";
-import { makeReliabilityFixture, hasGit } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { makeReliabilityFixture, hasGit, hasPg } from "./_helpers.js";
 
 describe("no-changes-finalized reliability interactions (real git)", () => {
-  it.skipIf(!hasGit)("reconciles verification-only done task without unproven warning", async () => {
+  it.skipIf(!hasGit || !hasPg)("reconciles verification-only done task without unproven warning", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-4701-RI",
       task: {

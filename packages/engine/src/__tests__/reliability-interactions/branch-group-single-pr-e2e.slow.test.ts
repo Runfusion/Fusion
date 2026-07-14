@@ -13,7 +13,8 @@ import {
 } from "../../group-merge-coordinator.js";
 import { aiMergeTask } from "../../merger.js";
 import { SelfHealingManager } from "../../self-healing.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 /**
  * U8 (R9): end-to-end single managed-PR flow for both entry points.
@@ -121,7 +122,7 @@ function makePromoteDriver(
 }
 
 describe("U8 end-to-end: single managed group PR (planning + mission)", () => {
-  it.skipIf(!hasGit)(
+  it.skipIf(!hasGit || !hasPg)(
     "PLANNING E2E: members land on shared branch → ONE PR created → synced on landing → terminal merged",
     async () => {
       const fixture = await makeReliabilityFixture({ taskId: "FN-U8-PLAN-A", settings: { testMode: true, autoMerge: true } as any });
@@ -281,7 +282,7 @@ describe("U8 end-to-end: single managed group PR (planning + mission)", () => {
     60_000,
   );
 
-  it.skipIf(!hasGit)(
+  it.skipIf(!hasGit || !hasPg)(
     "MISSION E2E: members enumerate by group id → land → ONE PR → abandon mid-flight closes PR (prState=closed)",
     async () => {
       const fixture = await makeReliabilityFixture({ taskId: "FN-U8-MIS-A", settings: { testMode: true, autoMerge: true } as any });
@@ -373,7 +374,7 @@ describe("U8 end-to-end: single managed group PR (planning + mission)", () => {
     60_000,
   );
 
-  it.skipIf(!hasGit)(
+  it.skipIf(!hasGit || !hasPg)(
     "SAFETY: a self-healing finalize during the flow keeps the member on the group branch (no main, no sibling)",
     async () => {
       const fixture = await makeReliabilityFixture({ taskId: "FN-U8-SAFE-A", settings: { testMode: true, autoMerge: true } as any });

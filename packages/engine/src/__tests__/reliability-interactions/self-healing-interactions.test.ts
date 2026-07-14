@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { SelfHealingManager } from "../../self-healing.js";
-import { makeReliabilityFixture, hasGit } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { makeReliabilityFixture, hasGit, hasPg } from "./_helpers.js";
 
 function makeTask(id: string, overrides: Partial<Task> = {}): Task {
   return {
@@ -111,7 +112,7 @@ describe("reliability interactions: self-healing", () => {
     expect(tasks.get(taskId)?.worktreeSessionRetryCount).toBe(1);
   });
 
-  it.skipIf(!hasGit)("recoverAlreadyMergedReviewTasks can still finalize from real git state", async () => {
+  it.skipIf(!hasGit || !hasPg)("recoverAlreadyMergedReviewTasks can still finalize from real git state", async () => {
     const fx = await makeReliabilityFixture({ taskId: "FN-4361-SH-GIT" });
     fixtures.push(fx);
     await fx.createBranch("fusion/fn-4361-sh");

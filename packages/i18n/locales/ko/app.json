@@ -5682,6 +5682,8 @@
       "title": "모양",
       "openTasksInRightSidebarHelp": "",
       "openMobileTasksInPopupHelp": "",
+      "taskPopupsBoardListOnly": "",
+      "taskPopupsBoardListOnlyHelp": "",
       "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": ""
@@ -8959,14 +8961,12 @@
     "done": "Done",
     "inProgress": "In Progress",
     "label": "Workflow",
-    "merging": "병합 중",
-    "mergingTitle": "{{count}}개 병합 중 작업{{plural}}",
+    "merging": "",
+    "mergingTitle": "",
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow",
-    "merging": "",
-    "mergingTitle": ""
+    "newWorkflow": "New workflow"
   },
   "workspace": {
     "projectRoot": "프로젝트 루트",

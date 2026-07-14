@@ -2332,7 +2332,7 @@ export type {
 // Re-export the drizzle-orm `sql` template tag so dashboard/engine consumers
 // can build raw queries against the AsyncDataLayer without depending on
 // drizzle-orm directly.
-export { sql as drizzleSql } from "drizzle-orm";
+export { sql as drizzleSql, eq as drizzleEq } from "drizzle-orm";
 
 // FNXC:PostgresSchema 2026-07-04-00:00:
 // Re-export the PostgreSQL Drizzle schema namespace so plugin stores (which
@@ -2346,3 +2346,6 @@ export {
   upsertWorkflowStepResult,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
 } from "./workflow-step-results.js";
+// FNXC:SqliteRemoval 2026-07-14: Export async audit reader so engine tests can
+// query run-audit events in backend mode (sync getRunAuditEvents returns [] in PG mode).
+export { queryRunAuditEvents } from "./task-store/async-audit.js";

@@ -7,7 +7,8 @@ import { aiMergeTask } from "../../merger.js";
 import { SelfHealingManager } from "../../self-healing.js";
 import { acquireTaskWorktree } from "../../worktree-acquisition.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "../../worktree-names.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 type StagedMember = {
   taskId: string;
@@ -115,7 +116,7 @@ git checkout main
 }
 
 describe("FN-5820 reliability interactions: shared branch group lifecycle", () => {
-  it.skipIf(!hasGit)("CASE 1: shared members resolve distinct working branches/worktrees without branch conflict", async () => {
+  it.skipIf(!hasGit || !hasPg)("CASE 1: shared members resolve distinct working branches/worktrees without branch conflict", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5820-RI-A", settings: sharedBranchLifecycleSettings() });
 
     try {
@@ -159,7 +160,7 @@ describe("FN-5820 reliability interactions: shared branch group lifecycle", () =
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("CASE 2: shared members integrate to common branch and accumulate without landing main", async () => {
+  it.skipIf(!hasGit || !hasPg)("CASE 2: shared members integrate to common branch and accumulate without landing main", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5820-RI-C", settings: sharedBranchLifecycleSettings() });
 
     try {
@@ -226,7 +227,7 @@ describe("FN-5820 reliability interactions: shared branch group lifecycle", () =
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("CASE 3: completion gate promotes exactly once after all shared members land", async () => {
+  it.skipIf(!hasGit || !hasPg)("CASE 3: completion gate promotes exactly once after all shared members land", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5820-RI-E", settings: sharedBranchLifecycleSettings({ autoMerge: true }) });
     try {
       const { rootDir, store, task } = fixture;
@@ -312,7 +313,7 @@ describe("FN-5820 reliability interactions: shared branch group lifecycle", () =
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("CASE 4: auto-merge gate disabled still integrates members into shared branch without promotion", async () => {
+  it.skipIf(!hasGit || !hasPg)("CASE 4: auto-merge gate disabled still integrates members into shared branch without promotion", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5820-RI-G", settings: sharedBranchLifecycleSettings({ autoMerge: false }) });
     try {
       const { rootDir, store, task, manager } = fixture;
@@ -411,7 +412,7 @@ describe("FN-5820 reliability interactions: shared branch group lifecycle", () =
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("CASE 5: self-healing already-merged recovery stamps shared-branch routing metadata", async () => {
+  it.skipIf(!hasGit || !hasPg)("CASE 5: self-healing already-merged recovery stamps shared-branch routing metadata", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5820-RI-K", settings: sharedBranchLifecycleSettings({ autoMerge: true }) });
     try {
       const { rootDir, store, task } = fixture;
@@ -449,7 +450,7 @@ describe("FN-5820 reliability interactions: shared branch group lifecycle", () =
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("CASE 6: per-task-derived and ungrouped tasks remain default-branch routed", async () => {
+  it.skipIf(!hasGit || !hasPg)("CASE 6: per-task-derived and ungrouped tasks remain default-branch routed", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5820-RI-I", settings: sharedBranchLifecycleSettings() });
     try {
       const { rootDir, store, task } = fixture;
