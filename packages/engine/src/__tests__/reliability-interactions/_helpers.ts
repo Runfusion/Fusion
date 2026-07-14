@@ -92,7 +92,17 @@ function probeTcpReachable(host: string, port: number, timeoutMs = 1500): boolea
   return view[0] === 1;
 }
 
-export const hasPg = process.env.FUSION_PG_TEST_SKIP !== "1" && (() => {
+/*
+FNXC:PgTestGuard 2026-07-14-07:10:
+hasPg must verify BOTH that the PostgreSQL server is TCP-reachable AND that the
+psql CLI binary is installed. adminExecAsync() shells out to psql for DDL
+(CREATE/DROP DATABASE). Without this check, a runner with Postgres reachable
+but psql missing would pass the gate and fail inside fixture creation with
+spawn ENOENT instead of skipping cleanly.
+*/
+const hasPsql = spawnSync("psql", ["--version"], { stdio: "pipe" }).status === 0;
+
+export const hasPg = process.env.FUSION_PG_TEST_SKIP !== "1" && hasPsql && (() => {
   if (!PG_TEST_URL_BASE) return false;
   const { host, port } = parseProbeTarget(PG_TEST_URL_BASE);
   return probeTcpReachable(host, port);

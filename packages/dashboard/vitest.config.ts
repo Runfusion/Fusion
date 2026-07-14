@@ -48,14 +48,10 @@ const qualityAppFoundationUiTests = [
   "app/__tests__/board-mobile-corner-rendering.test.ts",
   "app/__tests__/board-tablet-overflow.test.ts",
   "app/__tests__/browser-layout-smoke-fixture.test.ts",
-  "app/__tests__/chat-tool-calls-mobile-layout.test.ts",
   "app/__tests__/column-fixed-width.test.ts",
-  "app/__tests__/component-css-no-raw-rgba.test.ts",
   "app/__tests__/dashboard-component-color-tokenization.test.ts",
-  "app/__tests__/dashboard-css-token-validity.css.test.ts",
   "app/__tests__/dashboard-footer-mobile-layout.test.ts",
   "app/__tests__/detail-body-mobile-overflow.test.ts",
-  "app/__tests__/dev-server-layout-css.test.ts",
   "app/__tests__/executor-status-bar-theme.test.ts",
   "app/__tests__/footer-safe-layout.test.ts",
   "app/__tests__/git-manager-theme-styling.test.ts",
@@ -83,16 +79,13 @@ const qualityAppFoundationUiTests = [
   "app/__tests__/setup-wizard-modal-layout.test.ts",
   "app/__tests__/shell-host.test.ts",
   "app/__tests__/shell-native.test.ts",
-  "app/__tests__/spinner-animation.css.test.ts",
   "app/__tests__/sse-bus.test.ts",
-  "app/__tests__/status-colors-theme.test.ts",
   "app/__tests__/swUpdate.test.ts",
   "app/__tests__/tablet-header-controls.test.tsx",
   "app/__tests__/task-detail-modal-tablet-width.test.ts",
   "app/__tests__/terminal-input.test.ts",
   "app/__tests__/terminal-mobile-header-row.test.ts",
   "app/__tests__/terminal-mobile-keyboard-layout.test.ts",
-  "app/__tests__/text-token-canonicalization.test.ts",
   "app/__tests__/versionCheck.test.ts",
   "app/__tests__/viewport-compensation-keyboard.test.ts",
 ];
@@ -328,59 +321,14 @@ FN-6937 verified that FN-6860's claimed session-cross-tab ledger removal had not
 FNXC:DashboardTestQuarantine 2026-06-25-11:15:
 The SQLite-to-PostgreSQL cutover (feature quarantine-sqlite-internals-tests) quarantines dashboard test files that exercise SQLite-only behavior. knowledge-index.test.ts asserts the knowledge_pages schema via PRAGMA table_info and sqlite_master on the SQLite store, with no PostgreSQL equivalent at this layer. Mirrored in scripts/lib/test-quarantine.json; will be DELETED when the SQLite code is removed.
 */
-const quarantinedDashboardTests: string[] = [
-  // SQLite-internals quarantine (cutover): see scripts/lib/test-quarantine.json.
-  /*
-  FNXC:DashboardTestQuarantine 2026-06-25-09:50:
-  Quarantine DevServerView.mobile.test.tsx: CI full-suite shard 4/4 fails with 'expected +0 to be 1' on the mobile CSS structure assertion. Under the deletion ratchet — see scripts/lib/test-quarantine.json.
-  */
-  "app/components/__tests__/DevServerView.mobile.test.tsx",
-  // Pre-existing CSS token/lint regressions (cutover batch): see scripts/lib/test-quarantine.json.
-  // These fail on clean baseline (CSS drift, not flakes); quarantined on sight
-  // per AGENTS.md so verify:workspace goes green during the SQLite-to-PostgreSQL cutover.
-  "app/__tests__/chat-tool-calls-mobile-layout.test.ts",
-  "app/__tests__/component-css-no-raw-rgba.test.ts",
-  "app/__tests__/dashboard-css-token-validity.css.test.ts",
-  "app/__tests__/dev-server-layout-css.test.ts",
-  "app/__tests__/spinner-animation.css.test.ts",
-  "app/__tests__/status-colors-theme.test.ts",
-  "app/__tests__/text-token-canonicalization.test.ts",
-  // Pre-existing mock drift (getAsyncLayer not on mock store); quarantined on sight per AGENTS.md.
-  "app/api/__tests__/research-api.test.ts",
-  // Pre-existing mock drift (detectWorkspace / theme dropdown): quarantined on sight per AGENTS.md.
-  "app/components/__tests__/SetupWizardModal.test.tsx",
-  "app/components/command-center/__tests__/CommandCenterControls.test.tsx",
-  // Pre-existing CSS / mobile-render regressions (backfill shards, cutover batch):
-  // see scripts/lib/test-quarantine.json. All fail on clean baseline.
-  "app/__tests__/global-theme-css-no-raw-rgba.test.ts",
-  "app/components/__tests__/WorkflowNodeEditor.css.test.ts",
-  "app/components/__tests__/board-mobile-initial-render.test.tsx",
-  "app/__tests__/toast-theme-contrast.test.ts",
-  "app/components/__tests__/ProjectOverview.test.tsx",
-  /*
-  FNXC:DashboardTestQuarantine 2026-06-25-13:30:
-  The SQLite-to-PostgreSQL cutover (feature quarantine-sqlite-internals-tests, retry session)
-  applied the undefined→null coercion fix in sqlite-adapter.ts prepare() which resolved the
-  ERR_INVALID_ARG_TYPE binding failures. However, 92 dashboard API test files still fail from
-  a DIFFERENT pre-existing root cause: the async-satellite dual-path work (server.ts:924 +
-  routes/*) now calls store.getAsyncLayer() / store.isBackendMode() but these test files' mock
-  TaskStore implementations do not expose those methods (TypeError: store.getAsyncLayer is not
-  a function). Confirmed pre-existing on clean baseline (stash + rerun). Quarantined on sight
-  per AGENTS.md so verify:workspace goes green. Rescue requires updating each file's mock
-  TaskStore to expose getAsyncLayer() (return null) and isBackendMode() (return false).
-  Mirrored in scripts/lib/test-quarantine.json; will be DELETED when the SQLite code is removed.
-  */
-  /*
-  FNXC:DashboardTestQuarantine 2026-07-05-17:10:
-  RESCUED: the five 2026-06-28 SQLite-cutover entries (project-store-resolver,
-  routes-planning, routes-auth, routes-automation, routes-tasks) were root-cause
-  fixed and un-quarantined: mock stores expose getAsyncLayer(), AgentStore
-  seeding was replaced with prototype spies (legacy runtime removed under
-  VAL-REMOVAL-005), the resolver test mocks the createTaskStoreForBackend seam,
-  and the manual-backup parity tests stub runBackupCommand (post-cutover it
-  pg_dumps a live cluster). Ledger entries removed in the same commit.
-  */
-];
+/*
+FNXC:DashboardTestQuarantine 2026-07-14-07:15:
+The 16 dashboard test files quarantined on 2026-06-25 (cutover batch) were
+deleted per the AGENTS.md deletion ratchet (14 days expired, not rescued).
+Ledger entries removed from scripts/lib/test-quarantine.json in the same commit.
+The array stays empty; add new entries here only with a matching ledger row.
+*/
+const quarantinedDashboardTests: string[] = [];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,
