@@ -2654,23 +2654,32 @@ export class ProjectEngine {
     if (typeof store.getAgentLogs !== "function") return;
     try {
       await this.sessionAdvisor.ensureTask(task);
-      const logs = await store.getAgentLogs(task.id, { limit: 80 }).catch(() => [] as Array<{ type?: string; text?: string; detail?: string; agent?: string }>);
-      if (!Array.isArray(logs) || logs.length === 0) return;
-      const cursor = this.sessionAdvisorLogCursor.get(task.id) ?? 0;
-      // getAgentLogs is typically newest-first; normalize to chronological for delta.
-      const chronological = [...logs].reverse();
-      if (chronological.length <= cursor) {
-        // If the store returned a sliding window, re-seed cursor to length without replaying.
-        if (cursor > chronological.length) {
-          this.sessionAdvisorLogCursor.set(task.id, chronological.length);
-        }
+      // FNXC:PlannerOversight 2026-07-13-23:20:
+      // getAgentLogs returns chronological entries (oldest→newest within the
+      // trailing window). Cursor tracks durable log count so we only feed
+      // new rows and never reverse/replay a sliding window incorrectly.
+      const total =
+        typeof store.getAgentLogCount === "function"
+          ? await store.getAgentLogCount(task.id).catch(() => 0)
+          : 0;
+      if (!Number.isFinite(total) || total <= 0) return;
+
+      const cursor = this.sessionAdvisorLogCursor.get(task.id);
+      if (cursor === undefined) {
+        // First observation: seed without replaying history (OMP seedTo parity).
+        this.sessionAdvisorLogCursor.set(task.id, total);
         return;
       }
-      const delta = chronological.slice(cursor);
-      this.sessionAdvisorLogCursor.set(task.id, chronological.length);
-      if (delta.length > 0) {
-        await this.sessionAdvisor.onExecutorLogDelta(task.id, delta, task);
+      if (total <= cursor) return;
+
+      const need = Math.min(80, total - cursor);
+      const logs = await store.getAgentLogs(task.id, { limit: need }).catch(() => [] as Array<{ type?: string; text?: string; detail?: string; agent?: string }>);
+      if (!Array.isArray(logs) || logs.length === 0) {
+        this.sessionAdvisorLogCursor.set(task.id, total);
+        return;
       }
+      this.sessionAdvisorLogCursor.set(task.id, total);
+      await this.sessionAdvisor.onExecutorLogDelta(task.id, logs, task);
     } catch {
       /* best-effort */
     }
