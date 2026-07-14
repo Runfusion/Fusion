@@ -30,6 +30,7 @@ import { aggregateProductivityAnalytics } from "../../productivity-analytics.js"
 import { aggregateTeamAnalytics } from "../../team-analytics.js";
 import { aggregateTokenAnalytics } from "../../token-analytics.js";
 import { aggregateToolAnalytics } from "../../tool-analytics.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 
 const pgTest = pgDescribe;
 
@@ -199,5 +200,56 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
     expect(tools.autonomyRatio).toBe(2);
     const byCat = Object.fromEntries(tools.byCategory.map((c) => [c.category, c.count]));
     expect(Object.values(byCat).reduce((a, b) => a + b, 0)).toBe(2);
+  });
+
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-14-00:49:
+  Unbound tool analytics intentionally combine all project partitions, including usage-event totals/categories/sessions and task-backed user steers. Binding the same read layer must isolate every one of those query surfaces to the selected project.
+  */
+  it("tool analytics aggregate all projects when unbound and isolate a bound project", async () => {
+    const store = h.store();
+    const layer = h.layer() as AsyncDataLayer & { projectId?: string };
+    const adminDb = h.adminDb();
+
+    layer.projectId = "tool-project-a";
+    await store.createTaskWithReservedId(
+      { description: "tool analytics A", column: "todo" },
+      { taskId: "FN-TOOL-A", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
+    );
+    layer.projectId = "tool-project-b";
+    await store.createTaskWithReservedId(
+      { description: "tool analytics B", column: "todo" },
+      { taskId: "FN-TOOL-B", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
+    );
+    await adminDb.execute(sql`
+      UPDATE project.tasks
+      SET steering_comments = ${JSON.stringify([{ id: "steer-a", author: "user", content: "A", createdAt: IN_RANGE }])}::jsonb
+      WHERE id = 'FN-TOOL-A'
+    `);
+    await adminDb.execute(sql`
+      UPDATE project.tasks
+      SET steering_comments = ${JSON.stringify([{ id: "steer-b", author: "user", content: "B", createdAt: IN_RANGE }])}::jsonb
+      WHERE id = 'FN-TOOL-B'
+    `);
+    await adminDb.execute(sql`
+      INSERT INTO project.usage_events (project_id, ts, kind, tool_name, category)
+      VALUES
+        ('tool-project-a', ${IN_RANGE}, 'tool_call', 'Read', 'other'),
+        ('tool-project-a', ${IN_RANGE}, 'session_start', NULL, NULL),
+        ('tool-project-b', ${IN_RANGE}, 'tool_call', 'Edit', 'other'),
+        ('tool-project-b', ${IN_RANGE}, 'session_start', NULL, NULL)
+    `);
+
+    delete layer.projectId;
+    const range = { from: FROM, to: TO };
+    const unbound = await aggregateToolAnalytics(layer, range);
+    expect(unbound).toMatchObject({ toolCalls: 2, sessions: 2 });
+    expect(unbound.interventions).toMatchObject({ userSteers: 2, total: 2 });
+    expect(Object.values(Object.fromEntries(unbound.byCategory.map((row) => [row.category, row.count]))).reduce((a, b) => a + b, 0)).toBe(2);
+
+    const bound = await aggregateToolAnalytics({ ...layer, projectId: "tool-project-a" }, range);
+    expect(bound).toMatchObject({ toolCalls: 1, sessions: 1 });
+    expect(bound.interventions).toMatchObject({ userSteers: 1, total: 1 });
+    expect(Object.values(Object.fromEntries(bound.byCategory.map((row) => [row.category, row.count]))).reduce((a, b) => a + b, 0)).toBe(1);
   });
 });
