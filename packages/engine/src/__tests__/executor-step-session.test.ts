@@ -246,6 +246,52 @@ describe("Workflow Steps Execution", () => {
     );
   });
 
+  it("clears a stale assistant-continuation resume session and requeues without marking the task failed", async () => {
+    const store = createMockStore();
+    const task = {
+      id: "FN-ASSISTANT-STALE",
+      title: "Stale assistant continuation",
+      description: "Test stale assistant continuation recovery",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "in-progress" as const }],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      sessionFile: "/tmp/stale-session.jsonl",
+      worktree: "/tmp/test/.worktrees/fn-assistant-stale",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockResolvedValue(task as any);
+
+    const staleSession = {
+      prompt: vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant")),
+      dispose: vi.fn(),
+      subscribe: vi.fn(),
+      on: vi.fn(),
+      sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      state: {},
+    };
+    mockedCreateFnAgent.mockResolvedValue({ session: staleSession } as any);
+
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    await executor.execute(task as any);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
+      sessionFile: null,
+      status: null,
+      error: null,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", "todo", { preserveResumeState: true });
+    expect(store.handoffToReview).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   describe("FN-5436: pending-review skip on no-fn_task_done exit", () => {
     it("does not park in-review when code review REVISE requires more executor work", async () => {
       const store = createMockStore();

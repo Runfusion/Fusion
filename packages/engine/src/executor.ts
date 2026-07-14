@@ -566,6 +566,10 @@ function buildExecuteRequeueLoopHighWaterSignature(live: TaskDetail, previousSig
   };
 }
 
+export function isInvalidAssistantContinuationErrorMessage(errorMessage: string): boolean {
+  return /cannot continue from message role:\s*assistant/i.test(errorMessage);
+}
+
 const TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN = /ENOENT:\s+no such file or directory,\s+open\s+'([^']+\/\.fusion\/tasks\/([^/]+)\/task\.json)'/;
 
 export function isTransientMissingTaskJsonError(error: unknown, task: Pick<Task, "id" | "worktree">): boolean {
@@ -9824,6 +9828,7 @@ export class TaskExecutor {
     // the finally block so this.executing is cleared first (prevents re-dispatch race).
     // true = requeue to todo, false = budget exhausted (already marked failed).
     let stuckRequeue: boolean | null = null;
+    let staleAssistantContinuationRequeue = false;
     let taskDone = false;
     let reviewAddressingActivated = false;
     let taskEnv: NodeJS.ProcessEnv | undefined;
@@ -11793,6 +11798,16 @@ export class TaskExecutor {
         // Dependency added mid-execution — discard worktree and move to triage
         this.depAborted.delete(task.id);
         await this.handleDepAbortCleanup(task.id, worktreePath);
+      } else if (isInvalidAssistantContinuationErrorMessage(errorMessage)) {
+        staleAssistantContinuationRequeue = true;
+        executorLog.warn(`${task.id} stale assistant-continuation session detected — will clear sessionFile and requeue after executor lock release`);
+        await this.store.logEntry(
+          task.id,
+          `Detected stale assistant-continuation session — clearing persisted session and requeueing with progress preserved: ${errorMessage}`,
+          undefined,
+          this.getRunContextFor(task.id),
+        );
+        return;
       } else if (errorMessage.includes("Invalid transition")) {
         // Task was moved by user/process while executor was running — already in desired state
         // This check must come before pausedAborted since it's more specific
@@ -12486,6 +12501,33 @@ export class TaskExecutor {
         const latestTask = await this.store.getTask(task.id);
         if (latestTask.column === "done" || latestTask.column === "archived") {
           this.branchConflictErrorCount.delete(task.id);
+        }
+      }
+
+      // Requeue stale assistant-continuation sessions AFTER this.executing is cleared.
+      // Moving the task while the execution guard is still held can cause the scheduler's
+      // task:moved dispatch to no-op, stranding the task in todo with no fresh run.
+      if (staleAssistantContinuationRequeue) {
+        try {
+          const latestTask = await this.store.getTask(task.id);
+          if (latestTask.column === "in-progress" || latestTask.column === "todo") {
+            await this.store.updateTask(task.id, {
+              sessionFile: null,
+              status: null,
+              error: null,
+              recoveryRetryCount: null,
+              nextRecoveryAt: null,
+            });
+            if (latestTask.column !== "todo") {
+              await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+            }
+            executorLog.log(`${task.id} stale assistant-continuation session cleared — requeued to todo with progress preserved`);
+          } else {
+            executorLog.log(`${task.id} stale assistant-continuation requeue skipped — task is now in '${latestTask.column}'`);
+          }
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          executorLog.error(`Failed to requeue stale assistant-continuation task ${task.id}: ${errorMessage}`);
         }
       }
 
