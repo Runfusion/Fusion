@@ -9,9 +9,13 @@ import {
 import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
 import { redactConnectionString } from "../../postgres/credential-redact.js";
 
+// FNXC:PgTestAuthFix 2026-07-14-07:35:
+// Use FUSION_PG_TEST_URL_BASE (which includes credentials on CI) instead of the
+// bare FUSION_PG_TEST_URL default that omits user/password, causing postgres.js
+// to fall back to the OS user ('runner' on GitHub Actions) and fail auth.
 const PG_TEST_URL =
   process.env.FUSION_PG_TEST_URL ??
-  "postgresql://localhost:5432/postgres";
+  `${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/postgres`;
 
 const PG_AVAILABLE =
   process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL);

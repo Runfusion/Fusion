@@ -1269,6 +1269,8 @@ CREATE TABLE IF NOT EXISTS project.chat_sessions (
   model_provider text,
   model_id text,
   thinking_level text,
+  validator_thinking_level text,
+  planning_thinking_level text,
   created_at text NOT NULL,
   updated_at text NOT NULL,
   cli_session_file text,
