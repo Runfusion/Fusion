@@ -106,6 +106,7 @@ export function rowToTask(row: TaskRow): Task {
     executeRequeueLoopCount: row.executeRequeueLoopCount ?? undefined,
     executeRequeueLoopSignature: row.executeRequeueLoopSignature || undefined,
     postReviewFixCount: row.postReviewFixCount ?? undefined,
+    planReviewReplanCount: row.planReviewReplanCount ?? undefined,
     recoveryRetryCount: row.recoveryRetryCount ?? undefined,
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,
     worktreeSessionRetryCount: row.worktreeSessionRetryCount ?? undefined,

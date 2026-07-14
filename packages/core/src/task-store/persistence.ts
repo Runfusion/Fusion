@@ -52,6 +52,7 @@ export interface TaskRow {
   executeRequeueLoopCount: number | null;
   executeRequeueLoopSignature: string | null;
   postReviewFixCount: number | null;
+  planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
   taskDoneRetryCount: number | null;
   worktreeSessionRetryCount: number | null;
@@ -210,6 +211,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("executeRequeueLoopCount", (task) => task.executeRequeueLoopCount ?? 0),
   defineTaskColumn("executeRequeueLoopSignature", (task) => task.executeRequeueLoopSignature ?? null),
   defineTaskColumn("postReviewFixCount", (task) => task.postReviewFixCount ?? 0),
+  defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
   defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),

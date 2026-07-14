@@ -2481,6 +2481,16 @@ export interface Task {
    *  Review defaults to unbounded recovery so ordinary REVISE feedback does not
    *  terminal-fail the task. */
   postReviewFixCount?: number;
+  /** Number of consecutive triage pre-execution Plan Review REVISE replans this task
+   *  has consumed. Incremented by the triage Plan Review gate
+   *  (packages/engine/src/triage.ts runPlanReviewBeforeExecution) each time it blocks
+   *  execution with a REVISE verdict and routes the task back to `needs-replan`. When it
+   *  reaches `PLAN_REVIEW_GATE_REPLAN_CAP` the task is escalated to `awaiting-approval`
+   *  (awaitingApprovalReason `plan-review-replan-cap`) instead of replanning again, so a
+   *  planner/reviewer disagreement can never loop forever. Reset when the gate passes
+   *  (APPROVE) or on a manual retry. Distinct from `postReviewFixCount`, which bounds the
+   *  executor graph's post-merge/advisory optional-step REVISE budget. */
+  planReviewReplanCount?: number;
   /** Number of bounded recovery retry attempts for transient executor/triage failures.
    *  Distinct from `mergeRetries` (merge-conflict-specific). Incremented by the
    *  recovery-policy module on each recoverable failure; cleared when work restarts
@@ -2560,7 +2570,7 @@ export interface Task {
    * any such hold as an ordinary manual plan-approval hold (Approve/Reject Plan render
    * normally). Undefined means either no hold or a manual-approval hold.
    */
-  awaitingApprovalReason?: "release-authorization";
+  awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap";
   /*
    * FNXC:PlanApproval 2026-07-04-22:41:
    * FN-7569 — records the computePlanApprovalFingerprint (packages/core/src/plan-approval.ts)

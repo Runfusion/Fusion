@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   -- FNXC:SqliteFinalRemoval 2026-06-25: retry/stuck counters missed in initial snapshot
   stuck_kill_count integer DEFAULT 0,
   post_review_fix_count integer DEFAULT 0,
+  plan_review_replan_count integer DEFAULT 0,
   verification_failure_count integer DEFAULT 0,
   branch_conflict_recovery_count integer DEFAULT 0,
   reviewer_context_retry_count integer DEFAULT 0,

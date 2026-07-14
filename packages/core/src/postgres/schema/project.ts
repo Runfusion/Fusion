@@ -122,6 +122,7 @@ export const tasks = projectSchema.table("tasks", {
   */
   stuckKillCount: integer("stuck_kill_count").default(0),
   postReviewFixCount: integer("post_review_fix_count").default(0),
+  planReviewReplanCount: integer("plan_review_replan_count").default(0),
   verificationFailureCount: integer("verification_failure_count").default(0),
   branchConflictRecoveryCount: integer("branch_conflict_recovery_count").default(0),
   reviewerContextRetryCount: integer("reviewer_context_retry_count").default(0),
