@@ -30,6 +30,7 @@ import { aggregateWorkflowAnalytics } from "../../workflow-analytics.js";
 import { aggregateGithubIssueAnalytics } from "../../github-issue-analytics.js";
 import { aggregateSignalsAnalytics } from "../../activity-analytics.js";
 import { composeLiveSnapshot } from "../../command-center-live.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 
 const pgTest = pgDescribe;
 
@@ -268,5 +269,58 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
     expect(workflow.workflows[0].cost).toMatchObject({ unavailable: false, stale: false });
     expect(workflow.workflows[0].cost.usd).toBeCloseTo(4, 2);
     expect(workflow.totals.cost.usd).toBeCloseTo(4, 2);
+  });
+
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-14-00:49:
+  An unbound live snapshot intentionally composes sessions, heartbeat runs, active nodes, and task-column counts across every project partition. Binding the same layer must scope every live surface together so the snapshot cannot mix global and project-local counts.
+  */
+  it("live snapshot aggregates all projects when unbound and isolates a bound project", async () => {
+    const store = h.store();
+    const layer = h.layer() as AsyncDataLayer & { projectId?: string };
+    const adminDb = h.adminDb();
+
+    layer.projectId = "live-project-a";
+    await store.createTaskWithReservedId(
+      { description: "live task A", column: "todo" },
+      { taskId: "FN-LIVE-A", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
+    );
+    layer.projectId = "live-project-b";
+    await store.createTaskWithReservedId(
+      { description: "live task B", column: "in-progress" },
+      { taskId: "FN-LIVE-B", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
+    );
+    await adminDb.execute(sql`
+      INSERT INTO project.agents (id, name, role, state, created_at, updated_at)
+      VALUES
+        ('agent-live-a', 'Live A', 'executor', 'idle', ${IN_RANGE}, ${IN_RANGE}),
+        ('agent-live-b', 'Live B', 'executor', 'idle', ${IN_RANGE}, ${IN_RANGE})
+    `);
+    await adminDb.execute(sql`
+      INSERT INTO project.agent_runs (project_id, id, agent_id, data, started_at, status)
+      VALUES
+        ('live-project-a', 'run-live-a', 'agent-live-a', ${JSON.stringify({ taskId: "FN-LIVE-A" })}::jsonb, ${IN_RANGE}, 'active'),
+        ('live-project-b', 'run-live-b', 'agent-live-b', ${JSON.stringify({ taskId: "FN-LIVE-B" })}::jsonb, ${IN_RANGE}, 'active')
+    `);
+    await adminDb.execute(sql`
+      INSERT INTO project.cli_sessions
+        (id, task_id, purpose, project_id, adapter_id, agent_state, worktree_path, created_at, updated_at)
+      VALUES
+        ('cli-live-a', 'FN-LIVE-A', 'task', 'live-project-a', 'test', 'working', '/tmp/live-a', ${IN_RANGE}, ${IN_RANGE}),
+        ('cli-live-b', 'FN-LIVE-B', 'task', 'live-project-b', 'test', 'working', '/tmp/live-b', ${IN_RANGE}, ${IN_RANGE})
+    `);
+
+    delete layer.projectId;
+    const unbound = await composeLiveSnapshot(layer, Date.parse(IN_RANGE));
+    expect(unbound).toMatchObject({ activeSessions: 2, activeRuns: 2, activeNodes: 2 });
+    expect(unbound.sessions.map(({ id }) => id).sort()).toEqual(["cli-live-a", "cli-live-b"]);
+    expect(unbound.runs.map(({ id }) => id).sort()).toEqual(["run-live-a", "run-live-b"]);
+    expect(Object.fromEntries(unbound.columns.map(({ column, count }) => [column, count]))).toMatchObject({ todo: 1, "in-progress": 1 });
+
+    const bound = await composeLiveSnapshot({ ...layer, projectId: "live-project-a" }, Date.parse(IN_RANGE));
+    expect(bound).toMatchObject({ activeSessions: 1, activeRuns: 1, activeNodes: 1 });
+    expect(bound.sessions.map(({ id }) => id)).toEqual(["cli-live-a"]);
+    expect(bound.runs.map(({ id }) => id)).toEqual(["run-live-a"]);
+    expect(Object.fromEntries(bound.columns.map(({ column, count }) => [column, count]))).toEqual({ todo: 1 });
   });
 });

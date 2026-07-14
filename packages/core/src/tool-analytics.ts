@@ -108,7 +108,13 @@ export async function countInterventions(
   // user-authored-steer in-range counting mirrors the sync branch exactly.
   if ("ping" in dbOrLayer) {
     const layer = dbOrLayer as AsyncDataLayer;
-    const projectId = layer.projectId ?? "";
+    /*
+    FNXC:PostgresCommandCenterAnalytics 2026-07-14-00:49:
+    An unbound Command Center layer intentionally aggregates every project. Apply the optional project predicate to task-backed steering reads only when a project is explicitly bound; never reinterpret an absent binding as the empty-string partition.
+    */
+    const projectScope = layer.projectId !== undefined
+      ? sql`AND project_id = ${layer.projectId}`
+      : sql``;
     const aFrom = query.from !== undefined ? sql`AND created_at >= ${query.from}` : sql``;
     const aTo = query.to !== undefined ? sql`AND created_at <= ${query.to}` : sql``;
     const approvalRows = (await layer.db.execute(
@@ -119,8 +125,8 @@ export async function countInterventions(
 
     const steeringRows = (await layer.db.execute(
       sql`SELECT steering_comments AS "steeringComments" FROM project.tasks
-          WHERE project_id = ${projectId}
-            AND steering_comments IS NOT NULL
+          WHERE steering_comments IS NOT NULL
+            ${projectScope}
             AND jsonb_typeof(steering_comments) = 'array'
             AND jsonb_array_length(steering_comments) > 0`,
     )) as Array<{ steeringComments: unknown }>;
@@ -204,26 +210,32 @@ export async function aggregateToolAnalytics(
   // run via the shared buildToolAnalytics, identical to the sync branch.
   if ("ping" in dbOrLayer) {
     const layer = dbOrLayer as AsyncDataLayer;
-    const projectId = layer.projectId ?? "";
+    /*
+    FNXC:PostgresCommandCenterAnalytics 2026-07-14-00:49:
+    Tool-call totals, category groups, and session counts must share the same optional project scope. Unbound reads aggregate all partitions; explicitly bound reads remain isolated.
+    */
+    const projectScope = layer.projectId !== undefined
+      ? sql`AND project_id = ${layer.projectId}`
+      : sql``;
     const eFrom = query.from !== undefined ? sql`AND ts >= ${query.from}` : sql``;
     const eTo = query.to !== undefined ? sql`AND ts <= ${query.to}` : sql``;
 
     const toolCallsRows = (await layer.db.execute(
       sql`SELECT count(*)::int AS count FROM project.usage_events
-          WHERE project_id = ${projectId} AND kind = 'tool_call' ${eFrom} ${eTo}`,
+          WHERE kind = 'tool_call' ${projectScope} ${eFrom} ${eTo}`,
     )) as Array<{ count: number }>;
     const toolCalls = toolCallsRows[0]?.count ?? 0;
 
     const categoryRows = (await layer.db.execute(
       sql`SELECT tool_name AS "toolName", category AS category, count(*)::int AS count
           FROM project.usage_events
-          WHERE project_id = ${projectId} AND kind = 'tool_call' ${eFrom} ${eTo}
+          WHERE kind = 'tool_call' ${projectScope} ${eFrom} ${eTo}
           GROUP BY tool_name, category`,
     )) as unknown as CategoryRow[];
 
     const sessionsRows = (await layer.db.execute(
       sql`SELECT count(*)::int AS count FROM project.usage_events
-          WHERE project_id = ${projectId} AND kind = 'session_start' ${eFrom} ${eTo}`,
+          WHERE kind = 'session_start' ${projectScope} ${eFrom} ${eTo}`,
     )) as Array<{ count: number }>;
     const sessions = sessionsRows[0]?.count ?? 0;
 
