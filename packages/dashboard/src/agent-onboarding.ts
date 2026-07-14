@@ -413,8 +413,17 @@ export async function respondToAgentOnboarding(sessionId: string, responses: Rec
   const session = sessions.get(sessionId);
   if (!session) throw new SessionNotFoundError(`Agent onboarding session ${sessionId} not found or expired`);
   if (!session.currentQuestion) throw new InvalidSessionStateError("No active question in session");
-  session.history.push({ question: session.currentQuestion, response: responses });
-  const formatted = `Question: ${session.currentQuestion.question}\nAnswer: ${JSON.stringify(responses)}`;
+  const answeredQuestion = session.currentQuestion;
+  session.history.push({ question: answeredQuestion, response: responses });
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Same invariant as Planning Mode: once an answer is accepted the session is no longer awaiting
+  input, so clear currentQuestion before generating. This stops the onboarding SSE catch-up from
+  re-emitting the answered question to fresh connections and stops retry from prompting the agent
+  to "continue from" a question the user already answered.
+  */
+  session.currentQuestion = undefined;
+  const formatted = `Question: ${answeredQuestion.question}\nAnswer: ${JSON.stringify(responses)}`;
   await continueConversation(session, formatted);
 }
 
