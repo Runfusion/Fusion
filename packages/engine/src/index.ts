@@ -748,6 +748,29 @@ export {
   type OverseerHumanControlTask,
   type OverseerHumanControlSettings,
 } from "./overseer-human-control-policy.js";
+// FNXC:PlannerOversight 2026-07-13-23:05: session-advisor (OMP advisor parity) public surface.
+export {
+  OverseerAdvisorRuntime,
+  type OverseerAdvisorAgent,
+  type OverseerAdvisorRuntimeHost,
+  type OverseerAdvisorRuntimeOptions,
+} from "./overseer-advisor-runtime.js";
+export {
+  OverseerAdvisorService,
+  createParsingOverseerAgent,
+  type OverseerAdvisorServiceOptions,
+  type OverseerAdvisorModelConfig,
+} from "./overseer-advisor-service.js";
+export {
+  OverseerAdviseRecorder,
+  parseAdvisorReplyForAdvice,
+  OVERSEER_ADVISOR_REPLY_CONTRACT,
+} from "./overseer-advise-tool.js";
+export {
+  discoverOverseerWatchdogFiles,
+  formatOverseerWatchdogPromptBlocks,
+} from "./overseer-watchdog.js";
+export { formatOverseerSessionDelta, isOverseerSelfAdvisoryText } from "./overseer-session-delta.js";
 export {
   decidePlannerRecovery,
   PLANNER_RECOVERY_MAX_ATTEMPTS,

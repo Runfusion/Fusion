@@ -44,6 +44,13 @@ export interface OverseerEventInput {
   sourceLinks?: PlannerInterventionSourceLink[];
   /** ISO-8601 timestamp override. Defaults to now. */
   timestamp?: string;
+  /*
+  FNXC:PlannerOversight 2026-07-13-22:45:
+  Optional session-advisor metadata threaded into recordPlannerIntervention.
+  */
+  severity?: "nit" | "concern" | "blocker";
+  source?: "lifecycle" | "session-advisor" | "manual";
+  advisorSlug?: string;
 }
 
 /**
@@ -70,6 +77,9 @@ function normalizeAndRecord(
     attemptLimit: input.attemptLimit,
     sourceLinks: input.sourceLinks,
     timestamp: input.timestamp,
+    severity: input.severity,
+    source: input.source,
+    advisorSlug: input.advisorSlug,
   });
 }
 

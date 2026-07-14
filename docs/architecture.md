@@ -1367,6 +1367,24 @@ Limits are controlled by project settings (`maxSpawnedAgentsPerParent`, `maxSpaw
 ### Custom instructions
 `packages/engine/src/agent-instructions.ts` resolves per-agent instruction text/path with path-traversal and extension validation.
 
+### Planner overseer session advisor (OMP advisor parity)
+
+/*
+FNXC:PlannerOversight 2026-07-13-23:10:
+Session-advisor layer shadows executor agent-log deltas with a second model,
+severity-routed notes, and an emission guard. Soft-disabled until both
+`plannerOverseerAdvisorProvider` and `plannerOverseerAdvisorModelId` workflow
+settings are set. Lifecycle supervisor (FN-7511–7520) remains authoritative for
+stage signals, retry, and merge confirmation.
+*/
+
+When configured, `OverseerAdvisorService` (engine) queues transcript deltas from
+`AgentLogger.onEntriesFlushed` and the planner-overseer poll's agent-log cursor,
+prompts an isolated advisor model, and — after `OverseerEmissionGuard` — injects
+`[session-advisor]` steering comments for levels `steer`/`autonomous` (observe
+logs only). Project `OVERSEER.md` / `WATCHDOG.md` files append review priorities.
+Human-control withhold still applies at inject time.
+
 ### Planner overseer monitoring (records-only)
 
 /*

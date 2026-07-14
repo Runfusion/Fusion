@@ -69,6 +69,13 @@ export {
   emitOverseerEscalation,
 } from "./planner-overseer-events.js";
 export type { OverseerEventInput } from "./planner-overseer-events.js";
+/*
+FNXC:PlannerOversight 2026-07-13-22:40:
+Session-advisor (OMP advisor parity) vocabulary + emission guard. Pure
+types/policy for severity-routed notes before they reach steering inject.
+*/
+export * from "./overseer-advice.js";
+export * from "./overseer-emission-guard.js";
 export * from "./frontend-ux-policy.js";
 export * from "./file-scope-classification.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./task-list-format.js";

@@ -45,6 +45,11 @@ import { PrMonitor } from "./pr-monitor.js";
 import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./planner-overseer.js";
 import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./planner-recovery-controller.js";
 import { evaluateOverseerHumanControl } from "./overseer-human-control-policy.js";
+import {
+  OverseerAdvisorService,
+  createParsingOverseerAgent,
+} from "./overseer-advisor-service.js";
+import { createResolvedAgentSession } from "./agent-session-helpers.js";
 import type { PrNodeGithubOps } from "./pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
@@ -377,6 +382,14 @@ export class ProjectEngine {
    * safeguards beyond the userPaused skip are FN-7514's responsibility.
    */
   private plannerRecoveryController?: PlannerRecoveryController;
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor service (OMP advisor parity). Soft-disabled until workflow
+  plannerOverseerAdvisorProvider + plannerOverseerAdvisorModelId are both set.
+  */
+  private sessionAdvisor?: OverseerAdvisorService;
+  /** Per-task agent-log cursor for poll-fed session-advisor deltas. */
+  private readonly sessionAdvisorLogCursor = new Map<string, number>();
   /**
    * FNXC:PlannerOversight 2026-07-04-19:45:
    * FN-7551 requirement: real overseer decision points (observation,
@@ -714,6 +727,15 @@ export class ProjectEngine {
       snapshotProvider: this.plannerOverseer,
       handlers: this.buildPlannerRecoveryHandlers(store),
     });
+    // FNXC:PlannerOversight 2026-07-13-23:05: session advisor (transcript review) alongside lifecycle supervisor.
+    this.sessionAdvisor = this.buildSessionAdvisorService(store);
+    try {
+      this.runtime.getExecutor?.()?.setOnExecutorLogFlushed?.((taskId, entries) => {
+        this.notifySessionAdvisorLogDelta(taskId, entries);
+      });
+    } catch {
+      /* executor may not expose the setter on older shims */
+    }
     this.startPlannerOverseerPoll(store);
 
     // 2. Initialize PrMonitor + PrCommentHandler
@@ -1172,7 +1194,29 @@ export class ProjectEngine {
    * task (nothing to show on the card).
    */
   getPlannerOverseerRuntimeSnapshot(taskId: string): PlannerOverseerRuntimeSnapshot | null {
-    return assemblePlannerOverseerRuntimeSnapshot(taskId, this.plannerOverseer, this.plannerRecoveryController);
+    const base = assemblePlannerOverseerRuntimeSnapshot(taskId, this.plannerOverseer, this.plannerRecoveryController);
+    if (!base) return null;
+    const advisor = this.sessionAdvisor?.getTaskAdvisorSnapshot(taskId);
+    if (!advisor?.active) return base;
+    return {
+      ...base,
+      advisorActive: true,
+      advisorBacklog: advisor.backlog,
+      lastAdviceSeverity: advisor.lastAdviceSeverity,
+    };
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Feed executor agent-log entries into the session advisor (AgentLogger hook).
+   * Fail-soft; never throws into the logger.
+   */
+  notifySessionAdvisorLogDelta(taskId: string, entries: Array<{ type?: string; text?: string; detail?: string; agent?: string }>): void {
+    try {
+      void this.sessionAdvisor?.onExecutorLogDelta(taskId, entries);
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -1415,6 +1459,7 @@ export class ProjectEngine {
         // FN-7551: emit the steering intervention entry AFTER the steering
         // comment succeeds, through the real store, so the timeline reflects
         // the same guidance the agent actually saw.
+        // FNXC:PlannerOversight 2026-07-13-23:05: tag lifecycle source for timeline vs session-advisor.
         this.emitOverseerInterventionSafe(() =>
           emitOverseerSteering({
             store,
@@ -1422,6 +1467,7 @@ export class ProjectEngine {
             stage: (decision.watchedStage ?? "executor") as PlannerOversightStage,
             reason: decision.reason,
             sourceLinks: this.toInterventionSourceLinks(decision.sourceLinks),
+            source: "lifecycle",
           }),
         );
       },
@@ -2480,6 +2526,13 @@ export class ProjectEngine {
               this.emitOverseerEscalationDeduped(store, task.id, decision);
             }
           }
+
+          // FNXC:PlannerOversight 2026-07-13-23:05:
+          // Session-advisor: feed new agent-log entries for in-progress executor
+          // tasks (poll-backed delta; AgentLogger onEntriesFlushed is a faster path).
+          if (task.column === "in-progress" && this.sessionAdvisor) {
+            await this.feedSessionAdvisorFromAgentLogs(store, task);
+          }
         } catch {
           // Best-effort per-task — never let one task's failure block the poll.
         }
@@ -2491,6 +2544,8 @@ export class ProjectEngine {
         if (!inFlightIds.has(taskId)) {
           overseer.clear(taskId);
           this.plannerRecoveryController?.clear(taskId);
+          this.sessionAdvisor?.clear(taskId);
+          this.sessionAdvisorLogCursor.delete(taskId);
           this.plannerObservationEmitDedup.delete(taskId);
           this.clearPlannerEscalationDedup(taskId);
         }
@@ -2504,6 +2559,120 @@ export class ProjectEngine {
     if (this.plannerOverseerPollTimer) {
       clearInterval(this.plannerOverseerPollTimer);
       this.plannerOverseerPollTimer = null;
+    }
+    this.sessionAdvisor?.clearAll();
+    this.sessionAdvisorLogCursor.clear();
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Construct the session-advisor service with model gate + LLM complete path
+   * via createResolvedAgentSession (mock-safe under testMode).
+   */
+  private buildSessionAdvisorService(store: TaskStore): OverseerAdvisorService {
+    return new OverseerAdvisorService({
+      store: store as ConstructorParameters<typeof OverseerAdvisorService>[0]["store"],
+      resolveLevel: async (task) => {
+        const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
+          () => ({}) as Record<string, unknown>,
+        );
+        return resolveEffectivePlannerOversightLevel(
+          task.plannerOversightLevel,
+          workflowEffective.plannerOversightLevel as string | undefined,
+        );
+      },
+      resolveModel: async (task) => {
+        const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
+          () => ({}) as Record<string, unknown>,
+        );
+        const provider = String(workflowEffective.plannerOverseerAdvisorProvider ?? "").trim();
+        const modelId = String(workflowEffective.plannerOverseerAdvisorModelId ?? "").trim();
+        if (!provider || !modelId) return null;
+        return { provider, modelId };
+      },
+      resolveCwd: (task) => {
+        if (typeof task.worktree === "string" && task.worktree.length > 0) return task.worktree;
+        return this.config?.workingDirectory ?? process.cwd();
+      },
+      agentFactory: async ({ taskId, model, systemPrompt, onAdvice }) => {
+        const cwd =
+          (await store.getTask(taskId).catch(() => undefined))?.worktree ||
+          this.config?.workingDirectory ||
+          process.cwd();
+        return createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async (sys, user) => {
+            try {
+              const settings = await store.getSettings().catch(() => undefined);
+              const { session } = await createResolvedAgentSession({
+                sessionPurpose: "executor",
+                cwd: String(cwd),
+                defaultProvider: model.provider,
+                defaultModelId: model.modelId,
+                settings,
+              } as Parameters<typeof createResolvedAgentSession>[0]);
+              try {
+                await session.prompt(`${sys}\n\n${user}`);
+                const messages = (session as { messages?: Array<{ role?: string; content?: unknown }> }).messages
+                  ?? (session as { state?: { messages?: Array<{ role?: string; content?: unknown }> } }).state?.messages
+                  ?? [];
+                const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+                const content = lastAssistant?.content;
+                if (typeof content === "string") return content;
+                if (Array.isArray(content)) {
+                  return content
+                    .map((block) => (typeof block === "object" && block && "text" in block ? String((block as { text: unknown }).text) : ""))
+                    .join("\n");
+                }
+                return "";
+              } finally {
+                try {
+                  (session as { dispose?: () => void }).dispose?.();
+                } catch {
+                  /* ignore */
+                }
+              }
+            } catch (err) {
+              runtimeLog.warn(
+                `session advisor complete failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return '{"silence":true}';
+            }
+          },
+        });
+      },
+    });
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Poll-backed log cursor: push only new agent-log rows into the session advisor.
+   */
+  private async feedSessionAdvisorFromAgentLogs(store: TaskStore, task: Task): Promise<void> {
+    if (!this.sessionAdvisor) return;
+    if (typeof store.getAgentLogs !== "function") return;
+    try {
+      await this.sessionAdvisor.ensureTask(task);
+      const logs = await store.getAgentLogs(task.id, { limit: 80 }).catch(() => [] as Array<{ type?: string; text?: string; detail?: string; agent?: string }>);
+      if (!Array.isArray(logs) || logs.length === 0) return;
+      const cursor = this.sessionAdvisorLogCursor.get(task.id) ?? 0;
+      // getAgentLogs is typically newest-first; normalize to chronological for delta.
+      const chronological = [...logs].reverse();
+      if (chronological.length <= cursor) {
+        // If the store returned a sliding window, re-seed cursor to length without replaying.
+        if (cursor > chronological.length) {
+          this.sessionAdvisorLogCursor.set(task.id, chronological.length);
+        }
+        return;
+      }
+      const delta = chronological.slice(cursor);
+      this.sessionAdvisorLogCursor.set(task.id, chronological.length);
+      if (delta.length > 0) {
+        await this.sessionAdvisor.onExecutorLogDelta(task.id, delta, task);
+      }
+    } catch {
+      /* best-effort */
     }
   }
 

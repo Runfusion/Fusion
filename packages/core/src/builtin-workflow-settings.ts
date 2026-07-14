@@ -540,6 +540,28 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
     description:
       "Milliseconds of executor-stage inactivity (no progress since the task's last column move/update) before the planner overseer reports the in-progress task as stuck, triggering bounded autonomous recovery (Autonomous level only). Default 7200000 (2 hours). Set higher to avoid nagging long-running steps; set lower to recover hung executors faster.",
   },
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor (OMP parity) model gate. Both provider + model id must be
+  set for live transcript advising; when either is empty the session AI is
+  soft-disabled even if plannerOversightLevel is autonomous (cost-safe default).
+  */
+  {
+    id: "plannerOverseerAdvisorProvider",
+    name: "Session advisor model provider",
+    type: "string",
+    default: "",
+    description:
+      "Optional provider id for the planner overseer session advisor (live transcript review). Must be set together with Session advisor model id. Empty keeps session AI soft-disabled.",
+  },
+  {
+    id: "plannerOverseerAdvisorModelId",
+    name: "Session advisor model id",
+    type: "string",
+    default: "",
+    description:
+      "Optional model id for the planner overseer session advisor. Must be set together with Session advisor model provider. Empty keeps session AI soft-disabled (OMP-style dual gate).",
+  },
 ];
 
 export const BUILTIN_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [

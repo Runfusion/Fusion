@@ -165,6 +165,12 @@ export interface AgentLoggerOptions {
   onAgentText?: (taskId: string, delta: string) => void;
   /** Optional callback invoked alongside tool logging (e.g. for SSE streaming). */
   onAgentTool?: (taskId: string, toolName: string) => void;
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:00:
+  Session-advisor seam: after durable entries flush, notify the overseer
+  advisor runtime with the batch. Must be fail-soft (never throw into flush).
+  */
+  onEntriesFlushed?: (taskId: string, entries: AgentLogEntry[]) => void | Promise<void>;
   /** Byte threshold for automatic flush. Defaults to 1024. */
   flushSizeBytes?: number;
   /** Timer interval (ms) for periodic flush. Defaults to 500. */
@@ -217,6 +223,7 @@ export class AgentLogger {
   private readonly agent?: AgentRole;
   private readonly externalTextCb?: (taskId: string, delta: string) => void;
   private readonly externalToolCb?: (taskId: string, toolName: string) => void;
+  private readonly onEntriesFlushedCb?: (taskId: string, entries: AgentLogEntry[]) => void | Promise<void>;
   private readonly log = createLogger("agent-logger");
   private readonly persistAgentToolOutput: boolean;
   private readonly persistAgentThinkingLog: boolean;
@@ -242,6 +249,7 @@ export class AgentLogger {
     this.agent = options.agent;
     this.externalTextCb = options.onAgentText;
     this.externalToolCb = options.onAgentTool;
+    this.onEntriesFlushedCb = options.onEntriesFlushed;
     this.flushSizeBytes = options.flushSizeBytes ?? FLUSH_SIZE_BYTES;
     this.flushIntervalMs = options.flushIntervalMs ?? FLUSH_INTERVAL_MS;
     /*
@@ -581,6 +589,21 @@ export class AgentLogger {
           }),
         ),
       );
+    }
+
+    // FNXC:PlannerOversight 2026-07-13-23:00: best-effort session-advisor notify after durable flush.
+    if (this.onEntriesFlushedCb && this.taskId && entries.length > 0) {
+      try {
+        await Promise.resolve(this.onEntriesFlushedCb(this.taskId, entries)).catch((err) => {
+          this.log.warn(
+            `onEntriesFlushed callback failed for ${this.taskId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      } catch (err) {
+        this.log.warn(
+          `onEntriesFlushed callback threw for ${this.taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 }

@@ -6776,6 +6776,16 @@ export interface PlannerInterventionEntry {
   runId?: string;
   /** Agent ID that produced this intervention, if applicable. */
   agentId?: string;
+  /*
+  FNXC:PlannerOversight 2026-07-13-22:45:
+  Session-advisor parity: optional severity (nit/concern/blocker) and provenance
+  source so the intervention timeline distinguishes lifecycle canned guidance
+  from live session-advisor notes and manual operator nudges. Absent on
+  pre-existing rows — parsers must tolerate missing fields.
+  */
+  severity?: "nit" | "concern" | "blocker";
+  source?: "lifecycle" | "session-advisor" | "manual";
+  advisorSlug?: string;
 }
 
 /** Canonical run-audit mutation type used to persist planner-intervention entries. Single writer: `recordPlannerIntervention` (see `packages/core/src/planner-intervention.ts`); FN-7520 reuses this helper rather than emitting `overseer:intervention` events directly. */
