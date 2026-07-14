@@ -2529,11 +2529,18 @@ export class ProjectEngine {
             }
           }
 
-          // FNXC:PlannerOversight 2026-07-13-23:05:
-          // Session-advisor: feed new agent-log entries for in-progress executor
-          // tasks (poll-backed delta; AgentLogger onEntriesFlushed is a faster path).
+          // FNXC:PlannerOversight 2026-07-13-23:05 / 2026-07-14-12:00:
+          // Session-advisor log feed only when LLM advisor is enabled for the task
+          // (plannerOverseerAdvisorEnabled=true + model). Off by default.
           if (task.column === "in-progress" && this.sessionAdvisor) {
-            await this.feedSessionAdvisorFromAgentLogs(store, task);
+            const advisorEnabled = workflowEffective.plannerOverseerAdvisorEnabled === true;
+            if (advisorEnabled) {
+              await this.feedSessionAdvisorFromAgentLogs(store, task);
+            } else if (this.sessionAdvisor.getTaskAdvisorSnapshot(task.id).active) {
+              // Operator turned it off mid-flight — drop runtime so no further model spend.
+              this.sessionAdvisor.clear(task.id);
+              this.sessionAdvisorLogCursor.delete(task.id);
+            }
           }
         } catch {
           // Best-effort per-task — never let one task's failure block the poll.
@@ -2580,6 +2587,17 @@ export class ProjectEngine {
     */
     const service = new OverseerAdvisorService({
       store: store as ConstructorParameters<typeof OverseerAdvisorService>[0]["store"],
+      /*
+      FNXC:PlannerOversight 2026-07-14-12:00:
+      Session LLM advisor is OFF by default (plannerOverseerAdvisorEnabled=false).
+      Only strict true enables; missing/malformed settings stay disabled.
+      */
+      resolveEnabled: async (task) => {
+        const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
+          () => ({}) as Record<string, unknown>,
+        );
+        return workflowEffective.plannerOverseerAdvisorEnabled === true;
+      },
       resolveLevel: async (task) => {
         const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
           () => ({}) as Record<string, unknown>,
@@ -2593,6 +2611,7 @@ export class ProjectEngine {
         const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
           () => ({}) as Record<string, unknown>,
         );
+        if (workflowEffective.plannerOverseerAdvisorEnabled !== true) return null;
         const provider = String(workflowEffective.plannerOverseerAdvisorProvider ?? "").trim();
         const modelId = String(workflowEffective.plannerOverseerAdvisorModelId ?? "").trim();
         if (!provider || !modelId) return null;

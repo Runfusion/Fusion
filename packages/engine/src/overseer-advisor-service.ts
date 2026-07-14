@@ -55,6 +55,13 @@ export type OverseerAdvisorAgentFactory = (ctx: {
 
 export interface OverseerAdvisorServiceOptions {
   store: OverseerAdvisorServiceStore;
+  /*
+  FNXC:PlannerOversight 2026-07-14-12:00:
+  Explicit enable gate (workflow setting plannerOverseerAdvisorEnabled, default
+  false). When provided and false, no session advisor runtime is created even
+  if a model is configured. Tests may omit this and rely on model/agentFactory.
+  */
+  resolveEnabled?: (task: Task) => boolean | Promise<boolean>;
   /** Resolve model for the overseer; return null to leave session AI soft-disabled. */
   resolveModel?: (task: Task) => OverseerAdvisorModelConfig | null | Promise<OverseerAdvisorModelConfig | null>;
   /** Resolve effective planner oversight level for a task. */
@@ -100,6 +107,7 @@ export function createParsingOverseerAgent(opts: {
 
 export class OverseerAdvisorService {
   private readonly store: OverseerAdvisorServiceStore;
+  private readonly resolveEnabled?: OverseerAdvisorServiceOptions["resolveEnabled"];
   private readonly resolveModel?: OverseerAdvisorServiceOptions["resolveModel"];
   private readonly resolveLevel: OverseerAdvisorServiceOptions["resolveLevel"];
   private readonly resolveCwd?: OverseerAdvisorServiceOptions["resolveCwd"];
@@ -109,6 +117,7 @@ export class OverseerAdvisorService {
 
   constructor(options: OverseerAdvisorServiceOptions) {
     this.store = options.store;
+    this.resolveEnabled = options.resolveEnabled;
     this.resolveModel = options.resolveModel;
     this.resolveLevel = options.resolveLevel;
     this.resolveCwd = options.resolveCwd;
@@ -138,6 +147,16 @@ export class OverseerAdvisorService {
   async ensureTask(task: Task): Promise<boolean> {
     try {
       if (this.tasks.has(task.id)) return true;
+
+      /*
+      FNXC:PlannerOversight 2026-07-14-12:00:
+      LLM session advisor is opt-in (default off). resolveEnabled false → no
+      runtime, no model spend. Lifecycle overseer is unrelated.
+      */
+      if (this.resolveEnabled) {
+        const enabled = await this.resolveEnabled(task);
+        if (!enabled) return false;
+      }
 
       const level = await this.resolveLevel(task);
       if (level === "off") return false;

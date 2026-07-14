@@ -1370,20 +1370,22 @@ Limits are controlled by project settings (`maxSpawnedAgentsPerParent`, `maxSpaw
 ### Planner overseer session advisor (OMP advisor parity)
 
 /*
-FNXC:PlannerOversight 2026-07-13-23:10:
+FNXC:PlannerOversight 2026-07-13-23:10 / 2026-07-14-12:00:
 Session-advisor layer shadows executor agent-log deltas with a second model,
-severity-routed notes, and an emission guard. Soft-disabled until both
-`plannerOverseerAdvisorProvider` and `plannerOverseerAdvisorModelId` workflow
-settings are set. Lifecycle supervisor (FN-7511–7520) remains authoritative for
-stage signals, retry, and merge confirmation.
+severity-routed notes, and an emission guard. **Off by default** via workflow
+setting `plannerOverseerAdvisorEnabled` (false). When enabled, also requires
+both `plannerOverseerAdvisorProvider` and `plannerOverseerAdvisorModelId`.
+Lifecycle supervisor (FN-7511–7520) remains authoritative for stage signals,
+retry, and merge confirmation and does not depend on the LLM advisor.
 */
 
-When configured, `OverseerAdvisorService` (engine) queues transcript deltas from
-`AgentLogger.onEntriesFlushed` and the planner-overseer poll's agent-log cursor,
-prompts an isolated advisor model, and — after `OverseerEmissionGuard` — injects
-`[session-advisor]` steering comments for levels `steer`/`autonomous` (observe
-logs only). Project `OVERSEER.md` / `WATCHDOG.md` files append review priorities.
-Human-control withhold still applies at inject time.
+When enabled and a model is configured, `OverseerAdvisorService` (engine) queues
+transcript deltas from `AgentLogger.onEntriesFlushed` and the planner-overseer
+poll's agent-log cursor, prompts an isolated advisor model, and — after
+`OverseerEmissionGuard` — injects `[session-advisor]` steering comments for
+levels `steer`/`autonomous` (observe logs only). Project `OVERSEER.md` /
+`WATCHDOG.md` files append review priorities. Human-control withhold still
+applies at inject time.
 
 ### Planner overseer monitoring (records-only)
 

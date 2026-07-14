@@ -2,6 +2,6 @@
 "@runfusion/fusion": minor
 ---
 
-summary: Planner overseer can run a live session advisor that reviews executor transcripts and injects severity-routed advice.
+summary: Optional LLM session advisor for planner overseer (off by default; enable and set model to use).
 category: feature
-dev: OMP-advisor parity layer — OverseerEmissionGuard, session delta runtime, OVERSEER.md/WATCHDOG.md discovery, workflow settings plannerOverseerAdvisorProvider/ModelId (soft-disable until both set). Lifecycle supervisor unchanged.
+dev: OMP-advisor parity — OverseerEmissionGuard, delta runtime, OVERSEER.md/WATCHDOG.md. Gate: plannerOverseerAdvisorEnabled (default false) plus provider/model ids. Lifecycle supervisor unchanged.

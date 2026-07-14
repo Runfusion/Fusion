@@ -29,6 +29,27 @@ describe("OverseerAdvisorService", () => {
     expect(store.addSteeringComment).not.toHaveBeenCalled();
   });
 
+  it("stays off when resolveEnabled is false even with model and agent factory", async () => {
+    const addSteeringComment = vi.fn(async () => ({}));
+    const agentFactory = vi.fn(async () =>
+      createParsingOverseerAgent({
+        systemPrompt: "x",
+        onAdvice: async () => {},
+        complete: async () => JSON.stringify({ note: "should not run", severity: "nit" }),
+      }),
+    );
+    const service = new OverseerAdvisorService({
+      store: { addSteeringComment },
+      resolveEnabled: () => false,
+      resolveLevel: () => "autonomous",
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory,
+    });
+    expect(await service.ensureTask(baseTask())).toBe(false);
+    expect(agentFactory).not.toHaveBeenCalled();
+    expect(addSteeringComment).not.toHaveBeenCalled();
+  });
+
   it("injects concern notes at autonomous and skips content-free phrases", async () => {
     const addSteeringComment = vi.fn(async () => ({}));
     const recordRunAuditEvent = vi.fn((input) => ({
