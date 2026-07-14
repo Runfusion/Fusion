@@ -268,6 +268,56 @@ describe("WhatsAppConnection", () => {
     expect(mockState.logout).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["explicit logout", async (connection: WhatsAppConnection) => connection.logout()],
+    ["logged-out connection update", async () => mockState.handlers.get("connection.update")?.({
+      connection: "close",
+      lastDisconnect: { error: { output: { statusCode: 401 } } },
+    })],
+  ])("drains an accepted credential save before %s clears auth", async (_surface, triggerReset) => {
+    const saveStarted = deferred();
+    const releaseSave = deferred();
+    const persistence = createSqliteWhatsAppPersistence(createInMemoryDb() as any);
+    const saveCredentials = persistence.saveCredentials.bind(persistence);
+    vi.spyOn(persistence, "saveCredentials").mockImplementation(async (value) => {
+      saveStarted.resolve();
+      await releaseSave.promise;
+      await saveCredentials(value);
+    });
+    const clearAuthState = vi.spyOn(persistence, "clearAuthState");
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), persistence);
+    await connection.start();
+    const credentialSave = mockState.handlers.get("creds.update")?.({});
+    await saveStarted.promise;
+
+    const reset = triggerReset(connection);
+    await Promise.resolve();
+    expect(mockState.handlers.has("creds.update")).toBe(false);
+    expect(clearAuthState).not.toHaveBeenCalled();
+    releaseSave.resolve();
+    await Promise.all([credentialSave, reset]);
+
+    expect(clearAuthState).toHaveBeenCalledTimes(1);
+    expect(await persistence.loadCredentials()).toBeNull();
+  });
+
+  it("deduplicates explicit and connection-event auth resets for one socket", async () => {
+    const persistence = createSqliteWhatsAppPersistence(createInMemoryDb() as any);
+    const clearAuthState = vi.spyOn(persistence, "clearAuthState");
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), persistence);
+    await connection.start();
+    const connectionUpdate = mockState.handlers.get("connection.update")!;
+    mockState.logout.mockImplementationOnce(async () => connectionUpdate({
+      connection: "close",
+      lastDisconnect: { error: { output: { statusCode: 401 } } },
+    }));
+
+    await connection.logout();
+
+    expect(clearAuthState).toHaveBeenCalledTimes(1);
+    expect(await persistence.loadCredentials()).toBeNull();
+  });
+
   it("logs reconnect timer rejection instead of leaking it", async () => {
     vi.useFakeTimers();
     const ctx = makeCtx();

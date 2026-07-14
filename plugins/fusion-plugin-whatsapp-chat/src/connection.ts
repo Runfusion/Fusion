@@ -70,6 +70,11 @@ export class WhatsAppConnection {
   private authState: Awaited<ReturnType<typeof createPersistenceAuthState>> | null = null;
   private readonly senderQueues = new Map<string, Promise<void>>();
   private readonly inboundOperations = new Set<Promise<void>>();
+  private readonly credentialSaveOperations = new Set<Promise<void>>();
+  private readonly authResetOperations = new WeakMap<WASocket, Promise<void>>();
+  private readonly credentialUpdateHandlers = new WeakMap<WASocket, () => Promise<void>>();
+  private readonly connectionUpdateHandlers = new WeakMap<WASocket, (update: Partial<ConnectionState>) => Promise<void>>();
+  private acceptCredentialSaves = false;
 
   public constructor(
     private readonly ctx: PluginContext,
@@ -95,14 +100,18 @@ export class WhatsAppConnection {
     this.status = { state: "disconnected" };
 
     if (socket) {
-      socket.ev.off("creds.update", this.onCredsUpdate);
-      socket.ev.off("connection.update", this.onConnectionUpdate);
+      this.disableCredentialSaves(socket);
+      const connectionUpdateHandler = this.connectionUpdateHandlers.get(socket);
+      if (connectionUpdateHandler) socket.ev.off("connection.update", connectionUpdateHandler);
       socket.ev.off("messages.upsert", this.onMessagesUpsert);
       /**
        * FNXC:WhatsAppGracefulStop 2026-07-14-01:28:
        * Stop must reject new inbound work but let every already-accepted message send its persisted reply before the active socket closes. Otherwise the mutable socket can become null after history is saved, silently skipping a dedupe-claimed reply with no retry path.
        */
-      await Promise.allSettled([...this.inboundOperations]);
+      await Promise.allSettled([
+        ...this.credentialSaveOperations,
+        ...this.inboundOperations,
+      ]);
       if (this.sock === socket) this.sock = null;
       await socket.end(undefined);
     }
@@ -125,12 +134,20 @@ export class WhatsAppConnection {
      * Logout must retain the socket selected at invocation even when stop concurrently clears this.sock. The stable reference ensures Baileys still attempts its server-side logout before local credentials are discarded.
      */
     const socket = this.sock;
+    if (socket) this.disableCredentialSaves(socket);
     try {
       await socket?.logout();
     } finally {
-      await this.persistence.clearAuthState();
-      this.authState = await createPersistenceAuthState(this.persistence);
-      this.status = { state: "disconnected" };
+      if (socket) {
+        await this.resetLoggedOutAuth(socket);
+        if (this.sock === null || this.sock === socket) {
+          this.status = { state: "disconnected" };
+        }
+      } else {
+        await this.persistence.clearAuthState();
+        this.authState = await createPersistenceAuthState(this.persistence);
+        this.status = { state: "disconnected" };
+      }
     }
   }
 
@@ -147,8 +164,13 @@ export class WhatsAppConnection {
     });
 
     this.sock = socket;
-    socket.ev.on("creds.update", this.onCredsUpdate);
-    socket.ev.on("connection.update", this.onConnectionUpdate);
+    this.acceptCredentialSaves = true;
+    const credentialUpdateHandler = () => this.onCredsUpdate(socket);
+    const connectionUpdateHandler = (update: Partial<ConnectionState>) => this.onConnectionUpdate(socket, update);
+    this.credentialUpdateHandlers.set(socket, credentialUpdateHandler);
+    this.connectionUpdateHandlers.set(socket, connectionUpdateHandler);
+    socket.ev.on("creds.update", credentialUpdateHandler);
+    socket.ev.on("connection.update", connectionUpdateHandler);
     socket.ev.on("messages.upsert", this.onMessagesUpsert);
   }
 
@@ -156,27 +178,37 @@ export class WhatsAppConnection {
    * FNXC:WhatsAppAsyncListeners 2026-07-13-23:40:
    * Baileys uses EventEmitter, which does not observe rejected async listener promises. Every registered callback attaches its own rejection handler so QR/auth/persistence failures are logged and cannot become process-level unhandled rejections.
    */
-  private readonly onCredsUpdate = async (): Promise<void> => {
-    try {
-      await this.authState?.saveCreds();
-    } catch (error) {
-      this.ctx.logger.error("WhatsApp credential persistence failed", error);
-    }
-  };
+  private onCredsUpdate(socket: WASocket): Promise<void> {
+    if (this.sock !== socket || !this.acceptCredentialSaves) return Promise.resolve();
+    let operation: Promise<void>;
+    operation = Promise.resolve(this.authState?.saveCreds())
+      .catch((error: unknown) => {
+        this.ctx.logger.error("WhatsApp credential persistence failed", error);
+      })
+      .finally(() => this.credentialSaveOperations.delete(operation));
+    this.credentialSaveOperations.add(operation);
+    return operation;
+  }
 
-  private readonly onConnectionUpdate = (
+  private onConnectionUpdate(
+    socket: WASocket,
     update: Partial<ConnectionState>,
-  ): Promise<void> => this.handleConnectionUpdate(update).catch((error: unknown) => {
-    this.status = {
-      state: "error",
-      lastError: error instanceof Error ? error.message : String(error),
-    };
-    this.ctx.logger.error("WhatsApp connection update failed", error);
-  });
+  ): Promise<void> {
+    return this.handleConnectionUpdate(socket, update).catch((error: unknown) => {
+      if (this.sock !== socket) return;
+      this.status = {
+        state: "error",
+        lastError: error instanceof Error ? error.message : String(error),
+      };
+      this.ctx.logger.error("WhatsApp connection update failed", error);
+    });
+  }
 
-  private async handleConnectionUpdate(update: Partial<ConnectionState>): Promise<void> {
+  private async handleConnectionUpdate(socket: WASocket, update: Partial<ConnectionState>): Promise<void> {
+    if (this.sock !== socket) return;
     if (update.qr) {
       const qrDataUrl = await qrcode.toDataURL(update.qr);
+      if (this.sock !== socket) return;
       this.ctx.logger.info("WhatsApp pairing QR updated", update.qr);
       this.status = { state: "awaiting-qr", qr: update.qr, qrDataUrl };
     }
@@ -189,9 +221,10 @@ export class WhatsAppConnection {
 
     if (update.connection === "close") {
       if (isLoggedOutDisconnect(update.lastDisconnect?.error)) {
-        await this.persistence.clearAuthState();
-        this.authState = await createPersistenceAuthState(this.persistence);
-        this.status = { state: "disconnected", lastError: "loggedOut" };
+        await this.resetLoggedOutAuth(socket);
+        if (this.sock === null || this.sock === socket) {
+          this.status = { state: "disconnected", lastError: "loggedOut" };
+        }
         return;
       }
 
@@ -202,6 +235,34 @@ export class WhatsAppConnection {
       };
       this.scheduleReconnect();
     }
+  }
+
+  private disableCredentialSaves(socket: WASocket): void {
+    const credentialUpdateHandler = this.credentialUpdateHandlers.get(socket);
+    if (credentialUpdateHandler) socket.ev.off("creds.update", credentialUpdateHandler);
+    if (this.sock === socket) this.acceptCredentialSaves = false;
+  }
+
+  private resetLoggedOutAuth(socket: WASocket): Promise<void> {
+    const existing = this.authResetOperations.get(socket);
+    if (existing) return existing;
+
+    /**
+     * FNXC:WhatsAppCredentialReset 2026-07-14-02:08:
+     * Explicit logout and logged-out connection events must stop accepting credential writes and drain every accepted save before clearing authentication. Otherwise a standalone credentials upsert can finish after the clear and resurrect the stale session; one reset per socket also prevents the two logout surfaces from racing each other.
+     */
+    this.disableCredentialSaves(socket);
+    const operation = (async () => {
+      await Promise.allSettled([...this.credentialSaveOperations]);
+      if (this.sock !== null && this.sock !== socket) return;
+      await this.persistence.clearAuthState();
+      const replacementAuthState = await createPersistenceAuthState(this.persistence);
+      if (this.sock === null || this.sock === socket) {
+        this.authState = replacementAuthState;
+      }
+    })();
+    this.authResetOperations.set(socket, operation);
+    return operation;
   }
 
   private readonly onMessagesUpsert = (
