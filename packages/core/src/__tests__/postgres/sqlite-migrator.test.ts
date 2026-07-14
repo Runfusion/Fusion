@@ -350,6 +350,12 @@ async function teardownCtx(ctx: TestCtx | null): Promise<void> {
 pgDescribe("SQLite-to-PostgreSQL migrator", () => {
   let ctx: TestCtx | null = null;
 
+  const migrateTest = (
+    db: Parameters<typeof migrateSqliteToPostgres>[0],
+    sources: Parameters<typeof migrateSqliteToPostgres>[1],
+    options: Parameters<typeof migrateSqliteToPostgres>[2] = {},
+  ) => migrateSqliteToPostgres(db, sources, { projectId: "migration-test", ...options });
+
   beforeEach(async () => {
     ctx = await setupCtx();
   });
@@ -370,7 +376,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-001 — row-count verified migration
   it("migrates all rows with matching per-table row counts", async () => {
-    const report = await migrateSqliteToPostgres(ctx!.db, [
+    const report = await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "archive.db"), pgSchema: "archive" as const },
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
@@ -402,6 +408,148 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     expect(archived.targetRows).toBe(1);
   });
 
+  /*
+  FNXC:PostgresMigration 2026-07-13-22:37:
+  Every user table in a legacy SQLite database must be represented in the migration report. An unknown table is retained as an explicit failed verification so startup cannot claim a complete cutover while silently abandoning operator data.
+  */
+  it("reports an unmapped SQLite user table as a verification failure", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "fusion.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`CREATE TABLE operator_extension_data (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`);
+      legacy.prepare(`INSERT INTO operator_extension_data (id, payload) VALUES (?, ?)`).run("row-1", "must-not-disappear");
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(ctx!.db, [
+      { sqlitePath, pgSchema: "project" as const },
+    ]);
+
+    expect(report.tables).toContainEqual(
+      expect.objectContaining({
+        schema: "project",
+        table: "operator_extension_data",
+        sourceRows: 1,
+        insertedRows: 0,
+        verified: false,
+        skipped: false,
+      }),
+    );
+  });
+
+  /*
+  FNXC:PostgresMigration 2026-07-13-23:08:
+  FTS5 shadow tables are disposable implementation details, but the virtual table is the user-visible search dataset. Verification must distinguish the two so an unmapped search surface fails cutover while its internal indexes remain intentional skips.
+  */
+  it("fails an unmapped FTS5 virtual table while allowing only its shadow tables to skip", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "fusion.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`CREATE VIRTUAL TABLE operator_notes_fts USING fts5(body)`);
+      legacy.prepare(`INSERT INTO operator_notes_fts (body) VALUES (?)`).run("retain searchable content");
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(ctx!.db, [
+      { sqlitePath, pgSchema: "project" as const },
+    ]);
+
+    expect(report.tables).toContainEqual(expect.objectContaining({
+      table: "operator_notes_fts",
+      sourceRows: 1,
+      verified: false,
+      skipped: false,
+    }));
+    expect(report.tables).toContainEqual(expect.objectContaining({
+      table: "operator_notes_fts_data",
+      verified: true,
+      skipped: true,
+    }));
+  });
+
+  /*
+  FNXC:AutomationIsolation 2026-07-13-22:37:
+  Legacy project databases do not carry project_id on automation rows. Migration must inject the resolved registry identity before verification so bound automation stores and cron runners see only their project's schedules, including when legacy automation IDs overlap.
+  */
+  it("injects and verifies the project partition for migrated automations", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "fusion.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`CREATE TABLE automations (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, scheduleType TEXT NOT NULL,
+        cronExpression TEXT NOT NULL, command TEXT NOT NULL,
+        createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+      )`);
+      legacy.prepare(`INSERT INTO automations VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        "auto-shared", "Nightly", "cron", "0 0 * * *", "pnpm check", "2026-06-01", "2026-06-01",
+      );
+    } finally {
+      legacy.close();
+    }
+
+    for (const projectId of ["project-a", "project-b"]) {
+      const report = await migrateTest(
+        ctx!.db,
+        [{ sqlitePath, pgSchema: "project" as const }],
+        { projectId },
+      );
+      expect(report.tables.find((table) => table.table === "automations")).toEqual(
+        expect.objectContaining({ sourceRows: 1, targetRows: 1, verified: true }),
+      );
+    }
+
+    const rows = (await ctx!.db.execute(sql`
+      SELECT project_id, id FROM project.automations WHERE id = 'auto-shared' ORDER BY project_id
+    `)) as unknown as Array<{ project_id: string; id: string }>;
+    expect(rows).toEqual([
+      { project_id: "project-a", id: "auto-shared" },
+      { project_id: "project-b", id: "auto-shared" },
+    ]);
+  });
+
+  /*
+  FNXC:WhatsAppPostgres 2026-07-13-23:29:
+  Existing WhatsApp history, dedupe markers, credentials, and Signal keys must survive cutover. The generic camelCase mapper must target all four plugin hook tables and inject the registered project partition before verification.
+  */
+  it("migrates every legacy WhatsApp persistence table into the bound project", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "fusion.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`
+        CREATE TABLE whatsapp_chat_sessions (sender TEXT PRIMARY KEY, history TEXT NOT NULL, updatedAt TEXT NOT NULL);
+        CREATE TABLE whatsapp_chat_dedupe (messageId TEXT PRIMARY KEY, sender TEXT NOT NULL, receivedAt TEXT NOT NULL);
+        CREATE TABLE whatsapp_auth_creds (id TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL);
+        CREATE TABLE whatsapp_auth_keys (category TEXT NOT NULL, keyId TEXT NOT NULL, value TEXT NOT NULL, updatedAt TEXT NOT NULL, PRIMARY KEY (category, keyId));
+      `);
+      legacy.prepare(`INSERT INTO whatsapp_chat_sessions VALUES (?, ?, ?)`).run("+1555", "[]", "2026-07-01");
+      legacy.prepare(`INSERT INTO whatsapp_chat_dedupe VALUES (?, ?, ?)`).run("msg-1", "+1555", "2026-07-01");
+      legacy.prepare(`INSERT INTO whatsapp_auth_creds VALUES (?, ?, ?)`).run("creds", "{}", "2026-07-01");
+      legacy.prepare(`INSERT INTO whatsapp_auth_keys VALUES (?, ?, ?, ?)`).run("session", "key-1", "{}", "2026-07-01");
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(
+      ctx!.db,
+      [{ sqlitePath, pgSchema: "project" as const }],
+      { projectId: "project-whatsapp" },
+    );
+
+    for (const table of ["whatsapp_chat_sessions", "whatsapp_chat_dedupe", "whatsapp_auth_creds", "whatsapp_auth_keys"]) {
+      expect(report.tables).toContainEqual(expect.objectContaining({ table, sourceRows: 1, targetRows: 1, verified: true }));
+    }
+    const partitions = await ctx!.db.execute(sql`
+      SELECT project_id FROM project.whatsapp_chat_sessions
+      UNION ALL SELECT project_id FROM project.whatsapp_chat_dedupe
+      UNION ALL SELECT project_id FROM project.whatsapp_auth_creds
+      UNION ALL SELECT project_id FROM project.whatsapp_auth_keys
+    `) as unknown as Array<{ project_id: string }>;
+    expect(partitions).toHaveLength(4);
+    expect(partitions.every(({ project_id }) => project_id === "project-whatsapp")).toBe(true);
+  });
+
   // FNXC:PostgresMigration 2026-07-13-20:30:
   // Legacy camelCase TABLE names (activityLog, runAuditEvents, mergeQueue,
   // projectNodePathMappings, …) must be snake_cased when matched against
@@ -410,7 +558,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
   // counterpart"), surfacing post-cutover as
   // `Project/node path mapping not found` on engine start.
   it("migrates legacy camelCase-named tables into their snake_case PostgreSQL counterparts", async () => {
-    const report = await migrateSqliteToPostgres(ctx!.db, [
+    const report = await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -438,7 +586,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
   // mapping is now table-scoped: the agents.data column is classified as
   // jsonb (its type in the agents table specifically), not text.
   it("classifies the jsonb `data` column correctly per-table (P1 #14 collision fix)", async () => {
-    const report = await migrateSqliteToPostgres(ctx!.db, [
+    const report = await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -474,7 +622,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     ];
 
     // First migration: clean.
-    const first = await migrateSqliteToPostgres(ctx!.db, sources);
+    const first = await migrateTest(ctx!.db, sources);
     const tasksFirst = first.tables.find((t) => t.table === "tasks")!;
     expect(tasksFirst.verified).toBe(true);
 
@@ -486,7 +634,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     // (same PK), so the content checksum MUST now mismatch and report
     // verified: false for tasks. This proves the content check catches what
     // the row-count check could not.
-    const second = await migrateSqliteToPostgres(ctx!.db, sources);
+    const second = await migrateTest(ctx!.db, sources);
     const tasksSecond = second.tables.find((t) => t.table === "tasks")!;
     expect(tasksSecond.verified).toBe(false);
     expect(tasksSecond.targetRows).toBe(tasksSecond.sourceRows); // counts still match
@@ -494,7 +642,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-003 — JSON column fidelity
   it("round-trips JSON columns with identical shape (text-JSON → jsonb)", async () => {
-    await migrateSqliteToPostgres(ctx!.db, [
+    await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -516,7 +664,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
   });
 
   it("materializes defaults for legacy NULL values targeting required jsonb columns", async () => {
-    await migrateSqliteToPostgres(ctx!.db, [
+    await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -529,7 +677,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-003 — bytea fidelity
   it("round-trips bytea columns (BLOB → bytea) byte-identical", async () => {
-    await migrateSqliteToPostgres(ctx!.db, [
+    await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -544,7 +692,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-DATA-005/006 + soft-delete handling: deletedAt rows are migrated verbatim
   it("migrates soft-deleted rows verbatim (deletedAt preserved)", async () => {
-    await migrateSqliteToPostgres(ctx!.db, [
+    await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -558,7 +706,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-004 — sequence continuity
   it("bumps identity sequences to max(id)+1 so new inserts do not collide", async () => {
-    const report = await migrateSqliteToPostgres(ctx!.db, [
+    const report = await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -588,7 +736,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ];
 
-    const first = await migrateSqliteToPostgres(ctx!.db, sources);
+    const first = await migrateTest(ctx!.db, sources);
     const firstCounts = new Map(first.tables.map((t) => [`${t.schema}.${t.table}`, t.targetRows]));
 
     // FNXC:PostgresMigration 2026-07-13-21:05:
@@ -602,7 +750,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     }
 
     // Second run — should be a clean re-sync (ON CONFLICT DO NOTHING).
-    const second = await migrateSqliteToPostgres(ctx!.db, sources);
+    const second = await migrateTest(ctx!.db, sources);
     for (const t of second.tables) {
       const key = `${t.schema}.${t.table}`;
       expect(t.targetRows, `${key} row count should be unchanged on re-run`).toBe(firstCounts.get(key));
@@ -611,9 +759,36 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     }
   });
 
+  it("serializes concurrent cutovers on a multi-connection migration pool", async () => {
+    /*
+     * FNXC:PostgresMigration 2026-07-13-23:35:
+     * Exercise session pinning independently of the bulk-copy matrix so the
+     * concurrency invariant stays inside the merge-gate budget.
+     */
+    const sqlitePath = join(ctx!.fusionDir, "concurrent.db");
+    const sqliteDb = new DatabaseSync(sqlitePath);
+    sqliteDb.close();
+    const sources = [
+      { sqlitePath, pgSchema: "project" as const },
+    ];
+    const reports = await Promise.all([
+      migrateTest(ctx!.db, sources, { migrationKey: "concurrent-project", skipBaseline: true }),
+      migrateTest(ctx!.db, sources, { migrationKey: "concurrent-project", skipBaseline: true }),
+    ]);
+
+    for (const report of reports) {
+      expect(report.tables).toEqual([]);
+    }
+    const rows = (await ctx!.db.execute(sql`
+      SELECT status, project_id FROM public.fusion_sqlite_migrations
+      WHERE migration_key = 'concurrent-project'
+    `)) as unknown as Array<{ status: string; project_id: string }>;
+    expect(rows).toEqual([{ status: "complete", project_id: "migration-test" }]);
+  });
+
   // VAL-MIGRATE-005 — dry-run reports without writing
   it("dry-run reports the plan without modifying PostgreSQL", async () => {
-    const report = await migrateSqliteToPostgres(
+    const report = await migrateTest(
       ctx!.db,
       [{ sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const }],
       { dryRun: true },
@@ -638,7 +813,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-SEARCH-002 (search_vector population) — generated column auto-populates
   it("populates the search_vector generated column after migration", async () => {
-    await migrateSqliteToPostgres(ctx!.db, [
+    await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 
@@ -652,7 +827,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-006 — migrated DB shape matches native store expectations
   it("produces a target whose columns match the native schema shape", async () => {
-    await migrateSqliteToPostgres(ctx!.db, [
+    await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
 

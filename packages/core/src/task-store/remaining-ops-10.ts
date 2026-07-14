@@ -253,7 +253,10 @@ export async function clearActivityLogImpl(store: TaskStore): Promise<void> {
      * Drizzle instead of the SQLite-specific db.prepare() path.
      */
     if (store.backendMode) {
-      await store.asyncLayer!.db.delete(schema.project.activityLog);
+      const layer = store.asyncLayer!;
+      await layer.db
+        .delete(schema.project.activityLog)
+        .where(eq(schema.project.activityLog.projectId, layer.projectId ?? ""));
       return;
     }
     store.db.prepare("DELETE FROM activityLog").run();
@@ -323,6 +326,5 @@ export function getTodoStoreImpl(store: TaskStore): TodoStore | AsyncTodoStore {
     }
     return store.todoStore;
 }
-
 
 

@@ -136,6 +136,10 @@ interface TablePlan {
   */
   readonly pgTable: string;
   readonly columns: readonly ColumnMapping[];
+  /** Bound project identity injected into partitioned PostgreSQL tables. */
+  readonly partitionProjectId?: string;
+  /** Why a source table has no target mapping, when it is intentionally disposable. */
+  readonly allowedSkipReason?: string;
 }
 
 /** Per-table migration result. */
@@ -169,6 +173,49 @@ export interface MigrationOptions {
    * the caller guarantees the schema is already present.
    */
   readonly skipBaseline?: boolean;
+  /** Project partition used when importing one project's legacy databases into a shared cluster. */
+  readonly projectId?: string;
+  /** Durable identity used to serialize and record one project's cutover. */
+  readonly migrationKey?: string;
+  /** Leave a verified migration running until caller-side project stamping succeeds. */
+  readonly deferCompletion?: boolean;
+}
+
+const SQLITE_MIGRATION_STATE_TABLE = "fusion_sqlite_migrations";
+
+async function ensureMigrationStateTable(db: PostgresJsDatabase<Record<string, never>>): Promise<void> {
+  await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS public.${SQLITE_MIGRATION_STATE_TABLE} (
+    migration_key text PRIMARY KEY,
+    project_id text,
+    status text NOT NULL CHECK (status IN ('running', 'complete', 'failed')),
+    last_error text,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`));
+}
+
+/** Return true only after a fully verified cutover records its durable marker. */
+export async function isSqliteMigrationComplete(
+  db: PostgresJsDatabase<Record<string, never>>,
+  migrationKey: string,
+): Promise<boolean> {
+  await ensureMigrationStateTable(db);
+  const rows = (await db.execute(sql`
+    SELECT status FROM public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+    WHERE migration_key = ${migrationKey}
+  `)) as unknown as Array<{ status: string }>;
+  return rows[0]?.status === "complete";
+}
+
+/** Mark caller-side stamping and verification complete for a durable cutover. */
+export async function completeSqliteMigration(
+  db: PostgresJsDatabase<Record<string, never>>,
+  migrationKey: string,
+): Promise<void> {
+  await db.execute(sql`
+    UPDATE public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+    SET status = 'complete', last_error = NULL, updated_at = now()
+    WHERE migration_key = ${migrationKey}
+  `);
 }
 
 /**
@@ -190,15 +237,89 @@ export async function migrateSqliteToPostgres(
   sources: readonly SqliteMigrationSource[],
   options: MigrationOptions = {},
 ): Promise<MigrationReport> {
+  const migrationKey = options.migrationKey ?? `project:${options.projectId ?? "unbound"}`;
+  try {
+    /*
+    FNXC:PostgresMigrationSession 2026-07-14-00:05:
+    Pin the complete cutover to one transaction-backed PostgreSQL session. Advisory locking, trigger deferral, copy, verification, and reset must not hop across connections when callers provide a multi-connection pool.
+    */
+    return await migrationDb.transaction((tx) =>
+      migrateSqliteToPostgresOnSession(
+        tx as unknown as PostgresJsDatabase<Record<string, never>>,
+        sources,
+        options,
+      ),
+    );
+  } catch (error) {
+    if (options.dryRun !== true) {
+      await migrationDb.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:sqlite-migration-state'))`);
+        await ensureMigrationStateTable(tx);
+        await tx.execute(sql`
+          INSERT INTO public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+            (migration_key, project_id, status, last_error, updated_at)
+          VALUES (${migrationKey}, ${options.projectId ?? null}, 'failed', ${error instanceof Error ? error.message : String(error)}, now())
+          ON CONFLICT (migration_key) DO UPDATE
+          SET project_id = EXCLUDED.project_id, status = 'failed', last_error = EXCLUDED.last_error, updated_at = now()
+        `);
+      });
+    }
+    throw error;
+  }
+}
+
+async function migrateSqliteToPostgresOnSession(
+  migrationDb: PostgresJsDatabase<Record<string, never>>,
+  sources: readonly SqliteMigrationSource[],
+  options: MigrationOptions,
+): Promise<MigrationReport> {
   const dryRun = options.dryRun === true;
+  const migrationKey = options.migrationKey ?? `project:${options.projectId ?? "unbound"}`;
+
+  /*
+   * FNXC:PostgresMigration 2026-07-14-00:05:
+   * A failed cutover may already have copied rows. Serialize each project on
+   * the migration connection and persist completion only after every table
+   * verifies; startup can then retry idempotently instead of treating any
+   * copied task as proof that the whole migration finished.
+  */
+  if (!dryRun) {
+    await migrationDb.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:sqlite-migration-state'))`);
+    await ensureMigrationStateTable(migrationDb);
+    /*
+     * FNXC:PostgresMigrationSession 2026-07-14-00:14:
+     * Hold project serialization through transaction commit. Releasing a
+     * session lock before commit lets the next cutover block on the prior
+     * transaction's migration-state row and can deadlock pooled callers.
+     */
+    await migrationDb.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${migrationKey}, 0))`);
+    await migrationDb.execute(sql`
+      INSERT INTO public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+        (migration_key, project_id, status, last_error, updated_at)
+      VALUES (${migrationKey}, ${options.projectId ?? null}, 'running', NULL, now())
+      ON CONFLICT (migration_key) DO UPDATE
+      SET project_id = EXCLUDED.project_id, status = 'running', last_error = NULL, updated_at = now()
+    `);
+  }
 
   // 1. Apply the schema baseline (idempotent). In dry-run we still need to
   //    read the PostgreSQL column types, so the schema must exist. If the
   //    caller set skipBaseline, assume it's already there.
   let appliedBaseline = false;
-  if (!options.skipBaseline) {
-    const result = await applySchemaBaseline(migrationDb);
-    appliedBaseline = result.applied;
+  try {
+    if (!options.skipBaseline) {
+      const result = await applySchemaBaseline(migrationDb);
+      appliedBaseline = result.applied;
+    }
+  } catch (error) {
+    if (!dryRun) {
+      await migrationDb.execute(sql`
+        UPDATE public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+        SET status = 'failed', last_error = ${error instanceof Error ? error.message : String(error)}, updated_at = now()
+        WHERE migration_key = ${migrationKey}
+      `);
+    }
+    throw error;
   }
 
   const tableResults: TableMigrationResult[] = [];
@@ -230,9 +351,10 @@ export async function migrateSqliteToPostgres(
     }
   }
 
+  let copyError: unknown;
   try {
     for (const source of sources) {
-      const plan = await buildMigrationPlan(migrationDb, source);
+      const plan = await buildMigrationPlan(migrationDb, source, options.projectId);
       for (const tablePlan of plan) {
         const result = await migrateTable(migrationDb, source, tablePlan, dryRun);
         tableResults.push(result);
@@ -255,6 +377,8 @@ export async function migrateSqliteToPostgres(
         }
       }
     }
+  } catch (error) {
+    copyError = error;
   } finally {
     // Re-enable FK enforcement (triggers) after the copy, regardless of outcome.
     if (!dryRun) {
@@ -264,6 +388,17 @@ export async function migrateSqliteToPostgres(
         // best-effort reset; the connection is closed by the caller.
       }
     }
+  }
+
+  if (copyError !== undefined) {
+    if (!dryRun) {
+      await migrationDb.execute(sql`
+        UPDATE public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+        SET status = 'failed', last_error = ${copyError instanceof Error ? copyError.message : String(copyError)}, updated_at = now()
+        WHERE migration_key = ${migrationKey}
+      `);
+    }
+    throw copyError;
   }
 
   const report: MigrationReport = {
@@ -279,6 +414,13 @@ export async function migrateSqliteToPostgres(
   } else {
     const ok = tableResults.filter((t) => t.verified).length;
     const bad = tableResults.length - ok;
+    await migrationDb.execute(sql`
+      UPDATE public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+      SET status = ${bad === 0 ? (options.deferCompletion ? "running" : "complete") : "failed"},
+          last_error = ${bad === 0 ? null : `${bad} table(s) failed verification`},
+          updated_at = now()
+      WHERE migration_key = ${migrationKey}
+    `);
     log.log(`Migration complete: ${ok}/${tableResults.length} tables verified (${bad} failed verification). ${sequenceBumps.length} sequences bumped.`);
   }
 
@@ -296,23 +438,47 @@ export async function migrateSqliteToPostgres(
 async function buildMigrationPlan(
   db: PostgresJsDatabase<Record<string, never>>,
   source: SqliteMigrationSource,
+  projectId?: string,
 ): Promise<readonly TablePlan[]> {
   const sqlite = openSqlite(source.sqlitePath);
   try {
     const tables = listSqliteTables(sqlite);
+    const ftsVirtualTables = listFtsVirtualTables(sqlite);
+    const targetColumnsByTable = await loadTargetColumnMetadata(db, source.pgSchema);
     const plans: TablePlan[] = [];
     for (const table of tables) {
       // Legacy SQLite table names are camelCase; PostgreSQL tables are
       // snake_case. toSnakeCase is the identity for already-snake names.
       const pgTable = toSnakeCase(table);
-      const cols = await resolveColumnMapping(db, source.pgSchema, pgTable, table, sqlite);
+      const { columns: cols, targetColumnNames } = resolveColumnMapping(
+        pgTable,
+        table,
+        sqlite,
+        targetColumnsByTable,
+      );
+      const partitionProjectId =
+        projectId &&
+        source.pgSchema !== CENTRAL_SCHEMA &&
+        !cols.some((column) => column.pgName === "project_id") &&
+        targetColumnNames.has("project_id")
+          ? projectId
+          : undefined;
       if (cols.length === 0) {
-        // Table exists in SQLite but has no mappable columns in PostgreSQL —
-        // skip it (e.g. FTS5 shadow tables). Logged at the table-migration
-        // step, not here.
+        /*
+        FNXC:PostgresMigration 2026-07-13-22:37:
+        The migration report is the completeness contract for cutover. Preserve every SQLite table in the plan; only known SQLite bookkeeping and FTS5 implementation tables may be reported as intentional skips. Any other unmapped table must remain an unverified, non-skipped result so automated startup fails closed instead of silently abandoning data.
+        */
+        plans.push({
+          pgSchema: source.pgSchema,
+          table,
+          pgTable,
+          columns: cols,
+          partitionProjectId,
+          allowedSkipReason: disposableSqliteTableReason(ftsVirtualTables, table),
+        });
         continue;
       }
-      plans.push({ pgSchema: source.pgSchema, table, pgTable, columns: cols });
+      plans.push({ pgSchema: source.pgSchema, table, pgTable, columns: cols, partitionProjectId });
     }
     return plans;
   } finally {
@@ -336,23 +502,46 @@ function openSqlite(path: string): DatabaseSync {
   return db;
 }
 
-/** List user tables (excluding sqlite_ internal tables and FTS5 shadow tables). */
+/** List every SQLite table so the migration report can account for all source data. */
 function listSqliteTables(db: DatabaseSync): string[] {
   const rows = db
     .prepare(
       `SELECT name, type FROM sqlite_master
        WHERE type = 'table'
-         AND name NOT LIKE 'sqlite_%'
-         AND name NOT LIKE '%_fts%'
-         AND name NOT LIKE '%_data'
-         AND name NOT LIKE '%_idx'
-         AND name NOT LIKE '%_content'
-         AND name NOT LIKE '%_docsize'
-         AND name NOT LIKE '%_config'
        ORDER BY name`,
     )
     .all() as Array<{ name: string; type: string }>;
   return rows.map((r) => r.name);
+}
+
+function listFtsVirtualTables(db: DatabaseSync): readonly string[] {
+  return (db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND lower(sql) LIKE '%using fts5%'`)
+    .all() as Array<{ name: string }>).map(({ name }) => name);
+}
+
+/** Return the narrow allowlisted reason for SQLite-owned or FTS5-owned tables. */
+function disposableSqliteTableReason(virtualTables: readonly string[], table: string): string | undefined {
+  if (table === "sqlite_sequence" || table.startsWith("sqlite_stat")) {
+    return "SQLite internal bookkeeping table";
+  }
+
+  for (const name of virtualTables) {
+    /*
+    FNXC:PostgresMigration 2026-07-13-23:02:
+    An FTS5 virtual table is a logical, user-visible data surface even though SQLite stores it through shadow tables. Only the implementation-owned shadow tables may be skipped; an unmapped virtual table must fail verification so search content cannot disappear during cutover.
+    */
+    if (
+      table === `${name}_data` ||
+      table === `${name}_idx` ||
+      table === `${name}_content` ||
+      table === `${name}_docsize` ||
+      table === `${name}_config`
+    ) {
+      return `FTS5 implementation table for ${name}`;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -373,17 +562,60 @@ function listSqliteTables(db: DatabaseSync): string[] {
  *   - "generated" → omitted from INSERT (GENERATED ALWAYS AS, e.g. search_vector)
  *   - "plain"     → passed through verbatim
  *
- * Returns an empty list if the table does not exist in PostgreSQL (it is a
- * SQLite-only table with no PostgreSQL counterpart, e.g. an FTS5 shadow table
- * that escaped the name filter).
+ * Returns an empty column list plus an empty target-column set when the table
+ * does not exist in PostgreSQL. The target-column set also lets planning detect
+ * a project_id partition without a second metadata query per table.
  */
-async function resolveColumnMapping(
+interface PostgresColumnMetadata {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+  attidentity: string | null;
+  is_generated: number | string;
+}
+
+async function loadTargetColumnMetadata(
   db: PostgresJsDatabase<Record<string, never>>,
   pgSchema: string,
+): Promise<ReadonlyMap<string, readonly PostgresColumnMetadata[]>> {
+  /*
+  FNXC:PostgresMigration 2026-07-13-23:24:
+  Migration planning must introspect a target schema once, not issue one or two catalog queries for every SQLite table. Group the verified 1:1 catalog rows by table and build each plan locally; this keeps startup cutover bounded as plugin tables grow.
+  */
+  const rows = (await db.execute(sql`
+    SELECT
+      c.table_name,
+      c.column_name,
+      c.data_type,
+      c.is_nullable,
+      c.column_default,
+      a.attidentity,
+      CASE WHEN a.attgenerated <> '' THEN 1 ELSE 0 END AS is_generated
+    FROM information_schema.columns c
+    JOIN pg_attribute a ON a.attname = c.column_name
+    JOIN pg_class cls ON cls.oid = a.attrelid
+    JOIN pg_namespace n ON n.oid = cls.relnamespace
+    WHERE c.table_schema = ${pgSchema}
+      AND n.nspname = c.table_schema
+      AND cls.relname = c.table_name
+      AND a.attnum > 0
+  `)) as unknown as Array<PostgresColumnMetadata & { table_name: string }>;
+  const byTable = new Map<string, PostgresColumnMetadata[]>();
+  for (const { table_name: tableName, ...column } of rows) {
+    const columns = byTable.get(tableName) ?? [];
+    columns.push(column);
+    byTable.set(tableName, columns);
+  }
+  return byTable;
+}
+
+function resolveColumnMapping(
   pgTable: string,
   table: string,
   sqlite: DatabaseSync,
-): Promise<readonly ColumnMapping[]> {
+  targetColumnsByTable: ReadonlyMap<string, readonly PostgresColumnMetadata[]>,
+): { columns: readonly ColumnMapping[]; targetColumnNames: ReadonlySet<string> } {
   // PostgreSQL columns from information_schema + pg_attribute.
   // FNXC:PostgresMigration 2026-06-26-15:30 (fix migration-review P1 #14):
   // The join between information_schema.columns and pg_attribute MUST be
@@ -396,39 +628,14 @@ async function resolveColumnMapping(
   // row for that column name across the schema and the JOIN exploded to one
   // arbitrary row — classifications were then random. Adding the table
   // predicate (cls.relname = c.table_name AND n.nspname = c.table_schema)
-  // makes the join 1:1 per table and the data_type deterministic. The
-  // table_schema/table_name predicates are also moved up into the
-  // information_schema WHERE so we don't even consult other tables.
-  const pgCols = (await db.execute(sql`
-    SELECT
-      c.column_name,
-      c.data_type,
-      c.is_nullable,
-      c.column_default,
-      a.attidentity,
-      CASE WHEN a.attgenerated <> '' THEN 1 ELSE 0 END AS is_generated
-    FROM information_schema.columns c
-    JOIN pg_attribute a
-      ON a.attname = c.column_name
-    JOIN pg_class cls ON cls.oid = a.attrelid
-    JOIN pg_namespace n ON n.oid = cls.relnamespace
-    WHERE c.table_schema = ${pgSchema}
-      AND c.table_name = ${pgTable}
-      AND n.nspname = c.table_schema
-      AND cls.relname = c.table_name
-      AND a.attnum > 0
-  `)) as unknown as Array<{
-    column_name: string;
-    data_type: string;
-    is_nullable: string;
-    column_default: string | null;
-    attidentity: string | null;
-    is_generated: number | string;
-  }>;
+  // makes the join 1:1 per table and the data_type deterministic. Planning now
+  // loads those verified rows once per schema and supplies this table's group,
+  // avoiding repeated catalog queries without weakening the join invariant.
+  const pgCols = targetColumnsByTable.get(pgTable) ?? [];
 
   if (pgCols.length === 0) {
     // No PostgreSQL table with this name — skip.
-    return [];
+    return { columns: [], targetColumnNames: new Set() };
   }
 
   const pgByName = new Map(pgCols.map((c) => [c.column_name, c]));
@@ -470,7 +677,7 @@ async function resolveColumnMapping(
     mapping.push({ sqliteName: sc.name, pgName, type, nullJsonbFallback });
   }
 
-  return mapping;
+  return { columns: mapping, targetColumnNames: new Set(pgByName.keys()) };
 }
 
 /** Classify a PostgreSQL column into a conversion type. */
@@ -576,6 +783,25 @@ async function migrateTable(
   plan: TablePlan,
   dryRun: boolean,
 ): Promise<TableMigrationResult> {
+  if (plan.columns.length === 0) {
+    const sqlite = openSqlite(source.sqlitePath);
+    try {
+      const countRow = sqlite.prepare(`SELECT COUNT(*) AS n FROM ${quoteIdent(plan.table)}`).get() as { n: number };
+      const allowedSkip = plan.allowedSkipReason !== undefined;
+      return {
+        schema: plan.pgSchema,
+        table: plan.pgTable,
+        sourceRows: Number(countRow.n),
+        insertedRows: 0,
+        targetRows: 0,
+        verified: allowedSkip,
+        skipped: allowedSkip,
+        skipReason: plan.allowedSkipReason ?? "no PostgreSQL table or mappable columns",
+      };
+    } finally {
+      sqlite.close();
+    }
+  }
   // FNXC:PostgresMigration 2026-06-24-09:20:
   // Identity columns ARE copied (with OVERRIDING SYSTEM VALUE) so the actual
   // id values from SQLite are preserved. This is required for two reasons:
@@ -590,7 +816,7 @@ async function migrateTable(
   if (insertableCols.length === 0) {
     // No insertable columns (e.g. a pure-generated table). Verify the target
     // exists but copy nothing.
-    const targetRows = await countTargetRows(db, plan.pgSchema, plan.pgTable);
+    const targetRows = await countTargetRows(db, plan.pgSchema, plan.pgTable, plan.partitionProjectId);
     return {
       schema: plan.pgSchema,
       table: plan.pgTable,
@@ -623,7 +849,7 @@ async function migrateTable(
         table: plan.pgTable,
         sourceRows,
         insertedRows: 0,
-        targetRows: dryRun ? 0 : await countTargetRows(db, plan.pgSchema, plan.pgTable),
+        targetRows: dryRun ? 0 : await countTargetRows(db, plan.pgSchema, plan.pgTable, plan.partitionProjectId),
         verified: dryRun ? false : true,
         skipped: dryRun ? true : false,
         skipReason: dryRun ? "dry-run" : "no source rows",
@@ -668,7 +894,7 @@ async function migrateTable(
     // Both layers must pass for `verified: true`. The MD5 is computed in SQL
     // (md5(string_agg(...)) on PostgreSQL, and a Node-side md5 over the SQLite
     // converted stream) so the comparison is a single short string per side.
-    const targetRows = await countTargetRows(db, plan.pgSchema, plan.pgTable);
+    const targetRows = await countTargetRows(db, plan.pgSchema, plan.pgTable, plan.partitionProjectId);
     const rowCountOk = targetRows === sourceRows;
     let contentOk = true;
     if (rowCountOk && sourceRows > 0) {
@@ -678,6 +904,7 @@ async function migrateTable(
         plan.pgSchema,
         plan.pgTable,
         insertableCols,
+        plan.partitionProjectId,
       );
       contentOk = sourceChecksum === targetChecksum;
       if (!contentOk) {
@@ -728,7 +955,10 @@ async function insertBatch(
   hasIdentityCol: boolean,
 ): Promise<number> {
   if (rows.length === 0) return 0;
-  const colList = cols.map((c) => quoteIdent(c.pgName)).join(", ");
+  const colList = [
+    ...cols.map((c) => quoteIdent(c.pgName)),
+    ...(plan.partitionProjectId ? [quoteIdent("project_id")] : []),
+  ].join(", ");
   const schemaQualifiedTable = `${quoteIdent(plan.pgSchema)}.${quoteIdent(plan.pgTable)}`;
   // OVERRIDING SYSTEM VALUE lets us write explicit values into GENERATED ALWAYS
   // AS IDENTITY columns so the SQLite id is preserved (VAL-MIGRATE-002/004).
@@ -750,12 +980,11 @@ async function insertBatch(
     return sql`${value}`;
   };
 
-  const valueRowsBuilt = rows.map(
-    (row) => sql`(${sql.join(
-      cols.map((c) => buildCell(c, row[c.pgName])),
-      sql`, `,
-    )})`,
-  );
+  const valueRowsBuilt = rows.map((row) => {
+    const cells = cols.map((c) => buildCell(c, row[c.pgName]));
+    if (plan.partitionProjectId) cells.push(sql`${plan.partitionProjectId}`);
+    return sql`(${sql.join(cells, sql`, `)})`;
+  });
 
   /*
   FNXC:PostgresMigration 2026-07-13-21:05:
@@ -780,9 +1009,12 @@ async function countTargetRows(
   db: PostgresJsDatabase<Record<string, never>>,
   pgSchema: string,
   table: string,
+  projectId?: string,
 ): Promise<number> {
   const result = (await db.execute(
-    sql`SELECT COUNT(*)::int AS n FROM ${sql.raw(quoteIdent(pgSchema))}.${sql.raw(quoteIdent(table))}`,
+    projectId
+      ? sql`SELECT COUNT(*)::int AS n FROM ${sql.raw(quoteIdent(pgSchema))}.${sql.raw(quoteIdent(table))} WHERE project_id = ${projectId}`
+      : sql`SELECT COUNT(*)::int AS n FROM ${sql.raw(quoteIdent(pgSchema))}.${sql.raw(quoteIdent(table))}`,
   )) as unknown as Array<{ n: number }>;
   return Number(result[0]?.n ?? 0);
 }
@@ -925,9 +1157,8 @@ function stableJsonStringify(value: unknown): string {
  * the SAME insertable columns the copy used (so unmapped/generated columns do
  * not pollute the checksum), applies the SAME per-cell conversion the copy
  * used (so a jsonb cell is checksummed in its converted form), and MD5s the
- * resulting canonical row stream. Rows are sorted by their primary-key column
- * (the first insertable column) so row order from SQLite (insertion order)
- * does not matter.
+ * resulting canonical row stream. Rows are sorted by every insertable column
+ * so composite keys and duplicate leading values remain deterministic.
  *
  * FNXC:PostgresMigration 2026-06-26-15:50:
  * The checksum is computed over the CONVERTED values, not the raw SQLite
@@ -942,10 +1173,10 @@ function computeSourceContentChecksum(
   cols: readonly ColumnMapping[],
 ): string {
   if (cols.length === 0) return "";
-  const pkCol = cols[0]; // first insertable column is the identity/PK for sorting
   const selectCols = cols.map((c) => quoteIdent(c.sqliteName)).join(", ");
+  const orderCols = cols.map((c) => quoteIdent(c.sqliteName)).join(", ");
   const rows = sqlite
-    .prepare(`SELECT ${selectCols} FROM ${quoteIdent(table)} ORDER BY ${quoteIdent(pkCol.sqliteName)}`)
+    .prepare(`SELECT ${selectCols} FROM ${quoteIdent(table)} ORDER BY ${orderCols}`)
     .all() as Array<Record<string, unknown>>;
 
   const hash = createHash("md5");
@@ -963,8 +1194,7 @@ function computeSourceContentChecksum(
 /**
  * Compute a content checksum over the PostgreSQL target rows for a table.
  * Selects the SAME insertable columns the copy used and MD5s the canonical
- * row stream. Rows are sorted by the same primary-key column as the source
- * checksum so the two streams align row-for-row.
+ * row stream. Rows use the same complete ordering as the source checksum.
  *
  * jsonb columns come back from postgres.js as already-parsed JS values, and
  * bytea as Buffer, so canonicalizeCell handles them directly. The PostgreSQL
@@ -978,14 +1208,15 @@ async function computeTargetContentChecksum(
   pgSchema: string,
   table: string,
   cols: readonly ColumnMapping[],
+  projectId?: string,
 ): Promise<string> {
   if (cols.length === 0) return "";
-  const pkCol = cols[0];
   const selectCols = cols.map((c) => quoteIdent(c.pgName)).join(", ");
+  const orderCols = cols.map((c) => `${quoteIdent(c.pgName)} NULLS FIRST`).join(", ");
   const rows = (await db.execute(
     sql`SELECT ${sql.raw(selectCols)} FROM ${sql.raw(quoteIdent(pgSchema))}.${sql.raw(
       quoteIdent(table),
-    )} ORDER BY ${sql.raw(quoteIdent(pkCol.pgName))}`,
+    )}${projectId ? sql` WHERE project_id = ${projectId}` : sql``} ORDER BY ${sql.raw(orderCols)}`,
   )) as unknown as Array<Record<string, unknown>>;
 
   const hash = createHash("md5");

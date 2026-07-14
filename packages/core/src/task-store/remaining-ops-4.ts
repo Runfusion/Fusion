@@ -669,7 +669,7 @@ export async function getTaskMovedCountsByDayImpl(store: TaskStore, options: { s
     // Backend-mode: delegate to the async audit helper.
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getTaskMovedCountsByDayAsync(layer.db, options);
+      return getTaskMovedCountsByDayAsync(layer.db, layer.projectId ?? "", options);
     }
     let sql =
       "SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS count FROM activityLog WHERE type = 'task:moved' AND timestamp > ? AND timestamp <= ?";
@@ -800,4 +800,3 @@ export async function upsertTaskCommitAssociationImpl(store: TaskStore, input: O
     );
     return association;
   }
-

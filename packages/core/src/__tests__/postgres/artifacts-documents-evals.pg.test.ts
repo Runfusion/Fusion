@@ -20,6 +20,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import { AsyncEvalStore } from "../../async-eval-store.js";
+import { runScheduledEvalBatch } from "../../eval-automation.js";
 
 const pgTest = pgDescribe;
 
@@ -182,5 +183,56 @@ pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
     const got = await evalStore.getTaskResult(result.id);
     expect(got?.overallScore).toBe(87);
     expect(got?.taskSnapshot.title).toBe("Snapshot title");
+  });
+
+  /*
+  FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
+  Scheduled evaluation must use the same lifecycle on PostgreSQL as manual dashboard runs. This integration proof drives the real TaskStore and AsyncEvalStore through selection, scoring, event persistence, and terminal completion.
+  */
+  it("runs a scheduled evaluation batch through AsyncEvalStore", async () => {
+    const store = h.store();
+    const completedAt = "2026-07-13T20:00:00.000Z";
+    const task = await store.createTask({ description: "Scheduled evaluation candidate" });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    await store.moveTask(task.id, "in-review");
+    await store.moveTask(task.id, "done");
+    await store.updateTask(task.id, { executionCompletedAt: completedAt });
+
+    const result = await runScheduledEvalBatch({
+      store,
+      projectId: "P-EVAL-SCHEDULED",
+      startedAt: "2026-07-13T21:00:00.000Z",
+      evaluator: async () => ({ status: "scored", overallScore: 91, maxScore: 100 }),
+    });
+
+    expect(result).toMatchObject({ status: "completed", selectedTaskIds: [task.id], tasksSelected: 1 });
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect((await evalStore.getRun(result.runId))?.status).toBe("completed");
+    expect(await evalStore.listTaskResults({ runId: result.runId })).toHaveLength(1);
+    expect((await evalStore.listRunEvents(result.runId)).map((event) => event.status)).toContain("completed");
+  });
+
+  it("persists a failed lifecycle when scheduled task selection fails", async () => {
+    const store = h.store();
+    const result = await runScheduledEvalBatch({
+      store: {
+        getEvalStore: () => store.getEvalStore(),
+        listTasks: async () => { throw new Error("selection unavailable"); },
+      },
+      projectId: "P-EVAL-FAILURE",
+      startedAt: "2026-07-13T22:00:00.000Z",
+      evaluator: async () => ({ status: "scored", overallScore: 100, maxScore: 100 }),
+    });
+
+    expect(result.status).toBe("failed");
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect(await evalStore.getRun(result.runId)).toMatchObject({
+      status: "failed",
+      error: "selection unavailable",
+    });
+    expect(await evalStore.listRunEvents(result.runId)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "failed", type: "error" })]),
+    );
   });
 });

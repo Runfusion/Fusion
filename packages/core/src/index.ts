@@ -2225,6 +2225,8 @@ export {
   PROJECT_BACKUP_SCHEMAS,
   CENTRAL_BACKUP_SCHEMAS,
   migrateSqliteToPostgres,
+  isSqliteMigrationComplete,
+  completeSqliteMigration,
   defaultMigrationSources,
   // FNXC:CentralProjectIdentity 2026-07-13-23:10:
   // Post-migration project-partition stamping, shared by the startup-factory

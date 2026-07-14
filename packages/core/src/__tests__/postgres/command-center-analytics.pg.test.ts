@@ -51,7 +51,7 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
   // ── Empty project: each aggregator resolves with a zero/empty shape ─────────
 
   it("all four aggregators resolve (no throw) against an empty project", async () => {
-    const layer = h.layer();
+    const layer = Object.assign(h.layer(), { projectId: "p1" });
     const range = { from: FROM, to: TO };
 
     const productivity = await aggregateProductivityAnalytics(layer, range);
@@ -145,11 +145,11 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
 
     // Usage events: tool calls + a session start.
     await adminDb.execute(sql`
-      INSERT INTO project.usage_events (ts, kind, tool_name, category)
+      INSERT INTO project.usage_events (project_id, ts, kind, tool_name, category)
       VALUES
-        (${IN_RANGE}, 'tool_call', 'Read', 'other'),
-        (${IN_RANGE}, 'tool_call', 'Edit', 'other'),
-        (${IN_RANGE}, 'session_start', NULL, NULL)
+        ('p1', ${IN_RANGE}, 'tool_call', 'Read', 'other'),
+        ('p1', ${IN_RANGE}, 'tool_call', 'Edit', 'other'),
+        ('p1', ${IN_RANGE}, 'session_start', NULL, NULL)
     `);
 
     // An approval event (human intervention).
@@ -160,7 +160,7 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
         ('ev-1', 'req-1', 'approved', 'user-1', 'user', 'User One', ${IN_RANGE})
     `);
 
-    const layer = h.layer();
+    const layer = Object.assign(h.layer(), { projectId: "p1" });
     const range = { from: FROM, to: TO };
 
     // Productivity.

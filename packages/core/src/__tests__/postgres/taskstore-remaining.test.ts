@@ -367,7 +367,7 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     ctx = await setupCtx();
     await insertTaskRow(ctx.layer, makeMinimalTask("KB-ACT"), { lineageId: null });
 
-    await recordActivityLogEntry(ctx.layer.db, {
+    await recordActivityLogEntry(ctx.layer.db, ctx.layer.projectId ?? "", {
       type: "task:moved",
       taskId: "KB-ACT",
       taskTitle: "Test Task",
@@ -375,7 +375,7 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
       metadata: { from: "todo", to: "in-progress" },
     });
 
-    const entries = await getActivityLog(ctx.layer.db, { type: "task:moved" });
+    const entries = await getActivityLog(ctx.layer.db, ctx.layer.projectId ?? "", { type: "task:moved" });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.taskId).toBe("KB-ACT");
     expect(entries[0]?.metadata).toEqual({ from: "todo", to: "in-progress" });
@@ -615,7 +615,7 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
 
   it("usage events round-trip (emit + query)", async () => {
     ctx = await setupCtx();
-    const inserted = await emitUsageEvent(ctx.layer.db, {
+    const inserted = await emitUsageEvent(ctx.layer.db, ctx.layer.projectId ?? "", {
       kind: "tool_call",
       taskId: "KB-USAGE",
       agentId: "agent-1",
@@ -625,7 +625,7 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     });
     expect(inserted).toBe(true);
 
-    const events = await queryUsageEvents(ctx.layer.db, { taskId: "KB-USAGE" });
+    const events = await queryUsageEvents(ctx.layer.db, ctx.layer.projectId ?? "", { taskId: "KB-USAGE" });
     expect(events).toHaveLength(1);
     expect(events[0]?.toolName).toBe("edit");
     expect(events[0]?.meta).toEqual({ duration: 42 });
@@ -633,7 +633,7 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
 
   it("usage events fail-soft on unknown kind", async () => {
     ctx = await setupCtx();
-    const inserted = await emitUsageEvent(ctx.layer.db, {
+    const inserted = await emitUsageEvent(ctx.layer.db, ctx.layer.projectId ?? "", {
       // @ts-expect-error — intentionally invalid kind
       kind: "bogus_kind",
     });

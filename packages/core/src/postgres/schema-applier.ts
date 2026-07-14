@@ -26,14 +26,26 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 
-/** The single migration version this applier knows about. */
-export const SCHEMA_BASELINE_VERSION = "0000";
+/** The latest PostgreSQL schema version known to this applier. */
+export const SCHEMA_BASELINE_VERSION = "0002";
+const INITIAL_SCHEMA_VERSION = "0000";
+const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASELINE_MIGRATION_PATH = join(__dirname, "migrations", "0000_initial.sql");
+const AUTOMATION_ISOLATION_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0001_automation_project_isolation.sql",
+);
+const ANALYTICS_ISOLATION_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0002_analytics_project_isolation.sql",
+);
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -80,27 +92,66 @@ export async function applySchemaBaseline(
   db: PostgresJsDatabase<Record<string, never>>,
   options: { pluginHooks?: readonly PluginSchemaInitHook[] } = {},
 ): Promise<{ applied: boolean; pluginHooksRun: number }> {
-  await ensureBookkeepingTable(db);
-  const applied = await getAppliedMigrations(db);
-  const alreadyApplied = applied.includes(SCHEMA_BASELINE_VERSION);
+  /*
+   * FNXC:PostgresSchema 2026-07-14-00:05:
+   * Schema versions are a cluster-wide invariant. Serialize version discovery,
+   * DDL, and bookkeeping in one transaction so concurrent Fusion processes
+   * cannot both apply a version or race its primary-key marker.
+  */
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:schema-applier'))`);
+    await ensureBookkeepingTable(tx);
+    const applied = await getAppliedMigrations(tx);
+    const baselineAlreadyApplied = applied.includes(INITIAL_SCHEMA_VERSION);
+    const automationIsolationAlreadyApplied = applied.includes(AUTOMATION_ISOLATION_SCHEMA_VERSION);
+    const analyticsIsolationAlreadyApplied = applied.includes(SCHEMA_BASELINE_VERSION);
+    let schemaChanged = false;
 
-  if (!alreadyApplied) {
-    const baselineSql = await readBaselineMigrationSql();
-    // The baseline contains multiple statements including CREATE SCHEMA, CREATE
-    // TABLE, CREATE INDEX, and seed INSERTs. postgres.js executes a single
-    // query string as one batch (simple query protocol when unparameterized).
-    await db.execute(sql.raw(baselineSql));
-    await db.execute(
-      sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SCHEMA_BASELINE_VERSION})`,
-    );
-  }
+    if (!baselineAlreadyApplied) {
+      const baselineSql = await readBaselineMigrationSql();
+      // The baseline contains multiple statements including CREATE SCHEMA, CREATE
+      // TABLE, CREATE INDEX, and seed INSERTs. postgres.js executes a single
+      // query string as one batch (simple query protocol when unparameterized).
+      await tx.execute(sql.raw(baselineSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${INITIAL_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+  /*
+   * FNXC:AutomationIsolation 2026-07-13-22:37:
+   * A database that already recorded the initial PostgreSQL baseline must still receive project-scoped automation storage. Apply this version independently of 0000; ambiguous legacy ownership fails closed before any bound cron runner can silently omit those schedules.
+   */
+    if (!automationIsolationAlreadyApplied) {
+      const migrationSql = await readFile(AUTOMATION_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${AUTOMATION_ISOLATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:AnalyticsIsolation 2026-07-14-00:05:
+    Existing PostgreSQL databases that already recorded 0001 must independently receive analytics project partitions before project-scoped readers and writers start. Keep 0002 versioned so a fresh baseline cannot hide a skipped upgrade path.
+    */
+    if (!analyticsIsolationAlreadyApplied) {
+      const migrationSql = await readFile(ANALYTICS_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SCHEMA_BASELINE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
 
   // Run plugin schema-init hooks regardless of whether the baseline was just
   // applied or already present — plugin tables must exist on every connection
   // the applier touches. The hooks are themselves idempotent (CREATE TABLE IF
   // NOT EXISTS), so re-running is safe.
-  const pluginHooks = options.pluginHooks ?? DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS;
-  await runPluginSchemaInitHooks(db, pluginHooks);
+    const pluginHooks = options.pluginHooks ?? DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS;
+    await runPluginSchemaInitHooks(tx, pluginHooks);
 
-  return { applied: !alreadyApplied, pluginHooksRun: pluginHooks.length };
+    return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
+  });
 }

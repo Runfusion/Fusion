@@ -45,7 +45,6 @@
 
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { sql as drizzleSql } from "drizzle-orm";
 import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
 import { createLogger } from "../logger.js";
 import { TaskStore } from "../store.js";
@@ -61,6 +60,7 @@ import {
 } from "./connection.js";
 import { applySchemaBaseline } from "./schema-applier.js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
+import { lookupRegisteredProjectIdByPath, stampMigratedProjectRows } from "./migration-stamping.js";
 
 // FNXC:RuntimeStartupWiring 2026-06-24-10:55:
 // The embedded PostgreSQL lifecycle module imports the `embedded-postgres`
@@ -382,32 +382,52 @@ export async function createTaskStoreForBackend(
   is not registered (legacy/unregistered single-project setups stay unbound,
   matching their unfiltered readers).
   */
-  const lookupRegisteredProjectIdByPath = async (): Promise<string | undefined> => {
-    if (!rootDir) return undefined;
-    try {
-      const projectRows = (await connections.migration.execute(
-        drizzleSql`SELECT id FROM central.projects WHERE path = ${rootDir} LIMIT 1`,
-      )) as Array<{ id: string }>;
-      return projectRows[0]?.id;
-    } catch {
-      return undefined;
-    }
-  };
   if (rootDir) {
     try {
       const fusionDir = join(rootDir, ".fusion");
       const legacySqlitePath = join(fusionDir, "fusion.db");
       if (existsSync(legacySqlitePath)) {
+        let globalDir = options.globalSettingsDir;
+        if (!globalDir) {
+          try {
+            const { resolveGlobalDir } = await import("../global-settings.js");
+            globalDir = resolveGlobalDir();
+          } catch {
+            globalDir = undefined;
+          }
+        }
+
+        let migrationProjectId = options.projectId
+          ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir));
+        const legacyCentralPath = globalDir ? join(globalDir, "fusion-central.db") : undefined;
+        if (!migrationProjectId && legacyCentralPath && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
+          const { DatabaseSync } = await import("../sqlite-adapter.js");
+          const legacyCentral = new DatabaseSync(legacyCentralPath);
+          try {
+            const row = legacyCentral.prepare(`SELECT id FROM projects WHERE path = ? LIMIT 1`).get(rootDir) as
+              | { id: string }
+              | undefined;
+            migrationProjectId = row?.id;
+          } catch {
+            // A pre-registry central database leaves legacy single-project startup unbound.
+          } finally {
+            legacyCentral.close();
+          }
+        }
         /*
         FNXC:MultiProjectIsolation 2026-07-11:
         With per-project task partitioning (project_id on project.tasks), the
         first-boot emptiness check must be scoped to THIS project — otherwise
         the second project booting against the shared embedded cluster sees the
         first project's rows and silently skips migrating its own legacy
-        fusion.db (the exact data-loss trap Step 5.5 exists to close). NULL
-        project_id rows are counted as blocking: they may be this project's
-        pre-isolation data, and migrating on top of them risks id collisions.
-        Without a bound projectId the pre-isolation whole-table check applies.
+        fusion.db (the exact data-loss trap Step 5.5 exists to close).
+
+        FNXC:MultiProjectMigration 2026-07-13-22:37:
+        Resolve identity from PostgreSQL or the legacy central registry before
+        the emptiness check, then count only that partition. NULL or another
+        project's rows cannot suppress this migration; global-key collisions
+        instead surface through scoped post-copy verification and fail closed.
+        Without a registered identity the legacy whole-table check applies.
 
         FNXC:PostgresCutover 2026-07-13-20:50:
         Order matters: the PostgreSQL emptiness count runs BEFORE the SQLite
@@ -419,31 +439,34 @@ export async function createTaskStoreForBackend(
         only on the rare empty-PG path where auto-migration is actually being
         considered.
         */
-        const countRows = (await connections.migration.execute(
-          options.projectId
-            ? drizzleSql`SELECT count(*)::int AS count FROM project.tasks WHERE project_id = ${options.projectId} OR project_id IS NULL`
-            : drizzleSql`SELECT count(*)::int AS count FROM project.tasks`,
-        )) as Array<{ count: number }>;
-        const pgTaskCount = Number(countRows[0]?.count ?? 0);
-        if (pgTaskCount === 0 && isValidSqliteDatabaseFile(legacySqlitePath)) {
-          const { migrateSqliteToPostgres, defaultMigrationSources } = await import("./sqlite-migrator.js");
+        const migrationKey = `project:${migrationProjectId ?? rootDir}`;
+        const { migrateSqliteToPostgres, defaultMigrationSources, isSqliteMigrationComplete, completeSqliteMigration } = await import("./sqlite-migrator.js");
+        const migrationComplete = await isSqliteMigrationComplete(connections.migration, migrationKey);
+        if (!migrationComplete && isValidSqliteDatabaseFile(legacySqlitePath)) {
           // The central (global-dir) source is optional: when no global dir is
           // resolvable (e.g. tests without an explicit dir), migrate only the
           // project-local sources rather than failing the boot.
-          let globalDir = options.globalSettingsDir;
-          if (!globalDir) {
-            try {
-              const { resolveGlobalDir } = await import("../global-settings.js");
-              globalDir = resolveGlobalDir();
-            } catch {
-              globalDir = undefined;
-            }
-          }
           const sources = defaultMigrationSources(fusionDir, globalDir ?? join(fusionDir, "__no-global-dir__"))
             .filter((source) => existsSync(source.sqlitePath) && isValidSqliteDatabaseFile(source.sqlitePath));
           if (sources.length > 0) {
             log.log(`startup-factory: empty PostgreSQL database with legacy SQLite data present — auto-migrating ${sources.length} source(s) (SQLite files are kept as backups)`);
-            const report = await migrateSqliteToPostgres(connections.migration, sources, { skipBaseline: true });
+            const report = await migrateSqliteToPostgres(connections.migration, sources, {
+              skipBaseline: true,
+              projectId: migrationProjectId,
+              migrationKey,
+              deferCompletion: true,
+            });
+            /*
+            FNXC:PostgresMigrationVerification 2026-07-13-22:37:
+            Startup may advertise and bind a migrated database only after every non-disposable source table passes row-count and content verification. Fail before project stamping and before the migration notice so conflicts and unmapped operator tables remain diagnosable rather than becoming a false successful cutover.
+            */
+            const failedTables = report.tables.filter((table) => !table.skipped && !table.verified);
+            if (failedTables.length > 0) {
+              const failures = failedTables
+                .map((table) => `${table.schema}.${table.table} (${table.skipReason ?? `source=${table.sourceRows}, target=${table.targetRows}`})`)
+                .join(", ");
+              throw new Error(`${failedTables.length} table(s) failed verification: ${failures}`);
+            }
             const migratedRows = report.tables.reduce((sum, table) => sum + table.insertedRows, 0);
             /*
             FNXC:MultiProjectIsolation 2026-07-11:
@@ -470,7 +493,8 @@ export async function createTaskStoreForBackend(
             centrally, leave rows NULL — readers for unregistered
             single-project setups use an unbound layer with no scope filter.
             */
-            const stampProjectId = options.projectId ?? (await lookupRegisteredProjectIdByPath());
+            const stampProjectId = migrationProjectId
+              ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir));
             if (stampProjectId) {
               /*
               FNXC:CentralProjectIdentity 2026-07-13-23:10:
@@ -480,12 +504,12 @@ export async function createTaskStoreForBackend(
               stampMigratedProjectRows. rootDir is the pre-isolation key for the
               workflow tables, so it is passed alongside the stamp id.
               */
-              const { stampMigratedProjectRows } = await import("./migration-stamping.js");
               await stampMigratedProjectRows(connections.migration, {
                 projectId: stampProjectId,
                 rootDir,
               });
             }
+            await completeSqliteMigration(connections.migration, migrationKey);
             /*
             FNXC:PostgresMigrationBanner 2026-07-12:
             Remember the successful auto-migration so the dashboard can show a
@@ -533,7 +557,8 @@ export async function createTaskStoreForBackend(
   Unregistered paths resolve to undefined and boot unbound, preserving legacy
   single-project behavior.
   */
-  const resolvedProjectId = options.projectId ?? (await lookupRegisteredProjectIdByPath());
+  const resolvedProjectId = options.projectId
+    ?? (rootDir ? await lookupRegisteredProjectIdByPath(connections.migration, rootDir) : undefined);
   const asyncLayer = createAsyncDataLayer(connections, { projectId: resolvedProjectId });
 
   // Step 7: construct the TaskStore in backend mode.

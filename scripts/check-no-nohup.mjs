@@ -39,7 +39,16 @@ export function scanFileContent(content, filePath) {
 export function scanTrackedFiles(files = listTrackedTargets()) {
   const matches = [];
   for (const filePath of files) {
-    const content = readFileSync(filePath, "utf8");
+    let content;
+    try {
+      content = readFileSync(filePath, "utf8");
+    } catch {
+      /*
+      FNXC:MergeGateSourceScan 2026-07-13-23:58:
+      Git continues listing an unstaged deletion as tracked. Source guards must skip files already absent from the working tree so the deletion-ratchet workflow can reach the merge gate before commit.
+      */
+      continue;
+    }
     matches.push(...scanFileContent(content, filePath));
   }
   return matches;

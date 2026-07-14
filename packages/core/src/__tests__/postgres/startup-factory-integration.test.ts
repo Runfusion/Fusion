@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { createTaskStoreForBackend } from "../../postgres/startup-factory.js";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "../../sqlite-adapter.js";
+import postgres from "postgres";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
@@ -41,6 +42,42 @@ function adminExec(statement: string): void {
     `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
+}
+
+function seedLegacyTask(root: string, taskId: string, title: string): void {
+  const fusionDir = join(root, ".fusion");
+  mkdirSync(fusionDir, { recursive: true });
+  const legacy = new DatabaseSync(join(fusionDir, "fusion.db"));
+  try {
+    legacy.exec(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, title TEXT, description TEXT NOT NULL, "column" TEXT NOT NULL,
+      createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    )`);
+    legacy.prepare(
+      `INSERT INTO tasks (id, title, description, "column", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(taskId, title, "legacy", "todo", "2026-06-01T00:00:00Z", "2026-06-01T00:00:00Z");
+  } finally {
+    legacy.close();
+  }
+}
+
+function seedLegacyRegistry(globalDir: string, projects: Array<{ id: string; path: string }>): void {
+  mkdirSync(globalDir, { recursive: true });
+  const legacy = new DatabaseSync(join(globalDir, "fusion-central.db"));
+  try {
+    legacy.exec(`CREATE TABLE projects (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+      createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    )`);
+    const insert = legacy.prepare(
+      `INSERT INTO projects (id, name, path, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    for (const project of projects) {
+      insert.run(project.id, project.id, project.path, "active", "2026-06-01T00:00:00Z", "2026-06-01T00:00:00Z");
+    }
+  } finally {
+    legacy.close();
+  }
 }
 
 pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
@@ -416,6 +453,140 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
       expect(noop.stamped).toBe(false);
     } finally {
       await connections.close().catch(() => undefined);
+    }
+  });
+
+  /*
+  FNXC:MultiProjectMigration 2026-07-13-22:37:
+  A rootDir-only boot must resolve project identity before deciding whether PostgreSQL is empty. Existing rows owned by project A must not suppress project B's first-boot migration, and inserted rows plus verification must stay scoped to the corresponding registry identity.
+  */
+  it("migrates a second registered rootDir-only project after the first project has rows", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-two-projects-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    const projectA = join(rootDir, "project-a");
+    const projectB = join(rootDir, "project-b");
+    const globalDir = join(rootDir, "global");
+    seedLegacyTask(projectA, "A-1", "Project A task");
+    seedLegacyTask(projectB, "B-1", "Project B task");
+    seedLegacyRegistry(globalDir, [
+      { id: "project-a", path: projectA },
+      { id: "project-b", path: projectB },
+    ]);
+
+    const first = await createTaskStoreForBackend({ rootDir: projectA, globalSettingsDir: globalDir, env: { DATABASE_URL: testUrl } });
+    expect(first).not.toBeNull();
+    await first!.shutdown();
+
+    const second = await createTaskStoreForBackend({ rootDir: projectB, globalSettingsDir: globalDir, env: { DATABASE_URL: testUrl } });
+    expect(second).not.toBeNull();
+    try {
+      expect(second!.taskStore.getAsyncLayer()!.projectId).toBe("project-b");
+      expect((await second!.taskStore.getTask("B-1")).title).toBe("Project B task");
+      await expect(second!.taskStore.getTask("A-1")).rejects.toThrow();
+    } finally {
+      await second!.shutdown();
+    }
+  });
+
+  /*
+  FNXC:MultiProjectMigration 2026-07-13-22:37:
+  Legacy task IDs remain globally unique in the PostgreSQL schema. When two projects contain the same ID, the second migration must diagnose the collision through project-scoped verification and abort before stamping or recording success; it must never silently attribute project A's row to project B.
+  */
+  it("fails closed when a second project's legacy task id collides with the first project", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-project-collision-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    const projectA = join(rootDir, "project-a");
+    const projectB = join(rootDir, "project-b");
+    const globalDir = join(rootDir, "global");
+    seedLegacyTask(projectA, "SHARED-1", "Project A owns this id");
+    seedLegacyTask(projectB, "SHARED-1", "Project B collides");
+    seedLegacyRegistry(globalDir, [
+      { id: "project-a", path: projectA },
+      { id: "project-b", path: projectB },
+    ]);
+
+    const first = await createTaskStoreForBackend({ rootDir: projectA, globalSettingsDir: globalDir, env: { DATABASE_URL: testUrl } });
+    expect(first).not.toBeNull();
+    await first!.shutdown();
+
+    await expect(
+      createTaskStoreForBackend({ rootDir: projectB, globalSettingsDir: globalDir, env: { DATABASE_URL: testUrl } }),
+    ).rejects.toThrow(/failed verification.*project\.tasks/i);
+
+    const client = postgres(testUrl, { max: 1 });
+    try {
+      const rows = await client<{ title: string; project_id: string | null }[]>`
+        SELECT title, project_id FROM project.tasks WHERE id = 'SHARED-1'
+      `;
+      expect(rows).toEqual([{ title: "Project A owns this id", project_id: "project-a" }]);
+    } finally {
+      await client.end();
+    }
+  });
+
+  /*
+  FNXC:PostgresMigrationVerification 2026-07-13-22:37:
+  Verification failure is a hard startup boundary. ID collisions or unmapped operator tables may leave attempted rows behind for diagnosis, but startup must close connections and must not stamp rows or persist the successful-migration notice.
+  */
+  it("fails closed without a success notice when migration verification fails", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-fail-closed-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    seedLegacyTask(rootDir, "FAIL-1", "Must not be announced as migrated");
+    const legacy = new DatabaseSync(join(rootDir, ".fusion", "fusion.db"));
+    try {
+      legacy.exec(`CREATE TABLE operator_extension_data (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`);
+      legacy.prepare(`INSERT INTO operator_extension_data VALUES (?, ?)`).run("opaque-1", "preserve me");
+    } finally {
+      legacy.close();
+    }
+
+    await expect(
+      createTaskStoreForBackend({ rootDir, env: { DATABASE_URL: testUrl } }),
+    ).rejects.toThrow(/failed verification.*operator_extension_data/i);
+
+    const client = postgres(testUrl, { max: 1 });
+    try {
+      const configs = await client<{ settings: unknown }[]>`SELECT settings FROM project.config`;
+      expect(configs.some((row) => JSON.stringify(row.settings).includes("sqliteMigrationNotice"))).toBe(false);
+      const tasks = await client<{ project_id: string | null }[]>`SELECT project_id FROM project.tasks WHERE id = 'FAIL-1'`;
+      expect(tasks[0]?.project_id ?? null).toBeNull();
+    } finally {
+      await client.end();
+    }
+
+    /*
+     * FNXC:PostgresMigration 2026-07-14-00:05:
+     * The first attempt copied its task before the unmapped table failed.
+     * Removing the source defect and rebooting must resume from the durable
+     * incomplete marker even though PostgreSQL is no longer empty.
+     */
+    const repairedLegacy = new DatabaseSync(join(rootDir, ".fusion", "fusion.db"));
+    try {
+      repairedLegacy.exec("DROP TABLE operator_extension_data");
+    } finally {
+      repairedLegacy.close();
+    }
+    const retried = await createTaskStoreForBackend({ rootDir, env: { DATABASE_URL: testUrl } });
+    expect(retried).not.toBeNull();
+    try {
+      expect((await retried!.taskStore.getTask("FAIL-1")).title).toBe("Must not be announced as migrated");
+    } finally {
+      await retried!.shutdown();
+    }
+    const verifyClient = postgres(testUrl, { max: 1 });
+    try {
+      const states = await verifyClient<{ status: string }[]>`
+        SELECT status FROM public.fusion_sqlite_migrations WHERE migration_key = ${`project:${rootDir}`}
+      `;
+      expect(states).toEqual([{ status: "complete" }]);
+    } finally {
+      await verifyClient.end();
     }
   });
 });

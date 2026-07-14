@@ -1458,7 +1458,7 @@ export async function getActivityLogImpl(store: TaskStore, options?: { limit?: n
     // Backend-mode: delegate to the async audit helper.
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getActivityLogAsync(layer.db, options);
+      return getActivityLogAsync(layer.db, layer.projectId ?? "", options);
     }
     let sql = "SELECT * FROM activityLog WHERE 1=1";
     const params: (string | number)[] = [];
@@ -1491,4 +1491,3 @@ export async function getActivityLogImpl(store: TaskStore, options?: { limit?: n
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
     }));
   }
-

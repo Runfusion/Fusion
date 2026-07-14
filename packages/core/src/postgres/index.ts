@@ -155,6 +155,8 @@ export {
  */
 export {
   migrateSqliteToPostgres,
+  isSqliteMigrationComplete,
+  completeSqliteMigration,
   defaultMigrationSources,
   toSnakeCase,
   type SqliteMigrationSource,

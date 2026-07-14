@@ -20,9 +20,11 @@
  *   integration tests consume. They program against the stable
  *   `AsyncDataLayer` interface (U4), not the underlying driver.
  */
+import { EventEmitter } from "node:events";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import type { TodoStoreEvents } from "./todo-store.js";
 import type {
   TodoList,
   TodoItem,
@@ -350,12 +352,16 @@ export async function getTodoListsWithItems(
  * the list-existence check mirror the sync store; sortOrder auto-assignment and
  * the completed→completedAt toggle live in the helper functions above.
  *
- * Known gap vs the sync store: the sync TodoStore is an EventEmitter that emits
- * list:created/item:updated/… for SSE live-refresh. This wrapper performs the
- * CRUD only; UI updates land on the next read/refresh, not via live events.
+ * FNXC:PostgresMigrationCoverage 2026-07-13-22:54:
+ * The dashboard's SSE refresh path depends on the TodoStore event contract, so
+ * the PostgreSQL implementation must emit the same event names and payloads as
+ * the former SQLite store after successful mutations.
  */
-export class AsyncTodoStore {
-  constructor(private readonly layer: AsyncDataLayer) {}
+export class AsyncTodoStore extends EventEmitter<TodoStoreEvents> {
+  constructor(private readonly layer: AsyncDataLayer) {
+    super();
+    this.setMaxListeners(50);
+  }
 
   private static newId(prefix: "TDL" | "TDI"): string {
     const timestamp = Date.now().toString(36).toUpperCase();
@@ -369,21 +375,27 @@ export class AsyncTodoStore {
 
   async createList(projectId: string, input: TodoListCreateInput): Promise<TodoList> {
     const now = new Date().toISOString();
-    return createTodoList(this.layer.db, {
+    const list = await createTodoList(this.layer.db, {
       id: AsyncTodoStore.newId("TDL"),
       projectId,
       title: input.title,
       createdAt: now,
       updatedAt: now,
     });
+    this.emit("list:created", list);
+    return list;
   }
 
   async updateList(id: string, input: TodoListUpdateInput): Promise<TodoList | undefined> {
-    return updateTodoList(this.layer.db, id, input);
+    const updated = await updateTodoList(this.layer.db, id, input);
+    if (updated) this.emit("list:updated", updated);
+    return updated;
   }
 
   async deleteList(id: string): Promise<boolean> {
-    return deleteTodoList(this.layer.db, id);
+    const deleted = await deleteTodoList(this.layer.db, id);
+    if (deleted) this.emit("list:deleted", id);
+    return deleted;
   }
 
   async createItem(listId: string, input: TodoItemCreateInput): Promise<TodoItem> {
@@ -394,7 +406,7 @@ export class AsyncTodoStore {
       throw new Error(`Todo list ${listId} not found`);
     }
     const now = new Date().toISOString();
-    return createTodoItem(this.layer.db, {
+    const item = await createTodoItem(this.layer.db, {
       id: AsyncTodoStore.newId("TDI"),
       listId,
       text: input.text,
@@ -404,17 +416,25 @@ export class AsyncTodoStore {
       createdAt: now,
       updatedAt: now,
     });
+    this.emit("item:created", item);
+    return item;
   }
 
   async updateItem(id: string, input: TodoItemUpdateInput): Promise<TodoItem | undefined> {
-    return updateTodoItem(this.layer.db, id, input);
+    const updated = await updateTodoItem(this.layer.db, id, input);
+    if (updated) this.emit("item:updated", updated);
+    return updated;
   }
 
   async deleteItem(id: string): Promise<boolean> {
-    return deleteTodoItem(this.layer.db, id);
+    const deleted = await deleteTodoItem(this.layer.db, id);
+    if (deleted) this.emit("item:deleted", id);
+    return deleted;
   }
 
   async reorderItems(listId: string, itemIds: string[]): Promise<TodoItem[]> {
-    return reorderTodoItems(this.layer, listId, itemIds);
+    const items = await reorderTodoItems(this.layer, listId, itemIds);
+    this.emit("items:reordered", { listId, items });
+    return items;
   }
 }

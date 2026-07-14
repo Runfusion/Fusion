@@ -26,6 +26,7 @@ import {
   listSchedules as listSchedulesAsync,
   deleteSchedule as deleteScheduleAsync,
   getDueSchedules as getDueSchedulesAsync,
+  claimDueSchedule as claimDueScheduleAsync,
 } from "./async-automation-store.js";
 
 const CRON_TIMEZONE = "UTC";
@@ -219,7 +220,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
   private async readScheduleJson(id: string): Promise<ScheduledTask> {
     if (this.backendMode) {
-      return getScheduleAsync(this.asyncLayer!.db, id);
+      return getScheduleAsync(this.asyncLayer!, id);
     }
     const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id) as unknown as ScheduleRow | undefined;
     if (!row) {
@@ -230,7 +231,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
   private async persistSchedule(schedule: ScheduledTask): Promise<void> {
     if (this.backendMode) {
-      await upsertScheduleAsync(this.asyncLayer!.db, schedule);
+      await upsertScheduleAsync(this.asyncLayer!, schedule);
       return;
     }
     this.upsertSchedule(schedule);
@@ -320,14 +321,14 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
   async getSchedule(id: string): Promise<ScheduledTask> {
     if (this.backendMode) {
-      return getScheduleAsync(this.asyncLayer!.db, id);
+      return getScheduleAsync(this.asyncLayer!, id);
     }
     return this.readScheduleJson(id);
   }
 
   async listSchedules(): Promise<ScheduledTask[]> {
     if (this.backendMode) {
-      return listSchedulesAsync(this.asyncLayer!.db);
+      return listSchedulesAsync(this.asyncLayer!);
     }
     const rows = this.db.prepare('SELECT * FROM automations ORDER BY createdAt ASC').all() as unknown as ScheduleRow[];
     return rows.map((row) => this.rowToSchedule(row));
@@ -444,7 +445,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
       if (this.backendMode) {
-        await deleteScheduleAsync(this.asyncLayer!.db, id);
+        await deleteScheduleAsync(this.asyncLayer!, id);
       } else {
         // Delete from SQLite
         this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);
@@ -459,10 +460,28 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * Atomically claim one due schedule occurrence before execution.
    *
    * FNXC:Automations 2026-06-27-00:00:
-   * Claiming advances nextRunAt before executing the schedule so concurrent CronRunner pollers, overlapping scopes, and separate engine processes sharing one SQLite DB cannot double-fire the same due window. The conditional UPDATE is the cross-process claim boundary; losers observe zero changed rows and skip execution.
+   * Claiming advances nextRunAt before executing the schedule so concurrent CronRunner pollers, overlapping scopes, and separate engine processes sharing one database cannot double-fire the same due window. The conditional UPDATE is the cross-process claim boundary; losers observe zero changed rows and skip execution.
+   *
+   * FNXC:AutomationIsolation 2026-07-13-22:37:
+   * In PostgreSQL mode both the preliminary read and conditional claim use the bound AsyncDataLayer so a duplicate automation ID in another project cannot be observed or advanced.
    */
   async claimDueSchedule(id: string, expectedNextRunAt: string): Promise<boolean> {
     return this.withScheduleLock(id, async () => {
+      if (this.backendMode) {
+        const schedule = await getScheduleAsync(this.asyncLayer!, id).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        });
+        if (!schedule?.enabled || !schedule.nextRunAt) return false;
+        return claimDueScheduleAsync(
+          this.asyncLayer!,
+          id,
+          expectedNextRunAt,
+          this.computeNextRun(schedule.cronExpression),
+          new Date().toISOString(),
+        );
+      }
+
       const row = this.db.prepare(
         'SELECT id, cronExpression, enabled, nextRunAt FROM automations WHERE id = ?',
       ).get(id) as unknown as Pick<ScheduleRow, "id" | "cronExpression" | "enabled" | "nextRunAt"> | undefined;
@@ -525,7 +544,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   async getDueSchedules(scope: "global" | "project"): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
     if (this.backendMode) {
-      return getDueSchedulesAsync(this.asyncLayer!.db, now, scope);
+      return getDueSchedulesAsync(this.asyncLayer!, now, scope);
     }
     const rows = this.db.prepare(
       'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?'
@@ -540,7 +559,7 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   async getDueSchedulesAllScopes(): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
     if (this.backendMode) {
-      return getDueSchedulesAsync(this.asyncLayer!.db, now);
+      return getDueSchedulesAsync(this.asyncLayer!, now);
     }
     const rows = this.db.prepare(
       'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?'

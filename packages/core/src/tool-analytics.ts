@@ -108,6 +108,7 @@ export async function countInterventions(
   // user-authored-steer in-range counting mirrors the sync branch exactly.
   if ("ping" in dbOrLayer) {
     const layer = dbOrLayer as AsyncDataLayer;
+    const projectId = layer.projectId ?? "";
     const aFrom = query.from !== undefined ? sql`AND created_at >= ${query.from}` : sql``;
     const aTo = query.to !== undefined ? sql`AND created_at <= ${query.to}` : sql``;
     const approvalRows = (await layer.db.execute(
@@ -118,7 +119,8 @@ export async function countInterventions(
 
     const steeringRows = (await layer.db.execute(
       sql`SELECT steering_comments AS "steeringComments" FROM project.tasks
-          WHERE steering_comments IS NOT NULL
+          WHERE project_id = ${projectId}
+            AND steering_comments IS NOT NULL
             AND jsonb_typeof(steering_comments) = 'array'
             AND jsonb_array_length(steering_comments) > 0`,
     )) as Array<{ steeringComments: unknown }>;
@@ -202,25 +204,26 @@ export async function aggregateToolAnalytics(
   // run via the shared buildToolAnalytics, identical to the sync branch.
   if ("ping" in dbOrLayer) {
     const layer = dbOrLayer as AsyncDataLayer;
+    const projectId = layer.projectId ?? "";
     const eFrom = query.from !== undefined ? sql`AND ts >= ${query.from}` : sql``;
     const eTo = query.to !== undefined ? sql`AND ts <= ${query.to}` : sql``;
 
     const toolCallsRows = (await layer.db.execute(
       sql`SELECT count(*)::int AS count FROM project.usage_events
-          WHERE kind = 'tool_call' ${eFrom} ${eTo}`,
+          WHERE project_id = ${projectId} AND kind = 'tool_call' ${eFrom} ${eTo}`,
     )) as Array<{ count: number }>;
     const toolCalls = toolCallsRows[0]?.count ?? 0;
 
     const categoryRows = (await layer.db.execute(
       sql`SELECT tool_name AS "toolName", category AS category, count(*)::int AS count
           FROM project.usage_events
-          WHERE kind = 'tool_call' ${eFrom} ${eTo}
+          WHERE project_id = ${projectId} AND kind = 'tool_call' ${eFrom} ${eTo}
           GROUP BY tool_name, category`,
     )) as unknown as CategoryRow[];
 
     const sessionsRows = (await layer.db.execute(
       sql`SELECT count(*)::int AS count FROM project.usage_events
-          WHERE kind = 'session_start' ${eFrom} ${eTo}`,
+          WHERE project_id = ${projectId} AND kind = 'session_start' ${eFrom} ${eTo}`,
     )) as Array<{ count: number }>;
     const sessions = sessionsRows[0]?.count ?? 0;
 

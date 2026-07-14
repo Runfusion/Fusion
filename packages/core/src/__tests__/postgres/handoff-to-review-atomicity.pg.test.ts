@@ -82,6 +82,36 @@ pgTest("handoff-to-review transactional invariant (PostgreSQL)", () => {
     expect(audits.some((a) => a.mutationType === "task:handoff")).toBe(true);
   });
 
+  /**
+   * FNXC:PostgresMigrationCoverage 2026-07-13-22:54:
+   * Executor retries can repeat a completed handoff, so PostgreSQL must keep the operation idempotent, retain one merge-queue row, and audit the second call as an already-enqueued handoff from in-review.
+   */
+  it("is idempotent and records the retry status in the handoff audit", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "handoff retry", column: "in-progress" });
+
+    await store.handoffToReview(task.id, {
+      ownerAgentId: "agent-1",
+      evidence: { reason: "fn_task_done", runId: "run-1", agentId: "agent-1" },
+      now: "2026-07-13T20:00:00.000Z",
+    });
+    const retried = await store.handoffToReview(task.id, {
+      ownerAgentId: "agent-1",
+      evidence: { reason: "fn_task_done", runId: "run-2", agentId: "agent-1" },
+      now: "2026-07-13T20:00:05.000Z",
+    });
+
+    expect(retried.column).toBe("in-review");
+    const queueRows = await h.adminDb().select().from(schema.project.mergeQueue).where(eq(schema.project.mergeQueue.taskId, task.id));
+    expect(queueRows).toHaveLength(1);
+    const audits = await h.adminDb().select({ metadata: schema.project.runAuditEvents.metadata }).from(schema.project.runAuditEvents).where(and(eq(schema.project.runAuditEvents.taskId, task.id), eq(schema.project.runAuditEvents.mutationType, "task:handoff")));
+    expect(audits).toHaveLength(2);
+    expect(audits.some((audit) => {
+      const metadata = audit.metadata as Record<string, unknown>;
+      return metadata.runId === "run-2" && metadata.fromColumn === "in-review" && metadata.alreadyEnqueued === true;
+    })).toBe(true);
+  });
+
   it("rejects handoff of a soft-deleted task without partial writes", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "handoff deleted", column: "in-progress" });

@@ -18,16 +18,17 @@
  *   flip. These helpers are the async target the PostgreSQL integration tests
  *   consume.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
-import { EvalLifecycleError } from "./eval-store.js";
+import { EvalLifecycleError, applyEvalRunUpdate } from "./eval-store.js";
 import type {
   EvalRun,
   EvalRunCreateInput,
   EvalRunListOptions,
   EvalRunStatus,
+  EvalRunUpdateInput,
   EvalTaskResult,
   EvalTaskResultCreateInput,
   EvalTaskResultListOptions,
@@ -183,16 +184,17 @@ export async function listEvalRuns(handle: QueryHandle, options: EvalRunListOpti
   if (options.projectId) conditions.push(eq(schema.project.evalRuns.projectId, options.projectId));
   if (options.status) conditions.push(eq(schema.project.evalRuns.status, options.status));
   if (options.trigger) conditions.push(eq(schema.project.evalRuns.trigger, options.trigger));
-  const query = handle
+  let query = handle
     .select()
     .from(schema.project.evalRuns)
-    .orderBy(asc(schema.project.evalRuns.createdAt), asc(schema.project.evalRuns.id));
-  const rows = conditions.length > 0
-    ? await query.where(and(...conditions))
-    : await query;
-  const limited = options.limit !== undefined ? rows.slice(0, options.limit) : rows;
-  const offsetted = options.offset !== undefined ? limited.slice(options.offset) : limited;
-  return offsetted.map(rowToRun);
+    .$dynamic();
+  if (conditions.length > 0) query = query.where(and(...conditions));
+  query = options.order === "desc"
+    ? query.orderBy(desc(schema.project.evalRuns.createdAt), desc(schema.project.evalRuns.id))
+    : query.orderBy(asc(schema.project.evalRuns.createdAt), asc(schema.project.evalRuns.id));
+  if (options.offset !== undefined) query = query.offset(options.offset);
+  if (options.limit !== undefined) query = query.limit(options.limit);
+  return (await query).map(rowToRun);
 }
 
 /**
@@ -428,6 +430,18 @@ export class AsyncEvalStore {
       updatedAt: now,
     });
     return run;
+  }
+
+  /*
+  FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
+  PostgreSQL scheduled batches require the same guarded lifecycle mutation as EvalStore. Preserve terminal immutability, transition validation, nullable clears, and metadata/provenance merge semantics before persisting the async row.
+  */
+  async updateRun(id: string, input: EvalRunUpdateInput): Promise<EvalRun | undefined> {
+    const existing = await this.getRun(id);
+    if (!existing) return undefined;
+    const updated = applyEvalRunUpdate(existing, input);
+    await persistEvalRun(this.layer.db, updated);
+    return updated;
   }
 
   async getTaskResult(id: string): Promise<EvalTaskResult | undefined> {

@@ -1114,7 +1114,7 @@ export async function recordActivityImpl(store: TaskStore, entry: Omit<ActivityL
     // Backend-mode: delegate to the async audit helper (async-audit.ts).
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return recordActivityLogEntryAsync(layer.db, entry);
+      return recordActivityLogEntryAsync(layer.db, layer.projectId ?? "", entry);
     }
     const fullEntry: ActivityLogEntry = {
       ...entry,
@@ -1170,4 +1170,3 @@ export function getEvalStoreImpl(store: TaskStore): EvalStore | AsyncEvalStore {
     }
     return store.evalStore;
   }
-

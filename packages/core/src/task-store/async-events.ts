@@ -226,6 +226,7 @@ function rowToUsageEvent(row: Record<string, unknown>): UsageEvent {
  */
 export async function emitUsageEvent(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   event: UsageEventInput,
 ): Promise<boolean> {
   try {
@@ -235,6 +236,7 @@ export async function emitUsageEvent(
     const ts = event.ts ?? new Date().toISOString();
     const meta = serializeMeta(event.meta);
     await db.insert(schema.project.usageEvents).values({
+      projectId,
       ts,
       kind: event.kind,
       taskId: event.taskId ?? null,
@@ -259,9 +261,10 @@ export async function emitUsageEvent(
  */
 export async function queryUsageEvents(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   query: UsageEventRangeQuery = {},
 ): Promise<UsageEvent[]> {
-  const conditions = [];
+  const conditions = [eq(schema.project.usageEvents.projectId, projectId)];
   if (query.from) {
     conditions.push(gte(schema.project.usageEvents.ts, query.from));
   }

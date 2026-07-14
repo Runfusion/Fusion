@@ -108,6 +108,19 @@ pgDescribe("connection: external PostgreSQL integration (VAL-CONN-002)", () => {
     expect(result).toBeDefined();
   });
 
+  it("reserves migration work on a session separate from the runtime pool", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
+    const runtimeRows = await connections.runtime.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    const migrationRows = await connections.migration.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    expect(migrationRows[0]?.pid).not.toBe(runtimeRows[0]?.pid);
+  });
+
   it("close() cleanly shuts down the pool without error", async () => {
     const backend: ResolvedBackend = {
       mode: "external",

@@ -204,6 +204,7 @@ function rowToActivityLogEntry(row: ActivityLogRow): ActivityLogEntry {
  */
 export async function recordActivityLogEntry(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   entry: Omit<ActivityLogEntry, "id" | "timestamp">,
 ): Promise<ActivityLogEntry> {
   const fullEntry: ActivityLogEntry = {
@@ -214,6 +215,7 @@ export async function recordActivityLogEntry(
 
   try {
     await db.insert(schema.project.activityLog).values({
+      projectId,
       id: fullEntry.id,
       timestamp: fullEntry.timestamp,
       type: fullEntry.type,
@@ -243,9 +245,10 @@ export async function recordActivityLogEntry(
  */
 export async function getActivityLog(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   options?: { limit?: number; since?: string; type?: ActivityEventType },
 ): Promise<ActivityLogEntry[]> {
-  const conditions = [];
+  const conditions = [eq(schema.project.activityLog.projectId, projectId)];
   if (options?.since) {
     conditions.push(gte(schema.project.activityLog.timestamp, options.since));
   }
@@ -283,9 +286,11 @@ export async function getActivityLog(
  */
 export async function getTaskMovedCountsByDay(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   options: { since: string; until: string; fromColumn?: string; toColumn?: string },
 ): Promise<Record<string, number>> {
   const conditions = [
+    eq(schema.project.activityLog.projectId, projectId),
     eq(schema.project.activityLog.type, "task:moved"),
     gte(schema.project.activityLog.timestamp, options.since),
     lte(schema.project.activityLog.timestamp, options.until),

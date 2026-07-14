@@ -365,6 +365,10 @@ export class AgentStore extends EventEmitter {
     this.asyncLayer = options.asyncLayer ?? null;
   }
 
+  private get backendProjectId(): string {
+    return this.asyncLayer?.projectId ?? "";
+  }
+
   private get db(): Database {
     if (this.backendMode) {
       throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
@@ -2244,7 +2248,7 @@ export class AgentStore extends EventEmitter {
     let agentId: string;
     let existingRun: AgentHeartbeatRun;
     if (this.backendMode) {
-      const found = await getRunByIdAsync(this.asyncLayer!.db, runId);
+      const found = await getRunByIdAsync(this.asyncLayer!.db, this.backendProjectId, runId);
       if (!found) {
         return;
       }
@@ -2324,7 +2328,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle listActiveHeartbeatRuns helper.
      */
     if (this.backendMode) {
-      return listActiveHeartbeatRunsAsync(this.asyncLayer!.db);
+      return listActiveHeartbeatRunsAsync(this.asyncLayer!.db, this.backendProjectId);
     }
     const rows = this.db.prepare(`
       SELECT data FROM agentRuns
@@ -2539,7 +2543,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle saveRun helper.
      */
     if (this.backendMode) {
-      await saveRunAsync(this.asyncLayer!.db, run);
+      await saveRunAsync(this.asyncLayer!.db, this.backendProjectId, run);
       return;
     }
     this.db.prepare(`
@@ -2567,7 +2571,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle getRunDetail helper.
      */
     if (this.backendMode) {
-      return getRunDetailAsync(this.asyncLayer!.db, agentId, runId);
+      return getRunDetailAsync(this.asyncLayer!.db, this.backendProjectId, agentId, runId);
     }
     const row = this.db.prepare(`
       SELECT data FROM agentRuns WHERE agentId = ? AND id = ?
@@ -2587,7 +2591,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle getRecentRuns helper.
      */
     if (this.backendMode) {
-      return getRecentRunsAsync(this.asyncLayer!.db, agentId, limit);
+      return getRecentRunsAsync(this.asyncLayer!.db, this.backendProjectId, agentId, limit);
     }
     const rows = this.db.prepare(`
       SELECT data FROM agentRuns
@@ -2606,7 +2610,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle getRunStatusCounts helper.
      */
     if (this.backendMode) {
-      return getRunStatusCountsAsync(this.asyncLayer!.db, agentIds);
+      return getRunStatusCountsAsync(this.asyncLayer!.db, this.backendProjectId, agentIds);
     }
     let rows: Array<{ status: string; count: number }>;
 

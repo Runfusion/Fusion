@@ -431,6 +431,8 @@ export const taskWorkflowSelection = projectSchema.table("task_workflow_selectio
 
 // ── Activity log ─────────────────────────────────────────────────────
 export const activityLog = projectSchema.table("activity_log", {
+  // FNXC:AnalyticsIsolation 2026-07-13-23:41: Shared PostgreSQL telemetry must carry an explicit project partition; dashboard ranges must never aggregate another project's activity.
+  projectId: text("project_id").notNull(),
   id: text("id").primaryKey(),
   timestamp: text("timestamp").notNull(),
   type: text("type").notNull(),
@@ -440,6 +442,7 @@ export const activityLog = projectSchema.table("activity_log", {
   metadata: jsonb("metadata"),
 }, (t) => [
   index("idxActivityLogTimestamp").on(t.timestamp),
+  index("idxActivityLogProjectTimestamp").on(t.projectId, t.timestamp),
   index("idxActivityLogType").on(t.type),
   index("idxActivityLogTaskId").on(t.taskId),
   index("idxActivityLogTaskIdTimestamp").on(t.taskId, t.timestamp),
@@ -490,7 +493,12 @@ export const taskCommitAssociations = projectSchema.table("task_commit_associati
 
 // ── Automations ──────────────────────────────────────────────────────
 export const automations = projectSchema.table("automations", {
-  id: text("id").primaryKey(),
+  /*
+   * FNXC:AutomationIsolation 2026-07-13-22:37:
+   * Automations are partitioned by the AsyncDataLayer's project ID because embedded PostgreSQL consolidates the per-project SQLite files into one table. The composite key deliberately permits the same automation ID in two projects without allowing either project's CRUD or cron-claim path to address the other row. The empty default preserves an explicit partition for legacy and project-agnostic callers until startup stamps migrated rows.
+   */
+  projectId: text("project_id").notNull().default(""),
+  id: text("id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
   scheduleType: text("schedule_type").notNull(),
@@ -508,7 +516,9 @@ export const automations = projectSchema.table("automations", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  index("idxAutomationsScope").on(t.scope),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxAutomationsProjectScope").on(t.projectId, t.scope),
+  index("idxAutomationsProjectDue").on(t.projectId, t.enabled, t.nextRunAt),
 ]);
 
 // ── Agents ───────────────────────────────────────────────────────────
@@ -541,6 +551,8 @@ export const agentHeartbeats = projectSchema.table("agent_heartbeats", {
 ]);
 
 export const agentRuns = projectSchema.table("agent_runs", {
+  // FNXC:AnalyticsIsolation 2026-07-13-23:41: Agent-run analytics are project-scoped even though run IDs remain globally unique.
+  projectId: text("project_id").notNull(),
   id: text("id").primaryKey(),
   agentId: text("agent_id").notNull(),
   data: jsonb("data").notNull(),
@@ -550,6 +562,7 @@ export const agentRuns = projectSchema.table("agent_runs", {
 }, (t) => [
   foreignKey({ columns: [t.agentId], foreignColumns: [agents.id] }).onDelete("cascade"),
   index("idxAgentRunsAgentIdStartedAt").on(t.agentId, t.startedAt),
+  index("idxAgentRunsProjectStartedAt").on(t.projectId, t.startedAt),
   index("idxAgentRunsStatus").on(t.status),
 ]);
 
@@ -1308,6 +1321,8 @@ export const todoItems = projectSchema.table("todo_items", {
 
 // ── Usage events / plugin activations / knowledge pages / monitor ────
 export const usageEvents = projectSchema.table("usage_events", {
+  // FNXC:AnalyticsIsolation 2026-07-13-23:41: Usage events share one PostgreSQL table, so every write and query requires the owning project ID.
+  projectId: text("project_id").notNull(),
   id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
   ts: text("ts").notNull(),
   kind: text("kind").notNull(),
@@ -1321,6 +1336,7 @@ export const usageEvents = projectSchema.table("usage_events", {
   meta: jsonb("meta"),
 }, (t) => [
   index("idxUsageEventsTs").on(t.ts),
+  index("idxUsageEventsProjectTs").on(t.projectId, t.ts),
   index("idxUsageEventsTaskId").on(t.taskId),
   index("idxUsageEventsAgentId").on(t.agentId),
   index("idxUsageEventsKindTs").on(t.kind, t.ts),

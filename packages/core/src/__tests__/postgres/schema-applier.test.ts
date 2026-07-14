@@ -28,6 +28,7 @@ import { sql } from "drizzle-orm";
 import { execSync } from "node:child_process";
 import {
   applySchemaBaseline,
+  getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
   roadmapPluginSchemaInit,
 } from "../../postgres/index.js";
@@ -393,6 +394,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 index parity (every SQLite index has 
 
     // SQLite indexes that were renamed in PostgreSQL for clarity.
     const RENAMED_TO: Record<string, string> = {
+      idxAutomationsScope: "idxAutomationsProjectScope",
       idxSecretsKey: "secrets_key_unique",
       idxSecretsGlobalKey: "secrets_global_key_unique",
       idxTaskDocumentsTaskKey: "task_documents_task_id_key_unique",
@@ -447,6 +449,146 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 index parity (every SQLite index has 
   });
 });
 
+pgDescribe("schema-applier: automation project-isolation upgrade", () => {
+  let ctx: TestContext | null = null;
+
+  afterEach(async () => {
+    await teardownDb(ctx);
+    ctx = null;
+  });
+
+  async function seedVersion0000Automation(
+    db: TestContext["db"],
+    projectIds: readonly string[],
+  ): Promise<void> {
+    await db.execute(sql.raw(`
+      CREATE SCHEMA project;
+      CREATE SCHEMA central;
+      CREATE TABLE central.projects (
+        id text PRIMARY KEY,
+        name text NOT NULL,
+        path text NOT NULL UNIQUE,
+        status text NOT NULL DEFAULT 'active',
+        isolation_mode text NOT NULL DEFAULT 'in-process',
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      );
+      CREATE TABLE project.automations (
+        id text PRIMARY KEY,
+        name text NOT NULL,
+        description text,
+        schedule_type text NOT NULL,
+        cron_expression text NOT NULL,
+        command text NOT NULL,
+        enabled integer DEFAULT 1,
+        timeout_ms integer,
+        steps jsonb,
+        next_run_at text,
+        last_run_at text,
+        last_run_result jsonb,
+        run_count integer DEFAULT 0,
+        run_history jsonb DEFAULT '[]',
+        scope text DEFAULT 'project',
+        created_at text NOT NULL,
+        updated_at text NOT NULL
+      );
+      CREATE INDEX "idxAutomationsScope" ON project.automations(scope);
+      CREATE TABLE public.fusion_schema_migrations (
+        version text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO public.fusion_schema_migrations(version) VALUES ('0000');
+      INSERT INTO project.automations (
+        id, name, schedule_type, cron_expression, command, enabled,
+        next_run_at, scope, created_at, updated_at
+      ) VALUES (
+        'legacy-automation', 'Legacy', 'custom', '* * * * *', 'echo legacy', 1,
+        '2026-01-01T00:00:00.000Z', 'project', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+    `));
+    for (const projectId of projectIds) {
+      await db.execute(sql`
+        INSERT INTO central.projects(id, name, path, created_at, updated_at)
+        VALUES (${projectId}, ${projectId}, ${`/repo/${projectId}`}, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `);
+    }
+  }
+
+  /**
+   * FNXC:AutomationIsolation 2026-07-13-22:37:
+   * The versioned upgrade must preserve existing schedules. A sole registered project is deterministic ownership evidence; multiple projects are ambiguous and must fail loudly before a bound cron runner starts.
+   */
+  it("upgrades 0000 rows into the sole registered project and records version 0001", async () => {
+    ctx = await setupFreshDb();
+    await seedVersion0000Automation(ctx.db, ["project-a"]);
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    const rows = (await ctx.db.execute(sql`
+      SELECT project_id, id, name FROM project.automations
+    `)) as unknown as Array<{ project_id: string; id: string; name: string }>;
+    expect(rows).toEqual([{ project_id: "project-a", id: "legacy-automation", name: "Legacy" }]);
+    const versions = (await ctx.db.execute(sql`
+      SELECT version FROM public.fusion_schema_migrations ORDER BY version
+    `)) as unknown as Array<{ version: string }>;
+    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", SCHEMA_BASELINE_VERSION]);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
+  });
+
+  it("fails loudly when legacy automation ownership is ambiguous", async () => {
+    ctx = await setupFreshDb();
+    await seedVersion0000Automation(ctx.db, ["project-a", "project-b"]);
+
+    await expect(applySchemaBaseline(ctx.db, { pluginHooks: [] })).rejects.toThrow(
+      /Cannot assign legacy automations to a project/,
+    );
+    const versions = (await ctx.db.execute(sql`
+      SELECT version FROM public.fusion_schema_migrations ORDER BY version
+    `)) as unknown as Array<{ version: string }>;
+    expect(versions.map(({ version }) => version)).toEqual(["0000"]);
+  });
+
+  it("serializes concurrent schema appliers", async () => {
+    ctx = await setupFreshDb();
+    const results = await Promise.all([
+      applySchemaBaseline(ctx.db, { pluginHooks: [] }),
+      applySchemaBaseline(ctx.db, { pluginHooks: [] }),
+    ]);
+    expect(results.filter(({ applied }) => applied)).toHaveLength(1);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", SCHEMA_BASELINE_VERSION]);
+  });
+
+  it("upgrades a 0001 database by backfilling analytics ownership", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0002';
+      ALTER TABLE project.activity_log DROP COLUMN project_id;
+      ALTER TABLE project.agent_runs DROP COLUMN project_id;
+      ALTER TABLE project.usage_events DROP COLUMN project_id;
+      INSERT INTO central.projects(id, name, path, created_at, updated_at)
+      VALUES ('project-a', 'Project A', '/repo/project-a', '2026-01-01', '2026-01-01');
+      INSERT INTO project.agents(id, name, role, created_at, updated_at)
+      VALUES ('agent-a', 'Agent A', 'worker', '2026-01-01', '2026-01-01');
+      INSERT INTO project.activity_log(id, timestamp, type, details)
+      VALUES ('activity-a', '2026-01-01', 'task:created', 'created');
+      INSERT INTO project.agent_runs(id, agent_id, data, started_at, status)
+      VALUES ('run-a', 'agent-a', '{}'::jsonb, '2026-01-01', 'completed');
+      INSERT INTO project.usage_events(ts, kind)
+      VALUES ('2026-01-01', 'tool_call');
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    for (const table of ["activity_log", "agent_runs", "usage_events"] as const) {
+      const rows = (await ctx.db.execute(sql.raw(
+        `SELECT project_id FROM project.${table}`,
+      ))) as unknown as Array<{ project_id: string }>;
+      expect(rows).toEqual([{ project_id: "project-a" }]);
+    }
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002"]);
+  });
+});
+
 pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with sequence continuity", () => {
   let ctx: TestContext | null = null;
 
@@ -488,10 +630,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
-      INSERT INTO project.usage_events (ts, kind) VALUES ('2026-01-01', 'test')
+      INSERT INTO project.usage_events (project_id, ts, kind) VALUES ('schema-test', '2026-01-01', 'test')
     `);
     await ctx.db.execute(sql`
-      INSERT INTO project.usage_events (ts, kind) VALUES ('2026-01-02', 'test')
+      INSERT INTO project.usage_events (project_id, ts, kind) VALUES ('schema-test', '2026-01-02', 'test')
     `);
     const rows = (await ctx.db.execute(sql`
       SELECT id FROM project.usage_events ORDER BY id
@@ -747,16 +889,16 @@ pgDescribe("schema-applier: VAL-SCHEMA-007 plugin-owned tables materialize via s
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [roadmapPluginInitHook] });
     await ctx.db.execute(sql`
-      INSERT INTO project.roadmaps (id, title, created_at, updated_at)
-      VALUES ('rm1', 'R', '2026-01-01', '2026-01-01')
+      INSERT INTO project.roadmaps (id, project_id, title, created_at, updated_at)
+      VALUES ('rm1', 'schema-test', 'R', '2026-01-01', '2026-01-01')
     `);
     await ctx.db.execute(sql`
-      INSERT INTO project.roadmap_milestones (id, roadmap_id, title, order_index, created_at, updated_at)
-      VALUES ('rmm1', 'rm1', 'M', 0, '2026-01-01', '2026-01-01')
+      INSERT INTO project.roadmap_milestones (id, roadmap_id, project_id, title, order_index, created_at, updated_at)
+      VALUES ('rmm1', 'rm1', 'schema-test', 'M', 0, '2026-01-01', '2026-01-01')
     `);
     await ctx.db.execute(sql`
-      INSERT INTO project.roadmap_features (id, milestone_id, title, order_index, created_at, updated_at)
-      VALUES ('rmf1', 'rmm1', 'F', 0, '2026-01-01', '2026-01-01')
+      INSERT INTO project.roadmap_features (id, milestone_id, project_id, title, order_index, created_at, updated_at)
+      VALUES ('rmf1', 'rmm1', 'schema-test', 'F', 0, '2026-01-01', '2026-01-01')
     `);
     await ctx.db.execute(sql`DELETE FROM project.roadmaps WHERE id = 'rm1'`);
     const ms = (await ctx.db.execute(sql`

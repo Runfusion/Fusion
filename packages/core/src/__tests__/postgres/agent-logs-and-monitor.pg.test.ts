@@ -24,6 +24,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import { aggregateActivityAnalytics } from "../../activity-analytics.js";
+import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
 
@@ -86,5 +87,73 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
     expect(result.monitor.deployments).toBe(0);
     expect(result.monitor.incidentsOpened).toBe(0);
     expect(result.monitor.mttr.unavailable).toBe(true);
+  });
+
+  /*
+  FNXC:ActivityAnalyticsPostgres 2026-07-13-22:38:
+  PostgreSQL activity analytics must report persisted sessions, messages, nodes, agents, and heartbeat runs instead of valid-looking zeros. Seed every contributing surface so the dashboard contract is verified across summary and daily aggregation.
+  */
+  it("aggregateActivityAnalytics reports non-empty PostgreSQL activity", async () => {
+    const layer = h.layer();
+    await layer.db.insert(schema.project.agents).values({
+      id: "agent-analytics",
+      name: "Analytics Agent",
+      role: "worker",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    });
+    await layer.db.insert(schema.project.agentRuns).values({
+      projectId: layer.projectId ?? "",
+      id: "run-analytics",
+      agentId: "agent-analytics",
+      data: {},
+      startedAt: "2026-07-13T12:00:00.000Z",
+      status: "completed",
+    });
+    await layer.db.insert(schema.project.usageEvents).values([
+      { projectId: layer.projectId ?? "", ts: "2026-07-13T11:00:00.000Z", kind: "user_message", agentId: "agent-analytics", nodeId: "node-1" },
+      { projectId: layer.projectId ?? "", ts: "2026-07-13T11:05:00.000Z", kind: "tool_call", agentId: "agent-analytics", nodeId: "node-2" },
+    ]);
+    await layer.db.insert(schema.project.agents).values({
+      id: "agent-other-project",
+      name: "Other Project Agent",
+      role: "worker",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    });
+    await layer.db.insert(schema.project.agentRuns).values({
+      projectId: "other-project",
+      id: "run-other-project",
+      agentId: "agent-other-project",
+      data: {},
+      startedAt: "2026-07-13T12:00:00.000Z",
+      status: "failed",
+    });
+    await layer.db.insert(schema.project.usageEvents).values({
+      projectId: "other-project",
+      ts: "2026-07-13T11:00:00.000Z",
+      kind: "user_message",
+      agentId: "agent-other-project",
+      nodeId: "other-node",
+    });
+    await layer.db.insert(schema.project.cliSessions).values({
+      id: "cli-analytics",
+      purpose: "chat",
+      projectId: layer.projectId ?? "",
+      adapterId: "test",
+      createdAt: "2026-07-13T10:30:00.000Z",
+      updatedAt: "2026-07-13T10:30:00.000Z",
+    });
+
+    const result = await aggregateActivityAnalytics(layer, {
+      from: "2026-07-13T00:00:00.000Z",
+      to: "2026-07-13T23:59:59.999Z",
+    });
+
+    expect(result).toMatchObject({ sessions: 1, messages: 1, activeNodes: 2, activeAgents: 1 });
+    expect(result.agentRuns).toMatchObject({ total: 1, completed: 1 });
+    expect(result.daily).toEqual([
+      expect.objectContaining({ day: "2026-07-13", messages: 1, activeNodes: 2, activeAgents: 1, agentRuns: 1 }),
+    ]);
   });
 });

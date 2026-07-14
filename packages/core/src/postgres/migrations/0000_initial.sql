@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS project.task_workflow_selection (
 );
 
 CREATE TABLE IF NOT EXISTS project.activity_log (
+  project_id text NOT NULL,
   id text PRIMARY KEY,
   timestamp text NOT NULL,
   type text NOT NULL,
@@ -285,6 +286,7 @@ CREATE TABLE IF NOT EXISTS project.activity_log (
   metadata jsonb
 );
 CREATE INDEX IF NOT EXISTS "idxActivityLogTimestamp" ON project.activity_log(timestamp);
+CREATE INDEX IF NOT EXISTS "idxActivityLogProjectTimestamp" ON project.activity_log(project_id, timestamp);
 CREATE INDEX IF NOT EXISTS "idxActivityLogType" ON project.activity_log(type);
 CREATE INDEX IF NOT EXISTS "idxActivityLogTaskId" ON project.activity_log(task_id);
 
@@ -325,7 +327,8 @@ CREATE INDEX IF NOT EXISTS "idxTaskCommitAssociationsCommitSha"
   ON project.task_commit_associations(commit_sha);
 
 CREATE TABLE IF NOT EXISTS project.automations (
-  id text PRIMARY KEY,
+  project_id text NOT NULL DEFAULT '',
+  id text NOT NULL,
   name text NOT NULL,
   description text,
   schedule_type text NOT NULL,
@@ -341,7 +344,8 @@ CREATE TABLE IF NOT EXISTS project.automations (
   run_history jsonb DEFAULT '[]',
   scope text DEFAULT 'project',
   created_at text NOT NULL,
-  updated_at text NOT NULL
+  updated_at text NOT NULL,
+  PRIMARY KEY (project_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS project.agents (
@@ -370,6 +374,7 @@ CREATE INDEX IF NOT EXISTS "idxAgentHeartbeatsAgentId" ON project.agent_heartbea
 CREATE INDEX IF NOT EXISTS "idxAgentHeartbeatsRunId" ON project.agent_heartbeats(run_id);
 
 CREATE TABLE IF NOT EXISTS project.agent_runs (
+  project_id text NOT NULL,
   id text PRIMARY KEY,
   agent_id text NOT NULL,
   data jsonb NOT NULL,
@@ -380,6 +385,7 @@ CREATE TABLE IF NOT EXISTS project.agent_runs (
     FOREIGN KEY (agent_id) REFERENCES project.agents(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS "idxAgentRunsAgentIdStartedAt" ON project.agent_runs(agent_id, started_at);
+CREATE INDEX IF NOT EXISTS "idxAgentRunsProjectStartedAt" ON project.agent_runs(project_id, started_at);
 CREATE INDEX IF NOT EXISTS "idxAgentRunsStatus" ON project.agent_runs(status);
 
 CREATE TABLE IF NOT EXISTS project.agent_task_sessions (
@@ -1113,6 +1119,7 @@ CREATE INDEX IF NOT EXISTS "idxTodoItemsListId" ON project.todo_items(list_id);
 CREATE INDEX IF NOT EXISTS "idxTodoItemsSortOrder" ON project.todo_items(list_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS project.usage_events (
+  project_id text NOT NULL,
   id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   ts text NOT NULL,
   kind text NOT NULL,
@@ -1126,6 +1133,7 @@ CREATE TABLE IF NOT EXISTS project.usage_events (
   meta jsonb
 );
 CREATE INDEX IF NOT EXISTS "idxUsageEventsTs" ON project.usage_events(ts);
+CREATE INDEX IF NOT EXISTS "idxUsageEventsProjectTs" ON project.usage_events(project_id, ts);
 CREATE INDEX IF NOT EXISTS "idxUsageEventsTaskId" ON project.usage_events(task_id);
 CREATE INDEX IF NOT EXISTS "idxUsageEventsAgentId" ON project.usage_events(agent_id);
 CREATE INDEX IF NOT EXISTS "idxUsageEventsKindTs" ON project.usage_events(kind, ts);
@@ -1589,7 +1597,8 @@ CREATE INDEX IF NOT EXISTS "idxChatRoomMessagesRoomCreatedAt" ON project.chat_ro
 CREATE INDEX IF NOT EXISTS "idxChatRoomMessagesRoomId" ON project.chat_room_messages(room_id);
 
 -- automations
-CREATE INDEX IF NOT EXISTS "idxAutomationsScope" ON project.automations(scope);
+CREATE INDEX IF NOT EXISTS "idxAutomationsProjectScope" ON project.automations(project_id, scope);
+CREATE INDEX IF NOT EXISTS "idxAutomationsProjectDue" ON project.automations(project_id, enabled, next_run_at);
 
 -- routines
 CREATE INDEX IF NOT EXISTS "idxRoutinesNextRunAt" ON project.routines(next_run_at);

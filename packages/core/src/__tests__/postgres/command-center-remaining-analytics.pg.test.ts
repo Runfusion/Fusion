@@ -51,7 +51,7 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
   // ── Empty project: each aggregator resolves with a zero/empty shape ─────────
 
   it("all four aggregators resolve (no throw) against an empty project", async () => {
-    const layer = h.layer();
+    const layer = Object.assign(h.layer(), { projectId: "p1" });
     const range = { from: FROM, to: TO };
 
     const workflow = await aggregateWorkflowAnalytics(layer, {
@@ -165,8 +165,8 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
       VALUES ('agent-live', 'Live Agent', 'executor', 'idle', ${IN_RANGE}, ${IN_RANGE})
     `);
     await adminDb.execute(sql`
-      INSERT INTO project.agent_runs (id, agent_id, data, started_at, status)
-      VALUES ('run-1', 'agent-live', ${JSON.stringify({ taskId: "FN-WF-1" })}::jsonb, ${IN_RANGE}, 'active')
+      INSERT INTO project.agent_runs (project_id, id, agent_id, data, started_at, status)
+      VALUES ('p1', 'run-1', 'agent-live', ${JSON.stringify({ taskId: "FN-WF-1" })}::jsonb, ${IN_RANGE}, 'active')
     `);
     await adminDb.execute(sql`
       INSERT INTO project.cli_sessions
@@ -175,7 +175,7 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
         ('cli-1', 'FN-WF-1', 'task', 'p1', 'claude-local', 'working', '/tmp/wt/FN-WF-1', ${IN_RANGE}, ${IN_RANGE})
     `);
 
-    const layer = h.layer();
+    const layer = Object.assign(h.layer(), { projectId: "p1" });
     const range = { from: FROM, to: TO };
 
     // Workflow.
@@ -258,7 +258,7 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
       WHERE id = 'FN-SNAP-1'
     `);
 
-    const layer = h.layer();
+    const layer = Object.assign(h.layer(), { projectId: "p1" });
     const workflow = await aggregateWorkflowAnalytics(layer, {
       from: FROM,
       to: TO,

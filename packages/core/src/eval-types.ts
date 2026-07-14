@@ -408,6 +408,7 @@ export interface EvalRunListOptions {
   trigger?: EvalRunTrigger;
   limit?: number;
   offset?: number;
+  order?: "asc" | "desc";
 }
 
 export interface EvalTaskResultCreateInput {

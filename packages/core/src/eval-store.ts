@@ -42,6 +42,34 @@ export class EvalLifecycleError extends Error {
   }
 }
 
+/*
+FNXC:ScheduledEvalsPostgres 2026-07-13-23:18:
+SQLite and PostgreSQL eval stores must enforce one lifecycle invariant. Keep transition validation, terminal immutability, nullable clears, and metadata/provenance merging in this pure helper so persistence adapters cannot drift.
+*/
+export function applyEvalRunUpdate(
+  existing: EvalRun,
+  input: EvalRunUpdateInput,
+  updatedAt = new Date().toISOString(),
+): EvalRun {
+  if (TERMINAL_STATUSES.has(existing.status) && Object.keys(input).some((key) => key !== "status")) {
+    throw new EvalLifecycleError(`Eval run ${existing.id} is terminal and immutable`, "terminal_immutable");
+  }
+  if (input.status && input.status !== existing.status && !VALID_TRANSITIONS[existing.status].includes(input.status)) {
+    throw new EvalLifecycleError(`Invalid eval run status transition: ${existing.status} -> ${input.status}`, "invalid_transition");
+  }
+  return {
+    ...existing,
+    ...input,
+    error: input.error === null ? undefined : (input.error ?? existing.error),
+    metadata: input.metadata ? { ...(existing.metadata ?? {}), ...input.metadata } : existing.metadata,
+    provenance: input.provenance ? { ...(existing.provenance ?? {}), ...input.provenance } : existing.provenance,
+    updatedAt,
+    startedAt: input.startedAt === null ? undefined : (input.startedAt ?? existing.startedAt),
+    completedAt: input.completedAt === null ? undefined : (input.completedAt ?? existing.completedAt),
+    cancelledAt: input.cancelledAt === null ? undefined : (input.cancelledAt ?? existing.cancelledAt),
+  };
+}
+
 function generateRunId(): string {
   return `ER-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
@@ -213,7 +241,7 @@ export class EvalStore extends EventEmitter<EvalStoreEvents> {
     const rows = this.db.prepare(`
       SELECT * FROM eval_runs
       ${where}
-      ORDER BY createdAt ASC, id ASC
+      ORDER BY createdAt ${options.order === "desc" ? "DESC" : "ASC"}, id ${options.order === "desc" ? "DESC" : "ASC"}
       ${limit}
       ${offset}
     `).all(...params) as Record<string, unknown>[];
@@ -224,29 +252,7 @@ export class EvalStore extends EventEmitter<EvalStoreEvents> {
   updateRun(id: string, input: EvalRunUpdateInput): EvalRun | undefined {
     const existing = this.getRun(id);
     if (!existing) return undefined;
-
-    if (TERMINAL_STATUSES.has(existing.status) && Object.keys(input).some((k) => k !== "status")) {
-      throw new EvalLifecycleError(`Eval run ${id} is terminal and immutable`, "terminal_immutable");
-    }
-
-    if (input.status && input.status !== existing.status) {
-      if (!VALID_TRANSITIONS[existing.status].includes(input.status)) {
-        throw new EvalLifecycleError(`Invalid eval run status transition: ${existing.status} -> ${input.status}`, "invalid_transition");
-      }
-    }
-
-    const now = new Date().toISOString();
-    const updated: EvalRun = {
-      ...existing,
-      ...input,
-      error: input.error === null ? undefined : (input.error ?? existing.error),
-      metadata: input.metadata ? { ...(existing.metadata ?? {}), ...input.metadata } : existing.metadata,
-      provenance: input.provenance ? { ...(existing.provenance ?? {}), ...input.provenance } : existing.provenance,
-      updatedAt: now,
-      startedAt: input.startedAt === null ? undefined : (input.startedAt ?? existing.startedAt),
-      completedAt: input.completedAt === null ? undefined : (input.completedAt ?? existing.completedAt),
-      cancelledAt: input.cancelledAt === null ? undefined : (input.cancelledAt ?? existing.cancelledAt),
-    };
+    const updated = applyEvalRunUpdate(existing, input);
 
     this.persistRun(updated);
     this.emit("run:updated", updated);
