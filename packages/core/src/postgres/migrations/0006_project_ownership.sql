@@ -33,6 +33,13 @@ DECLARE
 BEGIN
   SELECT rolsuper INTO current_user_is_superuser FROM pg_roles WHERE rolname = current_user;
   IF current_user_is_superuser THEN
+    /*
+    FNXC:ProjectDataIsolation 2026-07-14-23:45:
+    PostgreSQL roles are cluster-wide while Gate databases apply this migration
+    concurrently. Serialize the check/create pair so two fresh project databases
+    cannot race into pg_authid_rolname_index for fusion_runtime.
+    */
+    PERFORM pg_advisory_xact_lock(hashtext('fusion_runtime role creation'));
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
       CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
     END IF;

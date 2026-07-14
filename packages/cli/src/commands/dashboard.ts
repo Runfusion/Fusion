@@ -1852,6 +1852,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   >();
   const getProjectScopedPluginSkills = async (rootDir: string, resolvedProjectStore?: TaskStore): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
     const normalizedRootDir = pathResolve(rootDir);
+    /*
+     * FNXC:PluginSkillsPostgres 2026-07-14-23:45:
+     * Skill discovery must use the backend-aware project store resolved by the
+     * dashboard route. Direct PluginStore/TaskStore construction enters the
+     * removed SQLite runtime under PostgreSQL (VAL-REMOVAL-005).
+     */
     const targetStore = resolvedProjectStore ?? (normalizedRootDir === pathResolve(store.getRootDir()) ? store : undefined);
     if (!targetStore) return [];
     const stateStore = targetStore.getPluginStore();
@@ -1886,7 +1892,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       const scopedPluginStore = targetStore.getPluginStore();
-      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: targetStore });
+      const scopedPluginLoader = new PluginLoader({
+        pluginStore: scopedPluginStore,
+        taskStore: targetStore,
+        persistRuntimeState: false,
+      });
       try {
         await scopedPluginStore.init();
         const { errors } = await scopedPluginLoader.loadAllPlugins();

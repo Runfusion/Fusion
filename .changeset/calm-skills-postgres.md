@@ -1,7 +1,8 @@
 ---
 "@runfusion/fusion": patch
+"@fusion/core": patch
 ---
 
-summary: Fix dashboard skill discovery in PostgreSQL mode.
+summary: Fix dashboard skill discovery lifecycle in PostgreSQL mode.
 category: fix
-dev: Reuse backend-aware project stores so skill discovery never falls through to the removed synchronous SQLite PluginStore and TaskStore paths.
+dev: Reuse and close backend-aware project stores, keep request-scoped discovery loaders from mutating persistent plugin runtime state, and serialize cluster-wide PostgreSQL runtime-role creation.

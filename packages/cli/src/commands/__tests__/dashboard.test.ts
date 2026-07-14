@@ -930,10 +930,10 @@ describe("runDashboard — project-scoped plugin skills", () => {
   it("reuses a backend-aware project store instead of constructing a SQLite PluginStore", async () => {
     vi.stubEnv("FUSION_NO_EMBEDDED_PG", "1");
     try {
-      await runDashboard(0, { open: false });
+      const dashboard = await runDashboard(0, { open: false });
 
       const adapterOptions = mockCreateSkillsAdapter.mock.calls.at(-1)?.[0] as
-        | { getPluginSkills?: (rootDir: string) => Promise<unknown[]> }
+        | { getPluginSkills?: (rootDir: string, resolvedProjectStore?: ReturnType<typeof makeMockStore>) => Promise<unknown[]> }
         | undefined;
       expect(adapterOptions?.getPluginSkills).toBeTypeOf("function");
 
@@ -944,19 +944,26 @@ describe("runDashboard — project-scoped plugin skills", () => {
       ]);
       const taskStoreConstructor = vi.mocked(TaskStore);
       taskStoreConstructor.mockClear();
-      taskStoreConstructor.mockImplementationOnce(() => scopedStore as unknown as InstanceType<typeof TaskStore>);
       const pluginStoreConstructor = vi.mocked(PluginStore);
       pluginStoreConstructor.mockClear();
       const pluginLoaderConstructor = vi.mocked(PluginLoader);
       pluginLoaderConstructor.mockClear();
 
-      await expect(adapterOptions!.getPluginSkills!("/tmp/other-project")).resolves.toEqual([]);
+      await expect(adapterOptions!.getPluginSkills!("/tmp/other-project", scopedStore)).resolves.toEqual([]);
       expect(pluginStoreConstructor).not.toHaveBeenCalled();
-      expect(taskStoreConstructor).toHaveBeenCalledWith("/tmp/other-project");
+      expect(taskStoreConstructor).not.toHaveBeenCalled();
       expect(pluginLoaderConstructor).toHaveBeenCalledWith({
         pluginStore: scopedStore.getPluginStore(),
         taskStore: scopedStore,
+        persistRuntimeState: false,
       });
+      const scopedPluginLoader = pluginLoaderConstructor.mock.results.at(-1)?.value as {
+        stopAllPlugins: ReturnType<typeof vi.fn>;
+      };
+      expect(scopedPluginLoader.stopAllPlugins).toHaveBeenCalledWith();
+
+      dashboard.dispose();
+      expect(scopedStore.close).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
     }
