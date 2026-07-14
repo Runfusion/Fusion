@@ -230,4 +230,46 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
     ]);
     expect(boundResult.funnel.stages.find(({ stage }) => stage === "todo")?.entered).toBe(1);
   });
+
+  /**
+   * FNXC:ActivityAnalyticsPostgres 2026-07-14-01:41:
+   * Legacy or schema-drift agent runs may lack an agent ID. Such rows still count as runs, but they must not create a phantom daily active agent or push stickiness above the range-active-agent population.
+   */
+  it("excludes null run agent IDs from daily active agents and stickiness", async () => {
+    const layer = h.layer();
+    await layer.db.insert(schema.project.agents).values({
+      id: "agent-real",
+      name: "Real Agent",
+      role: "worker",
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    });
+    await layer.db.insert(schema.project.usageEvents).values({
+      projectId: "",
+      ts: "2026-07-13T11:00:00.000Z",
+      kind: "user_message",
+      agentId: "agent-real",
+    });
+    await layer.db.execute(sql`ALTER TABLE project.agent_runs ALTER COLUMN agent_id DROP NOT NULL`);
+    try {
+      await layer.db.execute(sql`
+        INSERT INTO project.agent_runs (project_id, id, agent_id, data, started_at, status)
+        VALUES ('', 'run-without-agent', NULL, '{}'::jsonb, '2026-07-13T12:00:00.000Z', 'completed')
+      `);
+      const result = await aggregateActivityAnalytics(layer, {
+        from: "2026-07-13T00:00:00.000Z",
+        to: "2026-07-13T23:59:59.999Z",
+      });
+
+      expect(result.agentRuns.total).toBe(1);
+      expect(result.activeAgents).toBe(1);
+      expect(result.daily).toEqual([
+        expect.objectContaining({ day: "2026-07-13", activeAgents: 1, agentRuns: 1 }),
+      ]);
+      expect(result.stickiness).toBe(1);
+    } finally {
+      await layer.db.execute(sql`DELETE FROM project.agent_runs WHERE agent_id IS NULL`);
+      await layer.db.execute(sql`ALTER TABLE project.agent_runs ALTER COLUMN agent_id SET NOT NULL`);
+    }
+  });
 });

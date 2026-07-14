@@ -30,7 +30,6 @@ import { aggregateWorkflowAnalytics } from "../../workflow-analytics.js";
 import { aggregateGithubIssueAnalytics } from "../../github-issue-analytics.js";
 import { aggregateSignalsAnalytics } from "../../activity-analytics.js";
 import { composeLiveSnapshot } from "../../command-center-live.js";
-import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 
 const pgTest = pgDescribe;
 
@@ -277,7 +276,7 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
   */
   it("live snapshot aggregates all projects when unbound and isolates a bound project", async () => {
     const store = h.store();
-    const layer = h.layer() as AsyncDataLayer & { projectId?: string };
+    const layer = Object.assign(h.layer(), { projectId: undefined as string | undefined });
     const adminDb = h.adminDb();
 
     layer.projectId = "live-project-a";
@@ -329,7 +328,7 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
    * Unbound Signals analytics intentionally aggregate every project partition, while a bound layer must apply one tenant scope to totals, open/resolved counts, MTTR samples, and every source/severity/status breakdown.
    */
   it("signals analytics aggregate all projects when unbound and isolate a bound project", async () => {
-    const layer = h.layer() as AsyncDataLayer & { projectId?: string };
+    const layer = Object.assign(h.layer(), { projectId: undefined as string | undefined });
     const adminDb = h.adminDb();
     await adminDb.execute(sql`
       INSERT INTO project.incidents

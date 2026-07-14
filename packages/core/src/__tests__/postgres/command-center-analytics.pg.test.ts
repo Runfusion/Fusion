@@ -30,7 +30,6 @@ import { aggregateProductivityAnalytics } from "../../productivity-analytics.js"
 import { aggregateTeamAnalytics } from "../../team-analytics.js";
 import { aggregateTokenAnalytics } from "../../token-analytics.js";
 import { aggregateToolAnalytics } from "../../tool-analytics.js";
-import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 
 const pgTest = pgDescribe;
 
@@ -208,7 +207,7 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
   */
   it("tool analytics aggregate all projects when unbound and isolate a bound project", async () => {
     const store = h.store();
-    const layer = h.layer() as AsyncDataLayer & { projectId?: string };
+    const layer = Object.assign(h.layer(), { projectId: undefined as string | undefined });
     const adminDb = h.adminDb();
 
     layer.projectId = "tool-project-a";
