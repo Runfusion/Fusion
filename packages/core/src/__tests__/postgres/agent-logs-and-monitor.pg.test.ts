@@ -92,8 +92,11 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
   /*
   FNXC:ActivityAnalyticsPostgres 2026-07-13-22:38:
   PostgreSQL activity analytics must report persisted sessions, messages, nodes, agents, and heartbeat runs instead of valid-looking zeros. Seed every contributing surface so the dashboard contract is verified across summary and daily aggregation.
+
+  FNXC:ActivityAnalyticsPostgres 2026-07-14-00:37:
+  Unbound command-center analytics intentionally aggregate all project partitions, while an explicitly bound layer remains isolated. Cover sessions, usage, runs, daily activity, and SDLC funnel transitions together so those views cannot disagree about the project scope.
   */
-  it("aggregateActivityAnalytics reports non-empty PostgreSQL activity", async () => {
+  it("aggregateActivityAnalytics aggregates all projects when unbound and isolates a bound project", async () => {
     const layer = h.layer();
     await layer.db.insert(schema.project.agents).values({
       id: "agent-analytics",
@@ -144,16 +147,54 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
       createdAt: "2026-07-13T10:30:00.000Z",
       updatedAt: "2026-07-13T10:30:00.000Z",
     });
+    await layer.db.insert(schema.project.cliSessions).values({
+      id: "cli-other-project",
+      purpose: "chat",
+      projectId: "other-project",
+      adapterId: "test",
+      createdAt: "2026-07-13T10:45:00.000Z",
+      updatedAt: "2026-07-13T10:45:00.000Z",
+    });
+    await layer.db.insert(schema.project.activityLog).values([
+      {
+        projectId: "",
+        id: "activity-analytics-local",
+        timestamp: "2026-07-13T13:00:00.000Z",
+        type: "task:moved",
+        taskId: "FN-ANALYTICS-LOCAL",
+        details: "moved",
+        metadata: { to: "todo" },
+      },
+      {
+        projectId: "other-project",
+        id: "activity-analytics-other",
+        timestamp: "2026-07-13T13:05:00.000Z",
+        type: "task:moved",
+        taskId: "FN-ANALYTICS-OTHER",
+        details: "moved",
+        metadata: { to: "todo" },
+      },
+    ]);
 
-    const result = await aggregateActivityAnalytics(layer, {
+    const range = {
       from: "2026-07-13T00:00:00.000Z",
       to: "2026-07-13T23:59:59.999Z",
-    });
+    };
+    const result = await aggregateActivityAnalytics(layer, range);
 
-    expect(result).toMatchObject({ sessions: 1, messages: 1, activeNodes: 2, activeAgents: 1 });
-    expect(result.agentRuns).toMatchObject({ total: 1, completed: 1 });
+    expect(result).toMatchObject({ sessions: 2, messages: 2, activeNodes: 3, activeAgents: 2 });
+    expect(result.agentRuns).toMatchObject({ total: 2, completed: 1, failed: 1 });
     expect(result.daily).toEqual([
+      expect.objectContaining({ day: "2026-07-13", messages: 2, activeNodes: 3, activeAgents: 2, agentRuns: 2 }),
+    ]);
+    expect(result.funnel.stages.find(({ stage }) => stage === "todo")?.entered).toBe(2);
+
+    const boundResult = await aggregateActivityAnalytics({ ...layer, projectId: "" }, range);
+    expect(boundResult).toMatchObject({ sessions: 1, messages: 1, activeNodes: 2, activeAgents: 1 });
+    expect(boundResult.agentRuns).toMatchObject({ total: 1, completed: 1, failed: 0 });
+    expect(boundResult.daily).toEqual([
       expect.objectContaining({ day: "2026-07-13", messages: 1, activeNodes: 2, activeAgents: 1, agentRuns: 1 }),
     ]);
+    expect(boundResult.funnel.stages.find(({ stage }) => stage === "todo")?.entered).toBe(1);
   });
 });

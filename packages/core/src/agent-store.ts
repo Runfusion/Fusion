@@ -366,7 +366,15 @@ export class AgentStore extends EventEmitter {
   }
 
   private get backendProjectId(): string {
-    return this.asyncLayer?.projectId ?? "";
+    const projectId = this.asyncLayer?.projectId;
+    /*
+    FNXC:AgentHeartbeatIsolation 2026-07-14-00:37:
+    Backend heartbeat runs are project-owned. Reject unbound backend heartbeat/run access instead of silently reading or writing the legacy empty-string partition, which could mix ownership on a shared PostgreSQL cluster.
+    */
+    if (!projectId) {
+      throw new Error("AgentStore backend heartbeat/run operations require asyncLayer.projectId");
+    }
+    return projectId;
   }
 
   private get db(): Database {
@@ -2123,6 +2131,9 @@ export class AgentStore extends EventEmitter {
     status: AgentHeartbeatEvent["status"],
     runId?: string
   ): Promise<AgentHeartbeatEvent> {
+    if (this.backendMode) {
+      void this.backendProjectId;
+    }
     return this.withLock(agentId, async () => {
       // Verify agent exists
       const agent = await this.getAgent(agentId);
@@ -2187,6 +2198,7 @@ export class AgentStore extends EventEmitter {
     // FNXC:SqliteFinalRemoval 2026-06-26-00:05:
     // Backend mode: read via async Drizzle helper.
     if (this.backendMode) {
+      void this.backendProjectId;
       return getHeartbeatHistoryAsync(this.asyncLayer!.db, agentId, limit);
     }
     const rows = this.db.prepare(`
