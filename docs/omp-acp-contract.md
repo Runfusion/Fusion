@@ -70,6 +70,9 @@ provider key names). Inherited `process.env` is **not** forwarded.
 
 ## Fusion context delivery
 
-- `systemPrompt` is forwarded on ACP `session/new` as `_meta.systemPromptOverride`.
+- `systemPrompt` is forwarded on ACP `session/new` as `_meta.systemPromptOverride`
+  (plus rules describing Fusion MCP tools when present).
 - Operator MCP servers are eligible for `session/new.mcpServers` (`runtimeSupportsMcp("omp")`).
-- Fusion in-process `fn_*` custom tools are **not** bridged in v1.
+- Fusion in-process `fn_*` custom tools are bridged via loopback HTTP + stdio MCP
+  server `fusion-custom-tools` (`mcp-schema-server.cjs`, env
+  `FUSION_OMP_TOOL_BRIDGE_URL`) — same pattern as Grok ACP.

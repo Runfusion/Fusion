@@ -14,6 +14,8 @@ const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   // FNXC:GrokAcp 2026-07-11-14:00: Grok ACP ships mcp-schema-server.cjs so
   // session/new can forward executable Fusion fn_* tools to grok agent stdio.
   "fusion-plugin-grok-runtime",
+  // FNXC:OmpAcp 2026-07-14-00:05: OMP ACP ships the same bridge asset for fn_* tools.
+  "fusion-plugin-omp-runtime",
 ]);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -37,8 +37,48 @@ describe("OmpRuntimeAdapter", () => {
     });
 
     expect(seenOptions?.sessionMeta).toEqual(
-      expect.objectContaining({ systemPromptOverride: "Fusion system context" }),
+      expect.objectContaining({
+        systemPromptOverride: expect.stringContaining("Fusion system context"),
+      }),
     );
+  });
+
+  it("forwards Fusion fn_* tools via fusion-custom-tools MCP server", async () => {
+    let seenOptions: AgentRuntimeOptions | undefined;
+    const liveSession = makeFakeSession();
+    const adapter = new OmpRuntimeAdapter({
+      createAcpAdapter: () => ({
+        createSession: async (options) => {
+          seenOptions = options;
+          return { session: liveSession };
+        },
+        promptWithFallback: async () => undefined,
+        describeModel: () => "omp/default",
+      }),
+    });
+
+    const { session } = await adapter.createSession({
+      cwd: process.cwd(),
+      systemPrompt: "sys",
+      customTools: [
+        {
+          name: "fn_task_list",
+          description: "List tasks",
+          parameters: { type: "object", properties: {} },
+          execute: async () => ({ text: "ok" }),
+        },
+      ],
+    });
+
+    try {
+      const mcp = seenOptions?.mcpServers as Array<{ name?: string }> | undefined;
+      expect(mcp?.some((s) => s.name === "fusion-custom-tools")).toBe(true);
+      expect(String(seenOptions?.sessionMeta?.systemPromptOverride ?? "")).toContain(
+        "fusion-custom-tools",
+      );
+    } finally {
+      await adapter.dispose(session);
+    }
   });
 
   it("surfaces create failures as onText diagnostics without throwing", async () => {

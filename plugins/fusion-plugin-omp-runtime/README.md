@@ -57,11 +57,23 @@ See https://omp.sh/docs/acp for the upstream protocol surface (slash commands, `
    - Agent → **Runtime Source: Runtime** → **OMP Runtime** (`runtimeHint: "omp"`), or
    - Pick an `omp-cli/*` model when the toggle is on (from `omp models`).
 
+## Fusion tools (`fn_*`)
+
+Engine `customTools` (board/task/agent tools such as `fn_task_list`) are exposed to
+omp as MCP server **`fusion-custom-tools`**:
+
+1. `OmpRuntimeAdapter` starts a **loopback HTTP bridge** holding the in-process
+   `ToolDefinition.execute` closures.
+2. Session `session/new.mcpServers` includes a stdio MCP child
+   (`mcp-schema-server.cjs`) that implements `tools/list` + `tools/call` and
+   POSTs calls to the bridge (`FUSION_OMP_TOOL_BRIDGE_URL`).
+3. Operator-configured MCP servers are forwarded alongside (stdio/http/sse).
+4. System rules tell omp to prefer `fusion-custom-tools` for Fusion board ops.
+
 ## Known v1 gaps
 
 | Gap | Status |
 | --- | --- |
-| Fusion `fn_*` tool bridge (Grok-style loopback MCP) | **Not shipped** — operator MCP is forwarded when configured; in-process custom tools are not bridged |
 | Auto-route `omp-cli/*` without explicit Runtime Source | **Partial** — models surface when Enable is on; prefer `runtimeHint: "omp"` for agent lanes |
 | Mid-session Fusion model picker changes | **Not wired** — model is fixed at `omp --model … acp` spawn |
 

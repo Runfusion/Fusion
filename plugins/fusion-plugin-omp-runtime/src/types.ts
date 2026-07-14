@@ -28,12 +28,10 @@ export interface PermissionGate {
   markApprovalCompleted?: (approvalRequestId: string) => Promise<void> | void;
 }
 
-export interface AcpMcpServer {
-  name: string;
-  command: string;
-  args: string[];
-  env: { name: string; value: string }[];
-}
+import type { AcpMcpServer } from "./mcp-forwarding.js";
+
+/** Re-export multi-transport MCP shape used on ACP session/new. */
+export type { AcpMcpServer } from "./mcp-forwarding.js";
 
 export interface OmpCallbacks {
   /** Streams assistant text deltas from ACP `agent_message_chunk` updates. */

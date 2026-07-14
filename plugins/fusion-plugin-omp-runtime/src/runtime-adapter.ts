@@ -4,6 +4,12 @@ import {
   modelForCli,
   normalizeOmpCliModel,
 } from "./acp-settings.js";
+import { toAcpMcpServers, type AcpMcpServer } from "./mcp-forwarding.js";
+import {
+  startFusionToolBridge,
+  type FusionToolBridge,
+  type ToolLike,
+} from "./tool-bridge.js";
 import type {
   AgentRuntime,
   AgentRuntimeOptions,
@@ -19,6 +25,13 @@ Drive Oh My Pi over native ACP (`omp acp`) via vendored AcpRuntimeAdapter under
 Keep resolve-never-reject on prompt failures so chat/executor always get a
 well-formed turn; surface create/prompt failures as visible onText diagnostics
 rather than silent empty bubbles (FN-7779 invariant, same as Grok ACP).
+
+FNXC:OmpAcp 2026-07-14-00:05:
+Load Fusion tools + operator MCP into the ACP session for full fn_* parity with
+Grok ACP:
+  - Operator MCP servers → session/new.mcpServers (stdio/http/sse)
+  - Engine customTools (fn_*) → loopback MCP bridge + fusion-custom-tools server
+  - System rules describe available Fusion MCP tools so omp prefers them for board ops
 */
 
 export type AcpAdapterFactory = (settings: Record<string, unknown>) => {
@@ -47,10 +60,16 @@ interface TurnAccum {
   text: string;
 }
 
+interface SessionResources {
+  toolBridge?: FusionToolBridge | null;
+}
+
 const TURN_ACCUM = Symbol("ompTurnAccum");
+const SESSION_RESOURCES = Symbol("ompSessionResources");
 
 type SessionWithExtras = OmpSession & {
   [TURN_ACCUM]?: TurnAccum;
+  [SESSION_RESOURCES]?: SessionResources;
 };
 
 function compactDiagnostic(value: string): string {
@@ -90,11 +109,56 @@ function resetTurnAccum(session: OmpSession): void {
   getTurnAccum(session).text = "";
 }
 
+function collectCustomTools(options: AgentRuntimeOptions): ToolLike[] {
+  const fromCustom = Array.isArray(options.customTools) ? (options.customTools as ToolLike[]) : [];
+  /*
+  FNXC:OmpAcp 2026-07-14-00:05:
+  AgentRuntimeOptions.tools is typed as "coding"|"readonly"|undefined, but some call sites pass
+  an array of ToolDefinitions. Narrow via Array.isArray on the tools field, then cast the array
+  value only — never cast the whole options object (TS2352).
+  */
+  const toolsField = (options as { tools?: unknown }).tools;
+  const maybeToolsArray = Array.isArray(toolsField) ? (toolsField as ToolLike[]) : [];
+  return [...fromCustom, ...maybeToolsArray];
+}
+
+/**
+ * System rules so omp knows Fusion board tools are available via the
+ * fusion-custom-tools MCP server (not only omp-native tools).
+ */
+export function buildOmpFusionToolRules(options: {
+  fusionToolCount?: number;
+  operatorMcpCount?: number;
+}): string {
+  const parts: string[] = [];
+  if ((options.fusionToolCount ?? 0) > 0) {
+    parts.push(
+      [
+        "## Fusion board tools (MCP: fusion-custom-tools)",
+        `You have access to ${options.fusionToolCount} Fusion in-process tools (names typically start with \`fn_\`) via the MCP server \`fusion-custom-tools\`.`,
+        "Use them for Fusion board/task/agent/workflow operations instead of inventing shell workarounds.",
+        "Prefer these tools whenever the user or system prompt asks about tasks, missions, agents, or Fusion state.",
+      ].join("\n"),
+    );
+  }
+  if ((options.operatorMcpCount ?? 0) > 0) {
+    parts.push(
+      [
+        "## Operator MCP servers",
+        `${options.operatorMcpCount} additional operator-configured MCP server(s) are connected for this session.`,
+        "Use them when they match the user's request.",
+      ].join("\n"),
+    );
+  }
+  return parts.join("\n\n");
+}
+
 function ensureOmpSessionShape(
   session: AgentSession,
   model: string,
   options: AgentRuntimeOptions,
   turnAccum: TurnAccum,
+  resources: SessionResources,
 ): OmpSession {
   const messages: unknown[] =
     Array.isArray((session as OmpSession).messages) ? (session as OmpSession).messages : [];
@@ -117,7 +181,14 @@ function ensureOmpSessionShape(
     onToolEnd: omp.callbacks?.onToolEnd ?? options.onToolEnd,
   };
 
+  const originalDispose = typeof omp.dispose === "function" ? omp.dispose.bind(omp) : () => undefined;
+  omp.dispose = () => {
+    void resources.toolBridge?.dispose();
+    originalDispose();
+  };
+
   (omp as SessionWithExtras)[TURN_ACCUM] = turnAccum;
+  (omp as SessionWithExtras)[SESSION_RESOURCES] = resources;
   return omp;
 }
 
@@ -125,6 +196,7 @@ function createDeadSession(
   model: string,
   options: AgentRuntimeOptions,
   diagnostic: string,
+  resources?: SessionResources,
 ): OmpSession {
   const messages: unknown[] = [];
   return {
@@ -140,7 +212,9 @@ function createDeadSession(
       onToolStart: options.onToolStart,
       onToolEnd: options.onToolEnd,
     },
-    dispose: () => undefined,
+    dispose: () => {
+      void resources?.toolBridge?.dispose();
+    },
   };
 }
 
@@ -174,23 +248,50 @@ export class OmpRuntimeAdapter implements AgentRuntime {
   ): Promise<AgentSessionResult> {
     const model = normalizeOmpCliModel(options.defaultModelId) ?? "omp/default";
     const turnAccum: TurnAccum = { text: "" };
+    const resources: SessionResources = {};
 
-    const systemPrompt = options.systemPrompt?.trim() ?? "";
+    // ── Operator MCP + Fusion custom tools (fn_*) ─────────────────────────
+    const operatorMcp = toAcpMcpServers(options.mcpServers);
+    let toolBridge: FusionToolBridge | null = null;
+    try {
+      toolBridge = await startFusionToolBridge(collectCustomTools(options));
+      resources.toolBridge = toolBridge;
+    } catch {
+      toolBridge = null;
+    }
+
+    const mcpServers: AcpMcpServer[] = [
+      ...operatorMcp,
+      ...(toolBridge ? [toolBridge.mcpServer] : []),
+    ];
+
+    const toolRules = buildOmpFusionToolRules({
+      fusionToolCount: toolBridge?.toolCount,
+      operatorMcpCount: operatorMcp.length,
+    });
+
+    const systemPromptParts = [options.systemPrompt?.trim() ?? "", toolRules].filter(
+      (part) => part.length > 0,
+    );
+    const systemPrompt = systemPromptParts.join("\n\n");
+
     /*
-    FNXC:OmpAcp 2026-07-13-22:50:
-    Fusion system/runtime context must reach omp. ACP session/new._meta carries
-    systemPromptOverride (same contract as Grok ACP); without it only user turns
-    were sent and omp kept its default system prompt.
+    FNXC:OmpAcp 2026-07-13-22:50 / 2026-07-14-00:05:
+    Fusion system/runtime context + tool rules reach omp via session/new._meta
+    systemPromptOverride (same contract as Grok ACP).
     */
     const sessionMeta: Record<string, unknown> = {
       ...(options.sessionMeta ?? {}),
       ...(systemPrompt ? { systemPromptOverride: systemPrompt } : {}),
+      ...(toolBridge ? { fusionToolCount: toolBridge.toolCount } : {}),
     };
+
     const sessionOptions: AgentRuntimeOptions = {
       ...options,
       cwd: options.cwd?.trim() ? options.cwd : process.cwd(),
       systemPrompt,
       defaultModelId: modelForCli(model) ?? model,
+      mcpServers,
       sessionMeta,
       onText: (delta: string) => {
         turnAccum.text += delta;
@@ -220,12 +321,18 @@ export class OmpRuntimeAdapter implements AgentRuntime {
       Prefer sessionOptions (turnAccum-wrapped callbacks) over the raw engine options when
       ACP returns empty callbacks — otherwise assistant text is not accumulated for history.
       */
-      const session = ensureOmpSessionShape(result.session, model, sessionOptions, turnAccum);
+      const session = ensureOmpSessionShape(
+        result.session,
+        model,
+        sessionOptions,
+        turnAccum,
+        resources,
+      );
       this.adapters.set(session, acp);
       return { session, sessionFile: result.sessionFile };
     } catch (error) {
       const diagnostic = describeCreateFailure(error);
-      const session = createDeadSession(model, sessionOptions, diagnostic);
+      const session = createDeadSession(model, sessionOptions, diagnostic, resources);
       session.callbacks.onText?.(diagnostic);
       appendMessage(session, "assistant", diagnostic);
       return { session, sessionFile: undefined };
@@ -297,6 +404,12 @@ export class OmpRuntimeAdapter implements AgentRuntime {
   }
 
   async dispose(session: AgentSession): Promise<void> {
+    const resources = (session as SessionWithExtras)[SESSION_RESOURCES];
+    try {
+      await resources?.toolBridge?.dispose();
+    } catch {
+      // best-effort
+    }
     const acp = this.adapters.get(session);
     if (acp && typeof acp.dispose === "function") {
       await acp.dispose(session);

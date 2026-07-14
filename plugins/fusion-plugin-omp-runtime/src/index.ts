@@ -99,3 +99,6 @@ export {
   normalizeOmpCliModel,
   resolveOmpAcpAuthPreferMethods,
 } from "./acp-settings.js";
+export { startFusionToolBridge, toolsToMcpToolDefs, FUSION_OMP_TOOL_BRIDGE_URL } from "./tool-bridge.js";
+export { toAcpMcpServers } from "./mcp-forwarding.js";
+export { buildOmpFusionToolRules } from "./runtime-adapter.js";
