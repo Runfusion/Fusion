@@ -16,6 +16,8 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { StepSessionExecutor } from "../step-session-executor.js";
 import { executorLog } from "../logger.js";
 import { withRateLimitRetry } from "../rate-limit-retry.js";
+import { MAX_RECOVERY_RETRIES } from "../recovery-policy.js";
+import { executingTaskLock } from "../active-session-registry.js";
 import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
 import {
   createMockStore,
@@ -264,6 +266,11 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     };
     store.getTask.mockResolvedValue(task as any);
+    store.moveTask.mockImplementation(async () => {
+      expect(executingTaskLock.has("FN-ASSISTANT-STALE")).toBe(false);
+      expect((executor as any).activeWorktrees.has("FN-ASSISTANT-STALE")).toBe(false);
+      return task as any;
+    });
 
     const staleSession = {
       prompt: vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant")),
@@ -277,19 +284,71 @@ describe("Workflow Steps Execution", () => {
 
     const onError = vi.fn();
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    const markGraphExecuteSelfRequeued = vi.spyOn(executor as any, "markGraphExecuteSelfRequeued");
+    (executor as any).activeWorktrees.set("FN-ASSISTANT-STALE", new Set([task.worktree]));
 
     await executor.execute(task as any);
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
       sessionFile: null,
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", {
+      sessionFile: null,
       status: null,
       error: null,
+    });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", "todo", { preserveResumeState: true });
+    expect(markGraphExecuteSelfRequeued).toHaveBeenCalledWith("FN-ASSISTANT-STALE");
+    expect(executingTaskLock.has("FN-ASSISTANT-STALE")).toBe(false);
+    expect((executor as any).activeWorktrees.has("FN-ASSISTANT-STALE")).toBe(false);
+    expect(store.handoffToReview).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("fails a repeated stale assistant-continuation after the fresh-session retry budget is exhausted", async () => {
+    const store = createMockStore();
+    const task = {
+      id: "FN-ASSISTANT-STALE-EXHAUSTED",
+      title: "Repeated stale assistant continuation",
+      description: "Test bounded stale assistant continuation recovery",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "in-progress" as const }],
+      currentStep: 0,
+      recoveryRetryCount: MAX_RECOVERY_RETRIES,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      sessionFile: "/tmp/stale-session.jsonl",
+      worktree: "/tmp/test/.worktrees/fn-assistant-stale-exhausted",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockResolvedValue(task as any);
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockRejectedValue(new Error("Cannot continue from message role: assistant")),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+        state: {},
+      },
+    } as any);
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    await executor.execute(task as any);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", {
+      status: "failed",
+      error: "Cannot continue from message role: assistant",
       recoveryRetryCount: null,
       nextRecoveryAt: null,
     });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE", "todo", { preserveResumeState: true });
-    expect(store.handoffToReview).not.toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", "todo", expect.anything());
+    expect(onError).toHaveBeenCalledOnce();
   });
 
   describe("FN-5436: pending-review skip on no-fn_task_done exit", () => {
