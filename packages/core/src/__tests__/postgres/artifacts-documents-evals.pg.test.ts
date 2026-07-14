@@ -12,7 +12,7 @@
  * joined parent-task fields. Runs in the blocking gate (test:pg-gate).
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 
 import {
   pgDescribe,
@@ -21,8 +21,62 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import { AsyncEvalStore } from "../../async-eval-store.js";
 import { runScheduledEvalBatch } from "../../eval-automation.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import type { EvalRunStatus } from "../../eval-types.js";
 
 const pgTest = pgDescribe;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * FNXC:ScheduledEvalsPostgres 2026-07-14-01:41:
+ * Eval lifecycle race tests coordinate at the transaction's advisory-lock query. The first updater pauses after acquiring the real PostgreSQL lock, while the second signals before its lock attempt blocks, proving terminal transition serialization without sleeps or polling.
+ */
+function controlledEvalUpdateLayer(
+  layer: AsyncDataLayer,
+  mode: "hold-after-first-query" | "signal-first-query",
+): { layer: AsyncDataLayer; reached: Promise<void>; release: () => void } {
+  const reached = deferred();
+  const release = deferred();
+  let firstTransaction = true;
+  const controlled = {
+    ...layer,
+    transactionImmediate: async <T>(
+      fn: Parameters<AsyncDataLayer["transactionImmediate"]>[0],
+      options?: Parameters<AsyncDataLayer["transactionImmediate"]>[1],
+    ): Promise<T> => layer.transactionImmediate(async (tx) => {
+      if (!firstTransaction) return fn(tx) as Promise<T>;
+      firstTransaction = false;
+      let firstQuery = true;
+      const proxy = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "execute")
+            return Reflect.get(target, property, receiver);
+          return async (...args: Parameters<typeof tx.execute>) => {
+            if (!firstQuery) return tx.execute(...args);
+            firstQuery = false;
+            if (mode === "signal-first-query") {
+              reached.resolve();
+              return tx.execute(...args);
+            }
+            const result = await tx.execute(...args);
+            reached.resolve();
+            await release.promise;
+            return result;
+          };
+        },
+      });
+      return fn(proxy) as Promise<T>;
+    }, options),
+  } as AsyncDataLayer;
+  return { layer: controlled, reached: reached.promise, release: release.resolve };
+}
 
 pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -184,6 +238,47 @@ pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
     expect(got?.overallScore).toBe(87);
     expect(got?.taskSnapshot.title).toBe("Snapshot title");
   });
+
+  it.each<[EvalRunStatus, EvalRunStatus]>([
+    ["completed", "failed"],
+    ["failed", "cancelled"],
+    ["cancelled", "completed"],
+  ])(
+    "serializes concurrent terminal transitions after %s wins",
+    async (winningStatus, losingStatus) => {
+      const setup = new AsyncEvalStore(h.layer());
+      const run = await setup.createRun({
+        projectId: "P-EVAL-CONCURRENCY",
+        scope: "all",
+        trigger: "manual",
+      });
+      const firstControl = controlledEvalUpdateLayer(
+        h.layer(),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledEvalUpdateLayer(
+        h.layer(),
+        "signal-first-query",
+      );
+      const first = new AsyncEvalStore(firstControl.layer);
+      const second = new AsyncEvalStore(secondControl.layer);
+
+      const winningUpdate = first.updateRun(run.id, { status: winningStatus });
+      await firstControl.reached;
+      const losingUpdate = second.updateRun(run.id, { status: losingStatus });
+      await secondControl.reached;
+      firstControl.release();
+
+      await expect(winningUpdate).resolves.toMatchObject({
+        status: winningStatus,
+      });
+      await expect(losingUpdate).rejects.toMatchObject({
+        name: "EvalLifecycleError",
+        code: "invalid_transition",
+      });
+      expect(await setup.getRun(run.id)).toMatchObject({ status: winningStatus });
+    },
+  );
 
   /*
   FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
