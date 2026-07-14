@@ -204,7 +204,7 @@ function buildPopulatedSqliteProject(fusionDir: string): void {
       `INSERT INTO activityLog (id, timestamp, type, taskId, taskTitle, details, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     insertActivity.run("act-1", "2026-06-01T00:00:00Z", "task:created", "FN-100", "First task", "created", JSON.stringify({ source: "test" }));
-    insertActivity.run("act-2", "2026-06-01T01:00:00Z", "task:moved", "FN-100", "First task", "todo -> in-progress", "");
+    insertActivity.run("act-2", "2026-06-01T01:00:00Z", "task:moved", "FN-100", "First task", "todo -> in-progress", null);
 
     db.prepare(
       `INSERT INTO researchRuns (id, query, status, sources, events, tags, createdAt, updatedAt)
@@ -921,6 +921,24 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       "WF-legacy-scalar-ir": 42,
       "WF-legacy-whitespace-ir": " \t ",
     });
+  });
+
+  it("fails closed when a required jsonb default is declared but cannot be validated", async () => {
+    /*
+    FNXC:PostgresMigration 2026-07-14-10:43:
+    Function-style jsonb defaults are valid PostgreSQL expressions but are intentionally outside the migrator's literal fallback parser. Empty legacy text must not be stored as data when such a default exists.
+    */
+    await applySchemaBaseline(ctx!.db);
+    await ctx!.db.execute(sql`
+      ALTER TABLE project.workflows
+      ALTER COLUMN ir SET DEFAULT jsonb_build_object()
+    `);
+
+    await expect(migrateTest(
+      ctx!.db,
+      [{ sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const }],
+      { skipBaseline: true },
+    )).rejects.toThrow(/declared default could not be validated/);
   });
 
   // VAL-MIGRATE-003 — bytea fidelity

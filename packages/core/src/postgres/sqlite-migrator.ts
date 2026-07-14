@@ -116,7 +116,7 @@ interface ColumnMapping {
   readonly type: ColumnType;
   /** JSON text to use when a legacy NULL targets a NOT NULL jsonb default. */
   readonly nullJsonbFallback?: string;
-  /** Preserve empty/whitespace source text when required jsonb has no default. */
+  /** Preserve empty/whitespace source text only when required jsonb declares no default. */
   readonly preserveEmptyJsonbString: boolean;
 }
 
@@ -673,13 +673,14 @@ function resolveColumnMapping(
       continue;
     }
     const type = classifyColumnType(pgCol);
+    const hasJsonbDefault = type === "jsonb" && pgCol.column_default !== null;
     let nullJsonbFallback: string | undefined;
-    if (type === "jsonb" && pgCol.is_nullable === "NO" && pgCol.column_default) {
+    if (type === "jsonb" && pgCol.is_nullable === "NO" && hasJsonbDefault) {
       // FNXC:PostgresMigration 2026-07-14-05:30:
       // Legacy SQLite rows can contain NULL/empty JSON even when the target is
       // NOT NULL with a default. Materialize that default during conversion so
       // one stale row cannot abort the entire first-boot migration.
-      const match = /^'(.*)'::jsonb?$/s.exec(pgCol.column_default);
+      const match = /^'(.*)'::jsonb?$/s.exec(pgCol.column_default!);
       if (match) {
         const candidate = match[1].replace(/''/g, "'");
         try {
@@ -689,9 +690,18 @@ function resolveColumnMapping(
           // Leave malformed defaults to PostgreSQL rather than inventing data.
         }
       }
+      if (nullJsonbFallback === undefined) {
+        /*
+        FNXC:PostgresMigration 2026-07-14-10:43:
+        A required jsonb column with a declared but unvalidated default is not equivalent to a default-free column. Fail the cutover closed instead of converting empty legacy text into a JSON string that silently overrides the target's intended default.
+        */
+        throw new Error(
+          `Cannot migrate required jsonb column ${pgTable}.${pgName}: declared default could not be validated`,
+        );
+      }
     }
     const preserveEmptyJsonbString =
-      type === "jsonb" && pgCol.is_nullable === "NO" && nullJsonbFallback === undefined;
+      type === "jsonb" && pgCol.is_nullable === "NO" && !hasJsonbDefault;
     mapping.push({ sqliteName: sc.name, pgName, type, nullJsonbFallback, preserveEmptyJsonbString });
   }
 
@@ -734,9 +744,9 @@ function classifyColumnType(pgCol: {
  *   jsonb values MUST be passed as strings with an explicit `::jsonb` cast.
  *   NULL stays NULL unless the target is NOT NULL with a valid jsonb default;
  *   in that case legacy NULL values materialize the target default. Empty
- *   strings use that same default, or remain a JSON string scalar when the
- *   required target has no default, preserving source data without emitting
- *   SQL NULL.
+ *   strings use that same default, or remain a JSON string scalar only when
+ *   the required target declares no default. Declared defaults that cannot be
+ *   validated fail the migration before conversion rather than becoming data.
  * - bytea: SQLite stores BLOB. We wrap it in a Buffer (postgres.js handles
  *   Buffer natively for bytea). NULL stays NULL.
  * - plain: passed through verbatim.

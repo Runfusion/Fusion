@@ -1,5 +1,5 @@
 ---
-"@fusion/core": patch
+"@runfusion/fusion": patch
 ---
 
 summary: Preserve legacy empty JSON text during PostgreSQL cutover.
