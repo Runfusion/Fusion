@@ -193,10 +193,24 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       const agentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${task.id}`;
-      const existing = await chatStore.findLatestActiveSessionForTarget({
+      let existing = await chatStore.findLatestActiveSessionForTarget({
         agentId,
         ...(projectId ? { projectId } : {}),
       });
+
+      // FNXC:CentralProjectIdentity 2026-07-14-00:15:
+      // ctx projectId now resolves to the launch id, so a projectId-filtered lookup
+      // misses legacy active planner sessions created with a null projectId → we'd
+      // create a duplicate. On a scoped miss, retry unscoped and reuse a matched
+      // legacy (null-projectId) session for this task-specific agent. The projectId
+      // is not stamped onto it: ChatSessionUpdateInput has no projectId field, so no
+      // clean update path exists — reusing it is enough to prevent the duplicate.
+      if (!existing && projectId) {
+        const legacy = await chatStore.findLatestActiveSessionForTarget({ agentId });
+        if (legacy && legacy.projectId == null) {
+          existing = legacy;
+        }
+      }
 
       if (existing) {
         const session = modelProvider && modelId
@@ -736,8 +750,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw notFound(`Chat session ${sessionId} not found`);
       }
 
+      // FNXC:CentralProjectIdentity 2026-07-14-00:15:
+      // ctx projectId now resolves to the launch id, but legacy sessions stored a
+      // null/undefined projectId before scoping existed. Treat those as launch-owned
+      // so attaching to their in-flight stream is not spuriously 404'd; only reject a
+      // session that is explicitly stamped with a DIFFERENT project id.
       const { projectId } = await getProjectContext(req);
-      if (projectId !== undefined && session.projectId !== projectId) {
+      if (projectId !== undefined && session.projectId != null && session.projectId !== projectId) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
 

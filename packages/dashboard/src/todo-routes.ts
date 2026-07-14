@@ -7,7 +7,8 @@ import {
   notFound,
   internalError,
 } from "./api-error.js";
-import { getOrCreateProjectStore } from "./project-store-resolver.js";
+import { getScopedStore as resolveScopedRequestStore } from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 
 function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server error"): never {
   if (error instanceof ApiError) {
@@ -56,7 +57,7 @@ function validateStringArray(arr: unknown, fieldName: string): string[] {
   return arr;
 }
 
-export function createTodoRouter(store: TaskStore): Router {
+export function createTodoRouter(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
@@ -80,8 +81,11 @@ export function createTodoRouter(store: TaskStore): Router {
 
   router.use(async (req: Request, _res: Response, next) => {
     try {
-      const projectId = getProjectIdFromRequest(req);
-      const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : store;
+      // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+      // Resolve an explicit central-registry project id (request id → registered
+      // launch project id → raw launch store as last resort) via the shared seam,
+      // replacing the implicit projectId?getOrCreate:store fallback.
+      const scopedStore = await resolveScopedRequestStore(req, store, options);
       requestContext.run(scopedStore, next);
     } catch (error) {
       next(error);

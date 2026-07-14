@@ -69,7 +69,7 @@ import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
 import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
-import { getProjectIdFromRequest } from "./routes/context.js";
+import { getProjectIdFromRequest, resolveStoreForProjectId } from "./routes/context.js";
 import type { CliRelaunchRegistry } from "./cli-session-transport.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion, isUnresolvedCliPackageVersion } from "./cli-package-version.js";
@@ -202,19 +202,26 @@ export async function resolveScopedStore(
   projectId: string | undefined,
   store: TaskStore,
   engineManager?: import("@fusion/engine").ProjectEngineManager,
+  launchProjectId?: string,
+  // FNXC:CentralProjectIdentity 2026-07-13-23:55: thread the caller's ServerOptions so
+  // the shared one-time launch-dir fallback warning routes through runtimeLogger
+  // instead of console.warn and isn't consumed on the unstructured sink first.
+  options?: ServerOptions,
 ): Promise<TaskStore> {
-  if (!projectId) {
-    return store;
-  }
-
-  if (engineManager) {
-    const engine = engineManager.getEngine(projectId);
-    if (engine) {
-      return engine.getTaskStore();
-    }
-  }
-
-  return await getOrCreateProjectStore(projectId);
+  /*
+  FNXC:CentralProjectIdentity 2026-07-14-00:15:
+  Realtime scoped-store resolution delegates to the SINGLE shared id-based core
+  (routes/context.ts resolveStoreForProjectId) so the realtime path and route path
+  can never drift. This exported signature (separate engineManager/launchProjectId
+  params) is retained for caller compatibility; callers derive both from `options`
+  (engineManager = options.engineManager, launchProjectId = options.engine.getProjectId()),
+  so folding `projectId ?? launchProjectId` into the shared core is equivalent.
+  Note: engineManager/launchProjectId params below are consumed via `options` inside
+  the shared core; they remain in the signature only for backwards compatibility.
+  */
+  void engineManager;
+  void launchProjectId;
+  return resolveStoreForProjectId(projectId ?? launchProjectId, store, options);
 }
 
 export interface ServerOptions {
@@ -1223,7 +1230,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
    * Uses module-level resolveScopedStore with current closure context.
    */
   async function resolveProjectScopedStore(projectId: string | undefined): Promise<TaskStore> {
-    return resolveScopedStore(projectId, store, options?.engineManager);
+    // FNXC:CentralProjectIdentity 2026-07-13-23:53:
+    // Thread the daemon's registered launch project id so a realtime request
+    // without projectId resolves the explicit launch project (registry-bound
+    // injected store) rather than the implicit raw-store fallback.
+    return resolveScopedStore(projectId, store, options?.engineManager, options?.engine?.getProjectId?.(), options);
   }
 
   // Per-task SSE endpoint for live agent log streaming
@@ -2326,7 +2337,7 @@ export function setupTerminalWebSocket(
     try {
       if (projectId) {
         // When projectId is provided, resolve the scoped store and get its root dir
-        const scopedStore = await resolveScopedStore(projectId, store, options?.engineManager);
+        const scopedStore = await resolveScopedStore(projectId, store, options?.engineManager, options?.engine?.getProjectId?.(), options);
         scopedRootDir = scopedStore.getRootDir();
         terminalService = getTerminalService(scopedRootDir);
       } else {
@@ -2560,7 +2571,7 @@ export function setupBadgeWebSocket(
     }
     
     // Create scoped store
-    scopedStore = await resolveScopedStore(projectId, store, options?.engineManager);
+    scopedStore = await resolveScopedStore(projectId, store, options?.engineManager, options?.engine?.getProjectId?.(), options);
     scopedStores.set(projectId, scopedStore);
     return scopedStore;
   };

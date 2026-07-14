@@ -38,15 +38,20 @@ export function registerIntegratedRouters({
 }: IntegratedRoutersOptions): void {
   router.use(
     "/missions",
-    createMissionRouter(store, options?.missionAutopilot, aiSessionStore, options?.missionExecutionLoop, options?.engineManager, options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3]),
+    createMissionRouter(store, options?.missionAutopilot, aiSessionStore, options?.missionExecutionLoop, options?.engineManager, options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3], options),
   );
 
-  router.use("/insights", createInsightsRouter(store));
-  router.use("/evals", createEvalsRouter(store));
-  router.use("/research", createResearchRouter(store));
+  // FNXC:CentralProjectIdentity 2026-07-13-23:55:
+  // Thread ServerOptions into the project-scoped routers so their request
+  // middleware resolves an explicit central-registry project id (request id →
+  // registered launch project id) via the shared seam instead of the implicit
+  // raw launch-dir store fallback.
+  router.use("/insights", createInsightsRouter(store, options));
+  router.use("/evals", createEvalsRouter(store, options));
+  router.use("/research", createResearchRouter(store, options));
   router.use("/experiments", createExperimentRouter(store));
-  router.use("/todos", createTodoRouter(store));
-  router.use("/goals", createGoalsRouter(store));
+  router.use("/todos", createTodoRouter(store, options));
+  router.use("/goals", createGoalsRouter(store, options));
   router.use("/roadmaps", createRoadmapCompatibilityRouter(store));
   router.use("/stash-recovery", createStashRecoveryRouter(store));
   // T7: resolve the per-project working directory so the group-PR helpers (which

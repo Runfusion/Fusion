@@ -46,6 +46,8 @@ import {
   sweepStaleInsightRuns,
 } from "./insight-run-sweeper.js";
 import { createFnAgent, promptWithFallback, resolveMcpServersForStore, resolvePlanningThinkingLevel } from "@fusion/engine";
+import { getScopedStore as resolveScopedRequestStore } from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 
 /**
  * Re-throws an error as an ApiError, converting unknown errors to internal errors.
@@ -276,7 +278,7 @@ function toInsightTitle(content: string): string {
 /**
  * Create the insights router.
  */
-export function createInsightsRouter(store: TaskStore): Router {
+export function createInsightsRouter(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
@@ -328,11 +330,10 @@ export function createInsightsRouter(store: TaskStore): Router {
    */
   router.use(async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const projectId = getProjectId(req);
-      const scopedStore = projectId
-        // Import here to avoid circular dependency issues
-        ? await import("./project-store-resolver.js").then(({ getOrCreateProjectStore }) => getOrCreateProjectStore(projectId))
-        : store;
+      // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+      // Resolve an explicit central-registry project id via the shared seam
+      // (request id → registered launch project id → raw launch store last resort).
+      const scopedStore = await resolveScopedRequestStore(req, store, options);
       requestContext.run(scopedStore, () => {
         next();
       });
