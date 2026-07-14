@@ -136,4 +136,73 @@ describe("OverseerAdvisorService", () => {
     // ensureTask itself refuses paused tasks
     expect(await service.ensureTask(paused)).toBe(false);
   });
+
+  it("re-resolves level at inject time so mid-session observe flip does not inject", async () => {
+    const addSteeringComment = vi.fn(async () => ({}));
+    let level: "autonomous" | "observe" = "autonomous";
+    const task = baseTask();
+    const store = {
+      addSteeringComment,
+      recordRunAuditEvent: vi.fn((input) => ({
+        id: "e1",
+        timestamp: new Date().toISOString(),
+        domain: "database",
+        mutationType: "overseer:intervention",
+        target: "FN-9001",
+        ...input,
+      })),
+      getRunAuditEvents: () => [],
+      getTask: async () => task,
+    };
+
+    const service = new OverseerAdvisorService({
+      store,
+      resolveLevel: () => level,
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory: async ({ systemPrompt, onAdvice }) =>
+        createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async () =>
+            JSON.stringify({ note: "Concrete File Scope concern for level flip.", severity: "concern" }),
+        }),
+    });
+
+    expect(await service.ensureTask(task)).toBe(true);
+    // Operator flips to observe after ensure but before the first advice lands.
+    level = "observe";
+    await service.onExecutorLogDelta(task.id, [
+      { type: "text", text: "Editing wrong package after flip", agent: "executor" },
+    ]);
+    await vi.waitFor(() => expect(store.recordRunAuditEvent).toHaveBeenCalled());
+    expect(addSteeringComment).not.toHaveBeenCalled();
+  });
+
+  it("withholds inject when settings autoMerge is false", async () => {
+    const addSteeringComment = vi.fn(async () => ({}));
+    // autoMerge:false on task is enough for allowsAutoMergeProcessing to withhold.
+    const task = baseTask({ autoMerge: false });
+    const store = {
+      addSteeringComment,
+      getTask: async () => task,
+    };
+
+    const service = new OverseerAdvisorService({
+      store,
+      settings: { autoMerge: false },
+      resolveLevel: () => "autonomous",
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory: async ({ systemPrompt, onAdvice }) =>
+        createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async () =>
+            JSON.stringify({ note: "Should not inject under autoMerge false.", severity: "blocker" }),
+        }),
+    });
+
+    // ensureTask consults human-control with settings — withhold before runtime starts.
+    expect(await service.ensureTask(task)).toBe(false);
+    expect(addSteeringComment).not.toHaveBeenCalled();
+  });
 });

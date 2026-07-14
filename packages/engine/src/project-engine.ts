@@ -2490,6 +2490,8 @@ export class ProjectEngine {
       // consult `allowsAutoMergeProcessing(task, settings)` — the same
       // FN-5147 predicate `self-healing.ts` gates lifecycle mutation on.
       const engineSettings = await store.getSettings().catch(() => undefined);
+      // FNXC:PlannerOversight 2026-07-14-00:10: keep session-advisor human-control on live settings.
+      this.sessionAdvisor?.setSettings(engineSettings);
 
       for (const task of inFlight) {
         try {
@@ -2570,7 +2572,13 @@ export class ProjectEngine {
    * via createResolvedAgentSession (mock-safe under testMode).
    */
   private buildSessionAdvisorService(store: TaskStore): OverseerAdvisorService {
-    return new OverseerAdvisorService({
+    /*
+    FNXC:PlannerOversight 2026-07-14-00:10:
+    Greptile P1: pass live engine settings into the advisor so
+    evaluateOverseerHumanControl honors autoMerge:false / human-review
+    (undefined settings previously defaulted autoMerge:true).
+    */
+    const service = new OverseerAdvisorService({
       store: store as ConstructorParameters<typeof OverseerAdvisorService>[0]["store"],
       resolveLevel: async (task) => {
         const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
@@ -2605,15 +2613,22 @@ export class ProjectEngine {
           complete: async (sys, user) => {
             try {
               const settings = await store.getSettings().catch(() => undefined);
+              /*
+              FNXC:PlannerOversight 2026-07-14-00:10:
+              Greptile P1: createResolvedAgentSession requires systemPrompt.
+              Pass the advisor contract as the system role; user batch is the
+              session-update delta only (not concatenated into system).
+              */
               const { session } = await createResolvedAgentSession({
                 sessionPurpose: "executor",
                 cwd: String(cwd),
+                systemPrompt: sys,
                 defaultProvider: model.provider,
                 defaultModelId: model.modelId,
                 settings,
-              } as Parameters<typeof createResolvedAgentSession>[0]);
+              });
               try {
-                await session.prompt(`${sys}\n\n${user}`);
+                await session.prompt(user);
                 const messages = (session as { messages?: Array<{ role?: string; content?: unknown }> }).messages
                   ?? (session as { state?: { messages?: Array<{ role?: string; content?: unknown }> } }).state?.messages
                   ?? [];
@@ -2643,6 +2658,10 @@ export class ProjectEngine {
         });
       },
     });
+
+    // Best-effort initial settings; poll refreshes each cycle.
+    void store.getSettings().then((s) => service.setSettings(s)).catch(() => undefined);
+    return service;
   }
 
   /**

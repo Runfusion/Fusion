@@ -152,8 +152,14 @@ export class OverseerAdvisorService {
       if (human.withhold) return false;
 
       const guard = new OverseerEmissionGuard();
+      /*
+      FNXC:PlannerOversight 2026-07-14-00:10:
+      Greptile P1: do NOT capture level into the advise callback closure.
+      deliverAdvice re-resolves effective oversight level at inject time so an
+      operator flip to observe/off mid-session cannot keep injecting.
+      */
       const advise = new OverseerAdviseRecorder(async (note, severity) => {
-        await this.deliverAdvice(task.id, note, severity, level);
+        await this.deliverAdvice(task.id, note, severity);
       });
 
       const cwd = this.resolveCwd?.(task);
@@ -262,11 +268,16 @@ export class OverseerAdvisorService {
     return state.guard.accept({ note, severity });
   }
 
+  /**
+   * FNXC:PlannerOversight 2026-07-14-00:10:
+   * Inject-time policy: re-resolve oversight level + human-control from the
+   * live task/settings so mid-session flips (level→observe/off, autoMerge:false)
+   * cannot be bypassed by a level captured at ensureTask time.
+   */
   private async deliverAdvice(
     taskId: string,
     note: string,
     severity: OverseerAdviceSeverity | undefined,
-    level: PlannerOversightLevel,
   ): Promise<void> {
     try {
       const state = this.tasks.get(taskId);
@@ -274,6 +285,24 @@ export class OverseerAdvisorService {
 
       // Emission guard — load-bearing silence/dedupe.
       if (!state.guard.accept({ note, severity })) {
+        return;
+      }
+
+      const task = this.store.getTask ? await this.store.getTask(taskId) : undefined;
+      if (!task) {
+        // Cannot verify level/human-control without a task — refuse inject.
+        return;
+      }
+
+      const human = evaluateOverseerHumanControl(task, this.settings);
+      if (human.withhold) return;
+
+      const level = await this.resolveLevel(task);
+      state.level = level;
+
+      if (level === "off") {
+        // Tear down so we stop spending model turns until re-enabled.
+        this.clear(taskId);
         return;
       }
 
@@ -286,13 +315,6 @@ export class OverseerAdvisorService {
 
       if (level !== "steer" && level !== "autonomous") {
         return;
-      }
-
-      // Re-check human control at inject boundary.
-      const task = this.store.getTask ? await this.store.getTask(taskId) : undefined;
-      if (task) {
-        const human = evaluateOverseerHumanControl(task, this.settings);
-        if (human.withhold) return;
       }
 
       const severityAttr = severity ? ` severity="${severity}"` : "";
