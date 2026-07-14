@@ -242,6 +242,24 @@ Requires both the workflow-columns and graph-executor flags; with either off, bi
 ### Effective agent (execution principal)
 The agent identity that actually runs a piece of work after column-agent precedence resolves — and the principal every identity-keyed subsystem must consult: permission gating, heartbeat serialization in both directions, resume re-dispatch, and mid-flight change detection. It may differ from the task's assigned agent under an override binding, and one task may have multiple effective agents across concurrent branch sessions.
 
+### Permanent / durable agent
+A non-ephemeral agent row operators create and keep (CEO, specialists, column agents). Permanent agents wake on heartbeats, hold standing instructions (`instructionsText` / `instructionsPath` / `soul`), and coordinate work. Ephemeral task workers are created for a lane and deleted when the session ends.
+
+### Heartbeat run
+A short permanent-agent wake: timer, assignment, message, or on-demand. The run loads identity + Wake Delta + procedure, takes **one** coordination action, and exits via `fn_heartbeat_done`. Task-body coding runs on the **executor** path, not the default heartbeat.
+
+### Heartbeat procedure
+Per-tick ordered checklist text (built-in strict/lite/off templates or a per-agent `HEARTBEAT.md` at `heartbeatProcedurePath`). Task-scoped custom files replace the built-in procedure; no-task runs always use the ambient built-in so task-only tools are never promised. System-prompt **Critical Rules** still apply even when a custom procedure is loaded.
+
+### Checkout lease
+Exclusive execution ownership of a task (`checkedOutBy` + lease metadata / central claim row). Heartbeat validates the lease for a bound task and exits `checkout_conflict` without retry when another agent holds it. Claim/checkout are the binding primitives; agents must not spin on 409-style conflicts.
+
+### Auto-claim
+No-task heartbeat behavior that may claim an unowned ready `todo` matching role/policy (`autoClaimRelevantTasks`, engineer backlog opt-in). Distinct from multi-assign inventory (tasks already `assignedAgentId` to the agent). Auto-claim candidates and “your assigned tasks” must stay separate prompt sections.
+
+### assignmentPolicy
+Per-agent routing eligibility: `auto` (default pool + auto-claim), `explicit-only` (direct assign/delegate only), `none` (never bind implementation work — liaison/observer guarantee). Enforced on claim, checkout, assign, inbox selection, and delegation.
+
 ### Lane
 A horizontal row on the multi-lane board, one per workflow in use by visible cards. Each lane renders its own workflow's columns. Tasks with no workflow selection appear in the Default workflow's lane; every card appears in exactly one lane. Zero-card lanes are hidden; lanes are collapsible with persisted state.
 

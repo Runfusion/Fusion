@@ -929,6 +929,10 @@ fn message delete MSG-123
 fn agent mailbox AGENT-001
 ```
 
+## Permanent agent playbooks
+
+Worked manager/IC/message/blocked/no-task scenarios live in [Permanent Agent Heartbeat Playbooks](./agents-playbooks.md). Prefer those examples over re-deriving tick behavior from engine source.
+
 ## Heartbeat Prompt Composition and Autonomous Run Behavior
 
 Heartbeat runs are composed from multiple prompt layers so each wake has full identity and operating context:
@@ -949,9 +953,15 @@ Heartbeat runs are composed from multiple prompt layers so each wake has full id
 3. **Execution prompt framing**
    - `Identity Snapshot` block (agent ID/role + loaded soul/instructions/memory preview; `memory: loaded` when either inline memory or workspace `MEMORY.md` is present)
    - `Wake Delta` block (source, trigger detail, wake reason, assignment/comments/messages)
+   - Optional multi-assign inventory under Wake Delta (`your assigned tasks (coordination inventory…)`) ranked from `assignedAgentId` rows (cap 8); not an implement-from-heartbeat queue
    - Heartbeat procedure block (task-scoped or no-task variant, plus optional per-agent procedure override file)
+   - System prompts always include **Critical Rules** (one action, no implement-from-heartbeat, checkout no-retry, blocked dedup) so custom `HEARTBEAT.md` cannot erase them
 
 This structure ensures every run re-anchors on identity, wake reason, and current context before taking action.
+
+**Heartbeat skill policy:** heartbeat sessions load the waking agent’s `metadata.skills` plus enabled plugin skills. There is **no** role fallback to the published `fusion` operator skill on the heartbeat lane.
+
+**Default HEARTBEAT.md seed:** `ensureDefaultHeartbeatProcedureFile` is create-if-missing only. Operator edits to an existing per-agent procedure file are preserved; upgrade without force does not overwrite content.
 
 #### Wake reason values (message wakes)
 

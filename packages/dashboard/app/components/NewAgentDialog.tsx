@@ -17,6 +17,7 @@ import {
   VALID_AGENT_CAPABILITIES,
   type ThinkingLevel,
 } from "./agent-presets/agentCreatePayload";
+import { STANDING_INSTRUCTIONS_TEMPLATE } from "./agent-presets/standing-instructions-template";
 import { SkillMultiselect } from "./SkillMultiselect";
 import { AgentAvatar } from "./AgentAvatar";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
@@ -470,7 +471,12 @@ export function NewAgentDialog({
                   aria-selected={stepZeroTab === "custom"}
                   tabIndex={stepZeroTab === "custom" ? 0 : -1}
                   className={`agent-dialog-tab${stepZeroTab === "custom" ? " active" : ""}`}
-                  onClick={() => setStepZeroTab("custom")}
+                  onClick={() => {
+                    setStepZeroTab("custom");
+                    // FNXC:StandingInstructionsTemplate 2026-07-13-12:35:
+                    // Blank custom creates seed the six-section standing instructions skeleton so new permanent agents get structure without rewriting presets or existing agents.
+                    setInstructionsText((prev) => (prev.trim() ? prev : STANDING_INSTRUCTIONS_TEMPLATE));
+                  }}
                   data-testid="agent-dialog-tab-custom"
                 >
                   {t("agents.tabCustom", "Custom agent")}
