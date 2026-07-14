@@ -131,6 +131,17 @@ interface IncidentRow {
   updatedAt: string;
 }
 
+/**
+ * FNXC:MonitorWriteIsolation 2026-07-14-01:13:
+ * PostgreSQL monitor mutations are always project-owned. Reject an unbound layer before calling the core helpers so a missing identity cannot be converted into the legacy empty-string partition and become invisible to later bound reads.
+ */
+function monitorProjectId(layer: AsyncDataLayer): string {
+  if (!layer.projectId) {
+    throw new Error("PostgreSQL monitor writes require asyncLayer.projectId");
+  }
+  return layer.projectId;
+}
+
 function parseMeta(value: string | null): Record<string, unknown> | null {
   if (!value) return null;
   try {
@@ -176,7 +187,7 @@ export async function recordDeployment(db: Database | AsyncDataLayer, input: Dep
   // not, so `"ping" in db` correctly distinguishes the two backends.
   if ("ping" in db) {
     const layer = db as AsyncDataLayer;
-    return recordDeploymentAsync(layer.db, input, layer.projectId ?? "");
+    return recordDeploymentAsync(layer.db, input, monitorProjectId(layer));
   }
   const sqliteDb = db as Database;
   const deploymentId = input.deploymentId?.trim() || `dep-${randomUUID()}`;
@@ -265,7 +276,7 @@ export async function ingestIncidentSignal(
   // module's `Incident`.
   if ("ping" in db) {
     const layer = db as AsyncDataLayer;
-    return ingestIncidentSignalAsync(layer.db, input, layer.projectId ?? "") as Promise<{
+    return ingestIncidentSignalAsync(layer.db, input, monitorProjectId(layer)) as Promise<{
       incident: Incident;
       created: boolean;
     }>;
@@ -338,7 +349,7 @@ export async function resolveIncident(
   // of the broken `"transactionImmediate" in db` (SQLite Database also has it).
   if ("ping" in db) {
     const layer = db as AsyncDataLayer;
-    return resolveIncidentAsync(layer.db, groupingKey, at, layer.projectId ?? "");
+    return resolveIncidentAsync(layer.db, groupingKey, at, monitorProjectId(layer));
   }
   const sqliteDb = db as Database;
   const open = getOpenIncidentByGroupingKey(sqliteDb, groupingKey);
