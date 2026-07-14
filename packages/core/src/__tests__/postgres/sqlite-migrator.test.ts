@@ -129,6 +129,20 @@ CREATE TABLE IF NOT EXISTS activityLog (
 );
 `;
 
+/** Legacy research rows allowed NULL before PostgreSQL made these JSON fields required. */
+const RESEARCH_RUNS_SQLITE_DDL = `
+CREATE TABLE IF NOT EXISTS researchRuns (
+  id TEXT PRIMARY KEY,
+  query TEXT NOT NULL,
+  status TEXT NOT NULL,
+  sources TEXT,
+  events TEXT,
+  tags TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+`;
+
 /**
  * A minimal agents table so agent_heartbeats has a parent row to satisfy the
  * FK constraint that is re-enabled after the migration completes. Includes
@@ -162,6 +176,7 @@ function buildPopulatedSqliteProject(fusionDir: string): void {
     db.exec(CONFIG_SQLITE_DDL);
     db.exec(AGENTS_SQLITE_DDL);
     db.exec(ACTIVITY_LOG_SQLITE_DDL);
+    db.exec(RESEARCH_RUNS_SQLITE_DDL);
 
     // Legacy camelCase table rows — must land in project.activity_log.
     const insertActivity = db.prepare(
@@ -169,6 +184,20 @@ function buildPopulatedSqliteProject(fusionDir: string): void {
     );
     insertActivity.run("act-1", "2026-06-01T00:00:00Z", "task:created", "FN-100", "First task", "created", JSON.stringify({ source: "test" }));
     insertActivity.run("act-2", "2026-06-01T01:00:00Z", "task:moved", "FN-100", "First task", "todo -> in-progress", null);
+
+    db.prepare(
+      `INSERT INTO researchRuns (id, query, status, sources, events, tags, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "RR-legacy-null-json",
+      "legacy research",
+      "failed",
+      null,
+      "",
+      null,
+      "2026-06-01T00:00:00Z",
+      "2026-06-01T00:01:00Z",
+    );
 
     // Insert agents so agent_heartbeats FK is satisfiable post-migration.
     const insertAgent = db.prepare(`INSERT INTO agents (id, name, role, state, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`);
@@ -480,6 +509,18 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'dependencies'
     `)) as unknown as Array<{ data_type: string }>;
     expect(colInfo[0].data_type).toBe("jsonb");
+  });
+
+  it("materializes defaults for legacy NULL values targeting required jsonb columns", async () => {
+    await migrateSqliteToPostgres(ctx!.db, [
+      { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
+    ]);
+
+    const rows = (await ctx!.db.execute(sql`
+      SELECT sources, events, tags
+      FROM project.research_runs WHERE id = 'RR-legacy-null-json'
+    `)) as unknown as Array<{ sources: unknown; events: unknown; tags: unknown }>;
+    expect(rows[0]).toEqual({ sources: [], events: [], tags: [] });
   });
 
   // VAL-MIGRATE-003 — bytea fidelity
