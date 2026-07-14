@@ -114,6 +114,8 @@ interface ColumnMapping {
   readonly pgName: string;
   /** The resolved type for value conversion. */
   readonly type: ColumnType;
+  /** JSON text to use when a legacy NULL targets a NOT NULL jsonb default. */
+  readonly nullJsonbFallback?: string;
 }
 
 /** A table to migrate. */
@@ -401,6 +403,8 @@ async function resolveColumnMapping(
     SELECT
       c.column_name,
       c.data_type,
+      c.is_nullable,
+      c.column_default,
       a.attidentity,
       CASE WHEN a.attgenerated <> '' THEN 1 ELSE 0 END AS is_generated
     FROM information_schema.columns c
@@ -413,7 +417,14 @@ async function resolveColumnMapping(
       AND n.nspname = c.table_schema
       AND cls.relname = c.table_name
       AND a.attnum > 0
-  `)) as unknown as Array<{ column_name: string; data_type: string; attidentity: string | null; is_generated: number | string }>;
+  `)) as unknown as Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: string;
+    column_default: string | null;
+    attidentity: string | null;
+    is_generated: number | string;
+  }>;
 
   if (pgCols.length === 0) {
     // No PostgreSQL table with this name — skip.
@@ -439,7 +450,24 @@ async function resolveColumnMapping(
       continue;
     }
     const type = classifyColumnType(pgCol);
-    mapping.push({ sqliteName: sc.name, pgName, type });
+    let nullJsonbFallback: string | undefined;
+    if (type === "jsonb" && pgCol.is_nullable === "NO" && pgCol.column_default) {
+      // FNXC:PostgresMigration 2026-07-14-05:30:
+      // Legacy SQLite rows can contain NULL/empty JSON even when the target is
+      // NOT NULL with a default. Materialize that default during conversion so
+      // one stale row cannot abort the entire first-boot migration.
+      const match = /^'(.*)'::jsonb?$/s.exec(pgCol.column_default);
+      if (match) {
+        const candidate = match[1].replace(/''/g, "'");
+        try {
+          JSON.parse(candidate);
+          nullJsonbFallback = candidate;
+        } catch {
+          // Leave malformed defaults to PostgreSQL rather than inventing data.
+        }
+      }
+    }
+    mapping.push({ sqliteName: sc.name, pgName, type, nullJsonbFallback });
   }
 
   return mapping;
@@ -479,9 +507,9 @@ function classifyColumnType(pgCol: {
  *   postgres.js's raw `sql` template does NOT auto-serialize JS objects for
  *   jsonb columns (it tries to send the object as a byte string and fails), so
  *   jsonb values MUST be passed as strings with an explicit `::jsonb` cast.
- *   NULL stays NULL (emitted as SQL NULL, not the string "null"). An empty
- *   string is treated as NULL because some legacy rows stored '' where the new
- *   schema expects NULL jsonb.
+ *   NULL stays NULL unless the target is NOT NULL with a valid jsonb default;
+ *   in that case legacy NULL/empty-string values materialize the target default
+ *   so the migration does not violate the target constraint.
  * - bytea: SQLite stores BLOB. We wrap it in a Buffer (postgres.js handles
  *   Buffer natively for bytea). NULL stays NULL.
  * - plain: passed through verbatim.
@@ -489,9 +517,9 @@ function classifyColumnType(pgCol: {
  * Identity and generated columns are omitted at the insert-builder level
  * (never passed here).
  */
-function convertValue(value: unknown, type: ColumnType): unknown {
+function convertValue(value: unknown, type: ColumnType, nullJsonbFallback?: string): unknown {
   if (value === null || value === undefined) {
-    return null;
+    return type === "jsonb" && nullJsonbFallback !== undefined ? nullJsonbFallback : null;
   }
   switch (type) {
     case "jsonb": {
@@ -502,7 +530,7 @@ function convertValue(value: unknown, type: ColumnType): unknown {
       if (typeof value === "string") {
         const trimmed = value.trim();
         if (trimmed === "") {
-          return null;
+          return nullJsonbFallback ?? null;
         }
         try {
           return JSON.stringify(JSON.parse(trimmed));
@@ -615,7 +643,7 @@ async function migrateTable(
     for (const row of stmt.all() as Array<Record<string, unknown>>) {
       const converted: Record<string, unknown> = {};
       for (const col of insertableCols) {
-        converted[col.pgName] = convertValue(row[col.sqliteName], col.type);
+        converted[col.pgName] = convertValue(row[col.sqliteName], col.type, col.nullJsonbFallback);
       }
       batch.push(converted);
       if (batch.length >= INSERT_BATCH_SIZE) {
@@ -923,7 +951,7 @@ function computeSourceContentChecksum(
   const hash = createHash("md5");
   for (const row of rows) {
     for (const col of cols) {
-      const converted = convertValue(row[col.sqliteName], col.type);
+      const converted = convertValue(row[col.sqliteName], col.type, col.nullJsonbFallback);
       hash.update(canonicalizeCell(converted));
       hash.update("\u0001"); // cell separator
     }
