@@ -44,10 +44,16 @@ type AutomationDataLayer = Pick<AsyncDataLayer, "db" | "projectId">;
 
 /*
  * FNXC:AutomationIsolation 2026-07-13-22:37:
- * The embedded PostgreSQL cluster stores every project's automations in one physical table. Normalize an undefined binding to the empty legacy partition while ensuring every CRUD and due-run operation filters one and only one project partition. Global automations remain global execution-lane entries owned by their creating project, matching the former per-project SQLite file semantics; they are never cross-project rows.
+ * The embedded PostgreSQL cluster stores every project's automations in one physical table. Every CRUD and due-run operation filters one and only one project partition. Global automations remain global execution-lane entries owned by their creating project, matching the former per-project SQLite file semantics; they are never cross-project rows.
+ *
+ * FNXC:AutomationIsolation 2026-07-14-00:37:
+ * Automation schedules are project-owned, so an unbound async layer is invalid. Fail closed before any query instead of treating a missing project identity as ownership of the legacy empty-string partition.
  */
 function automationProjectId(layer: AutomationDataLayer): string {
-  return layer.projectId ?? "";
+  if (!layer.projectId) {
+    throw new Error("AutomationStore backend operations require asyncLayer.projectId");
+  }
+  return layer.projectId;
 }
 
 function automationProjectScope(layer: AutomationDataLayer) {

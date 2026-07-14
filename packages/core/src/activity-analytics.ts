@@ -358,20 +358,22 @@ async function aggregatePostgresActivityAnalytics(
   layer: AsyncDataLayer,
   query: ActivityAnalyticsQuery,
 ): Promise<ActivityAnalytics> {
-  const projectId = layer.projectId ?? "";
   const eventFrom = query.from ? sql`AND ts >= ${query.from}` : sql``;
   const eventTo = query.to ? sql`AND ts <= ${query.to}` : sql``;
   const runFrom = query.from ? sql`AND started_at >= ${query.from}` : sql``;
   const runTo = query.to ? sql`AND started_at <= ${query.to}` : sql``;
   const sessionFrom = query.from ? sql`AND created_at >= ${query.from}` : sql``;
   const sessionTo = query.to ? sql`AND created_at <= ${query.to}` : sql``;
-  const sessionProject = layer.projectId !== undefined
+  /*
+  FNXC:ActivityAnalyticsPostgres 2026-07-14-00:37:
+  An unbound analytics layer is deliberately project-agnostic and must aggregate every project partition consistently. A bound layer scopes sessions, usage, agent runs, and funnel activity to its project; never reinterpret an absent binding as the legacy empty-string partition.
+  */
+  const analyticsProject = layer.projectId !== undefined
     ? sql`AND project_id = ${layer.projectId}`
     : sql``;
-  const analyticsProject = sql`AND project_id = ${projectId}`;
 
   const [sessionResult, eventSummaryResult, eventDailyResult, runStatusResult, runDailyResult, runAgentResult, monitor, funnel] = await Promise.all([
-    layer.db.execute(sql`SELECT count(*)::int AS count FROM project.cli_sessions WHERE 1=1 ${sessionProject} ${sessionFrom} ${sessionTo}`),
+    layer.db.execute(sql`SELECT count(*)::int AS count FROM project.cli_sessions WHERE 1=1 ${analyticsProject} ${sessionFrom} ${sessionTo}`),
     layer.db.execute(sql`
       SELECT
         count(*) FILTER (WHERE kind = 'user_message')::int AS messages,
@@ -765,13 +767,15 @@ async function aggregatePostgresSdlcFunnel(
   layer: AsyncDataLayer,
   query: SdlcFunnelQuery,
 ): Promise<SdlcFunnel> {
-  const projectId = layer.projectId ?? "";
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
   const from = query.from ? sql`AND timestamp >= ${query.from}` : sql``;
   const to = query.to ? sql`AND timestamp <= ${query.to}` : sql``;
   const rows = await layer.db.execute(sql`
     SELECT task_id AS "taskId", metadata ->> 'to' AS "to", timestamp AS ts
     FROM project.activity_log
-    WHERE project_id = ${projectId} AND type = 'task:moved' ${from} ${to}
+    WHERE type = 'task:moved' ${projectScope} ${from} ${to}
   `) as unknown as MoveRow[];
   return buildSdlcFunnelFromRows(rows, query, query.columns ?? defaultColumns());
 }
