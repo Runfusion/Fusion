@@ -116,6 +116,8 @@ interface ColumnMapping {
   readonly type: ColumnType;
   /** JSON text to use when a legacy NULL targets a NOT NULL jsonb default. */
   readonly nullJsonbFallback?: string;
+  /** Preserve empty/whitespace source text when required jsonb has no default. */
+  readonly preserveEmptyJsonbString: boolean;
 }
 
 /** A table to migrate. */
@@ -688,7 +690,9 @@ function resolveColumnMapping(
         }
       }
     }
-    mapping.push({ sqliteName: sc.name, pgName, type, nullJsonbFallback });
+    const preserveEmptyJsonbString =
+      type === "jsonb" && pgCol.is_nullable === "NO" && nullJsonbFallback === undefined;
+    mapping.push({ sqliteName: sc.name, pgName, type, nullJsonbFallback, preserveEmptyJsonbString });
   }
 
   return { columns: mapping, targetColumnNames: new Set(pgByName.keys()) };
@@ -729,8 +733,10 @@ function classifyColumnType(pgCol: {
  *   jsonb columns (it tries to send the object as a byte string and fails), so
  *   jsonb values MUST be passed as strings with an explicit `::jsonb` cast.
  *   NULL stays NULL unless the target is NOT NULL with a valid jsonb default;
- *   in that case legacy NULL/empty-string values materialize the target default
- *   so the migration does not violate the target constraint.
+ *   in that case legacy NULL values materialize the target default. Empty
+ *   strings use that same default, or remain a JSON string scalar when the
+ *   required target has no default, preserving source data without emitting
+ *   SQL NULL.
  * - bytea: SQLite stores BLOB. We wrap it in a Buffer (postgres.js handles
  *   Buffer natively for bytea). NULL stays NULL.
  * - plain: passed through verbatim.
@@ -738,7 +744,12 @@ function classifyColumnType(pgCol: {
  * Identity and generated columns are omitted at the insert-builder level
  * (never passed here).
  */
-function convertValue(value: unknown, type: ColumnType, nullJsonbFallback?: string): unknown {
+function convertValue(
+  value: unknown,
+  type: ColumnType,
+  nullJsonbFallback?: string,
+  preserveEmptyJsonbString = false,
+): unknown {
   if (value === null || value === undefined) {
     return type === "jsonb" && nullJsonbFallback !== undefined ? nullJsonbFallback : null;
   }
@@ -751,7 +762,7 @@ function convertValue(value: unknown, type: ColumnType, nullJsonbFallback?: stri
       if (typeof value === "string") {
         const trimmed = value.trim();
         if (trimmed === "") {
-          return nullJsonbFallback ?? null;
+          return nullJsonbFallback ?? (preserveEmptyJsonbString ? JSON.stringify(value) : null);
         }
         try {
           return JSON.stringify(JSON.parse(trimmed));
@@ -883,7 +894,12 @@ async function migrateTable(
     for (const row of stmt.all() as Array<Record<string, unknown>>) {
       const converted: Record<string, unknown> = {};
       for (const col of insertableCols) {
-        converted[col.pgName] = convertValue(row[col.sqliteName], col.type, col.nullJsonbFallback);
+        converted[col.pgName] = convertValue(
+          row[col.sqliteName],
+          col.type,
+          col.nullJsonbFallback,
+          col.preserveEmptyJsonbString,
+        );
       }
       batch.push(converted);
       if (batch.length >= INSERT_BATCH_SIZE) {
@@ -1245,6 +1261,18 @@ function stableJsonStringify(value: unknown): string {
     .join(",")}}`;
 }
 
+/** Canonicalize a converted source value as PostgreSQL will return it. */
+function canonicalizeConvertedCell(value: unknown, type: ColumnType): string {
+  if (type === "jsonb" && typeof value === "string") {
+    try {
+      return canonicalizeCell(JSON.parse(value));
+    } catch {
+      // Defensive fallback: convertValue normally guarantees valid JSON text.
+    }
+  }
+  return canonicalizeCell(value);
+}
+
 /**
  * Compute a content checksum over the SQLite source rows for a table. Reads
  * the SAME insertable columns the copy used (so unmapped/generated columns do
@@ -1277,8 +1305,13 @@ function computeSourceContentChecksum(
     for (const col of cols) {
       const converted = col.pgName === "project_id" && partitionProjectId
         ? partitionProjectId
-        : convertValue(row[col.sqliteName], col.type, col.nullJsonbFallback);
-      canonical += `${canonicalizeCell(converted)}\u0001`;
+        : convertValue(
+            row[col.sqliteName],
+            col.type,
+            col.nullJsonbFallback,
+            col.preserveEmptyJsonbString,
+          );
+      canonical += `${canonicalizeConvertedCell(converted, col.type)}\u0001`;
     }
     return canonical;
   }).sort();
