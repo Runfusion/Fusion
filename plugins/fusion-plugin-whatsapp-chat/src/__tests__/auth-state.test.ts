@@ -5,8 +5,9 @@ function createInMemoryDb() {
   const creds = new Map<string, string>();
   const keys = new Map<string, string>();
   const makeKey = (category: string, id: string) => `${category}:${id}`;
-  let transactionSnapshot: Map<string, string> | null = null;
+  let transactionSnapshot: { creds: Map<string, string>; keys: Map<string, string> } | null = null;
   let failKeyId: string | null = null;
+  let failAuthKeysClear = false;
 
   return {
     prepare(sql: string) {
@@ -38,17 +39,22 @@ function createInMemoryDb() {
             keys.delete(makeKey(args[0] as string, args[1] as string));
           }
           if (sql.includes("DELETE FROM whatsapp_auth_keys")) {
+            if (failAuthKeysClear) throw new Error("injected auth-key clear failure");
             keys.clear();
           }
         },
       };
     },
     exec(sql: string) {
-      if (sql === "BEGIN IMMEDIATE") transactionSnapshot = new Map(keys);
+      if (sql === "BEGIN IMMEDIATE") {
+        transactionSnapshot = { creds: new Map(creds), keys: new Map(keys) };
+      }
       if (sql === "COMMIT") transactionSnapshot = null;
       if (sql === "ROLLBACK" && transactionSnapshot) {
+        creds.clear();
+        for (const [key, value] of transactionSnapshot.creds) creds.set(key, value);
         keys.clear();
-        for (const [key, value] of transactionSnapshot) keys.set(key, value);
+        for (const [key, value] of transactionSnapshot.keys) keys.set(key, value);
         transactionSnapshot = null;
       }
     },
@@ -56,6 +62,9 @@ function createInMemoryDb() {
     _keys: keys,
     failAuthKeyWrite(id: string | null) {
       failKeyId = id;
+    },
+    failAuthKeyClear(value: boolean) {
+      failAuthKeysClear = value;
     },
   };
 }
@@ -119,6 +128,22 @@ describe("auth-state", () => {
 
     expect(db._creds.size).toBe(0);
     expect(db._keys.size).toBe(0);
+  });
+
+  it("rolls back credentials and keys when the second SQLite auth clear fails", async () => {
+    const db = createInMemoryDb();
+    const auth = await createPluginDbAuthState(db as any);
+    auth.state.creds.me = { id: "123@s.whatsapp.net", name: "Fusion" } as any;
+    await auth.saveCreds();
+    await auth.state.keys.set({ session: { alpha: { ok: true } as any } });
+    db.failAuthKeyClear(true);
+
+    await expect(clearAuthState(db as any)).rejects.toThrow("injected auth-key clear failure");
+
+    db.failAuthKeyClear(false);
+    const restored = await createPluginDbAuthState(db as any);
+    expect(restored.state.creds.me?.id).toBe("123@s.whatsapp.net");
+    expect((await restored.state.keys.get("session", ["alpha"]) as any).alpha).toEqual({ ok: true });
   });
 
   it("handles corrupt json gracefully", async () => {

@@ -40,6 +40,14 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function signal() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A factory exposing the onProgress hook and a controllable nextEvent. */
@@ -229,6 +237,54 @@ pgDescribe("detached turns (route posture)", () => {
     expect(h.emitted).toContainEqual({
       event: CE_EVENTS.error,
       data: { sessionId: started.session.id, message: "detached operation failed" },
+    });
+  });
+
+  it("does not let an already-queued progress write invalidate the detached failure fallback", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const store = getCeSessionStore(h.ctx);
+    const session = await store.createAsync({ stage: "brainstorm" });
+    const progressStarted = signal();
+    const releaseProgress = signal();
+    const touchActivityAsync = store.touchActivityAsync.bind(store);
+    vi.spyOn(store, "touchActivityAsync").mockImplementation(async (sessionId, at) => {
+      progressStarted.resolve();
+      await releaseProgress.promise;
+      return touchActivityAsync(sessionId, at);
+    });
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("primary failure write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    const internal = orch as unknown as {
+      queueProgressPersistence(sessionId: string, at: number, force?: boolean): void;
+      detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void;
+    };
+    internal.queueProgressPersistence(session.id, session.lastActivityAt + 100, true);
+    await progressStarted.promise;
+    internal.detachTurn(session.id, "controlled turn", Promise.reject(new Error("detached operation failed")));
+    releaseProgress.resolve();
+
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("primary failure write failed"),
+    ));
+    expect((await store.getAsync(session.id))?.lastActivityAt).toBeGreaterThan(session.lastActivityAt);
+    expect(await orch.getState(session.id)).toMatchObject({
+      status: "error",
+      error: "detached operation failed",
+    });
+
+    await store.updateAsync(session.id, { status: "interrupted", error: "durable recovery advanced" });
+    expect(await orch.getState(session.id)).toMatchObject({
+      status: "interrupted",
+      error: "durable recovery advanced",
     });
   });
 });

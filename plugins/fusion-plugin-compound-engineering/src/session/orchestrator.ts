@@ -73,6 +73,22 @@ const MAX_PERSISTED_ACTIVITY_TURN_CHARS = 4000;
 const INTERACTIVE_AI_UNAVAILABLE_MESSAGE =
   "Session cannot be continued in this process: interactive AI sessions are unavailable (no factory on this context). Resume from a route context with the engine loaded.";
 
+/** Excludes liveness-only timestamps so a drained heartbeat cannot supersede a terminal fallback. */
+function durableSessionMutationFingerprint(session: CeSession): string {
+  return JSON.stringify({
+    id: session.id,
+    stage: session.stage,
+    status: session.status,
+    currentQuestion: session.currentQuestion,
+    conversationHistory: session.conversationHistory,
+    projectId: session.projectId,
+    artifactPath: session.artifactPath,
+    error: session.error,
+    turnIntervalMs: session.turnIntervalMs,
+    createdAt: session.createdAt,
+  });
+}
+
 /**
  * Observable event names emitted via `ctx.emitEvent`. The no-silent-loss
  * invariant requires that interrupt/error ALWAYS emit one of these AND persist
@@ -275,7 +291,7 @@ export class CeOrchestrator {
   private readonly replaying = new Set<string>();
   private readonly progressPersistence = new Map<string, Promise<void>>();
   /** Process-local terminal state used only when detached failure persistence itself fails. */
-  private readonly detachedFailureFallbacks = new Map<string, { session: CeSession; durableUpdatedAt: string }>();
+  private readonly detachedFailureFallbacks = new Map<string, { session: CeSession; durableFingerprint: string }>();
 
   constructor(deps: OrchestratorDeps) {
     this.ctx = deps.ctx;
@@ -808,7 +824,7 @@ export class CeOrchestrator {
     const durable = await this.store.getAsync(sessionId);
     const fallback = this.detachedFailureFallbacks.get(sessionId);
     if (!fallback) return durable;
-    if (!durable || durable.updatedAt !== fallback.durableUpdatedAt) {
+    if (!durable || durableSessionMutationFingerprint(durable) !== fallback.durableFingerprint) {
       this.detachedFailureFallbacks.delete(sessionId);
       return durable;
     }
@@ -1091,8 +1107,8 @@ export class CeOrchestrator {
   }
 
   /**
-   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:43:
-   * Route-detached model work must always terminate its rejection chain. If both the turn and its PostgreSQL terminal write fail, retain a process-local error overlay so current polling clients stop seeing launching/active; any later durable mutation supersedes that bounded fallback and existing stale-session recovery remains authoritative after restart.
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:53:
+   * Route-detached model work must always terminate its rejection chain. If both the turn and its PostgreSQL terminal write fail, retain a process-local error overlay so current polling clients stop seeing launching/active. Drained or already-queued liveness-only writes must not invalidate the overlay, while a later semantic durable mutation still supersedes it and existing stale-session recovery remains authoritative after restart.
    */
   private detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void {
     void operation.catch(async (cause: unknown) => {
@@ -1109,7 +1125,7 @@ export class CeOrchestrator {
         if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
           const failedAt = Date.now();
           this.detachedFailureFallbacks.set(sessionId, {
-            durableUpdatedAt: session.updatedAt,
+            durableFingerprint: durableSessionMutationFingerprint(session),
             session: {
               ...session,
               status: "error",

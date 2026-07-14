@@ -151,8 +151,14 @@ export function createSqliteWhatsAppPersistence(db: PluginDb): WhatsAppPersisten
       });
     },
     async clearAuthState() {
-      db.prepare("DELETE FROM whatsapp_auth_creds").run();
-      db.prepare("DELETE FROM whatsapp_auth_keys").run();
+      /**
+       * FNXC:WhatsAppAuthStateAtomicity 2026-07-14-00:54:
+       * Credentials and Signal keys form one authentication state. Clear both in one immediate transaction so a failed or interrupted second delete cannot persist credentials without their matching keys, or vice versa.
+       */
+      withImmediateTransaction(db, () => {
+        db.prepare("DELETE FROM whatsapp_auth_creds").run();
+        db.prepare("DELETE FROM whatsapp_auth_keys").run();
+      });
     },
   };
 }
