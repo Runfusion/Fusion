@@ -105,9 +105,9 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 | [UX Audit Report](./ux-audit-report.md) | Comprehensive UX audit with prioritized recommendations for dashboard improvements |
 | [Codebase Improvement Audit](./codebase-improvement-audit.md) | Evidence-based technical debt and reliability gap audit with prioritized recommendations |
 | [Gap Analysis](./gap-analysis.md) | System completeness analysis comparing Fusion to Paperclip feature set |
+| [Permanent Agent Heartbeat Playbooks](./agents-playbooks.md) | Worked manager/IC/message/blocked/no-task heartbeat scenarios and anti-patterns |
 | [Agent Sandbox Research](./agent-sandboxing-research.md) | Research on agent isolation, capability enforcement, and sandboxing approaches |
 | [Even Realities Integration Research (FN-3737)](./even-realities-integration-research.md) | Research summary and recommended integration topology for Even Realities glasses + Fusion |
-| [Agent Gap Analysis](./agent-paperclip-gap-analysis.md) | Gap analysis for agent Paperclip integration |
 | [pi-autoresearch Analysis for Fusion Port](./research/pi-autoresearch-analysis.md) | Upstream architecture/license analysis and Fusion integration mapping for autoresearch capabilities |
 | [pi-autoresearch Audit vs Fusion Research](./research/pi-autoresearch-audit-2026-05.md) | Audit comparing Fusion's research subsystem against upstream pi-autoresearch capabilities and parity gaps (FN-4136) |
 | [Research Hardening Preflight Baseline](./research/research-hardening-preflight.md) | Verified research subsystem baseline, lifecycle contracts, and hardening pressure points |

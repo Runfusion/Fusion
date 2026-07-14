@@ -17,6 +17,7 @@ import {
   VALID_AGENT_CAPABILITIES,
   type ThinkingLevel,
 } from "./agent-presets/agentCreatePayload";
+import { withStandingInstructionsTemplate } from "./agent-presets/standing-instructions-template";
 import { SkillMultiselect } from "./SkillMultiselect";
 import { AgentAvatar } from "./AgentAvatar";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
@@ -234,7 +235,10 @@ export function NewAgentDialog({
     setIcon(values.icon ?? "");
     setRole(values.role);
     setReportsTo(values.reportsTo ?? "");
-    setInstructionsText(values.instructionsText ?? "");
+    // FNXC:StandingInstructionsTemplate 2026-07-14-00:12:
+    // Prefill/onboarding can set custom tab programmatically with empty instructionsText.
+    // Seed the six-section skeleton for blank drafts; preserve non-empty interview content.
+    setInstructionsText(withStandingInstructionsTemplate(values.instructionsText ?? ""));
     setHeartbeatProcedurePath(values.heartbeatProcedurePath ?? "");
     setSoul(values.soul ?? "");
     setMemory(values.memory ?? "");
@@ -470,7 +474,12 @@ export function NewAgentDialog({
                   aria-selected={stepZeroTab === "custom"}
                   tabIndex={stepZeroTab === "custom" ? 0 : -1}
                   className={`agent-dialog-tab${stepZeroTab === "custom" ? " active" : ""}`}
-                  onClick={() => setStepZeroTab("custom")}
+                  onClick={() => {
+                    setStepZeroTab("custom");
+                    // FNXC:StandingInstructionsTemplate 2026-07-13-12:35:
+                    // Blank custom creates seed the six-section standing instructions skeleton so new permanent agents get structure without rewriting presets or existing agents.
+                    setInstructionsText((prev) => withStandingInstructionsTemplate(prev));
+                  }}
                   data-testid="agent-dialog-tab-custom"
                 >
                   {t("agents.tabCustom", "Custom agent")}

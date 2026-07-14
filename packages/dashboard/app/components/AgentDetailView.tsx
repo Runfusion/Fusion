@@ -37,6 +37,7 @@ import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingM
 import { AgentPermissionPolicyEditor } from "./AgentPermissionPolicyEditor";
 import { useFavorites } from "../hooks/useFavorites";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
+import { STANDING_INSTRUCTIONS_TEMPLATE } from "./agent-presets/standing-instructions-template";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -3125,6 +3126,21 @@ function InstructionsTab({
             <label htmlFor="instructions-text">{t("agents.inlineInstructions", "Inline Instructions")}</label>
             <div className="agent-content-toolbar">
               <div className="agent-content-mode-toggle">
+                {!instructionsText.trim() && !showPreview && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    data-testid="instructions-insert-template"
+                    onClick={() => {
+                      // FNXC:StandingInstructionsTemplate 2026-07-13-12:40:
+                      // Empty-state only: insert six-section skeleton without overwriting non-empty instructions.
+                      setInstructionsText(STANDING_INSTRUCTIONS_TEMPLATE);
+                      setJustSaved(false);
+                    }}
+                  >
+                    {t("agents.insertInstructionsTemplate", "Insert template")}
+                  </button>
+                )}
                 <button
                   className={`btn btn-sm ${!showPreview ? "btn-primary" : ""}`}
                   onClick={() => setShowPreview(false)}
