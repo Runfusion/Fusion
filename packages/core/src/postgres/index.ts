@@ -165,6 +165,20 @@ export {
 } from "./sqlite-migrator.js";
 
 /**
+ * FNXC:CentralProjectIdentity 2026-07-13-23:10:
+ * Post-migration project-partition stamping, shared by the startup-factory
+ * first-boot auto-migration and the manual `fn db migrate` cutover command so
+ * migrated rows (tasks/archived_tasks/config/workflow settings) are re-keyed to
+ * the central-registry project id on BOTH paths.
+ */
+export {
+  stampMigratedProjectRows,
+  lookupRegisteredProjectIdByPath,
+  type StampMigratedProjectRowsInput,
+  type StampMigratedProjectRowsResult,
+} from "./migration-stamping.js";
+
+/**
  * FNXC:BackendFlip 2026-06-26-14:30:
  * Runtime startup factory (cutover milestone). `createTaskStoreForBackend()`
  * is the single entry point production construction sites consult to decide

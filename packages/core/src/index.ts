@@ -2226,6 +2226,12 @@ export {
   CENTRAL_BACKUP_SCHEMAS,
   migrateSqliteToPostgres,
   defaultMigrationSources,
+  // FNXC:CentralProjectIdentity 2026-07-13-23:10:
+  // Post-migration project-partition stamping, shared by the startup-factory
+  // first-boot auto-migration and `fn db migrate` so migrated rows are re-keyed
+  // to the central-registry project id on BOTH cutover paths.
+  stampMigratedProjectRows,
+  lookupRegisteredProjectIdByPath,
   applySchemaBaseline,
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
@@ -2263,6 +2269,8 @@ export type {
   SchemaName,
   MigrationReport,
   TableMigrationResult,
+  StampMigratedProjectRowsInput,
+  StampMigratedProjectRowsResult,
   BackendBootResult,
   CreateTaskStoreForBackendOptions,
 } from "./postgres/index.js";

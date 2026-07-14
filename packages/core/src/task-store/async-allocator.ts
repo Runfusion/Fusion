@@ -108,6 +108,20 @@ export async function getConfiguredPrefixAndLegacyNextId(
  * The table is scanned in application code (not SQL) because the prefix/sequence
  * are embedded in the string id column, not a separate numeric column. This
  * mirrors the sync `getMaxTaskSequenceFromTable()` exactly.
+ *
+ * FNXC:CentralProjectIdentity 2026-07-13-22:40:
+ * This scan is deliberately GLOBAL — filtered by prefix only, NEVER by
+ * project_id — because task ids are a globally-unique namespace across the whole
+ * embedded-PG cluster (`project.tasks.id` is a global PRIMARY KEY, shared by all
+ * projects in the one `project` schema). Two projects that share a prefix (e.g.
+ * both "KB") draw from ONE per-prefix sequence, so the high-water mark that
+ * advances that shared sequence MUST observe every project's tasks. Adding a
+ * `project_id` predicate here would compute a per-project floor that ignores a
+ * sibling project's higher max suffix, letting the allocator mint an id another
+ * project already owns — a tasks.id PK collision on insert and a merge_queue
+ * (task_id PK) collision downstream. Do NOT scope this scan to a project to
+ * "align" it with MultiProjectIsolation's per-project task reads; per-project
+ * scoping belongs only on reporting/board reads, never on id-sequence advancement.
  */
 async function getMaxTaskSequenceFromTable(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -167,6 +181,20 @@ async function getMaxReservationSequence(
  * This is the core of VAL-DATA-007. Every known prefix gets bumped to at least
  * one past the highest in-use suffix across tasks, archived tasks, and
  * reservations so a newly-allocated id never collides with an existing one.
+ *
+ * FNXC:CentralProjectIdentity 2026-07-13-22:40:
+ * `projectId` is threaded here for ONE purpose only: scoping the config-row read
+ * (`getConfiguredPrefixAndLegacyNextId`) so a per-project `config.next_id` legacy
+ * floor is read from the bound project's row. That legacy value can only RAISE
+ * the floor (via `Math.max`), never lower the shared sequence. The three
+ * high-water scans below (tasks / archived_tasks / reservations) stay GLOBAL —
+ * they take NO projectId — because the id namespace is global across the cluster
+ * (see getMaxTaskSequenceFromTable). Consequently, with two projects sharing a
+ * prefix, the returned floor is the max in-use suffix across BOTH projects, and
+ * `ensureStateRow`'s `GREATEST(current, floor)` update never moves the shared
+ * `distributed_task_id_state.next_sequence` backward. Net: a per-project floor
+ * can never lower the shared sequence or emit an id below another project's max,
+ * so no cross-project duplicate id is possible.
  */
 export async function computeNextSequenceFloor(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -347,6 +375,13 @@ function formatDistributedTaskId(prefix: string, sequence: number): string {
  * FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-12:35:
  * Check whether a task ID already exists in the tasks or archived_tasks table.
  * Used by the async allocator reservation loop to skip past existing IDs.
+ *
+ * FNXC:CentralProjectIdentity 2026-07-13-22:40:
+ * Defense-in-depth existence probe: matched by exact task id ONLY, never scoped
+ * by project_id, so it detects an id owned by ANY project on the shared cluster.
+ * This backstops the global sequence floor — even if the shared sequence somehow
+ * pointed at a taken id, the reserve loop skips forward until it finds one no
+ * project holds, keeping the global tasks.id namespace collision-free.
  */
 async function taskIdExists(
   tx: DbTransaction,

@@ -5,6 +5,8 @@ import {
   resolveBackend,
   migrateSqliteToPostgres,
   defaultMigrationSources,
+  stampMigratedProjectRows,
+  lookupRegisteredProjectIdByPath,
   resolveGlobalDir,
   type MigrationReport,
 } from "@fusion/core";
@@ -238,6 +240,50 @@ export async function runDbMigrate(
     await connections.close().catch(() => undefined);
     process.exit(1);
     return;
+  }
+
+  /*
+   * FNXC:CentralProjectIdentity 2026-07-13-23:10:
+   * The migrator (migrateSqliteToPostgres) is partition-unaware: it copies
+   * legacy rows verbatim, so migrated rows land with NULL project_id, a '' config
+   * key, and rootDir-path-keyed workflow settings — all invisible to bound
+   * readers (engine, dashboard project-store-resolver, configScope,
+   * workflow-settings resolver). The first-boot auto-migration stamps these; the
+   * manual `fn db migrate` path stamped NOTHING, so an operator cutover left the
+   * board/settings empty. Resolve the registered project id for this cwd by
+   * matching central.projects.path (the migration just populated central.projects,
+   * so query AFTER the copy) and re-key the migrated rows. If the project was
+   * never registered centrally, leave rows unstamped and tell the operator how to
+   * fix it (unregistered single-project setups use an unbound, unfiltered layer).
+   */
+  if (!dryRun) {
+    try {
+      const registeredProjectId = await lookupRegisteredProjectIdByPath(
+        connections.migration,
+        projectRoot,
+      );
+      if (registeredProjectId) {
+        await stampMigratedProjectRows(connections.migration, {
+          projectId: registeredProjectId,
+          rootDir: projectRoot,
+        });
+        console.log(
+          `fn db migrate: stamped migrated rows with central-registry project id "${registeredProjectId}" (tasks, archived tasks, config, workflow settings).`,
+        );
+      } else {
+        console.warn(
+          `fn db migrate: WARNING — no registered project matches path "${projectRoot}" in central.projects; ` +
+            `migrated rows were left UNSTAMPED (NULL project_id / '' config key / rootDir-keyed workflow settings) ` +
+            `and will be invisible to project-bound readers. To fix: register the project (e.g. open it once via the ` +
+            `dashboard/CLI so it is added to central.projects), then re-run \`fn db migrate\` to stamp the rows.`,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        `fn db migrate: WARNING — post-migration row stamping failed: ${(error as Error).message}. ` +
+          `Migrated rows may be invisible to project-bound readers; re-run \`fn db migrate\` after confirming the project is registered.`,
+      );
+    }
   }
 
   await connections.close().catch(() => undefined);

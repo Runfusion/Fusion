@@ -221,6 +221,21 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
         JSON.stringify({ taskPrefix: "ST", merger: { mode: "ai" } }),
         "2026-06-01T00:00:00Z",
       );
+      // Legacy workflow_settings keyed by the pre-isolation rootDir path string
+      // (real SQLite schema: workflowId, projectId, "values", updatedAt). Must
+      // be re-keyed from the rootDir path to the registered project id so the
+      // bound workflow-settings resolver still sees the migrated VALUES
+      // (FNXC:CentralProjectIdentity 2026-07-13-23:10).
+      legacy.exec(`CREATE TABLE IF NOT EXISTS workflow_settings (
+        workflowId TEXT NOT NULL,
+        projectId TEXT NOT NULL,
+        "values" TEXT DEFAULT '{}',
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (workflowId, projectId)
+      );`);
+      legacy.prepare(
+        `INSERT INTO workflow_settings (workflowId, projectId, "values", updatedAt) VALUES (?, ?, ?, ?)`,
+      ).run("wf_default", rootDir, JSON.stringify({ maxWorktrees: 3 }), "2026-06-01T00:00:00Z");
     } finally {
       legacy.close();
     }
@@ -274,8 +289,129 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
       expect(projectConfig, "migrated config row must be re-keyed to the project").toBeDefined();
       expect(projectConfig!.settings?.taskPrefix).toBe("ST");
       expect(configRows.some((r) => r.project_id === ""), "no orphaned '' config row").toBe(false);
+      /*
+      FNXC:CentralProjectIdentity 2026-07-13-23:10:
+      The migrated workflow_settings row, keyed by the pre-isolation rootDir
+      path string, must be re-keyed to the registered project id so a bound
+      workflow-settings resolver still sees the migrated VALUES. Before the
+      stamping re-key, this row stayed rootDir-keyed and vanished from every
+      project-bound read.
+      */
+      const wfRows = (await layer.db.execute(
+        `SELECT workflow_id, project_id, "values" FROM project.workflow_settings ORDER BY workflow_id`,
+      )) as unknown as Array<{ workflow_id: string; project_id: string; values: { maxWorktrees?: number } | null }>;
+      const wfRow = wfRows.find((r) => r.workflow_id === "wf_default");
+      expect(wfRow, "migrated workflow_settings row must survive the migration").toBeDefined();
+      expect(
+        wfRow!.project_id,
+        "workflow_settings row must be re-keyed from the rootDir path to the registered project id",
+      ).toBe("proj_stamp_test");
+      expect(wfRow!.values?.maxWorktrees).toBe(3);
+      expect(
+        wfRows.some((r) => r.project_id === rootDir),
+        "no workflow_settings row may remain keyed by the rootDir path",
+      ).toBe(false);
     } finally {
       await boot!.shutdown();
+    }
+  });
+
+  /*
+  FNXC:CentralProjectIdentity 2026-07-13-23:10:
+  Direct unit-ish coverage of the shared stampMigratedProjectRows helper: seed a
+  freshly-baselined PG schema with unstamped rows (NULL project_id tasks, ''
+  config, rootDir-keyed workflow settings/prompt overrides), run the helper, and
+  assert every table is re-keyed to the supplied project id — including the
+  NOT_EXISTS guard that refuses to clobber a pre-existing per-project row.
+  */
+  it("stampMigratedProjectRows re-keys all partitioned tables to the project id", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "stamp-helper-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    const fakeRootDir = "/legacy/path/to/project";
+
+    const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
+    const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
+    const { stampMigratedProjectRows } = await import("../../postgres/migration-stamping.js");
+    const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
+
+    const connections = await createConnectionSetFromUrl(
+      resolveBackendWithOptions({ databaseUrl: testUrl }),
+      { poolMax: 1, connectTimeoutSeconds: 30 },
+    );
+    try {
+      await applySchemaBaseline(connections.migration);
+      const db = connections.migration;
+
+      // Seed unstamped rows the migrator would have produced.
+      await db.execute(
+        `INSERT INTO project.tasks (id, description, "column", created_at, updated_at)
+         VALUES ('FN-HELP-1', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
+      );
+      await db.execute(
+        `INSERT INTO project.config (project_id, settings, updated_at)
+         VALUES ('', '{"taskPrefix":"HL"}'::jsonb, '2026-06-01T00:00:00Z')`,
+      );
+      await db.execute(
+        `INSERT INTO project.workflow_settings (workflow_id, project_id, "values", updated_at)
+         VALUES ('wf_a', '${fakeRootDir}', '{"maxWorktrees":5}'::jsonb, '2026-06-01T00:00:00Z')`,
+      );
+      // A pre-existing per-project row for wf_b: the rootDir-keyed migrated copy
+      // must NOT clobber it (NOT_EXISTS guard).
+      await db.execute(
+        `INSERT INTO project.workflow_settings (workflow_id, project_id, "values", updated_at)
+         VALUES ('wf_b', 'proj_help', '{"maxWorktrees":9}'::jsonb, '2026-06-01T00:00:00Z')`,
+      );
+      await db.execute(
+        `INSERT INTO project.workflow_settings (workflow_id, project_id, "values", updated_at)
+         VALUES ('wf_b', '${fakeRootDir}', '{"maxWorktrees":1}'::jsonb, '2026-06-01T00:00:00Z')`,
+      );
+      await db.execute(
+        `INSERT INTO project.workflow_prompt_overrides (workflow_id, project_id, overrides, updated_at)
+         VALUES ('wf_a', '${fakeRootDir}', '{"executor":"x"}'::jsonb, '2026-06-01T00:00:00Z')`,
+      );
+
+      const result = await stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir });
+      expect(result.stamped).toBe(true);
+
+      const tasks = (await db.execute(
+        `SELECT project_id FROM project.tasks WHERE id = 'FN-HELP-1'`,
+      )) as unknown as Array<{ project_id: string | null }>;
+      expect(tasks[0]?.project_id).toBe("proj_help");
+
+      const cfg = (await db.execute(
+        `SELECT project_id FROM project.config ORDER BY project_id`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(cfg.some((r) => r.project_id === "proj_help")).toBe(true);
+      expect(cfg.some((r) => r.project_id === "")).toBe(false);
+
+      const wf = (await db.execute(
+        `SELECT workflow_id, project_id, "values" FROM project.workflow_settings ORDER BY workflow_id, project_id`,
+      )) as unknown as Array<{ workflow_id: string; project_id: string; values: { maxWorktrees?: number } | null }>;
+      // wf_a re-keyed to proj_help.
+      const wfA = wf.find((r) => r.workflow_id === "wf_a");
+      expect(wfA?.project_id).toBe("proj_help");
+      expect(wfA?.values?.maxWorktrees).toBe(5);
+      // wf_b keeps its pre-existing per-project row (value 9); the rootDir copy
+      // was NOT re-keyed (guard) so it remains keyed by the fake rootDir.
+      const wfBProject = wf.find((r) => r.workflow_id === "wf_b" && r.project_id === "proj_help");
+      expect(wfBProject?.values?.maxWorktrees, "pre-existing per-project row must not be clobbered").toBe(9);
+      const wfBLegacy = wf.find((r) => r.workflow_id === "wf_b" && r.project_id === fakeRootDir);
+      expect(wfBLegacy, "guarded rootDir row is left in place for manual reconciliation").toBeDefined();
+      // No wf_a row remains keyed by the fake rootDir path.
+      expect(wf.some((r) => r.workflow_id === "wf_a" && r.project_id === fakeRootDir)).toBe(false);
+
+      const overrides = (await db.execute(
+        `SELECT project_id FROM project.workflow_prompt_overrides WHERE workflow_id = 'wf_a'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(overrides[0]?.project_id).toBe("proj_help");
+
+      // No-op when projectId is empty.
+      const noop = await stampMigratedProjectRows(db, { projectId: "", rootDir: fakeRootDir });
+      expect(noop.stamped).toBe(false);
+    } finally {
+      await connections.close().catch(() => undefined);
     }
   });
 });

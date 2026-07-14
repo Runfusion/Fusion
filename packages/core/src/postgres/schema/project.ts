@@ -325,6 +325,34 @@ export const config = projectSchema.table("config", {
 });
 
 // ── Distributed task ID allocator ────────────────────────────────────
+/*
+FNXC:CentralProjectIdentity 2026-07-13-22:40:
+distributed_task_id_state / distributed_task_id_reservations / merge_queue are
+INTENTIONALLY NOT project-partitioned (no project_id column), unlike `tasks` and
+`archived_tasks`. This is load-bearing, not an oversight:
+
+  - Task ids are a GLOBALLY-UNIQUE namespace across the entire embedded-PG
+    cluster: `tasks.id` is a global PRIMARY KEY shared by every project in the
+    one `project` schema. Two ids like "KB-123" must never coexist even across
+    different projects.
+  - The mechanism that guarantees this is the SHARED per-prefix sequence keyed
+    on `distributed_task_id_state.prefix` (PK = prefix, no project_id). Projects
+    that share a prefix share one monotonic counter, so they can never mint the
+    same id. Adding a project_id here would split the counter per project and
+    let two projects using the same prefix collide on `tasks.id`.
+  - `distributed_task_id_reservations` (unique on prefix+sequence and prefix+
+    task_id) is the reservation ledger for that shared counter; scoping it per
+    project would break the uniqueness backstop for the same reason.
+  - `merge_queue` (PK = task_id → FK tasks.id) needs no project_id BECAUSE
+    task_id is globally unique: its PK can never collide across projects, and its
+    rows are scoped to a project transitively through the joined task's
+    project_id (see async-merge-coordination taskStillInReview / taskProjectScope).
+
+Projects that share a prefix therefore share id numbering by design. The
+allocator enforces the global floor by scanning tasks/archived_tasks WITHOUT a
+project_id filter (see async-allocator computeNextSequenceFloor /
+getMaxTaskSequenceFromTable / taskIdExists).
+*/
 export const distributedTaskIdState = projectSchema.table("distributed_task_id_state", {
   prefix: text("prefix").primaryKey(),
   nextSequence: integer("next_sequence").notNull(),
@@ -565,6 +593,13 @@ export const agentBlockedStates = projectSchema.table("agent_blocked_states", {
 }, (t) => [foreignKey({ columns: [t.agentId], foreignColumns: [agents.id] }).onDelete("cascade")]);
 
 // ── Merge queue / merge requests / handoff ───────────────────────────
+/*
+FNXC:CentralProjectIdentity 2026-07-13-22:40:
+merge_queue has NO project_id and is safe without one: its PK is task_id, which
+is globally unique across the cluster (tasks.id global PK — see the allocator
+note above), so the PK cannot collide across projects. Per-project scoping is
+applied transitively via the joined task's project_id in lease/cleanup queries.
+*/
 export const mergeQueue = projectSchema.table("merge_queue", {
   taskId: text("task_id").primaryKey(),
   enqueuedAt: text("enqueued_at").notNull(),

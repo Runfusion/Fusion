@@ -472,34 +472,19 @@ export async function createTaskStoreForBackend(
             */
             const stampProjectId = options.projectId ?? (await lookupRegisteredProjectIdByPath());
             if (stampProjectId) {
-              await connections.migration.execute(
-                drizzleSql`UPDATE project.tasks SET project_id = ${stampProjectId} WHERE project_id IS NULL`,
-              );
-              await connections.migration.execute(
-                drizzleSql`UPDATE project.archived_tasks SET project_id = ${stampProjectId} WHERE project_id IS NULL`,
-              );
-              // The cold-storage archive is also partitioned (PR #2007 review
-              // P1); migrated snapshots must be owned by this project too.
-              await connections.migration.execute(
-                drizzleSql`UPDATE archive.archived_tasks SET project_id = ${stampProjectId} WHERE project_id IS NULL`,
-              );
               /*
-              FNXC:CentralProjectIdentity 2026-07-13-22:00:
-              project.config is keyed by project_id (DEFAULT '' — the legacy
-              SQLite-parity row). The migrator copies the legacy singleton
-              config into the '' row, but configScope() has NO bound→''
-              fallback, so a bound reader silently lost the migrated project
-              settings, workflowSteps, taskPrefix, and nextId floor (defaults
-              returned right after a "successful" migration). Re-key the
-              migrated row to this project. Guarded so a pre-existing
-              per-project row is never clobbered (then the '' row is left for
-              manual reconciliation rather than destroying either copy).
+              FNXC:CentralProjectIdentity 2026-07-13-23:10:
+              The stamping DML (tasks/archived_tasks NULL→id, config ''→id, and
+              the workflow_settings/workflow_prompt_overrides rootDir-key→id
+              re-key) is shared with `fn db migrate` via
+              stampMigratedProjectRows. rootDir is the pre-isolation key for the
+              workflow tables, so it is passed alongside the stamp id.
               */
-              await connections.migration.execute(
-                drizzleSql`UPDATE project.config SET project_id = ${stampProjectId}
-                  WHERE project_id = ''
-                    AND NOT EXISTS (SELECT 1 FROM project.config WHERE project_id = ${stampProjectId})`,
-              );
+              const { stampMigratedProjectRows } = await import("./migration-stamping.js");
+              await stampMigratedProjectRows(connections.migration, {
+                projectId: stampProjectId,
+                rootDir,
+              });
             }
             /*
             FNXC:PostgresMigrationBanner 2026-07-12:

@@ -710,6 +710,34 @@ export async function resolveWorkflowSettingDeclarationsImpl(store: TaskStore,
 }
 
 export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
+    /*
+     * FNXC:CentralProjectIdentity 2026-07-13-22:40:
+     * This is the SINGLE seam that produces the `project_id` key for the
+     * `workflow_settings` / `workflow_prompt_overrides` tables (keyed by
+     * (workflow_id, project_id)). Project identity ALWAYS comes from the
+     * central-registry id when available; rootDir is only a filesystem root /
+     * last-resort legacy key.
+     *
+     * Resolution order:
+     *   (a) `store.asyncLayer?.projectId` — backend (PostgreSQL) mode bound to a
+     *       central-registry project (e.g. "proj_2f4be0f31a404d2c"). This is the
+     *       id the rest of the system partitions by, so workflow settings MUST
+     *       key by it too.
+     *   (b) `store.db.getProjectIdentity()?.id` — legacy SQLite identity id.
+     *   (c) `store.rootDir` — absolute filesystem path, last-resort legacy key.
+     *
+     * BUG this fixes: the old code went straight to (b). In backend mode
+     * `store.db` is a SQLite stub whose `getProjectIdentity()` THROWS
+     * (throwSqliteRemoved), so the catch ALWAYS returned `store.rootDir` — an
+     * absolute path like "/Users/…/kb". Meanwhile every other backend-mode read/
+     * write partitions by the central-registry id, so workflow settings landed
+     * under a rootDir key that nothing else could find (settings looked "reset").
+     *
+     * Legacy rows still keyed by rootDir / the old identity id are re-keyed by
+     * migration stamping (owned elsewhere — see the PG startup/migration path).
+     */
+    const boundProjectId = store.asyncLayer?.projectId;
+    if (boundProjectId) return boundProjectId;
     try {
       return store.db.getProjectIdentity()?.id ?? store.rootDir;
     } catch {
