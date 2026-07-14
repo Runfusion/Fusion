@@ -1284,7 +1284,7 @@ export class TriageProcessor {
             comment-derived feedback still wins because this only runs when none was found.
             */
             if (!feedback) {
-              const latestPlanReviewRevise = [...(task.workflowStepResults || [])]
+              const latestPlanReviewRevise = [...(currentTask.workflowStepResults || [])]
                 .reverse()
                 .find((result) =>
                   result.workflowStepId === PLAN_REVIEW_GROUP_ID
