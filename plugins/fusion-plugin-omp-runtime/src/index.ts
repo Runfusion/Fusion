@@ -1,0 +1,101 @@
+import { definePlugin } from "@fusion/plugin-sdk";
+import type { FusionPlugin } from "@fusion/plugin-sdk";
+import { killAllProcesses } from "./acp/index.js";
+import { probeOmpBinary } from "./probe.js";
+import { discoverOmpProviderModels } from "./provider.js";
+import { OmpRuntimeAdapter } from "./runtime-adapter.js";
+
+/*
+FNXC:OmpAcp 2026-07-11-23:35:
+OMP Runtime plugin — drive Oh My Pi (`omp`) as a Fusion agent runtime over the
+Agent Client Protocol. Transport is `omp acp` (JSON-RPC/stdio). Mirrors the
+landed Grok ACP runtime pattern (vendored ACP client under ./acp/) with
+OMP-specific binary/args/auth (agent auth reuses ~/.omp).
+
+This shells out to an operator-installed `omp` binary on PATH — Fusion does not
+download or bundle it. Upstream: https://omp.sh/docs/acp
+https://github.com/can1357/oh-my-pi
+*/
+
+// Reap OMP ACP agent subprocesses on hard process exit (registry SIGKILL is
+// authoritative). Scoped to ACP-tracked agent children only — never port 4040.
+process.on("exit", killAllProcesses);
+
+const plugin: FusionPlugin = definePlugin({
+  manifest: {
+    id: "fusion-plugin-omp-runtime",
+    name: "OMP Runtime Plugin",
+    version: "0.1.0",
+    description: "Oh My Pi (omp) runtime support for Fusion via ACP (omp acp)",
+    author: "Fusion Team",
+    homepage: "https://omp.sh/docs/acp",
+    runtime: {
+      runtimeId: "omp",
+      name: "OMP Runtime",
+      version: "0.1.0",
+      description: "Drives the local `omp acp` Agent Client Protocol server",
+    },
+  },
+  state: "installed",
+  hooks: {
+    onLoad: (ctx) => {
+      ctx.logger.info(
+        "OMP Runtime Plugin loaded — transport=ACP (omp acp); probe uses omp --version",
+      );
+    },
+  },
+  runtime: {
+    metadata: {
+      runtimeId: "omp",
+      name: "OMP Runtime",
+      version: "0.1.0",
+      description: "Drives the local `omp acp` Agent Client Protocol server",
+    },
+    factory: async () => new OmpRuntimeAdapter(),
+  },
+  cliProviders: [
+    {
+      providerId: "omp-cli",
+      displayName: "Oh My Pi (omp)",
+      binaryName: "omp",
+      providerType: "cli",
+      statusRoute: "/providers/omp-cli/status",
+      authRoute: "/auth/omp-cli",
+      actions: [
+        { actionId: "enable", label: "Enable", actionType: "enable", method: "POST", route: "/auth/omp-cli" },
+        { actionId: "disable", label: "Disable", actionType: "disable", method: "POST", route: "/auth/omp-cli" },
+        { actionId: "test", label: "Test", actionType: "test", method: "GET", route: "/providers/omp-cli/status" },
+      ],
+      probe: async () => {
+        const status = await probeOmpBinary();
+        return {
+          available: status.available,
+          authenticated: status.authenticated,
+          binaryPath: status.binaryPath,
+          binaryName: status.binaryName,
+          version: status.version,
+          reason: status.reason,
+        };
+      },
+      discoverModels: discoverOmpProviderModels,
+      runtime: {
+        runtimeId: "omp",
+        createAdapter: async () => new OmpRuntimeAdapter(),
+      },
+    },
+  ],
+});
+
+export default plugin;
+export { probeOmpBinary } from "./probe.js";
+export { discoverOmpProviderModels } from "./provider.js";
+export { OmpRuntimeAdapter } from "./runtime-adapter.js";
+export type { OmpBinaryStatus } from "./types.js";
+export {
+  buildOmpAcpArgs,
+  buildOmpAcpRuntimeSettings,
+  OMP_ACP_ENV_ALLOWLIST,
+  modelForCli,
+  normalizeOmpCliModel,
+  resolveOmpAcpAuthPreferMethods,
+} from "./acp-settings.js";

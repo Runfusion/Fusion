@@ -35,6 +35,8 @@ export const BUNDLED_PLUGIN_IDS = [
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-grok-runtime",
+  // FNXC:OmpAcp 2026-07-11-23:35: Oh My Pi ACP runtime available as a staged/bundled install target.
+  "fusion-plugin-omp-runtime",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-compound-engineering",
   "fusion-plugin-linear-import",

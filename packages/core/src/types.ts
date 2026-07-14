@@ -3462,6 +3462,18 @@ export interface GlobalSettings {
    * Operators need a global machine-local Grok CLI executable override when PATH discovery resolves the wrong `grok`/`.cmd`/`.bat` shim. Blank/undefined means Fusion must keep auto-detecting through PATH candidates.
    */
   grokCliBinaryPath?: string;
+  /**
+   * FNXC:OmpAcp 2026-07-13-22:50:
+   * When true, enable Oh My Pi (omp) CLI model-provider support (provider ID: `omp-cli`)
+   * through an operator-local `omp` install driven over ACP (`omp acp`).
+   */
+  useOmpCli?: boolean;
+  /**
+   * FNXC:OmpAcp 2026-07-13-22:50:
+   * Global machine-local OMP CLI executable override when PATH discovery resolves the wrong
+   * `omp`/`.cmd`/`.bat` shim. Blank/undefined means PATH auto-detection.
+   */
+  ompCliBinaryPath?: string;
   /** Global baseline AI model provider for task execution (executor agent).
    *  This is the global lane that project-level `executionProvider` can override.
    *  Must be set together with `executionGlobalModelId`. Falls back to

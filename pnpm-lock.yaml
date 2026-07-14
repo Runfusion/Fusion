@@ -267,6 +267,9 @@ importers:
       '@fusion-plugin-examples/hermes-runtime':
         specifier: workspace:*
         version: link:../../plugins/fusion-plugin-hermes-runtime
+      '@fusion-plugin-examples/omp-runtime':
+        specifier: workspace:*
+        version: link:../../plugins/fusion-plugin-omp-runtime
       '@fusion-plugin-examples/openclaw-runtime':
         specifier: workspace:*
         version: link:../../plugins/fusion-plugin-openclaw-runtime
@@ -1065,6 +1068,34 @@ importers:
       react-dom:
         specifier: 19.2.4
         version: 19.2.4(react@19.2.4)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.8(@opentelemetry/api@1.9.0)(@types/node@25.5.2)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.1)(jsdom@29.0.1)(vite@6.4.1(@types/node@25.5.2)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
+  plugins/fusion-plugin-omp-runtime:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.24.0
+        version: 0.24.0(zod@4.3.6)
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.80.6(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.80.6(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@fusion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@fusion/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

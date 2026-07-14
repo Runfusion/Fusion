@@ -904,6 +904,12 @@ describe("GET /auth/status", () => {
       reason: "mocked unavailable",
       probeDurationMs: 0,
     });
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
     vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
       available: false,
       reason: "mocked unavailable",
@@ -945,7 +951,7 @@ describe("GET /auth/status", () => {
     expect(res.status).toBe(200);
     // Filter out synthetic CLI providers — they have dedicated route tests.
     // Structural assertions here are about OAuth + API-key paths only.
-    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "llama-cpp");
+    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "omp-cli" && p.id !== "llama-cpp");
     /*
     FN-7625: the static catalog (anthropic-subscription/github-copilot/openai-codex
     OAuth + the full API-key catalog) is always present, unioned with whatever the
@@ -1062,7 +1068,7 @@ describe("GET /auth/status", () => {
     const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
-    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "llama-cpp");
+    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "omp-cli" && p.id !== "llama-cpp");
     /*
     FN-7625: catalog ids remain present even though storage only reported a
     narrow subset, and a storage-reported id NOT in the catalog ("acme-extension")
@@ -1549,7 +1555,7 @@ describe("GET /auth/status", () => {
 
     function nonCliProviderIds(res: any): string[] {
       return res.body.providers
-        .filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "llama-cpp")
+        .filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "omp-cli" && p.id !== "llama-cpp")
         .map((p: any) => p.id);
     }
 
@@ -1826,6 +1832,13 @@ describe("Droid CLI auth routes", () => {
       probeDurationMs: 0,
     });
     vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    // FNXC:OmpAcp 2026-07-13-22:50: stub omp probe so /auth/status does not spawn real omp.
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
       available: false,
       authenticated: false,
       reason: "mocked unavailable",
@@ -5411,4 +5424,67 @@ describe("llama.cpp auth routes", () => {
     expect(res.status).toBe(200);
     expect(onUseLlamaCppToggled).toHaveBeenCalledWith(false, true);
   });
+
+  it("POST /auth/omp-cli enables when omp binary is available", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "omp/16.4.6",
+      probeDurationMs: 8,
+    });
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useOmpCli: true });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/omp-cli", JSON.stringify({ enabled: true }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true, restartRequired: false });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ useOmpCli: true });
+  });
+
+  it("POST /auth/omp-cli saves a validated binary path without toggling", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "omp/16.4.6",
+      binaryPath: "/opt/omp",
+      configuredBinaryPath: "/opt/omp",
+      usingConfiguredBinaryPath: true,
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useOmpCli: false }),
+    });
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useOmpCli: false, ompCliBinaryPath: "/opt/omp" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/omp-cli", JSON.stringify({ binaryPath: "  /opt/omp  " }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, binaryPath: "/opt/omp", restartRequired: false });
+    expect(runtimeProviderProbesModule.probeOmpCliProvider).toHaveBeenCalledWith({ binaryPath: "/opt/omp" });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ ompCliBinaryPath: "/opt/omp" });
+  });
+
+  it("GET /providers/omp-cli/status returns ready when enabled and binary available", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeOmpCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "omp/16.4.6",
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useOmpCli: true }),
+    });
+
+    const res = await GET(buildApp(), "/api/providers/omp-cli/status");
+    expect(res.status).toBe(200);
+    expect(res.body.ready).toBe(true);
+    expect(res.body.enabled).toBe(true);
+  });
+
 });

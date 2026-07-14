@@ -10,6 +10,8 @@ describe("runtimeSupportsMcp", () => {
   it("allows Claude/ACP runtime identifiers", () => {
     expect(runtimeSupportsMcp("claude-code", "anthropic")).toBe(true);
     expect(runtimeSupportsMcp("vendor-acp-runtime", "anthropic")).toBe(true);
+    // FNXC:OmpAcp 2026-07-11-23:35: Oh My Pi ACP runtime forwards mcpServers on session/new.
+    expect(runtimeSupportsMcp("omp", "anthropic")).toBe(true);
   });
 
   it("rejects mock provider even on an otherwise supported runtime", () => {

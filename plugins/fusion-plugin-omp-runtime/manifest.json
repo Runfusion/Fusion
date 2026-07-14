@@ -1,0 +1,6 @@
+{
+  "id": "fusion-plugin-omp-runtime",
+  "name": "OMP Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Provides Oh My Pi (omp) CLI-backed agent runtime integration over ACP (omp acp)"
+}

@@ -472,6 +472,8 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   // Authentication section (POSTs /auth/grok-cli), not rendered as a plain description field.
   useGrokCli: "managed via GrokCliProviderCard in the Authentication section, not a plain description field",
   grokCliBinaryPath: "managed via GrokCliProviderCard in the Authentication section, not a plain description field",
+  useOmpCli: "managed via OmpCliProviderCard in the Authentication section, not a plain description field",
+  ompCliBinaryPath: "managed via OmpCliProviderCard in the Authentication section, not a plain description field",
   vitestAutoKillEnabled: "dashboard TUI memory guard, no Settings UI field",
   vitestKillThresholdPct: "dashboard TUI memory guard, no Settings UI field",
   agentMemoryInclusionMode: "not yet exposed as a distinct Settings field",

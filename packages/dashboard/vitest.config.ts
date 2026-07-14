@@ -593,6 +593,19 @@ export default defineConfig({
         __dirname,
         "../../plugins/fusion-plugin-grok-runtime/src/index.ts",
       ),
+      /*
+      FNXC:OmpAcp 2026-07-11-23:35:
+      runtime-provider-probes.ts imports probeOmpBinary from @fusion-plugin-examples/omp-runtime.
+      Source aliases avoid missing dist/ on a source checkout.
+      */
+      "@fusion-plugin-examples/omp-runtime/probe": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-omp-runtime/src/probe.ts",
+      ),
+      "@fusion-plugin-examples/omp-runtime": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-omp-runtime/src/index.ts",
+      ),
       "@fusion-plugin-examples/roadmap/roadmap-suggestions": resolve(
         __dirname,
         "../../plugins/fusion-plugin-roadmap/src/roadmap-suggestions.ts",

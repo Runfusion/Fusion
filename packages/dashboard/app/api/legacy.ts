@@ -2031,6 +2031,28 @@ export interface GrokCliStatus {
   ready: boolean;
 }
 
+/*
+FNXC:OmpAcp 2026-07-13-22:50:
+Status shape for Settings → Oh My Pi (omp) ACP card. ready = enabled + binary available; auth under ~/.omp.
+*/
+export interface OmpCliStatus {
+  binary: {
+    available: boolean;
+    authenticated?: boolean;
+    version?: string;
+    binaryPath?: string;
+    configuredBinaryPath?: string;
+    usingConfiguredBinaryPath?: boolean;
+    diagnostics?: string[];
+    reason?: string;
+    probeDurationMs: number;
+  };
+  enabled: boolean;
+  binaryPath?: string;
+  extension: null;
+  ready: boolean;
+}
+
 export interface LlamaCppStatus {
   enabled: boolean;
   extension: {
@@ -2105,6 +2127,10 @@ export function fetchCursorCliStatus(): Promise<CursorCliStatus> {
 
 export function fetchGrokCliStatus(): Promise<GrokCliStatus> {
   return api<GrokCliStatus>("/providers/grok-cli/status");
+}
+
+export function fetchOmpCliStatus(): Promise<OmpCliStatus> {
+  return api<OmpCliStatus>("/providers/omp-cli/status");
 }
 
 /** Probe llama.cpp server + setting + extension state. */
@@ -2402,6 +2428,28 @@ export function setGrokCliBinaryPath(
   binaryPath: string | null,
 ): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
   return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
+    method: "POST",
+    body: JSON.stringify({ binaryPath }),
+  });
+}
+
+/*
+FNXC:OmpAcp 2026-07-13-22:50:
+Client helpers for Oh My Pi ACP enable + binary path (mirror Grok/Cursor).
+*/
+export function setOmpCliEnabled(
+  enabled: boolean,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/omp-cli", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function setOmpCliBinaryPath(
+  binaryPath: string | null,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/omp-cli", {
     method: "POST",
     body: JSON.stringify({ binaryPath }),
   });
