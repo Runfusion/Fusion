@@ -6,7 +6,7 @@ import type {
   PlanningQuestion,
 } from "@fusion/core";
 import { buildStageSystemPrompt, CeOrchestrator, CE_EVENTS } from "../session/orchestrator.js";
-import { getCeSessionStore } from "../session/session-store.js";
+import { getCeSessionStore, type CeSession } from "../session/session-store.js";
 import { getStage } from "../session/stage-registry.js";
 import { makeHarness, makeScriptedSession, pgDescribe, type TestHarness } from "./_harness.js";
 
@@ -248,7 +248,10 @@ pgDescribe("detached turns (route posture)", () => {
       turnTimeoutMs: 5000,
     });
     const store = getCeSessionStore(h.ctx);
-    const session = await store.createAsync({ stage: "brainstorm" });
+    const session = (await store.updateAsync(
+      (await store.createAsync({ stage: "brainstorm" })).id,
+      { status: "active" },
+    ))!;
     const progressStarted = signal();
     const releaseProgress = signal();
     const touchActivityAsync = store.touchActivityAsync.bind(store);
@@ -265,11 +268,11 @@ pgDescribe("detached turns (route posture)", () => {
 
     const internal = orch as unknown as {
       queueProgressPersistence(sessionId: string, at: number, force?: boolean): void;
-      detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void;
+      detachTurn(session: () => CeSession, label: string, operation: Promise<unknown>): void;
     };
     internal.queueProgressPersistence(session.id, session.lastActivityAt + 100, true);
     await progressStarted.promise;
-    internal.detachTurn(session.id, "controlled turn", Promise.reject(new Error("detached operation failed")));
+    internal.detachTurn(() => session, "controlled turn", Promise.reject(new Error("detached operation failed")));
     releaseProgress.resolve();
 
     await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
@@ -283,6 +286,54 @@ pgDescribe("detached turns (route posture)", () => {
 
     await store.updateAsync(session.id, { status: "interrupted", error: "durable recovery advanced" });
     expect(await orch.getState(session.id)).toMatchObject({
+      status: "interrupted",
+      error: "durable recovery advanced",
+    });
+  });
+
+  it("uses the pre-detach snapshot when the failure read and terminal write both reject", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const store = getCeSessionStore(h.ctx);
+    const session = await store.createAsync({ stage: "brainstorm" });
+    let accepted = session;
+    let rejectOperation!: (cause: unknown) => void;
+    const operation = new Promise<never>((_resolve, reject) => {
+      rejectOperation = reject;
+    });
+    const internal = orch as unknown as {
+      detachTurn(session: () => CeSession, label: string, operation: Promise<unknown>): void;
+    };
+    internal.detachTurn(() => accepted, "controlled turn", operation);
+    accepted = (await store.updateAsync(session.id, { status: "active" }))!;
+
+    const getAsync = store.getAsync.bind(store);
+    vi.spyOn(store, "getAsync")
+      .mockRejectedValueOnce(new Error("failure snapshot read failed"))
+      .mockImplementation(getAsync);
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("terminal write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    rejectOperation(new Error("detached operation failed"));
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("terminal write failed"),
+    ));
+
+    expect(await orch.getState(accepted.id)).toMatchObject({
+      status: "error",
+      error: "detached operation failed",
+    });
+    expect(h.ctx.logger.error).toHaveBeenCalledWith(expect.stringContaining("failure snapshot read failed"));
+
+    await store.updateAsync(accepted.id, { status: "interrupted", error: "durable recovery advanced" });
+    expect(await orch.getState(accepted.id)).toMatchObject({
       status: "interrupted",
       error: "durable recovery advanced",
     });

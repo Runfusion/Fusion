@@ -533,15 +533,18 @@ export class CeOrchestrator {
       ? await this.store.createWithPlanHandoffClaimAsync(sessionInput, handoffArtifactPath)
       : await this.store.createAsync(sessionInput);
     await this.store.appendHistoryAsync(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
-
-    const turn = opts.detach
-      ? Promise.resolve().then(() => this.runOpeningTurn(session.id, stage, opts.openingMessage))
-      : this.runOpeningTurn(session.id, stage, opts.openingMessage);
     if (opts.detach) {
-      this.detachTurn(session.id, "opening turn", turn);
-      return { session: await this.requireSession(session.id) };
+      let accepted = await this.requireSession(session.id);
+      const turn = Promise.resolve().then(() => this.runOpeningTurn(
+        session.id,
+        stage,
+        opts.openingMessage,
+        (active) => { accepted = active; },
+      ));
+      this.detachTurn(() => accepted, "opening turn", turn);
+      return { session: accepted };
     }
-    return turn;
+    return this.runOpeningTurn(session.id, stage, opts.openingMessage);
   }
 
   /** Resolve the newest durable same-project Brainstorm handoff accepted for in-place Plan enrichment. */
@@ -589,6 +592,7 @@ export class CeOrchestrator {
     sessionId: string,
     stage: CeStageDefinition,
     openingMessage: string,
+    onAccepted?: (session: CeSession) => void,
   ): Promise<CeStepResult> {
     let interactive;
     try {
@@ -597,7 +601,8 @@ export class CeOrchestrator {
       return { session: await this.failSession(sessionId, err), event: undefined };
     }
     this.live.set(sessionId, interactive.session);
-    await this.store.updateAsync(sessionId, { status: "active" });
+    const active = await this.store.updateAsync(sessionId, { status: "active" }) ?? await this.requireSession(sessionId);
+    onAccepted?.(active);
     return this.runTurn(sessionId, () => interactive.session.prompt(openingMessage), interactive.session);
   }
 
@@ -633,7 +638,7 @@ export class CeOrchestrator {
       // turn re-creates the handle and converges through persisted state.
       const accepted = await this.store.updateAsync(sessionId, { status: "active", currentQuestion: null, error: null }) ?? session;
       const turn = Promise.resolve().then(() => this.runAnswerTurn(accepted, questionId, response));
-      this.detachTurn(sessionId, "answer turn", turn);
+      this.detachTurn(() => accepted, "answer turn", turn);
       return { session: accepted };
     }
     return this.runAnswerTurn(session, questionId, response);
@@ -738,7 +743,7 @@ export class CeOrchestrator {
       // slow; the route posture marks the session active and converges via
       // push/poll.
       const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
-      this.detachTurn(sessionId, "rehydration", rehydration);
+      this.detachTurn(() => next, "rehydration", rehydration);
       return { session: next };
     }
     return rehydration;
@@ -1166,24 +1171,28 @@ export class CeOrchestrator {
   }
 
   /**
-   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:58:
-   * Route-detached model work must always terminate its rejection chain. If both the turn and its PostgreSQL terminal write reject, use the shared process-local terminal fallback so current polling clients stop seeing launching/active without creating an unhandled rejection.
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-01:57:
+   * Route-detached model work must capture its accepted semantic state before arming the background rejection handler. If PostgreSQL reads and the terminal write both fail afterward, that snapshot seeds the shared process-local fallback; heartbeat timestamps remain non-semantic and later durable semantic mutations still supersede it.
    */
-  private detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void {
+  private detachTurn(accepted: () => CeSession, label: string, operation: Promise<unknown>): void {
+    const sessionId = accepted().id;
     void operation.catch(async (cause: unknown) => {
       const message = cause instanceof Error ? cause.message : String(cause);
       this.ctx.logger.error(`Compound Engineering detached ${label} failed for ${sessionId}: ${message}`);
-      let session: CeSession | undefined;
+      let session = accepted();
       try {
-        session = await this.store.getAsync(sessionId);
-        if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
-          await this.failSession(sessionId, cause);
-        }
+        const current = await this.store.getAsync(sessionId);
+        if (!current) return;
+        session = current;
+      } catch (readError) {
+        this.ctx.logger.error(`Compound Engineering could not read detached ${label} failure state for ${sessionId}: ${readError instanceof Error ? readError.message : String(readError)}`);
+      }
+      if (session.status === "completed" || session.status === "error" || session.status === "interrupted") return;
+      try {
+        await this.failSession(sessionId, cause);
       } catch (persistError) {
         this.ctx.logger.error(`Compound Engineering could not persist detached ${label} failure for ${sessionId}: ${persistError instanceof Error ? persistError.message : String(persistError)}`);
-        if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
-          this.retainTerminalFallback(session, "error", message);
-        }
+        this.retainTerminalFallback(session, "error", message);
       }
     });
   }
