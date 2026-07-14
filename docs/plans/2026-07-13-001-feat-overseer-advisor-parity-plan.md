@@ -1,7 +1,7 @@
 ---
 title: "feat: Overseer session advisor (OMP advisor parity)"
 type: feat
-status: active
+status: completed
 date: 2026-07-13
 origin: conversation gap analysis of https://github.com/can1357/oh-my-pi/tree/main/packages/coding-agent/src/advisor (no brainstorm requirements doc)
 branch: feature/improve-overseer
