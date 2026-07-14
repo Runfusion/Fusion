@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Preserve OAuth, CLI authentication, and selected workflow behavior after PostgreSQL migration.
+summary: Restore provider usage, workflow routing, and failed-task stability after PostgreSQL migration.
 category: fix
-dev: Refreshes Anthropic OAuth canonically, de-duplicates CLI auth rows, parses zero-use Grok billing, and forwards workflow context.
+dev: Refreshes migrated OAuth, surfaces re-auth failures, repairs fallback selection and Grok billing, and parks blocked retries.

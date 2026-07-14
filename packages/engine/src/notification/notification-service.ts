@@ -549,15 +549,44 @@ export class NotificationService {
   }
 
   async dispatch(eventType: NotificationEvent, payload: NotificationPayload): Promise<void> {
+    await this.dispatchConfirmed(eventType, payload);
+  }
+
+  async dispatchConfirmed(eventType: NotificationEvent, payload: NotificationPayload): Promise<boolean> {
     if (!this.notificationsEnabled) {
       await this.refreshNotificationState("manual-dispatch");
       if (!this.notificationsEnabled) {
-        return;
+        return false;
       }
     }
 
     const dedupTaskId = payload.taskId ?? "global";
-    this.maybeNotify(dedupTaskId, eventType, payload);
+    const metadataDedupeKey = typeof payload.metadata?.notificationDedupeKey === "string"
+      ? payload.metadata.notificationDedupeKey.trim()
+      : "";
+    const key = metadataDedupeKey.length > 0 ? metadataDedupeKey : `${dedupTaskId}:${eventType}`;
+    if (this.notifiedEvents.has(key)) {
+      return true;
+    }
+
+    /*
+    FNXC:OAuthNotifications 2026-07-14-15:46:
+    OAuth expiry monitoring needs confirmed delivery before it starts the durable 12-hour alert cooldown. Its confirmed dispatch path therefore awaits provider results and reports whether any provider succeeded; existing workflow dispatch keeps its Promise<void> contract and fire-and-forget task events remain on maybeNotify.
+    */
+    this.notifiedEvents.add(key);
+    try {
+      const results = await this.dispatcher.dispatch(eventType, payload);
+      const delivered = results.some((result) => result.success);
+      if (!delivered) {
+        this.notifiedEvents.delete(key);
+      }
+      return delivered;
+    } catch (error) {
+      this.notifiedEvents.delete(key);
+      const message = error instanceof Error ? error.message : String(error);
+      schedulerLog.log(`NotificationService.dispatch failed key=${key} error=${message}`);
+      return false;
+    }
   }
 
   private async refreshNotificationState(reason: string): Promise<void> {

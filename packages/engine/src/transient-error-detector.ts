@@ -309,6 +309,7 @@ const OPERATOR_ACTIONABLE_AGENT_ERROR_PATTERNS: RegExp[] = [
   /no such model/i,
   /credential/i,
   /missing .*key/i,
+  /no api key/i,
   /billing/i,
   /quota exceeded/i,
 ];

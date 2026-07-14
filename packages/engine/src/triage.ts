@@ -128,7 +128,7 @@ import {
   checkSessionError,
   type UsageLimitPauser,
 } from "./usage-limit-detector.js";
-import { isTransientError, isSilentTransientError } from "./transient-error-detector.js";
+import { isOperatorActionableAgentError, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector } from "./stuck-task-detector.js";
@@ -1522,6 +1522,31 @@ export class TriageProcessor {
             planLog.warn(`${task.id}: failed to persist planner fallback exhaustion: ${msg}`);
           });
           this.options.onSpecifyError?.(task, err);
+          return;
+        } else if (isOperatorActionableAgentError(errorMessage) && !isTransientError(errorMessage)) {
+          /*
+          FNXC:TriageAuth 2026-07-14-15:46:
+          Provider credentials, OAuth grants, billing, and model-access failures require operator action. Triage must park the task as failed instead of restoring its claimable status, because the scheduler otherwise repeats the same specification attempt every poll while no external state has changed.
+
+          FNXC:TriageAuth 2026-07-14-16:08:
+          Transient infrastructure signals take precedence when an error also mentions credentials, such as a connection reset during refresh. Those mixed failures keep the bounded retry policy; only genuinely permanent authentication failures park immediately.
+          */
+          const failureMessage = `Specification failed: ${errorMessage}`;
+          planLog.error(`✗ ${task.id} planning needs operator action: ${errorDetail}`);
+          await this.store.logEntry(task.id, failureMessage, errorStack).catch((logErr: unknown) => {
+            const msg = logErr instanceof Error ? logErr.message : String(logErr);
+            planLog.warn(`${task.id}: failed to persist operator-actionable specification failure: ${msg}`);
+          });
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: failureMessage,
+            recoveryRetryCount: null,
+            nextRecoveryAt: null,
+          }).catch((updateErr: unknown) => {
+            const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
+            planLog.warn(`${task.id}: failed to park operator-actionable specification failure: ${msg}`);
+          });
+          this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy

@@ -29,11 +29,12 @@ describe("createFallbackModelObserver", () => {
       primaryModel: "openai-codex/gpt-5.3-codex",
       fallbackModel: "zai/glm-5.1",
       triggerPoint: "prompt-time",
+      failureCategory: "authentication",
       timestamp: "2026-05-03T22:00:00.000Z",
     });
 
     const expectedMessage =
-      "[fallback] executor switched from openai-codex/gpt-5.3-codex to zai/glm-5.1 (prompt-time)";
+      "[fallback] executor switched from openai-codex/gpt-5.3-codex to zai/glm-5.1 (prompt-time; primary provider authentication failed)";
 
     expect(store.logEntry).toHaveBeenCalledWith("FN-123", expectedMessage);
     expect(store.appendAgentLog).toHaveBeenCalledWith(

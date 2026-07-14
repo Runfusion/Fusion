@@ -497,6 +497,19 @@ export function resolveImplicitPlanningFallbackModel(
   // (hasDistinctFallback requires the models to differ). Leave both fields
   // undefined so the existing terminal behavior is preserved cleanly.
   if (resolvedModel.provider === primaryProvider && resolvedModel.modelId === primaryModelId) {
+    /*
+    FNXC:TriageModelFallback 2026-07-14-15:54:
+    A project default override can also become the resolved planning primary. When that makes the first implicit fallback a self-swap, try the distinct inherited global default pair before declaring that no fallback exists. This preserves the one-swap ceiling while allowing an authenticated global provider to recover a project-override auth failure.
+    */
+    const inheritedGlobalProvider = settings?.defaultProvider;
+    const inheritedGlobalModelId = settings?.defaultModelId;
+    if (
+      inheritedGlobalProvider
+      && inheritedGlobalModelId
+      && (inheritedGlobalProvider !== primaryProvider || inheritedGlobalModelId !== primaryModelId)
+    ) {
+      return { provider: inheritedGlobalProvider, modelId: inheritedGlobalModelId };
+    }
     return { provider: undefined, modelId: undefined };
   }
 

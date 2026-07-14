@@ -39,7 +39,7 @@ describe("OAuthReloginBanner", () => {
     window.localStorage.clear();
   });
 
-  it("hides expired Anthropic subscription urgency when Claude CLI is authenticated", async () => {
+  it("shows expired Anthropic subscription urgency when Claude CLI is authenticated", async () => {
     mockFetchAuthStatus.mockResolvedValueOnce({
       providers: [
         { id: "anthropic-subscription", name: "Anthropic Subscription", type: "oauth", authenticated: false, expired: true },
@@ -50,10 +50,8 @@ describe("OAuthReloginBanner", () => {
 
     render(<OAuthReloginBanner onReLogin={vi.fn()} pollIntervalMs={60_000} />);
 
-    await waitFor(() => expect(mockFetchAuthStatus).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.queryByText(/Re-login required: Anthropic Subscription/i)).toBeNull();
-    expect(screen.queryByText(/keep agents running/i)).toBeNull();
+    expect(await screen.findByRole("status")).toHaveTextContent("Re-login required: Anthropic Subscription");
+    expect(screen.getByRole("status")).toHaveTextContent("keep agents running");
   });
 
   it("hides expired Anthropic subscription urgency when API key and Claude CLI are authenticated", async () => {

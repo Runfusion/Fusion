@@ -2895,6 +2895,14 @@ export class TaskExecutor {
   }
 
   private async dispatchUnpauseResume(task: Task): Promise<boolean> {
+    /*
+    FNXC:ExecutorResume 2026-07-14-15:31:
+    A terminal failed in-progress task must not be resurrected by an unrelated `task:updated` event. Planner oversight steering comments emit that event; treating it as an unpause cleared the failure and restarted the same missing-credential execution every 45 seconds. Explicit Retry/Unpause routes clear `status` before emitting their update, while startup orphan recovery has its own bounded path, so keep failed rows parked here for operator action.
+    */
+    if (task.status === "failed") {
+      return false;
+    }
+
     if (
       this.executing.has(task.id)
       || this.resumingUnpaused.has(task.id)
@@ -3113,8 +3121,9 @@ export class TaskExecutor {
           }
         }
 
-        // This also covers orphaned states (for example, engine restart while
-        // paused in-progress). dispatchUnpauseResume owns all duplicate guards.
+        // Explicit unpause updates and non-failed orphan updates can resume here;
+        // startup failed-orphan recovery is owned by resumeOrphaned().
+        // dispatchUnpauseResume owns the terminal-failure and duplicate guards.
         if (
           !task.paused
           && task.column === "in-progress"

@@ -615,6 +615,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         const scopeLoginError = missingInferenceScope
           ? "This Anthropic login is missing the model-access (inference) scope, so model calls will fail. Re-login to grant full access."
           : undefined;
+        /*
+        FNXC:ProviderAuth 2026-07-14-15:54:
+        Expired OAuth must carry an actionable card message, not only authenticated:false. Refresh failures such as invalid_grant cannot repair themselves; tell the operator to re-login while preserving a more specific background-login or inference-scope error when available.
+        */
+        const expiryLoginError = expired
+          ? "This OAuth session expired and could not be refreshed. Re-login to restore model access."
+          : undefined;
         return {
           id: statusProvider.id,
           name: statusProvider.name,
@@ -623,7 +630,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           expired: expired || missingInferenceScope,
           loginInProgress: loginInProgress.has(statusProvider.id),
           requiresManualCode: getManualCodeConfig(toOauthLoginProviderId(statusProvider.id), origin) !== undefined || undefined,
-          loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError,
+          loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError ?? expiryLoginError,
         };
       }));
 

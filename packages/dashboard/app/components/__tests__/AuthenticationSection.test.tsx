@@ -195,6 +195,24 @@ describe("AuthenticationSection", () => {
     expect(handleSaveApiKey).toHaveBeenCalledWith("anthropic-api-key");
   });
 
+  it("renders an OAuth refresh failure durably on the affected provider card", () => {
+    renderAuthSection([
+      {
+        id: "anthropic-subscription",
+        name: "Anthropic Subscription",
+        authenticated: false,
+        type: "oauth",
+        expired: true,
+        loginError: "This OAuth session expired and could not be refreshed. Re-login to restore model access.",
+      },
+      { id: "openai-codex", name: "OpenAI Codex", authenticated: true, type: "oauth" },
+    ]);
+
+    const subscriptionCard = screen.getByTestId("auth-provider-icon-anthropic-subscription").closest(".auth-provider-card") as HTMLElement;
+    expect(within(subscriptionCard).getByRole("alert")).toHaveTextContent("expired and could not be refreshed");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
   it("keeps Anthropic OAuth logout separate from a stored API key clear action", () => {
     const { handleLogout, handleClearApiKey } = renderAuthSection([
       { id: "anthropic-subscription", name: "Anthropic Subscription", authenticated: true, type: "oauth" },

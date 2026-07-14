@@ -3653,7 +3653,7 @@ describe("usage", () => {
       expect(mockRequest).toHaveBeenCalledTimes(1);
     });
 
-    it("treats an omitted protobuf zero percentage as 0% for a valid weekly CLI billing period", async () => {
+    it("treats an omitted exhausted percentage as 100% used for a valid weekly CLI billing period", async () => {
       mockReadFile.mockImplementation(async (filePath: string) => {
         if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
         return Promise.reject(new Error("File not found"));
@@ -3680,8 +3680,8 @@ describe("usage", () => {
       expect(grok.windows).toHaveLength(1);
       expect(grok.windows[0]).toMatchObject({
         label: "Weekly (credits)",
-        percentUsed: 0,
-        percentLeft: 100,
+        percentUsed: 100,
+        percentLeft: 0,
       });
       expect(grok.windows[0].resetText).toContain("resets in");
       expect(mockRequest).toHaveBeenCalledTimes(1);

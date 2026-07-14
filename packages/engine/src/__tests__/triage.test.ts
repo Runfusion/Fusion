@@ -4573,6 +4573,65 @@ describe("taskCreate tool model inheritance", () => {
       }));
       expect(onSpecifyError).toHaveBeenCalled();
     });
+
+    it("parks missing provider credentials instead of making triage immediately claimable again", async () => {
+      const task = {
+        id: "FN-7952",
+        description: "Specify a task with direct Anthropic auth",
+        column: "triage",
+        status: "planning",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error("No API key for provider: anthropic"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7952", expect.objectContaining({
+        status: "failed",
+        error: "Specification failed: No API key for provider: anthropic",
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952", expect.objectContaining({ status: null }));
+    });
+
+    it("uses bounded transient recovery when a credential refresh fails because the connection reset", async () => {
+      const task = {
+        id: "FN-7952-TRANSIENT",
+        description: "Retry a transient credential refresh failure",
+        column: "triage",
+        status: "planning",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error("credential refresh failed: connection reset"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({
+        status: null,
+        recoveryRetryCount: 1,
+        nextRecoveryAt: expect.any(String),
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({ status: "failed" }));
+    });
   });
 
   describe("recovery due-time gating (nextRecoveryAt)", () => {

@@ -175,11 +175,23 @@ export class OAuthExpiryMonitor {
           providerId: provider.id,
           providerName: provider.name,
           expiresAt: new Date(credential.expires).toISOString(),
+          /*
+          FNXC:OAuthNotifications 2026-07-14-16:08:
+          Each provider and credential expiry needs an independent notification identity. A shared global event key makes a successful alert for one expired provider suppress every other provider while falsely starting their durable cooldowns.
+          */
+          notificationDedupeKey: `oauth-token-expired:${provider.id}:${credential.expires}`,
         },
       };
 
       try {
-        await this.opts.notificationService.dispatch("oauth-token-expired", payload);
+        const confirmedDispatch = this.opts.notificationService.dispatchConfirmed?.bind(this.opts.notificationService);
+        const delivered = confirmedDispatch
+          ? await confirmedDispatch("oauth-token-expired", payload)
+          : (await this.opts.notificationService.dispatch("oauth-token-expired", payload), true);
+        if (delivered === false) {
+          schedulerLog.warn(`OAuth expiry notification had no successful provider provider=${provider.id}`);
+          continue;
+        }
         this.dispatchedExpiryKeys.add(expiryKey);
         this.alertState.recordAlert(provider.id, credential.expires, now);
       } catch (error) {

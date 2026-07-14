@@ -1682,13 +1682,13 @@ async function fetchGrokCliBillingUsage(token: string, usage: ProviderUsage): Pr
     const isWeekly = config.currentPeriod?.type === "USAGE_PERIOD_TYPE_WEEKLY";
     /*
     FNXC:UsageProviders 2026-07-14-14:47:
-    Grok's billing endpoint uses protobuf-style JSON and omits the numeric `creditUsagePercent` field when its value is zero. The Grok Build CLI renders that valid reduced weekly config as “Weekly limit: 0%”; Fusion must mirror the CLI instead of treating an authenticated 200 response as expired auth. Only infer zero when the response still proves a weekly billing period and reset boundary, so malformed payloads continue to fail closed.
+    Grok's billing endpoint omits `creditUsagePercent` when the weekly allowance is exhausted. Grok Build renders that valid reduced config as “Weekly limit: 0%” (zero allowance remaining), while Fusion's usage model stores percent consumed. Therefore the omitted exhausted value maps to 100% used—not 0% used. Only infer exhaustion when the response still proves a weekly billing period and reset boundary, so malformed payloads continue to fail closed.
     */
     const rawPercentUsed = config.creditUsagePercent;
     const pctUsed = typeof rawPercentUsed === "number" && Number.isFinite(rawPercentUsed)
       ? rawPercentUsed
       : isWeekly && parsedReset
-        ? 0
+        ? 100
         : undefined;
     if (pctUsed === undefined) return false;
 

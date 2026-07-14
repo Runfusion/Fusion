@@ -927,6 +927,24 @@ describe("resolveImplicitPlanningFallbackModel (FN-7719)", () => {
     });
   });
 
+  it("uses the inherited global default when a project override equals the planning primary", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel(
+        {
+          defaultProviderOverride: "anthropic",
+          defaultModelIdOverride: "claude-sonnet-5",
+          defaultProvider: "openai-codex",
+          defaultModelId: "gpt-5.5",
+        },
+        "anthropic",
+        "claude-sonnet-5",
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+    });
+  });
+
   it("returns undefined/undefined when no project/global default model is configured", () => {
     expect(
       resolveImplicitPlanningFallbackModel({}, "9router", "nvidia/moonshotai/kimi-k2.6"),

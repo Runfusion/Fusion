@@ -969,6 +969,7 @@ export interface FallbackModelUsedPayload {
   taskId?: string;
   taskTitle?: string;
   timestamp?: string;
+  failureCategory?: "authentication" | "rate-limit" | "model-selection" | "provider-error";
 }
 
 export class ModelFallbackExhaustedError extends Error {
@@ -2502,10 +2503,28 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     });
   };
 
-  const emitFallbackUsed = async (triggerPoint: "session-creation" | "prompt-time"): Promise<void> => {
+  const emitFallbackUsed = async (
+    triggerPoint: "session-creation" | "prompt-time",
+    primaryFailure: unknown,
+  ): Promise<void> => {
     if (!options.onFallbackModelUsed || !selectedModel || !fallbackModel || !hasDistinctFallback) {
       return;
     }
+    const failureMessage = primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure);
+    const normalizedFailure = failureMessage.toLowerCase();
+    const failureCategory: FallbackModelUsedPayload["failureCategory"] =
+      normalizedFailure.includes("auth")
+      || normalizedFailure.includes("api key")
+      || normalizedFailure.includes("credential")
+      || normalizedFailure.includes("oauth")
+      || normalizedFailure.includes("401")
+      || normalizedFailure.includes("403")
+        ? "authentication"
+        : normalizedFailure.includes("rate limit") || normalizedFailure.includes("429") || normalizedFailure.includes("quota")
+          ? "rate-limit"
+          : isRetryableModelSelectionError(failureMessage)
+            ? "model-selection"
+            : "provider-error";
     await options.onFallbackModelUsed({
       primaryModel: `${selectedModel.provider}/${selectedModel.id}`,
       fallbackModel: `${fallbackModel.provider}/${fallbackModel.id}`,
@@ -2513,6 +2532,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       taskId: options.taskId,
       taskTitle: options.taskTitle,
       timestamp: new Date().toISOString(),
+      failureCategory,
     });
   };
 
@@ -2537,7 +2557,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     } catch (fallbackErr: unknown) {
       throw makeFallbackExhaustedError("session-creation", 2, fallbackErr);
     }
-    await emitFallbackUsed("session-creation");
+    await emitFallbackUsed("session-creation", err);
     piLog.log("Fallback session created successfully");
   }
 
@@ -2692,7 +2712,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
 
       usingFallback = true;
       const fallbackSession = await swapPromptSession(fallbackModel);
-      await emitFallbackUsed("prompt-time");
+      await emitFallbackUsed("prompt-time", err);
 
       // Retry with fallback model, also with auto-compaction support
       try {

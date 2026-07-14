@@ -1223,7 +1223,11 @@ describe("GET /auth/status", () => {
     const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
     const claudeCli = res.body.providers.find((p: any) => p.id === "claude-cli");
     expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
-    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+    expect(anthropic).toMatchObject({
+      authenticated: false,
+      expired: true,
+      loginError: "This OAuth session expired and could not be refreshed. Re-login to restore model access.",
+    });
     expect(claudeCli).toMatchObject({ type: "cli" });
   });
 

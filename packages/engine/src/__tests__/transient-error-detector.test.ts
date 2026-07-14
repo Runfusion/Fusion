@@ -385,6 +385,7 @@ describe("Transient Error Detector", () => {
       expect(isOperatorActionableAgentError("Authentication failed for provider")).toBe(true);
       expect(isOperatorActionableAgentError("model gpt-x not found")).toBe(true);
       expect(isOperatorActionableAgentError("missing OPENAI_API_KEY")).toBe(true);
+      expect(isOperatorActionableAgentError("No API key for provider: anthropic")).toBe(true);
       expect(isOperatorActionableAgentError("billing issue: quota exceeded")).toBe(true);
       expect(isOperatorActionableAgentError("OAuth token does not meet scope requirements")).toBe(true);
       expect(isOperatorActionableAgentError("insufficient_scope: missing repo grant")).toBe(true);
