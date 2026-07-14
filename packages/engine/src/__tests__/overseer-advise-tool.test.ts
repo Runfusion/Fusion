@@ -1,5 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
-import { OverseerAdviseRecorder, parseAdvisorReplyForAdvice } from "../overseer-advise-tool.js";
+import {
+  OVERSEER_ADVISOR_REPLY_CONTRACT,
+  OVERSEER_ADVISOR_SYSTEM_PROMPT,
+  OverseerAdviseRecorder,
+  parseAdvisorReplyForAdvice,
+} from "../overseer-advise-tool.js";
+
+describe("OVERSEER_ADVISOR_SYSTEM_PROMPT", () => {
+  it("keeps the JSON reply contract and OMP-style critical silence policy", () => {
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain('{"silence":true}');
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain('"severity":"nit"|"concern"|"blocker"');
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("Look where the agent is NOT");
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("NEVER police scope or ambition");
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("NEVER advise on intent or process");
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("File Scope");
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("PROMPT.md");
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("<completeness>");
+    expect(OVERSEER_ADVISOR_SYSTEM_PROMPT).toContain("<reply-contract>");
+    // Alias still points at the full expanded prompt.
+    expect(OVERSEER_ADVISOR_REPLY_CONTRACT).toBe(OVERSEER_ADVISOR_SYSTEM_PROMPT);
+  });
+});
 
 describe("parseAdvisorReplyForAdvice", () => {
   it("parses fenced JSON advice", () => {

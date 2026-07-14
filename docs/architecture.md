@@ -1383,7 +1383,11 @@ When enabled and a model is configured, `OverseerAdvisorService` (engine) queues
 transcript deltas from `AgentLogger.onEntriesFlushed` and the planner-overseer
 poll's agent-log cursor, prompts an isolated advisor model, and — after
 `OverseerEmissionGuard` — injects `[session-advisor]` steering comments for
-levels `steer`/`autonomous` (observe logs only). Project `OVERSEER.md` /
+levels `steer`/`autonomous` (observe logs only). The system prompt
+(`OVERSEER_ADVISOR_SYSTEM_PROMPT`) ports oh-my-pi advisor judgment policy
+(peer-programmer role, critical silence rules, nit/concern/blocker criteria)
+with Fusion anchors (PROMPT.md, File Scope, verification) and a JSON
+`note`/`severity` or `silence` reply contract. Project `OVERSEER.md` /
 `WATCHDOG.md` files append review priorities. Human-control withhold still
 applies at inject time.
 

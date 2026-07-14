@@ -23,7 +23,7 @@ import {
   type OverseerAdvisorRuntimeHost,
 } from "./overseer-advisor-runtime.js";
 import {
-  OVERSEER_ADVISOR_REPLY_CONTRACT,
+  OVERSEER_ADVISOR_SYSTEM_PROMPT,
   OverseerAdviseRecorder,
   parseAdvisorReplyForAdvice,
 } from "./overseer-advise-tool.js";
@@ -186,7 +186,8 @@ export class OverseerAdvisorService {
         cwd != null
           ? formatOverseerWatchdogPromptBlocks(discoverOverseerWatchdogFiles({ cwd }))
           : [];
-      const systemPrompt = [OVERSEER_ADVISOR_REPLY_CONTRACT, ...watchdogBlocks].join("\n\n");
+      // FNXC:PlannerOversight 2026-07-14-12:30: OMP-expanded system prompt + project OVERSEER/WATCHDOG blocks.
+      const systemPrompt = [OVERSEER_ADVISOR_SYSTEM_PROMPT, ...watchdogBlocks].join("\n\n");
 
       const onAdvice = async (note: string, severity?: OverseerAdviceSeverity) => {
         await advise.execute({ note, severity });

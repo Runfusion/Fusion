@@ -764,6 +764,7 @@ export {
 export {
   OverseerAdviseRecorder,
   parseAdvisorReplyForAdvice,
+  OVERSEER_ADVISOR_SYSTEM_PROMPT,
   OVERSEER_ADVISOR_REPLY_CONTRACT,
 } from "./overseer-advise-tool.js";
 export {
