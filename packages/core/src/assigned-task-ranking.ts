@@ -57,6 +57,14 @@ function isTerminalColumn(column: string): boolean {
   return column === "done" || column === "archived";
 }
 
+/*
+FNXC:WakeDeltaMultiAssign 2026-07-14-00:10:
+Custom workflows use non-default column ids for ready/active work. Only treating
+default `todo`/`in-progress` as titled hid assigned work as a bare count.
+Map known default columns for rank quality; treat all other non-terminal open
+columns (including custom workflow columns) as titled `other` so inventory stays
+visible. Paused stays count-only to avoid re-chase noise.
+*/
 function tierForTask(task: AssignedTaskLike): AssignedTaskRankTier | "not_actionable" {
   if (task.paused) return "not_actionable";
   if (task.column === "in-progress") return "in_progress";
@@ -66,8 +74,9 @@ function tierForTask(task: AssignedTaskLike): AssignedTaskRankTier | "not_action
     // Coarse v1: non-empty deps ⇒ partial_blocked visibility (full dep hydrate deferred).
     return "partial_blocked";
   }
-  // in-review / triage / other open columns: inventory via count-only, not titled spam.
-  return "not_actionable";
+  // Default triage/in-review and any project-specific open columns: keep titled
+  // at lowest rank so custom workflows do not hide assigned work as count-only.
+  return "other";
 }
 
 const TIER_ORDER: Record<AssignedTaskRankTier, number> = {
@@ -179,7 +188,7 @@ export function formatAssignedTasksWakeDeltaSection(
 
   if (notActionableCount > 0) {
     lines.push(
-      `- also assigned not actionable now: ${notActionableCount} (fully blocked/paused/in-review wait)`,
+      `- also assigned not actionable now: ${notActionableCount} (paused)`,
     );
   }
 

@@ -27,19 +27,22 @@ describe("rankAssignedTasksForWakeDelta", () => {
     expect(result.ranked[0]?.labels).toContain("bound");
   });
 
-  it("excludes done/archived and counts paused as not actionable", () => {
+  it("excludes done/archived, counts paused as not actionable, and keeps open custom columns titled", () => {
     const result = rankAssignedTasksForWakeDelta(
       [
         task({ id: "FN-1", column: "todo", title: "Open" }),
         task({ id: "FN-2", column: "done", title: "Done" }),
         task({ id: "FN-3", column: "todo", title: "Paused", paused: true }),
         task({ id: "FN-4", column: "in-review", title: "Review" }),
+        task({ id: "FN-5", column: "ready-for-dev", title: "Custom workflow ready" }),
       ],
       { agentId: "agent-1" },
     );
-    expect(result.ranked.map((r) => r.task.id)).toEqual(["FN-1"]);
-    expect(result.notActionableCount).toBe(2);
-    expect(result.totalOpen).toBe(3);
+    // todo first, then other-tier open columns (in-review + custom) by createdAt
+    expect(result.ranked.map((r) => r.task.id)).toEqual(["FN-1", "FN-4", "FN-5"]);
+    expect(result.ranked.find((r) => r.task.id === "FN-5")?.tier).toBe("other");
+    expect(result.notActionableCount).toBe(1); // paused only
+    expect(result.totalOpen).toBe(4); // excludes done
   });
 
   it("caps titled lines and marks truncated", () => {
