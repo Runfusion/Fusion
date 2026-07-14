@@ -284,6 +284,43 @@ pgDescribe("interrupt + resume (no silent loss)", () => {
     expect(hasAnswerTurn).toBe(true);
   });
 
+  it("keeps detached answer rehydration failure terminal when the interrupted write returns no row", async () => {
+    const store = getCeSessionStore(h.ctx);
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
+      role: "agent",
+      text: JSON.stringify({ question: QUESTION }),
+      at: new Date().toISOString(),
+    });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => {
+        throw new Error("rehydration failed");
+      }),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "interrupted") return Promise.resolve(undefined);
+      return updateAsync(sessionId, patch);
+    });
+
+    const returned = await orch.answer(created.id, "q1", "a", { detach: true });
+    expect(returned.session.status).toBe("active");
+    await vi.waitFor(async () => expect(await orch.getState(created.id)).toMatchObject({
+      status: "interrupted",
+      error: "rehydration failed",
+    }));
+    expect((await store.getAsync(created.id))?.status).toBe("active");
+    expect(h.emitted).toContainEqual({
+      event: CE_EVENTS.interrupted,
+      data: { sessionId: created.id, message: "rehydration failed" },
+    });
+  });
+
   it("Bug 5: an interrupted/awaiting session with a currentQuestion + history can be resumed (rehydrated) and then ANSWERED to continue to completion", async () => {
     // Simulate the post-interrupt / post-restart state: a session persisted
     // mid-question (awaiting_input, currentQuestion set, full history) whose live

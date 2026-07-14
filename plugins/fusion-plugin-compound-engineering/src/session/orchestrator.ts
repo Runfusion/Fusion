@@ -1039,19 +1039,58 @@ export class CeOrchestrator {
     // user needs to see to understand where it stopped.
     await this.flushActivity(sessionId);
     const message = cause instanceof Error ? cause.message : String(cause);
-    const s =
-      await this.store.updateAsync(sessionId, { status: "interrupted", error: message }) ?? await this.requireSession(sessionId);
-    this.ctx.emitEvent(CE_EVENTS.interrupted, { sessionId, message });
-    return s;
+    return this.persistTerminalState(sessionId, "interrupted", message);
   }
 
   /** Persist `error` (session-create failure path) and emit. */
   private async failSession(sessionId: string, cause: unknown): Promise<CeSession> {
     await this.drainProgressPersistence(sessionId);
     const message = cause instanceof Error ? cause.message : String(cause);
-    const s = await this.store.updateAsync(sessionId, { status: "error", error: message }) ?? await this.requireSession(sessionId);
-    this.ctx.emitEvent(CE_EVENTS.error, { sessionId, message });
-    return s;
+    return this.persistTerminalState(sessionId, "error", message);
+  }
+
+  /**
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:58:
+   * Every detached terminal transition must be observable even when PostgreSQL returns no updated row. Error and interrupted writes share one process-local fallback that ignores heartbeat-only timestamp movement but yields to any later semantic durable mutation.
+   */
+  private async persistTerminalState(
+    sessionId: string,
+    status: "error" | "interrupted",
+    message: string,
+  ): Promise<CeSession> {
+    const durable = await this.store.updateAsync(sessionId, { status, error: message }) ?? await this.requireSession(sessionId);
+    if (durable.status === "completed" || durable.status === "error" || durable.status === "interrupted") {
+      if (durable.status === status) {
+        this.ctx.emitEvent(status === "error" ? CE_EVENTS.error : CE_EVENTS.interrupted, { sessionId, message });
+      }
+      return durable;
+    }
+    return this.retainTerminalFallback(durable, status, message);
+  }
+
+  private retainTerminalFallback(
+    durable: CeSession,
+    status: "error" | "interrupted",
+    message: string,
+  ): CeSession {
+    const failedAt = Date.now();
+    const fallback: CeSession = {
+      ...durable,
+      status,
+      error: message,
+      lastActivityAt: failedAt,
+      updatedAt: new Date(failedAt).toISOString(),
+    };
+    this.detachedFailureFallbacks.set(durable.id, {
+      durableFingerprint: durableSessionMutationFingerprint(durable),
+      session: fallback,
+    });
+    this.disposeLive(durable.id);
+    this.ctx.emitEvent(status === "error" ? CE_EVENTS.error : CE_EVENTS.interrupted, {
+      sessionId: durable.id,
+      message,
+    });
+    return fallback;
   }
 
   /**
@@ -1107,8 +1146,8 @@ export class CeOrchestrator {
   }
 
   /**
-   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:53:
-   * Route-detached model work must always terminate its rejection chain. If both the turn and its PostgreSQL terminal write fail, retain a process-local error overlay so current polling clients stop seeing launching/active. Drained or already-queued liveness-only writes must not invalidate the overlay, while a later semantic durable mutation still supersedes it and existing stale-session recovery remains authoritative after restart.
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:58:
+   * Route-detached model work must always terminate its rejection chain. If both the turn and its PostgreSQL terminal write reject, use the shared process-local terminal fallback so current polling clients stop seeing launching/active without creating an unhandled rejection.
    */
   private detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void {
     void operation.catch(async (cause: unknown) => {
@@ -1123,19 +1162,7 @@ export class CeOrchestrator {
       } catch (persistError) {
         this.ctx.logger.error(`Compound Engineering could not persist detached ${label} failure for ${sessionId}: ${persistError instanceof Error ? persistError.message : String(persistError)}`);
         if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
-          const failedAt = Date.now();
-          this.detachedFailureFallbacks.set(sessionId, {
-            durableFingerprint: durableSessionMutationFingerprint(session),
-            session: {
-              ...session,
-              status: "error",
-              error: message,
-              lastActivityAt: failedAt,
-              updatedAt: new Date(failedAt).toISOString(),
-            },
-          });
-          this.disposeLive(sessionId);
-          this.ctx.emitEvent(CE_EVENTS.error, { sessionId, message });
+          this.retainTerminalFallback(session, "error", message);
         }
       }
     });
