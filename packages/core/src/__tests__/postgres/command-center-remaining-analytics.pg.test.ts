@@ -155,9 +155,9 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
     // ── Signals: one resolved-in-range incident ──────────────────────────────
     await adminDb.execute(sql`
       INSERT INTO project.incidents
-        (incident_id, grouping_key, title, severity, status, source, opened_at, resolved_at, created_at, updated_at)
+        (project_id, incident_id, grouping_key, title, severity, status, source, opened_at, resolved_at, created_at, updated_at)
       VALUES
-        ('inc-1', 'gk-1', 'DB down', 'high', 'resolved', 'datadog', ${IN_RANGE}, ${RESOLVED_IN_RANGE}, ${IN_RANGE}, ${RESOLVED_IN_RANGE})
+        ('p1', 'inc-1', 'gk-1', 'DB down', 'high', 'resolved', 'datadog', ${IN_RANGE}, ${RESOLVED_IN_RANGE}, ${IN_RANGE}, ${RESOLVED_IN_RANGE})
     `);
 
     // ── Live snapshot: one active session + one active run ────────────────────
@@ -322,5 +322,45 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
     expect(bound.sessions.map(({ id }) => id)).toEqual(["cli-live-a"]);
     expect(bound.runs.map(({ id }) => id)).toEqual(["run-live-a"]);
     expect(Object.fromEntries(bound.columns.map(({ column, count }) => [column, count]))).toEqual({ todo: 1 });
+  });
+
+  /**
+   * FNXC:SignalsAnalyticsIsolation 2026-07-14-01:26:
+   * Unbound Signals analytics intentionally aggregate every project partition, while a bound layer must apply one tenant scope to totals, open/resolved counts, MTTR samples, and every source/severity/status breakdown.
+   */
+  it("signals analytics aggregate all projects when unbound and isolate a bound project", async () => {
+    const layer = h.layer() as AsyncDataLayer & { projectId?: string };
+    const adminDb = h.adminDb();
+    await adminDb.execute(sql`
+      INSERT INTO project.incidents
+        (project_id, incident_id, grouping_key, title, severity, status, source, opened_at, resolved_at, created_at, updated_at)
+      VALUES
+        ('signal-project-a', 'signal-a', 'group-a', 'A', 'high', 'resolved', 'datadog', ${IN_RANGE}, ${RESOLVED_IN_RANGE}, ${IN_RANGE}, ${RESOLVED_IN_RANGE}),
+        ('signal-project-b', 'signal-b', 'group-b', 'B', 'critical', 'open', 'sentry', ${IN_RANGE}, NULL, ${IN_RANGE}, ${IN_RANGE})
+    `);
+
+    const range = { from: FROM, to: TO };
+    const unbound = await aggregateSignalsAnalytics(layer, range);
+    expect(unbound).toMatchObject({ totalSignals: 2, open: 1, resolved: 1 });
+    expect(unbound.mttr).toEqual({ value: 60, unavailable: false, sampleCount: 1 });
+    expect(unbound.bySource).toEqual([
+      { source: "datadog", count: 1 },
+      { source: "sentry", count: 1 },
+    ]);
+    expect(unbound.bySeverity).toEqual([
+      { severity: "critical", count: 1 },
+      { severity: "high", count: 1 },
+    ]);
+    expect(unbound.byStatus).toEqual([
+      { status: "open", count: 1 },
+      { status: "resolved", count: 1 },
+    ]);
+
+    const bound = await aggregateSignalsAnalytics({ ...layer, projectId: "signal-project-a" }, range);
+    expect(bound).toMatchObject({ totalSignals: 1, open: 0, resolved: 1 });
+    expect(bound.mttr).toEqual({ value: 60, unavailable: false, sampleCount: 1 });
+    expect(bound.bySource).toEqual([{ source: "datadog", count: 1 }]);
+    expect(bound.bySeverity).toEqual([{ severity: "high", count: 1 }]);
+    expect(bound.byStatus).toEqual([{ status: "resolved", count: 1 }]);
   });
 });

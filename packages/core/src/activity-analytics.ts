@@ -1184,25 +1184,32 @@ async function aggregateSignalsAnalyticsAsync(
   layer: AsyncDataLayer,
   query: ActivityAnalyticsQuery,
 ): Promise<SignalsAnalytics> {
+  /*
+  FNXC:SignalsAnalyticsIsolation 2026-07-14-01:26:
+  A project-bound Signals read must apply the same tenant predicate to totals, open incidents, resolved/MTTR samples, and every breakdown. An unbound Command Center layer deliberately omits the predicate to preserve global aggregation.
+  */
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
   const openedFrom = query.from !== undefined ? sql`AND opened_at >= ${query.from}` : sql``;
   const openedTo = query.to !== undefined ? sql`AND opened_at <= ${query.to}` : sql``;
   const resolvedFrom = query.from !== undefined ? sql`AND resolved_at >= ${query.from}` : sql``;
   const resolvedTo = query.to !== undefined ? sql`AND resolved_at <= ${query.to}` : sql``;
 
   const totalRows = (await layer.db.execute(
-    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`,
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}`,
   )) as Array<{ count: number }>;
   const totalSignals = Number(totalRows[0]?.count ?? 0);
 
   const openRows = (await layer.db.execute(
-    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${openedFrom} ${openedTo}`,
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${projectScope} ${openedFrom} ${openedTo}`,
   )) as Array<{ count: number }>;
   const open = Number(openRows[0]?.count ?? 0);
 
   const resolvedRows = (await layer.db.execute(
     sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt"
         FROM project.incidents
-        WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`,
+        WHERE resolved_at IS NOT NULL ${projectScope} ${resolvedFrom} ${resolvedTo}`,
   )) as Array<{ openedAt: string; resolvedAt: string }>;
   const resolved = resolvedRows.length;
 
@@ -1211,7 +1218,7 @@ async function aggregateSignalsAnalyticsAsync(
     const rows = (await layer.db.execute(
       sql`SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'unknown') AS key, count(*)::int AS count
           FROM project.incidents
-          WHERE 1=1 ${openedFrom} ${openedTo}
+          WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}
           GROUP BY 1
           ORDER BY count DESC, key ASC`,
     )) as Array<{ key: string | null; count: number }>;
