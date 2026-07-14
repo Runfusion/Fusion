@@ -6,6 +6,7 @@ import type {
   PlanningQuestion,
 } from "@fusion/core";
 import { buildStageSystemPrompt, CeOrchestrator, CE_EVENTS } from "../session/orchestrator.js";
+import { getCeSessionStore } from "../session/session-store.js";
 import { getStage } from "../session/stage-registry.js";
 import { makeHarness, makeScriptedSession, pgDescribe, type TestHarness } from "./_harness.js";
 
@@ -194,6 +195,41 @@ pgDescribe("detached turns (route posture)", () => {
     await vi.waitFor(async () => expect((await orch.getState(started.session.id))?.status).toBe("error"));
     expect((await orch.getState(started.session.id))?.error).toContain("unexpected detached rejection");
     expect(h.ctx.logger.error).toHaveBeenCalledWith(expect.stringContaining("unexpected detached rejection"));
+  });
+
+  it("keeps a detached rejection observably terminal when its primary failure write also rejects", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const internal = orch as unknown as {
+      runOpeningTurn(sessionId: string): Promise<never>;
+    };
+    vi.spyOn(internal, "runOpeningTurn").mockRejectedValue(new Error("detached operation failed"));
+
+    const store = getCeSessionStore(h.ctx);
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("primary failure write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    const started = await orch.start("brainstorm", { openingMessage: "go", detach: true });
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("primary failure write failed"),
+    ));
+
+    expect((await store.getAsync(started.session.id))?.status).toBe("launching");
+    expect(await orch.getState(started.session.id)).toMatchObject({
+      status: "error",
+      error: "detached operation failed",
+    });
+    expect(h.emitted).toContainEqual({
+      event: CE_EVENTS.error,
+      data: { sessionId: started.session.id, message: "detached operation failed" },
+    });
   });
 });
 

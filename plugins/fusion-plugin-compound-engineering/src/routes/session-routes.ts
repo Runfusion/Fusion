@@ -124,7 +124,11 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const id = (req as RouteRequest).params.id;
         await recoverStaleSessionsForContext(ctx, { reason: "route" });
-        const session = await getCeSessionStore(ctx).getAsync(id);
+        /*
+         * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:43:
+         * Single-session polling reads through the cached orchestrator so a detached turn whose PostgreSQL failure write also failed is still observably terminal in this process; ordinary and recovered sessions continue to come from the async store.
+         */
+        const session = await getOrchestrator(ctx).getState(id);
         if (!session) return { status: 404, body: { error: `Session ${id} not found` } };
         // Attach the orchestrator's transient mid-turn buffer so a polling
         // client can watch the agent work while the turn runs.

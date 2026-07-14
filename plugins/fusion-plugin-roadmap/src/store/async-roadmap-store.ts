@@ -297,17 +297,32 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
   async reorderMilestones(
     input: RoadmapMilestoneReorderInput,
   ): Promise<RoadmapMilestone[]> {
-    if (!(await this.getRoadmap(input.roadmapId)))
-      throw new Error(`Roadmap ${input.roadmapId} not found`);
-    const result = applyRoadmapMilestoneReorder(
-      await this.listMilestones(input.roadmapId),
-      input,
-    );
-    await this.layer.transactionImmediate(async (tx) => {
-      for (const item of result)
+    const result = await this.layer.transactionImmediate(async (tx) => {
+      /*
+       * FNXC:RoadmapOrderingConcurrency 2026-07-14-00:43:
+       * Every PostgreSQL reorder and move for one project roadmap must acquire the same transaction-scoped advisory lock before reading its hierarchy. This makes validation and recomputation observe the last committed ordering instead of overwriting it with a pre-transaction snapshot.
+       */
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${input.roadmapId}`}, 0))`,
+      );
+      const roadmapRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmaps WHERE project_id=${this.projectId} AND id=${input.roadmapId} LIMIT 1`,
+      )) as unknown as RoadmapRow[];
+      if (!roadmapRows[0])
+        throw new Error(`Roadmap ${input.roadmapId} not found`);
+      const rows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND roadmap_id=${input.roadmapId} ORDER BY order_index, created_at, id`,
+      )) as unknown as MilestoneRow[];
+      const updatedAt = new Date().toISOString();
+      const reordered = applyRoadmapMilestoneReorder(
+        rows.map((row) => this.milestone(row)),
+        input,
+      ).map((item) => ({ ...item, updatedAt }));
+      for (const item of reordered)
         await tx.execute(
-          sql`UPDATE project.roadmap_milestones SET order_index=${item.orderIndex}, updated_at=${new Date().toISOString()} WHERE project_id=${this.projectId} AND id=${item.id}`,
+          sql`UPDATE project.roadmap_milestones SET order_index=${item.orderIndex}, updated_at=${item.updatedAt} WHERE project_id=${this.projectId} AND id=${item.id}`,
         );
+      return reordered;
     });
     /*
      * FNXC:RoadmapPostgresEvents 2026-07-13-23:40:
@@ -322,21 +337,35 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
   async reorderFeatures(
     input: RoadmapFeatureReorderInput,
   ): Promise<RoadmapFeature[]> {
-    const milestone = await this.getMilestone(input.milestoneId);
-    if (!milestone) throw new Error(`Milestone ${input.milestoneId} not found`);
-    if (milestone.roadmapId !== input.roadmapId)
-      throw new Error(
-        `Milestone ${input.milestoneId} does not belong to roadmap ${input.roadmapId}`,
+    const result = await this.layer.transactionImmediate(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${input.roadmapId}`}, 0))`,
       );
-    const result = applyRoadmapFeatureReorder(
-      await this.listFeatures(input.milestoneId),
-      input,
-    );
-    await this.layer.transactionImmediate(async (tx) => {
-      for (const item of result)
-        await tx.execute(
-          sql`UPDATE project.roadmap_features SET order_index=${item.orderIndex}, updated_at=${new Date().toISOString()} WHERE project_id=${this.projectId} AND id=${item.id}`,
+      const milestoneRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id=${input.milestoneId} LIMIT 1`,
+      )) as unknown as MilestoneRow[];
+      const milestone = milestoneRows[0]
+        ? this.milestone(milestoneRows[0])
+        : undefined;
+      if (!milestone)
+        throw new Error(`Milestone ${input.milestoneId} not found`);
+      if (milestone.roadmapId !== input.roadmapId)
+        throw new Error(
+          `Milestone ${input.milestoneId} does not belong to roadmap ${input.roadmapId}`,
         );
+      const rows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_features WHERE project_id=${this.projectId} AND milestone_id=${input.milestoneId} ORDER BY order_index, created_at, id`,
+      )) as unknown as FeatureRow[];
+      const updatedAt = new Date().toISOString();
+      const reordered = applyRoadmapFeatureReorder(
+        rows.map((row) => this.feature(row)),
+        input,
+      ).map((item) => ({ ...item, updatedAt }));
+      for (const item of reordered)
+        await tx.execute(
+          sql`UPDATE project.roadmap_features SET order_index=${item.orderIndex}, updated_at=${item.updatedAt} WHERE project_id=${this.projectId} AND id=${item.id}`,
+        );
+      return reordered;
     });
     this.emit("feature:reordered", {
       milestoneId: input.milestoneId,
@@ -345,47 +374,51 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     return result;
   }
   async moveFeature(input: RoadmapFeatureMoveInput): Promise<void> {
-    const from = await this.getMilestone(input.fromMilestoneId);
-    const to = await this.getMilestone(input.toMilestoneId);
-    if (!from)
-      throw new Error(`Source milestone ${input.fromMilestoneId} not found`);
-    if (!to)
-      throw new Error(`Destination milestone ${input.toMilestoneId} not found`);
-    const feature = await this.getFeature(input.featureId);
-    if (!feature || feature.milestoneId !== input.fromMilestoneId)
-      throw new Error(
-        `Feature ${input.featureId} does not belong to source milestone ${input.fromMilestoneId}`,
+    const movedFeature = await this.layer.transactionImmediate(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${input.roadmapId}`}, 0))`,
       );
-    /*
-     * FNXC:RoadmapMoveOwnership 2026-07-13-23:40:
-     * A feature move is confined to the requested roadmap. Checking both milestone parents prevents a caller from using valid IDs to splice one project's or roadmap's hierarchy into another.
-     */
-    if (
-      from.roadmapId !== input.roadmapId
-      || to.roadmapId !== input.roadmapId
-    ) {
-      throw new Error(
-        `Feature ${input.featureId} cannot move across roadmaps`,
-      );
-    }
-    const source = await this.listFeatures(input.fromMilestoneId);
-    const target =
-      input.fromMilestoneId === input.toMilestoneId
-        ? []
-        : await this.listFeatures(input.toMilestoneId);
-    const moved = moveRoadmapFeature([...source, ...target], input);
-    await this.layer.transactionImmediate(async (tx) => {
-      for (const item of moved.affectedFeatures)
-        await tx.execute(
-          sql`UPDATE project.roadmap_features SET milestone_id=${item.milestoneId}, order_index=${item.orderIndex}, updated_at=${new Date().toISOString()} WHERE project_id=${this.projectId} AND id=${item.id}`,
+      const milestoneRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id IN (${input.fromMilestoneId}, ${input.toMilestoneId})`,
+      )) as unknown as MilestoneRow[];
+      const fromRow = milestoneRows.find((row) => row.id === input.fromMilestoneId);
+      const toRow = milestoneRows.find((row) => row.id === input.toMilestoneId);
+      const from = fromRow ? this.milestone(fromRow) : undefined;
+      const to = toRow ? this.milestone(toRow) : undefined;
+      if (!from)
+        throw new Error(`Source milestone ${input.fromMilestoneId} not found`);
+      if (!to)
+        throw new Error(`Destination milestone ${input.toMilestoneId} not found`);
+      /*
+       * FNXC:RoadmapMoveOwnership 2026-07-14-00:43:
+       * Validate feature and milestone ownership only after taking the roadmap ordering lock so a concurrent move cannot invalidate the hierarchy snapshot used to compute this move.
+       */
+      if (from.roadmapId !== input.roadmapId || to.roadmapId !== input.roadmapId)
+        throw new Error(`Feature ${input.featureId} cannot move across roadmaps`);
+      const featureRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_features WHERE project_id=${this.projectId} AND milestone_id IN (${input.fromMilestoneId}, ${input.toMilestoneId}) ORDER BY order_index, created_at, id`,
+      )) as unknown as FeatureRow[];
+      const features = featureRows.map((row) => this.feature(row));
+      const feature = features.find((item) => item.id === input.featureId);
+      if (!feature || feature.milestoneId !== input.fromMilestoneId)
+        throw new Error(
+          `Feature ${input.featureId} does not belong to source milestone ${input.fromMilestoneId}`,
         );
+      const updatedAt = new Date().toISOString();
+      const moved = moveRoadmapFeature(features, input);
+      const affectedFeatures = moved.affectedFeatures.map((item) => ({
+        ...item,
+        updatedAt,
+      }));
+      for (const item of affectedFeatures)
+        await tx.execute(
+          sql`UPDATE project.roadmap_features SET milestone_id=${item.milestoneId}, order_index=${item.orderIndex}, updated_at=${item.updatedAt} WHERE project_id=${this.projectId} AND id=${item.id}`,
+        );
+      const committed = affectedFeatures.find((item) => item.id === input.featureId);
+      if (!committed)
+        throw new Error(`Feature ${input.featureId} was not moved`);
+      return committed;
     });
-    const movedFeature = moved.affectedFeatures.find(
-      (item) => item.id === input.featureId,
-    );
-    if (!movedFeature) {
-      throw new Error(`Feature ${input.featureId} was not moved`);
-    }
     this.emit("feature:moved", {
       feature: movedFeature,
       fromMilestoneId: input.fromMilestoneId,

@@ -26,7 +26,157 @@ function errorChain(error: unknown): string {
   return messages.join("\n");
 }
 
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * FNXC:RoadmapOrderingConcurrency 2026-07-14-00:43:
+ * PostgreSQL ordering regressions coordinate at the advisory-lock query itself. The first caller holds its real transaction after acquiring the lock, while the second caller signals its lock attempt before PostgreSQL blocks it; this proves serialization without sleeps, polling, or timeout-based assertions.
+ */
+function controlledOrderingLayer(
+  layer: AsyncDataLayer,
+  mode: "hold-after-first-query" | "signal-first-query",
+): {
+  layer: AsyncDataLayer;
+  reached: Promise<void>;
+  release: () => void;
+} {
+  const reached = deferred();
+  const release = deferred();
+  let firstTransaction = true;
+  const controlled = {
+    ...layer,
+    transactionImmediate: async <T>(
+      fn: Parameters<AsyncDataLayer["transactionImmediate"]>[0],
+      options?: Parameters<AsyncDataLayer["transactionImmediate"]>[1],
+    ): Promise<T> => layer.transactionImmediate(async (tx) => {
+      if (!firstTransaction)
+        return fn(tx) as Promise<T>;
+      firstTransaction = false;
+      let firstQuery = true;
+      const proxy = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "execute")
+            return Reflect.get(target, property, receiver);
+          return async (...args: Parameters<typeof tx.execute>) => {
+            if (!firstQuery)
+              return tx.execute(...args);
+            firstQuery = false;
+            if (mode === "signal-first-query") {
+              reached.resolve();
+              return tx.execute(...args);
+            }
+            const result = await tx.execute(...args);
+            reached.resolve();
+            await release.promise;
+            return result;
+          };
+        },
+      });
+      return fn(proxy) as Promise<T>;
+    }, options),
+  } as AsyncDataLayer;
+  return { layer: controlled, reached: reached.promise, release: release.resolve };
+}
+
 pgDescribe("AsyncRoadmapStore", () => {
+  it("serializes concurrent feature moves against the committed roadmap ordering", async () => {
+    const h = await createTaskStoreForTest({ prefix: "roadmap_move_concurrency" });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({ title: "Concurrent moves" });
+      const source = await setup.createMilestone(roadmap.id, { title: "Source" });
+      const target = await setup.createMilestone(roadmap.id, { title: "Target" });
+      const alpha = await setup.createFeature(source.id, { title: "Alpha" });
+      const beta = await setup.createFeature(source.id, { title: "Beta" });
+      const gamma = await setup.createFeature(source.id, { title: "Gamma" });
+      const delta = await setup.createFeature(target.id, { title: "Delta" });
+      const firstControl = controlledOrderingLayer(bind(h.layer, "project-a"), "hold-after-first-query");
+      const secondControl = controlledOrderingLayer(bind(h.layer, "project-a"), "signal-first-query");
+      const first = new AsyncRoadmapStore(firstControl.layer);
+      const second = new AsyncRoadmapStore(secondControl.layer);
+
+      const firstMove = first.moveFeature({
+        roadmapId: roadmap.id,
+        featureId: gamma.id,
+        fromMilestoneId: source.id,
+        toMilestoneId: target.id,
+        targetOrderIndex: 0,
+      });
+      await firstControl.reached;
+      const secondMove = second.moveFeature({
+        roadmapId: roadmap.id,
+        featureId: beta.id,
+        fromMilestoneId: source.id,
+        toMilestoneId: target.id,
+        targetOrderIndex: 0,
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await Promise.all([firstMove, secondMove]);
+
+      expect((await setup.listFeatures(source.id)).map((item) => item.id)).toEqual([alpha.id]);
+      expect((await setup.listFeatures(target.id)).map((item) => item.id)).toEqual([
+        beta.id,
+        gamma.id,
+        delta.id,
+      ]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("revalidates a feature reorder after a concurrent move commits", async () => {
+    const h = await createTaskStoreForTest({ prefix: "roadmap_reorder_concurrency" });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({ title: "Concurrent reorder" });
+      const source = await setup.createMilestone(roadmap.id, { title: "Source" });
+      const target = await setup.createMilestone(roadmap.id, { title: "Target" });
+      const alpha = await setup.createFeature(source.id, { title: "Alpha" });
+      const beta = await setup.createFeature(source.id, { title: "Beta" });
+      const gamma = await setup.createFeature(source.id, { title: "Gamma" });
+      const firstControl = controlledOrderingLayer(bind(h.layer, "project-a"), "hold-after-first-query");
+      const secondControl = controlledOrderingLayer(bind(h.layer, "project-a"), "signal-first-query");
+      const mover = new AsyncRoadmapStore(firstControl.layer);
+      const reorderer = new AsyncRoadmapStore(secondControl.layer);
+
+      const move = mover.moveFeature({
+        roadmapId: roadmap.id,
+        featureId: beta.id,
+        fromMilestoneId: source.id,
+        toMilestoneId: target.id,
+        targetOrderIndex: 0,
+      });
+      await firstControl.reached;
+      const reorder = reorderer.reorderFeatures({
+        roadmapId: roadmap.id,
+        milestoneId: source.id,
+        orderedFeatureIds: [gamma.id, beta.id, alpha.id],
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await move;
+      await expect(reorder).rejects.toThrow("Expected 2 feature ids but received 3");
+
+      expect((await setup.listFeatures(source.id)).map((item) => item.id)).toEqual([
+        alpha.id,
+        gamma.id,
+      ]);
+      expect((await setup.listFeatures(target.id)).map((item) => item.id)).toEqual([beta.id]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("preserves CRUD, ordering, move, handoff, event, and project-isolation invariants", async () => {
     const h = await createTaskStoreForTest({ prefix: "roadmap_store" });
     try {

@@ -36,6 +36,16 @@ vi.mock("qrcode", () => ({
 import { WhatsAppConnection } from "../connection.js";
 import { createSqliteWhatsAppPersistence } from "../persistence.js";
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function createInMemoryDb() {
   const sessions = new Map<string, string>();
   const dedupe = new Set<string>();
@@ -92,6 +102,7 @@ describe("WhatsAppConnection", () => {
     mockState.makeWASocket.mockClear();
     mockState.sendMessage.mockClear();
     mockState.end.mockClear();
+    mockState.logout.mockReset();
     mockState.toDataURL.mockReset();
     mockState.toDataURL.mockResolvedValue("data:image/png;base64,abc");
   });
@@ -173,6 +184,59 @@ describe("WhatsAppConnection", () => {
 
     expect(reply).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes concurrent messages from one sender and preserves both turns", async () => {
+    const firstReplyStarted = deferred();
+    const releaseFirstReply = deferred();
+    const db = createInMemoryDb();
+    const persistence = createSqliteWhatsAppPersistence(db as any);
+    const reply = vi.fn(async (_ctx: unknown, _sender: string, text: string, history: Array<{ text: string }>) => {
+      if (text === "first") {
+        firstReplyStarted.resolve();
+        await releaseFirstReply.promise;
+      }
+      return `${text}-reply-${history.length}`;
+    });
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", reply, persistence);
+    await connection.start();
+    const upsert = mockState.handlers.get("messages.upsert")!;
+
+    const first = upsert({ type: "notify", messages: [{ key: { remoteJid: "15550001111@s.whatsapp.net", id: "m-first", fromMe: false }, message: { conversation: "first" } }] });
+    await firstReplyStarted.promise;
+    const second = upsert({ type: "notify", messages: [{ key: { remoteJid: "15550001111@s.whatsapp.net", id: "m-second", fromMe: false }, message: { conversation: "second" } }] });
+
+    await Promise.resolve();
+    expect(reply).toHaveBeenCalledTimes(1);
+    releaseFirstReply.resolve();
+    await Promise.all([first, second]);
+
+    expect(reply.mock.calls[1]?.[3].map((turn: { text: string }) => turn.text)).toEqual(["first", "first-reply-0"]);
+    expect((await persistence.loadHistory("15550001111")).map((turn) => turn.text)).toEqual([
+      "first",
+      "first-reply-0",
+      "second",
+      "second-reply-2",
+    ]);
+  });
+
+  it("attempts server logout through the socket captured before a concurrent stop", async () => {
+    const logoutStarted = deferred();
+    const releaseLogout = deferred();
+    mockState.logout.mockImplementationOnce(async () => {
+      logoutStarted.resolve();
+      await releaseLogout.promise;
+    });
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("reply"), createSqliteWhatsAppPersistence(createInMemoryDb() as any));
+    await connection.start();
+
+    const logout = connection.logout();
+    await logoutStarted.promise;
+    await connection.stop();
+    releaseLogout.resolve();
+    await logout;
+
+    expect(mockState.logout).toHaveBeenCalledTimes(1);
   });
 
   it("logs reconnect timer rejection instead of leaking it", async () => {

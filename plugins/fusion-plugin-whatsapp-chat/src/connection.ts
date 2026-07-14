@@ -68,6 +68,7 @@ export class WhatsAppConnection {
   private reconnectAttempt = 0;
   private stopped = true;
   private authState: Awaited<ReturnType<typeof createPersistenceAuthState>> | null = null;
+  private readonly senderQueues = new Map<string, Promise<void>>();
 
   public constructor(
     private readonly ctx: PluginContext,
@@ -113,8 +114,13 @@ export class WhatsAppConnection {
   }
 
   public async logout(): Promise<void> {
+    /**
+     * FNXC:WhatsAppLogoutRace 2026-07-14-00:42:
+     * Logout must retain the socket selected at invocation even when stop concurrently clears this.sock. The stable reference ensures Baileys still attempts its server-side logout before local credentials are discarded.
+     */
+    const socket = this.sock;
     try {
-      await this.sock?.logout();
+      await socket?.logout();
     } finally {
       await this.persistence.clearAuthState();
       this.authState = await createPersistenceAuthState(this.persistence);
@@ -222,28 +228,40 @@ export class WhatsAppConnection {
         getDedupeRetentionDays(this.ctx.settings),
       ))) continue;
 
-      try {
-        const history = await this.persistence.loadHistory(sender);
-        const reply = await this.generateReply(this.ctx, sender, text, history);
-        const now = new Date().toISOString();
-        const nextHistory: ChatTurn[] = [
-          ...history,
-          { role: "user" as const, text, createdAt: now },
-          { role: "assistant" as const, text: reply, createdAt: now },
-        ].slice(-getHistoryTurnLimit(this.ctx.settings));
-        await this.persistence.saveHistory(sender, nextHistory);
-
-        for (const chunk of splitMessageForWhatsapp(reply)) {
-          await this.sock?.sendMessage(jid, { text: chunk });
-        }
-      } catch (error) {
-        this.ctx.logger.error("WhatsApp chat processing failed", error);
+      await this.enqueueSender(sender, async () => {
         try {
-          await this.sock?.sendMessage(jid, { text: FALLBACK_TEXT });
-        } catch {
-          // no-op
+          const history = await this.persistence.loadHistory(sender);
+          const reply = await this.generateReply(this.ctx, sender, text, history);
+          const now = new Date().toISOString();
+          const turns: ChatTurn[] = [
+            { role: "user" as const, text, createdAt: now },
+            { role: "assistant" as const, text: reply, createdAt: now },
+          ];
+          await this.persistence.appendHistory(sender, turns, getHistoryTurnLimit(this.ctx.settings));
+
+          for (const chunk of splitMessageForWhatsapp(reply)) {
+            await this.sock?.sendMessage(jid, { text: chunk });
+          }
+        } catch (error) {
+          this.ctx.logger.error("WhatsApp chat processing failed", error);
+          try {
+            await this.sock?.sendMessage(jid, { text: FALLBACK_TEXT });
+          } catch {
+            // no-op
+          }
         }
-      }
+      });
+    }
+  }
+
+  private async enqueueSender(sender: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.senderQueues.get(sender) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    this.senderQueues.set(sender, current);
+    try {
+      await current;
+    } finally {
+      if (this.senderQueues.get(sender) === current) this.senderQueues.delete(sender);
     }
   }
 

@@ -11,7 +11,7 @@ const DAY_MS = 86_400_000;
 
 export interface WhatsAppPersistence {
   loadHistory(sender: string): Promise<ChatTurn[]>;
-  saveHistory(sender: string, history: ChatTurn[]): Promise<void>;
+  appendHistory(sender: string, turns: ChatTurn[], turnLimit: number): Promise<void>;
   wasProcessed(messageId: string): Promise<boolean>;
   markProcessed(messageId: string, sender: string, retentionDays: number): Promise<void>;
   claimMessage(messageId: string, sender: string, retentionDays: number): Promise<boolean>;
@@ -42,6 +42,34 @@ export function saveHistory(db: PluginDb, sender: string, history: ChatTurn[]): 
   db.prepare(`INSERT INTO whatsapp_chat_sessions(sender, history, updatedAt) VALUES(?, ?, ?)
     ON CONFLICT(sender) DO UPDATE SET history = excluded.history, updatedAt = excluded.updatedAt`)
     .run(sender, JSON.stringify(history), now);
+}
+
+function withImmediateTransaction<T>(db: PluginDb, operation: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = operation();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * FNXC:WhatsAppConcurrentHistory 2026-07-14-00:42:
+ * Concurrent deliveries from one sender must append complete user/assistant turns instead of replacing a stale history snapshot. Keep the read, bounded append, and write in one immediate transaction; the connection also serializes reply generation per sender so each reply observes every earlier delivered turn.
+ */
+export function appendHistory(
+  db: PluginDb,
+  sender: string,
+  turns: ChatTurn[],
+  turnLimit: number,
+): void {
+  withImmediateTransaction(db, () => {
+    const history = [...loadHistory(db, sender), ...turns].slice(-turnLimit);
+    saveHistory(db, sender, history);
+  });
 }
 
 export function wasProcessed(db: PluginDb, messageId: string): boolean {
@@ -76,8 +104,8 @@ export function createSqliteWhatsAppPersistence(db: PluginDb): WhatsAppPersisten
     async loadHistory(sender) {
       return loadHistory(db, sender);
     },
-    async saveHistory(sender, history) {
-      saveHistory(db, sender, history);
+    async appendHistory(sender, turns, turnLimit) {
+      appendHistory(db, sender, turns, turnLimit);
     },
     async wasProcessed(messageId) {
       return wasProcessed(db, messageId);
@@ -107,14 +135,20 @@ export function createSqliteWhatsAppPersistence(db: PluginDb): WhatsAppPersisten
       return result;
     },
     async writeAuthKeys(category, values) {
-      const upsert = db.prepare(`INSERT INTO whatsapp_auth_keys(category, keyId, value, updatedAt) VALUES(?, ?, ?, ?)
-        ON CONFLICT(category, keyId) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`);
-      const remove = db.prepare("DELETE FROM whatsapp_auth_keys WHERE category = ? AND keyId = ?");
-      const now = new Date().toISOString();
-      for (const [id, value] of Object.entries(values)) {
-        if (value === null) remove.run(category, id);
-        else upsert.run(category, id, value, now);
-      }
+      /**
+       * FNXC:WhatsAppAuthKeyAtomicity 2026-07-14-00:42:
+       * A Baileys Signal-key update is one logical batch. Commit every delete/upsert together so a failed statement cannot leave a partially rotated key set that is unusable on the next connection.
+       */
+      withImmediateTransaction(db, () => {
+        const upsert = db.prepare(`INSERT INTO whatsapp_auth_keys(category, keyId, value, updatedAt) VALUES(?, ?, ?, ?)
+          ON CONFLICT(category, keyId) DO UPDATE SET value = excluded.value, updatedAt = excluded.updatedAt`);
+        const remove = db.prepare("DELETE FROM whatsapp_auth_keys WHERE category = ? AND keyId = ?");
+        const now = new Date().toISOString();
+        for (const [id, value] of Object.entries(values)) {
+          if (value === null) remove.run(category, id);
+          else upsert.run(category, id, value, now);
+        }
+      });
     },
     async clearAuthState() {
       db.prepare("DELETE FROM whatsapp_auth_creds").run();
@@ -146,11 +180,17 @@ export function createWhatsAppPersistence(ctx: PluginContext): WhatsAppPersisten
         WHERE project_id = ${projectId} AND sender = ${sender} LIMIT 1`) as unknown as Array<{ history: string }>;
       return parseHistory(rows[0]?.history);
     },
-    async saveHistory(sender, history) {
+    async appendHistory(sender, turns, turnLimit) {
       const now = new Date().toISOString();
-      await db.execute(sql`INSERT INTO project.whatsapp_chat_sessions(project_id, sender, history, updated_at)
-        VALUES(${projectId}, ${sender}, ${JSON.stringify(history)}, ${now})
-        ON CONFLICT(project_id, sender) DO UPDATE SET history = excluded.history, updated_at = excluded.updated_at`);
+      await layer.transactionImmediate(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${projectId}:${sender}`}, 0))`);
+        const rows = await tx.execute(sql`SELECT history FROM project.whatsapp_chat_sessions
+          WHERE project_id = ${projectId} AND sender = ${sender} LIMIT 1`) as unknown as Array<{ history: string }>;
+        const history = [...parseHistory(rows[0]?.history), ...turns].slice(-turnLimit);
+        await tx.execute(sql`INSERT INTO project.whatsapp_chat_sessions(project_id, sender, history, updated_at)
+          VALUES(${projectId}, ${sender}, ${JSON.stringify(history)}, ${now})
+          ON CONFLICT(project_id, sender) DO UPDATE SET history = excluded.history, updated_at = excluded.updated_at`);
+      });
     },
     async wasProcessed(messageId) {
       const rows = await db.execute(sql`SELECT 1 AS found FROM project.whatsapp_chat_dedupe

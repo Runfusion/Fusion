@@ -274,6 +274,8 @@ export class CeOrchestrator {
   /** Sessions currently REPLAYING history (rehydrate) — progress suppressed. */
   private readonly replaying = new Set<string>();
   private readonly progressPersistence = new Map<string, Promise<void>>();
+  /** Process-local terminal state used only when detached failure persistence itself fails. */
+  private readonly detachedFailureFallbacks = new Map<string, { session: CeSession; durableUpdatedAt: string }>();
 
   constructor(deps: OrchestratorDeps) {
     this.ctx = deps.ctx;
@@ -803,7 +805,14 @@ export class CeOrchestrator {
 
   /** Read-through accessor for routes. */
   async getState(sessionId: string): Promise<CeSession | undefined> {
-    return this.store.getAsync(sessionId);
+    const durable = await this.store.getAsync(sessionId);
+    const fallback = this.detachedFailureFallbacks.get(sessionId);
+    if (!fallback) return durable;
+    if (!durable || durable.updatedAt !== fallback.durableUpdatedAt) {
+      this.detachedFailureFallbacks.delete(sessionId);
+      return durable;
+    }
+    return fallback.session;
   }
 
   /**
@@ -835,7 +844,9 @@ export class CeOrchestrator {
   async discard(sessionId: string): Promise<boolean> {
     await this.drainProgressPersistence(sessionId);
     this.disposeLive(sessionId);
-    return this.store.deleteAsync(sessionId);
+    const deleted = await this.store.deleteAsync(sessionId);
+    if (deleted) this.detachedFailureFallbacks.delete(sessionId);
+    return deleted;
   }
 
   /**
@@ -1080,20 +1091,36 @@ export class CeOrchestrator {
   }
 
   /**
-   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:22:
-   * Route-detached model work must always terminate its rejection chain. Unexpected failures are logged and persisted best-effort so the process never receives an unhandled rejection and polling clients still observe a failed session.
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:43:
+   * Route-detached model work must always terminate its rejection chain. If both the turn and its PostgreSQL terminal write fail, retain a process-local error overlay so current polling clients stop seeing launching/active; any later durable mutation supersedes that bounded fallback and existing stale-session recovery remains authoritative after restart.
    */
   private detachTurn(sessionId: string, label: string, operation: Promise<unknown>): void {
     void operation.catch(async (cause: unknown) => {
       const message = cause instanceof Error ? cause.message : String(cause);
       this.ctx.logger.error(`Compound Engineering detached ${label} failed for ${sessionId}: ${message}`);
+      let session: CeSession | undefined;
       try {
-        const session = await this.store.getAsync(sessionId);
+        session = await this.store.getAsync(sessionId);
         if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
           await this.failSession(sessionId, cause);
         }
       } catch (persistError) {
         this.ctx.logger.error(`Compound Engineering could not persist detached ${label} failure for ${sessionId}: ${persistError instanceof Error ? persistError.message : String(persistError)}`);
+        if (session && session.status !== "completed" && session.status !== "error" && session.status !== "interrupted") {
+          const failedAt = Date.now();
+          this.detachedFailureFallbacks.set(sessionId, {
+            durableUpdatedAt: session.updatedAt,
+            session: {
+              ...session,
+              status: "error",
+              error: message,
+              lastActivityAt: failedAt,
+              updatedAt: new Date(failedAt).toISOString(),
+            },
+          });
+          this.disposeLive(sessionId);
+          this.ctx.emitEvent(CE_EVENTS.error, { sessionId, message });
+        }
       }
     });
   }

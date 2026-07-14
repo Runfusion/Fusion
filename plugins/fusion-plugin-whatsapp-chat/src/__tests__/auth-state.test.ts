@@ -5,6 +5,8 @@ function createInMemoryDb() {
   const creds = new Map<string, string>();
   const keys = new Map<string, string>();
   const makeKey = (category: string, id: string) => `${category}:${id}`;
+  let transactionSnapshot: Map<string, string> | null = null;
+  let failKeyId: string | null = null;
 
   return {
     prepare(sql: string) {
@@ -29,6 +31,7 @@ function createInMemoryDb() {
             creds.clear();
           }
           if (sql.includes("INSERT INTO whatsapp_auth_keys")) {
+            if (args[1] === failKeyId) throw new Error("injected auth-key write failure");
             keys.set(makeKey(args[0] as string, args[1] as string), args[2] as string);
           }
           if (sql.includes("DELETE FROM whatsapp_auth_keys WHERE category")) {
@@ -40,9 +43,20 @@ function createInMemoryDb() {
         },
       };
     },
-    exec() {},
+    exec(sql: string) {
+      if (sql === "BEGIN IMMEDIATE") transactionSnapshot = new Map(keys);
+      if (sql === "COMMIT") transactionSnapshot = null;
+      if (sql === "ROLLBACK" && transactionSnapshot) {
+        keys.clear();
+        for (const [key, value] of transactionSnapshot) keys.set(key, value);
+        transactionSnapshot = null;
+      }
+    },
     _creds: creds,
     _keys: keys,
+    failAuthKeyWrite(id: string | null) {
+      failKeyId = id;
+    },
   };
 }
 
@@ -73,6 +87,25 @@ describe("auth-state", () => {
     await auth.state.keys.set({ session: { alpha: null } });
     const removed = await auth.state.keys.get("session", ["alpha"]);
     expect((removed as any).alpha).toBeUndefined();
+  });
+
+  it("rolls back the whole SQLite auth-key batch when one write fails", async () => {
+    const db = createInMemoryDb();
+    const auth = await createPluginDbAuthState(db as any);
+    await auth.state.keys.set({ session: { alpha: { version: "old" } as any } });
+    db.failAuthKeyWrite("beta");
+
+    await expect(auth.state.keys.set({
+      session: {
+        alpha: { version: "new" } as any,
+        beta: { version: "new" } as any,
+      },
+    })).rejects.toThrow("injected auth-key write failure");
+
+    db.failAuthKeyWrite(null);
+    const loaded = await auth.state.keys.get("session", ["alpha", "beta"]);
+    expect((loaded as any).alpha).toEqual({ version: "old" });
+    expect((loaded as any).beta).toBeUndefined();
   });
 
   it("clears auth state", async () => {

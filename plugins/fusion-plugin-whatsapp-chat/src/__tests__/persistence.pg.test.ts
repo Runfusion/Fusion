@@ -34,9 +34,9 @@ pgDescribe("WhatsAppPersistence PostgreSQL", () => {
       const first = { role: "user" as const, text: "hello", createdAt: "2026-07-13T00:00:00.000Z" };
       const replacement = { role: "assistant" as const, text: "updated", createdAt: "2026-07-13T00:01:00.000Z" };
 
-      await a.saveHistory("15551234", [first]);
-      await a.saveHistory("15551234", [replacement]);
-      expect(await a.loadHistory("15551234")).toEqual([replacement]);
+      await a.appendHistory("15551234", [first], 10);
+      await a.appendHistory("15551234", [replacement], 10);
+      expect(await a.loadHistory("15551234")).toEqual([first, replacement]);
       expect(await b.loadHistory("15551234")).toEqual([]);
 
       await a.saveCredentials("a-creds");
@@ -50,6 +50,25 @@ pgDescribe("WhatsAppPersistence PostgreSQL", () => {
       expect(await a.loadCredentials()).toBeNull();
       expect(await a.loadAuthKeys("session", ["keep"])).toEqual({});
       expect(await b.loadCredentials()).toBe("b-creds");
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("preserves every concurrent append for one sender", async () => {
+    const h = await createTaskStoreForTest({ prefix: "whatsapp_history_append" });
+    try {
+      const persistence = createWhatsAppPersistence(context(bind(h.layer, "project-a")));
+      const turns = Array.from({ length: 8 }, (_, index) => ({
+        role: "user" as const,
+        text: `message-${index}`,
+        createdAt: `2026-07-14T00:00:0${index}.000Z`,
+      }));
+
+      await Promise.all(turns.map((turn) => persistence.appendHistory("15551234", [turn], 20)));
+
+      expect((await persistence.loadHistory("15551234")).map((turn) => turn.text).sort())
+        .toEqual(turns.map((turn) => turn.text).sort());
     } finally {
       await h.teardown();
     }
