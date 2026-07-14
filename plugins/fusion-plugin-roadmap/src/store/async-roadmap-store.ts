@@ -169,22 +169,36 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     roadmapId: string,
     input: RoadmapMilestoneCreateInput,
   ): Promise<RoadmapMilestone> {
-    if (!(await this.getRoadmap(roadmapId)))
-      throw new Error(`Roadmap ${roadmapId} not found`);
-    const existing = await this.listMilestones(roadmapId);
-    const now = new Date().toISOString();
-    const milestone: RoadmapMilestone = {
-      id: this.id("RMS"),
-      roadmapId,
-      title: input.title,
-      description: input.description,
-      orderIndex: nextOrderIndex(existing),
-      createdAt: now,
-      updatedAt: now,
-    };
-    await this.layer.db.execute(
-      sql`INSERT INTO project.roadmap_milestones(id, project_id, roadmap_id, title, description, order_index, created_at, updated_at) VALUES(${milestone.id}, ${this.projectId}, ${roadmapId}, ${milestone.title}, ${milestone.description ?? null}, ${milestone.orderIndex}, ${now}, ${now})`,
-    );
+    const milestone = await this.layer.transactionImmediate(async (tx) => {
+      /*
+       * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:24:
+       * Appending a milestone is an ordering mutation. It must hold the same project-and-roadmap transaction lock as reorder and move from the existence check through the insert, so concurrent creates cannot choose the same order index and a reorder cannot overwrite a newly appended item from a stale hierarchy snapshot.
+       */
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${roadmapId}`}, 0))`,
+      );
+      const roadmapRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmaps WHERE project_id=${this.projectId} AND id=${roadmapId} LIMIT 1`,
+      )) as unknown as RoadmapRow[];
+      if (!roadmapRows[0]) throw new Error(`Roadmap ${roadmapId} not found`);
+      const rows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND roadmap_id=${roadmapId} ORDER BY order_index, created_at, id`,
+      )) as unknown as MilestoneRow[];
+      const now = new Date().toISOString();
+      const created: RoadmapMilestone = {
+        id: this.id("RMS"),
+        roadmapId,
+        title: input.title,
+        description: input.description,
+        orderIndex: nextOrderIndex(rows.map((row) => this.milestone(row))),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await tx.execute(
+        sql`INSERT INTO project.roadmap_milestones(id, project_id, roadmap_id, title, description, order_index, created_at, updated_at) VALUES(${created.id}, ${this.projectId}, ${roadmapId}, ${created.title}, ${created.description ?? null}, ${created.orderIndex}, ${now}, ${now})`,
+      );
+      return created;
+    });
     this.emit("milestone:created", milestone);
     return milestone;
   }
@@ -233,22 +247,44 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     milestoneId: string,
     input: RoadmapFeatureCreateInput,
   ): Promise<RoadmapFeature> {
-    if (!(await this.getMilestone(milestoneId)))
+    const candidateMilestone = await this.getMilestone(milestoneId);
+    if (!candidateMilestone)
       throw new Error(`Milestone ${milestoneId} not found`);
-    const existing = await this.listFeatures(milestoneId);
-    const now = new Date().toISOString();
-    const feature: RoadmapFeature = {
-      id: this.id("RF"),
-      milestoneId,
-      title: input.title,
-      description: input.description,
-      orderIndex: nextOrderIndex(existing),
-      createdAt: now,
-      updatedAt: now,
-    };
-    await this.layer.db.execute(
-      sql`INSERT INTO project.roadmap_features(id, project_id, milestone_id, title, description, order_index, created_at, updated_at) VALUES(${feature.id}, ${this.projectId}, ${milestoneId}, ${feature.title}, ${feature.description ?? null}, ${feature.orderIndex}, ${now}, ${now})`,
-    );
+    const feature = await this.layer.transactionImmediate(async (tx) => {
+      /*
+       * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:24:
+       * Feature appends share the roadmap ordering lock with create, reorder, and move. The milestone and sibling list are authoritative only after this lock is held, and the append stays in that transaction through commit.
+       */
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${candidateMilestone.roadmapId}`}, 0))`,
+      );
+      const milestoneRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id=${milestoneId} LIMIT 1`,
+      )) as unknown as MilestoneRow[];
+      const milestone = milestoneRows[0]
+        ? this.milestone(milestoneRows[0])
+        : undefined;
+      if (!milestone) throw new Error(`Milestone ${milestoneId} not found`);
+      if (milestone.roadmapId !== candidateMilestone.roadmapId)
+        throw new Error(`Milestone ${milestoneId} changed roadmaps`);
+      const rows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_features WHERE project_id=${this.projectId} AND milestone_id=${milestoneId} ORDER BY order_index, created_at, id`,
+      )) as unknown as FeatureRow[];
+      const now = new Date().toISOString();
+      const created: RoadmapFeature = {
+        id: this.id("RF"),
+        milestoneId,
+        title: input.title,
+        description: input.description,
+        orderIndex: nextOrderIndex(rows.map((row) => this.feature(row))),
+        createdAt: now,
+        updatedAt: now,
+      };
+      await tx.execute(
+        sql`INSERT INTO project.roadmap_features(id, project_id, milestone_id, title, description, order_index, created_at, updated_at) VALUES(${created.id}, ${this.projectId}, ${milestoneId}, ${created.title}, ${created.description ?? null}, ${created.orderIndex}, ${now}, ${now})`,
+      );
+      return created;
+    });
     this.emit("feature:created", feature);
     return feature;
   }

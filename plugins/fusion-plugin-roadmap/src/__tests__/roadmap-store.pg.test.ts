@@ -88,6 +88,136 @@ function controlledOrderingLayer(
 }
 
 pgDescribe("AsyncRoadmapStore", () => {
+  it("serializes concurrent milestone appends at the roadmap lock", async () => {
+    const h = await createTaskStoreForTest({
+      prefix: "roadmap_milestone_create_concurrency",
+    });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({
+        title: "Concurrent milestone creates",
+      });
+      const firstControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "signal-first-query",
+      );
+      const first = new AsyncRoadmapStore(firstControl.layer);
+      const second = new AsyncRoadmapStore(secondControl.layer);
+
+      const firstCreate = first.createMilestone(roadmap.id, { title: "First" });
+      await firstControl.reached;
+      const secondCreate = second.createMilestone(roadmap.id, {
+        title: "Second",
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await Promise.all([firstCreate, secondCreate]);
+
+      expect(
+        (await setup.listMilestones(roadmap.id)).map(
+          (item) => item.orderIndex,
+        ),
+      ).toEqual([0, 1]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("serializes concurrent feature appends at the roadmap lock", async () => {
+    const h = await createTaskStoreForTest({
+      prefix: "roadmap_feature_create_concurrency",
+    });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({
+        title: "Concurrent feature creates",
+      });
+      const milestone = await setup.createMilestone(roadmap.id, {
+        title: "Milestone",
+      });
+      const firstControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "signal-first-query",
+      );
+      const first = new AsyncRoadmapStore(firstControl.layer);
+      const second = new AsyncRoadmapStore(secondControl.layer);
+
+      const firstCreate = first.createFeature(milestone.id, { title: "First" });
+      await firstControl.reached;
+      const secondCreate = second.createFeature(milestone.id, {
+        title: "Second",
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await Promise.all([firstCreate, secondCreate]);
+
+      expect(
+        (await setup.listFeatures(milestone.id)).map(
+          (item) => item.orderIndex,
+        ),
+      ).toEqual([0, 1]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  /*
+   * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:24:
+   * Deterministic PostgreSQL races cover create/create and create/reorder surfaces. A reorder queued behind an append must validate against the committed hierarchy and reject an obsolete client order instead of erasing the append's position.
+   */
+  it("revalidates a feature reorder after a concurrent append commits", async () => {
+    const h = await createTaskStoreForTest({
+      prefix: "roadmap_create_reorder_concurrency",
+    });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({ title: "Create then reorder" });
+      const milestone = await setup.createMilestone(roadmap.id, {
+        title: "Milestone",
+      });
+      const alpha = await setup.createFeature(milestone.id, { title: "Alpha" });
+      const firstControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "signal-first-query",
+      );
+      const creator = new AsyncRoadmapStore(firstControl.layer);
+      const reorderer = new AsyncRoadmapStore(secondControl.layer);
+
+      const create = creator.createFeature(milestone.id, { title: "Beta" });
+      await firstControl.reached;
+      const reorder = reorderer.reorderFeatures({
+        roadmapId: roadmap.id,
+        milestoneId: milestone.id,
+        orderedFeatureIds: [alpha.id],
+      });
+      await secondControl.reached;
+      firstControl.release();
+      const beta = await create;
+      await expect(reorder).rejects.toThrow(
+        "Expected 2 feature ids but received 1",
+      );
+
+      expect((await setup.listFeatures(milestone.id)).map((item) => item.id)).toEqual([
+        alpha.id,
+        beta.id,
+      ]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("serializes concurrent feature moves against the committed roadmap ordering", async () => {
     const h = await createTaskStoreForTest({ prefix: "roadmap_move_concurrency" });
     try {
