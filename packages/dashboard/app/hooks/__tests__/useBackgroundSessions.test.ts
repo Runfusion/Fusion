@@ -299,15 +299,16 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("planning-session");
     });
 
-    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined, expect.any(String));
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning cancellation is lock-free — no tabId argument.
+    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-session");
   });
 
-  it("force-dismisses a planning session even when cancellation is lock-conflicted", async () => {
+  it("force-dismisses a planning session even when cancellation fails", async () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "planning-locked", status: "generating", type: "planning" }),
     ]);
-    mockCancelPlanning.mockRejectedValueOnce(new Error("locked by another tab"));
+    mockCancelPlanning.mockRejectedValueOnce(new Error("cancel failed"));
 
     const { result } = renderHook(() => useBackgroundSessions());
 

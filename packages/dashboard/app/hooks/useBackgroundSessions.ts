@@ -345,13 +345,11 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
     let cancelFailed = false;
 
     if (sessionType === "planning") {
+      // FNXC:PlanningMultiTab 2026-07-14-00:00: planning routes are lock-free; no tabId needed.
       try {
-        await cancelPlanning(id, projectId, sessionTabId);
-      } catch (err: unknown) {
+        await cancelPlanning(id, projectId);
+      } catch {
         cancelFailed = true;
-        if (err instanceof Error && err.message.includes("locked")) {
-          console.warn(`[useBackgroundSessions] Forcing dismiss of planning session ${id} despite lock by another tab`);
-        }
       }
     } else if (sessionType === "subtask") {
       try {

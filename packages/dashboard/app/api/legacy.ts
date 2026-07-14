@@ -4087,11 +4087,10 @@ export function respondToPlanning(
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
-  tabId?: string,
 ): Promise<PlanningSession> {
   return api<PlanningSession>(withProjectId("/planning/respond", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, responses, tabId }),
+    body: JSON.stringify({ sessionId, responses }),
   });
 }
 
@@ -4099,13 +4098,11 @@ export function respondToPlanning(
 export function rewindPlanningSession(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }> {
   return api<{ currentQuestion: PlanningQuestion; history: Array<{ question: PlanningQuestion; response: unknown; thinkingOutput?: string }> }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/back`, projectId),
     {
       method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
@@ -4114,13 +4111,11 @@ export function rewindPlanningSession(
 export function retryPlanningSession(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ success: boolean; sessionId: string }> {
   return api<{ success: boolean; sessionId: string }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/retry`, projectId),
     {
       method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
@@ -4129,22 +4124,20 @@ export function retryPlanningSession(
 export function stopPlanningGeneration(
   sessionId: string,
   projectId?: string,
-  tabId?: string,
 ): Promise<{ success: boolean }> {
   return api<{ success: boolean }>(
     withProjectId(`/planning/${encodeURIComponent(sessionId)}/stop`, projectId),
     {
       method: "POST",
-      ...(tabId ? { body: JSON.stringify({ tabId }) } : {}),
     },
   );
 }
 
 /** Cancel an active planning session */
-export function cancelPlanning(sessionId: string, projectId?: string, tabId?: string): Promise<void> {
+export function cancelPlanning(sessionId: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId("/planning/cancel", projectId), {
     method: "POST",
-    body: JSON.stringify({ sessionId, tabId }),
+    body: JSON.stringify({ sessionId }),
   });
 }
 

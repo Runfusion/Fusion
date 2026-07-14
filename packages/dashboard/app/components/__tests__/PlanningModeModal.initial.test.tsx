@@ -21,8 +21,6 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
     useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
   };
 });
-import { useSessionLock } from "../../hooks/useSessionLock";
-import { getSessionTabId } from "../../utils/getSessionTabId";
 import type { MergeResult } from "@fusion/core";
 import {
   mockStartPlanning,

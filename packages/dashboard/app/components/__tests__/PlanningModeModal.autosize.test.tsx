@@ -88,10 +88,6 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (...args: any[]) => mockUseMobileKeyboard(...args),
 }));
 
-vi.mock("../../hooks/useSessionLock", () => ({
-  useSessionLock: () => ({ isLockedByOther: false, takeControl: vi.fn(), isLoading: false }),
-}));
-
 const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
 
 describe("PlanningModeModal autosize", () => {
