@@ -157,11 +157,22 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     return next;
   }
   async deleteRoadmap(id: string): Promise<void> {
-    if (!(await this.getRoadmap(id)))
-      throw new Error(`Roadmap ${id} not found`);
-    await this.layer.db.execute(
-      sql`DELETE FROM project.roadmaps WHERE project_id=${this.projectId} AND id=${id}`,
-    );
+    await this.layer.transactionImmediate(async (tx) => {
+      /*
+       * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:32:
+       * Deleting a roadmap cascades through its entire ordered hierarchy, so it must serialize with create, reorder, move, and child delete operations. Holding the roadmap lock through existence validation and cascade prevents a concurrent ordering mutation from returning or emitting a hierarchy that the delete removed mid-transaction.
+       */
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${id}`}, 0))`,
+      );
+      const rows = (await tx.execute(
+        sql`SELECT * FROM project.roadmaps WHERE project_id=${this.projectId} AND id=${id} LIMIT 1`,
+      )) as unknown as RoadmapRow[];
+      if (!rows[0]) throw new Error(`Roadmap ${id} not found`);
+      await tx.execute(
+        sql`DELETE FROM project.roadmaps WHERE project_id=${this.projectId} AND id=${id}`,
+      );
+    });
     this.emit("roadmap:deleted", id);
   }
 
@@ -235,11 +246,28 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     return next;
   }
   async deleteMilestone(id: string): Promise<void> {
-    if (!(await this.getMilestone(id)))
+    const candidate = await this.getMilestone(id);
+    if (!candidate)
       throw new Error(`Milestone ${id} not found`);
-    await this.layer.db.execute(
-      sql`DELETE FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id=${id}`,
-    );
+    await this.layer.transactionImmediate(async (tx) => {
+      /*
+       * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:32:
+       * Milestone deletion is a destructive roadmap-order mutation. Revalidate and cascade-delete it under the shared roadmap lock so a queued reorder observes the committed removal rather than persisting a stale pre-delete list. Deletion intentionally preserves SQLite parity by leaving sibling order indexes unchanged until an explicit reorder normalizes them.
+       */
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${candidate.roadmapId}`}, 0))`,
+      );
+      const rows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id=${id} LIMIT 1`,
+      )) as unknown as MilestoneRow[];
+      const milestone = rows[0] ? this.milestone(rows[0]) : undefined;
+      if (!milestone) throw new Error(`Milestone ${id} not found`);
+      if (milestone.roadmapId !== candidate.roadmapId)
+        throw new Error(`Milestone ${id} changed roadmaps`);
+      await tx.execute(
+        sql`DELETE FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id=${id}`,
+      );
+    });
     this.emit("milestone:deleted", id);
   }
 
@@ -321,12 +349,41 @@ export class AsyncRoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     return next;
   }
   async deleteFeature(id: string): Promise<void> {
-    const feature = await this.getFeature(id);
-    if (!feature)
+    const candidate = await this.getFeature(id);
+    if (!candidate)
       throw new Error(`Feature ${id} not found`);
-    await this.layer.db.execute(
-      sql`DELETE FROM project.roadmap_features WHERE project_id=${this.projectId} AND id=${id}`,
-    );
+    const candidateMilestone = await this.getMilestone(candidate.milestoneId);
+    if (!candidateMilestone)
+      throw new Error(`Milestone ${candidate.milestoneId} not found`);
+    const feature = await this.layer.transactionImmediate(async (tx) => {
+      /*
+       * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:32:
+       * Feature deletion shares the project-and-roadmap lock with every ordering mutation. Re-read its current parent and delete within that transaction so reorder and move cannot commit from a sibling snapshot that still contains the deleted feature; sibling indexes retain SQLite delete semantics until explicit normalization.
+       */
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:roadmap-order:${this.projectId}:${candidateMilestone.roadmapId}`}, 0))`,
+      );
+      const featureRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_features WHERE project_id=${this.projectId} AND id=${id} LIMIT 1`,
+      )) as unknown as FeatureRow[];
+      const committed = featureRows[0]
+        ? this.feature(featureRows[0])
+        : undefined;
+      if (!committed) throw new Error(`Feature ${id} not found`);
+      const milestoneRows = (await tx.execute(
+        sql`SELECT * FROM project.roadmap_milestones WHERE project_id=${this.projectId} AND id=${committed.milestoneId} LIMIT 1`,
+      )) as unknown as MilestoneRow[];
+      const milestone = milestoneRows[0]
+        ? this.milestone(milestoneRows[0])
+        : undefined;
+      if (!milestone) throw new Error(`Milestone ${committed.milestoneId} not found`);
+      if (milestone.roadmapId !== candidateMilestone.roadmapId)
+        throw new Error(`Feature ${id} changed roadmaps`);
+      await tx.execute(
+        sql`DELETE FROM project.roadmap_features WHERE project_id=${this.projectId} AND id=${id}`,
+      );
+      return committed;
+    });
     this.emit("feature:deleted", feature);
   }
 

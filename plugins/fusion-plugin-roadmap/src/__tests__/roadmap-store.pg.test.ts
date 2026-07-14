@@ -218,6 +218,135 @@ pgDescribe("AsyncRoadmapStore", () => {
     }
   });
 
+  /*
+   * FNXC:RoadmapOrderingConcurrency 2026-07-14-01:32:
+   * Deterministic delete/reorder races prove destructive hierarchy changes hold the roadmap lock through commit. Queued reorders must reject stale complete-ID lists after the delete, while remaining siblings retain the established SQLite gap semantics.
+   */
+  it("revalidates a feature reorder after a concurrent delete commits", async () => {
+    const h = await createTaskStoreForTest({
+      prefix: "roadmap_feature_delete_concurrency",
+    });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({ title: "Delete feature" });
+      const milestone = await setup.createMilestone(roadmap.id, {
+        title: "Milestone",
+      });
+      const alpha = await setup.createFeature(milestone.id, { title: "Alpha" });
+      const beta = await setup.createFeature(milestone.id, { title: "Beta" });
+      const firstControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "signal-first-query",
+      );
+      const deleter = new AsyncRoadmapStore(firstControl.layer);
+      const reorderer = new AsyncRoadmapStore(secondControl.layer);
+
+      const deletion = deleter.deleteFeature(alpha.id);
+      await firstControl.reached;
+      const reorder = reorderer.reorderFeatures({
+        roadmapId: roadmap.id,
+        milestoneId: milestone.id,
+        orderedFeatureIds: [beta.id, alpha.id],
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await deletion;
+      await expect(reorder).rejects.toThrow(
+        "Expected 1 feature ids but received 2",
+      );
+
+      expect(await setup.listFeatures(milestone.id)).toEqual([
+        expect.objectContaining({ id: beta.id, orderIndex: 1 }),
+      ]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("revalidates a milestone reorder after a concurrent delete commits", async () => {
+    const h = await createTaskStoreForTest({
+      prefix: "roadmap_milestone_delete_concurrency",
+    });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({ title: "Delete milestone" });
+      const first = await setup.createMilestone(roadmap.id, { title: "First" });
+      const second = await setup.createMilestone(roadmap.id, {
+        title: "Second",
+      });
+      const firstControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "signal-first-query",
+      );
+      const deleter = new AsyncRoadmapStore(firstControl.layer);
+      const reorderer = new AsyncRoadmapStore(secondControl.layer);
+
+      const deletion = deleter.deleteMilestone(first.id);
+      await firstControl.reached;
+      const reorder = reorderer.reorderMilestones({
+        roadmapId: roadmap.id,
+        orderedMilestoneIds: [second.id, first.id],
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await deletion;
+      await expect(reorder).rejects.toThrow(
+        "Expected 1 milestone ids but received 2",
+      );
+
+      expect(await setup.listMilestones(roadmap.id)).toEqual([
+        expect.objectContaining({ id: second.id, orderIndex: 1 }),
+      ]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("serializes roadmap cascade deletion against milestone reorder", async () => {
+    const h = await createTaskStoreForTest({
+      prefix: "roadmap_delete_concurrency",
+    });
+    try {
+      const setup = new AsyncRoadmapStore(bind(h.layer, "project-a"));
+      const roadmap = await setup.createRoadmap({ title: "Delete roadmap" });
+      const milestone = await setup.createMilestone(roadmap.id, {
+        title: "Milestone",
+      });
+      const firstControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledOrderingLayer(
+        bind(h.layer, "project-a"),
+        "signal-first-query",
+      );
+      const deleter = new AsyncRoadmapStore(firstControl.layer);
+      const reorderer = new AsyncRoadmapStore(secondControl.layer);
+
+      const deletion = deleter.deleteRoadmap(roadmap.id);
+      await firstControl.reached;
+      const reorder = reorderer.reorderMilestones({
+        roadmapId: roadmap.id,
+        orderedMilestoneIds: [milestone.id],
+      });
+      await secondControl.reached;
+      firstControl.release();
+      await deletion;
+      await expect(reorder).rejects.toThrow(`Roadmap ${roadmap.id} not found`);
+      expect(await setup.getMilestone(milestone.id)).toBeUndefined();
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("serializes concurrent feature moves against the committed roadmap ordering", async () => {
     const h = await createTaskStoreForTest({ prefix: "roadmap_move_concurrency" });
     try {
