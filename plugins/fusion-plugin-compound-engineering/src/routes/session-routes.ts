@@ -1,7 +1,7 @@
 import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/core";
 import { CeOrchestrator } from "../session/orchestrator.js";
 import { recoverStaleSessionsForContext } from "../session/session-recovery.js";
-import { asCeSessionStatus, getCeSessionStore } from "../session/session-store.js";
+import { asCeSessionStatus } from "../session/session-store.js";
 import { getCePipelineStore } from "../sync/pipeline-store.js";
 import { asString } from "./route-helpers.js";
 
@@ -153,7 +153,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
         FNXC:CompoundEngineering 2026-07-10-23:40:
         Dashboard session collections must be scoped at the route/store boundary so resume, URL restoration, stage state, and history cannot expose another project's Compound Engineering runs.
         */
-        const sessions = await getCeSessionStore(ctx).listAsync({ status, stage, projectId });
+        const sessions = await getOrchestrator(ctx).listStates({ status, stage, projectId });
         return { status: 200, body: { sessions } };
       },
     },

@@ -133,6 +133,39 @@ pgDescribe("session routes (polling transport)", () => {
     expect(sessions.map((s) => s.stage).sort()).toEqual(["brainstorm", "plan"]);
   });
 
+  it("GET /sessions applies detached terminal fallbacks before status filtering", async () => {
+    const { getCeSessionStore } = await import("../session/session-store.js");
+    const store = getCeSessionStore(h.ctx);
+    h.ctx.createInteractiveAiSession = vi.fn(async () => {
+      throw new Error("detached factory failed");
+    });
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("terminal write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    const started = await call("POST", "/sessions", {
+      params: {},
+      body: { stage: "brainstorm", message: "go" },
+    }, h.ctx);
+    expect(started.status).toBe(201);
+    const sessionId = (started.body as { session: { id: string } }).session.id;
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("terminal write failed"),
+    ));
+    expect((await store.getAsync(sessionId))?.status).toBe("launching");
+
+    const all = await call("GET", "/sessions", { params: {}, query: {} }, h.ctx);
+    const errors = await call("GET", "/sessions", { params: {}, query: { status: "error" } }, h.ctx);
+    const launching = await call("GET", "/sessions", { params: {}, query: { status: "launching" } }, h.ctx);
+    expect((all.body as { sessions: Array<{ id: string; status: string }> }).sessions).toContainEqual(
+      expect.objectContaining({ id: sessionId, status: "error" }),
+    );
+    expect((errors.body as { sessions: Array<{ id: string }> }).sessions.map((session) => session.id)).toContain(sessionId);
+    expect((launching.body as { sessions: Array<{ id: string }> }).sessions.map((session) => session.id)).not.toContain(sessionId);
+  });
+
   it("GET /sessions enforces the task store's bound project over caller-supplied row ownership", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);

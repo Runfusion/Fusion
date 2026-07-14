@@ -13,7 +13,7 @@ import { resolveDefaultInstallTargetRoot } from "../skill-installation.js";
 import { getCePipelineStore, type CePipelineStore } from "../sync/pipeline-store.js";
 import { createCeTaskWithLink } from "../sync/ce-task.js";
 import { getDefaultModelId, getDefaultProvider, getDisabledStages } from "../settings.js";
-import type { CeActivityTurn, CeSession, CeSessionStore } from "./session-store.js";
+import type { CeActivityTurn, CeSession, CeSessionStatus, CeSessionStore } from "./session-store.js";
 import { getCeSessionStore } from "./session-store.js";
 import { getStage, type CeStageDefinition } from "./stage-registry.js";
 
@@ -822,10 +822,30 @@ export class CeOrchestrator {
   /** Read-through accessor for routes. */
   async getState(sessionId: string): Promise<CeSession | undefined> {
     const durable = await this.store.getAsync(sessionId);
-    const fallback = this.detachedFailureFallbacks.get(sessionId);
+    return this.resolveDetachedFailureFallback(durable, sessionId);
+  }
+
+  /**
+   * FNXC:CompoundEngineeringConcurrency 2026-07-14-01:10:
+   * Session collections must expose the same effective terminal fallback as single-session polling. Apply stage/project constraints in PostgreSQL, overlay detached terminal failures, and only then evaluate status so a durably launching row cannot remain visible as running or disappear from an error-filtered list.
+   */
+  async listStates(
+    filter: { status?: CeSessionStatus; stage?: string; projectId?: string } = {},
+  ): Promise<CeSession[]> {
+    const durable = await this.store.listAsync({ stage: filter.stage, projectId: filter.projectId });
+    const effective = durable.map((session) => this.resolveDetachedFailureFallback(session) ?? session);
+    return filter.status ? effective.filter((session) => session.status === filter.status) : effective;
+  }
+
+  private resolveDetachedFailureFallback(durable: CeSession | undefined, sessionId = durable?.id): CeSession | undefined {
+    if (!durable) {
+      if (sessionId) this.detachedFailureFallbacks.delete(sessionId);
+      return undefined;
+    }
+    const fallback = this.detachedFailureFallbacks.get(durable.id);
     if (!fallback) return durable;
-    if (!durable || durableSessionMutationFingerprint(durable) !== fallback.durableFingerprint) {
-      this.detachedFailureFallbacks.delete(sessionId);
+    if (durableSessionMutationFingerprint(durable) !== fallback.durableFingerprint) {
+      this.detachedFailureFallbacks.delete(durable.id);
       return durable;
     }
     return fallback.session;
