@@ -110,7 +110,7 @@ export async function countInterventions(
     const layer = dbOrLayer as AsyncDataLayer;
     /*
     FNXC:PostgresCommandCenterAnalytics 2026-07-14-00:49:
-    An unbound Command Center layer intentionally aggregates every project. Apply the optional project predicate to task-backed steering reads only when a project is explicitly bound; never reinterpret an absent binding as the empty-string partition.
+    An unbound Command Center layer intentionally aggregates every project. Apply the optional project predicate to approval events and task-backed steering reads only when a project is explicitly bound; never reinterpret an absent binding as the empty-string partition.
     */
     const projectScope = layer.projectId !== undefined
       ? sql`AND project_id = ${layer.projectId}`
@@ -119,7 +119,7 @@ export async function countInterventions(
     const aTo = query.to !== undefined ? sql`AND created_at <= ${query.to}` : sql``;
     const approvalRows = (await layer.db.execute(
       sql`SELECT count(*)::int AS count FROM project.approval_request_audit_events
-          WHERE event_type IN ('created', 'approved') ${aFrom} ${aTo}`,
+          WHERE event_type IN ('created', 'approved') ${projectScope} ${aFrom} ${aTo}`,
     )) as Array<{ count: number }>;
     const approvals = approvalRows[0]?.count ?? 0;
 

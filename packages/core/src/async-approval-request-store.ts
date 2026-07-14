@@ -116,9 +116,13 @@ function rowToAuditEvent(row: ApprovalRequestAuditEventRow): ApprovalRequestAudi
 
 /**
  * Append an audit event row inside the given transaction handle.
+ *
+ * FNXC:ApprovalAnalyticsIsolation 2026-07-14-01:04:
+ * Audit events must carry the bound layer's project ID at write time because request IDs alone do not provide a reliable tenant ownership join for Command Center intervention analytics.
  */
 async function appendAuditEvent(
   tx: DbTransaction,
+  projectId: string,
   requestId: string,
   eventType: ApprovalRequestAuditEventType,
   actor: ApprovalRequestActorSnapshot,
@@ -135,6 +139,7 @@ async function appendAuditEvent(
     createdAt,
   };
   await tx.insert(schema.project.approvalRequestAuditEvents).values({
+    projectId,
     id,
     requestId,
     eventType,
@@ -158,6 +163,7 @@ export async function createApprovalRequest(
   input: ApprovalRequestCreateInput & { id: string },
 ): Promise<ApprovalRequest> {
   const now = new Date().toISOString();
+  const projectId = layer.projectId ?? "";
   const request: ApprovalRequest = {
     id: input.id,
     status: "pending",
@@ -193,7 +199,7 @@ export async function createApprovalRequest(
       createdAt: request.createdAt,
       updatedAt: request.updatedAt,
     });
-    await appendAuditEvent(tx, request.id, "created", input.requester, now);
+    await appendAuditEvent(tx, projectId, request.id, "created", input.requester, now);
   });
   return request;
 }
@@ -259,7 +265,7 @@ export async function decideApprovalRequest(
       .update(schema.project.approvalRequests)
       .set({ status, decidedAt: now, updatedAt: now })
       .where(eq(schema.project.approvalRequests.id, requestId));
-    await appendAuditEvent(tx, requestId, status, input.actor, now, input.note);
+    await appendAuditEvent(tx, layer.projectId ?? "", requestId, status, input.actor, now, input.note);
   });
   return (await getApprovalRequest(layer.db, requestId))!;
 }
@@ -284,7 +290,7 @@ export async function markApprovalRequestCompleted(
       .update(schema.project.approvalRequests)
       .set({ status: "completed", completedAt: now, updatedAt: now })
       .where(eq(schema.project.approvalRequests.id, requestId));
-    await appendAuditEvent(tx, requestId, "completed", input.actor, now, input.note);
+    await appendAuditEvent(tx, layer.projectId ?? "", requestId, "completed", input.actor, now, input.note);
   });
   return (await getApprovalRequest(layer.db, requestId))!;
 }

@@ -27,9 +27,10 @@ import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 
 /** The latest PostgreSQL schema version known to this applier. */
-export const SCHEMA_BASELINE_VERSION = "0002";
+export const SCHEMA_BASELINE_VERSION = "0003";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
+const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -45,6 +46,11 @@ const ANALYTICS_ISOLATION_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0002_analytics_project_isolation.sql",
+);
+const MONITOR_APPROVAL_ISOLATION_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0003_monitor_approval_project_isolation.sql",
 );
 
 /**
@@ -104,7 +110,8 @@ export async function applySchemaBaseline(
     const applied = await getAppliedMigrations(tx);
     const baselineAlreadyApplied = applied.includes(INITIAL_SCHEMA_VERSION);
     const automationIsolationAlreadyApplied = applied.includes(AUTOMATION_ISOLATION_SCHEMA_VERSION);
-    const analyticsIsolationAlreadyApplied = applied.includes(SCHEMA_BASELINE_VERSION);
+    const analyticsIsolationAlreadyApplied = applied.includes(ANALYTICS_ISOLATION_SCHEMA_VERSION);
+    const monitorApprovalIsolationAlreadyApplied = applied.includes(SCHEMA_BASELINE_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -138,6 +145,19 @@ export async function applySchemaBaseline(
     */
     if (!analyticsIsolationAlreadyApplied) {
       const migrationSql = await readFile(ANALYTICS_ISOLATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${ANALYTICS_ISOLATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:CommandCenterTenantIsolation 2026-07-14-01:04:
+    Version 0003 supplies durable ownership for monitor and approval analytics. It must run independently after 0002 so databases that already accepted the earlier analytics migration cannot silently skip the remaining tenant partitions.
+    */
+    if (!monitorApprovalIsolationAlreadyApplied) {
+      const migrationSql = await readFile(MONITOR_APPROVAL_ISOLATION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SCHEMA_BASELINE_VERSION}) ON CONFLICT (version) DO NOTHING`,
