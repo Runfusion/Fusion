@@ -902,11 +902,18 @@ export async function aggregateMonitorMetrics(
     // deployments read previously sat OUTSIDE the try/catch, so this error 500'd
     // the whole /command-center/activity route instead of degrading. Deployment
     // frequency filters on deployed_at (deploy time), not the incident openedAt.
+    /*
+    FNXC:MonitorAnalyticsIsolation 2026-07-14-01:04:
+    A bound PostgreSQL layer must apply one shared tenant predicate to every deployment and incident metric, including the point-in-time open count and MTTR sample. An unbound layer deliberately omits it for global Command Center aggregation.
+    */
+    const projectScope = layer.projectId !== undefined
+      ? sql`AND project_id = ${layer.projectId}`
+      : sql``;
     let deployments = 0;
     try {
       const depFrom = query.from ? sql`AND deployed_at >= ${query.from}` : sql``;
       const depTo = query.to ? sql`AND deployed_at <= ${query.to}` : sql``;
-      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${depFrom} ${depTo}`);
+      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${projectScope} ${depFrom} ${depTo}`);
       deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
     } catch (err) {
       // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
@@ -921,15 +928,15 @@ export async function aggregateMonitorMetrics(
       const openedTo = query.to ? sql`AND opened_at <= ${query.to}` : sql``;
       const resolvedFrom = query.from ? sql`AND resolved_at >= ${query.from}` : sql``;
       const resolvedTo = query.to ? sql`AND resolved_at <= ${query.to}` : sql``;
-      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`);
+      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}`);
       const incidentsOpened = (incidentsOpenedRows[0] as { count?: number } | undefined)?.count ?? 0;
-      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open'`);
+      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${projectScope}`);
       const openIncidents = (openIncidentsRows[0] as { count?: number } | undefined)?.count ?? 0;
       // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
       // resolvedDetailRows already returns every resolved-in-range incident, so
       // incidentsResolved is its row count — drop the separate COUNT query that
       // had an identical WHERE clause (one fewer round-trip per activity load).
-      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${projectScope} ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
       const incidentsResolved = resolvedDetailRows.length;
       let totalMs = 0;
       let sampleCount = 0;

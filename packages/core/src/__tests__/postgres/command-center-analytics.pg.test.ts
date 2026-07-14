@@ -156,9 +156,9 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
     // An approval event (human intervention).
     await adminDb.execute(sql`
       INSERT INTO project.approval_request_audit_events
-        (id, request_id, event_type, actor_id, actor_type, actor_name, created_at)
+        (project_id, id, request_id, event_type, actor_id, actor_type, actor_name, created_at)
       VALUES
-        ('ev-1', 'req-1', 'approved', 'user-1', 'user', 'User One', ${IN_RANGE})
+        ('p1', 'ev-1', 'req-1', 'approved', 'user-1', 'user', 'User One', ${IN_RANGE})
     `);
 
     const layer = Object.assign(h.layer(), { projectId: "p1" });
@@ -239,17 +239,24 @@ pgTest("Command Center analytics aggregators (PostgreSQL backend mode)", () => {
         ('tool-project-b', ${IN_RANGE}, 'tool_call', 'Edit', 'other'),
         ('tool-project-b', ${IN_RANGE}, 'session_start', NULL, NULL)
     `);
+    await adminDb.execute(sql`
+      INSERT INTO project.approval_request_audit_events
+        (project_id, id, request_id, event_type, actor_id, actor_type, actor_name, created_at)
+      VALUES
+        ('tool-project-a', 'tool-approval-a', 'tool-request-a', 'approved', 'user-a', 'user', 'User A', ${IN_RANGE}),
+        ('tool-project-b', 'tool-approval-b', 'tool-request-b', 'approved', 'user-b', 'user', 'User B', ${IN_RANGE})
+    `);
 
     delete layer.projectId;
     const range = { from: FROM, to: TO };
     const unbound = await aggregateToolAnalytics(layer, range);
     expect(unbound).toMatchObject({ toolCalls: 2, sessions: 2 });
-    expect(unbound.interventions).toMatchObject({ userSteers: 2, total: 2 });
+    expect(unbound.interventions).toMatchObject({ approvals: 2, userSteers: 2, total: 4 });
     expect(Object.values(Object.fromEntries(unbound.byCategory.map((row) => [row.category, row.count]))).reduce((a, b) => a + b, 0)).toBe(2);
 
     const bound = await aggregateToolAnalytics({ ...layer, projectId: "tool-project-a" }, range);
     expect(bound).toMatchObject({ toolCalls: 1, sessions: 1 });
-    expect(bound.interventions).toMatchObject({ userSteers: 1, total: 1 });
+    expect(bound.interventions).toMatchObject({ approvals: 1, userSteers: 1, total: 2 });
     expect(Object.values(Object.fromEntries(bound.byCategory.map((row) => [row.category, row.count]))).reduce((a, b) => a + b, 0)).toBe(1);
   });
 });

@@ -23,7 +23,8 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { aggregateActivityAnalytics } from "../../activity-analytics.js";
+import { aggregateActivityAnalytics, aggregateMonitorMetrics } from "../../activity-analytics.js";
+import { sql } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
@@ -87,6 +88,38 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
     expect(result.monitor.deployments).toBe(0);
     expect(result.monitor.incidentsOpened).toBe(0);
     expect(result.monitor.mttr.unavailable).toBe(true);
+  });
+
+  /**
+   * FNXC:MonitorAnalyticsIsolation 2026-07-14-01:04:
+   * An unbound Command Center monitor read intentionally aggregates every project, while a project-bound layer must isolate deployments, incident counts, and MTTR to that tenant.
+   */
+  it("monitor metrics aggregate all projects when unbound and isolate a bound project", async () => {
+    const adminDb = h.adminDb();
+    await adminDb.execute(sql`
+      INSERT INTO project.deployments
+        (project_id, deployment_id, deployed_at, created_at)
+      VALUES
+        ('monitor-project-a', 'deployment-a', '2026-07-13T12:00:00.000Z', '2026-07-13T12:00:00.000Z'),
+        ('monitor-project-b', 'deployment-b', '2026-07-13T12:00:00.000Z', '2026-07-13T12:00:00.000Z')
+    `);
+    await adminDb.execute(sql`
+      INSERT INTO project.incidents
+        (project_id, incident_id, grouping_key, title, status, opened_at, resolved_at, created_at, updated_at)
+      VALUES
+        ('monitor-project-a', 'incident-a', 'group-a', 'A', 'resolved', '2026-07-13T10:00:00.000Z', '2026-07-13T11:00:00.000Z', '2026-07-13T10:00:00.000Z', '2026-07-13T11:00:00.000Z'),
+        ('monitor-project-b', 'incident-b', 'group-b', 'B', 'open', '2026-07-13T12:00:00.000Z', NULL, '2026-07-13T12:00:00.000Z', '2026-07-13T12:00:00.000Z')
+    `);
+
+    const range = { from: "2026-07-13T00:00:00.000Z", to: "2026-07-13T23:59:59.999Z" };
+    const layer = h.layer();
+    const unbound = await aggregateMonitorMetrics(layer, range);
+    expect(unbound).toMatchObject({ deployments: 2, incidentsOpened: 2, incidentsResolved: 1, openIncidents: 1 });
+    expect(unbound.mttr).toEqual({ value: 60, unavailable: false, sampleCount: 1 });
+
+    const bound = await aggregateMonitorMetrics({ ...layer, projectId: "monitor-project-a" }, range);
+    expect(bound).toMatchObject({ deployments: 1, incidentsOpened: 1, incidentsResolved: 1, openIncidents: 0 });
+    expect(bound.mttr).toEqual({ value: 60, unavailable: false, sampleCount: 1 });
   });
 
   /*

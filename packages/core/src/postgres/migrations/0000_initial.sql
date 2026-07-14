@@ -1170,7 +1170,8 @@ CREATE INDEX IF NOT EXISTS "idxKnowledgePagesUpdatedAt"
 
 CREATE TABLE IF NOT EXISTS project.deployments (
   id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  deployment_id text NOT NULL UNIQUE,
+  project_id text NOT NULL DEFAULT '',
+  deployment_id text NOT NULL,
   service text,
   environment text,
   version text,
@@ -1180,11 +1181,14 @@ CREATE TABLE IF NOT EXISTS project.deployments (
   meta jsonb,
   created_at text NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS "idxDeploymentsProjectDeploymentId" ON project.deployments(project_id, deployment_id);
+CREATE INDEX IF NOT EXISTS "idxDeploymentsProjectDeployedAt" ON project.deployments(project_id, deployed_at);
 CREATE INDEX IF NOT EXISTS "idxDeploymentsDeployedAt" ON project.deployments(deployed_at);
 CREATE INDEX IF NOT EXISTS "idxDeploymentsService" ON project.deployments(service);
 
 CREATE TABLE IF NOT EXISTS project.incidents (
   id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  project_id text NOT NULL DEFAULT '',
   incident_id text NOT NULL UNIQUE,
   grouping_key text NOT NULL,
   title text NOT NULL,
@@ -1199,6 +1203,8 @@ CREATE TABLE IF NOT EXISTS project.incidents (
   created_at text NOT NULL,
   updated_at text NOT NULL
 );
+CREATE INDEX IF NOT EXISTS "idxIncidentsProjectOpenedAt" ON project.incidents(project_id, opened_at);
+CREATE INDEX IF NOT EXISTS "idxIncidentsProjectStatus" ON project.incidents(project_id, status);
 CREATE INDEX IF NOT EXISTS "idxIncidentsGroupingKey" ON project.incidents(grouping_key);
 CREATE INDEX IF NOT EXISTS "idxIncidentsStatus" ON project.incidents(status);
 CREATE INDEX IF NOT EXISTS "idxIncidentsOpenedAt" ON project.incidents(opened_at);
@@ -1417,6 +1423,7 @@ CREATE TABLE IF NOT EXISTS project.approval_requests (
 );
 
 CREATE TABLE IF NOT EXISTS project.approval_request_audit_events (
+  project_id text NOT NULL DEFAULT '',
   id text PRIMARY KEY,
   request_id text NOT NULL,
   event_type text NOT NULL,
@@ -1583,6 +1590,8 @@ CREATE INDEX IF NOT EXISTS "idxApprovalRequestsTaskCreatedAt" ON project.approva
 -- approval_request_audit_events
 CREATE INDEX IF NOT EXISTS "idxApprovalRequestAuditRequestCreatedAt"
   ON project.approval_request_audit_events(request_id, created_at, id);
+CREATE INDEX IF NOT EXISTS "idxApprovalRequestAuditProjectCreatedAt"
+  ON project.approval_request_audit_events(project_id, created_at);
 
 -- chat_rooms
 CREATE UNIQUE INDEX IF NOT EXISTS "idxChatRoomsSlug" ON project.chat_rooms(project_id, slug);

@@ -1372,7 +1372,8 @@ export const knowledgePages = projectSchema.table("knowledge_pages", {
 
 export const deployments = projectSchema.table("deployments", {
   id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
-  deploymentId: text("deployment_id").notNull().unique(),
+  projectId: text("project_id").notNull().default(""),
+  deploymentId: text("deployment_id").notNull(),
   service: text("service"),
   environment: text("environment"),
   version: text("version"),
@@ -1382,12 +1383,15 @@ export const deployments = projectSchema.table("deployments", {
   meta: jsonb("meta"),
   createdAt: text("created_at").notNull(),
 }, (t) => [
+  uniqueIndex("idxDeploymentsProjectDeploymentId").on(t.projectId, t.deploymentId),
+  index("idxDeploymentsProjectDeployedAt").on(t.projectId, t.deployedAt),
   index("idxDeploymentsDeployedAt").on(t.deployedAt),
   index("idxDeploymentsService").on(t.service),
 ]);
 
 export const incidents = projectSchema.table("incidents", {
   id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
+  projectId: text("project_id").notNull().default(""),
   incidentId: text("incident_id").notNull().unique(),
   groupingKey: text("grouping_key").notNull(),
   title: text("title").notNull(),
@@ -1402,6 +1406,8 @@ export const incidents = projectSchema.table("incidents", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
+  index("idxIncidentsProjectOpenedAt").on(t.projectId, t.openedAt),
+  index("idxIncidentsProjectStatus").on(t.projectId, t.status),
   index("idxIncidentsGroupingKey").on(t.groupingKey),
   index("idxIncidentsStatus").on(t.status),
   index("idxIncidentsOpenedAt").on(t.openedAt),
@@ -1682,6 +1688,7 @@ export const approvalRequests = projectSchema.table("approval_requests", {
 ]);
 
 export const approvalRequestAuditEvents = projectSchema.table("approval_request_audit_events", {
+  projectId: text("project_id").notNull().default(""),
   id: text("id").primaryKey(),
   requestId: text("request_id").notNull(),
   eventType: text("event_type").notNull(),
@@ -1692,6 +1699,7 @@ export const approvalRequestAuditEvents = projectSchema.table("approval_request_
   createdAt: text("created_at").notNull(),
 }, (t) => [
   index("idxApprovalRequestAuditRequestCreatedAt").on(t.requestId, t.createdAt, t.id),
+  index("idxApprovalRequestAuditProjectCreatedAt").on(t.projectId, t.createdAt),
 ]);
 
 export const chatRooms = projectSchema.table("chat_rooms", {

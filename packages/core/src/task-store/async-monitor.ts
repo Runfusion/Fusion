@@ -165,10 +165,15 @@ function incidentFromRow(row: typeof schema.project.incidents.$inferSelect): Inc
  *
  * @param db The Drizzle instance (or transaction handle) from the AsyncDataLayer.
  * @param input The deployment input.
+ * @param projectId The owning project partition; dashboard callers pass the bound AsyncDataLayer project ID.
+ *
+ * FNXC:MonitorAnalyticsIsolation 2026-07-14-01:04:
+ * Monitor writes must persist tenant ownership so bound deployment and incident analytics can filter without inferring ownership from provider identifiers.
  */
 export async function recordDeploymentAsync(
   db: AsyncDataLayer["db"] | DbTransaction,
   input: DeploymentInput,
+  projectId = "",
 ): Promise<Deployment> {
   const deploymentId = input.deploymentId?.trim() || `dep-${randomUUID()}`;
   const now = new Date().toISOString();
@@ -177,6 +182,7 @@ export async function recordDeploymentAsync(
   await db
     .insert(schema.project.deployments)
     .values({
+      projectId,
       deploymentId,
       service: input.service ?? null,
       environment: input.environment ?? null,
@@ -188,7 +194,7 @@ export async function recordDeploymentAsync(
       createdAt: now,
     })
     .onConflictDoUpdate({
-      target: schema.project.deployments.deploymentId,
+      target: [schema.project.deployments.projectId, schema.project.deployments.deploymentId],
       set: {
         service: input.service ?? null,
         environment: input.environment ?? null,
@@ -203,7 +209,7 @@ export async function recordDeploymentAsync(
   const rows = await db
     .select()
     .from(schema.project.deployments)
-    .where(eq(schema.project.deployments.deploymentId, deploymentId));
+    .where(and(eq(schema.project.deployments.projectId, projectId), eq(schema.project.deployments.deploymentId, deploymentId)));
   const row = rows[0];
   if (!row) throw new Error(`deployment ${deploymentId} not found after upsert`);
   return deploymentFromRow(row);
@@ -220,11 +226,12 @@ export async function recordDeploymentAsync(
 export async function getOpenIncidentByGroupingKeyAsync(
   db: AsyncDataLayer["db"] | DbTransaction,
   groupingKey: string,
+  projectId = "",
 ): Promise<Incident | null> {
   const rows = await db
     .select()
     .from(schema.project.incidents)
-    .where(and(eq(schema.project.incidents.groupingKey, groupingKey), eq(schema.project.incidents.status, "open")))
+    .where(and(eq(schema.project.incidents.projectId, projectId), eq(schema.project.incidents.groupingKey, groupingKey), eq(schema.project.incidents.status, "open")))
     .orderBy(desc(schema.project.incidents.openedAt), desc(schema.project.incidents.id))
     .limit(1);
   return rows[0] ? incidentFromRow(rows[0]) : null;
@@ -239,11 +246,12 @@ export async function getOpenIncidentByGroupingKeyAsync(
 export async function getIncidentAsync(
   db: AsyncDataLayer["db"] | DbTransaction,
   incidentId: string,
+  projectId = "",
 ): Promise<Incident | null> {
   const rows = await db
     .select()
     .from(schema.project.incidents)
-    .where(eq(schema.project.incidents.incidentId, incidentId))
+    .where(and(eq(schema.project.incidents.projectId, projectId), eq(schema.project.incidents.incidentId, incidentId)))
     .limit(1);
   return rows[0] ? incidentFromRow(rows[0]) : null;
 }
@@ -266,9 +274,10 @@ export async function getIncidentAsync(
 export async function ingestIncidentSignalAsync(
   db: AsyncDataLayer["db"] | DbTransaction,
   input: IncidentSignalInput,
+  projectId = "",
 ): Promise<{ incident: Incident; created: boolean }> {
   const now = input.at ?? new Date().toISOString();
-  const existing = await getOpenIncidentByGroupingKeyAsync(db, input.groupingKey);
+  const existing = await getOpenIncidentByGroupingKeyAsync(db, input.groupingKey, projectId);
 
   if (existing) {
     // Absorb the re-firing signal into the open incident.
@@ -284,7 +293,7 @@ export async function ingestIncidentSignalAsync(
       .update(schema.project.incidents)
       .set({ updatedAt: now, meta: nextMeta })
       .where(eq(schema.project.incidents.incidentId, existing.incidentId));
-    const updated = await getIncidentAsync(db, existing.incidentId);
+    const updated = await getIncidentAsync(db, existing.incidentId, projectId);
     return { incident: updated ?? existing, created: false };
   }
 
@@ -295,6 +304,7 @@ export async function ingestIncidentSignalAsync(
     [FIRST_FIRED_META_KEY]: now,
   };
   await db.insert(schema.project.incidents).values({
+    projectId,
     incidentId,
     groupingKey: input.groupingKey,
     title: input.title,
@@ -309,7 +319,7 @@ export async function ingestIncidentSignalAsync(
     createdAt: now,
     updatedAt: now,
   });
-  const incident = await getIncidentAsync(db, incidentId);
+  const incident = await getIncidentAsync(db, incidentId, projectId);
   if (!incident) throw new Error(`incident ${incidentId} not found after insert`);
   return { incident, created: true };
 }
@@ -326,15 +336,16 @@ export async function resolveIncidentAsync(
   db: AsyncDataLayer["db"] | DbTransaction,
   groupingKey: string,
   at?: string,
+  projectId = "",
 ): Promise<Incident | null> {
-  const open = await getOpenIncidentByGroupingKeyAsync(db, groupingKey);
+  const open = await getOpenIncidentByGroupingKeyAsync(db, groupingKey, projectId);
   if (!open) return null;
   const now = at ?? new Date().toISOString();
   await db
     .update(schema.project.incidents)
     .set({ status: "resolved", resolvedAt: now, updatedAt: now })
-    .where(eq(schema.project.incidents.incidentId, open.incidentId));
-  return getIncidentAsync(db, open.incidentId);
+    .where(and(eq(schema.project.incidents.projectId, projectId), eq(schema.project.incidents.incidentId, open.incidentId)));
+  return getIncidentAsync(db, open.incidentId, projectId);
 }
 
 /**

@@ -531,7 +531,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     const versions = (await ctx.db.execute(sql`
       SELECT version FROM public.fusion_schema_migrations ORDER BY version
     `)) as unknown as Array<{ version: string }>;
-    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", SCHEMA_BASELINE_VERSION]);
+    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", SCHEMA_BASELINE_VERSION]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
@@ -555,14 +555,14 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       applySchemaBaseline(ctx.db, { pluginHooks: [] }),
     ]);
     expect(results.filter(({ applied }) => applied)).toHaveLength(1);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", SCHEMA_BASELINE_VERSION]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", SCHEMA_BASELINE_VERSION]);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version = '0002';
+      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0002', '0003');
       ALTER TABLE project.activity_log DROP COLUMN project_id;
       ALTER TABLE project.agent_runs DROP COLUMN project_id;
       ALTER TABLE project.usage_events DROP COLUMN project_id;
@@ -585,7 +585,39 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003"]);
+  });
+
+  /**
+   * FNXC:CommandCenterTenantIsolation 2026-07-14-01:04:
+   * A database that already recorded analytics migration 0002 must still backfill monitor and approval ownership from the sole registered project before bound Command Center reads are enabled.
+   */
+  it("upgrades a 0002 database by backfilling monitor and approval ownership", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0003';
+      ALTER TABLE project.deployments DROP COLUMN project_id;
+      ALTER TABLE project.incidents DROP COLUMN project_id;
+      ALTER TABLE project.approval_request_audit_events DROP COLUMN project_id;
+      INSERT INTO central.projects(id, name, path, created_at, updated_at)
+      VALUES ('project-a', 'Project A', '/repo/project-a', '2026-01-01', '2026-01-01');
+      INSERT INTO project.deployments(deployment_id, deployed_at, created_at)
+      VALUES ('deployment-a', '2026-01-01', '2026-01-01');
+      INSERT INTO project.incidents(incident_id, grouping_key, title, status, opened_at, created_at, updated_at)
+      VALUES ('incident-a', 'group-a', 'Incident A', 'open', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO project.approval_request_audit_events(id, request_id, event_type, actor_id, actor_type, actor_name, created_at)
+      VALUES ('event-a', 'request-a', 'approved', 'user-a', 'user', 'User A', '2026-01-01');
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    for (const table of ["deployments", "incidents", "approval_request_audit_events"] as const) {
+      const rows = (await ctx.db.execute(sql.raw(
+        `SELECT project_id FROM project.${table}`,
+      ))) as unknown as Array<{ project_id: string }>;
+      expect(rows).toEqual([{ project_id: "project-a" }]);
+    }
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003"]);
   });
 });
 

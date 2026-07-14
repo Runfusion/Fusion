@@ -175,7 +175,8 @@ export async function recordDeployment(db: Database | AsyncDataLayer, input: Dep
   // uniquely exposes `ping()` (the connectivity probe); SQLite `Database` does
   // not, so `"ping" in db` correctly distinguishes the two backends.
   if ("ping" in db) {
-    return recordDeploymentAsync((db as AsyncDataLayer).db, input);
+    const layer = db as AsyncDataLayer;
+    return recordDeploymentAsync(layer.db, input, layer.projectId ?? "");
   }
   const sqliteDb = db as Database;
   const deploymentId = input.deploymentId?.trim() || `dep-${randomUUID()}`;
@@ -263,7 +264,8 @@ export async function ingestIncidentSignal(
   // helper returns the core `Incident` shape, structurally identical to this
   // module's `Incident`.
   if ("ping" in db) {
-    return ingestIncidentSignalAsync((db as AsyncDataLayer).db, input) as Promise<{
+    const layer = db as AsyncDataLayer;
+    return ingestIncidentSignalAsync(layer.db, input, layer.projectId ?? "") as Promise<{
       incident: Incident;
       created: boolean;
     }>;
@@ -335,7 +337,8 @@ export async function resolveIncident(
   // P1 fix (review #17): use `"ping" in db` (unique to AsyncDataLayer) instead
   // of the broken `"transactionImmediate" in db` (SQLite Database also has it).
   if ("ping" in db) {
-    return resolveIncidentAsync((db as AsyncDataLayer).db, groupingKey, at);
+    const layer = db as AsyncDataLayer;
+    return resolveIncidentAsync(layer.db, groupingKey, at, layer.projectId ?? "");
   }
   const sqliteDb = db as Database;
   const open = getOpenIncidentByGroupingKey(sqliteDb, groupingKey);
