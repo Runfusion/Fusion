@@ -2,18 +2,14 @@ import { DisconnectReason, makeWASocket, type ConnectionState, type WAMessage, t
 import type { PluginContext } from "@fusion/plugin-sdk";
 import pino from "pino";
 import qrcode from "qrcode";
-import { clearAuthState, createPluginDbAuthState } from "./auth-state.js";
+import { createPersistenceAuthState } from "./auth-state.js";
 import {
   getAllowedSenders,
   getDedupeRetentionDays,
   getHistoryTurnLimit,
-  loadHistory,
-  markProcessed,
-  saveHistory,
-  wasProcessed,
   type ChatTurn,
-  type PluginDb,
 } from "./index.js";
+import type { WhatsAppPersistence } from "./persistence.js";
 
 export type ConnectionStatus = {
   state: "starting" | "awaiting-qr" | "awaiting-code" | "connected" | "disconnected" | "error";
@@ -71,18 +67,25 @@ export class WhatsAppConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private stopped = true;
-  private authState: ReturnType<typeof createPluginDbAuthState>;
+  private authState: Awaited<ReturnType<typeof createPersistenceAuthState>> | null = null;
+  private readonly senderQueues = new Map<string, Promise<void>>();
+  private readonly inboundOperations = new Set<Promise<void>>();
+  private readonly credentialSaveOperations = new Set<Promise<void>>();
+  private readonly authResetOperations = new WeakMap<WASocket, Promise<void>>();
+  private readonly credentialUpdateHandlers = new WeakMap<WASocket, () => Promise<void>>();
+  private readonly connectionUpdateHandlers = new WeakMap<WASocket, (update: Partial<ConnectionState>) => Promise<void>>();
+  private acceptCredentialSaves = false;
 
   public constructor(
     private readonly ctx: PluginContext,
     private readonly fusionVersion: string,
     private readonly generateReply: ReplyGenerator,
-    private readonly db: PluginDb,
-  ) {
-    this.authState = createPluginDbAuthState(this.db);
-  }
+    private readonly persistence: WhatsAppPersistence,
+  ) {}
+
 
   public async start(): Promise<void> {
+    this.authState = await createPersistenceAuthState(this.persistence);
     this.stopped = false;
     this.status = { state: "starting" };
     await this.connect();
@@ -94,13 +97,22 @@ export class WhatsAppConnection {
     this.clearReconnectTimer();
 
     const socket = this.sock;
-    this.sock = null;
     this.status = { state: "disconnected" };
 
     if (socket) {
-      socket.ev.off("creds.update", this.authState.saveCreds);
-      socket.ev.off("connection.update", this.onConnectionUpdate);
+      this.disableCredentialSaves(socket);
+      const connectionUpdateHandler = this.connectionUpdateHandlers.get(socket);
+      if (connectionUpdateHandler) socket.ev.off("connection.update", connectionUpdateHandler);
       socket.ev.off("messages.upsert", this.onMessagesUpsert);
+      /**
+       * FNXC:WhatsAppGracefulStop 2026-07-14-01:28:
+       * Stop must reject new inbound work but let every already-accepted message send its persisted reply before the active socket closes. Otherwise the mutable socket can become null after history is saved, silently skipping a dedupe-claimed reply with no retry path.
+       */
+      await Promise.allSettled([
+        ...this.credentialSaveOperations,
+        ...this.inboundOperations,
+      ]);
+      if (this.sock === socket) this.sock = null;
       await socket.end(undefined);
     }
   }
@@ -117,17 +129,31 @@ export class WhatsAppConnection {
   }
 
   public async logout(): Promise<void> {
+    /**
+     * FNXC:WhatsAppLogoutRace 2026-07-14-00:42:
+     * Logout must retain the socket selected at invocation even when stop concurrently clears this.sock. The stable reference ensures Baileys still attempts its server-side logout before local credentials are discarded.
+     */
+    const socket = this.sock;
+    if (socket) this.disableCredentialSaves(socket);
     try {
-      await this.sock?.logout();
+      await socket?.logout();
     } finally {
-      clearAuthState(this.db);
-      this.authState = createPluginDbAuthState(this.db);
-      this.status = { state: "disconnected" };
+      if (socket) {
+        await this.resetLoggedOutAuth(socket);
+        if (this.sock === null || this.sock === socket) {
+          this.status = { state: "disconnected" };
+        }
+      } else {
+        await this.persistence.clearAuthState();
+        this.authState = await createPersistenceAuthState(this.persistence);
+        this.status = { state: "disconnected" };
+      }
     }
   }
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    if (!this.authState) this.authState = await createPersistenceAuthState(this.persistence);
 
     this.status = { state: "starting" };
     const socket = makeWASocket({
@@ -138,14 +164,51 @@ export class WhatsAppConnection {
     });
 
     this.sock = socket;
-    socket.ev.on("creds.update", this.authState.saveCreds);
-    socket.ev.on("connection.update", this.onConnectionUpdate);
+    this.acceptCredentialSaves = true;
+    const credentialUpdateHandler = () => this.onCredsUpdate(socket);
+    const connectionUpdateHandler = (update: Partial<ConnectionState>) => this.onConnectionUpdate(socket, update);
+    this.credentialUpdateHandlers.set(socket, credentialUpdateHandler);
+    this.connectionUpdateHandlers.set(socket, connectionUpdateHandler);
+    socket.ev.on("creds.update", credentialUpdateHandler);
+    socket.ev.on("connection.update", connectionUpdateHandler);
     socket.ev.on("messages.upsert", this.onMessagesUpsert);
   }
 
-  private readonly onConnectionUpdate = async (update: Partial<ConnectionState>): Promise<void> => {
+  /*
+   * FNXC:WhatsAppAsyncListeners 2026-07-13-23:40:
+   * Baileys uses EventEmitter, which does not observe rejected async listener promises. Every registered callback attaches its own rejection handler so QR/auth/persistence failures are logged and cannot become process-level unhandled rejections.
+   */
+  private onCredsUpdate(socket: WASocket): Promise<void> {
+    if (this.sock !== socket || !this.acceptCredentialSaves) return Promise.resolve();
+    let operation: Promise<void>;
+    operation = Promise.resolve(this.authState?.saveCreds())
+      .catch((error: unknown) => {
+        this.ctx.logger.error("WhatsApp credential persistence failed", error);
+      })
+      .finally(() => this.credentialSaveOperations.delete(operation));
+    this.credentialSaveOperations.add(operation);
+    return operation;
+  }
+
+  private onConnectionUpdate(
+    socket: WASocket,
+    update: Partial<ConnectionState>,
+  ): Promise<void> {
+    return this.handleConnectionUpdate(socket, update).catch((error: unknown) => {
+      if (this.sock !== socket) return;
+      this.status = {
+        state: "error",
+        lastError: error instanceof Error ? error.message : String(error),
+      };
+      this.ctx.logger.error("WhatsApp connection update failed", error);
+    });
+  }
+
+  private async handleConnectionUpdate(socket: WASocket, update: Partial<ConnectionState>): Promise<void> {
+    if (this.sock !== socket) return;
     if (update.qr) {
       const qrDataUrl = await qrcode.toDataURL(update.qr);
+      if (this.sock !== socket) return;
       this.ctx.logger.info("WhatsApp pairing QR updated", update.qr);
       this.status = { state: "awaiting-qr", qr: update.qr, qrDataUrl };
     }
@@ -158,9 +221,10 @@ export class WhatsAppConnection {
 
     if (update.connection === "close") {
       if (isLoggedOutDisconnect(update.lastDisconnect?.error)) {
-        clearAuthState(this.db);
-        this.authState = createPluginDbAuthState(this.db);
-        this.status = { state: "disconnected", lastError: "loggedOut" };
+        await this.resetLoggedOutAuth(socket);
+        if (this.sock === null || this.sock === socket) {
+          this.status = { state: "disconnected", lastError: "loggedOut" };
+        }
         return;
       }
 
@@ -171,9 +235,53 @@ export class WhatsAppConnection {
       };
       this.scheduleReconnect();
     }
+  }
+
+  private disableCredentialSaves(socket: WASocket): void {
+    const credentialUpdateHandler = this.credentialUpdateHandlers.get(socket);
+    if (credentialUpdateHandler) socket.ev.off("creds.update", credentialUpdateHandler);
+    if (this.sock === socket) this.acceptCredentialSaves = false;
+  }
+
+  private resetLoggedOutAuth(socket: WASocket): Promise<void> {
+    const existing = this.authResetOperations.get(socket);
+    if (existing) return existing;
+
+    /**
+     * FNXC:WhatsAppCredentialReset 2026-07-14-02:08:
+     * Explicit logout and logged-out connection events must stop accepting credential writes and drain every accepted save before clearing authentication. Otherwise a standalone credentials upsert can finish after the clear and resurrect the stale session; one reset per socket also prevents the two logout surfaces from racing each other.
+     */
+    this.disableCredentialSaves(socket);
+    const operation = (async () => {
+      await Promise.allSettled([...this.credentialSaveOperations]);
+      if (this.sock !== null && this.sock !== socket) return;
+      await this.persistence.clearAuthState();
+      const replacementAuthState = await createPersistenceAuthState(this.persistence);
+      if (this.sock === null || this.sock === socket) {
+        this.authState = replacementAuthState;
+      }
+    })();
+    this.authResetOperations.set(socket, operation);
+    return operation;
+  }
+
+  private readonly onMessagesUpsert = (
+    upsert: { type?: string; messages?: WAMessage[] },
+  ): Promise<void> => {
+    if (this.stopped) return Promise.resolve();
+    let operation: Promise<void>;
+    operation = this.handleMessagesUpsert(upsert)
+      .catch((error: unknown) => {
+        this.ctx.logger.error("WhatsApp inbound listener failed", error);
+      })
+      .finally(() => this.inboundOperations.delete(operation));
+    this.inboundOperations.add(operation);
+    return operation;
   };
 
-  private readonly onMessagesUpsert = async (upsert: { type?: string; messages?: WAMessage[] }): Promise<void> => {
+  private async handleMessagesUpsert(
+    upsert: { type?: string; messages?: WAMessage[] },
+  ): Promise<void> {
     if (upsert.type !== "notify") return;
 
     for (const message of upsert.messages ?? []) {
@@ -189,43 +297,68 @@ export class WhatsAppConnection {
       const sender = normalizeSender(jid);
       const allowedSenders = getAllowedSenders(this.ctx.settings);
       if (allowedSenders.size === 0 || (!allowedSenders.has(sender) && !allowedSenders.has(jid))) continue;
-      if (wasProcessed(this.db, messageId)) continue;
+      if (!(await this.persistence.claimMessage(
+        messageId,
+        sender,
+        getDedupeRetentionDays(this.ctx.settings),
+      ))) continue;
 
-      markProcessed(this.db, messageId, sender, getDedupeRetentionDays(this.ctx.settings));
-
-      try {
-        const history = loadHistory(this.db, sender);
-        const reply = await this.generateReply(this.ctx, sender, text, history);
-        const now = new Date().toISOString();
-        const nextHistory: ChatTurn[] = [
-          ...history,
-          { role: "user" as const, text, createdAt: now },
-          { role: "assistant" as const, text: reply, createdAt: now },
-        ].slice(-getHistoryTurnLimit(this.ctx.settings));
-        saveHistory(this.db, sender, nextHistory);
-
-        for (const chunk of splitMessageForWhatsapp(reply)) {
-          await this.sock?.sendMessage(jid, { text: chunk });
-        }
-      } catch (error) {
-        this.ctx.logger.error("WhatsApp chat processing failed", error);
+      await this.enqueueSender(sender, async () => {
         try {
-          await this.sock?.sendMessage(jid, { text: FALLBACK_TEXT });
-        } catch {
-          // no-op
+          const history = await this.persistence.loadHistory(sender);
+          const reply = await this.generateReply(this.ctx, sender, text, history);
+          const now = new Date().toISOString();
+          const turns: ChatTurn[] = [
+            { role: "user" as const, text, createdAt: now },
+            { role: "assistant" as const, text: reply, createdAt: now },
+          ];
+          await this.persistence.appendHistory(sender, turns, getHistoryTurnLimit(this.ctx.settings));
+
+          for (const chunk of splitMessageForWhatsapp(reply)) {
+            await this.sock?.sendMessage(jid, { text: chunk });
+          }
+        } catch (error) {
+          this.ctx.logger.error("WhatsApp chat processing failed", error);
+          try {
+            await this.sock?.sendMessage(jid, { text: FALLBACK_TEXT });
+          } catch {
+            // no-op
+          }
         }
-      }
+      });
     }
-  };
+  }
+
+  private async enqueueSender(sender: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.senderQueues.get(sender) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    this.senderQueues.set(sender, current);
+    try {
+      await current;
+    } finally {
+      if (this.senderQueues.get(sender) === current) this.senderQueues.delete(sender);
+    }
+  }
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
     const delay = BACKOFF_MS[Math.min(this.reconnectAttempt, BACKOFF_MS.length - 1)] ?? 30000;
     this.reconnectAttempt += 1;
 
-    this.reconnectTimer = setTimeout(async () => {
+    this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      await this.connect();
+      /*
+       * FNXC:WhatsAppReconnectErrors 2026-07-13-23:40:
+       * Timer callbacks have no promise consumer. Attach failure handling at scheduling time, expose the error through connection status/logs, and continue bounded backoff unless the plugin was stopped.
+       */
+      void this.connect().catch((error: unknown) => {
+        this.status = {
+          state: "error",
+          lastError: error instanceof Error ? error.message : String(error),
+        };
+        this.ctx.logger.error("WhatsApp reconnect failed", error);
+        this.scheduleReconnect();
+      });
     }, delay);
   }
 

@@ -19,12 +19,12 @@ export function getResearchToolSurfaceStatus(settings: Partial<Settings> | undef
 }
 
 const TRIAGE_RESEARCH_GUIDANCE = `## Research tools
-When spec work needs missing domain context, you may use research tools (\`fn_research_run\`, \`fn_research_list\`, \`fn_research_get\`, \`fn_research_cancel\`). Keep research bounded to the task at hand, prefer concise queries, and write durable findings into task documents when useful.
+When spec work needs missing domain context, you may use research tools (\`fn_research_run\`, \`fn_research_list\`, \`fn_research_get\`, \`fn_research_cancel\`, \`fn_research_retry\`). Keep research bounded to the task at hand, prefer concise queries, and write durable findings into task documents when useful.
 If research is unavailable or unconfigured, continue planning with repository context and clearly note assumptions.`;
 
 const EXECUTOR_RESEARCH_GUIDANCE = `## Research tools
 When implementation needs external context, you may use research tools (
-\`fn_research_run\`, \`fn_research_list\`, \`fn_research_get\`, \`fn_research_cancel\`) to run bounded research.
+\`fn_research_run\`, \`fn_research_list\`, \`fn_research_get\`, \`fn_research_cancel\`, \`fn_research_retry\`) to run bounded research.
 Keep runs focused and short, and persist durable conclusions into task documents (for example key="research").
 If research is disabled or providers are not configured, use the actionable tool response and continue with available local context.`;
 

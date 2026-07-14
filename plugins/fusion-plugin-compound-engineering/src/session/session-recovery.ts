@@ -18,10 +18,10 @@ interface RecoverStaleSessionsOptions {
  * their in-memory agent handle. Route callers use a TTL because the individual
  * session endpoint is also the dashboard polling fallback.
  */
-export function recoverStaleSessionsForContext(
+export async function recoverStaleSessionsForContext(
   ctx: PluginContext,
   options: RecoverStaleSessionsOptions,
-): string[] {
+): Promise<string[]> {
   const key = ctx.taskStore as object;
   const now = options.now ?? Date.now();
   const ttlMs = options.ttlMs ?? DEFAULT_RECOVERY_SCAN_TTL_MS;
@@ -32,7 +32,7 @@ export function recoverStaleSessionsForContext(
   lastRecoveryScanAt.set(key, now);
 
   try {
-    const recovered = getCeSessionStore(ctx).recoverStaleSessions(now);
+    const recovered = await getCeSessionStore(ctx).recoverStaleSessionsAsync(now);
     if (recovered.length > 0) {
       ctx.logger.info(`Compound Engineering recovered stale session(s) during ${options.reason}: ${recovered.join(", ")}`);
       if (options.emitEvent) {

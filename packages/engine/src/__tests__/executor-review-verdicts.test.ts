@@ -642,6 +642,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     expect(tools.fn_research_list).toBeTypeOf("function");
     expect(tools.fn_research_get).toBeTypeOf("function");
     expect(tools.fn_research_cancel).toBeTypeOf("function");
+    expect(tools.fn_research_retry).toBeTypeOf("function");
   });
 
   it("does not register research runtime tools when researchView experimental flag is disabled", async () => {
@@ -650,6 +651,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     expect(tools.fn_research_list).toBeUndefined();
     expect(tools.fn_research_get).toBeUndefined();
     expect(tools.fn_research_cancel).toBeUndefined();
+    expect(tools.fn_research_retry).toBeUndefined();
   });
 
   it("REVISE tool response text includes re-review instructions", async () => {
@@ -1976,4 +1978,3 @@ describe("fn_task_add_dep tool", () => {
 // ── Usage limit detection in executor ────────────────────────────────
 
 import { UsageLimitPauser } from "../usage-limit-detector.js";
-

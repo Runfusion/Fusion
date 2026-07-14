@@ -397,7 +397,10 @@ export class CronRunner {
 
         /*
          * FNXC:Automations 2026-06-27-00:00:
-         * Cron execution must claim the due window in SQLite before running so two runner instances, overlapping project/all pollers, or separate engine processes cannot execute the same still-due row. The in-memory inFlight guard remains useful within one process but is not the cross-process authority.
+         * Cron execution must claim the due window in storage before running so two runner instances, overlapping project/all pollers, or separate engine processes cannot execute the same still-due row. The in-memory inFlight guard remains useful within one process but is not the cross-process authority.
+         *
+         * FNXC:AutomationIsolation 2026-07-13-22:37:
+         * PostgreSQL claims include the AutomationStore's bound project ID. A project cron runner may claim its own project or global execution lane, but it must never claim another project's command from the shared table.
          */
         const claimed = await this.automationStore.claimDueSchedule(schedule.id, schedule.nextRunAt);
         if (!claimed) {

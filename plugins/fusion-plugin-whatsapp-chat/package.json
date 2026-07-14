@@ -24,10 +24,12 @@
   "dependencies": {
     "@fusion/plugin-sdk": "workspace:*",
     "@whiskeysockets/baileys": "^6.7.21",
+    "drizzle-orm": "^0.45.2",
     "pino": "^9.9.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
+    "@fusion/core": "workspace:*",
     "@types/node": "^25.5.2",
     "typescript": "^5.7.0",
     "vitest": "^4.1.0"

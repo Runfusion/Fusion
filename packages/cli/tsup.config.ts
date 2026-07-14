@@ -328,8 +328,8 @@ const cliBuildConfig = {
   },
   onSuccess: async () => {
     // FNXC:RuntimeStartupWiring 2026-06-24-11:15:
-    // Stage the PostgreSQL schema baseline (0000_initial.sql + meta) into
-    // dist/migrations so the schema applier can read it at runtime after
+    // FNXC:AutomationIsolation 2026-07-13-22:37: Stage the complete versioned PostgreSQL migration directory (including automation project isolation) into dist/migrations so existing installations upgrade before project cron runners start.
+    // Stage the PostgreSQL schema migrations into dist/migrations so the schema applier can read them at runtime after
     // @fusion/core is bundled into dist/bin.js. Without this, the PG boot
     // path fails with ENOENT for dist/migrations/0000_initial.sql.
     if (existsSync(pgMigrationsSrc)) {
@@ -341,7 +341,7 @@ const cliBuildConfig = {
       console.log("Copied PostgreSQL migrations to dist/migrations/");
     } else {
       console.warn(
-        `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply the schema baseline.`,
+        `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply schema migrations.`,
       );
     }
     if (existsSync(desktopRuntimeDest)) {

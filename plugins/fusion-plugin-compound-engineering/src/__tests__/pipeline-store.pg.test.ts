@@ -15,7 +15,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import {
   applySchemaBaseline,
@@ -26,13 +26,14 @@ import {
   type ResolvedBackend,
 } from "@fusion/core";
 import { CePipelineStore } from "../sync/pipeline-store.js";
+import { CeSessionStore, PlanHandoffClaimError } from "../session/session-store.js";
+import {
+  PG_AVAILABLE,
+  pgDescribe,
+} from "@fusion/test-utils/pg-test-harness";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_AVAILABLE = process.env.FUSION_PG_TEST_SKIP !== "1";
-
-const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
-
 const PG_USER = process.env.USER ?? "postgres";
 
 function adminExec(statement: string): void {
@@ -51,6 +52,7 @@ function uniqueDbName(): string {
 interface TestCtx {
   readonly dbName: string;
   readonly layer: AsyncDataLayer;
+  readonly layerB: AsyncDataLayer;
   close(): Promise<void>;
 }
 
@@ -83,12 +85,14 @@ async function setupCtx(): Promise<TestCtx> {
     poolMax: 5,
     connectTimeoutSeconds: 5,
   });
-  const layer = createAsyncDataLayer(connections);
+  const layer = createAsyncDataLayer(connections, { projectId: "ce-project-a" });
+  const layerB = createAsyncDataLayer(connections, { projectId: "ce-project-b" });
 
   let closed = false;
   return {
     dbName,
     layer,
+    layerB,
     async close() {
       if (closed) return;
       closed = true;
@@ -117,6 +121,57 @@ afterAll(async () => {
 });
 
 pgDescribe("CePipelineStore (PG backend mode)", () => {
+  it("persists sessions and isolates identical lookups by bound project", async () => {
+    const a = new CeSessionStore(null, ctx!.layer);
+    const b = new CeSessionStore(null, ctx!.layerB);
+    expect(await a.listAsync()).toEqual([]);
+    expect(await b.listAsync()).toEqual([]);
+    const created = await a.createAsync({ id: "shared-session", stage: "brainstorm" });
+    await a.appendHistoryAsync(created.id, { role: "user", text: "hello", at: new Date().toISOString() });
+    expect((await a.getAsync(created.id))?.conversationHistory[0]?.text).toBe("hello");
+    expect(await b.getAsync(created.id)).toBeUndefined();
+  });
+
+  it("keeps terminal state and every history turn under concurrent liveness and history writes", async () => {
+    const store = new CeSessionStore(null, ctx!.layer);
+    const session = await store.createAsync({ id: "session-concurrency", stage: "brainstorm" });
+    const turns = Array.from({ length: 12 }, (_, index) => ({
+      role: "agent" as const,
+      text: `turn-${index}`,
+      at: new Date(1_700_000_000_000 + index).toISOString(),
+    }));
+
+    /*
+     * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:24:
+     * Concurrent PostgreSQL history appends, terminal transitions, and heartbeat touches must compose without last-writer-wins loss. This regression exercises the real database so a read-modify-write implementation deterministically loses one or more independently appended turns.
+     */
+    await Promise.all([
+      ...turns.map((turn) => store.appendHistoryAsync(session.id, turn)),
+      store.updateAsync(session.id, { status: "completed" }),
+      store.touchActivityAsync(session.id, Date.now() + 1000),
+    ]);
+
+    const settled = await store.getAsync(session.id);
+    expect(settled?.status).toBe("completed");
+    expect(settled?.conversationHistory.map((turn) => turn.text).sort()).toEqual(
+      turns.map((turn) => turn.text).sort(),
+    );
+  });
+
+  it("allows exactly one PostgreSQL Plan handoff claim under concurrent starts", async () => {
+    const first = new CeSessionStore(null, ctx!.layer);
+    const second = new CeSessionStore(null, ctx!.layer);
+    const artifactPath = "/tmp/ce-concurrent-plan.md";
+    const results = await Promise.allSettled([
+      first.createWithPlanHandoffClaimAsync({ id: "plan-claim-a", stage: "plan" }, artifactPath),
+      second.createWithPlanHandoffClaimAsync({ id: "plan-claim-b", stage: "plan" }, artifactPath),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toBeInstanceOf(PlanHandoffClaimError);
+    expect((await first.listAsync({ stage: "plan" })).filter((row) => row.artifactPath === artifactPath)).toHaveLength(1);
+  });
   it("constructs in backend mode (asyncLayer wired, sync db null)", () => {
     const store = new CePipelineStore(null, ctx!.layer);
     expect(store.backendMode).toBe(true);

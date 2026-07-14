@@ -49,11 +49,20 @@ function createInMemoryDb() {
           return undefined;
         },
         run: (...args: unknown[]) => {
+          if (sql.includes("INSERT OR IGNORE INTO whatsapp_chat_dedupe")) {
+            if (dedupe.has(args[0] as string)) return { changes: 0 };
+            dedupe.set(args[0] as string, {
+              sender: args[1] as string,
+              receivedAt: args[2] as string,
+            });
+            return { changes: 1 };
+          }
           if (sql.includes("INSERT INTO whatsapp_chat_dedupe")) {
             dedupe.set(args[0] as string, {
               sender: args[1] as string,
               receivedAt: args[2] as string,
             });
+            return { changes: 1 };
           }
           if (sql.includes("DELETE FROM whatsapp_chat_dedupe WHERE receivedAt < ?")) {
             const cutoff = args[0] as string;

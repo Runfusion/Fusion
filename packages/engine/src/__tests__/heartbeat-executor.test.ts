@@ -3055,7 +3055,7 @@ describe("executeHeartbeat", () => {
       expect(callArgs.tools).toBe("coding");
       // fn_artifact_register/list/view, agent config/provisioning, goals/evaluations/identity,
       // task read discovery, workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(40);
+      expect(callArgs.customTools).toHaveLength(41);
       expect(callArgs.customTools![0]!.name).toBe("fn_task_create");
       expect(callArgs.customTools![1]!.name).toBe("fn_task_log");
       expect(callArgs.customTools![2]!.name).toBe("fn_task_document_write");
@@ -3089,14 +3089,15 @@ describe("executeHeartbeat", () => {
       expect(callArgs.customTools![30]!.name).toBe("fn_research_list");
       expect(callArgs.customTools![31]!.name).toBe("fn_research_get");
       expect(callArgs.customTools![32]!.name).toBe("fn_research_cancel");
-      expect(callArgs.customTools![33]!.name).toBe("fn_workflow_select");
-      expect(callArgs.customTools![34]!.name).toBe("fn_task_promote");
-      expect(callArgs.customTools![35]!.name).toBe("fn_web_fetch");
-      expect(callArgs.customTools![36]!.name).toBe("fn_memory_search");
-      expect(callArgs.customTools![37]!.name).toBe("fn_memory_get");
-      expect(callArgs.customTools![38]!.name).toBe("fn_memory_append");
+      expect(callArgs.customTools![33]!.name).toBe("fn_research_retry");
+      expect(callArgs.customTools![34]!.name).toBe("fn_workflow_select");
+      expect(callArgs.customTools![35]!.name).toBe("fn_task_promote");
+      expect(callArgs.customTools![36]!.name).toBe("fn_web_fetch");
+      expect(callArgs.customTools![37]!.name).toBe("fn_memory_search");
+      expect(callArgs.customTools![38]!.name).toBe("fn_memory_get");
+      expect(callArgs.customTools![39]!.name).toBe("fn_memory_append");
       // fn_heartbeat_done is last (terminal tool)
-      expect(callArgs.customTools![39]!.name).toBe("fn_heartbeat_done");
+      expect(callArgs.customTools![40]!.name).toBe("fn_heartbeat_done");
     });
 
     it("loads workspace memory into system prompt and identity snapshot when inline memory is empty", async () => {
@@ -4202,4 +4203,3 @@ describe("executeHeartbeat", () => {
 });
 
 // ── Task Creation Tracking Tests ──────────────────────────────────────
-
