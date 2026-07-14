@@ -220,6 +220,35 @@ describe("WhatsAppConnection", () => {
     ]);
   });
 
+  it("sends an accepted reply before a concurrent stop closes its socket", async () => {
+    const replyPersisted = deferred();
+    const releasePersistedReply = deferred();
+    const persistence = createSqliteWhatsAppPersistence(createInMemoryDb() as any);
+    const appendHistory = persistence.appendHistory.bind(persistence);
+    vi.spyOn(persistence, "appendHistory").mockImplementation(async (...args) => {
+      await appendHistory(...args);
+      replyPersisted.resolve();
+      await releasePersistedReply.promise;
+    });
+    const connection = new WhatsAppConnection(makeCtx(), "0.1.0", vi.fn().mockResolvedValue("saved reply"), persistence);
+    await connection.start();
+    const upsert = mockState.handlers.get("messages.upsert")!;
+
+    const inbound = upsert({ type: "notify", messages: [{ key: { remoteJid: "15550001111@s.whatsapp.net", id: "m-stop-race", fromMe: false }, message: { conversation: "hello" } }] });
+    await replyPersisted.promise;
+    const stop = connection.stop();
+
+    await Promise.resolve();
+    expect(mockState.handlers.has("messages.upsert")).toBe(false);
+    expect(mockState.end).not.toHaveBeenCalled();
+    releasePersistedReply.resolve();
+    await Promise.all([inbound, stop]);
+
+    expect(mockState.sendMessage).toHaveBeenCalledWith("15550001111@s.whatsapp.net", { text: "saved reply" });
+    expect(mockState.sendMessage.mock.invocationCallOrder[0])
+      .toBeLessThan(mockState.end.mock.invocationCallOrder[0]!);
+  });
+
   it("attempts server logout through the socket captured before a concurrent stop", async () => {
     const logoutStarted = deferred();
     const releaseLogout = deferred();

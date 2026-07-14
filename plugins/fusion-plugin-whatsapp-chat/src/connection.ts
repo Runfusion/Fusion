@@ -69,6 +69,7 @@ export class WhatsAppConnection {
   private stopped = true;
   private authState: Awaited<ReturnType<typeof createPersistenceAuthState>> | null = null;
   private readonly senderQueues = new Map<string, Promise<void>>();
+  private readonly inboundOperations = new Set<Promise<void>>();
 
   public constructor(
     private readonly ctx: PluginContext,
@@ -91,13 +92,18 @@ export class WhatsAppConnection {
     this.clearReconnectTimer();
 
     const socket = this.sock;
-    this.sock = null;
     this.status = { state: "disconnected" };
 
     if (socket) {
       socket.ev.off("creds.update", this.onCredsUpdate);
       socket.ev.off("connection.update", this.onConnectionUpdate);
       socket.ev.off("messages.upsert", this.onMessagesUpsert);
+      /**
+       * FNXC:WhatsAppGracefulStop 2026-07-14-01:28:
+       * Stop must reject new inbound work but let every already-accepted message send its persisted reply before the active socket closes. Otherwise the mutable socket can become null after history is saved, silently skipping a dedupe-claimed reply with no retry path.
+       */
+      await Promise.allSettled([...this.inboundOperations]);
+      if (this.sock === socket) this.sock = null;
       await socket.end(undefined);
     }
   }
@@ -200,9 +206,17 @@ export class WhatsAppConnection {
 
   private readonly onMessagesUpsert = (
     upsert: { type?: string; messages?: WAMessage[] },
-  ): Promise<void> => this.handleMessagesUpsert(upsert).catch((error: unknown) => {
-    this.ctx.logger.error("WhatsApp inbound listener failed", error);
-  });
+  ): Promise<void> => {
+    if (this.stopped) return Promise.resolve();
+    let operation: Promise<void>;
+    operation = this.handleMessagesUpsert(upsert)
+      .catch((error: unknown) => {
+        this.ctx.logger.error("WhatsApp inbound listener failed", error);
+      })
+      .finally(() => this.inboundOperations.delete(operation));
+    this.inboundOperations.add(operation);
+    return operation;
+  };
 
   private async handleMessagesUpsert(
     upsert: { type?: string; messages?: WAMessage[] },
