@@ -23,4 +23,10 @@ describe("standing-instructions-template", () => {
     expect(withStandingInstructionsTemplate("")).toBe(STANDING_INSTRUCTIONS_TEMPLATE);
     expect(withStandingInstructionsTemplate("Already filled")).toBe("Already filled");
   });
+
+  it("preserves trailing newline on non-empty body and strips other trailing whitespace", () => {
+    expect(withStandingInstructionsTemplate("Already filled\n")).toBe("Already filled\n");
+    expect(withStandingInstructionsTemplate("Already filled\n\n")).toBe("Already filled\n");
+    expect(withStandingInstructionsTemplate("Already filled  ")).toBe("Already filled");
+  });
 });

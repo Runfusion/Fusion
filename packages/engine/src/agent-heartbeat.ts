@@ -3238,9 +3238,12 @@ export class HeartbeatMonitor {
           FNXC:WakeDeltaMultiAssign 2026-07-13-12:20:
           Inject compact ranked multi-assignment inventory into Wake Delta so permanent agents see siblings beyond singular agent.taskId.
           Coordination inventory only — not an implement-from-heartbeat queue. Cap 8; fully unactionable blocked stay count-only.
+
+          FNXC:WakeDeltaMultiAssign 2026-07-14-12:00:
+          Skip getTasksByAssignedAgent for ephemeral agents — multi-assign inventory is permanent-agent coordination only.
           */
           let multiAssignWakeDeltaLines: string[] = [];
-          if (this.taskStore && typeof this.taskStore.getTasksByAssignedAgent === "function") {
+          if (!isAgentEphemeral && this.taskStore && typeof this.taskStore.getTasksByAssignedAgent === "function") {
             try {
               const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
               const ranked = rankAssignedTasksForWakeDelta(assignedOpen, {

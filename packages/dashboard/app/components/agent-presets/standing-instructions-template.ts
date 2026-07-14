@@ -45,7 +45,12 @@ export function withStandingInstructionsTemplate(body?: string | null): string {
   if (isStandingInstructionsEmpty(body)) {
     return STANDING_INSTRUCTIONS_TEMPLATE;
   }
-  return body!.trimEnd() + (body!.endsWith("\n") ? "" : "");
+  /*
+  FNXC:StandingInstructionsTemplate 2026-07-14-12:00:
+  Preserve a trailing newline when the original non-empty body ended with one.
+  trimEnd strips trailing whitespace first; re-append "\n" only if body had a final newline.
+  */
+  return body!.trimEnd() + (body!.endsWith("\n") ? "\n" : "");
 }
 
 /** Whether text already contains the six section headings. */
