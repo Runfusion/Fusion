@@ -431,8 +431,8 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-1165-NOOP",
       expect.stringContaining("implementation did not run"),
-      expect.anything(),
-      expect.anything(),
+      undefined,
+      undefined,
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
   });
