@@ -15,7 +15,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  h.close();
+  h?.close();
   vi.restoreAllMocks();
 });
 

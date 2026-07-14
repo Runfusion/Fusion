@@ -22,10 +22,12 @@ export interface TestHarness {
 }
 
 const dbName = `ce_harness_${process.pid}_${process.env.VITEST_POOL_ID ?? "0"}_${Math.random().toString(36).slice(2, 8)}`.replace(/[^a-zA-Z0-9_]/g, "_");
-const pgUser = process.env.USER ?? "postgres";
 let connections: Awaited<ReturnType<typeof createConnectionSetFromUrl>> | null = null;
 let setupPromise: Promise<void> | null = null;
-function admin(statement: string): void { execSync(`psql -h localhost -p 5432 -U ${pgUser} -d postgres -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" }); }
+// FNXC:PgTestAuthFix 2026-07-14-07:40:
+// The inline admin used process.env.USER for the psql -U flag, which is 'runner' on
+// GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead.
+function admin(statement: string): void { execSync(`psql "${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/postgres" -v ON_ERROR_STOP=1 -c "${statement}"`, { stdio: "pipe" }); }
 async function setupPostgres(): Promise<void> {
   if (connections) return;
   admin(`DROP DATABASE IF EXISTS ${dbName}`); admin(`CREATE DATABASE ${dbName}`);
