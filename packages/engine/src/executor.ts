@@ -566,6 +566,12 @@ function buildExecuteRequeueLoopHighWaterSignature(live: TaskDetail, previousSig
   };
 }
 
+const INVALID_ASSISTANT_CONTINUATION_PATTERN = /cannot continue from message role:\s*assistant/i;
+
+function isInvalidAssistantContinuationErrorMessage(errorMessage: string): boolean {
+  return INVALID_ASSISTANT_CONTINUATION_PATTERN.test(errorMessage);
+}
+
 const TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN = /ENOENT:\s+no such file or directory,\s+open\s+'([^']+\/\.fusion\/tasks\/([^/]+)\/task\.json)'/;
 
 export function isTransientMissingTaskJsonError(error: unknown, task: Pick<Task, "id" | "worktree">): boolean {
@@ -9824,6 +9830,7 @@ export class TaskExecutor {
     // the finally block so this.executing is cleared first (prevents re-dispatch race).
     // true = requeue to todo, false = budget exhausted (already marked failed).
     let stuckRequeue: boolean | null = null;
+    let staleAssistantContinuationRequeue = false;
     let taskDone = false;
     let reviewAddressingActivated = false;
     let taskEnv: NodeJS.ProcessEnv | undefined;
@@ -11793,6 +11800,54 @@ export class TaskExecutor {
         // Dependency added mid-execution — discard worktree and move to triage
         this.depAborted.delete(task.id);
         await this.handleDepAbortCleanup(task.id, worktreePath);
+      } else if (isInvalidAssistantContinuationErrorMessage(errorMessage)) {
+        /*
+        FNXC:ExecutorSessionRecovery 2026-07-14-06:03:
+        A stale assistant-last transcript gets a bounded fresh-session retry with the shared recovery backoff. The retry counter must survive the deferred move so repeated fresh-session failures eventually become a visible execution failure instead of cycling through Todo forever.
+
+        FNXC:ExecutorSessionRecovery 2026-07-14-06:19:
+        Deferred self-requeues must mark the workflow graph recovery and release the active worktree slot after the executor lock drops; otherwise graph failure cleanup can overwrite the recovery and the parked task can keep consuming maxWorktrees capacity.
+        */
+        const liveTask = await this.store.getTask(task.id);
+        const decision = computeRecoveryDecision({
+          recoveryRetryCount: liveTask.recoveryRetryCount,
+          nextRecoveryAt: liveTask.nextRecoveryAt,
+        });
+        if (!decision.shouldRetry) {
+          executorLog.error(`✗ ${task.id} stale assistant-continuation retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
+          await this.store.logEntry(
+            task.id,
+            `Stale assistant-continuation fresh-session retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`,
+            errorStack ?? errorDetail,
+            this.getRunContextFor(task.id),
+          );
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: errorMessage,
+            recoveryRetryCount: null,
+            nextRecoveryAt: null,
+          });
+          await this.persistTokenUsage(task.id);
+          this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
+          return;
+        }
+
+        staleAssistantContinuationRequeue = true;
+        const attempt = decision.nextState.recoveryRetryCount;
+        const delay = formatDelay(decision.delayMs);
+        executorLog.warn(`${task.id} stale assistant-continuation session detected — fresh-session retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay} after executor lock release`);
+        await this.store.logEntry(
+          task.id,
+          `Detected stale assistant-continuation session — fresh-session retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay} with progress preserved: ${errorMessage}`,
+          undefined,
+          this.getRunContextFor(task.id),
+        );
+        await this.store.updateTask(task.id, {
+          sessionFile: null,
+          recoveryRetryCount: decision.nextState.recoveryRetryCount,
+          nextRecoveryAt: decision.nextState.nextRecoveryAt,
+        });
+        return;
       } else if (errorMessage.includes("Invalid transition")) {
         // Task was moved by user/process while executor was running — already in desired state
         // This check must come before pausedAborted since it's more specific
@@ -12486,6 +12541,54 @@ export class TaskExecutor {
         const latestTask = await this.store.getTask(task.id);
         if (latestTask.column === "done" || latestTask.column === "archived") {
           this.branchConflictErrorCount.delete(task.id);
+        }
+      }
+
+      // Requeue stale assistant-continuation sessions AFTER this.executing is cleared.
+      // Moving the task while the execution guard is still held can cause the scheduler's
+      // task:moved dispatch to no-op, stranding the task in todo with no fresh run.
+      if (staleAssistantContinuationRequeue) {
+        /*
+        FNXC:ExecutorSessionRecovery 2026-07-14-06:26:
+        Claim the process-wide executor lock for deferred cleanup, release it immediately before moveTask emits task:moved, and always drop the claim on errors. This closes the guard-release race without recreating the original no-op dispatch: a fresh retry cannot start while stale state is being cleared, but can claim the task when the committed move event fires.
+
+        FNXC:ExecutorSessionRecovery 2026-07-14-06:34:
+        Release the stale run's activeWorktrees slot before releasing the executor lock. Once the lock is open, the fresh retry may install its own slot while moveTask dispatches; deleting afterward would erase the new run's capacity and liveness tracking.
+        */
+        const cleanupClaimed = executingTaskLock.tryClaim(task.id);
+        if (!cleanupClaimed) {
+          executorLog.log(`${task.id} stale assistant-continuation requeue skipped — a fresh executor already claimed the task`);
+        } else {
+          let cleanupLockHeld = true;
+          try {
+            const latestTask = await this.store.getTask(task.id);
+            if (latestTask.column === "in-progress" || latestTask.column === "todo") {
+              await this.store.updateTask(task.id, {
+                sessionFile: null,
+                status: null,
+                error: null,
+              });
+              if (latestTask.column !== "todo") {
+                this.markGraphExecuteSelfRequeued(task.id);
+                this.activeWorktrees.delete(task.id);
+                executingTaskLock.release(task.id);
+                cleanupLockHeld = false;
+                await this.store.moveTask(task.id, "todo", { preserveResumeState: true });
+              } else {
+                this.activeWorktrees.delete(task.id);
+              }
+              executorLog.log(`${task.id} stale assistant-continuation session cleared — requeued to todo with progress preserved`);
+            } else {
+              executorLog.log(`${task.id} stale assistant-continuation requeue skipped — task is now in '${latestTask.column}'`);
+            }
+          } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            executorLog.error(`Failed to requeue stale assistant-continuation task ${task.id}: ${errorMessage}`);
+          } finally {
+            if (cleanupLockHeld) {
+              executingTaskLock.release(task.id);
+            }
+          }
         }
       }
 
