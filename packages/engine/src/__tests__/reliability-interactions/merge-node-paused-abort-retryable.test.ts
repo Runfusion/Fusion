@@ -275,4 +275,100 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
       expect.objectContaining({ status: null, error: null, paused: false }),
     );
   });
+
+  const implementationIncompleteMergeNodes = [
+    "merge",
+    "requestMerge",
+    "merge-gate",
+    "merge-attempt",
+    "manual-merge-hold",
+    "merge-manual-hold",
+    "retry-backoff",
+    "merge-retry",
+  ] as const;
+
+  it.each(implementationIncompleteMergeNodes)("fails implementation-incomplete no-proof merge pause abort at node %s without requesting no-op merge", async (nodeId) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [],
+      currentStep: 0,
+      branch: null,
+      worktree: null,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+    mergeRequester.mockImplementation(async () => {
+      await store.updateTask(task.id, {
+        mergeDetails: {
+          mergeConfirmed: true,
+          noOpMerge: true,
+          noOpReason: "no-branch",
+        },
+      });
+      return {
+        task,
+        branch: null,
+        merged: true,
+        noOp: true,
+        mergeConfirmed: true,
+        reason: "no-branch",
+        worktreeRemoved: false,
+        branchDeleted: false,
+      } as any;
+    });
+
+    await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        mergeDetails: expect.objectContaining({ noOpMerge: true, noOpReason: "no-branch" }),
+      }),
+      expect.anything(),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("implementation incomplete with no executable proof to resume"),
+      }),
+      undefined,
+    );
+    const messages = logText(store);
+    expect(messages).toContain(`Workflow graph merge blocked at node '${nodeId}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`);
+    expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
+  });
+
+  it.each(implementationIncompleteMergeNodes)("requeues resumable implementation-incomplete parsed steps at node %s without requesting merge", async (nodeId) => {
+    const { store, task, executor, mergeRequester } = makeHarness({
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implement", status: "pending" },
+      ],
+      currentStep: 1,
+      branch: null,
+      worktree: null,
+      modifiedFiles: undefined,
+      workflowStepResults: undefined,
+      paused: false,
+    } as Partial<TaskDetail>);
+
+    await invokeGraphFailure(executor, task, nodeId, "implementation-incomplete");
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: null, error: null }, undefined);
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
+      preserveProgress: true,
+      moveSource: "engine",
+      recoveryRehome: true,
+    }));
+    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "done", expect.anything());
+    const messages = logText(store);
+    expect(messages).toContain(`Workflow graph failed at node '${nodeId}' (implementation-incomplete) with incomplete steps — moved back to todo for execution resume`);
+    expect(messages).not.toContain("routed to bounded auto-merge retry after benign pause/resume abort");
+  });
+
 });

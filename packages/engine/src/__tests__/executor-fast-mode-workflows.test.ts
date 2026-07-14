@@ -378,6 +378,65 @@ describe("fast mode workflow/runtime invariants", () => {
     );
   });
 
+
+  it("allows noCommitsExpected builtin:coding merge even when parsed implementation steps are empty", async () => {
+    const liveTask = task({
+      id: "FN-1165-NOOP",
+      executionMode: "fast",
+      enabledWorkflowSteps: [],
+      column: "in-progress",
+      steps: [],
+      noCommitsExpected: true,
+      branch: null,
+      worktree: null,
+      prompt: "# Task\n\n## Steps\n\n### Step 1: Decide\n- [ ] Record no-code decision",
+    });
+    const inReviewTask = { ...liveTask, column: "in-review" } as typeof liveTask;
+    const doneTask = {
+      ...liveTask,
+      column: "done",
+      mergeDetails: {
+        mergeConfirmed: true,
+        noOpMerge: true,
+        noOpReason: "no-commits-expected",
+      },
+    } as typeof liveTask;
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(liveTask);
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "builtin:coding", stepIds: [] }));
+    store.getWorkflowDefinition = vi.fn(async (id: string) => getBuiltinWorkflow(id));
+    store.moveTask
+      .mockResolvedValueOnce(inReviewTask)
+      .mockResolvedValueOnce(doneTask);
+    const executor = new TaskExecutor(store, "/tmp/test") as any;
+    const mergeRequester = vi.fn(async () => ({
+      task: inReviewTask,
+      merged: true,
+      noOp: true,
+      mergeConfirmed: true,
+      reason: "no-commits-expected",
+    }));
+    executor.setMergeRequester(mergeRequester);
+
+    const result = await executor.createAuthoritativeWorkflowPrimitives({ autoMerge: true }).requestMerge(
+      {
+        run: { runId: "FN-1165-NOOP:builtin:coding", taskId: "FN-1165-NOOP", workflowId: "builtin-stepwise-final-review-coding" },
+        node: { node: { id: "merge" } },
+      },
+      liveTask,
+    );
+
+    expect(result).toMatchObject({ outcome: "success", value: "merge-noop" });
+    expect(mergeRequester).toHaveBeenCalledWith("FN-1165-NOOP", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-1165-NOOP",
+      expect.stringContaining("implementation did not run"),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
+  });
+
   it("fast builtin:coding executes plain Steps-section headings from fast triage specs", async () => {
     const calls: string[] = [];
     const prompt = `# Task
