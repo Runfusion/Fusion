@@ -9763,8 +9763,17 @@ export class TaskExecutor {
       /*
       FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
       After graph falls back it may have re-registered a scheduler pre-held slot for legacy execute. Any return that does not reach runWithExecutorSemaphore (which take()s the registration) must dropPreHeldExecutorSlot or the shared semaphore stays permanently inflated.
+
+      FNXC:GlobalConcurrencyControls 2026-07-15-03:10:
+      workflowAuthoritativeDispatch can reject as well as return true. Rejection propagates out of execute() before the explicit drop below and before the main executor try/finally, so the re-registered pre-held registration and underlying semaphore claim would otherwise stay active forever. Drop before rethrowing.
       */
-      const authoritativeOwned = await this.options.workflowAuthoritativeDispatch?.(task);
+      let authoritativeOwned: boolean | undefined;
+      try {
+        authoritativeOwned = await this.options.workflowAuthoritativeDispatch?.(task);
+      } catch (err) {
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        throw err;
+      }
       if (authoritativeOwned) {
         dropPreHeldExecutorSlot(task.id, this.options.semaphore);
         return;

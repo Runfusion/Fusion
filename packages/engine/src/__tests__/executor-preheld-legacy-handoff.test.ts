@@ -19,6 +19,11 @@ the legacy execute path. execute() must drop that registration on every early re
 that never reaches runWithExecutorSemaphore.take — authoritative dispatch accept,
 workflow work-engine claim, and heartbeat defer — or the shared semaphore permanently
 shrinks global capacity. Surface enumeration covers all three named leak paths.
+
+FNXC:GlobalConcurrencyControls 2026-07-15-03:10:
+Also cover authoritative dispatch rejection: a thrown callback exits execute() before the
+accept-path drop and before the main try/finally, so the re-registered slot would leak
+unless drop runs in the catch-before-rethrow path.
 */
 
 const now = "2026-07-15T00:00:00.000Z";
@@ -99,6 +104,35 @@ describe("executor pre-held legacy handoff (graph fallback)", () => {
     } as any);
 
     await executor.execute(live);
+
+    expect(workflowAuthoritativeDispatch).toHaveBeenCalledTimes(1);
+    expect(hasPreHeldExecutorSlot(live.id)).toBe(false);
+    expect(sem.activeCount).toBe(0);
+  });
+
+  it("drops the re-registered slot when authoritative dispatch rejects", async () => {
+    resetExecutorMocks();
+    clearPreHeldExecutorSlotsForTests();
+    executingTaskLock._clearForTest();
+
+    const sem = new AgentSemaphore(2);
+    const live = task();
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(live);
+    store.getSettings.mockResolvedValue(settings());
+    delete (store as { getTaskWorkflowSelection?: unknown }).getTaskWorkflowSelection;
+    delete (store as { getTaskWorkflowSelectionAsync?: unknown }).getTaskWorkflowSelectionAsync;
+
+    reservePreHeld(live.id, sem);
+
+    const dispatchError = new Error("authoritative dispatch failed");
+    const workflowAuthoritativeDispatch = vi.fn().mockRejectedValue(dispatchError);
+    const executor = new TaskExecutor(store, "/tmp/test", {
+      semaphore: sem,
+      workflowAuthoritativeDispatch,
+    } as any);
+
+    await expect(executor.execute(live)).rejects.toThrow("authoritative dispatch failed");
 
     expect(workflowAuthoritativeDispatch).toHaveBeenCalledTimes(1);
     expect(hasPreHeldExecutorSlot(live.id)).toBe(false);
