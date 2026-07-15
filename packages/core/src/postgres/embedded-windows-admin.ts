@@ -288,8 +288,9 @@ export async function startServerAsNonAdminUser(
     ].join("\r\n"),
     "ascii",
   );
+  const powerShell = resolvePowerShell();
   const launch = spawnSync(
-    resolvePowerShell(),
+    powerShell,
     [
       "-NoProfile",
       "-ExecutionPolicy",
@@ -311,7 +312,7 @@ export async function startServerAsNonAdminUser(
   if (!Number.isFinite(wrapperPid)) {
     throw new Error(
       `embedded postgres: failed to launch non-admin postgres ` +
-        `(powershell status=${launch.status}: ${(launch.stderr || "").trim().slice(0, 400)}).`,
+        `(${powerShell} status=${launch.status}: ${(launch.stderr || "").trim().slice(0, 400)}).`,
     );
   }
   opts.onLog(
