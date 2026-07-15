@@ -8804,11 +8804,28 @@ export class TaskExecutor {
   }
 
   private async routeImplementationIncompleteMergeGraphFailure(live: TaskDetail, failedNode: string): Promise<boolean> {
+    /*
+    FNXC:WorkflowMerge 2026-07-14-18:20:
+    FN-1165 greptile P1s: (1) system-paused implementation-incomplete merge failures must still classify —
+    clear only non-user pause parks so incomplete steps can requeue; real global/user pauses never enter this method.
+    (2) Do not drop activeWorktrees until we know the outcome is terminal fail-closed. Resumable requeue preserves
+    progress (and often the persisted worktree); releasing tracking early leaves that worktree uncounted while a later
+    dispatch can allocate a second one. Keep the active registration on the resumable path; release only on fail-closed.
+    */
     this.clearPausedAborted(live.id);
-    this.activeWorktrees.delete(live.id);
-    if (hasNonTerminalWorkflowSteps(live) && await this.routeGraphFailureToExecutionResume(live, failedNode, "implementation-incomplete")) {
+    let resumeLive = live;
+    if (live.paused === true && live.userPaused !== true) {
+      await this.store.updateTask(live.id, {
+        paused: false,
+        pausedReason: null,
+      }, this.getRunContextFor(live.id));
+      resumeLive = { ...live, paused: false, pausedReason: null };
+    }
+    if (hasNonTerminalWorkflowSteps(resumeLive) && await this.routeGraphFailureToExecutionResume(resumeLive, failedNode, "implementation-incomplete")) {
       return true;
     }
+    // Fail-closed terminal path — release active worktree tracking now that no resume will reuse it.
+    this.activeWorktrees.delete(live.id);
     const message = `Workflow graph merge blocked at node '${failedNode}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`;
     executorLog.warn(`${live.id}: ${message}`);
     await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
@@ -8917,11 +8934,16 @@ export class TaskExecutor {
           return;
         }
       }
+      /*
+      FNXC:WorkflowMerge 2026-07-14-18:20:
+      FN-1165 greptile P1: system pause (`live.paused` without userPaused/global-pause) must still enter the
+      implementation-incomplete merge classifier. Requiring `live.paused !== true` let pause-abort parking win and
+      skipped fail-closed/resumable routing for missing implementation proof. User pause and global-pause stay excluded.
+      */
       if (
         genuinePauseAbort
         && abortProvenance !== "global-pause"
         && abortProvenance !== "completion-finalize"
-        && live.paused !== true
         && live.userPaused !== true
         && this.isMergeGraphFailure(failedNodeForLog)
         && failureValueForLog === "implementation-incomplete"
