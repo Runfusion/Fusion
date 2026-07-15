@@ -1022,8 +1022,8 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 - **Health check**: `GET /api/health`
   - Returns liveness status for load balancers and monitoring
   - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly", checkedAt: string | null, anomalies: [...], recommendedAction: string | null } }`
-  - PostgreSQL health is derived from the active data layer's connectivity probe; startup and explicit refreshes never open or inspect a SQLite file.
-  - The `corruptionDetected` and `corruptionErrors` response fields remain for API compatibility. PostgreSQL reports connectivity failures through them until the dashboard health contract is versioned independently.
+  - PostgreSQL startup and explicit refreshes never open or inspect a SQLite file.
+  - The `corruptionDetected` and `corruptionErrors` response fields remain as compatibility placeholders and do not currently report PostgreSQL connectivity failures.
   - The former background `PRAGMA integrity_check` scheduling, per-`fusion.db` deduplication, and SQLite corruption notification behavior are pre-cutover history only; they are not a runtime fallback.
   - `POST /api/health/refresh` recomputes the task-ID integrity section on demand and returns the same top-level shape, including the current database corruption fields.
   - No authentication required
