@@ -1586,19 +1586,19 @@ export class InProcessRuntime
    * Get the project's TaskStore instance.
    * @throws Error if runtime has not been started
    */
+  getTaskStore(): TaskStore {
+    if (!this.taskStore) {
+      throw new Error("TaskStore not initialized. Call start() first.");
+    }
+    return this.taskStore;
+  }
+
   /**
    * FNXC:PlannerOversight 2026-07-13-23:05:
    * Expose TaskExecutor so ProjectEngine can wire session-advisor log flush.
    */
   getExecutor(): TaskExecutor | undefined {
     return this.executor;
-  }
-
-  getTaskStore(): TaskStore {
-    if (!this.taskStore) {
-      throw new Error("TaskStore not initialized. Call start() first.");
-    }
-    return this.taskStore;
   }
 
   /**

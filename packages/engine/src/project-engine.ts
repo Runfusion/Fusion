@@ -49,6 +49,7 @@ import {
   OverseerAdvisorService,
   createParsingOverseerAgent,
 } from "./overseer-advisor-service.js";
+import { extractAdvisorAssistantText } from "./overseer-advise-tool.js";
 import { createResolvedAgentSession } from "./agent-session-helpers.js";
 import type { PrNodeGithubOps } from "./pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
@@ -1213,7 +1214,12 @@ export class ProjectEngine {
    */
   notifySessionAdvisorLogDelta(taskId: string, entries: Array<{ type?: string; text?: string; detail?: string; agent?: string }>): void {
     try {
-      void this.sessionAdvisor?.onExecutorLogDelta(taskId, entries);
+      // FNXC:PlannerOversight 2026-07-14-14:00: CodeRabbit — attach .catch so async rejections cannot become unhandled rejections (sync try/catch is not enough).
+      void this.sessionAdvisor?.onExecutorLogDelta(taskId, entries)?.catch((err) => {
+        runtimeLog.warn(
+          `session advisor log-delta notification failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
     } catch {
       /* ignore */
     }
@@ -2585,6 +2591,20 @@ export class ProjectEngine {
     evaluateOverseerHumanControl honors autoMerge:false / human-review
     (undefined settings previously defaulted autoMerge:true).
     */
+    /*
+    FNXC:PlannerOversight 2026-07-14-14:00:
+    Shared per-task workflow settings loader for session-advisor resolve*
+    callbacks (avoids three independent resolveEffectiveSettings shapes with
+    diverging fallbacks). Still one store round-trip per callback invocation.
+    */
+    const loadWorkflowForTask = async (task: Task): Promise<Record<string, unknown>> =>
+      resolveEffectiveSettings(store, { id: task.id }).catch(() => ({}) as Record<string, unknown>);
+
+    const resolveAdvisorCwd = (task: Task | undefined): string => {
+      if (task && typeof task.worktree === "string" && task.worktree.length > 0) return task.worktree;
+      return this.config?.workingDirectory ?? process.cwd();
+    };
+
     const service = new OverseerAdvisorService({
       store: store as ConstructorParameters<typeof OverseerAdvisorService>[0]["store"],
       /*
@@ -2593,39 +2613,28 @@ export class ProjectEngine {
       Only strict true enables; missing/malformed settings stay disabled.
       */
       resolveEnabled: async (task) => {
-        const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
-          () => ({}) as Record<string, unknown>,
-        );
+        const workflowEffective = await loadWorkflowForTask(task);
         return workflowEffective.plannerOverseerAdvisorEnabled === true;
       },
       resolveLevel: async (task) => {
-        const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
-          () => ({}) as Record<string, unknown>,
-        );
+        const workflowEffective = await loadWorkflowForTask(task);
         return resolveEffectivePlannerOversightLevel(
           task.plannerOversightLevel,
           workflowEffective.plannerOversightLevel as string | undefined,
         );
       },
       resolveModel: async (task) => {
-        const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(
-          () => ({}) as Record<string, unknown>,
-        );
+        const workflowEffective = await loadWorkflowForTask(task);
         if (workflowEffective.plannerOverseerAdvisorEnabled !== true) return null;
         const provider = String(workflowEffective.plannerOverseerAdvisorProvider ?? "").trim();
         const modelId = String(workflowEffective.plannerOverseerAdvisorModelId ?? "").trim();
         if (!provider || !modelId) return null;
         return { provider, modelId };
       },
-      resolveCwd: (task) => {
-        if (typeof task.worktree === "string" && task.worktree.length > 0) return task.worktree;
-        return this.config?.workingDirectory ?? process.cwd();
-      },
+      resolveCwd: (task) => resolveAdvisorCwd(task),
       agentFactory: async ({ taskId, model, systemPrompt, onAdvice }) => {
-        const cwd =
-          (await store.getTask(taskId).catch(() => undefined))?.worktree ||
-          this.config?.workingDirectory ||
-          process.cwd();
+        const task = await store.getTask(taskId).catch(() => undefined);
+        const cwd = resolveAdvisorCwd(task);
         return createParsingOverseerAgent({
           systemPrompt,
           onAdvice,
@@ -2633,33 +2642,25 @@ export class ProjectEngine {
             try {
               const settings = await store.getSettings().catch(() => undefined);
               /*
-              FNXC:PlannerOversight 2026-07-14-00:10:
-              Greptile P1: createResolvedAgentSession requires systemPrompt.
-              Pass the advisor contract as the system role; user batch is the
-              session-update delta only (not concatenated into system).
+              FNXC:PlannerOversight 2026-07-14-00:10 / 2026-07-14-14:00:
+              CodeRabbit critical: do not use sessionPurpose "executor" (coding
+              tool surface). Use "reviewer" + tools:"readonly" so the advisor is
+              investigative-only; systemPrompt is the advisor contract; user
+              batch is the session-update delta only.
               */
               const { session } = await createResolvedAgentSession({
-                sessionPurpose: "executor",
+                sessionPurpose: "reviewer",
                 cwd: String(cwd),
                 systemPrompt: sys,
+                tools: "readonly",
                 defaultProvider: model.provider,
                 defaultModelId: model.modelId,
                 settings,
               });
               try {
                 await session.prompt(user);
-                const messages = (session as { messages?: Array<{ role?: string; content?: unknown }> }).messages
-                  ?? (session as { state?: { messages?: Array<{ role?: string; content?: unknown }> } }).state?.messages
-                  ?? [];
-                const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-                const content = lastAssistant?.content;
-                if (typeof content === "string") return content;
-                if (Array.isArray(content)) {
-                  return content
-                    .map((block) => (typeof block === "object" && block && "text" in block ? String((block as { text: unknown }).text) : ""))
-                    .join("\n");
-                }
-                return "";
+                // FNXC:PlannerOversight 2026-07-14-14:00: runtime-agnostic assistant text extraction.
+                return extractAdvisorAssistantText(session);
               } finally {
                 try {
                   (session as { dispose?: () => void }).dispose?.();

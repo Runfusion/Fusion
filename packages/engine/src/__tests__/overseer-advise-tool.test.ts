@@ -3,6 +3,7 @@ import {
   OVERSEER_ADVISOR_REPLY_CONTRACT,
   OVERSEER_ADVISOR_SYSTEM_PROMPT,
   OverseerAdviseRecorder,
+  extractAdvisorAssistantText,
   parseAdvisorReplyForAdvice,
 } from "../overseer-advise-tool.js";
 
@@ -57,5 +58,24 @@ describe("OverseerAdviseRecorder", () => {
     expect(first.recorded).toBe(true);
     expect(second.recorded).toBe(false);
     expect(onAdvice).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("extractAdvisorAssistantText", () => {
+  it("reads nested state.messages assistant content", () => {
+    const session = {
+      state: {
+        messages: [
+          { role: "user", content: "delta" },
+          { role: "assistant", content: '{"note":"Scope drift","severity":"concern"}' },
+        ],
+      },
+    };
+    expect(extractAdvisorAssistantText(session)).toContain("Scope drift");
+  });
+
+  it("returns empty string for unknown session shapes", () => {
+    expect(extractAdvisorAssistantText(null)).toBe("");
+    expect(extractAdvisorAssistantText({})).toBe("");
   });
 });

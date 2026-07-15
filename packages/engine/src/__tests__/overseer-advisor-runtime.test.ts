@@ -88,6 +88,24 @@ describe("OverseerAdvisorRuntime", () => {
     expect(agent.prompts.length).toBe(0);
   });
 
+  it("notifies again on a second three-failure streak after a drop", async () => {
+    // Six failures: first streak notifies, second streak notifies again (failureNotified reset on drop).
+    const agent = createFakeAgent({ failTimes: 6 });
+    const notifyFailure = vi.fn();
+    const runtime = new OverseerAdvisorRuntime({
+      agent,
+      host: { enqueueAdvice: vi.fn(), notifyFailure },
+      retryDelayMs: 0,
+      sleep: async () => {},
+    });
+
+    runtime.onLogDelta([{ type: "text", text: "streak one", agent: "executor" }]);
+    await vi.waitFor(() => expect(notifyFailure).toHaveBeenCalledTimes(1));
+
+    runtime.onLogDelta([{ type: "text", text: "streak two", agent: "executor" }]);
+    await vi.waitFor(() => expect(notifyFailure).toHaveBeenCalledTimes(2));
+  });
+
   it("reset invalidates in-flight work via epoch", async () => {
     const agent = createFakeAgent();
     const runtime = new OverseerAdvisorRuntime({

@@ -1387,9 +1387,15 @@ levels `steer`/`autonomous` (observe logs only). The system prompt
 (`OVERSEER_ADVISOR_SYSTEM_PROMPT`) ports oh-my-pi advisor judgment policy
 (peer-programmer role, critical silence rules, nit/concern/blocker criteria)
 with Fusion anchors (PROMPT.md, File Scope, verification) and a JSON
-`note`/`severity` or `silence` reply contract. Project `OVERSEER.md` /
-`WATCHDOG.md` files append review priorities. Human-control withhold still
+`note`/`severity` or `silence` reply contract. Human-control withhold still
 applies at inject time.
+
+**Watchdog / review-priority discovery** (`discoverOverseerWatchdogFiles` in
+`overseer-watchdog.ts`) loads every readable `OVERSEER.md` and `WATCHDOG.md`
+from: (1) the user agent dir when configured, (2) each directory from the task
+worktree/cwd upward to the repo root (or home), including both bare and
+`.fusion/` / `.omp/` nested variants. Multiple files concatenate; user-level
+first, then project ancestor→leaf so the leaf is most prominent.
 
 ### Planner overseer monitoring (records-only)
 

@@ -230,6 +230,8 @@ export class OverseerAdvisorRuntime {
               }
             }
             this.#consecutiveFailures = 0;
+            // FNXC:PlannerOversight 2026-07-14-14:00: CodeRabbit — allow a *new* 3-failure streak to notify again after this drop is handled (do not latch forever until a success).
+            this.#failureNotified = false;
             success = true; // treat as handled drop
           } else {
             this.#pending.unshift({ text: batch, turns: turnsCovered });

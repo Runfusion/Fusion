@@ -231,3 +231,70 @@ The note must be specific (what/where/why). Prefer citing File Scope, PROMPT, a 
  * existing imports; value is the full expanded system prompt.
  */
 export const OVERSEER_ADVISOR_REPLY_CONTRACT = OVERSEER_ADVISOR_SYSTEM_PROMPT;
+
+/**
+ * FNXC:PlannerOversight 2026-07-14-14:00:
+ * Extract the last assistant text from a heterogeneous agent session shape.
+ * createResolvedAgentSession may resolve pi or plugin runtimes; do not assume
+ * a single messages layout. Never throws — returns "" when nothing usable is found.
+ */
+export function extractAdvisorAssistantText(session: unknown): string {
+  try {
+    if (!session || typeof session !== "object") return "";
+    const s = session as Record<string, unknown>;
+    const candidates: unknown[] = [];
+
+    if (Array.isArray(s.messages)) candidates.push(s.messages);
+    const state = s.state;
+    if (state && typeof state === "object") {
+      const st = state as Record<string, unknown>;
+      if (Array.isArray(st.messages)) candidates.push(st.messages);
+    }
+    const agent = s.agent;
+    if (agent && typeof agent === "object") {
+      const ag = agent as Record<string, unknown>;
+      if (Array.isArray(ag.messages)) candidates.push(ag.messages);
+      const agState = ag.state;
+      if (agState && typeof agState === "object") {
+        const ast = agState as Record<string, unknown>;
+        if (Array.isArray(ast.messages)) candidates.push(ast.messages);
+      }
+    }
+    if (typeof s.getMessages === "function") {
+      try {
+        const got = (s.getMessages as () => unknown)();
+        if (Array.isArray(got)) candidates.push(got);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    for (const list of candidates) {
+      if (!Array.isArray(list) || list.length === 0) continue;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const msg = list[i];
+        if (!msg || typeof msg !== "object") continue;
+        const m = msg as Record<string, unknown>;
+        if (m.role !== "assistant") continue;
+        const content = m.content;
+        if (typeof content === "string" && content.trim()) return content;
+        if (Array.isArray(content)) {
+          const text = content
+            .map((block) => {
+              if (typeof block === "string") return block;
+              if (block && typeof block === "object" && "text" in block) {
+                return String((block as { text: unknown }).text ?? "");
+              }
+              return "";
+            })
+            .join("\n")
+            .trim();
+          if (text) return text;
+        }
+      }
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}

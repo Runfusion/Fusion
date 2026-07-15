@@ -314,7 +314,26 @@ export class OverseerAdvisorService {
         return;
       }
 
-      const human = evaluateOverseerHumanControl(task, this.settings);
+      /*
+      FNXC:PlannerOversight 2026-07-14-14:00:
+      CodeRabbit: do not rely solely on poll-refreshed this.settings — the live
+      log-flush inject path can race a project autoMerge flip. Prefer a fresh
+      getSettings() at inject time when the store exposes it.
+      */
+      let settingsForControl = this.settings;
+      if (this.store.getSettings) {
+        try {
+          const live = await this.store.getSettings();
+          if (live) {
+            settingsForControl = live;
+            this.settings = live;
+          }
+        } catch {
+          /* keep cached settings */
+        }
+      }
+
+      const human = evaluateOverseerHumanControl(task, settingsForControl);
       if (human.withhold) return;
 
       const level = await this.resolveLevel(task);

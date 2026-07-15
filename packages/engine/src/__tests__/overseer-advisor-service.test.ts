@@ -226,4 +226,49 @@ describe("OverseerAdvisorService", () => {
     expect(await service.ensureTask(task)).toBe(false);
     expect(addSteeringComment).not.toHaveBeenCalled();
   });
+
+  it("re-fetches settings at inject time so a live autoMerge flip withholds", async () => {
+    const addSteeringComment = vi.fn(async () => ({}));
+    const task = baseTask({ autoMerge: undefined });
+    let settings = { autoMerge: true as boolean | undefined };
+    const store = {
+      addSteeringComment,
+      getTask: async () => task,
+      getSettings: async () => settings,
+      recordRunAuditEvent: vi.fn((input) => ({
+        id: "e1",
+        timestamp: new Date().toISOString(),
+        domain: "database",
+        mutationType: "overseer:intervention",
+        target: "FN-9001",
+        ...input,
+      })),
+      getRunAuditEvents: () => [],
+    };
+
+    const service = new OverseerAdvisorService({
+      store,
+      settings: { autoMerge: true },
+      resolveLevel: () => "autonomous",
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory: async ({ systemPrompt, onAdvice }) =>
+        createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async () =>
+            JSON.stringify({ note: "Concrete note after settings flip.", severity: "concern" }),
+        }),
+    });
+
+    expect(await service.ensureTask(task)).toBe(true);
+    // Flip project autoMerge off and mark task so allowsAutoMergeProcessing withholds.
+    settings = { autoMerge: false };
+    Object.assign(task, { autoMerge: false });
+
+    await service.onExecutorLogDelta(task.id, [
+      { type: "text", text: "still working after autoMerge flip", agent: "executor" },
+    ]);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(addSteeringComment).not.toHaveBeenCalled();
+  });
 });
