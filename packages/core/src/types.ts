@@ -32,1007 +32,239 @@ export {
 export type { GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabConfigInput } from "./gitlab-config.js";
 export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetailed } from "./settings-validation.js";
 
-/**
- * Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning.
- * Includes extra-high for maximum-effort requests on reasoning-capable models.
- *
- * FNXC:Settings-ThinkingLevel 2026-06-19-14:55:
- * The central thinking-level enum must expose `xhigh` so UI settings and API validation can pass maximum reasoning requests through to CLI adapters. Runtime adapters map `xhigh` to `high` for non-Opus models and `max` for Opus models.
- */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-
-/**
- * The legacy default-workflow column set. Workflow-aware task movement resolves
- * valid columns from each task's workflow definition (the default workflow's
- * column IDs are byte-identical to these — KTD-1). New code should prefer the
- * workflow-resolved path (`resolveAllowedColumns` / `workflowHasColumn` in
- * `workflow-transitions.ts`) and trait predicates over string equality; this
- * enum remains the canonical id set for the built-in default workflow.
- */
-export const COLUMNS = ["triage", "todo", "in-progress", "in-review", "done", "archived"] as const;
-/**
- * The closed legacy column union — still the correct type for default-workflow
- * column ids. Movement entry points accept the wider {@link ColumnId}; runtime
- * code validates ids against the task's resolved workflow.
- */
-export type Column = (typeof COLUMNS)[number];
-
-/**
- * Column identifier accepted at task-movement entry points (KTD-1).
- * Equals the legacy `Column` union for autocomplete purposes, but admits
- * workflow-defined custom column ids; runtime paths validate the id against the
- * task's resolved workflow.
- */
-export type ColumnId = Column | (string & {});
-
-export const DEFAULT_COLUMN: Column = "triage";
-
-/**
- * Tests membership against the closed legacy column enum. Note: under the
- * workflowColumns flag, column validity is workflow-scoped — flag-aware code
- * should use `workflowHasColumn(ir, columnId)` (`workflow-transitions.ts`);
- * this remains correct for the flag-OFF path and default-workflow ids.
- */
-export function isColumn(value: unknown): value is Column {
-  return typeof value === "string" && (COLUMNS as readonly string[]).includes(value);
-}
-
-/**
- * @deprecated (workflowColumns, U12) Coerces an arbitrary value to a legacy
- * column, DISCARDING workflow-defined custom column ids — lossy under the
- * flag. Resolve and validate against the task's workflow instead. Retained
- * for the legacy flag-OFF path while the flag exists.
- */
-export function normalizeColumn(value: unknown, fallback: Column = DEFAULT_COLUMN): Column {
-  return isColumn(value) ? value : fallback;
-}
-
-/** Ordered task-priority levels for the core task domain contract. */
-export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
-export type TaskPriority = (typeof TASK_PRIORITIES)[number];
-
-/**
- * Default task priority used for legacy rows/entries and create flows when
- * callers omit the priority field.
- */
-export const DEFAULT_TASK_PRIORITY: TaskPriority = "normal";
-
-export const MERGE_REQUEST_STATES = [
-  "queued",
-  "running",
-  "retrying",
-  "succeeded",
-  "exhausted",
-  "cancelled",
-  "manual-required",
-] as const;
-
-export type MergeRequestState = (typeof MERGE_REQUEST_STATES)[number];
-
-export const WORKFLOW_WORK_ITEM_KINDS = [
-  "task",
-  "merge",
-  "retry",
-  "manual-hold",
-  "recovery",
-] as const;
-
-export type WorkflowWorkItemKind = (typeof WORKFLOW_WORK_ITEM_KINDS)[number];
-
-export const WORKFLOW_WORK_ITEM_STATES = [
-  "runnable",
-  "running",
-  "held",
-  "retrying",
-  "manual-required",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "exhausted",
-] as const;
-
-export type WorkflowWorkItemState = (typeof WORKFLOW_WORK_ITEM_STATES)[number];
-
-export interface WorkflowWorkItem {
-  id: string;
-  runId: string;
-  taskId: string;
-  nodeId: string;
-  kind: WorkflowWorkItemKind;
-  state: WorkflowWorkItemState;
-  attempt: number;
-  retryAfter: string | null;
-  leaseOwner: string | null;
-  leaseExpiresAt: string | null;
-  lastError: string | null;
-  blockedReason: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkflowWorkItemUpsertInput {
-  id?: string;
-  runId: string;
-  taskId: string;
-  nodeId: string;
-  kind: WorkflowWorkItemKind;
-  state?: WorkflowWorkItemState;
-  attempt?: number;
-  retryAfter?: string | null;
-  leaseOwner?: string | null;
-  leaseExpiresAt?: string | null;
-  lastError?: string | null;
-  blockedReason?: string | null;
-  now?: string;
-}
-
-export interface WorkflowWorkItemTransitionPatch {
-  attempt?: number;
-  retryAfter?: string | null;
-  leaseOwner?: string | null;
-  leaseExpiresAt?: string | null;
-  lastError?: string | null;
-  blockedReason?: string | null;
-  now?: string;
-}
-
-export interface WorkflowWorkItemDueFilter {
-  now?: string;
-  limit?: number;
-  kinds?: WorkflowWorkItemKind[];
-  states?: WorkflowWorkItemState[];
-}
-
-export interface MergeRequestWorkflowProjectionOptions {
-  runId?: string;
-  nodeId?: string;
-  now?: string;
-}
-
-export interface MergeQueueEntry {
-  taskId: string;
-  enqueuedAt: string;
-  priority: TaskPriority;
-  leasedBy: string | null;
-  leasedAt: string | null;
-  leaseExpiresAt: string | null;
-  attemptCount: number;
-  lastError: string | null;
-}
-
-export interface MergeRequestRecord {
-  taskId: string;
-  state: MergeRequestState;
-  createdAt: string;
-  updatedAt: string;
-  attemptCount: number;
-  lastError: string | null;
-}
-
-export interface CompletionHandoffMarker {
-  taskId: string;
-  acceptedAt: string;
-  source: string;
-}
-
-export interface MergeQueueEnqueueOptions {
-  priority?: TaskPriority;
-  now?: string;
-}
-
-export interface MergeQueueAcquireOptions {
-  leaseDurationMs: number;
-  now?: string;
-  /** If provided, the lease attempt targets this specific task first.
-   *  The task must be unexpired/available; otherwise falls back to normal queue-head selection. */
-  targetTaskId?: string;
-}
-
-export type MergeQueueReleaseOutcome =
-  | { kind: "success" }
-  | { kind: "failure"; error: string };
-
-export interface HandoffEvidence {
-  /** Reason text recorded on the run-audit event (for example "fn_task_done"). */
-  reason: string;
-  /** Optional run id captured for forensics. */
-  runId?: string;
-  /** Optional agent id captured for forensics. */
-  agentId?: string;
-}
-
-export interface HandoffToReviewOptions {
-  ownerAgentId: string | null;
-  evidence: HandoffEvidence;
-  moveOptions?: {
-    preserveResumeState?: boolean;
-    preserveProgress?: boolean;
-    preserveWorktree?: boolean;
-    preserveStatus?: boolean;
-    moveSource?: "user" | "engine";
-    skipMergeBlocker?: boolean;
-  };
-  /** Inject a clock for tests. */
-  now?: string;
-}
-
-/**
- * Dashboard high-fan-out blocker threshold. A blocker is considered high impact
- * when at least this many active todo tasks are waiting on it.
- */
-export const HIGH_FANOUT_BLOCKER_TODO_THRESHOLD = 5;
-
-/**
- * Default age gate (ms) before a high fan-out blocker is escalated in dashboards.
- */
-export const STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
-
-/**
- * Execution mode for task implementation.
- * Controls how the executor agent approaches the task:
- * - "standard": Full execution with complete review workflow (default)
- * - "fast": Expedited execution with minimal overhead for simple tasks
- */
-export const EXECUTION_MODES = ["standard", "fast"] as const;
-export type ExecutionMode = (typeof EXECUTION_MODES)[number];
-
-/** Default execution mode for new tasks */
-export const DEFAULT_EXECUTION_MODE: ExecutionMode = "standard";
 
 /*
- * FNXC:PlannerOversight 2026-07-04-00:00:
- * Per-task override of the workflow-native `plannerOversightLevel` setting
- * (declared in `BUILTIN_OVERSIGHT_SETTINGS`, packages/core/src/builtin-workflow-settings.ts).
- * When a task sets this field, it wins over the workflow's effective oversight
- * value; unset (NULL in storage) means "inherit the workflow default". Values,
- * order, and default here must stay in sync with `BUILTIN_OVERSIGHT_SETTINGS`.
- */
-export const PLANNER_OVERSIGHT_LEVELS = ["off", "observe", "steer", "autonomous"] as const;
-export type PlannerOversightLevel = (typeof PLANNER_OVERSIGHT_LEVELS)[number];
-export const DEFAULT_PLANNER_OVERSIGHT_LEVEL: PlannerOversightLevel = "autonomous";
-
-/** Controls whether triage should require completion documentation artifacts in task specs. */
-export const COMPLETION_DOCUMENTATION_MODES = ["off", "changeset", "changelog"] as const;
-export type CompletionDocumentationMode = (typeof COMPLETION_DOCUMENTATION_MODES)[number];
-
-/** Theme mode for light/dark/system preference */
-export const THEME_MODES = ["dark", "light", "system"] as const;
-export type ThemeMode = (typeof THEME_MODES)[number];
-
-/** Color theme options for the dashboard */
-export const COLOR_THEMES = [
-  "default",
-  "ocean",
-  "forest",
-  "sunset",
-  "zen",
-  "berry",
-  "high-contrast",
-  "industrial",
-  "monochrome",
-  "slate",
-  "ash",
-  // FNXC:DashboardTheming 2026-06-19-15:36: "air" is the source-of-truth id for the minimal, borderless, paper-like dashboard theme; keep bootstrap validators and theme options in sync with this union.
-  "air",
-  "graphite",
-  "silver",
-  "solarized",
-  "factory",
-  "factory-mono",
-  "ayu",
-  "one-dark",
-  "nord",
-  "dracula",
-  "gruvbox",
-  "tokyo-night",
-  "catppuccin-mocha",
-  "github-dark",
-  "everforest",
-  "rose-pine",
-  "kanagawa",
-  "night-owl",
-  "palenight",
-  "monokai-pro",
-  "slime",
-  "brutalist",
-  "neon-city",
-  "parchment",
-  "terminal",
-  "glass",
-  // FNXC:DashboardTheming 2026-07-01-00:00: Glass Silver is the silver/gray frosted sibling of Glass; keep this id in lockstep with dashboard/desktop validators and selector metadata so persisted explicit choices survive startup.
-  "glass-silver",
-  "horizon",
-  "vitesse",
-  "outrun",
-  "snazzy",
-  "porple",
-  "espresso",
-  "mars",
-  "poimandres",
-  "ember",
-  "rust",
-  "copper",
-  "foundry",
-  "carbon",
-  "sandstone",
-  "lagoon",
-  "frost",
-  "lavender",
-  "neon-bloom",
-  "sepia",
-  "shadcn",
-  // FNXC:DashboardTheming 2026-06-30-00:00: Shadcn Ember is the default for unset installs; keep it adjacent to the shadcn base so dashboard options and bootstrap validators preserve published theme order while explicit legacy ids remain valid.
-  "shadcn-ember",
-  // FNXC:DashboardTheming 2026-06-20-18:20: FN-6816 adds the user-customizable shadcn variant; keep this union in lockstep with dashboard theme options, swatches, theme-data base blocks, and the shadcn custom color token list.
-  "shadcn-custom",
-  // FNXC:DashboardTheming 2026-06-19-16:07: FN-6756 extends the published color-theme union with shadcn-family accent variants; keep dashboard theme options, bootstrap validation, swatches, and theme-data token blocks in lockstep with this ordered list.
-  // FNXC:DashboardTheming 2026-06-20-00:00: FN-6813 renames the grayscale-base mono theme to shadcn-mono-red and adds the remaining mono accent variants; keep Shadcn Gray adjacent to Shadcn Black so the color-family order stays stable with FN-6814.
-  // FNXC:DashboardTheming 2026-06-21-00:00: FN-6815 adds shadcn-gray-blue as the slate-neutral blue-gray sibling; keep it adjacent to Shadcn Gray so the published union mirrors dashboard option order.
-  "shadcn-blue",
-  "shadcn-green",
-  "shadcn-red",
-  "shadcn-purple",
-  "shadcn-pink",
-  "shadcn-orange",
-  "shadcn-yellow",
-  "shadcn-mono-red",
-  "shadcn-mono-blue",
-  "shadcn-mono-green",
-  "shadcn-mono-purple",
-  "shadcn-mono-pink",
-  "shadcn-mono-orange",
-  "shadcn-mono-yellow",
-  "shadcn-black",
-  "shadcn-gray",
-  "shadcn-gray-blue",
-] as const;
-export type ColorTheme = (typeof COLOR_THEMES)[number];
-
-/** UI locales supported across the dashboard and terminal UI. `en` is the
- *  source-of-truth language and the fallback for all others. Adding a locale
- *  here (plus translated catalogs) is the only code change a new language
- *  needs — see `@fusion/i18n`. zh-CN and zh-TW are independent catalogs and
- *  are never auto-converted between scripts. */
-export const SUPPORTED_LOCALES = ["en", "zh-CN", "zh-TW", "fr", "es", "ko"] as const;
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
-/** Source-of-truth language and the fallback for all locales. */
-export const DEFAULT_LOCALE: Locale = "en";
-
-/** Narrow an arbitrary value to a supported `Locale`. */
-export function isLocale(value: unknown): value is Locale {
-  return (
-    typeof value === "string" &&
-    (SUPPORTED_LOCALES as readonly string[]).includes(value)
-  );
-}
-
-export type PrStatus = "open" | "closed" | "merged" | "draft";
-export type MergeStrategy = "direct" | "pull-request";
-export type MergeIntegrationWorktreeMode =
-  | "reuse-task-worktree"
-  | "cwd-integration-branch" // explicit opt-in; surfaces a warning at startup. See FN-5348.
-  | "cwd-main"; // legacy alias for cwd-integration-branch; deprecated. Normalized at read time.
-
-let warnedLegacyCwdMain = false;
-
-export function __resetLegacyCwdMainWarningForTests(): void {
-  warnedLegacyCwdMain = false;
-}
-
-export function normalizeMergeIntegrationWorktreeMode(
-  value: unknown,
-): MergeIntegrationWorktreeMode {
-  if (value === "reuse-task-worktree" || value === "cwd-integration-branch") {
-    return value;
-  }
-
-  if (value === "cwd-main") {
-    if (!warnedLegacyCwdMain) {
-      warnedLegacyCwdMain = true;
-      console.warn("[merger] settings.mergeIntegrationWorktree=cwd-main is legacy; normalized to cwd-integration-branch");
-    }
-    return "cwd-integration-branch";
-  }
-
-  return "reuse-task-worktree";
-}
-
-export const DIRECT_MERGE_COMMIT_STRATEGIES = ["auto", "always-squash", "always-rebase"] as const;
-export type DirectMergeCommitStrategy = (typeof DIRECT_MERGE_COMMIT_STRATEGIES)[number];
-
-export const MERGE_ADVANCE_AUTO_SYNC_MODES = ["off", "ff-only", "stash-and-ff"] as const;
-export type MergeAdvanceAutoSyncMode = (typeof MERGE_ADVANCE_AUTO_SYNC_MODES)[number];
-export function normalizeMergeAdvanceAutoSyncMode(value: unknown): MergeAdvanceAutoSyncMode {
-  return value === "off" || value === "ff-only" || value === "stash-and-ff" ? value : "stash-and-ff";
-}
-/** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
- *
- *  Both `smart-*` strategies share the same cascade: pre-merge fetch +
- *  fast-forward of local main from origin (graceful degrade on failure),
- *  then AI, then auto-resolve lock/generated/trivial files. They differ only
- *  in the final per-file fallback when conflicts remain:
- *
- *  - "smart-prefer-main" (default): fall back to `-X ours` so main's state
- *    wins. Best when concurrent tasks could regress just-merged sibling work.
- *  - "smart-prefer-branch": fall back to `-X theirs` so the task branch wins.
- *    Best when one agent at a time is dominant and you trust their output.
- *  - "ai-only": run AI on every attempt; never silently prefer one side.
- *  - "abort": run AI once; if conflict remains, fail the merge so a human
- *    can resolve it.
- *
- *  Legacy values `"smart"` and `"prefer-main"` are accepted for backwards
- *  compatibility and normalized via {@link normalizeMergeConflictStrategy}.
- *  `"smart"` maps to `"smart-prefer-branch"` (its historical fallback) and
- *  `"prefer-main"` maps to `"smart-prefer-main"`. */
-export type MergeConflictStrategy =
-  | "smart-prefer-main"
-  | "smart-prefer-branch"
-  | "ai-only"
-  | "abort"
-  /** @deprecated use "smart-prefer-branch" */
-  | "smart"
-  /** @deprecated use "smart-prefer-main" */
-  | "prefer-main";
-
-/** Canonical (post-migration) values that the merger actually dispatches on. */
-export type CanonicalMergeConflictStrategy = Exclude<
-  MergeConflictStrategy,
-  "smart" | "prefer-main"
->;
-
-/** Translate legacy `mergeConflictStrategy` values into their canonical form.
- *  Pass-through for already-canonical values; defaults to "smart-prefer-main"
- *  when the input is undefined. */
-export function normalizeMergeConflictStrategy(
-  value: MergeConflictStrategy | undefined,
-): CanonicalMergeConflictStrategy {
-  switch (value) {
-    case "smart":
-      return "smart-prefer-branch";
-    case "prefer-main":
-      return "smart-prefer-main";
-    case undefined:
-      return "smart-prefer-main";
-    default:
-      return value;
-  }
-}
-
-export const MERGE_STRATEGY_OVERLAP_BEHAVIORS = [
-  "flip-to-prefer-branch",
-  "warn-only",
-  "ignore",
-] as const;
-
-export type MergeStrategyOverlapBehavior = (typeof MERGE_STRATEGY_OVERLAP_BEHAVIORS)[number];
-
-export function normalizeMergeStrategyOverlapBehavior(
-  value: unknown,
-): MergeStrategyOverlapBehavior {
-  return typeof value === "string"
-    && (MERGE_STRATEGY_OVERLAP_BEHAVIORS as readonly string[]).includes(value)
-    ? value as MergeStrategyOverlapBehavior
-    : "flip-to-prefer-branch";
-}
-
-export const POST_MERGE_AUDIT_MODES = ["block", "warn", "off"] as const;
-
-/** Controls how the merger reacts to a dirty post-merge audit (FN-4333). */
-export type PostMergeAuditMode = (typeof POST_MERGE_AUDIT_MODES)[number];
-
-export function normalizePostMergeAuditMode(value: unknown): PostMergeAuditMode {
-  return typeof value === "string"
-    && (POST_MERGE_AUDIT_MODES as readonly string[]).includes(value)
-    ? (value as PostMergeAuditMode)
-    : "block";
-}
-
-export const MERGE_AUDIT_AUTO_RECOVERY_MODES = ["deterministic-only", "programmatic", "ai-assisted", "off"] as const;
-
-/** Controls how aggressively the merger tries to auto-recover from audit blocks (FN-4315). */
-export type MergeAuditAutoRecoveryMode = (typeof MERGE_AUDIT_AUTO_RECOVERY_MODES)[number];
-
-export function normalizeMergeAuditAutoRecovery(value: unknown): MergeAuditAutoRecoveryMode {
-  return typeof value === "string"
-    && (MERGE_AUDIT_AUTO_RECOVERY_MODES as readonly string[]).includes(value)
-    ? (value as MergeAuditAutoRecoveryMode)
-    : "ai-assisted";
-}
-
-export const MERGER_MODES = ["ai", "deterministic"] as const;
-
-/**
- * Merge execution path (FN-5633).
- *  - "ai" (default): the standalone AI merge path — a clean-room worktree where
- *    an AI agent merges the task branch and an AI reviewer audits it (with
- *    corrective retries) before a fast-forward landing. Bypasses the legacy
- *    scaffolding entirely.
- *  - "deterministic": **DEPRECATED (master-plan U0, 2026-06-21) and INERT.** Once
- *    routed to the legacy `aiMergeTask` pipeline; now ignored — every merge uses
- *    the unified "ai" path (`runAiMerge`). The value is retained (not removed) to
- *    avoid a breaking `@runfusion/fusion` type change, and the engine logs a
- *    one-time deprecation warning when it observes a resolved "deterministic".
- *
- * FNXC:MergerUnification 2026-06-21-19:05: `merger.mode` is published surface, so
- * the type and the `MergerSettings.mode` field stay; only the "deterministic"
- * VALUE is deprecated/inert. Removing the type is a separate breaking change.
- */
-export type MergerMode = (typeof MERGER_MODES)[number];
-
-export function normalizeMergerMode(value: unknown): MergerMode {
-  return typeof value === "string" && (MERGER_MODES as readonly string[]).includes(value)
-    ? (value as MergerMode)
-    : "ai";
-}
-
-/** Settings for the AI merge path (FN-5633). */
-export interface MergerSettings {
-  /**
-   * Which merge path to use. Default: "ai".
-   * @deprecated master-plan U0 (2026-06-21): the value is inert — every merge now
-   * uses the unified AI merge path (`runAiMerge`). Field retained as published
-   * surface; "deterministic" only triggers a one-time deprecation warning.
-   */
-  mode?: MergerMode;
-  /** How many AI corrective rounds before landing the best result (advisory) or
-   *  hard-failing (blocking). Default: 3. The reviewer uses the project's
-   *  validator/reviewer model lane — there is no merge-specific model setting. */
-  maxReviewPasses?: number;
-  /** Dangerous compatibility escape hatch for the AI merge landing path.
-   *  When true (default for resolved project settings), Fusion restores the legacy
-   *  stash → fast-forward → restore behavior when the checked-out integration
-   *  worktree is dirty. Set false to explicitly opt out and fail closed before
-   *  unrelated local edits can be reintroduced after landing. */
-  allowDirtyLocalCheckoutSync?: boolean;
-}
-
-export const AUTO_RECOVERY_MODES = ["off", "deterministic-only", "programmatic", "ai-assisted"] as const;
-
-export type AutoRecoveryMode = (typeof AUTO_RECOVERY_MODES)[number];
-
-export type AutoRecoveryFailureClass =
-  | "file-scope-invariant"
-  | "post-squash-audit-blocker"
-  | "branch-cross-contamination"
-  | "branch-conflict-tripwire"
-  | "branch-conflict-recovery-exhausted"
-  | "branch-conflict-unrecoverable"
-  | "message-delivery-failure";
-
-export interface AutoRecoverySettings {
-  mode: AutoRecoveryMode;
-  perClass?: Partial<Record<AutoRecoveryFailureClass, AutoRecoveryMode>>;
-  maxRetries?: number;
-}
-
-export function normalizeAutoRecovery(value: unknown): AutoRecoverySettings {
-  const fallback: AutoRecoverySettings = { mode: "deterministic-only", maxRetries: 3 };
-  if (!value || typeof value !== "object") return fallback;
-
-  const candidate = value as {
-    mode?: unknown;
-    perClass?: unknown;
-    maxRetries?: unknown;
-  };
-  const mode = typeof candidate.mode === "string" && (AUTO_RECOVERY_MODES as readonly string[]).includes(candidate.mode)
-    ? candidate.mode as AutoRecoveryMode
-    : fallback.mode;
-  const perClass = typeof candidate.perClass === "object" && candidate.perClass
-    ? Object.fromEntries(
-      Object.entries(candidate.perClass as Record<string, unknown>)
-        .filter(([k, v]) => (
-          [
-            "file-scope-invariant",
-            "post-squash-audit-blocker",
-            "branch-cross-contamination",
-            "branch-conflict-tripwire",
-            "branch-conflict-recovery-exhausted",
-            "branch-conflict-unrecoverable",
-            "message-delivery-failure",
-          ].includes(k)
-          && typeof v === "string"
-          && (AUTO_RECOVERY_MODES as readonly string[]).includes(v)
-        )),
-    ) as Partial<Record<AutoRecoveryFailureClass, AutoRecoveryMode>>
-    : undefined;
-  const maxRetries = typeof candidate.maxRetries === "number" && Number.isFinite(candidate.maxRetries)
-    ? Math.max(0, Math.floor(candidate.maxRetries))
-    : fallback.maxRetries;
-
-  return { mode, perClass, maxRetries };
-}
-/** Policy for handling task execution when the selected node is unavailable/unhealthy. */
-export type UnavailableNodePolicy = "block" | "fallback-local";
-
-export type OwningNodeHandoffPolicy = "block" | "reassign-to-local" | "reassign-any-healthy";
-
-export interface ModelPreset {
-  id: string;
-  name: string;
-  executorProvider?: string;
-  executorModelId?: string;
-  validatorProvider?: string;
-  validatorModelId?: string;
-}
-
-/** A reusable workflow step definition that can run after task implementation. */
-/** Execution mode for a workflow step. */
-export type WorkflowStepMode = "prompt" | "script";
-export type WorkflowStepToolMode = "readonly" | "coding";
-export type WorkflowStepGateMode = "gate" | "advisory";
-
-/** Lifecycle phase for workflow step execution. */
-export type WorkflowStepPhase = "pre-merge" | "post-merge";
-
-export interface WorkflowStep {
-  /** Unique identifier (e.g., "WS-001") */
-  id: string;
-  /** Built-in template source ID when this step was materialized from a template. */
-  templateId?: string;
-  /** Display name (e.g., "Documentation Review") */
-  name: string;
-  /** Short description for UI display */
-  description: string;
-  /** Execution mode — "prompt" runs an AI agent, "script" runs a named project script */
-  mode: WorkflowStepMode;
-  /** Lifecycle phase — "pre-merge" runs before merge (default), "post-merge" runs after merge success */
-  phase?: WorkflowStepPhase;
-  /** Gate behavior — gate blocks merge/auto-revive on failure, advisory records non-blocking findings. */
-  gateMode: WorkflowStepGateMode;
-  /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
-  prompt: string;
-  /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
-  toolMode?: WorkflowStepToolMode;
-  /** Name of a skill to load into this step's session (e.g.
-   *  "compound-engineering:ce-work"). When set, the step session loads the named
-   *  skill (discovery + selection) and the engine injects the Fusion workflow-step
-   *  conventions preamble. Only meaningful for skill-executor graph nodes. */
-  skillName?: string;
-  /**
-   * Browser capability requested by prompt-mode steps. When true, the executor
-   * loads the agent-browser navigation skill when available, preflights the
-   * `agent-browser` CLI, and records browser-verification activity in the agent
-   * log. Ignored for script-mode steps.
-   */
-  requiresBrowser?: boolean;
-  /** Name of a script from project settings `scripts` map to execute (required when mode is "script") */
-  scriptName?: string;
-  /** Whether this step is available for selection on new tasks */
-  enabled: boolean;
-  /** When true, this step is automatically pre-selected when creating new tasks.
-   *  Users can still deselect it — this only controls the initial default state. */
-  defaultOn?: boolean;
-  /** AI model provider override for the workflow step agent (e.g., "anthropic").
-   *  Must be set together with `modelId`. When both model fields are undefined,
-   *  the executor uses global settings defaults. Only used when mode is "prompt". */
-  modelProvider?: string;
-  /** AI model ID override for the workflow step agent (e.g., "claude-sonnet-4-5").
-   *  Must be set together with `modelProvider`. When both model fields are undefined,
-   *  the executor uses global settings defaults. Only used when mode is "prompt". */
-  modelId?: string;
-  /**
-   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-   * Workflow IR nodes may pin reasoning effort independently from the model pair so authors can inherit the model while overriding thinking level. Runtime precedence is node/step `thinkingLevel` > task `thinkingLevel` > settings `defaultThinkingLevel`.
-   */
-  thinkingLevel?: ThinkingLevel;
-  /** (workflow-editor-consolidation U1/U2, KTD-1/KTD-3) when this legacy step has
-   *  been migrated into a fragment WorkflowDefinition, the fragment's id is stamped
-   *  here so the lazy step migration is idempotent (already-stamped rows are
-   *  skipped). Stored in the `migrated_fragment_id` column. */
-  migratedFragmentId?: string;
-  /** ISO-8601 timestamp of creation */
-  createdAt: string;
-  /** ISO-8601 timestamp of last update */
-  updatedAt: string;
-}
-
-/** Input for creating a new workflow step. */
-/** Event types that can trigger ntfy notifications */
-export type NtfyNotificationEvent =
-  | "in-review"
-  | "merged"
-  | "failed"
-  | "awaiting-approval"
-  | "awaiting-user-review"
-  | "planning-awaiting-input"
-  | "cli-agent-awaiting-input"
-  | "gridlock"
-  | "board-stall-unrecovered"
-  | "db-corruption-detected"
-  | "fallback-used"
-  | "memory-dreams-processed"
-  | "token-budget"
-  | "message:agent-to-user"
-  | "message:agent-to-agent"
-  | "message:room"
-  | "oauth-token-expired"
-  | "task-created"
-  | "workflow-notify";
-
-/** Known notification event types. Providers may support additional custom events. */
-export const NOTIFICATION_EVENTS = [
-  "in-review",
-  "merged",
-  "failed",
-  "awaiting-approval",
-  "awaiting-user-review",
-  "planning-awaiting-input",
-  /*
-   * FNXC:ToolPermissionNotifications 2026-06-27-00:00:
-   * CLI tool-permission requests are a distinct user-facing notification event from plan approval. Operators must be able to enable external alerts when a terminal-backed agent waits for human input.
-   */
-  "cli-agent-awaiting-input",
-  "gridlock",
-  "board-stall-unrecovered",
-  "db-corruption-detected",
-  "fallback-used",
-  "memory-dreams-processed",
-  "token-budget",
-  "message:agent-to-user",
-  "message:agent-to-agent",
-  "message:room",
-  "oauth-token-expired",
-  "task-created",
-  "workflow-notify",
-] as const;
-
-/** Notification event type. Known events plus provider-specific custom events. */
-export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number] | (string & {});
-
-/** Standard payload shape shared across notification providers. */
-export interface NotificationPayload {
-  taskId?: string;
-  taskTitle?: string;
-  taskDescription?: string;
-  event: NotificationEvent;
-  timestamp?: string;
-  metadata?: Record<string, unknown>;
-}
-
-/** Declarative notification provider configuration persisted in settings. */
-export interface NotificationProviderConfig {
-  id: string;
-  name: string;
-  enabled: boolean;
-  config: Record<string, unknown>;
-}
-
-export interface CustomProvider {
-  id: string;
-  name: string;
-  apiType: "openai-compatible" | "anthropic-compatible" | "google-generative-ai" | "openai-responses";
-  baseUrl: string;
-  apiKey?: string;
-  /**
-   * OpenAI-compatible opt-in for providers that explicitly support the `developer` role.
-   * Omitted/false forces legacy `system` role emission to avoid provider 400s.
-   */
-  supportsDeveloperRole?: boolean;
-  /**
-   * FNXC:ProviderAuth 2026-07-08-00:00:
-   * FN-7689: opt-in for custom `openai-compatible`/`openai-responses` gateways that proxy an
-   * Anthropic-format backend (e.g. `usai/claude_4_6_sonnet`). When true, registered
-   * `openai-completions` models get pi-ai's `compat.cacheControlFormat = "anthropic"`, which makes
-   * pi-ai emit Anthropic-style `cache_control` breakpoints on the system prompt, last
-   * conversation message, and last tool. Without this, pi-ai's `detectCompat` only auto-enables
-   * caching for OpenRouter `anthropic/*` models, so a generic custom gateway re-bills the entire
-   * context prefix uncached every turn (measured cachedTokens=0/cacheWriteTokens=0 across 243
-   * runs, ~327.5:1 input:output ratio). Default off — never force cache_control on gateways that
-   * did not opt in, since non-Anthropic-compatible backends (Together, Fireworks, etc.) can 400 on
-   * unexpected `cache_control` fields. Inert for `anthropic-compatible` (already auto-caches) and
-   * `google-generative-ai` (no cache_control concept).
-   */
-  anthropicPromptCaching?: boolean;
-  models?: { id: string; name: string }[];
-}
-
-export interface WorkflowStepInput {
-  /** Built-in template source ID when creating a concrete step from a template. */
-  templateId?: string;
-  name: string;
-  description: string;
-  /** Execution mode — defaults to "prompt" if not specified */
-  mode?: WorkflowStepMode;
-  /** Lifecycle phase — defaults to "pre-merge" if not specified */
-  phase?: WorkflowStepPhase;
-  /** Gate behavior — defaults by mode (prompt: advisory, script: gate) when omitted. */
-  gateMode?: WorkflowStepGateMode;
-  /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
-  prompt?: string;
-  /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
-  toolMode?: WorkflowStepToolMode;
-  /** Name of a skill to load into this step's session (e.g.
-   *  "compound-engineering:ce-work"). See `WorkflowStep.skillName`. */
-  skillName?: string;
-  /** Script name from project settings (required when mode is "script").
-   *  Must reference a named script in `settings.scripts` — no raw commands. */
-  scriptName?: string;
-  /** Defaults to true if not specified */
-  enabled?: boolean;
-  /** When true, this step is automatically pre-selected when creating new tasks.
-   *  Users can still deselect — this only controls the initial default state. */
-  defaultOn?: boolean;
-  /** AI model provider override. Must be set together with modelId. Only used when mode is "prompt". */
-  modelProvider?: string;
-  /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */
-  modelId?: string;
-  /** Optional per-node reasoning-effort override; inherits from task/settings when omitted. */
-  thinkingLevel?: ThinkingLevel;
-  /** (workflow-editor-consolidation U2, KTD-3) fragment id stamped when this step
-   *  was migrated into a fragment WorkflowDefinition. Set by the migration only. */
-  migratedFragmentId?: string;
-}
-
-/** Result of a workflow step execution on a task. */
-export interface WorkflowStepResult {
-  /** ID of the workflow step that ran (e.g., "WS-001") */
-  workflowStepId: string;
-  /** Name of the workflow step at execution time */
-  workflowStepName: string;
-  /** Lifecycle phase at execution time */
-  phase?: WorkflowStepPhase;
-  /** Runtime source for distinguishing graph-authored node progress from optional-toggle checks. */
-  source?: "optional-group" | "node";
-  /** Execution status */
-  status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
-  /** Output from the workflow step agent (findings, errors, etc.) */
-  output?: string;
-  /**
-   * Machine-readable verdict from prompt-mode structured output.
-   * Absent for script-mode steps and legacy prose-only prompt outputs.
-   */
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  /**
-   * Optional notes from prompt-mode structured output.
-   * Absent for script-mode steps and legacy prose-only prompt outputs.
-   */
-  notes?: string;
-  /** ISO-8601 timestamp when the step started */
-  startedAt?: string;
-  /** ISO-8601 timestamp when the step completed */
-  completedAt?: string;
-  /*
-   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
-   * A privileged operator can bypass a `status:"failed"` pre-merge review step
-   * (leading real-world cause: the Runfusion/Fusion#1946 `(no feedback captured)`
-   * no-verdict dispatch defect) so a card stranded solely by that failure can
-   * advance to merge (FN-7720). The bypass REWRITES this result's `status` to a
-   * terminal, non-blocking value (`"skipped"`) and stamps the fields below as an
-   * explicit audit trail — it never fabricates a reviewer `verdict`. Only the
-   * `getTaskMergeBlocker` "task has failed pre-merge workflow steps" reason is
-   * cleared; every other merge-blocker condition (paused, incomplete steps,
-   * blocking task status, still-`pending` pre-merge steps) is untouched.
-   */
-  /** Operator identity that performed the bypass, if this result was bypassed. */
-  bypassedBy?: string;
-  /** ISO-8601 timestamp when the bypass was applied. */
-  bypassedAt?: string;
-  /** Mandatory operator-supplied justification for the bypass. */
-  bypassReason?: string;
-  /** The `status` this result carried immediately before the bypass rewrote it (always `"failed"` for the supported bypass path). */
-  bypassedFromStatus?: WorkflowStepResult["status"];
-  /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
-  bypassedFromVerdict?: WorkflowStepResult["verdict"];
-  /*
-   * FNXC:WorkflowStepResults 2026-07-09-00:10:
-   * FN-7727: self-healing recovery re-runs a failed pre-merge review node
-   * (`code-review`, `code-review-remediation`, `plan-review`,
-   * `browser-verification`) in place, and the recorder upsert previously
-   * REPLACED the prior `status:"failed"` entry — erasing its captured
-   * `output`/`notes`/`verdict`/timestamps forever (the diagnostic trail
-   * FN-7642 worked to capture, and the history FN-7720's bypass affordance
-   * needs to show). `priorAttempts` preserves a BOUNDED, single-level history
-   * of prior terminal-failure (`failed`/`advisory_failure`) attempts on the
-   * surviving entry — snapshots never carry their own nested `priorAttempts`,
-   * so history cannot grow unbounded. This field is READ-ONLY history: it
-   * never participates in merge-blocking (`getTaskMergeBlocker`), self-healing
-   * recovery selection (`latestFailedPreMergeStep`), or progress/timing
-   * computation — only the current (this) entry's fields do. Written by the
-   * shared `upsertWorkflowStepResult` helper (`workflow-step-results.ts`).
-   */
-  /** Bounded, single-level history of prior terminal-failure attempts this entry replaced. Read-only; never affects merge-blocking or recovery selection. */
-  priorAttempts?: WorkflowStepResult[];
-}
-
-/**
- * Lifecycle status of one persisted step instance (step-inversion U4, KTD-6).
- * - `pending` — expanded but not yet started.
- * - `in-progress` — actively executing inside its foreach sub-walk.
- * - `awaiting-integration` — work complete on a parallel-mode branch, waiting
- *   for the ordered integration stage (KTD-11; unused at concurrency 1).
- * - `completed` — terminal success (integrated in parallel mode).
- * - `failed` — terminal failure.
- */
-export type WorkflowRunStepInstanceStatus =
-  | "pending"
-  | "in-progress"
-  | "awaiting-integration"
-  | "completed"
-  | "failed";
-
-/**
- * Persisted run-state for one expanded step instance inside a foreach region
- * (step-inversion U4, KTD-6). One row per `(taskId, runId, foreachNodeId,
- * stepIndex)`; mirrors the `workflow_run_branches` posture. Resume reconstructs
- * the instance set from `pinnedStepCount` + per-instance `currentNodeId` /
- * `reworkCount`. `baselineSha` / `checkpointId` are the RETHINK reset anchors
- * (previously in-memory, lost on restart). `branchName` / `integratedAt` and the
- * `awaiting-integration` status serve parallel mode (KTD-11); null/unused at
- * concurrency 1. This is the core row shape; the engine-side instance model is
- * separate and engine-owned.
- */
-export interface WorkflowRunStepInstance {
-  taskId: string;
-  runId: string;
-  /** Node id of the foreach region that expanded this instance. */
-  foreachNodeId: string;
-  /** Zero-based index of the step this instance runs. */
-  stepIndex: number;
-  /** Step count pinned at expansion; resume fails on mismatch with live steps[]. */
-  pinnedStepCount: number;
-  /** Current sub-walk node id for the in-flight instance; null when not started. */
-  currentNodeId?: string | null;
-  status: WorkflowRunStepInstanceStatus;
-  /** Git sha the RETHINK reset rewinds to; null when no baseline captured. */
-  baselineSha?: string | null;
-  /** Session checkpoint to rewind to on RETHINK; null when none captured. */
-  checkpointId?: string | null;
-  /** Number of rework cycles consumed against the rework budget. */
-  reworkCount: number;
-  /** Per-instance branch name in worktree-isolation mode (KTD-11); null otherwise. */
-  branchName?: string | null;
-  /** ISO-8601 timestamp the instance branch was integrated (KTD-11); null otherwise. */
-  integratedAt?: string | null;
-  /** ISO-8601 timestamp of the last write to this row. */
-  updatedAt: string;
-}
-
-/*
-FNXC:WorkflowStepTemplate 2026-06-25-00:00:
-U6 deleted the built-in step-template catalog array (the former value export). The
-`WorkflowStepTemplate` SHAPE is KEPT because plugin-contributed step templates still use
-it (they feed the
-workflow-editor optional-group palette via `getPluginWorkflowStepTemplates`). It is no
-longer backed by any built-in catalog: the former built-in `browser-verification` /
-`code-review` literals now live inlined in their optional-group node builders
-(`builtin-browser-verification-group.ts` / `builtin-code-review-group.ts`).
+FNXC:CodeOrganization 2026-07-15-00:00:
+Domain peels live under types/*.ts. Import locally so residual interfaces in this
+barrel can reference them, then re-export so the Vite @fusion/core alias and
+package consumers keep stable import paths.
 */
-/** A workflow step template shape used by plugin-contributed steps (palette entries). */
-export interface WorkflowStepTemplate {
-  /** Unique template identifier (e.g., "documentation-review") */
-  id: string;
-  /** Display name (e.g., "Documentation Review") */
-  name: string;
-  /** Short description for UI */
-  description: string;
-  /** Full agent prompt template */
-  prompt: string;
-  /** Execution mode for plugin-contributed templates; defaults to prompt. */
-  mode?: WorkflowStepMode;
-  /** Task lifecycle phase for plugin-contributed templates; defaults to pre-merge. */
-  phase?: "pre-merge" | "post-merge";
-  /** Script name for script-mode plugin templates. */
-  scriptName?: string;
-  /** Tool set available when the template runs as a prompt-mode step. */
-  toolMode?: WorkflowStepToolMode;
-  /** Failure behavior for materialized steps from this template. */
-  gateMode?: WorkflowStepGateMode;
-  /** Whether this template should be auto-selected for new tasks. */
-  defaultOn?: boolean;
-  /** AI model provider override for prompt-mode templates. */
-  modelProvider?: string;
-  /** AI model ID override for prompt-mode templates. */
-  modelId?: string;
-  /** Optional per-node reasoning-effort override for prompt-mode templates. */
-  thinkingLevel?: ThinkingLevel;
-  /** Grouping category (e.g., "Quality", "Security") */
-  category: string;
-  /** Optional icon identifier for UI (e.g., "file-text", "shield") */
-  icon?: string;
-  /** Optional default enabled state for plugin-provided templates. */
-  enabled?: boolean;
-}
+import {
+  THINKING_LEVELS,
+  COLUMNS,
+  DEFAULT_COLUMN,
+  isColumn,
+  normalizeColumn,
+  TASK_PRIORITIES,
+  DEFAULT_TASK_PRIORITY,
+} from "./types/board.js";
+import type { ThinkingLevel, Column, ColumnId, TaskPriority } from "./types/board.js";
+export {
+  THINKING_LEVELS,
+  COLUMNS,
+  DEFAULT_COLUMN,
+  isColumn,
+  normalizeColumn,
+  TASK_PRIORITIES,
+  DEFAULT_TASK_PRIORITY,
+};
+export type { ThinkingLevel, Column, ColumnId, TaskPriority };
+
+import {
+  MERGE_REQUEST_STATES,
+  WORKFLOW_WORK_ITEM_KINDS,
+  WORKFLOW_WORK_ITEM_STATES,
+} from "./types/merge-queue.js";
+import type {
+  MergeRequestState,
+  WorkflowWorkItemKind,
+  WorkflowWorkItemState,
+  WorkflowWorkItem,
+  WorkflowWorkItemUpsertInput,
+  WorkflowWorkItemTransitionPatch,
+  WorkflowWorkItemDueFilter,
+  MergeRequestWorkflowProjectionOptions,
+  MergeQueueEntry,
+  MergeRequestRecord,
+  CompletionHandoffMarker,
+  MergeQueueEnqueueOptions,
+  MergeQueueAcquireOptions,
+  MergeQueueReleaseOutcome,
+  HandoffEvidence,
+  HandoffToReviewOptions,
+} from "./types/merge-queue.js";
+export {
+  MERGE_REQUEST_STATES,
+  WORKFLOW_WORK_ITEM_KINDS,
+  WORKFLOW_WORK_ITEM_STATES,
+};
+export type {
+  MergeRequestState,
+  WorkflowWorkItemKind,
+  WorkflowWorkItemState,
+  WorkflowWorkItem,
+  WorkflowWorkItemUpsertInput,
+  WorkflowWorkItemTransitionPatch,
+  WorkflowWorkItemDueFilter,
+  MergeRequestWorkflowProjectionOptions,
+  MergeQueueEntry,
+  MergeRequestRecord,
+  CompletionHandoffMarker,
+  MergeQueueEnqueueOptions,
+  MergeQueueAcquireOptions,
+  MergeQueueReleaseOutcome,
+  HandoffEvidence,
+  HandoffToReviewOptions,
+};
+
+import {
+  HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
+  STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
+  EXECUTION_MODES,
+  DEFAULT_EXECUTION_MODE,
+  PLANNER_OVERSIGHT_LEVELS,
+  DEFAULT_PLANNER_OVERSIGHT_LEVEL,
+  COMPLETION_DOCUMENTATION_MODES,
+  THEME_MODES,
+  COLOR_THEMES,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  isLocale,
+} from "./types/execution-and-ui.js";
+import type {
+  ExecutionMode,
+  PlannerOversightLevel,
+  CompletionDocumentationMode,
+  ThemeMode,
+  ColorTheme,
+  Locale,
+} from "./types/execution-and-ui.js";
+export {
+  HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
+  STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
+  EXECUTION_MODES,
+  DEFAULT_EXECUTION_MODE,
+  PLANNER_OVERSIGHT_LEVELS,
+  DEFAULT_PLANNER_OVERSIGHT_LEVEL,
+  COMPLETION_DOCUMENTATION_MODES,
+  THEME_MODES,
+  COLOR_THEMES,
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  isLocale,
+};
+export type {
+  ExecutionMode,
+  PlannerOversightLevel,
+  CompletionDocumentationMode,
+  ThemeMode,
+  ColorTheme,
+  Locale,
+};
+
+import {
+  __resetLegacyCwdMainWarningForTests,
+  normalizeMergeIntegrationWorktreeMode,
+  DIRECT_MERGE_COMMIT_STRATEGIES,
+  MERGE_ADVANCE_AUTO_SYNC_MODES,
+  normalizeMergeAdvanceAutoSyncMode,
+  normalizeMergeConflictStrategy,
+  MERGE_STRATEGY_OVERLAP_BEHAVIORS,
+  normalizeMergeStrategyOverlapBehavior,
+  POST_MERGE_AUDIT_MODES,
+  normalizePostMergeAuditMode,
+  MERGE_AUDIT_AUTO_RECOVERY_MODES,
+  normalizeMergeAuditAutoRecovery,
+  MERGER_MODES,
+  normalizeMergerMode,
+  AUTO_RECOVERY_MODES,
+  normalizeAutoRecovery,
+} from "./types/merge-policy.js";
+import type {
+  PrStatus,
+  MergeStrategy,
+  MergeIntegrationWorktreeMode,
+  DirectMergeCommitStrategy,
+  MergeAdvanceAutoSyncMode,
+  MergeConflictStrategy,
+  CanonicalMergeConflictStrategy,
+  MergeStrategyOverlapBehavior,
+  PostMergeAuditMode,
+  MergeAuditAutoRecoveryMode,
+  MergerMode,
+  MergerSettings,
+  AutoRecoveryMode,
+  AutoRecoveryFailureClass,
+  AutoRecoverySettings,
+  UnavailableNodePolicy,
+  OwningNodeHandoffPolicy,
+} from "./types/merge-policy.js";
+export {
+  __resetLegacyCwdMainWarningForTests,
+  normalizeMergeIntegrationWorktreeMode,
+  DIRECT_MERGE_COMMIT_STRATEGIES,
+  MERGE_ADVANCE_AUTO_SYNC_MODES,
+  normalizeMergeAdvanceAutoSyncMode,
+  normalizeMergeConflictStrategy,
+  MERGE_STRATEGY_OVERLAP_BEHAVIORS,
+  normalizeMergeStrategyOverlapBehavior,
+  POST_MERGE_AUDIT_MODES,
+  normalizePostMergeAuditMode,
+  MERGE_AUDIT_AUTO_RECOVERY_MODES,
+  normalizeMergeAuditAutoRecovery,
+  MERGER_MODES,
+  normalizeMergerMode,
+  AUTO_RECOVERY_MODES,
+  normalizeAutoRecovery,
+};
+export type {
+  PrStatus,
+  MergeStrategy,
+  MergeIntegrationWorktreeMode,
+  DirectMergeCommitStrategy,
+  MergeAdvanceAutoSyncMode,
+  MergeConflictStrategy,
+  CanonicalMergeConflictStrategy,
+  MergeStrategyOverlapBehavior,
+  PostMergeAuditMode,
+  MergeAuditAutoRecoveryMode,
+  MergerMode,
+  MergerSettings,
+  AutoRecoveryMode,
+  AutoRecoveryFailureClass,
+  AutoRecoverySettings,
+  UnavailableNodePolicy,
+  OwningNodeHandoffPolicy,
+};
+
+import { NOTIFICATION_EVENTS } from "./types/workflow-steps.js";
+import type {
+  ModelPreset,
+  WorkflowStepMode,
+  WorkflowStepToolMode,
+  WorkflowStepGateMode,
+  WorkflowStepPhase,
+  WorkflowStep,
+  NtfyNotificationEvent,
+  NotificationEvent,
+  NotificationPayload,
+  NotificationProviderConfig,
+  CustomProvider,
+  WorkflowStepInput,
+  WorkflowStepResult,
+  WorkflowRunStepInstanceStatus,
+  WorkflowRunStepInstance,
+  WorkflowStepTemplate,
+} from "./types/workflow-steps.js";
+export { NOTIFICATION_EVENTS };
+export type {
+  ModelPreset,
+  WorkflowStepMode,
+  WorkflowStepToolMode,
+  WorkflowStepGateMode,
+  WorkflowStepPhase,
+  WorkflowStep,
+  NtfyNotificationEvent,
+  NotificationEvent,
+  NotificationPayload,
+  NotificationProviderConfig,
+  CustomProvider,
+  WorkflowStepInput,
+  WorkflowStepResult,
+  WorkflowRunStepInstanceStatus,
+  WorkflowRunStepInstance,
+  WorkflowStepTemplate,
+};
 
 export type PrConflictState = "clean" | "conflicting" | "behind" | "blocked" | "unknown";
 

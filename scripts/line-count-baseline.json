@@ -16,7 +16,7 @@
   "packages/core/src/mission-store.ts": 4364,
   "packages/core/src/postgres/sqlite-migrator.ts": 2068,
   "packages/core/src/store.ts": 2631,
-  "packages/core/src/types.ts": 8104,
+  "packages/core/src/types.ts": 7336,
   "packages/dashboard/app/api/legacy.ts": 11627,
   "packages/dashboard/app/components/AgentDetailView.tsx": 5552,
   "packages/dashboard/app/components/AgentsView.tsx": 2254,
