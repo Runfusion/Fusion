@@ -17,10 +17,9 @@ describe("even realities plugin", () => {
     ]);
   });
 
-  it("creates notifier dedupe table on schema init", () => {
-    const exec = vi.fn();
-    plugin.hooks?.onSchemaInit?.({ exec } as never);
-    expect(exec).toHaveBeenCalledWith(expect.stringContaining("CREATE TABLE IF NOT EXISTS even_realities_seen_tasks"));
+  it("leaves schema creation to the registered PostgreSQL startup hook", () => {
+    /* FNXC:EvenRealitiesPostgres 2026-07-14-17:55: Plugin runtime hooks no longer execute SQLite DDL; core's registered migration-connection hook owns PostgreSQL schema creation. */
+    expect(plugin.hooks?.onSchemaInit).toBeUndefined();
   });
 
   it("returns 503 for unknown instance routes", async () => {
@@ -36,10 +35,7 @@ describe("even realities plugin", () => {
   });
 
   it("handles known instance route after load", async () => {
-    const db = {
-      exec: vi.fn(),
-      prepare: vi.fn(() => ({ all: () => [], run: vi.fn() })),
-    };
+    const layer = { projectId: "known-project", db: {} };
     const ctx = {
       pluginId: "known",
       settings: {
@@ -48,7 +44,7 @@ describe("even realities plugin", () => {
         companionWebhookUrl: "https://companion.example",
       },
       logger: console,
-      taskStore: { getPluginStore: () => ({ db }) },
+      taskStore: { getAsyncLayer: () => layer, listTasks: vi.fn(async () => []) },
     } as never;
 
     await plugin.hooks?.onLoad?.(ctx);

@@ -2,32 +2,12 @@ import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "
 import { applyDecision, type ApprovalActor, type ApprovalDecision, type ApprovalSettings } from "../approval.js";
 import { getApprovalRequired, getApproverAgentIds, getAutoPublishOnApproval, getPublishTargets } from "../settings.js";
 import { buildShareBlocks } from "../share-blocks.js";
-import { ReportStore } from "../store/report-store.js";
+import { getReportStore } from "../store/report-store-provider.js";
 
 interface RouteRequest {
   params: Record<string, string>;
   body?: Record<string, unknown>;
   headers?: Record<string, string | undefined>;
-}
-
-const reportStoreCache = new WeakMap<object, ReportStore>();
-
-function getStore(ctx: PluginContext): ReportStore {
-  const taskStoreWithReports = ctx.taskStore as PluginContext["taskStore"] & { getReportStore?: () => ReportStore };
-  if (typeof taskStoreWithReports.getReportStore === "function") return taskStoreWithReports.getReportStore();
-  const key = ctx.taskStore as object;
-  const cached = reportStoreCache.get(key);
-  if (cached) return cached;
-  // FNXC:PostgresCutover 2026-07-04-00:00:
-  // In backend mode, pass asyncLayer so ReportStore async methods work.
-  if (ctx.taskStore.isBackendMode()) {
-    const store = new ReportStore(null, { asyncLayer: ctx.taskStore.getAsyncLayer() });
-    reportStoreCache.set(key, store);
-    return store;
-  }
-  const store = new ReportStore(ctx.taskStore.getDatabase());
-  reportStoreCache.set(key, store);
-  return store;
 }
 
 function settingsFromContext(ctx: PluginContext): ApprovalSettings {
@@ -67,7 +47,7 @@ export function createReportApprovalRoutes(): PluginRouteDefinition[] {
   const mutate = (action: ApprovalDecision["action"]) => async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
     const request = req as RouteRequest;
     const reportId = request.params.id;
-    const store = getStore(ctx);
+        const store = getReportStore(ctx);
     const report = await store.getReportAsync(reportId);
     if (!report) return notFound(reportId);
 
@@ -93,7 +73,7 @@ export function createReportApprovalRoutes(): PluginRouteDefinition[] {
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const request = req as RouteRequest;
         const reportId = request.params.id;
-        const report = await getStore(ctx).getReportAsync(reportId);
+        const report = await getReportStore(ctx).getReportAsync(reportId);
         if (!report) return notFound(reportId);
         if (!(report.approvalState === "approved" || report.approvalState === "published")) {
           return { status: 409, body: { error: "Share blocks unlock after approval" } };

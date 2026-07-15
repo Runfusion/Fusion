@@ -1,27 +1,9 @@
 import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/core";
-import { ReportStore } from "../store/report-store.js";
+import { getReportStore } from "../store/report-store-provider.js";
 
 interface RouteRequest {
   params: Record<string, string>;
   query?: Record<string, string | string[] | undefined>;
-}
-
-const reportStoreCache = new WeakMap<object, ReportStore>();
-
-function getStore(ctx: PluginContext): ReportStore {
-  const key = ctx.taskStore as object;
-  const cached = reportStoreCache.get(key);
-  if (cached) return cached;
-  // FNXC:PostgresCutover 2026-07-04-00:00:
-  // In backend mode, pass asyncLayer so ReportStore async methods work.
-  if (ctx.taskStore.isBackendMode()) {
-    const store = new ReportStore(null, { asyncLayer: ctx.taskStore.getAsyncLayer() });
-    reportStoreCache.set(key, store);
-    return store;
-  }
-  const store = new ReportStore(ctx.taskStore.getDatabase());
-  reportStoreCache.set(key, store);
-  return store;
 }
 
 function badRequest(message: string): PluginRouteResponse {
@@ -43,7 +25,7 @@ export function createReportListRoutes(): PluginRouteDefinition[] {
         const q = typeof query.q === "string" && query.q.length > 0 ? query.q.toLowerCase() : undefined;
         const agent = typeof query.agentId === "string" && query.agentId.length > 0 ? query.agentId.toLowerCase() : undefined;
 
-        const store = getStore(ctx);
+        const store = getReportStore(ctx);
         const reports = await store.listReportsAsync({
           cadence: cadence as never,
           status: status as never,
@@ -70,7 +52,7 @@ export function createReportListRoutes(): PluginRouteDefinition[] {
       path: "/reports/:id",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const request = req as RouteRequest;
-        const report = await getStore(ctx).getReportAsync(request.params.id);
+        const report = await getReportStore(ctx).getReportAsync(request.params.id);
         if (!report) return { status: 404, body: { error: `Report ${request.params.id} not found` } };
         return { status: 200, body: { report } };
       },

@@ -543,17 +543,15 @@ pgDescribe("AsyncRoadmapStore", () => {
     const h = await createTaskStoreForTest({ prefix: "roadmap_upgrade_single" });
     try {
       await h.adminDb.execute(sql.raw(`
-        ALTER TABLE project.roadmap_features ALTER COLUMN project_id DROP NOT NULL;
-        ALTER TABLE project.roadmap_milestones ALTER COLUMN project_id DROP NOT NULL;
-        ALTER TABLE project.roadmaps ALTER COLUMN project_id DROP NOT NULL;
+        /* FNXC:RoadmapPostgresUpgrade 2026-07-14-21:04: Project ownership now participates in primary and foreign keys, so legacy-unowned fixtures use the supported empty owner sentinel instead of invalidating current constraints to insert NULL. */
         INSERT INTO central.projects(id, name, path, created_at, updated_at)
           VALUES ('project-only', 'Only', '/only', '2026-07-13', '2026-07-13');
         INSERT INTO project.roadmaps(id, project_id, title, created_at, updated_at)
-          VALUES ('RM-OLD', NULL, 'Old', '2026-07-13', '2026-07-13');
+          VALUES ('RM-OLD', '', 'Old', '2026-07-13', '2026-07-13');
         INSERT INTO project.roadmap_milestones(id, project_id, roadmap_id, title, order_index, created_at, updated_at)
-          VALUES ('RMS-OLD', NULL, 'RM-OLD', 'Old milestone', 0, '2026-07-13', '2026-07-13');
+          VALUES ('RMS-OLD', '', 'RM-OLD', 'Old milestone', 0, '2026-07-13', '2026-07-13');
         INSERT INTO project.roadmap_features(id, project_id, milestone_id, title, order_index, created_at, updated_at)
-          VALUES ('RF-OLD', NULL, 'RMS-OLD', 'Old feature', 0, '2026-07-13', '2026-07-13');
+          VALUES ('RF-OLD', '', 'RMS-OLD', 'Old feature', 0, '2026-07-13', '2026-07-13');
       `));
 
       await roadmapPluginSchemaInit.init(h.adminDb);
@@ -583,12 +581,11 @@ pgDescribe("AsyncRoadmapStore", () => {
     const h = await createTaskStoreForTest({ prefix: "roadmap_upgrade_ambiguous" });
     try {
       await h.adminDb.execute(sql.raw(`
-        ALTER TABLE project.roadmaps ALTER COLUMN project_id DROP NOT NULL;
         INSERT INTO central.projects(id, name, path, created_at, updated_at) VALUES
           ('project-a', 'A', '/a', '2026-07-13', '2026-07-13'),
           ('project-b', 'B', '/b', '2026-07-13', '2026-07-13');
         INSERT INTO project.roadmaps(id, project_id, title, created_at, updated_at)
-          VALUES ('RM-AMBIGUOUS', NULL, 'Ambiguous', '2026-07-13', '2026-07-13');
+          VALUES ('RM-AMBIGUOUS', '', 'Ambiguous', '2026-07-13', '2026-07-13');
       `));
 
       let failure: unknown;

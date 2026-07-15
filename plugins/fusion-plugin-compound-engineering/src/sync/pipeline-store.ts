@@ -496,15 +496,10 @@ export function getCePipelineStore(ctx: PluginContext): CePipelineStore {
   const key = ctx.taskStore as object;
   const cached = storeCache.get(key);
   if (cached) return cached;
-  // FNXC:PostgresCutover 2026-07-04-00:00 RESOLVED:
-  // In backend mode the sync SQLite Database is unavailable (getDatabase()
-  // throws), but the TaskStore's AsyncDataLayer is wired through. Pass both:
-  // the *Async() siblings use asyncLayer in backend mode; the sync methods
-  // remain as the SQLite fallback for non-backend callers/tests.
-  const backendMode = ctx.taskStore.isBackendMode();
-  const db = backendMode ? null : ctx.taskStore.getDatabase();
-  const asyncLayer = backendMode ? ctx.taskStore.getAsyncLayer() : null;
-  const store = new CePipelineStore(db, asyncLayer);
+  const asyncLayer = ctx.taskStore.getAsyncLayer();
+  if (!asyncLayer) throw new Error("Compound Engineering pipeline store requires the project PostgreSQL AsyncDataLayer");
+  /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Bundled CE pipeline state is PostgreSQL-only at runtime. */
+  const store = new CePipelineStore(null, asyncLayer);
   storeCache.set(key, store);
   return store;
 }
