@@ -45,11 +45,14 @@ const { taskStoreInstances, makeTaskStore, mockListProjects, mockGetProjectHealt
 });
 
 vi.mock("@fusion/core", () => ({
-  // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
-  createTaskStoreForBackend: vi.fn(async ({ rootDir }: { rootDir: string }) => ({
-    taskStore: makeTaskStore(rootDir),
-    shutdown: vi.fn().mockResolvedValue(undefined),
-  })),
+  // FNXC:PostgresCutover 2026-07-14-23:02: The mock mirrors the mandatory backend owner: shutdown closes the exact TaskStore it returns so lifecycle tests expose direct-close and double-close regressions.
+  createTaskStoreForBackend: vi.fn(async ({ rootDir }: { rootDir: string }) => {
+    const taskStore = makeTaskStore(rootDir);
+    return {
+      taskStore,
+      shutdown: vi.fn(async () => taskStore.close()),
+    };
+  }),
   CentralCore: makeConstructibleMock(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),

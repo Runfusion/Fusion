@@ -8,7 +8,7 @@ import { AgentStore } from "@fusion/core";
 vi.mock("../../project-context.js", () => ({
   resolveAgentStoreBase: vi.fn(async () => ({
     rootDir: process.cwd(),
-    asyncLayer: null,
+    asyncLayer: {} as never,
     cleanup: vi.fn(async () => undefined),
   })),
 }));

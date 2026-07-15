@@ -92,6 +92,11 @@ const quarantinedCliTests: string[] = [
   FN-7530 resolved the FN-7447 entry: RESCUE-by-split, not delete. The single dist-barrel recompilation test (unchanged assertions) moved to packages/cli/src/__tests__/extension-dist-barrel.test.ts; extension.test.ts is back in the default lane and its ~68 stable tests run again. The isolated file still stays quarantined here under its OWN fresh entry, because the root cause is loaded-lane CPU contention during vi.resetModules()/vi.importActual(dist barrel)/dynamic import() -- a property of that operation under 4-shard CI, not of file layout -- so splitting the file does not by itself make it safe to re-admit, and with only one test in the file there is no second call site to amortize a module-top-level rescue against. No testTimeout widening, retries, or worker/concurrency changes were made. Mirrors scripts/lib/test-quarantine.json; this isolated file's own 14-day deletion clock is due 2026-07-18.
   */
   "src/__tests__/extension-dist-barrel.test.ts",
+  /*
+  FNXC:CliTests 2026-07-14-23:05:
+  project-context.test.ts lost its embedded PostgreSQL postmaster and timed out only in a combined focused lane, then passed 12/12 in isolation. Quarantine the loaded-lane cluster interference on sight instead of widening hooks, retrying, or weakening lifecycle assertions; mirrored in scripts/lib/test-quarantine.json.
+  */
+  "src/__tests__/project-context.test.ts",
 ];
 
 export default defineConfig({

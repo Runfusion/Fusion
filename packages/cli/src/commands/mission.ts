@@ -224,7 +224,7 @@ export async function runMissionList(
     const includeDrafts = options.includeDrafts ?? true;
 
     const missions = await missionStore.listMissions();
-    // FNXC:PostgresCutover 2026-07-04: in backend mode read mission-interview
+    // FNXC:PostgresCutover 2026-07-04-00:00: in backend mode read mission-interview
     // drafts from PostgreSQL via Drizzle (the SQLite getDatabase() runtime was
     // removed under VAL-REMOVAL-005). PG ai_sessions columns are snake_case, so
     // alias updated_at -> updatedAt to preserve the existing draft row shape.

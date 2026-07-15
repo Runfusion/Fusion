@@ -233,9 +233,30 @@ export async function runAgentImport(
   const base = await resolveAgentStoreBase(options?.project);
   const projectPath = base.rootDir;
   const agentStore = new AgentStore({ rootDir: projectPath + "/.fusion", asyncLayer: base.asyncLayer });
+  let cleanupPromise: Promise<void> | undefined;
+  let exitRequested = false;
+  const cleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      const failures: unknown[] = [];
+      try {
+        agentStore.close();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await base.cleanup();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, "Failed to close agent import resources");
+    })();
+    return cleanupPromise;
+  };
   const exitWithCleanup = async (code: number): Promise<never> => {
-    agentStore.close();
-    await base.cleanup();
+    exitRequested = true;
+    /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Import parse failures retain their established exit code even when teardown fails, while cleanup still attempts both AgentStore and borrowed PostgreSQL owners. */
+    await cleanup().catch((error) => console.error(`Cleanup failed: ${error instanceof Error ? error.message : String(error)}`));
     return process.exit(code);
   };
   try {
@@ -390,7 +411,7 @@ export async function runAgentImport(
 
     printSummary(companyName, agentCount, teamCount, created, result.skipped, errors, false, skillResult);
   } finally {
-    agentStore.close();
-    await base.cleanup();
+    if (exitRequested) await cleanup().catch(() => undefined);
+    else await cleanup();
   }
 }

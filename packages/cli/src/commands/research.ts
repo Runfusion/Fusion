@@ -26,9 +26,8 @@ import { retryOnLock } from "../lock-retry.js";
  * event loop alive after the command's work is done. Fixed by resolving the
  * name→path via `resolveProjectPathOnly` (closes+evicts the cached store
  * internally) and retaining the startup factory shutdown owner for every
- * caller. The non-wait create path transfers backend ownership to its active
- * in-process run so the command can return immediately while completion is
- * still observed and releases PostgreSQL resources. Discrete board/settings reads that gate run-critical
+ * caller. The non-wait create path persists a queued run and shuts down its
+ * backend normally; the durable engine dispatcher executes that work. Discrete board/settings reads that gate run-critical
  * decisions (`getSettings()` in `getResearchRuntime`) and the `createExport`
  * write are wrapped in `retryOnLock` so a momentary `database is locked`
  * from an active engine/agent writer is retried instead of failing the
@@ -160,8 +159,9 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
    * does NOT run pending `finally` blocks in production (only a *mocked*
    * `process.exit` in tests throws, which would misleadingly make a
    * `finally` after `handleError` appear to work under test but not for
-   * real). EVERY exit point below drains active orchestrator work, then
-   * invokes the startup factory's shutdown owner before returning or exiting.
+   * real). EVERY exit point below invokes the startup factory's shutdown owner
+   * before returning or exiting; only the explicit wait path starts and drains
+   * in-process orchestrator work.
    */
   let owned: OwnedResearchStore | undefined;
   let store: TaskStore | undefined;
@@ -187,26 +187,14 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
       stepTimeoutMs: resolved.limits.requestTimeoutMs,
     });
 
-    const runPromise = orchestrator.startRun(runId, options.query);
+    await store.getResearchStore().updateRun(runId, { query: options.query });
     if (!options.waitForCompletion) {
       /*
-      FNXC:ResearchCliBackground 2026-07-14-21:20:
-      Non-wait research preserves its operator contract by returning immediately after run creation. Transfer the backend owner and observe completion before any further await so a fast rejection cannot become unhandled; PostgreSQL shuts down only after the in-process orchestrator finishes using it.
+      FNXC:ResearchCliDurableDispatch 2026-07-14-22:54:
+      A non-wait CLI invocation persists a query-bearing queued run and exits after normal backend shutdown. It must not start in-process work or retain PostgreSQL ownership; the durable engine ResearchRunDispatcher owns queued execution after the short-lived CLI process exits.
       */
-      const backgroundOwner = owned;
-      owned = undefined;
-      void runPromise
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`Background cited-research run ${runId} failed: ${message}`);
-        })
-        .finally(async () => {
-          await backgroundOwner?.shutdown().catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
-            console.error(`Failed to close cited-research backend for ${runId}: ${message}`);
-          });
-        });
       const run = await store.getResearchStore().getRun(runId);
+      await closeStore();
       if (options.json) {
         jsonOut(run);
       } else {
@@ -216,6 +204,7 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
       return;
     }
 
+    const runPromise = orchestrator.startRun(runId, options.query);
     const maxWaitMs = Math.max(1_000, Math.min(options.maxWaitMs ?? 90_000, resolved.limits.maxDurationMs));
     const fallbackRun = (): ResearchRun => ({
           id: runId,
@@ -254,8 +243,7 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
       completed = (await store.getResearchStore().getRun(runId)) ?? completed;
     }
 
-    // The run either completed or was cancelled and drained above, so unlike
-    // the fire-and-forget branch it is safe to close here.
+    // The wait-path run either completed or was cancelled and drained above.
     await closeStore();
 
     if (options.json) {

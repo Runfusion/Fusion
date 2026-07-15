@@ -38,7 +38,10 @@ export async function runSettingsExport(options: {
   const exitWithBackend = async (code: number): Promise<never> => {
     const shutdown = backendShutdown;
     backendShutdown = undefined;
-    await shutdown?.();
+    /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Settings export preserves its success/failure exit code after making an awaited shutdown attempt; teardown rejection is diagnostic, not a second export result. */
+    await shutdown?.().catch((cleanupError) => {
+      console.error(`Cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    });
     return process.exit(code);
   };
 

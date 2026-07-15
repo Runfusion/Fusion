@@ -164,9 +164,6 @@ export async function runAgentStop(id: string, projectName?: string): Promise<vo
     console.log();
     console.log(`  ✓ Agent ${id} stopped`);
     console.log();
-  } catch (err) {
-    closeAgentStoreSafely(agentStore);
-    throw err;
   } finally {
     closeAgentStoreSafely(agentStore);
     await owned.cleanup();
@@ -219,9 +216,6 @@ export async function runAgentStart(id: string, projectName?: string): Promise<v
     console.log();
     console.log(`  ✓ Agent ${id} started`);
     console.log();
-  } catch (err) {
-    closeAgentStoreSafely(agentStore);
-    throw err;
   } finally {
     closeAgentStoreSafely(agentStore);
     await owned.cleanup();

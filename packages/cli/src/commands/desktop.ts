@@ -32,7 +32,7 @@ interface DashboardRuntime {
 }
 
 async function startDashboardRuntime(rootDir: string, paused: boolean, noAuth: boolean): Promise<DashboardRuntime> {
-  // FNXC:PostgresCutover 2026-07-04: boot the PostgreSQL backend via the startup
+  // FNXC:PostgresCutover 2026-07-04-00:00: boot the PostgreSQL backend via the startup
   // factory (embedded by default, external via DATABASE_URL), mirroring dashboard.ts.
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Desktop startup has no SQLite
   // fallback; an obsolete backend opt-out fails explicitly in the factory.

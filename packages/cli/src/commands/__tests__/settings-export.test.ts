@@ -169,5 +169,7 @@ describe("runSettingsExport", () => {
     await expect(runSettingsExport({ projectName: "alpha" })).rejects.toThrow("startup failed");
 
     expect(closeProjectStore).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(closeProjectStore).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(createTaskStoreForBackend).mock.invocationCallOrder[0]);
   });
 });

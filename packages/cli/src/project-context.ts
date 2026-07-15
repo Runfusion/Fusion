@@ -36,23 +36,39 @@ async function closeOwnedProjectStore(store: TaskStore): Promise<void> {
   if (closedProjectStores.has(store)) return;
   const owner = storeOwners.get(store);
   if (!owner) {
-    await store.close().catch(() => undefined);
+    await store.close();
     closedProjectStores.add(store);
     return;
   }
   if (!owner.closePromise) {
     /*
     FNXC:PostgresCliLifecycle 2026-07-14-19:10:
-    A layerless CentralCore can own the embedded postmaster that a subsequently-created project TaskStore only observes. Teardown must therefore close the TaskStore pool first and stop the retained CentralCore/postmaster second, with one shared promise making concurrent command cleanup exactly-once.
+    A layerless CentralCore can own the embedded postmaster that a subsequently-created project TaskStore only observes. Teardown must attempt both retained owners even if the first rejects. Failed cleanup remains retryable; only a completely successful attempt evicts ownership and marks the store closed.
     */
     owner.closePromise = (async () => {
-      await owner.backendShutdown().catch(() => undefined);
-      await owner.central?.close().catch(() => undefined);
+      const failures: unknown[] = [];
+      try {
+        await owner.backendShutdown();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await owner.central?.close();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, "Failed to close project PostgreSQL owners");
     })();
   }
-  await owner.closePromise;
-  storeOwners.delete(store);
-  closedProjectStores.add(store);
+  try {
+    await owner.closePromise;
+    storeOwners.delete(store);
+    closedProjectStores.add(store);
+  } catch (error) {
+    owner.closePromise = undefined;
+    throw error;
+  }
 }
 
 /**
@@ -416,10 +432,10 @@ export async function resolveAgentStoreBase(
  * another in-process caller already holds/closed the same cached instance.
  */
 export async function closeProjectStore(context: ProjectContext): Promise<void> {
+  await closeOwnedProjectStore(context.store);
   if (storeCache.get(context.projectId) === context.store) {
     storeCache.delete(context.projectId);
   }
-  await closeOwnedProjectStore(context.store);
 }
 
 /**

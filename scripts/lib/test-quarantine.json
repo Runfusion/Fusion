@@ -185,6 +185,11 @@
       "file": "packages/dashboard/src/__tests__/routes-system.test.ts",
       "reason": "PostgreSQL maintainability verification on 2026-07-14 observed the CPU sampling assertion near line 500 receive 10 when 30 was expected during the local file-scoped `pnpm --filter @fusion/dashboard exec vitest run packages/dashboard/src/__tests__/routes-system.test.ts` run. Archived local-run evidence: https://github.com/Runfusion/Fusion/pull/2109#discussion_r3584473782. The unrelated sampling result is timing/load-sensitive, so quarantine the file on sight instead of changing its timeout, retries, or assertion. Mirrored in packages/dashboard/vitest.config.ts quarantinedDashboardTests.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/cli/src/__tests__/project-context.test.ts",
+      "reason": "PR #2110 feedback verification on 2026-07-14 observed the embedded PostgreSQL postmaster exit unexpectedly in a combined file-scoped CLI run, followed by ECONNREFUSED, 10s hook timeouts, and the subprocess guard; the unchanged suite passed 12/12 immediately in isolation. Archived local-run evidence: https://github.com/Runfusion/Fusion/pull/2110#issuecomment-4977406152. The loaded-lane embedded-cluster interference is timing/resource-sensitive, so quarantine the file on sight instead of widening timeouts, adding retries, or weakening assertions. Mirrored in packages/cli/vitest.config.ts quarantinedCliTests.",
+      "quarantinedAt": "2026-07-14"
     }
   ]
 }

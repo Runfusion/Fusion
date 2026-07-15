@@ -982,8 +982,21 @@ export async function getProjectsWithStatus(): Promise<
 
   const projects = await central.listProjects();
 
-  const results = await Promise.all(
-    projects.map(async (project) => {
+  /*
+   * FNXC:PostgresProjectStatus 2026-07-14-23:02:
+   * Each status read owns a short-lived PostgreSQL pool. Bound fan-out so a large registry cannot open one pool per project simultaneously, while retaining input order and per-project soft failure semantics.
+   */
+  const results = new Array<{
+    project: RegisteredProject;
+    runtimeStatus: import("@fusion/engine").RuntimeStatus | "not_started";
+    taskCount: number;
+  }>(projects.length);
+  let nextProjectIndex = 0;
+  const workerCount = Math.min(4, projects.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextProjectIndex < projects.length) {
+      const projectIndex = nextProjectIndex++;
+      const project = projects[projectIndex];
       const runtime = pm.getRuntime(project.id);
       const runtimeStatus = runtime?.getStatus() ?? "not_started";
 
@@ -1006,13 +1019,9 @@ export async function getProjectsWithStatus(): Promise<
         await shutdown?.().catch(() => undefined);
       }
 
-      return { project, runtimeStatus, taskCount } as {
-        project: RegisteredProject;
-        runtimeStatus: import("@fusion/engine").RuntimeStatus | "not_started";
-        taskCount: number;
-      };
-    })
-  );
+      results[projectIndex] = { project, runtimeStatus, taskCount };
+    }
+  }));
 
   return results;
 }

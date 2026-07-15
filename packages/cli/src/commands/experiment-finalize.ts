@@ -51,8 +51,10 @@ async function parsePlanOverride(path: string): Promise<FinalizePlanOverride> {
 }
 
 async function exitWithError(error: unknown, shutdown?: () => Promise<void>): Promise<never> {
-  /* FNXC:PostgresCliLifecycle 2026-07-14-19:10: Experiment-finalize errors may terminate the process, so drain the owned PostgreSQL backend before selecting the command's established exit code. */
-  await shutdown?.();
+  /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Experiment-finalize must attempt backend teardown before exit without allowing a shutdown rejection to replace its established typed error code. */
+  await shutdown?.().catch((cleanupError) => {
+    console.error(`Cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+  });
   if (error instanceof ExperimentFinalizeCherryPickConflictError) {
     console.error(`Error: ${error.message}`);
     console.error(JSON.stringify({ groupId: error.groupId, commit: error.commit, stderr: error.stderr }));

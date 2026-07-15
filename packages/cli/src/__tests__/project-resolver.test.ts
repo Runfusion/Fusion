@@ -191,6 +191,48 @@ describe("Project Resolver", () => {
       expect(shutdown).toHaveBeenCalledOnce();
     });
 
+    it("releases aggregate status backends when task reads reject", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue([project] as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks: vi.fn().mockRejectedValue(new Error("read failed")) } as never,
+        shutdown,
+      } as never);
+
+      await expect(getProjectsWithStatus()).resolves.toEqual([
+        { project, runtimeStatus: "not_started", taskCount: 0 },
+      ]);
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("bounds aggregate PostgreSQL backend fan-out and preserves project order", async () => {
+      const projects = Array.from({ length: 7 }, (_, index) => ({
+        ...project,
+        id: `proj_${index}`,
+        name: `project-${index}`,
+        path: `/projects/${index}`,
+      }));
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue(projects as never);
+      let active = 0;
+      let peak = 0;
+      vi.mocked(createTaskStoreForBackend).mockImplementation(async ({ projectId }) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        return {
+          taskStore: { listTasks: vi.fn().mockResolvedValue([{ column: projectId }]) },
+          shutdown: vi.fn(async () => { active -= 1; }),
+        } as never;
+      });
+
+      const result = await getProjectsWithStatus();
+
+      expect(peak).toBeLessThanOrEqual(4);
+      expect(active).toBe(0);
+      expect(result.map(({ project: item }) => item.id)).toEqual(projects.map((item) => item.id));
+    });
+
     it("boots and releases an owned PostgreSQL store for one-shot column counts", async () => {
       const shutdown = vi.fn().mockResolvedValue(undefined);
       const listTasks = vi.fn().mockResolvedValue([{ column: "todo" }, { column: "todo" }, { column: "done" }]);
@@ -203,6 +245,19 @@ describe("Project Resolver", () => {
 
       await expect(getProjectTaskCounts(project.id)).resolves.toEqual({ todo: 2, done: 1 });
       expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: project.path, projectId: project.id });
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("releases one-shot column-count backends when task reads reject", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const central = await getCentralCore();
+      vi.mocked(central.getProject).mockResolvedValue(project as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks: vi.fn().mockRejectedValue(new Error("read failed")) } as never,
+        shutdown,
+      } as never);
+
+      await expect(getProjectTaskCounts(project.id)).rejects.toThrow("read failed");
       expect(shutdown).toHaveBeenCalledOnce();
     });
 

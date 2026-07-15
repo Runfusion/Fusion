@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTaskStoreForBackend } from "@fusion/core";
 
 const lifecycle = vi.hoisted(() => {
   const events: string[] = [];
@@ -64,5 +65,38 @@ describe("project-context PostgreSQL ownership", () => {
 
   it("surfaces resolution failures instead of returning a null agent layer", async () => {
     await expect(resolveAgentStoreBase("missing")).rejects.toThrow("not found");
+  });
+
+  /*
+  FNXC:PostgresCliLifecycle 2026-07-14-22:55:
+  A rejected owner shutdown must not suppress CentralCore teardown or permanently mark the store closed. The same context remains retryable and is evicted only after every retained owner closes successfully.
+  */
+  it("attempts every owner and retries after a rejected shutdown", async () => {
+    const retryStore = {
+      getAsyncLayer: vi.fn(() => lifecycle.layer),
+      close: vi.fn(async () => undefined),
+    };
+    const retryShutdown = vi.fn()
+      .mockRejectedValueOnce(new Error("pool close failed"))
+      .mockImplementationOnce(async () => {
+        lifecycle.events.push("backend-shutdown-retry");
+        await retryStore.close();
+      });
+    vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+      taskStore: retryStore,
+      asyncLayer: lifecycle.layer,
+      backend: { mode: "embedded" },
+      shutdown: retryShutdown,
+    } as never);
+    const context = await resolveProject("proj-1", "/repo");
+
+    await expect(closeProjectStore(context)).rejects.toThrow("pool close failed");
+    expect(lifecycle.centralClose).toHaveBeenCalledTimes(1);
+
+    await closeProjectStore(context);
+    expect(retryShutdown).toHaveBeenCalledTimes(2);
+    expect(lifecycle.centralClose).toHaveBeenCalledTimes(2);
+    await closeProjectStore(context);
+    expect(retryShutdown).toHaveBeenCalledTimes(2);
   });
 });

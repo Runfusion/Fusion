@@ -4,9 +4,8 @@
  * command must close its resolved `TaskStore` on every exit path
  * (success/not-found/`handleError`), retry `getSettings()`/`createExport`
  * through a momentary `database is locked`, and — critically — the
- * `runResearchCreate` non-`waitForCompletion` branch must return before
- * completion while transferring cleanup to an observed background promise
- * (closing immediately would truncate an in-flight run). Uses a mocked `TaskStore`/orchestrator (per
+ * `runResearchCreate` non-`waitForCompletion` branch must persist queued work,
+ * avoid in-process execution, and complete normal backend shutdown. Uses a mocked `TaskStore`/orchestrator (per
  * FN-5048 — no real long waits) with `retryOnLock`'s real bounded-backoff
  * implementation exercised end to end via fake timers.
  */
@@ -50,6 +49,7 @@ const researchStoreMock = Object.assign(Object.create(MockResearchStore.prototyp
   getRun: vi.fn(() => mockRun),
   listRuns: vi.fn(() => [mockRun]),
   createExport: vi.fn(),
+  updateRun: vi.fn(),
 });
 
 const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegistryMock, writeFileMock, MockResearchStore } = vi.hoisted(() => {
@@ -60,6 +60,7 @@ const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegist
     getRun: vi.fn(),
     listRuns: vi.fn(),
     createExport: vi.fn(),
+    updateRun: vi.fn(),
   });
   return {
     storeMock: {
@@ -178,27 +179,20 @@ describe("research commands — leak/lock reproduction (FN-7740)", () => {
     expect(storeMock.close).toHaveBeenCalled();
   });
 
-  it("returns before a non-wait run completes and closes the store after background completion", async () => {
-    let completeRun!: (run: typeof mockRun) => void;
-    orchestratorMock.startRun.mockReturnValue(new Promise((resolveRun) => {
-      completeRun = resolveRun;
-    }));
-
+  it("persists a queued non-wait run without starting it and completes shutdown", async () => {
     await runResearchCreate({ query: "hello" });
-    expect(storeMock.close).not.toHaveBeenCalled();
+    expect(researchStore.updateRun).toHaveBeenCalledWith("RR-002", { query: "hello" });
+    expect(orchestratorMock.startRun).not.toHaveBeenCalled();
+    expect(storeMock.close).toHaveBeenCalledTimes(1);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Created cited-research run"));
-
-    completeRun({ ...mockRun, id: "RR-002", status: "completed" });
-    await vi.waitFor(() => expect(storeMock.close).toHaveBeenCalledTimes(1));
   });
 
-  it("observes a rejected non-wait run and still closes its backend", async () => {
-    orchestratorMock.startRun.mockRejectedValue(new Error("provider failed"));
-
-    await runResearchCreate({ query: "hello" });
-
-    await vi.waitFor(() => expect(storeMock.close).toHaveBeenCalledTimes(1));
-    expect(errorSpy).toHaveBeenCalledWith("Background cited-research run RR-002 failed: provider failed");
+  it("starts and awaits the run only for waitForCompletion", async () => {
+    orchestratorMock.startRun.mockResolvedValue({ ...mockRun, id: "RR-002", status: "completed" });
+    await runResearchCreate({ query: "hello", waitForCompletion: true, maxWaitMs: 1_000 });
+    expect(researchStore.updateRun).toHaveBeenCalledWith("RR-002", { query: "hello" });
+    expect(orchestratorMock.startRun).toHaveBeenCalledWith("RR-002", "hello");
+    expect(storeMock.close).toHaveBeenCalledTimes(1);
   });
 
   it("retries getSettings through a transient database-is-locked error and succeeds once it clears", async () => {

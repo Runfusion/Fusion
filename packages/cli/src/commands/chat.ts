@@ -31,9 +31,19 @@ async function createAgentStore(projectName?: string): Promise<{ store: AgentSto
     await store.init();
     return { store, cleanup: base.cleanup };
   } catch (error) {
-    store.close();
-    await base.cleanup();
-    throw error;
+    const failures: unknown[] = [error];
+    try {
+      store.close();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    try {
+      await base.cleanup();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    if (failures.length === 1) throw error;
+    throw new AggregateError(failures, "AgentStore initialization and cleanup failed");
   }
 }
 
@@ -110,6 +120,7 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
   const ownedAgentStore = await createAgentStore(options.project);
   const agentStore = ownedAgentStore.store;
   let messageOwner: Awaited<ReturnType<typeof createMessageStore>> | undefined;
+  let commandFailure: unknown;
   try {
     const agent = await agentStore.getAgent(agentId);
     if (!agent) {
@@ -226,10 +237,34 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
     rl.close();
     await poller;
     return 0;
+  } catch (error) {
+    commandFailure = error;
+    throw error;
   } finally {
-    agentStore.close();
-    await messageOwner?.db.close();
-    await ownedAgentStore.cleanup();
+    /* FNXC:PostgresCliLifecycle 2026-07-14-22:55: Chat owns three independently-failing resources. Always attempt AgentStore, message database, and borrowed project teardown; report all cleanup failures without discarding an earlier command failure. */
+    const cleanupFailures: unknown[] = [];
+    try {
+      agentStore.close();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      await messageOwner?.db.close();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      await ownedAgentStore.cleanup();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    if (cleanupFailures.length > 0) {
+      // eslint-disable-next-line no-unsafe-finally -- cleanup must aggregate with, rather than silently lose, the active command failure.
+      throw new AggregateError(
+        commandFailure === undefined ? cleanupFailures : [commandFailure, ...cleanupFailures],
+        "Chat command cleanup failed",
+      );
+    }
   }
 }
 
