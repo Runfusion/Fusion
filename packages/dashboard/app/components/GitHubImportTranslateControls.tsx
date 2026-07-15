@@ -44,6 +44,22 @@ Issues per background request. Small enough that the first translated titles app
 */
 export const AUTO_TRANSLATE_CHUNK_SIZE = 8;
 
+/*
+FNXC:GitHubImportTranslate 2026-07-15-18:40:
+Cheap djb2 digest of the items' prose, used ONLY to decide when the panel must re-request (an edited issue keeps its number but must not keep its old translation).
+Deliberately not a crypto hash: it runs on every eligible issue and only needs to change when the text changes. The durable server cache keys on a real sha256 of the same content.
+*/
+export function hashImportItemsForKey(items: AutoTranslateListItem[]): string {
+  let hash = 5381;
+  for (const item of items) {
+    const text = `${item.number}|${item.title ?? ""}|${item.body ?? ""}|`;
+    for (let i = 0; i < text.length; i++) {
+      hash = (((hash << 5) + hash) ^ text.charCodeAt(i)) >>> 0;
+    }
+  }
+  return hash.toString(36);
+}
+
 export interface AutoTranslateListItem {
   number: number;
   title: string;
@@ -110,14 +126,24 @@ export function useGitHubImportAutoTranslate({
   const eligibleRef = useRef(eligible);
   eligibleRef.current = eligible;
 
-  /* Stable-by-value key: re-runs only when the actual issue set / repo / locale
-     changes, not on unrelated list re-renders. */
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-18:40:
+  The key covers issue CONTENT, not just issue numbers (PR #2147 review). Keying on numbers alone meant an edited issue — same number, new prose — produced an unchanged key, so the panel never re-requested and kept showing the translation of the OLD text. The server would have missed its own cache on `sourceHash` and re-translated, but the client never asked.
+  `contentSignature` is a cheap non-cryptographic digest: this only has to CHANGE when the prose changes, it is not a security or storage key (the durable cache uses a real sha256 server-side).
+  */
+  const contentSignature = useMemo(
+    () => hashImportItemsForKey(eligible),
+    [eligible],
+  );
+
+  /* Stable-by-value key: re-runs only when the actual issue set / content / repo
+     / locale changes, not on unrelated list re-renders. */
   const requestKey = useMemo(
     () =>
       enabled && owner && repo && eligible.length > 0
-        ? `${owner}/${repo}|${targetLocale}|${eligible.map((i) => i.number).join(",")}`
+        ? `${owner}/${repo}|${targetLocale}|${eligible.map((i) => i.number).join(",")}|${contentSignature}`
         : null,
-    [enabled, owner, repo, targetLocale, eligible],
+    [enabled, owner, repo, targetLocale, eligible, contentSignature],
   );
 
   const capExceeded = openCount > AUTO_TRANSLATE_MAX_ISSUES;
@@ -146,7 +172,13 @@ export function useGitHubImportAutoTranslate({
     Chunked rather than one 50-issue request because a single request only resolves once EVERY issue is translated — on a big page that is minutes of nothing happening, and one timeout would discard the whole page's work. Chunks make progress visible and make a failure cost one chunk instead of all 50.
     Chunks are issued sequentially so a panel open cannot fan 50 model calls at the provider at once (the server already runs 4-way concurrency within a chunk); a cancelled/closed panel stops at the next chunk boundary.
     */
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-18:40:
+    try/finally, not a `setLoading(false)` after the loop: EVERY exit path must clear the spinner. The server-disabled early return skipped the post-loop clear and left the panel loading forever (PR #2147 review); a `finally` makes that unrepeatable for any future early return too.
+    A cancelled run deliberately does NOT touch state — the effect that superseded it owns `loading` now.
+    */
     void (async () => {
+      try {
       for (let i = 0; i < pending.length; i += AUTO_TRANSLATE_CHUNK_SIZE) {
         if (cancelled) return;
         const chunk = pending.slice(i, i + AUTO_TRANSLATE_CHUNK_SIZE);
@@ -168,6 +200,7 @@ export function useGitHubImportAutoTranslate({
           // The server is the authority on the setting: an "off" answer stops the run.
           if (response.enabled === false) return;
 
+
           const received = Object.entries(response.translations ?? {});
           if (received.length > 0) {
             setTranslations((prev) => {
@@ -188,7 +221,9 @@ export function useGitHubImportAutoTranslate({
           setError(getTranslateErrorMessage(err));
         }
       }
-      if (!cancelled) setLoading(false);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
 
     return () => {

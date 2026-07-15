@@ -133,6 +133,61 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     expect(autoTranslateImportIssues).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-18:40:
+  Regression: PR #2147 review. A server "off" answer returned early and skipped the only
+  setLoading(false), so the panel span stayed in the loading state indefinitely.
+  */
+  it("clears loading when the server reports the setting is off", async () => {
+    autoTranslateImportIssues.mockResolvedValue({ enabled: false, targetLocale: null, capped: false, translations: {} });
+    const { result } = renderHook(() => useGitHubImportAutoTranslate({ ...base, items: makeItems(4) }));
+    await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+
+  it("clears loading even when every chunk fails", async () => {
+    autoTranslateImportIssues.mockRejectedValue(new Error("boom"));
+    const { result } = renderHook(() => useGitHubImportAutoTranslate({ ...base, items: makeItems(4) }));
+    await waitFor(() => expect(result.current.error).toBeTruthy());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-18:40:
+  Regression: PR #2147 review. Keying the request on issue NUMBERS alone meant an edited issue —
+  same number, new prose — produced an unchanged key, so the panel never re-requested and kept
+  showing the translation of the OLD text.
+  */
+  it("re-requests when an issue's body is edited (same number, new prose)", async () => {
+    autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
+    const first = [{ number: 1, title: "t1", body: "original", state: "open" as const }];
+    const { rerender, result } = renderHook(
+      ({ items }) => useGitHubImportAutoTranslate({ ...base, items }),
+      { initialProps: { items: first } },
+    );
+    await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1));
+
+    // Same issue number, edited body -> must re-request.
+    rerender({ items: [{ number: 1, title: "t1", body: "EDITED", state: "open" as const }] });
+    await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(2));
+    expect(result.current.translations.get(1)?.title).toBe("T1");
+  });
+
+  it("does NOT re-request when the same issue set re-renders unchanged", async () => {
+    autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
+    const items = [{ number: 1, title: "t1", body: "same", state: "open" as const }];
+    const { rerender } = renderHook(
+      ({ items: i }) => useGitHubImportAutoTranslate({ ...base, items: i }),
+      { initialProps: { items } },
+    );
+    await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1));
+
+    // A fresh array identity with identical content must not re-bill.
+    rerender({ items: [{ number: 1, title: "t1", body: "same", state: "open" as const }] });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1);
+  });
+
   it("never sends closed issues and caps the page at the 50 most recent open", async () => {
     const items = [...makeItems(60), { number: 999, title: "x", body: "b", state: "closed" as const }];
     autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
