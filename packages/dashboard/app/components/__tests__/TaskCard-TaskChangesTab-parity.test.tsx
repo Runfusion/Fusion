@@ -16,12 +16,12 @@ vi.mock("../../hooks/useTaskDiffStats", async (importOriginal) => {
 });
 
 vi.mock("../../api", async (importOriginal) => {
-  
-  fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
   const actual = await importOriginal<typeof import("../../api")>();
   return {
     ...actual,
     fetchTaskDiff: (...args: unknown[]) => fetchTaskDiffMock(...args),
+    // FNXC:DashboardTests 2026-07-14-21:50: TaskCard loads oversight workflow settings; complete the mock surface so parity tests collect.
+    fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
   };
 });
 
@@ -30,26 +30,26 @@ vi.mock("lucide-react", async (importOriginal) => {
   return {
     ...actual,
     Link: () => null,
-  GitBranch: () => null,
-  Clock: () => null,
-  Pencil: () => null,
-  Layers: () => null,
-  ChevronDown: () => null,
-  Folder: () => null,
-  GitPullRequest: () => null,
-  CircleDot: () => null,
-  Target: () => null,
-  Bot: () => null,
-  Trash2: () => null,
-  RotateCw: () => null,
-  Zap: () => null,
-  FileCode: () => null,
-  ChevronRight: () => null,
-  ChevronLeft: () => null,
-  AlertCircle: () => null,
-  GitCommit: () => null,
-  WrapText: () => null,
-  Maximize2: () => null,
+    GitBranch: () => null,
+    Clock: () => null,
+    Pencil: () => null,
+    Layers: () => null,
+    ChevronDown: () => null,
+    Folder: () => null,
+    GitPullRequest: () => null,
+    CircleDot: () => null,
+    Target: () => null,
+    Bot: () => null,
+    Trash2: () => null,
+    RotateCw: () => null,
+    Zap: () => null,
+    FileCode: () => null,
+    ChevronRight: () => null,
+    ChevronLeft: () => null,
+    AlertCircle: () => null,
+    GitCommit: () => null,
+    WrapText: () => null,
+    Maximize2: () => null,
   };
 });
 

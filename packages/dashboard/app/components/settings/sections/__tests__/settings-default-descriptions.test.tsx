@@ -273,6 +273,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 
 /** Setting keys intentionally not surfaced as a plain Settings UI description field, with reasons. */
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
+  // Internal migration/inbox bookkeeping — not plain Settings UI description fields.
+  sqliteMigrationNotice: "engine/migration bookkeeping; not a Settings description field",
+  postgresMigrationInboxMessageSentAt: "engine/migration inbox timestamp; not a Settings description field",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in settings-schema.ts.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
