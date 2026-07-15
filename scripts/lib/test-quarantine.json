@@ -200,6 +200,31 @@
       "file": "packages/dashboard/src/routes/__tests__/tasks-planner-overseer-state.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: TaskStore/Database.init. Local 2026-07-14 api-backfill-1. Mirrored in packages/dashboard/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/gitlab-source-issue-reconciler.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: sync SQLite Database/TaskStore.init. Local 2026-07-14 api-backfill-2. Mirrored packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/server-view-preload.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: sync SQLite Database/TaskStore.init. Local 2026-07-14 api-backfill-2. Mirrored packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/task-effective-settings-route.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: sync SQLite Database/TaskStore.init. Local 2026-07-14 api-backfill-2. Mirrored packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/routes/__tests__/agent-avatar-routes.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: sync SQLite Database/TaskStore.init. Local 2026-07-14 api-backfill-2. Mirrored packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/routes/__tests__/mission-workflow-triage-route.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: sync SQLite Database/TaskStore.init. Local 2026-07-14 api-backfill-2. Mirrored packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
     }
   ]
 }

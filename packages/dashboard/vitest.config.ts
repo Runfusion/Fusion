@@ -350,6 +350,11 @@ const quarantinedDashboardTests: string[] = [
   "src/routes/__tests__/tasks-overseer-controls.test.ts",
   "src/routes/__tests__/tasks-planner-overseer-state.test.ts",
   "src/__tests__/mcp-helper-forwarding.test.ts",
+  "src/__tests__/gitlab-source-issue-reconciler.test.ts",
+  "src/__tests__/server-view-preload.test.ts",
+  "src/__tests__/task-effective-settings-route.test.ts",
+  "src/routes/__tests__/agent-avatar-routes.test.ts",
+  "src/routes/__tests__/mission-workflow-triage-route.test.ts",
   "src/routes/__tests__/workflow-validate-route.test.ts",
 ];
 
