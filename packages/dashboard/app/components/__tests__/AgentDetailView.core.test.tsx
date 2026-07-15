@@ -1195,8 +1195,12 @@ it("keeps mobile inline header controls on the same row as identity", () => {
   expect(stylesContent).toContain("@media (max-width: 768px)");
   expect(stylesContent).toContain(".agent-detail-header {");
   expect(stylesContent).toContain("grid-template-columns: minmax(0, 1fr) auto;");
+  expect(stylesContent).toContain("column-gap: var(--space-sm);");
+  expect(stylesContent).toContain("row-gap: var(--space-sm);");
+  expect(stylesContent).toContain("padding: var(--space-md);");
   expect(stylesContent).toContain(".agent-detail-identity {");
   expect(stylesContent).toContain("grid-column: 1;");
+  expect(stylesContent).toContain("gap: var(--space-md);");
   expect(stylesContent).toContain(".agent-detail-header-actions {");
   expect(stylesContent).toContain("grid-column: 2;");
   expect(stylesContent).toContain(".agent-detail-controls .agent-detail-mobile-icon-control {");
