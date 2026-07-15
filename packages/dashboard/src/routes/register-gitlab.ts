@@ -11,6 +11,7 @@ import {
   type GitLabResourceType,
 } from "../gitlab.js";
 import { GitLabSourceIssueReconciler, GITLAB_RECONCILE_SCAN_LIMIT } from "../gitlab-source-issue-reconciler.js";
+import { importIssueImageAttachments, gitlabImagePolicy } from "../issue-image-attachments.js";
 import type { ApiRoutesContext } from "./types.js";
 
 function readRequiredString(body: Record<string, unknown>, key: string): string | number {
@@ -108,6 +109,46 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata },
   });
   await store.logEntry(task.id, args.resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", args.item.webUrl);
+
+  /*
+  FNXC:IssueImportAttachments 2026-07-15-13:40:
+  GitLab imports attach their screenshots exactly like GitHub imports: the agent-facing contract is `.fusion/tasks/<id>/attachments/`, and it must not depend on which forge the issue came from. All four GitLab import routes (project issue, group issue, MR, batch) funnel through importItem, so wiring here covers every surface.
+  GitLab `/uploads/...` assets need the instance token, which only exists here — see gitlabImagePolicy for why resolution is project-relative.
+  Best-effort: notes-fetch and download failures never fail an import that already produced the task.
+  */
+  const gitlabAuth = (client as unknown as { auth: { webBaseUrl: string; token: string; headerName: string } }).auth;
+  const imageBodies: Array<string | null | undefined> = [args.item.description];
+  const noteResource = args.resourceType === "merge_request" ? "merge_requests" as const : "issues" as const;
+  const noteProject = args.item.projectPath ?? args.item.projectId;
+  if (noteProject !== undefined) {
+    try {
+      imageBodies.push(...(await client.listNotes(noteResource, noteProject, args.item.iid)));
+    } catch (error) {
+      console.warn(
+        `[fusion:gitlab-import] Could not fetch notes for ${args.resourceType} #${args.item.iid}; importing description images only: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const imageImport = await importIssueImageAttachments(
+    store,
+    task.id,
+    imageBodies,
+    gitlabImagePolicy({
+      webBaseUrl: gitlabAuth.webBaseUrl,
+      webUrl: args.item.webUrl,
+      token: gitlabAuth.token,
+      headerName: gitlabAuth.headerName,
+    }),
+  );
+  if (imageImport.attached > 0) {
+    await store.logEntry(
+      task.id,
+      `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitLab`,
+      args.item.webUrl,
+    );
+  }
+
   return task;
 }
 

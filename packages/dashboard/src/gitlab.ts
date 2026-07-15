@@ -250,6 +250,19 @@ export class GitLabClient {
   }
 
   /*
+  FNXC:IssueImportAttachments 2026-07-15-13:40:
+  Import reads note bodies so screenshots posted in a comment ("here's the repro") reach the agent as attachments, not just those in the original description. Read-only: this does not post notes, and the "no comment side effects" rule above governs writes, not reads.
+  Returns bodies only — the caller needs image references, not authorship — and swallows nothing: the caller decides that a notes failure is non-fatal.
+  */
+  async listNotes(resource: "issues" | "merge_requests", project: string | number, iid: number): Promise<string[]> {
+    const raw = await this.request<unknown>(`projects/${encodeGitLabPathId(project)}/${resource}/${iid}/notes?per_page=100`);
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((note) => (note as { body?: unknown })?.body)
+      .filter((body): body is string => typeof body === "string");
+  }
+
+  /*
   FNXC:GitLabLifecycle 2026-07-02-00:00:
   GitLab lifecycle side effects must use REST notes and state_event APIs for GitLab.com and self-managed instances. Keep project identifiers URL-encoded, token auth header-based, and never introduce a local GitLab CLI dependency.
   */
