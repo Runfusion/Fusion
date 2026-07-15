@@ -20,6 +20,28 @@ service scans, so parking a needs-replan card in their custom entry column stran
 write. "triage" preserves the pre-workflow-aware behavior for these workflows: the move is
 legal from every legacy column and eligibleTriageTasks re-specifies unconditionally.
 */
+/*
+ * FNXC:WorkflowReplan 2026-07-15-13:15:
+ * FN-7977: a planning/provider recovery may finish after another engine lane has
+ * started execution. Recovery callers must prove the live row is still planning
+ * before writing planning state; worktrees, materialized steps, and execution or
+ * terminal columns are durable evidence that the task has advanced.
+ */
+export function hasAdvancedPastPlanning(task: Pick<Task, "column" | "worktree" | "steps">): boolean {
+  return (
+    task.column === "in-progress"
+    || task.column === "in-review"
+    || task.column === "done"
+    || task.column === "archived"
+    || task.worktree != null
+    || (task.steps?.length ?? 0) > 0
+  );
+}
+
+export function isTaskStillInPlanningStage(task: Pick<Task, "column" | "worktree" | "steps">): boolean {
+  return !hasAdvancedPastPlanning(task);
+}
+
 export async function resolveReplanTargetColumn(store: TaskStore, taskId: string): Promise<string> {
   try {
     const ir = await resolveWorkflowIrForTask(store, taskId);

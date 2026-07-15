@@ -108,6 +108,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
+import { isTaskStillInPlanningStage } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -1009,7 +1010,9 @@ export class TriageProcessor {
       const agentWork = async () => {
         // Set status only after the semaphore slot has been acquired, so
         // tasks waiting in the queue don't appear as "planning".
-        await this.store.updateTask(task.id, { status: "planning" });
+        if (!await this.updatePlanningStateIfStillCurrent(task, { status: "planning" })) {
+          return;
+        }
 
         const stuckDetector = this.options.stuckTaskDetector;
 
@@ -1410,7 +1413,7 @@ export class TriageProcessor {
             this.pauseAborted.delete(task.id);
             planLog.log(`${task.id} aborted by pause — clearing status`);
             const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
-            await this.store.updateTask(task.id, { status: restoreStatus }).catch((err: unknown) => {
+            await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus }).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' during pause-abort cleanup: ${msg}`);
             });
@@ -1496,7 +1499,7 @@ export class TriageProcessor {
               planLog.warn(`${task.id} ${retryMessage}`);
               await this.store.logEntry(task.id, retryMessage);
               const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
-              await this.store.updateTask(task.id, {
+              await this.updatePlanningStateIfStillCurrent(task, {
                 status: restoreStatus,
                 error: null,
                 recoveryRetryCount: decision.nextState.recoveryRetryCount,
@@ -1515,13 +1518,14 @@ export class TriageProcessor {
               task.id,
               failureMessage,
             );
-            await this.store.updateTask(task.id, {
+            if (await this.updatePlanningStateIfStillCurrent(task, {
               status: "failed",
               error: failureMessage,
               recoveryRetryCount: null,
               nextRecoveryAt: null,
-            });
-            await this.backfillBlankTitleAfterTerminalTriageFailure(task);
+            })) {
+              await this.backfillBlankTitleAfterTerminalTriageFailure(task);
+            }
             return;
           }
 
@@ -1576,7 +1580,7 @@ export class TriageProcessor {
         // For interrupted recovery states, restore the original triage-held status;
         // otherwise clear to null so the next poll can re-pick ordinary tasks up.
         const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
-        await this.store.updateTask(task.id, { status: restoreStatus }).catch((err: unknown) => {
+        await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' during pause-abort error cleanup: ${msg}`);
         });
@@ -1603,7 +1607,7 @@ export class TriageProcessor {
             const msg = logErr instanceof Error ? logErr.message : String(logErr);
             planLog.warn(`${task.id}: failed to log planner fallback exhaustion: ${msg}`);
           });
-          await this.store.updateTask(task.id, {
+          const persisted = await this.updatePlanningStateIfStillCurrent(task, {
             status: "failed",
             error: failureMessage,
             recoveryRetryCount: null,
@@ -1611,7 +1615,9 @@ export class TriageProcessor {
           }).catch((updateErr: unknown) => {
             const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
             planLog.warn(`${task.id}: failed to persist planner fallback exhaustion: ${msg}`);
+            return false;
           });
+          if (!persisted) return;
           await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err);
           return;
@@ -1629,7 +1635,7 @@ export class TriageProcessor {
             const msg = logErr instanceof Error ? logErr.message : String(logErr);
             planLog.warn(`${task.id}: failed to persist operator-actionable specification failure: ${msg}`);
           });
-          await this.store.updateTask(task.id, {
+          const persisted = await this.updatePlanningStateIfStillCurrent(task, {
             status: "failed",
             error: failureMessage,
             recoveryRetryCount: null,
@@ -1637,7 +1643,9 @@ export class TriageProcessor {
           }).catch((updateErr: unknown) => {
             const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
             planLog.warn(`${task.id}: failed to park operator-actionable specification failure: ${msg}`);
+            return false;
           });
+          if (!persisted) return;
           await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
@@ -1660,7 +1668,7 @@ export class TriageProcessor {
               });
             }
             const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
-            await this.store.updateTask(task.id, {
+            await this.updatePlanningStateIfStillCurrent(task, {
               status: restoreStatus,
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
               nextRecoveryAt: decision.nextState.nextRecoveryAt,
@@ -1677,14 +1685,16 @@ export class TriageProcessor {
             const msg = err instanceof Error ? err.message : String(err);
             planLog.warn(`${task.id}: failed to log transient-error retries-exhausted entry: ${msg}`);
           });
-          await this.store.updateTask(task.id, {
+          const persisted = await this.updatePlanningStateIfStillCurrent(task, {
             error: `Specification failed after ${MAX_RECOVERY_RETRIES} transient errors: ${errorMessage}`,
             recoveryRetryCount: null,
             nextRecoveryAt: null,
           }).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             planLog.warn(`${task.id}: failed to persist transient-error retries-exhausted state: ${msg}`);
+            return false;
           });
+          if (!persisted) return;
           await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
@@ -1692,7 +1702,7 @@ export class TriageProcessor {
         // For interrupted recovery states, restore the original triage-held status;
         // otherwise clear to null so the next poll can re-pick ordinary tasks up.
         const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
-        await this.store.updateTask(task.id, { status: restoreStatus }).catch((restoreErr: unknown) => {
+        await this.updatePlanningStateIfStillCurrent(task, { status: restoreStatus }).catch((restoreErr: unknown) => {
           const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
           planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' after planning error: ${msg}`);
         });
@@ -2012,6 +2022,45 @@ export class TriageProcessor {
     };
 
     return [taskList, taskSearch, taskShow, taskCreate];
+  }
+
+  /**
+   * Atomically preserve a task that advanced while this triage session awaited a
+   * provider response. `updateTaskAtomic` holds the task lock across the live-row
+   * predicate and patch, closing the scheduler-transition race.
+   */
+  private async updatePlanningStateIfStillCurrent(
+    task: Task,
+    patch: Parameters<TaskStore["updateTask"]>[1],
+  ): Promise<boolean> {
+    if (typeof this.store.updateTaskAtomic !== "function") {
+      // Compatibility adapters used by older embedded hosts do not expose the
+      // core task lock; current TaskStore implementations always take the atomic path.
+      const liveTask = await Promise.resolve(this.store.getTask(task.id)).catch(() => task) ?? task;
+      if (!isTaskStillInPlanningStage(liveTask)) {
+        planLog.warn(`${task.id}: ignored stale triage recovery after task advanced to ${liveTask.column}`);
+        return false;
+      }
+      await this.store.updateTask(task.id, patch);
+      return true;
+    }
+
+    let persisted = false;
+    await this.store.updateTaskAtomic(task.id, (liveTask) => {
+      if (!isTaskStillInPlanningStage(liveTask)) {
+        /*
+         * FNXC:Triage 2026-07-15-16:35:
+         * FN-7977: a provider or validation failure must never overwrite an
+         * advanced task with planning/failed/retry state. Evaluate this predicate
+         * under the task lock so scheduler advancement cannot race the recovery write.
+         */
+        planLog.warn(`${task.id}: ignored stale triage recovery after task advanced to ${liveTask.column}`);
+        return null;
+      }
+      persisted = true;
+      return patch;
+    });
+    return persisted;
   }
 
   private restoreStatusAfterInterruptedTriageWork(task: Task): Task["status"] | null {

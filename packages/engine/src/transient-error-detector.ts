@@ -42,6 +42,7 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
   // Connection establishment failures - usually temporary
   /Connection refused/i,
   /connection reset/i,
+  /ECONNRESET/i,
   /ECONNREFUSED/i,
   /ETIMEDOUT/i,
   /socket hang up/i,
@@ -102,6 +103,42 @@ export function isTransientError(errorMessage: string): boolean {
     return true;
   }
   return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(errorMessage));
+}
+
+/*
+ * FNXC:PlanReviewReplan 2026-07-15-12:00:
+ * FN-7977 / issue #2124: a Plan Review provider, model-selection, or transport
+ * failure is not evidence that the plan needs revision. This extends FN-7561's
+ * advisory-failure guard to hard failures so execution state never regresses to
+ * planning unless a reviewer actually returned REVISE.
+ */
+const MODEL_FALLBACK_EXHAUSTED_PATTERN = /unable to select a usable model after\s+\d+\s+attempt/i;
+
+/**
+ * Identifies failed Plan Review calls that must stay in place rather than trigger
+ * the plan-revision handoff. The raw node failure value preserves abort/exception
+ * cases when a provider produced no diagnostic message.
+ */
+export function isNonPlanDefectPlanReviewFailure(input: {
+  verdict?: string;
+  errorMessage?: string;
+  failureValue?: string;
+}): boolean {
+  if (input.verdict === "REVISE") return false;
+
+  const failureValue = input.failureValue?.trim().toLowerCase();
+  if (failureValue === "exception" || failureValue === "aborted") return true;
+
+  const errorMessage = input.errorMessage?.trim();
+  return Boolean(
+    errorMessage
+    && (
+      isTransientError(errorMessage)
+      || isUsageLimitError(errorMessage)
+      || isOperatorActionableAgentError(errorMessage)
+      || MODEL_FALLBACK_EXHAUSTED_PATTERN.test(errorMessage)
+    )
+  );
 }
 
 /*

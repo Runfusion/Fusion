@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
-import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, moveTaskToReplanColumn, resolveReplanTargetColumn } from "../replan-target.js";
 
 /*
 FNXC:WorkflowReplan 2026-07-12-23:55:
@@ -17,6 +17,21 @@ function storeWithSelection(workflowId: string | undefined): TaskStore {
     moveTask: vi.fn().mockResolvedValue(undefined),
   } as unknown as TaskStore;
 }
+
+describe("planning-stage guard", () => {
+  it.each([
+    [{ column: "triage", worktree: null, steps: [] }, true, "empty triage task"],
+    [{ column: "todo", worktree: null, steps: [] }, true, "unplanned todo seed"],
+    [{ column: "todo", worktree: "/tmp/FN-1", steps: [] }, false, "todo task with a worktree"],
+    [{ column: "todo", worktree: null, steps: [{ id: "step-1" }] }, false, "todo task with materialized steps"],
+    [{ column: "in-progress", worktree: null, steps: [] }, false, "in-progress task"],
+    [{ column: "in-review", worktree: null, steps: [] }, false, "in-review task"],
+    [{ column: "done", worktree: null, steps: [] }, false, "completed task"],
+  ] as const)("recognizes %s", (task, expected) => {
+    expect(isTaskStillInPlanningStage(task)).toBe(expected);
+    expect(hasAdvancedPastPlanning(task)).toBe(!expected);
+  });
+});
 
 describe("resolveReplanTargetColumn", () => {
   it("targets triage for the default Coding workflow", async () => {

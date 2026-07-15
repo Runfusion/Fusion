@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR, BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "@fusion/core";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 
-import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflow-graph-executor.js";
+import {
+  PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
+  WorkflowGraphExecutor,
+  type WorkflowNodeHandler,
+} from "../workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
@@ -463,6 +467,46 @@ describe("WorkflowGraphExecutor optional-group", () => {
     expect(result.context["node:plan-review:fixScheduled"]).toBe(true);
     expect(records).toEqual(expect.arrayContaining([
       expect.objectContaining({ workflowStepId: "plan-review", status: "failed" }),
+    ]));
+  });
+
+  it("keeps transient Plan Review provider failures in place without synthesizing REVISE", async () => {
+    const requestFix = vi.fn(async () => true);
+    const records: unknown[] = [];
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => node.id === "plan-review-step"
+          ? {
+              outcome: "failure",
+              value: "exception",
+              contextPatch: {
+                output: "Unable to select a usable model after 2 attempts (429 Too Many Requests)",
+              },
+            }
+          : { outcome: "success" },
+      },
+      recordWorkflowStepResult: async (_taskId, result) => { records.push(result); },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run(
+      taskWith(["plan-review"]),
+      settingsOn(),
+      BUILTIN_CODING_WORKFLOW_IR,
+    );
+
+    expect(requestFix).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("failure");
+    expect(result.context["node:plan-review:value"]).toBe(PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE);
+    expect(result.visitedNodeIds).toContain("plan-review");
+    expect(result.visitedNodeIds).not.toContain("plan-replan");
+    expect(result.visitedNodeIds).not.toContain("execute");
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        workflowStepId: "plan-review",
+        status: "failed",
+        output: expect.stringContaining("Unable to select a usable model"),
+      }),
     ]));
   });
 

@@ -44,7 +44,12 @@ import {
   type ForeachActiveContext,
   type WorkflowLegacySeams,
 } from "./workflow-node-handlers.js";
-import { MERGE_REGION_KINDS, WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND, WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY } from "./workflow-graph-executor.js";
+import {
+  MERGE_REGION_KINDS,
+  PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
+  WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
+  WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
+} from "./workflow-graph-executor.js";
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
 import type {
@@ -166,7 +171,7 @@ import { AgentLogger } from "./agent-logger.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
-import { isNonContinuableSessionError, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
+import { isNonContinuableSessionError, isNonPlanDefectPlanReviewFailure, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
 import {
   detectExternalIntegrationEvidenceGaps,
@@ -4480,6 +4485,8 @@ export class TaskExecutor {
       phase: CoreWorkflowStepResult["phase"];
       status: CoreWorkflowStepResult["status"];
       verdict?: string;
+      /** Raw graph node result when no reviewer verdict was produced. */
+      failureValue?: string;
       nodeId?: string;
       maxRevisions?: unknown;
     },
@@ -4496,6 +4503,26 @@ export class TaskExecutor {
        */
       if (info.status === "advisory_failure" && info.verdict !== "REVISE") return false;
       if (info.verdict !== undefined && info.verdict !== "REVISE") return false;
+      /*
+       * FNXC:PlanReviewReplan 2026-07-15-12:00:
+       * FN-7977 / issue #2124: graph traversal is the primary guard, but this
+       * compatibility seam also receives explicit remediation edges and future
+       * callers. A provider/model/transport failure without a genuine REVISE must
+       * be logged and left in its current execution column, never sent to replan.
+       */
+      if (isNonPlanDefectPlanReviewFailure({
+        verdict: info.verdict,
+        errorMessage: info.feedback,
+        failureValue: info.failureValue,
+      })) {
+        await this.store.logEntry(
+          taskId,
+          "Plan Review provider failure — task kept in place",
+          `Plan Review failed without a REVISE verdict due to a provider, model, transport, or abort condition. The task remains in ${liveTask.column}; no automatic replan was scheduled.\n\nDiagnostic:\n${info.feedback}`,
+          this.getRunContextFor(taskId),
+        );
+        return false;
+      }
       /*
        * FNXC:PlanReviewReplan 2026-06-29-00:41:
        * Plan Review is pre-execution spec validation, so a failed/revision result
@@ -8835,6 +8862,37 @@ export class TaskExecutor {
         return;
       }
       const live = loadedLive;
+      if (this.graphFailureValue(result) === PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE) {
+        /*
+         * FNXC:PlanReviewReplan 2026-07-15-16:35:
+         * FN-7977: graph-native Plan Review provider failures are a bounded
+         * in-place retry. They must not follow the built-in failure edge into
+         * plan-replan or overwrite a progressed card's column, worktree, or steps.
+         */
+        const priorRetries = live.graphResumeRetryCount ?? 0;
+        if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
+          const nextRetries = priorRetries + 1;
+          const message = `Plan Review provider failure — retrying in place (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
+          executorLog.warn(`${task.id}: ${message}`);
+          await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+          await this.store.updateTask(task.id, {
+            graphResumeRetryCount: nextRetries,
+          }, this.getRunContextFor(task.id));
+          const scheduleRetry = () => {
+            this.execute(live).catch((err) =>
+              executorLog.error(`Failed Plan Review provider retry for ${task.id}:`, err),
+            );
+          };
+          const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
+          handle.unref?.();
+        } else {
+          const message = "Plan Review provider retry budget exhausted — task remains held in its current state";
+          executorLog.warn(`${task.id}: ${message}`);
+          await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+        }
+        await this.persistTokenUsage(task.id);
+        return;
+      }
       if (live.mergeDetails?.mergeConfirmed === true && live.column !== "done") {
         if (await this.finalizeMergeConfirmedWorkflowGraphTask(live.id, "graph-failure")) {
           await this.persistTokenUsage(task.id);

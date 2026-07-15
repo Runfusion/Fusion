@@ -10,6 +10,7 @@ import type {
   WorkflowStepResult,
 } from "@fusion/core";
 import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode } from "@fusion/core";
+import { isNonPlanDefectPlanReviewFailure } from "./transient-error-detector.js";
 
 import {
   createDefaultNodeHandlers,
@@ -48,6 +49,9 @@ export type WorkflowNodeOutcome = "success" | "failure";
 type WorkflowNodeSettings = Pick<Settings, "experimentalFeatures"> & {
   reviewerInlineFixes?: boolean;
 };
+
+/** A classified Plan Review provider outage terminates the graph without replan traversal. */
+export const PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE = "plan-review-provider-failure-hold";
 
 export type WorkflowNodeAbortKind = "engine-pause";
 
@@ -221,6 +225,8 @@ export interface WorkflowGraphExecutorDeps {
     phase: WorkflowStepResult["phase"];
     status: WorkflowStepResult["status"];
     verdict?: string;
+    /** Raw node result retained for non-verdict provider-failure classification. */
+    failureValue?: string;
     nodeId?: string;
     maxRevisions?: unknown;
   }) => Promise<boolean> | boolean;
@@ -792,11 +798,23 @@ export class WorkflowGraphExecutor {
           /*
            * FNXC:PlanReviewReplan 2026-06-29-00:41:
            * Plan Review sits between specification and execution. A REVISE verdict
-           * or hard failure at this node means PROMPT.md needs another planning pass,
-           * not executor remediation. Forward the failure into the same pre-merge fix
-           * seam with a synthesized REVISE verdict so the executor can route it back
-           * to triage and then let approved replans continue through todo/execution.
+           * means PROMPT.md needs another planning pass, not executor remediation.
            */
+          /*
+           * FNXC:PlanReviewReplan 2026-07-15-12:00:
+           * FN-7977 / issue #2124: do not fabricate REVISE from a hard Plan Review
+           * provider failure. Transport, rate-limit, model-selection, abort, and
+           * operator-actionable errors must remain visible in place so completed
+           * execution work cannot bounce back to the planner column.
+           */
+          const nonPlanDefectPlanReviewFailure =
+            node.id === PLAN_REVIEW_GROUP_ID
+            && stepStatus === "failed"
+            && isNonPlanDefectPlanReviewFailure({
+              verdict,
+              errorMessage: stepOutput ?? stepNotes,
+              failureValue: verdictRaw,
+            });
           /*
            * FNXC:PlanReview 2026-06-29-02:05:
            * Plan Review should send a task back to triage only for an actual
@@ -807,7 +825,23 @@ export class WorkflowGraphExecutor {
           const shouldRequestPreMergeFix =
             stepPhase === "pre-merge"
             && (stepStatus === "advisory_failure" || stepStatus === "failed")
-            && (verdict === "REVISE" || (node.id === PLAN_REVIEW_GROUP_ID && stepStatus === "failed"));
+            && (verdict === "REVISE" || (
+              node.id === PLAN_REVIEW_GROUP_ID
+              && stepStatus === "failed"
+              && !nonPlanDefectPlanReviewFailure
+            ));
+          if (nonPlanDefectPlanReviewFailure) {
+            /*
+             * FNXC:PlanReviewReplan 2026-07-15-16:35:
+             * FN-7977: a classified provider/model/transport failure is a retryable
+             * hold, not a Plan Review REVISE. Do not traverse the built-in failure
+             * edge to plan-replan without remediation context; the executor retries
+             * this explicit hold in place and preserves advanced execution state.
+             */
+            context[`node:${node.id}:outcome`] = "failure";
+            context[`node:${node.id}:value`] = PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE;
+            return { outcome: "failure", value: PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE };
+          }
           if (shouldRequestPreMergeFix) {
             const feedback = stepOutput?.trim()
               || stepNotes?.trim()
@@ -820,6 +854,7 @@ export class WorkflowGraphExecutor {
               phase: stepPhase,
               status: stepStatus,
               verdict: verdict ?? (node.id === PLAN_REVIEW_GROUP_ID ? "REVISE" : undefined),
+              ...(!verdict && verdictRaw !== undefined ? { failureValue: verdictRaw } : {}),
               nodeId: node.id,
               maxRevisions: node.config?.maxRevisions,
             };

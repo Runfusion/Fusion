@@ -11,6 +11,7 @@ import {
   isProviderModelNotFoundError,
   isUnsupportedMessageRoleError,
   isNonContinuableSessionError,
+  isNonPlanDefectPlanReviewFailure,
   TRANSIENT_ERROR_PATTERNS,
 } from "../transient-error-detector.js";
 import { isUsageLimitError } from "../usage-limit-detector.js";
@@ -66,8 +67,8 @@ describe("Transient Error Detector", () => {
       expect(isTransientError("Connection Reset")).toBe(true);
     });
 
-    it("matches 'ECONNREFUSED'", () => {
-      expect(isTransientError("ECONNREFUSED")).toBe(true);
+    it("matches connection reset errno messages", () => {
+      expect(isTransientError("ECONNRESET")).toBe(true);
       expect(isTransientError("Error: ECONNREFUSED")).toBe(true);
     });
 
@@ -171,6 +172,33 @@ describe("Transient Error Detector", () => {
       expect(isTransientError("abort")).toBe(false);
       expect(isTransientError("Aborted")).toBe(false);
       expect(isTransientError("The operation was aborted by user")).toBe(false);
+    });
+  });
+
+  describe("isNonPlanDefectPlanReviewFailure", () => {
+    it.each([
+      "429 Too Many Requests from the provider",
+      "403 forbidden: model access is not enabled for this account",
+      "Unable to select a usable model after 2 attempts (primary example/model)",
+      "ECONNRESET while contacting reviewer",
+      "WebSocket closed 1006",
+      "request was aborted",
+    ])("keeps provider failure in place: %s", (errorMessage) => {
+      expect(isNonPlanDefectPlanReviewFailure({ errorMessage })).toBe(true);
+    });
+
+    it("keeps raw abort and exception failure values in place", () => {
+      expect(isNonPlanDefectPlanReviewFailure({ failureValue: "exception" })).toBe(true);
+      expect(isNonPlanDefectPlanReviewFailure({ failureValue: "aborted" })).toBe(true);
+    });
+
+    it("never classifies a genuine REVISE verdict as a provider failure", () => {
+      expect(isNonPlanDefectPlanReviewFailure({
+        verdict: "REVISE",
+        errorMessage: "429 Too Many Requests",
+        failureValue: "exception",
+      })).toBe(false);
+      expect(isNonPlanDefectPlanReviewFailure({ errorMessage: "PROMPT.md is missing acceptance criteria" })).toBe(false);
     });
   });
 

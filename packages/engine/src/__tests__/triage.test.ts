@@ -4869,6 +4869,116 @@ describe("taskCreate tool model inheritance", () => {
       // fallbackProvider/fallbackModelId via mockCreateFnAgent call args here.
     });
 
+    it.each([
+      ["transient provider failure", "upstream connect error"],
+      ["operator-actionable provider failure", "No API key for provider: anthropic"],
+      ["generic planning failure", "planner protocol failed"],
+    ])("keeps an advanced task in place after a %s", async (_label, errorMessage) => {
+      const task = {
+        id: "FN-7977-ADVANCED",
+        description: "Do not overwrite execution after a stale planning run",
+        column: "triage",
+        status: "planning",
+        dependencies: [],
+        steps: [],
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      let liveTask = { ...task, attachments: [], comments: [] } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockImplementation(async () => liveTask),
+        updateTask: vi.fn().mockImplementation(async (_id: string, patch: Partial<Task>) => {
+          if (patch.status === "planning") {
+            liveTask = {
+              ...liveTask,
+              column: "in-progress",
+              status: "executing",
+              worktree: "/tmp/fusion/FN-7977-ADVANCED",
+              steps: [{ id: "implementation", status: "in-progress" }],
+            } as unknown as Task;
+          }
+        }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error(errorMessage));
+
+      await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
+
+      expect(liveTask).toMatchObject({
+        column: "in-progress",
+        status: "executing",
+        worktree: "/tmp/fusion/FN-7977-ADVANCED",
+        steps: [{ id: "implementation", status: "in-progress" }],
+      });
+      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7977-ADVANCED", { status: "planning" });
+    });
+
+    it("keeps advanced worktree and steps after model fallback exhaustion", async () => {
+      const task = {
+        id: "FN-7977-MODEL",
+        description: "Preserve execution after planner model fallback exhaustion",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      let liveTask = { ...task, attachments: [], comments: [] } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockImplementation(async () => liveTask),
+        updateTask: vi.fn().mockImplementation(async (_id: string, patch: Partial<Task>) => {
+          if (patch.status === "planning") {
+            liveTask = { ...liveTask, column: "in-review", status: "reviewing", worktree: "/tmp/FN-7977-MODEL", steps: [{ id: "1" }] } as unknown as Task;
+          }
+        }),
+      });
+      mockCreateFnAgent.mockResolvedValue({ session: { state: {}, sessionManager: {}, prompt: vi.fn(), dispose: vi.fn(), navigateTree: vi.fn() } });
+      const { ModelFallbackExhaustedError, promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new ModelFallbackExhaustedError({
+        primaryModel: "antigravity/gemini-3.5-flash-low",
+        attempts: 2,
+        triggerPoint: "prompt-time",
+        underlyingReason: "403 provider access forbidden",
+      }));
+
+      await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
+
+      expect(liveTask).toMatchObject({ column: "in-review", status: "reviewing", worktree: "/tmp/FN-7977-MODEL", steps: [{ id: "1" }] });
+      expect(store.updateTask).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps advanced worktree and steps after deterministic validation recovery", async () => {
+      const task = {
+        id: "FN-7977-VALIDATION",
+        description: "Preserve execution after stale deterministic validation retry",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      let liveTask = { ...task, attachments: [], comments: [] } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockImplementation(async () => liveTask),
+        updateTask: vi.fn().mockImplementation(async (_id: string, patch: Partial<Task>) => {
+          if (patch.status === "planning") {
+            liveTask = { ...liveTask, column: "in-progress", status: "executing", worktree: "/tmp/FN-7977-VALIDATION", steps: [{ id: "1" }] } as unknown as Task;
+          }
+        }),
+      });
+      mockCreateFnAgent.mockResolvedValue({ session: { state: {}, sessionManager: {}, prompt: vi.fn(), dispose: vi.fn(), navigateTree: vi.fn() } });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+      await new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 }).specifyTask(task);
+
+      expect(liveTask).toMatchObject({ column: "in-progress", status: "executing", worktree: "/tmp/FN-7977-VALIDATION", steps: [{ id: "1" }] });
+      expect(store.updateTask).toHaveBeenCalledTimes(1);
+    });
+
     it("escalates to error state when triage retries are exhausted via specifyTask", async () => {
       const task = {
         id: "FN-201",
