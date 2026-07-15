@@ -34,7 +34,6 @@ import {
   formatAssignedTasksWakeDeltaSection,
   resolveEffectiveSettingsById,
   resolveEffectivePlannerHeartbeatPatrolEnabled,
-  TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -483,7 +482,6 @@ export {
 } from "./agent-heartbeat-prompts.js";
 import {
   HEARTBEAT_SYSTEM_PROMPT,
-  HEARTBEAT_NO_TASK_SYSTEM_PROMPT,
   HEARTBEAT_PROCEDURE_STRICT,
   HEARTBEAT_PROCEDURE_LITE,
   HEARTBEAT_PROCEDURE_OFF,
