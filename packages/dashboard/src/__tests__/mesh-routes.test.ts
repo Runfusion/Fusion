@@ -105,7 +105,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 
 class MockStore extends EventEmitter {
   /*
-  FNXC:PostgresCutover 2026-07-10:
+  FNXC:PostgresCutover 2026-07-10-00:00:
   FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
   createServer requires a project PostgreSQL AsyncDataLayer for ChatStore /
   AgentStore construction. Mesh route tests only exercise HTTP topology and
@@ -780,18 +780,41 @@ describe("/api/mesh/task-ids routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("ignores coordinatorNodeId and commits locally against shared allocator rows", async () => {
-    // FNXC:SharedPostgresMultiNode 2026-07-14-23:45: remote coordinator hops are retired.
-    mockCommitDistributedTaskIdReservation.mockResolvedValue({ reservationId: "res-1", taskId: "FN-001", status: "committed" });
-    const response = await request(
-      app,
-      "POST",
-      "/api/mesh/task-ids/commit",
-      JSON.stringify({ reservationId: "res-1", nodeId: "node-a", coordinatorNodeId: "node_remote_1" }),
-      { "Content-Type": "application/json" },
-    );
+  /*
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Remote coordinator hops are retired on all three mutating allocator routes.
+  Assert the invariant across reserve/commit/abort, not only commit.
+  */
+  it.each([
+    {
+      name: "reserve",
+      method: "POST" as const,
+      path: "/api/mesh/task-ids/reserve",
+      body: { prefix: "FN", nodeId: "node-a", coordinatorNodeId: "node_remote_1" },
+      mock: mockReserveDistributedTaskId,
+      expectedArgs: { prefix: "FN", nodeId: "node-a", ttlMs: undefined },
+    },
+    {
+      name: "commit",
+      method: "POST" as const,
+      path: "/api/mesh/task-ids/commit",
+      body: { reservationId: "res-1", nodeId: "node-a", coordinatorNodeId: "node_remote_1" },
+      mock: mockCommitDistributedTaskIdReservation,
+      expectedArgs: { reservationId: "res-1", nodeId: "node-a" },
+    },
+    {
+      name: "abort",
+      method: "POST" as const,
+      path: "/api/mesh/task-ids/abort",
+      body: { reservationId: "res-1", nodeId: "node-a", reason: "abort", coordinatorNodeId: "node_remote_1" },
+      mock: mockAbortDistributedTaskIdReservation,
+      expectedArgs: { reservationId: "res-1", nodeId: "node-a", reason: "abort" },
+    },
+  ])("ignores coordinatorNodeId on $name and allocates locally", async ({ method, path, body, mock, expectedArgs }) => {
+    mockGetNode.mockClear();
+    const response = await request(app, method, path, JSON.stringify(body), { "Content-Type": "application/json" });
     expect(response.status).toBe(200);
-    expect(mockCommitDistributedTaskIdReservation).toHaveBeenCalledWith({ reservationId: "res-1", nodeId: "node-a" });
+    expect(mock).toHaveBeenCalledWith(expectedArgs);
     expect(mockGetNode).not.toHaveBeenCalled();
   });
 });

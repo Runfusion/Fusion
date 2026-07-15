@@ -816,7 +816,7 @@ A lease is recoverable only when there is **no active local executor session for
 - Canonical multi-node contract: [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md) (shared Postgres + claims; multi-leader HTTP task replication retired).
 - Distributed task-ID allocation is a **shared-database** primitive (not a remote mesh coordinator):
   - Durable state lives in Postgres `project.distributed_task_id_state` / `distributed_task_id_reservations` (async allocator path).
-  - Reserve/commit/abort run against those shared rows under the project’s transactions. Default reservation TTL is `15 * 60 * 1000` ms. Expired/aborted reservations are **burned** and never reissued. Failed creates after a committed reservation abort the reservation and emit `task:reservation-commit-rolled-back`.
+  - Reserve/commit/abort run against those shared rows under the project’s transactions. Default reservation TTL is `15 * 60 * 1000` ms. Expired/aborted reservations are **burned** and never reissued. Failed creates abort the still-reserved reservation (or roll back a just-committed reservation via `task:reservation-commit-rolled-back` when create materialization fails after the commit flip); once a reservation is fully committed with a durable task row, it is final and not re-aborted as an ordinary abort.
   - `committedClusterTaskCount` is the authoritative committed-task count for a prefix within a project partition.
   - Store open reconciles each prefix high-water mark past existing live/archived/reservation sequences.
   - `/api/mesh/task-ids/*` always uses the local allocator under Postgres (shared rows are the coordinator). Remote coordinator forwarding is disabled.

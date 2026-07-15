@@ -1,3 +1,4 @@
+import { validateSnapshotEnvelope } from "@fusion/core";
 import { createFusionAuthStorage } from "@fusion/engine";
 import { ApiError, badRequest } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -326,7 +327,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       // ── Shared state: auth material only ──
-      const { validateSnapshotEnvelope } = await import("@fusion/core");
       const rawSharedState = req.body?.sharedState;
       let sharedState = rawSharedState;
       if (rawSharedState && typeof rawSharedState === "object") {

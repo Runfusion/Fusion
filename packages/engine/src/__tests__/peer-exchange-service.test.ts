@@ -51,6 +51,7 @@ describe("PeerExchangeService", () => {
   let mockApplyRemoteSettings: ReturnType<typeof vi.fn>;
   let mockGetProjectSettingsSnapshot: ReturnType<typeof vi.fn>;
   let mockGetAuthMaterialSnapshot: ReturnType<typeof vi.fn>;
+  let mockApplyAuthMaterialSnapshot: ReturnType<typeof vi.fn>;
   let mockApplyProjectSettingsSnapshot: ReturnType<typeof vi.fn>;
   let mockEnqueueMeshWrite: ReturnType<typeof vi.fn>;
   let mockListPendingMeshWrites: ReturnType<typeof vi.fn>;
@@ -72,6 +73,7 @@ describe("PeerExchangeService", () => {
     mockApplyRemoteSettings = vi.fn();
     mockGetProjectSettingsSnapshot = vi.fn();
     mockGetAuthMaterialSnapshot = vi.fn();
+    mockApplyAuthMaterialSnapshot = vi.fn();
     mockApplyProjectSettingsSnapshot = vi.fn();
     mockEnqueueMeshWrite = vi.fn();
     mockListPendingMeshWrites = vi.fn();
@@ -91,6 +93,7 @@ describe("PeerExchangeService", () => {
       applyRemoteSettings: mockApplyRemoteSettings,
       getProjectSettingsSnapshot: mockGetProjectSettingsSnapshot,
       getAuthMaterialSnapshot: mockGetAuthMaterialSnapshot,
+      applyAuthMaterialSnapshot: mockApplyAuthMaterialSnapshot,
       applyProjectSettingsSnapshot: mockApplyProjectSettingsSnapshot,
       enqueueMeshWrite: mockEnqueueMeshWrite,
       listPendingMeshWrites: mockListPendingMeshWrites,
@@ -559,6 +562,60 @@ describe("PeerExchangeService", () => {
       const result = await service.syncWithNode(makeNode());
       expect(result.settingsApplied).toBeUndefined();
       expect(result.settingsVersion).toBeUndefined();
+    });
+
+    /*
+    FNXC:SharedPostgresMultiNode 2026-07-15-00:15:
+    Auth material must still travel when settings gossip is off (Postgres path).
+    */
+    it("includes and applies authMaterial when settingsSyncAuth is enabled without settings gossip", async () => {
+      Object.defineProperty(mockCentralCore, "backendMode", { value: true, configurable: true });
+      mockGetAuthMaterialSnapshot.mockReturnValue({
+        version: 1,
+        exportedAt: "2026-04-01T00:00:00.000Z",
+        checksum: "auth-checksum",
+        payload: { providerAuth: { anthropic: { type: "api_key", key: "sk-ant" } } },
+      });
+      mockApplyAuthMaterialSnapshot.mockReturnValue({
+        success: true,
+        authCount: 1,
+        providerAuth: { anthropic: { type: "api_key", key: "sk-ant" } },
+      });
+      const node = makeNode();
+      setupSuccessfulSync(node);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          senderNodeId: node.id,
+          senderNodeUrl: node.url,
+          knownPeers: [],
+          newPeers: [],
+          timestamp: "2026-04-01T12:00:00.000Z",
+          sharedState: {
+            authMaterial: {
+              version: 1,
+              exportedAt: "2026-04-01T00:00:00.000Z",
+              checksum: "remote-auth",
+              payload: { providerAuth: { anthropic: { type: "api_key", key: "sk-remote" } } },
+            },
+          },
+        }),
+      });
+
+      const service = new PeerExchangeService(mockCentralCore, {
+        settingsSyncEnabled: true, // forced off by backendMode
+        settingsSyncAuth: true,
+        providerAuth: { anthropic: { type: "api_key", key: "sk-ant" } },
+      });
+      await service.syncWithNode(node);
+
+      expect(mockGetSettingsForSync).not.toHaveBeenCalled();
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.settings).toBeUndefined();
+      expect(body.sharedState?.authMaterial).toBeDefined();
+      expect(body.sharedState?.projectSettings).toBeUndefined();
+      expect(mockApplyAuthMaterialSnapshot).toHaveBeenCalled();
     });
   });
 

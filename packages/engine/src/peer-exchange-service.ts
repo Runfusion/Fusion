@@ -299,7 +299,13 @@ export class PeerExchangeService {
         timestamp: new Date().toISOString(),
       };
 
-      // ── Settings sync: decide whether to include settings in request ──
+      // ── Settings sync (legacy) + auth material (independent of settings gossip) ──
+      /*
+      FNXC:SharedPostgresMultiNode 2026-07-15-00:15:
+      Auth material lives in per-machine auth.json and must still sync when
+      settings gossip is force-disabled under shared Postgres. Attach auth-only
+      sharedState whenever settingsSyncAuth is on, without requiring settingsSyncEnabled.
+      */
       let shouldIncludeSettings = false;
 
       if (this.settingsSyncEnabled) {
@@ -343,12 +349,23 @@ export class PeerExchangeService {
 
           if (shouldIncludeSettings) {
             request.settings = this.cachedSettingsPayload;
-            request.sharedState = await this.getSharedStateSettingsBundle();
           }
         } catch (err) {
           // Log error but continue with peer sync
           const error = err instanceof Error ? err : String(err);
           peerExchangeLog.warn(`Failed to get settings for sync with ${node.name}: ${error}`);
+        }
+      }
+
+      if (shouldIncludeSettings || this.settingsSyncAuth) {
+        try {
+          const sharedState = await this.getSharedStateSettingsBundle();
+          if (sharedState) {
+            request.sharedState = sharedState;
+          }
+        } catch (err) {
+          const error = err instanceof Error ? err : String(err);
+          peerExchangeLog.warn(`Failed to build shared-state bundle for ${node.name}: ${error}`);
         }
       }
 
@@ -396,7 +413,7 @@ export class PeerExchangeService {
         // This ensures we get updates for existing peers too
         const mergeResult = await this.centralCore.mergePeers(peerResponse.knownPeers);
 
-        // ── Process remote settings if included in response ──
+        // ── Process remote settings (legacy) and/or auth sharedState ──
         if (this.settingsSyncEnabled && (peerResponse.sharedState || peerResponse.settings)) {
           const remoteChecksum =
             peerResponse.sharedState?.projectSettings?.checksum ??
@@ -436,6 +453,23 @@ export class PeerExchangeService {
               version: remoteChecksum,
               timestamp: Date.now(),
             });
+          }
+        } else if (this.settingsSyncAuth && peerResponse.sharedState?.authMaterial) {
+          // Auth-only path when settings gossip is disabled (shared Postgres default).
+          try {
+            const applyResult = await this.applyRemoteSharedState(peerResponse.sharedState, undefined);
+            if (applyResult.success && applyResult.authCount > 0) {
+              settingsApplied = true;
+              this.cachedSharedStatePayload = null;
+              peerExchangeLog.log(
+                `Applied remote auth material from ${node.name} (auth providers: ${applyResult.authCount})`,
+              );
+            } else if (!applyResult.success) {
+              peerExchangeLog.warn(`Failed to apply remote auth material from ${node.name}: ${applyResult.error}`);
+            }
+          } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            peerExchangeLog.warn(`Auth material sync error with ${node.name}: ${error}`);
           }
         }
 
@@ -519,21 +553,30 @@ export class PeerExchangeService {
                 : undefined,
             }
           : rawRequest;
-        const response = await fetch(`${node.url}/api/mesh/sync`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) {
-          await this.centralCore.markMeshWriteFailed(entry.id, { lastError: `HTTP ${response.status}: ${response.statusText}` });
-          failed += 1;
-          continue;
+        // FNXC:SharedPostgresMultiNode 2026-07-15-00:15: Replay uses the same 10s abort as live peer sync so stop() cannot hang on a stalled peer.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10_000);
+        try {
+          const response = await fetch(`${node.url}/api/mesh/sync`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            await this.centralCore.markMeshWriteFailed(entry.id, { lastError: `HTTP ${response.status}: ${response.statusText}` });
+            failed += 1;
+            continue;
+          }
+          await this.centralCore.markMeshWriteApplied(entry.id, {});
+          applied += 1;
+        } finally {
+          clearTimeout(timeoutId);
         }
-        await this.centralCore.markMeshWriteApplied(entry.id, {});
-        applied += 1;
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         await this.centralCore.markMeshWriteFailed(entry.id, {
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: message.includes("abort") ? "Timeout (10s)" : message,
         });
         failed += 1;
       }
