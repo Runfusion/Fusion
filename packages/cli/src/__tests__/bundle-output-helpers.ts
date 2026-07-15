@@ -9,6 +9,24 @@ export const bundlePath = join(cliRoot, "dist", "bin.js");
 export const clientIndexPath = join(cliRoot, "dist", "client", "index.html");
 const cursorPluginManifestPath = join(cliRoot, "dist", "plugins", "fusion-plugin-cursor-runtime", "manifest.json");
 const roadmapPluginBundledPath = join(cliRoot, "dist", "plugins", "fusion-plugin-roadmap", "bundled.js");
+const reportsPluginBundledPath = join(cliRoot, "dist", "plugins", "fusion-plugin-reports", "bundled.js");
+const cliPrintingPressPluginBundledPath = join(
+  cliRoot,
+  "dist",
+  "plugins",
+  "fusion-plugin-cli-printing-press",
+  "bundled.js",
+);
+const whatsappChatPluginBundledPath = join(cliRoot, "dist", "plugins", "fusion-plugin-whatsapp-chat", "bundled.js");
+const compoundEngineeringSkillPath = join(
+  cliRoot,
+  "dist",
+  "plugins",
+  "fusion-plugin-compound-engineering",
+  "skills",
+  "ce-brainstorm",
+  "SKILL.md",
+);
 export const openclawMcpSchemaServerPath = join(
   cliRoot,
   "dist",
@@ -50,6 +68,10 @@ export function hasBuiltDashboardAssets(): boolean {
     !existsSync(clientIndexPath) ||
     !existsSync(cursorPluginManifestPath) ||
     !existsSync(roadmapPluginBundledPath) ||
+    !existsSync(reportsPluginBundledPath) ||
+    !existsSync(cliPrintingPressPluginBundledPath) ||
+    !existsSync(whatsappChatPluginBundledPath) ||
+    !existsSync(compoundEngineeringSkillPath) ||
     !existsSync(openclawMcpSchemaServerPath) ||
     !existsSync(droidPluginMcpServerPath)
   ) {
@@ -115,7 +137,11 @@ export function buildCliWithRealDashboardAssets() {
   try {
     runBuildCommand(`node ${join(workspaceRoot, "scripts", "ensure-test-artifacts.mjs")}`, workspaceRoot);
     runBuildCommand("pnpm --filter @fusion/dashboard build:client", workspaceRoot);
-    runBuildCommand("pnpm build", cliRoot);
+    /*
+     * FNXC:BundledPlugins 2026-07-15-09:08:
+     * bundle-output tests assert the published CLI packaging surface, including staged bundled plugins and skill assets. Local `pnpm build` may use fast package mode, so bootstrap with `build:package` to force FUSION_CLI_FULL_PACKAGE and avoid reading stale raw-src plugin output from dist/.
+     */
+    runBuildCommand("pnpm build:package", cliRoot);
 
     if (hasBuiltDashboardAssets()) {
       return;
@@ -124,7 +150,7 @@ export function buildCliWithRealDashboardAssets() {
     // Fallback for environments where build:client alone does not refresh the
     // dashboard dist/client bundle consumed by the CLI copy step.
     runBuildCommand("pnpm --filter @fusion/dashboard build", workspaceRoot);
-    runBuildCommand("pnpm build", cliRoot);
+    runBuildCommand("pnpm build:package", cliRoot);
   } finally {
     if (acquiredLock) {
       rmSync(buildLockDir, { recursive: true, force: true });

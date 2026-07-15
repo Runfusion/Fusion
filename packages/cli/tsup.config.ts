@@ -88,6 +88,7 @@ type BundlePluginEntryOptions = {
   srcDir: string;
   destDir: string;
   withMcpAsset?: boolean;
+  external?: string[];
 };
 
 type PackageManifest = {
@@ -161,7 +162,7 @@ function writeSanitizedCopiedManifest(srcPkgPath: string, destPkgPath: string) {
   writeFileSync(destPkgPath, JSON.stringify(destPkg, null, 2));
 }
 
-async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = false }: BundlePluginEntryOptions) {
+async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = false, external = [] }: BundlePluginEntryOptions) {
   if (existsSync(destDir)) {
     rmSync(destDir, { recursive: true, force: true });
   }
@@ -199,7 +200,7 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     platform: "node",
     target: "node22",
     outfile: join(destDir, "bundled.js"),
-    external: ["@fusion/engine"],
+    external: ["@fusion/engine", ...external],
     alias: {
       "@fusion/plugin-sdk": join(__dirname, "..", "plugin-sdk", "src", "index.ts"),
       /*
@@ -475,20 +476,20 @@ const cliBuildConfig = {
       destDir: dependencyGraphPluginDest,
     });
 
-    if (existsSync(whatsappChatPluginDest)) {
-      rmSync(whatsappChatPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(whatsappChatPluginSrc)) {
-      mkdirSync(whatsappChatPluginDest, { recursive: true });
-      cpSync(join(whatsappChatPluginSrc, "manifest.json"), join(whatsappChatPluginDest, "manifest.json"));
-      writeSanitizedCopiedManifest(join(whatsappChatPluginSrc, "package.json"), join(whatsappChatPluginDest, "package.json"));
-      cpSync(join(whatsappChatPluginSrc, "src"), join(whatsappChatPluginDest, "src"), { recursive: true });
-      console.log("Copied WhatsApp chat plugin to dist/plugins/fusion-plugin-whatsapp-chat/");
-    } else {
-      console.warn(
-        `WARNING: WhatsApp chat plugin source not found at ${whatsappChatPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    /*
+     * FNXC:BundledPlugins 2026-07-15-00:00:
+     * FN-7956 moves WhatsApp Chat, Reports, and CLI Printing Press off raw `src/` staging because npm/global installs place them under `node_modules`, where Node refuses TypeScript type stripping. Route them through bundlePluginEntry so each published plugin root contains install-safe `bundled.js` output and no `.ts` entry tree.
+     */
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-whatsapp-chat",
+      srcDir: whatsappChatPluginSrc,
+      destDir: whatsappChatPluginDest,
+      /*
+       * FNXC:BundledPlugins 2026-07-15-09:12:
+       * Baileys contains optional dynamic require() paths for QR/link-preview/media helpers that are not needed for plugin module load. Keep those optional packages external so the published WhatsApp Chat bundled.js can be produced and loaded without reintroducing a raw TypeScript src/ entry under node_modules.
+       */
+      external: ["jimp", "link-preview-js", "qrcode-terminal"],
+    });
 
     await bundlePluginEntry({
       pluginId: "fusion-plugin-roadmap",
@@ -508,35 +509,17 @@ const cliBuildConfig = {
       destDir: linearImportPluginDest,
     });
 
-    if (existsSync(reportsPluginDest)) {
-      rmSync(reportsPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(reportsPluginSrc)) {
-      mkdirSync(reportsPluginDest, { recursive: true });
-      cpSync(join(reportsPluginSrc, "manifest.json"), join(reportsPluginDest, "manifest.json"));
-      writeSanitizedCopiedManifest(join(reportsPluginSrc, "package.json"), join(reportsPluginDest, "package.json"));
-      cpSync(join(reportsPluginSrc, "src"), join(reportsPluginDest, "src"), { recursive: true });
-      console.log("Copied reports plugin to dist/plugins/fusion-plugin-reports/");
-    } else {
-      console.warn(
-        `WARNING: Reports plugin source not found at ${reportsPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-reports",
+      srcDir: reportsPluginSrc,
+      destDir: reportsPluginDest,
+    });
 
-    if (existsSync(cliPrintingPressPluginDest)) {
-      rmSync(cliPrintingPressPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(cliPrintingPressPluginSrc)) {
-      mkdirSync(cliPrintingPressPluginDest, { recursive: true });
-      cpSync(join(cliPrintingPressPluginSrc, "manifest.json"), join(cliPrintingPressPluginDest, "manifest.json"));
-      writeSanitizedCopiedManifest(join(cliPrintingPressPluginSrc, "package.json"), join(cliPrintingPressPluginDest, "package.json"));
-      cpSync(join(cliPrintingPressPluginSrc, "src"), join(cliPrintingPressPluginDest, "src"), { recursive: true });
-      console.log("Copied cli-printing-press plugin to dist/plugins/fusion-plugin-cli-printing-press/");
-    } else {
-      console.warn(
-        `WARNING: cli-printing-press plugin source not found at ${cliPrintingPressPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-cli-printing-press",
+      srcDir: cliPrintingPressPluginSrc,
+      destDir: cliPrintingPressPluginDest,
+    });
 
     // Bundle each runtime plugin into a self-contained ESM file so npm/npx
     // installs can load them without the workspace `@fusion/plugin-sdk`.

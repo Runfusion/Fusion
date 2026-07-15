@@ -22,7 +22,15 @@ const bundlePluginEntryPluginIds = [
   "fusion-plugin-dependency-graph",
   "fusion-plugin-roadmap",
   "fusion-plugin-compound-engineering",
+  "fusion-plugin-whatsapp-chat",
+  "fusion-plugin-reports",
+  "fusion-plugin-cli-printing-press",
   "fusion-plugin-linear-import",
+] as const;
+const selfContainedBundlePluginIds = [
+  "fusion-plugin-reports",
+  "fusion-plugin-cli-printing-press",
+  "fusion-plugin-whatsapp-chat",
 ] as const;
 const knownCompoundEngineeringSkillIds = [
   "ce-brainstorm",
@@ -38,6 +46,37 @@ const knownCompoundEngineeringSkillIds = [
   "ce-strategy",
   "ce-work",
 ] as const;
+
+function expectSelfContainedBundle(pluginId: typeof selfContainedBundlePluginIds[number]) {
+  const stagedRoot = join(cliRoot, "dist", "plugins", pluginId);
+  const manifestPath = join(stagedRoot, "manifest.json");
+  const packageJsonPath = join(stagedRoot, "package.json");
+  const bundledPath = join(stagedRoot, "bundled.js");
+
+  expect(existsSync(bundledPath), `${pluginId} should ship bundled.js`).toBe(true);
+  expect(existsSync(join(stagedRoot, "src")), `${pluginId} should not ship raw src/`).toBe(false);
+  expect(
+    readdirSync(stagedRoot).some((entry) => /\.index\.reload-\d+\.ts$/.test(entry)),
+    `${pluginId} should not ship hot-reload TypeScript artifacts`,
+  ).toBe(false);
+
+  expect(existsSync(manifestPath), `${pluginId} manifest should exist`).toBe(true);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
+  expect(manifest.id).toBe(pluginId);
+  expect(typeof manifest.name).toBe("string");
+  expect(manifest.name?.length).toBeGreaterThan(0);
+
+  const stagedPkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+    exports?: { "."?: { import?: string } };
+  };
+  expect(stagedPkg.exports?.["."]?.import).toBe("./bundled.js");
+
+  const bundled = readFileSync(bundledPath, "utf-8");
+  expect(bundled, `${pluginId} should not keep a bare @fusion/core import`).not.toMatch(
+    /from\s+["']@fusion\/core["']/,
+  );
+  expect(bundled, `${pluginId} should not mention the private @fusion/core package`).not.toContain("@fusion/core");
+}
 
 describe("CLI bundle output", () => {
   beforeAll(() => {
@@ -296,40 +335,28 @@ describe("CLI bundle output", () => {
         /from\s+["']@fusion\/core["']/,
       );
       expect(bundled, `${pluginId} should not mention the private @fusion/core package`).not.toContain(
-        '"@fusion/core"',
+        "@fusion/core",
       );
     }
 
     expect(inspectedPluginIds.length).toBeGreaterThan(0);
   });
 
-  it("dist/plugins/fusion-plugin-whatsapp-chat/ is staged with a valid manifest", () => {
-    const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-whatsapp-chat");
-    const manifestPath = join(stagedRoot, "manifest.json");
-
-    expect(existsSync(manifestPath)).toBe(true);
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
-    expect(manifest.id).toBe("fusion-plugin-whatsapp-chat");
-    expect(typeof manifest.name).toBe("string");
-    expect(manifest.name?.length).toBeGreaterThan(0);
-  });
-
-  it("dist/plugins/fusion-plugin-cli-printing-press/ is staged with source entry for bundled install", () => {
-    const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-cli-printing-press");
-    const manifestPath = join(stagedRoot, "manifest.json");
-    const packageJsonPath = join(stagedRoot, "package.json");
-
-    expect(existsSync(manifestPath)).toBe(true);
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
-    expect(manifest.id).toBe("fusion-plugin-cli-printing-press");
-    expect(typeof manifest.name).toBe("string");
-    expect(manifest.name?.length).toBeGreaterThan(0);
-
-    expect(existsSync(join(stagedRoot, "src", "index.ts"))).toBe(true);
-    const stagedPkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-      exports?: { "."?: { import?: string } };
-    };
-    expect(stagedPkg.exports?.["."]?.import).toBe("./src/index.ts");
+  it("reports, cli-printing-press, and whatsapp-chat ship self-contained bundled.js outputs", () => {
+    /*
+     * FNXC:BundledPlugins 2026-07-15-00:00:
+     * Surface Enumeration for FN-7956:
+     * - [x] Providers / bridges / execution paths: fusion-plugin-reports, fusion-plugin-cli-printing-press, and fusion-plugin-whatsapp-chat are all asserted through this bundlePluginEntry output invariant.
+     * - [x] Desktop + mobile breakpoints / platforms: N/A build/packaging-only change; desktop missing-bundle behavior for non-staged dependencies is unchanged.
+     * - [x] Empty / undefined / duplicate / populated data states: each staged root must contain bundled.js, omit src/, and omit .index.reload-N.ts artifacts.
+     * - [x] Shared hooks / components / modules / helpers: these ids are included in bundlePluginEntryPluginIds so the shared @fusion/core runtime-shim alias invariant covers them.
+     * - [x] Every component that renders the affordance: N/A no UI affordance add/remove.
+     * - [x] Leftover shells after removal: package output assertions fail if the old raw-src branches leave src/ or reload TypeScript files behind.
+     * - [x] Runtime-value assertion: each emitted bundled.js has no from "@fusion/core" import and no literal @fusion/core occurrence.
+     */
+    for (const pluginId of selfContainedBundlePluginIds) {
+      expectSelfContainedBundle(pluginId);
+    }
   });
 
   it("dist/plugins/fusion-plugin-openclaw-runtime/ is staged with required bridge assets", () => {
