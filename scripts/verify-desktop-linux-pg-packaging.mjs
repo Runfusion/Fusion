@@ -284,24 +284,20 @@ function assertUnpackedTree(unpackedDir, asarBin) {
       fail(`${unpackedDir}: no @embedded-postgres/linux-* packages in asar.unpacked (got: ${readdirSync(platformRoot).join(", ") || "none"})`);
     } else {
       ok(`${unpackedDir}: platform packages: ${platforms.join(", ")}`);
-      for (const platform of platforms) {
-        // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:45:
-        // Each unpacked Electron target must contain binaries for its own CPU.
-        // A bundled but wrong-architecture package cannot boot Local mode.
-        if (platform !== expectedPlatform) {
-          fail(`${unpackedDir}: found ${platform}; expected ${expectedPlatform} for this unpacked target`);
-          continue;
-        }
-        for (const bin of ["initdb", "pg_ctl", "postgres"]) {
-          const binPath = join(platformRoot, platform, "native", "bin", bin);
-          if (!isRegularExecutable(binPath)) {
-            fail(`${unpackedDir}: missing executable file ${platform}/native/bin/${bin}`);
-          }
-        }
-        assertPlatformSonameLinks(unpackedDir, platformRoot, platform);
-      }
+      // FNXC:DesktopEmbeddedPostgres 2026-07-15-13:20:
+      // electron-builder can retain optional native packages for several Linux
+      // CPUs in one unpacked tree. Validate the target CPU's runnable payload,
+      // rather than rejecting extra architecture packages that do not affect it.
       if (!platforms.includes(expectedPlatform)) {
         fail(`${unpackedDir}: missing @embedded-postgres/${expectedPlatform}`);
+      } else {
+        for (const bin of ["initdb", "pg_ctl", "postgres"]) {
+          const binPath = join(platformRoot, expectedPlatform, "native", "bin", bin);
+          if (!isRegularExecutable(binPath)) {
+            fail(`${unpackedDir}: missing executable file ${expectedPlatform}/native/bin/${bin}`);
+          }
+        }
+        assertPlatformSonameLinks(unpackedDir, platformRoot, expectedPlatform);
       }
     }
   }

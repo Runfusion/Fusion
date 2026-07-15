@@ -98,6 +98,12 @@ describe("desktop release workflow wiring", () => {
     expect(verifier).toContain("assertPlatformSonameLinks");
     expect(verifier).toContain("omp-runtime/dist/index.js");
     expect(verifier).toContain("omp-runtime/dist/probe.js");
+    // FNXC:DesktopEmbeddedPostgres 2026-07-15-13:20: The x64 unpacked tree can
+    // carry optional arm64 packages too; retain validation of x64 binaries and
+    // SONAME links without treating that multi-arch closure as a packaging error.
+    expect(verifier).toContain("platforms.includes(expectedPlatform)");
+    expect(verifier).toContain("expectedPlatform, \"native\", \"bin\"");
+    expect(verifier).not.toContain("found ${platform}; expected ${expectedPlatform}");
 
     const advisoryPackaging = await readRepoFile(".github/workflows/desktop-packaging.yml");
     for (const workflow of [release, testRelease, advisoryPackaging]) {
