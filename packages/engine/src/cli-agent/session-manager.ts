@@ -473,6 +473,11 @@ export class CliSessionManager {
       });
     }
 
+    // FNXC:CliAgentPostgres 2026-07-14-12:00:
+    // The durable session row must commit before its PTY starts; otherwise an
+    // engine crash between spawn and the queued write would defeat recovery.
+    await this.store.flush();
+
     const allowlist = adapter.buildEnvAllowlist(launchCtx);
     const env = this.buildEnv(allowlist);
 
@@ -492,6 +497,7 @@ export class CliSessionManager {
         agentState: "dead",
         terminationReason: "crashed",
       });
+      await this.store.flush();
       throw err;
     }
 

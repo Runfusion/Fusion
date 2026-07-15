@@ -1645,7 +1645,7 @@ export class ChatManager {
           mentions: mentions.map((mention) => mention.agentId),
         });
         if (response.tokenUsage) {
-          this.chatStore.recordTokenUsage({
+          await this.chatStore.recordTokenUsage({
             sourceKind: "room-chat",
             roomId,
             messageId: assistantMessage.id,
@@ -1954,7 +1954,7 @@ export class ChatManager {
            * FNXC:ChatTokenAccounting 2026-07-02-00:00:
            * CLI-agent-backed chat returns before the dashboard model loop, so read the runner's per-turn telemetry snapshot here and persist it as `cli-chat`. This keeps CLI/pi chat tokens in Command Center while leaving task execution tokenUsage untouched.
            */
-          this.chatStore.recordTokenUsage({
+          await this.chatStore.recordTokenUsage({
             sourceKind: "cli-chat",
             chatSessionId: sessionId,
             messageId: usageSnapshot?.messageId ?? null,
@@ -2534,7 +2534,7 @@ export class ChatManager {
          * FNXC:ChatTokenAccounting 2026-07-02-00:00:
          * Successful dashboard chat turns persist provider-reported session stats as chat-token rows. Task-detail planner chat uses sourceKind `task-planner-chat` instead of task.tokenUsage so the planner's own model call is visible in Command Center without mutating execution totals for the task it discusses.
          */
-        this.chatStore.recordTokenUsage({
+        await this.chatStore.recordTokenUsage({
           sourceKind: taskPlannerChatTaskId ? "task-planner-chat" : "chat",
           chatSessionId: sessionId,
           messageId: assistantMessage.id,

@@ -572,7 +572,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
 
       const existingPaths = new Set(existingProjects.map((p: { path: string }) => p.path));
 
-      // Scan for openable .fusion/fusion.db files (indicating fn projects)
+      // Scan for PostgreSQL-era project markers or openable legacy SQLite DBs.
       const detected: Array<{ path: string; suggestedName: string; existing: boolean }> = [];
 
       try {
@@ -582,7 +582,16 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           if (!entry.isDirectory()) continue;
 
           const dirPath = join(searchPath, entry.name);
-          if (isValidSqliteDatabaseFile(join(dirPath, ".fusion", "fusion.db"))) {
+          /*
+           * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+           * Current projects advertise `.fusion/project.json`; an openable
+           * `fusion.db` remains discoverable only as legacy migration input.
+           */
+          const fusionDir = join(dirPath, ".fusion");
+          if (
+            readProjectIdentity(fusionDir) !== null
+            || isValidSqliteDatabaseFile(join(fusionDir, "fusion.db"))
+          ) {
             detected.push({
               path: dirPath,
               suggestedName: entry.name,
@@ -842,7 +851,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       // Evict the in-memory store (closes watchers + connection pool) so the
       // dashboard doesn't hold stale resources for an unregistered project.
       // When the project is re-added, getOrCreateProjectStore will re-create it.
-      evictProjectStore(req.params.id);
+      await evictProjectStore(req.params.id);
 
       res.json({ success: true });
     } catch (err: unknown) {

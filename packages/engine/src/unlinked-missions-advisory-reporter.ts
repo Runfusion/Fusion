@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, InsightStore, MissionStore, type Mission, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, MissionStore, type Mission, type TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const reporterLog = createLogger("unlinked-missions-advisory");
@@ -72,15 +72,9 @@ export class UnlinkedMissionsAdvisoryReporter {
         if (!this.projectId) {
           throw new Error("empty projectId");
         }
-        // FNXC:InsightStore 2026-06-27-09:25:
-        // getInsightStore() now returns InsightStore | AsyncInsightStore. This
-        // reporter calls the store synchronously and stays on graceful fallback
-        // in PG backend mode (not ported this unit) — route async into the catch.
-        const resolved = this.store.getInsightStore();
-        if (!(resolved instanceof InsightStore)) {
-          throw new Error("InsightStore not available in PG backend mode");
-        }
-        insightStore = resolved;
+        // FNXC:PostgresInsights 2026-07-14-17:25: Persist through the async
+        // insight store instead of treating PostgreSQL as unavailable.
+        insightStore = this.store.getInsightStore();
       } catch (error) {
         await this.store.logEntry(
           missionIds[0],
@@ -90,7 +84,7 @@ export class UnlinkedMissionsAdvisoryReporter {
         return { alerted: true };
       }
 
-      const existingInsights = insightStore.listInsights({
+      const existingInsights = await insightStore.listInsights({
         projectId: this.projectId,
         category: "workflow",
         limit: 10,
@@ -104,7 +98,7 @@ export class UnlinkedMissionsAdvisoryReporter {
         return { alerted: false, reason: "already-reported" };
       }
 
-      insightStore.upsertInsight(this.projectId, {
+      await insightStore.upsertInsight(this.projectId, {
         title: UNLINKED_MISSIONS_ADVISORY_TITLE,
         content,
         category: "workflow",
