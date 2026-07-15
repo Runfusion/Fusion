@@ -20,6 +20,26 @@ vi.mock("@fusion/core", async () => {
   };
 });
 
+function buildApp(centralCore: Record<string, unknown> | undefined) {
+  const router = express.Router();
+  registerNodeRoutes({
+    router,
+    options: centralCore ? { centralCore: centralCore as never } : {},
+    rethrowAsApiError(error: unknown): never {
+      throw error;
+    },
+  } as unknown as ApiRoutesContext);
+
+  const app = express();
+  app.use(express.json());
+  app.use("/api", router);
+  app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(500).json({ error: error.message });
+  });
+
+  return app;
+}
+
 function createFixture() {
   const centralCore = {
     init: vi.fn(async () => undefined),
@@ -35,23 +55,7 @@ function createFixture() {
     })),
   };
 
-  const router = express.Router();
-  registerNodeRoutes({
-    router,
-    options: { centralCore: centralCore as never },
-    rethrowAsApiError(error: unknown): never {
-      throw error;
-    },
-  } as unknown as ApiRoutesContext);
-
-  const app = express();
-  app.use(express.json());
-  app.use("/api", router);
-  app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    res.status(500).json({ error: error.message });
-  });
-
-  return { app, centralCore };
+  return { app: buildApp(centralCore), centralCore };
 }
 
 describe("registerNodeRoutes PostgreSQL authority", () => {
@@ -104,5 +108,32 @@ describe("registerNodeRoutes PostgreSQL authority", () => {
     expect(centralCore.init).not.toHaveBeenCalled();
     expect(centralCore.close).not.toHaveBeenCalled();
     expect(legacyCentralConstructor).not.toHaveBeenCalled();
+  });
+
+  // FNXC:NodeRegistry — a route-owned fallback authority (no injected centralCore) must close on
+  // EVERY exit path, including when the underlying store operation throws mid-handler.
+  it("closes a route-owned fallback authority when listNodes throws", async () => {
+    const fallbackCentral = {
+      init: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      listNodes: vi.fn(async () => {
+        throw new Error("registry unavailable");
+      }),
+    };
+    // Only the single fallback construction in this test uses the working fake; the default throwing
+    // constructor is restored automatically afterward.
+    legacyCentralConstructor.mockImplementationOnce(function ConstructedFallbackCentral() {
+      return fallbackCentral;
+    });
+
+    const app = buildApp(undefined);
+
+    const response = await request(app, "GET", "/api/nodes");
+
+    expect(response.status).toBe(500);
+    expect(legacyCentralConstructor).toHaveBeenCalledTimes(1);
+    expect(fallbackCentral.init).toHaveBeenCalledOnce();
+    expect(fallbackCentral.listNodes).toHaveBeenCalledOnce();
+    expect(fallbackCentral.close).toHaveBeenCalledOnce();
   });
 });
