@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
-import { builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
+import { applyOriginalDescription, builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
   TriageProcessor,
   buildSpecificationPrompt,
@@ -3042,8 +3042,36 @@ describe("requirePlanApproval setting", () => {
     const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n";
     const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n";
 
+    /*
+    FNXC:PlanApproval 2026-07-15-14:05:
+    Build PROMPT.md as it exists ON DISK once a plan has been approved.
+
+    `finalizeApprovedTask` injects `## Original Description` (FN 2026-07-14-23:35,
+    `applyOriginalDescription`) into PROMPT.md BEFORE computing the approval fingerprint, and
+    `POST /tasks/:id/approve-plan` fingerprints the on-disk file — so the fingerprint an operator's
+    approval records is always over the POST-injection content. A fixture that writes the raw
+    planner text and fingerprints THAT models a state approve-plan can never produce: the
+    injection then rewrites the file, the fingerprint moves, and the idempotency short-circuit
+    looks broken when it is not (verified: the injection is idempotent, so the real approve →
+    recover round-trip matches).
+
+    Derive the content from the helper rather than hard-coding a post-injection string, so this
+    fixture keeps meaning "whatever content the operator actually approved" if the hygiene
+    injection changes.
+    */
+    const approvedOnDisk = (source: string, description: string): string =>
+      applyOriginalDescription(source, description);
+
     it("re-specifying the SAME approved plan skips the manual gate and moves straight to todo", async () => {
-      const fingerprint = computePlanApprovalFingerprint(planText);
+      /*
+      Re-specify the plan as it was actually approved (description already injected). Passing the
+      RAW planner text here made this test pass for the wrong reason: the injection rewrote the
+      content, the rewrite ENOENT'd because no task dir exists, the failure was swallowed, and
+      `written` stayed raw — so the fingerprint matched only by accident. With the approved
+      content the injection is a no-op, no rewrite is attempted, and the short-circuit is proven.
+      */
+      const approvedPlan = approvedOnDisk(planText, "Triage task");
+      const fingerprint = computePlanApprovalFingerprint(approvedPlan);
       const task = createTriageTask({
         id: "FN-IDEMPOTENT",
         status: "planning",
@@ -3058,7 +3086,7 @@ describe("requirePlanApproval setting", () => {
         finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
       }).finalizeApprovedTask(
         task,
-        planText,
+        approvedPlan,
         { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
       );
 
@@ -3168,9 +3196,11 @@ describe("requirePlanApproval setting", () => {
      * proven to reach every finalizeApprovedTask caller, not just a direct-call seam.
      */
     it("recoverApprovedTask (self-healing planning recovery) skips re-park for an unchanged already-approved plan", async () => {
-      const fingerprint = computePlanApprovalFingerprint(planText);
+      // The plan the operator approved is the on-disk file, description already injected.
+      const approvedPlan = approvedOnDisk(planText, "Recovered triage task");
+      const fingerprint = computePlanApprovalFingerprint(approvedPlan);
       await mkdir(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT"), { recursive: true });
-      await writeFile(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT", "PROMPT.md"), planText);
+      await writeFile(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT", "PROMPT.md"), approvedPlan);
       const store = createMockStore({
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 2,
