@@ -382,6 +382,10 @@ const mocks = vi.hoisted(() => {
     return pluginLoader;
   });
 
+  const pluginRunner = {
+    getRuntimeById: vi.fn(),
+  };
+
   const authStorage = {
     getApiKey: vi.fn().mockResolvedValue(undefined),
     reload: vi.fn(),
@@ -536,6 +540,11 @@ const mocks = vi.hoisted(() => {
         at: new Date().toISOString(),
         provider: null,
       })),
+      /*
+      FNXC:FasterStartup 2026-07-15-12:41:
+      Keep the serve startup fixture aligned with the HTTP host contract: createServer receives the engine PluginRunner so model routes can resolve runtime-backed providers while startup remains non-blocking.
+      */
+      getPluginRunner: vi.fn(() => pluginRunner),
       startRemoteTunnel: vi.fn(async () => remoteStatus),
       stopRemoteTunnel: vi.fn(async () => ({ ...remoteStatus, state: "stopped" as const, provider: null, pid: null, url: null })),
       onMerge: vi.fn().mockResolvedValue(undefined),
@@ -1234,7 +1243,7 @@ describe("runServe — Plugin wiring", () => {
     expect(serverOpts).toHaveProperty("pluginStore");
     expect(serverOpts).toHaveProperty("pluginLoader");
     expect(serverOpts).toHaveProperty("pluginRunner");
-    expect(serverOpts.pluginRunner).toBe(serverOpts.pluginLoader);
+    expect(serverOpts.pluginRunner).toBe(mocks.projectEngineInstances[0].getPluginRunner());
 
     await triggerSignal("SIGINT");
   });
