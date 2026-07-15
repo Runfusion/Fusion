@@ -651,12 +651,22 @@ export class PeerExchangeService {
     // Auth-only apply is always allowed (auth.json is not the shared DB).
     if (this.sharedPostgresMode) {
       if (this.settingsSyncAuth && sharedState?.authMaterial && core.applyAuthMaterialSnapshot) {
-        const authResult = core.applyAuthMaterialSnapshot(sharedState.authMaterial);
-        const authCount =
-          typeof authResult.authCount === "number"
-            ? authResult.authCount
-            : Object.keys(sharedState.authMaterial.payload.providerAuth ?? {}).length;
-        return { success: authResult.success !== false, globalCount: 0, projectCount: 0, authCount, error: authResult.error };
+        try {
+          const authResult = core.applyAuthMaterialSnapshot(sharedState.authMaterial);
+          const authCount =
+            typeof authResult.authCount === "number"
+              ? authResult.authCount
+              : Object.keys(sharedState.authMaterial.payload.providerAuth ?? {}).length;
+          return { success: true, globalCount: 0, projectCount: 0, authCount };
+        } catch (err) {
+          return {
+            success: false,
+            globalCount: 0,
+            projectCount: 0,
+            authCount: 0,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
       }
       return { success: true, globalCount: 0, projectCount: 0, authCount: 0 };
     }
