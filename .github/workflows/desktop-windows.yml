@@ -22,11 +22,72 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # FNXC:WindowsDesktopPackaging 2026-07-15-00:55:
+      # The embedded-PG smoke boots postgres under a non-admin helper user
+      # (fusion-pg). The FIRST Start-Process -Credential for that user loads its
+      # Windows profile hive (~10-20s), which would blow a test's 15s budget.
+      # Create the user and warm its profile once here, outside any test window;
+      # the launcher resets the user's password before each run, but the warmed
+      # profile persists, so every later launch is ~0.5s.
+      - name: Prewarm embedded-PG helper user profile
+        shell: pwsh
+        run: |
+          $user = "fusion-pg"
+          # Throwaway password for the ephemeral helper user (the launcher resets
+          # it before each run); generated at runtime to avoid a hardcoded literal.
+          $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
+          net user $user $pass /add /y 2>&1 | Out-Null
+          $sec = ConvertTo-SecureString $pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$user", $sec)
+          [void](Start-Process -FilePath cmd.exe -ArgumentList '/c','exit' -Credential $cred -Wait -WindowStyle Hidden)
+          Write-Host "prewarmed $user profile"
+
       # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
       # The manual Windows installer path must boot the same embedded database
       # payload used by Local mode before it can publish an installer artifact.
+      # FNXC:WindowsDesktopPackaging 2026-07-15-02:40:
+      # The runner executes jobs elevated, and PostgreSQL refuses an elevated
+      # (admin) token. Run the WHOLE smoke AS the non-admin helper user
+      # (fusion-pg): the test process, its tmpdir() data dirs, AND postgres all
+      # run as fusion-pg, so postgres inherits a non-admin token and boots via
+      # the normal embedded-postgres path — no in-launcher Start-Process
+      # -Credential / staging / process-kill races.
       - name: Smoke embedded Postgres on Windows
-        run: pnpm --filter @fusion/core test:embedded-postgres
+        shell: pwsh
+        run: |
+          $user = "fusion-pg"
+          $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
+          net user $user $pass /y 2>&1 | Out-Null
+          # Grant the helper user (via BUILTIN\Users) access to the workspace,
+          # the pnpm store, and the pnpm/node tooling so it can run the test.
+          icacls D:\a\Fusion\Fusion /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
+          icacls D:\.pnpm-store /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          icacls C:\Users\runneradmin /grant "*S-1-5-32-545:RX" /C 2>&1 | Out-Null
+          icacls C:\Users\runneradmin\setup-pnpm /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          $nodeDir = Split-Path (Get-Command node).Source -Parent
+          icacls $nodeDir /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          # Traversable HOME/TEMP for the helper user (its tmpdir() lands here).
+          $h = "C:\fusionpg-home"
+          New-Item -ItemType Directory -Force -Path "$h\tmp" | Out-Null
+          icacls $h /grant "*S-1-5-32-545:(OI)(CI)F" /T /C 2>&1 | Out-Null
+          $pnpmDir = Split-Path (Get-Command pnpm).Source -Parent
+          $bat = Join-Path $h "smoke.bat"
+          Set-Content -Path $bat -Encoding ASCII -Value @(
+            "@echo off",
+            "set `"USERPROFILE=$h`"",
+            "set `"APPDATA=$h\AppData\Roaming`"",
+            "set `"LOCALAPPDATA=$h\AppData\Local`"",
+            "set `"TEMP=$h\tmp`"",
+            "set `"TMP=$h\tmp`"",
+            "set `"PATH=$nodeDir;$pnpmDir;%PATH%`"",
+            "cd /d D:\a\Fusion\Fusion",
+            "call pnpm --filter @fusion/core test:embedded-postgres",
+            "exit /b %ERRORLEVEL%"
+          )
+          $sec = ConvertTo-SecureString $pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$user", $sec)
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList '/c',$bat -Credential $cred -Wait -PassThru -WindowStyle Hidden
+          if ($p.ExitCode -ne 0) { Write-Error "embedded-PG smoke failed (exit $($p.ExitCode))"; exit 1 }
 
       # FNXC:WindowsDesktopPackaging 2026-07-01-19:45:
       # Mirror release.yml: build every workspace package's tsc dist (incl.

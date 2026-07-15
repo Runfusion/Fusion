@@ -59,8 +59,45 @@ describe("desktop release workflow wiring", () => {
     }
     expect(manualWindows).toContain("Smoke embedded Postgres on Windows");
     expect(manualWindows).toContain("pnpm --filter @fusion/core test:embedded-postgres");
+    // FNXC:WindowsDesktopPackaging 2026-07-15-10:45:
+    // windows-latest jobs are elevated; postgres refuses an admin token. CI must
+    // run the smoke as a non-admin helper (fusion-pg) so the process token is
+    // medium integrity and the normal embedded-postgres path works.
+    expect(manualWindows).toContain("fusion-pg");
+    expect(manualWindows).toContain("Start-Process");
+    expect(manualWindows).toContain("Prewarm embedded-PG helper user profile");
     expect(advisoryPackaging).toContain("Smoke embedded Postgres lifecycle");
     expect(advisoryPackaging).toContain("pnpm --filter @fusion/core test:embedded-postgres");
+  });
+
+  it("inspects Linux AppImage unpacked trees for embedded Postgres packaging", async () => {
+    /*
+     * FNXC:DesktopEmbeddedPostgres 2026-07-15-00:20:
+     * v0.60.0 AppImages existed but omitted embedded-postgres, main-bootstrap, and
+     * omp-runtime. Release + test-release must run the packaging content verifier
+     * after electron-builder produces linux-*-unpacked dirs.
+     */
+    const release = await readRepoFile(".github/workflows/release.yml");
+    const testRelease = await readRepoFile(".github/workflows/test-release.yml");
+    const verifier = await readRepoFile("scripts/verify-desktop-linux-pg-packaging.mjs");
+
+    expect(verifier).toContain("main-bootstrap.cjs");
+    expect(verifier).toContain("embedded-postgres");
+    expect(verifier).toContain("omp-runtime");
+    expect(verifier).toContain("@embedded-postgres");
+    // FNXC:DesktopEmbeddedPostgres 2026-07-15-00:30: Greptile P1 locks —
+    // soname links (pg-symlinks) and runnable omp dist entrypoints, not just
+    // binary names / package-name substrings.
+    expect(verifier).toContain("pg-symlinks.json");
+    expect(verifier).toContain("assertPlatformSonameLinks");
+    expect(verifier).toContain("omp-runtime/dist/index.js");
+    expect(verifier).toContain("omp-runtime/dist/probe.js");
+
+    const advisoryPackaging = await readRepoFile(".github/workflows/desktop-packaging.yml");
+    for (const workflow of [release, testRelease, advisoryPackaging]) {
+      expect(workflow).toContain("Verify Linux AppImage embedded Postgres packaging");
+      expect(workflow).toContain("node scripts/verify-desktop-linux-pg-packaging.mjs");
+    }
   });
 
   it("wires release aggregation to include desktop assets across platforms", async () => {
