@@ -4,6 +4,9 @@ Multiple in-progress tasks each calling fn_run_verification (often `pnpm verify:
 
 FNXC:VerificationConcurrency 2026-07-15-08:20:
 Greptile P1/P2: (1) clamp 1–8 so programmatic settings cannot open 50 slots; (2) do not re-set the process limit on every verification start (multi-project races last-writer-wins) — wire the limit from engine settings load/update only; (3) honor AbortSignal while queued so cancelled merge/verification does not block the slot queue.
+
+FNXC:VerificationConcurrency 2026-07-15-09:05:
+Greptile P1 multi-project: multiple ProjectEngine instances must not last-write the singleton limit. Register each project's desired cap; the effective process limit is the MIN of registered caps (most restrictive wins) so a project set to 1 cannot be overridden by a peer set to 8.
 */
 import { AgentSemaphore, PRIORITY_EXECUTE } from "./concurrency.js";
 
@@ -12,8 +15,10 @@ export const MAX_CONCURRENT_VERIFICATIONS_HARD_CAP = 8;
 /** Floor — at least one verification can always run. */
 export const MIN_CONCURRENT_VERIFICATIONS = 1;
 
-let limit = MIN_CONCURRENT_VERIFICATIONS;
-const verificationSemaphore = new AgentSemaphore(() => limit);
+/** projectId -> clamped desired limit for that engine instance */
+const projectLimits = new Map<string, number>();
+let fallbackLimit = MIN_CONCURRENT_VERIFICATIONS;
+const verificationSemaphore = new AgentSemaphore(() => resolveEffectiveLimit());
 
 /**
  * Clamp a raw setting/API value into the enforced verification concurrency range.
@@ -26,17 +31,50 @@ export function clampMaxConcurrentVerifications(next: number): number {
   );
 }
 
-/**
- * Update the process-wide verification slot limit from engine settings load/update.
- * Values are clamped to 1–8. Do not call this on every verification start.
- */
-export function setMaxConcurrentVerifications(next: number): void {
-  limit = clampMaxConcurrentVerifications(next);
+function resolveEffectiveLimit(): number {
+  if (projectLimits.size === 0) return fallbackLimit;
+  let min = MAX_CONCURRENT_VERIFICATIONS_HARD_CAP;
+  for (const value of projectLimits.values()) {
+    if (value < min) min = value;
+  }
+  return min;
 }
 
-/** Current verification concurrency limit (after clamping). */
+/**
+ * Register or update one project's desired verification concurrency.
+ * Effective process limit = min(registered project caps).
+ */
+export function registerProjectVerificationLimit(projectId: string, next: number): void {
+  if (!projectId) return;
+  projectLimits.set(projectId, clampMaxConcurrentVerifications(next));
+}
+
+/**
+ * Drop a project's registration when its engine stops so stale caps do not pin the min forever.
+ */
+export function unregisterProjectVerificationLimit(projectId: string): void {
+  if (!projectId) return;
+  projectLimits.delete(projectId);
+}
+
+/**
+ * Legacy setter used by tests and single-engine paths without a project id.
+ * Sets the fallback limit when no projects are registered; when projects are
+ * registered this is ignored for the effective min (use registerProjectVerificationLimit).
+ */
+export function setMaxConcurrentVerifications(next: number): void {
+  fallbackLimit = clampMaxConcurrentVerifications(next);
+}
+
+/** Current effective verification concurrency limit (after clamping / min aggregation). */
 export function getMaxConcurrentVerifications(): number {
   return verificationSemaphore.limit;
+}
+
+/** Test helper: clear project registrations. */
+export function resetVerificationLimitRegistryForTests(): void {
+  projectLimits.clear();
+  fallbackLimit = MIN_CONCURRENT_VERIFICATIONS;
 }
 
 /**

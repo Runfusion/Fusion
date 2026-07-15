@@ -510,10 +510,33 @@ function formatPlanLine(pkg) {
  * FUSION_CLI_FULL_PACKAGE for the CLI packaging path (desktop + plugins + DTS).
  */
 /**
+ * FNXC:WorkspaceBuild 2026-07-15-03:25 / 2026-07-15-09:05:
+ * Mirror packages/cli wantsFullCliPackage so build-workspace and tsup agree on when
+ * full CLI packaging runs. CLI enables full via FUSION_CLI_FULL_PACKAGE, CI=true, or prepack;
+ * root also enables via --full. Explicit FUSION_CLI_FULL_PACKAGE=0/false opts out.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {{ fullFlag?: boolean }} [options]
+ * @returns {boolean}
+ */
+export function wantsFullCliPackage(env = process.env, { fullFlag = false } = {}) {
+  const explicit = env.FUSION_CLI_FULL_PACKAGE;
+  if (explicit === "0" || explicit === "false") return false;
+  if (explicit === "1" || explicit === "true") return true;
+  if (fullFlag) return true;
+  if (env.CI === "true" || env.CI === "1") return true;
+  if (env.npm_lifecycle_event === "prepack") return true;
+  return false;
+}
+
+/**
  * FNXC:WorkspaceBuild 2026-07-15-08:15:
  * Greptile P1: a warm fast build caches CLI after emitting only bin.js/extension.js.
- * `pnpm build:full` must still run tsup so desktop/plugins/DTS stage. Force-include
- * @runfusion/fusion whenever fullPackage is requested, even if content-hash says skip.
+ * Full packaging modes must still run tsup so desktop/plugins/DTS stage. Force-include
+ * @runfusion/fusion whenever full packaging is active, even if content-hash says skip.
+ *
+ * FNXC:WorkspaceBuild 2026-07-15-09:05:
+ * fullPackage must include env-driven modes (CI / FUSION_CLI_FULL_PACKAGE), not only --full.
  */
 export function ensureFullPackageCliPlanned(plannedPackages, skippedPackages, { fullPackage = false } = {}) {
   if (!fullPackage) {
@@ -543,14 +566,22 @@ export function main({
   pluginsOnly = false,
   force = false,
   fullPackage = false,
+  env = process.env,
 } = {}) {
+  /*
+  FNXC:WorkspaceBuild 2026-07-15-09:05:
+  Align with CLI tsup wantsFullCliPackage: --full OR CI OR FUSION_CLI_FULL_PACKAGE (unless explicitly 0).
+  */
+  const effectiveFullPackage = wantsFullCliPackage(env, { fullFlag: fullPackage });
   const cache = force ? { version: BUILD_CACHE_VERSION, entries: {} } : readPluginBuildCache(rootDir);
   const snapshot = createRepoContentSnapshot({ rootDir, gitFn });
   const plan = planWorkspaceBuild({ rootDir, cache, gitFn, snapshot, force });
   let plannedPackages = pluginsOnly ? plan.plannedPackages.filter((pkg) => pkg.isPlugin) : plan.plannedPackages;
   let skippedPackages = plan.skippedPackages ?? plan.skippedPlugins;
   if (!pluginsOnly) {
-    ({ plannedPackages, skippedPackages } = ensureFullPackageCliPlanned(plannedPackages, skippedPackages, { fullPackage }));
+    ({ plannedPackages, skippedPackages } = ensureFullPackageCliPlanned(plannedPackages, skippedPackages, {
+      fullPackage: effectiveFullPackage,
+    }));
   }
   const plannedNames = plannedPackages.map(formatPlanLine);
   const skippedNames = skippedPackages.map((pkg) => pkg.name);
@@ -560,11 +591,11 @@ export function main({
   if (skippedNames.length > 0) {
     console.log(`[build-workspace] skipped unchanged packages: ${skippedNames.join(", ")}`);
   }
-  if (fullPackage) {
-    console.log("[build-workspace] full CLI packaging enabled (FUSION_CLI_FULL_PACKAGE=1)");
+  if (effectiveFullPackage) {
+    console.log("[build-workspace] full CLI packaging enabled (CI / FUSION_CLI_FULL_PACKAGE / --full)");
   }
 
-  const result = runPlannedBuilds(plannedPackages, rootDir, spawnFn, { fullPackage });
+  const result = runPlannedBuilds(plannedPackages, rootDir, spawnFn, { fullPackage: effectiveFullPackage, env });
   if (result.status !== 0) {
     process.stderr.write(`[build-workspace] FAILED packages: ${result.packageNames.join(", ") || "(none)"}\n`);
     return result.status;

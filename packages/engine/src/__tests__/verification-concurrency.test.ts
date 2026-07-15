@@ -4,12 +4,16 @@ import {
   getMaxConcurrentVerifications,
   getVerificationSemaphore,
   MAX_CONCURRENT_VERIFICATIONS_HARD_CAP,
+  registerProjectVerificationLimit,
+  resetVerificationLimitRegistryForTests,
   setMaxConcurrentVerifications,
+  unregisterProjectVerificationLimit,
   withVerificationSlot,
 } from "../verification-concurrency.js";
 
 describe("verification concurrency", () => {
   beforeEach(() => {
+    resetVerificationLimitRegistryForTests();
     setMaxConcurrentVerifications(1);
     // Drain any leaked active count from other tests (should be 0).
     getVerificationSemaphore().reconcileActiveCount(0);
@@ -26,6 +30,17 @@ describe("verification concurrency", () => {
     expect(clampMaxConcurrentVerifications(3.9)).toBe(3);
     setMaxConcurrentVerifications(99);
     expect(getMaxConcurrentVerifications()).toBe(8);
+  });
+
+  it("uses the minimum of registered project limits (most restrictive wins)", () => {
+    registerProjectVerificationLimit("proj-a", 8);
+    registerProjectVerificationLimit("proj-b", 1);
+    expect(getMaxConcurrentVerifications()).toBe(1);
+    unregisterProjectVerificationLimit("proj-b");
+    expect(getMaxConcurrentVerifications()).toBe(8);
+    unregisterProjectVerificationLimit("proj-a");
+    setMaxConcurrentVerifications(2);
+    expect(getMaxConcurrentVerifications()).toBe(2);
   });
 
   it("serializes overlapping withVerificationSlot callers when limit is 1", async () => {

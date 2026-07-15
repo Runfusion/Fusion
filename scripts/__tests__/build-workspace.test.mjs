@@ -14,6 +14,7 @@ import {
   planWorkspaceBuild,
   readPluginBuildCache,
   requiredPluginOutputs,
+  wantsFullCliPackage,
 } from "../build-workspace.mjs";
 
 function createWorkspace() {
@@ -309,4 +310,13 @@ test("full package mode is a no-op when CLI already planned", () => {
   const result = ensureFullPackageCliPlanned(planned, skipped, { fullPackage: true });
   assert.equal(result.plannedPackages.length, 1);
   assert.equal(result.plannedPackages[0].buildReason, "changed-inputs");
+});
+
+test("wantsFullCliPackage matches CLI packaging env rules", () => {
+  assert.equal(wantsFullCliPackage({}, { fullFlag: false }), false);
+  assert.equal(wantsFullCliPackage({}, { fullFlag: true }), true);
+  assert.equal(wantsFullCliPackage({ CI: "true" }, { fullFlag: false }), true);
+  assert.equal(wantsFullCliPackage({ FUSION_CLI_FULL_PACKAGE: "1" }, { fullFlag: false }), true);
+  assert.equal(wantsFullCliPackage({ FUSION_CLI_FULL_PACKAGE: "0", CI: "true" }, { fullFlag: true }), false);
+  assert.equal(wantsFullCliPackage({ npm_lifecycle_event: "prepack" }, { fullFlag: false }), true);
 });
