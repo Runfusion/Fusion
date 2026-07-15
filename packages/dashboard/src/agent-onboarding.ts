@@ -65,6 +65,12 @@ type SkillSelectionPluginRunner = Parameters<typeof buildSessionSkillContextSync
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const GENERATION_TIMEOUT_MS = 120_000;
+class AgentOnboardingGenerationTimeoutError extends Error {
+  constructor() {
+    super("AI generation timed out. You can retry.");
+    this.name = "AgentOnboardingGenerationTimeoutError";
+  }
+}
 const REFORMAT_PROMPT =
   "Your previous response could not be parsed as JSON. " +
   'Respond with ONLY one valid JSON object using either {"type":"question","data":{...}} or {"type":"complete","data":{...}}. ' +
@@ -108,6 +114,7 @@ interface Session {
   error?: string;
   history: Array<{ question: PlanningQuestion; response: Record<string, unknown> }>;
   thinkingOutput: string;
+  agentEpoch: number;
   agent?: OnboardingAgent;
   rootDir: string;
   modelProvider?: string;
@@ -316,6 +323,7 @@ export async function startAgentOnboardingSession(
     }),
     history: [],
     thinkingOutput: "",
+    agentEpoch: 0,
     rootDir,
     modelProvider,
     modelId,
@@ -333,6 +341,7 @@ export async function startAgentOnboardingSession(
 }
 
 async function createAgentOnboardingAgent(session: Session, store?: TaskStore): Promise<OnboardingAgent> {
+  const agentEpoch = ++session.agentEpoch;
   const systemPrompt = resolvePrompt("agent-onboarding-system", session.promptOverrides) || AGENT_ONBOARDING_SYSTEM_PROMPT;
   const skillContext = buildSessionSkillContextSync(null, "executor", session.rootDir, session.pluginRunner);
   const mcpServers = (await resolveMcpServersForStore(store ?? {})).servers;
@@ -355,10 +364,16 @@ async function createAgentOnboardingAgent(session: Session, store?: TaskStore): 
     */
     ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     onThinking: (delta: string) => {
+      /*
+      FNXC:AgentOnboarding 2026-07-15-16:48:
+      Provider cancellation is best-effort. Ignore callbacks from an invalidated agent epoch so an expired prompt cannot contaminate a fresh retry's streamed output or SSE timeline.
+      */
+      if (session.agentEpoch !== agentEpoch) return;
       session.thinkingOutput += delta;
       agentOnboardingStreamManager.broadcast(session.id, { type: "thinking", data: delta });
     },
     onText: (delta: string) => {
+      if (session.agentEpoch !== agentEpoch) return;
       session.thinkingOutput += delta;
       agentOnboardingStreamManager.broadcast(session.id, { type: "thinking", data: delta });
     },
@@ -382,7 +397,7 @@ async function runGenerationWithTimeout<T>(session: Session, operation: () => Pr
   });
   const timer = setTimeout(() => {
     abortController.abort();
-    rejectTimeout(new Error("AI generation timed out. You can retry."));
+    rejectTimeout(new AgentOnboardingGenerationTimeoutError());
   }, GENERATION_TIMEOUT_MS);
   activeGenerations.set(session.id, { abortController, timer });
   try {
@@ -472,6 +487,12 @@ async function continueConversation(session: Session, message: string): Promise<
       agentOnboardingStreamManager.broadcast(session.id, { type: "complete" });
     }
   } catch (err) {
+    if (err instanceof AgentOnboardingGenerationTimeoutError) {
+      const expiredAgent = session.agent;
+      session.agentEpoch += 1;
+      session.agent = undefined;
+      try { expiredAgent?.session.dispose?.(); } catch { /* best-effort provider cancellation */ }
+    }
     session.error = err instanceof Error ? err.message : String(err);
     agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
   }
@@ -549,6 +570,10 @@ export function stopAgentOnboardingGeneration(sessionId: string): boolean {
   activeGenerations.delete(sessionId);
   const session = sessions.get(sessionId);
   if (session) {
+    const expiredAgent = session.agent;
+    session.agentEpoch += 1;
+    session.agent = undefined;
+    try { expiredAgent?.session.dispose?.(); } catch { /* best-effort provider cancellation */ }
     session.error = "Generation stopped by user. You can retry.";
     agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
   }

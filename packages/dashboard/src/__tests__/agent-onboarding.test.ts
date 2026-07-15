@@ -594,8 +594,13 @@ describe("agent-onboarding", () => {
       }
       return new Promise<void>(() => {});
     });
-    mockCreateFnAgent.mockResolvedValueOnce({
-      session: { state: { messages }, prompt, dispose: vi.fn() },
+    const dispose = vi.fn();
+    let expiredOnText: ((delta: string) => void) | undefined;
+    mockCreateFnAgent.mockImplementationOnce(async (options: unknown) => {
+      expiredOnText = (options as { onText?: (delta: string) => void }).onText;
+      return {
+        session: { state: { messages }, prompt, dispose },
+      };
     });
 
     const sessionId = await startAgentOnboardingSession(
@@ -608,8 +613,12 @@ describe("agent-onboarding", () => {
 
     await vi.advanceTimersByTimeAsync(120_000);
 
-    const session = getAgentOnboardingSession(sessionId);
+    const session = getAgentOnboardingSession(sessionId) as { error?: string; agent?: unknown; thinkingOutput: string } | undefined;
     expect(session?.error).toBe("AI generation timed out. You can retry.");
+    expect(session?.agent).toBeUndefined();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expiredOnText?.("stale expired output");
+    expect(session?.thinkingOutput).toBe("");
     expect(agentOnboardingStreamManager.getBufferedEvents(sessionId, 0)).toContainEqual(
       expect.objectContaining({ event: "error", data: JSON.stringify("AI generation timed out. You can retry.") }),
     );
