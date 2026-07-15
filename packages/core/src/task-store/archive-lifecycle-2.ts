@@ -271,7 +271,12 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
         A cold snapshot may outlive a missing project.tasks row after cleanup or partial legacy archival. Rebuild that row through the canonical snapshot restoration path before restoreTaskFromArchive consumes the snapshot; an existing live or tombstoned row keeps the established in-place restore path.
         */
         if (!liveRow) {
-          await store.restoreFromArchive(entry);
+          const restoredTask = await store.restoreFromArchive(entry);
+          /*
+          FNXC:ArchiveRestore 2026-07-14-22:02:
+          Filesystem reconstruction alone is not authoritative in PostgreSQL mode. Persist the restored archived row before restoreTaskFromArchive removes the cold snapshot, so a later move failure still leaves a durable recovery source.
+          */
+          await store.atomicWriteTaskJson(store.taskDir(id), restoredTask);
         }
         await restoreTaskFromArchive(layer, entry);
         task = await store.getTask(id);

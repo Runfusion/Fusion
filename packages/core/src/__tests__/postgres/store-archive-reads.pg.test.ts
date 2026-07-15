@@ -2,7 +2,7 @@
  * FNXC:PostgresArchiveReads 2026-07-14-17:07:
  * PostgreSQL cold storage is part of the public TaskStore read model. After a real archiveTask call, includeArchived list/search and task detail must read the archive snapshot, while active-only reads must continue to exclude it. Merged pagination is applied after active and archived results are composed so page boundaries cannot silently drop cold-storage tasks.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
   createSharedPgTaskStoreTestHarness,
@@ -145,7 +145,22 @@ pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
         eq(schema.project.tasks.id, task.id),
       ));
 
+    const persistRestoredRow = store.atomicWriteTaskJson.bind(store);
+    const persistSpy = vi.spyOn(store, "atomicWriteTaskJson").mockImplementation(async (dir, restoredTask) => {
+      await persistRestoredRow(dir, restoredTask);
+      const durableRows = await h.adminDb()
+        .select({ id: schema.project.tasks.id })
+        .from(schema.project.tasks)
+        .where(and(
+          eq(schema.project.tasks.projectId, h.layer().projectId ?? "__legacy_unscoped__"),
+          eq(schema.project.tasks.id, task.id),
+        ));
+      expect(durableRows).toHaveLength(1);
+      expect(await findArchivedTaskEntry(h.layer().db, task.id, h.layer().projectId)).toBeDefined();
+    });
+
     const restored = await store.unarchiveTask(task.id);
+    expect(persistSpy).toHaveBeenCalledOnce();
     expect(restored.id).toBe(task.id);
     expect(restored.description).toBe("restore from snapshot only");
     expect(restored.column).toBe("todo");
