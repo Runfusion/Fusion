@@ -4,10 +4,13 @@ import { clearAuthToken, setAuthToken } from "../auth";
 
 afterEach(() => {
   clearAuthToken();
-  window.localStorage.clear();
 });
 
 describe("artifactMediaUrl", () => {
+  /*
+   * FNXC:ArtifactMediaAuth 2026-07-15-14:24:
+   * Browser-native image, video, and link requests cannot attach the dashboard's Authorization header. Keep this regression focused on the generated URL contract: encoded artifact id and project scope survive while the existing same-origin fn_token fallback is appended.
+   */
   it("appends the daemon token for image and link navigation", () => {
     setAuthToken("daemon-token");
 
