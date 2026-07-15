@@ -4,9 +4,9 @@
  * command must close its resolved `TaskStore` on every exit path
  * (success/not-found/`handleError`), retry `getSettings()`/`createExport`
  * through a momentary `database is locked`, and — critically — the
- * `runResearchCreate` non-`waitForCompletion` fire-and-forget branch must
- * be exempt from the close discipline (closing it would truncate an
- * in-flight background run). Uses a mocked `TaskStore`/orchestrator (per
+ * `runResearchCreate` non-`waitForCompletion` branch must return before
+ * completion while transferring cleanup to an observed background promise
+ * (closing immediately would truncate an in-flight run). Uses a mocked `TaskStore`/orchestrator (per
  * FN-5048 — no real long waits) with `retryOnLock`'s real bounded-backoff
  * implementation exercised end to end via fake timers.
  */
@@ -178,14 +178,27 @@ describe("research commands — leak/lock reproduction (FN-7740)", () => {
     expect(storeMock.close).toHaveBeenCalled();
   });
 
-  it("does NOT close the store on runResearchCreate's non-wait fire-and-forget path (intentionally-long-lived exemption)", async () => {
-    // The background run continues to read/write the same store via
-    // `orchestrator.startRun` after this call returns — closing it here
-    // would truncate an in-flight run. This is the ONE deliberately
-    // exempted branch in the whole FN-7740 audit.
+  it("returns before a non-wait run completes and closes the store after background completion", async () => {
+    let completeRun!: (run: typeof mockRun) => void;
+    orchestratorMock.startRun.mockReturnValue(new Promise((resolveRun) => {
+      completeRun = resolveRun;
+    }));
+
     await runResearchCreate({ query: "hello" });
-    expect(storeMock.close).toHaveBeenCalled();
+    expect(storeMock.close).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Created cited-research run"));
+
+    completeRun({ ...mockRun, id: "RR-002", status: "completed" });
+    await vi.waitFor(() => expect(storeMock.close).toHaveBeenCalledTimes(1));
+  });
+
+  it("observes a rejected non-wait run and still closes its backend", async () => {
+    orchestratorMock.startRun.mockRejectedValue(new Error("provider failed"));
+
+    await runResearchCreate({ query: "hello" });
+
+    await vi.waitFor(() => expect(storeMock.close).toHaveBeenCalledTimes(1));
+    expect(errorSpy).toHaveBeenCalledWith("Background cited-research run RR-002 failed: provider failed");
   });
 
   it("retries getSettings through a transient database-is-locked error and succeeds once it clears", async () => {

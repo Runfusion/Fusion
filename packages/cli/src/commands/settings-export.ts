@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createTaskStoreForBackend, exportSettings, generateExportFilename } from "@fusion/core";
-import { resolveProject } from "../project-context.js";
+import { closeProjectStore, resolveProject, type ProjectContext } from "../project-context.js";
 
 /**
  * Run settings export command.
@@ -17,11 +17,18 @@ export async function runSettingsExport(options: {
   projectName?: string;
 } = {}): Promise<void> {
   const scope = options.scope ?? "both";
-  const project = options.projectName ? await resolveProject(options.projectName) : undefined;
+  let project: ProjectContext | undefined;
+  let rootDir = process.cwd();
+  try {
+    project = options.projectName ? await resolveProject(options.projectName) : undefined;
+    rootDir = project?.projectPath ?? rootDir;
+  } finally {
+    /* FNXC:PostgresCliLifecycle 2026-07-14-21:20: Settings export uses a separate backend boot, so a project context opened only to resolve its root must be closed and evicted before export begins, including when later startup or export work fails. */
+    if (project) await closeProjectStore(project);
+  }
 
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Settings export always uses the
   // PostgreSQL startup factory; the removed SQLite opt-out has no runtime path.
-  const rootDir = project?.projectPath ?? process.cwd();
   const boot = await createTaskStoreForBackend({ rootDir });
   const store = boot.taskStore;
   const outputPath = options.output;
