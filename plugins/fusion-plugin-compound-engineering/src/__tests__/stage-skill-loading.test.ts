@@ -1,25 +1,25 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CreateInteractiveAiSessionFactory } from "@fusion/core";
 import { CeOrchestrator, warnIfStageSkillMissing } from "../session/orchestrator.js";
 import { getCeSessionStore } from "../session/session-store.js";
 import { listStages } from "../session/stage-registry.js";
-import { makeHarness, makeScriptedSession, type TestHarness } from "./_harness.js";
+import { makeHarness, makeScriptedSession, pgDescribe, type TestHarness } from "./_harness.js";
 
 let h: TestHarness;
 
-beforeEach(() => {
-  h = makeHarness();
+beforeEach(async () => {
+  h = await makeHarness();
 });
 
 afterEach(() => {
-  h.close();
+  h?.close();
   vi.restoreAllMocks();
 });
 
-describe("CE stage skill loading session options", () => {
+pgDescribe("CE stage skill loading session options", () => {
   it.each(listStages())("starts $stageId with its registered skill selected and discoverable", async (stage) => {
     const capturedOptions: Parameters<CreateInteractiveAiSessionFactory>[0][] = [];
     const session = makeScriptedSession([{ type: "complete", data: { artifact: `# ${stage.stageId}` } }]);
@@ -79,8 +79,8 @@ describe("CE stage skill loading session options", () => {
     });
     const orch = new CeOrchestrator({ ctx: h.ctx, createInteractiveAiSession: factory, projectRoot: h.projectRoot });
 
-    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: "project-a" });
-    const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: "project-a" });
+    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: h.layer.projectId });
+    const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: h.layer.projectId });
 
     expect(plan.session.artifactPath).toBe(brainstorm.session.artifactPath);
     expect(readFileSync(plan.session.artifactPath!, "utf8")).toContain("artifact_readiness: implementation-ready");
@@ -96,12 +96,12 @@ describe("CE stage skill loading session options", () => {
       return { session: makeScriptedSession([{ type: "complete", data: { artifact } }]) };
     });
     const orch = new CeOrchestrator({ ctx: h.ctx, createInteractiveAiSession: factory, projectRoot: h.projectRoot });
-    const older = await orch.start("brainstorm", { openingMessage: "Older", projectId: "project-a" });
-    const newer = await orch.start("brainstorm", { openingMessage: "Newer", projectId: "project-a" });
+    const older = await orch.start("brainstorm", { openingMessage: "Older", projectId: h.layer.projectId });
+    const newer = await orch.start("brainstorm", { openingMessage: "Newer", projectId: h.layer.projectId });
 
     const plan = await orch.start("plan", {
       openingMessage: "Plan the selected requirements",
-      projectId: "project-a",
+      projectId: h.layer.projectId,
       sourceSessionId: older.session.id,
     });
 
@@ -118,11 +118,11 @@ describe("CE stage skill loading session options", () => {
       return { session: makeScriptedSession([{ type: "complete", data: { artifact } }]) };
     });
     const orch = new CeOrchestrator({ ctx: h.ctx, createInteractiveAiSession: factory, projectRoot: h.projectRoot });
-    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: "project-a" });
-    const firstPlan = await orch.start("plan", { openingMessage: "Plan it", projectId: "project-a" });
+    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: h.layer.projectId });
+    const firstPlan = await orch.start("plan", { openingMessage: "Plan it", projectId: h.layer.projectId });
     const finalized = readFileSync(firstPlan.session.artifactPath!, "utf8");
 
-    const secondPlan = await orch.start("plan", { openingMessage: "Plan again", projectId: "project-a" });
+    const secondPlan = await orch.start("plan", { openingMessage: "Plan again", projectId: h.layer.projectId });
 
     expect(secondPlan.session.artifactPath).not.toBe(brainstorm.session.artifactPath);
     expect(readFileSync(brainstorm.session.artifactPath!, "utf8")).toBe(finalized);
@@ -136,10 +136,10 @@ describe("CE stage skill loading session options", () => {
       return { session: makeScriptedSession([{ type: "complete", data: { artifact } }]) };
     });
     const orch = new CeOrchestrator({ ctx: h.ctx, createInteractiveAiSession: factory, projectRoot: h.projectRoot });
-    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: "project-a" });
+    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: h.layer.projectId });
     const original = readFileSync(brainstorm.session.artifactPath!, "utf8");
 
-    const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: "project-a" });
+    const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: h.layer.projectId });
 
     expect(plan.session.status).toBe("error");
     expect(readFileSync(brainstorm.session.artifactPath!, "utf8")).toBe(original);
@@ -154,7 +154,7 @@ describe("CE stage skill loading session options", () => {
     }));
     const orch = new CeOrchestrator({ ctx: h.ctx, createInteractiveAiSession: factory, projectRoot: h.projectRoot });
 
-    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: "project-a" });
+    const brainstorm = await orch.start("brainstorm", { openingMessage: "Frame it", projectId: h.layer.projectId });
     const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: "project-b" });
 
     expect(plan.session.artifactPath).not.toBe(brainstorm.session.artifactPath);
@@ -165,15 +165,15 @@ describe("CE stage skill loading session options", () => {
     const outsideArtifact = join(outsideRoot, "requirements.md");
     writeFileSync(outsideArtifact, "do not overwrite", "utf8");
     const store = getCeSessionStore(h.ctx);
-    const seeded = store.create({ stage: "brainstorm", projectId: "project-a", artifactPath: outsideArtifact });
-    store.update(seeded.id, { status: "completed" });
+    const seeded = await store.createAsync({ stage: "brainstorm", projectId: h.layer.projectId, artifactPath: outsideArtifact });
+    await store.updateAsync(seeded.id, { status: "completed" });
     const factory: CreateInteractiveAiSessionFactory = vi.fn(async () => ({
       session: makeScriptedSession([{ type: "complete", data: { artifact: "# Safe plan" } }]),
     }));
     const orch = new CeOrchestrator({ ctx: h.ctx, createInteractiveAiSession: factory, projectRoot: h.projectRoot });
 
     try {
-      const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: "project-a" });
+      const plan = await orch.start("plan", { openingMessage: "Plan it", projectId: h.layer.projectId });
 
       expect(plan.session.artifactPath).not.toBe(outsideArtifact);
       expect(readFileSync(outsideArtifact, "utf8")).toBe("do not overwrite");

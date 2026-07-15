@@ -389,6 +389,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.postReviewFixCount !== undefined) {
         task.postReviewFixCount = updates.postReviewFixCount;
       }
+      if (updates.planReviewReplanCount === null) {
+        task.planReviewReplanCount = undefined;
+      } else if (updates.planReviewReplanCount !== undefined) {
+        task.planReviewReplanCount = updates.planReviewReplanCount;
+      }
       if (updates.recoveryRetryCount === null) {
         task.recoveryRetryCount = undefined;
       } else if (updates.recoveryRetryCount !== undefined) {

@@ -2,19 +2,14 @@ import { definePlugin } from "@fusion/plugin-sdk";
 import type { FusionPlugin, PluginContext, PluginRouteDefinition, PluginRouteResponse, PluginSettingSchema } from "@fusion/plugin-sdk";
 import { WhatsAppConnection } from "./connection.js";
 import { generateReply } from "./reply.js";
+import { createWhatsAppPersistence } from "./persistence.js";
+export { claimMessage, loadHistory, saveHistory, wasProcessed, markProcessed } from "./persistence.js";
+export type { ChatTurn, PluginDb } from "./persistence.js";
 
 const DEFAULT_HISTORY_TURN_LIMIT = 40;
 const DEFAULT_DEDUPE_RETENTION_DAYS = 7;
 
-export type ChatTurn = { role: "user" | "assistant"; text: string; createdAt: string };
-
-export type PluginDb = {
-  exec(sql: string): void;
-  prepare(sql: string): {
-    get(...args: unknown[]): unknown;
-    run(...args: unknown[]): unknown;
-  };
-};
+import type { ChatTurn, PluginDb } from "./persistence.js";
 
 const settingsSchema: Record<string, PluginSettingSchema> = {
   pairingMode: {
@@ -115,53 +110,6 @@ export function ensureSchema(db: PluginDb): void {
   `);
 }
 
-export function loadHistory(db: PluginDb, sender: string): ChatTurn[] {
-  const row = db.prepare("SELECT history FROM whatsapp_chat_sessions WHERE sender = ?").get(sender) as { history: string } | undefined;
-  if (!row) return [];
-  try {
-    const parsed = JSON.parse(row.history) as ChatTurn[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveHistory(db: PluginDb, sender: string, history: ChatTurn[]): void {
-  const now = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO whatsapp_chat_sessions(sender, history, updatedAt)
-    VALUES(?, ?, ?)
-    ON CONFLICT(sender) DO UPDATE SET history = excluded.history, updatedAt = excluded.updatedAt
-  `).run(sender, JSON.stringify(history), now);
-}
-
-export function wasProcessed(db: PluginDb, messageId: string): boolean {
-  const row = db.prepare("SELECT 1 as found FROM whatsapp_chat_dedupe WHERE messageId = ?").get(messageId) as { found: number } | undefined;
-  return Boolean(row?.found);
-}
-
-export function markProcessed(
-  db: PluginDb,
-  messageId: string,
-  sender: string,
-  retentionDays: number = DEFAULT_DEDUPE_RETENTION_DAYS,
-): void {
-  const now = new Date().toISOString();
-  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  db.prepare("DELETE FROM whatsapp_chat_dedupe WHERE receivedAt < ?").run(cutoff);
-  db.prepare("INSERT INTO whatsapp_chat_dedupe(messageId, sender, receivedAt) VALUES(?, ?, ?)").run(messageId, sender, now);
-}
-
-
-function getDbFromTaskStore(ctx: PluginContext): PluginDb {
-  const pluginStore = ctx.taskStore.getPluginStore();
-  const db = (pluginStore as unknown as { db?: PluginDb }).db;
-  if (!db) {
-    throw new Error("Plugin database unavailable");
-  }
-  return db;
-}
-
 function getConnectionOrResponse(ctx: PluginContext): { connection?: WhatsAppConnection; error?: PluginRouteResponse } {
   const connection = connections.get(getConnectionKey(ctx));
   if (!connection) {
@@ -244,8 +192,8 @@ const plugin: FusionPlugin = definePlugin({
       ensureSchema(db as PluginDb);
     },
     onLoad: async (ctx) => {
-      const db = getDbFromTaskStore(ctx);
-      const connection = new WhatsAppConnection(ctx, plugin.manifest.version, generateReply, db);
+      const persistence = createWhatsAppPersistence(ctx);
+      const connection = new WhatsAppConnection(ctx, plugin.manifest.version, generateReply, persistence);
       connections.set(getConnectionKey(ctx), connection);
       await connection.start();
     },

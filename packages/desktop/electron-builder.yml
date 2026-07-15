@@ -83,7 +83,12 @@ files:
   - node_modules/tar-fs/**/*
   - node_modules/uuid/**/*
 
-asarUnpack: []
+# FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+# Embedded Postgres launches native initdb/pg_ctl/postgres child processes.
+# Executables and their shared libraries must live on the real filesystem;
+# processes cannot execute payloads directly from Electron's virtual app.asar.
+asarUnpack:
+  - "node_modules/@embedded-postgres/*/native/**/*"
 
 extraMetadata:
   main: dist/main.js
@@ -116,7 +121,13 @@ mac:
   minimumSystemVersion: "10.15"
   target:
     - target: dmg
+      arch:
+        - x64
+        - arm64
     - target: zip
+      arch:
+        - x64
+        - arm64
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
@@ -124,15 +135,18 @@ mac:
   notarize: true
 
 win:
+  # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+  # embedded-postgres 15.18 publishes only @embedded-postgres/windows-x64 and
+  # throws on win32/arm64. Do not publish an ARM64 installer whose default local
+  # database cannot start; Windows ARM64 can use the supported x64 installer via
+  # the OS compatibility layer until upstream ships a native ARM64 payload.
   target:
     - target: nsis
       arch:
         - x64
-        - arm64
     - target: portable
       arch:
         - x64
-        - arm64
   signtoolOptions:
     signingHashAlgorithms:
       - sha256

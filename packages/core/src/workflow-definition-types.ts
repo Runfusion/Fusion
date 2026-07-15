@@ -63,6 +63,22 @@ export interface WorkflowDefinition {
   updatedAt: string;
 }
 
+/*
+FNXC:WorkflowPersistence 2026-07-14-13:35:
+SQLite and PostgreSQL workflow readers must share one storage-row contract so migration-parity fields such as the custom icon cannot disappear at a mapper boundary.
+*/
+export interface StoredWorkflowRow {
+  id: string;
+  name: string;
+  description: string;
+  icon: string | null;
+  ir: string;
+  layout: string;
+  kind: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Input for creating a workflow definition. */
 export interface WorkflowDefinitionInput {
   name: string;

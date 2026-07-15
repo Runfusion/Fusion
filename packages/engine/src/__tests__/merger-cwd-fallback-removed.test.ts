@@ -17,10 +17,11 @@ vi.mock("../pi.js", () => ({
 import { aiMergeTask } from "../merger.js";
 import { mergerLog } from "../logger.js";
 import { resolveMergeIntegrationRoot } from "../merger-integration-worktree.js";
-import { git, hasGit, makeReliabilityFixture } from "./reliability-interactions/_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./reliability-interactions/_helpers.js";
 
 describe("FN-5348 cwd integration fallback removed", () => {
-  it.skipIf(!hasGit)("Scenario A/B: dirty reused worktree is autostashed and the merge proceeds without any cwd fallback", async () => {
+  it.skipIf(!hasGit || !hasPg)("Scenario A/B: dirty reused worktree is autostashed and the merge proceeds without any cwd fallback", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-5348-DIRTY-AUTOSTASH",
       settings: {
@@ -83,7 +84,7 @@ describe("FN-5348 cwd integration fallback removed", () => {
     expect(root.mode).toBe("reuse-task-worktree");
   });
 
-  it.skipIf(!hasGit)("Scenario D: explicit opt-in (legacy alias) emits warning", async () => {
+  it.skipIf(!hasGit || !hasPg)("Scenario D: explicit opt-in (legacy alias) emits warning", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-5348-CWD-OPTIN",
       settings: {

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode } from "@fusion/core";
-import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, ResearchStore, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
+import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
 import { DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
@@ -512,6 +512,10 @@ export const researchGetParams = Type.Object({
 
 export const researchCancelParams = Type.Object({
   id: Type.String({ description: "Research run ID to cancel" }),
+});
+
+export const researchRetryParams = Type.Object({
+  id: Type.String({ description: "Failed or cancelled research run ID to retry" }),
 });
 
 export const memoryAppendParams = Type.Object({
@@ -2740,7 +2744,7 @@ export function createWorkflowSettingsTool(store: TaskStore): ToolDefinition {
 
       if (params.action === "get") {
         try {
-          const stored = store.getWorkflowSettingValues(workflowId, projectId);
+          const stored = await store.getWorkflowSettingValuesAsync(workflowId, projectId);
           const effective = await resolveEffectiveSettingsById(store, workflowId, projectId);
           const declarations = await resolveWorkflowSettingDeclarationsForTool(store, workflowId);
           const orphaned = findOrphanedSettingValues(declarations, stored);
@@ -4263,16 +4267,11 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     inFlight: new Map(),
   };
 
-  // FNXC:ResearchStore 2026-06-27-12:35:
-  // The ResearchOrchestrator + the research tools' direct reads require the sync
-  // EventEmitter ResearchStore. In PG backend mode getResearchStore() returns the
-  // AsyncResearchStore (CRUD-only), so resolve to the sync store or null and degrade
-  // the research tools — AI research EXECUTION stays unavailable in PG mode (the
-  // dashboard CRUD/lifecycle surface is the ported boundary).
-  const resolveSyncResearchStore = (): ResearchStore | null => {
-    const resolved = options.store.getResearchStore();
-    return resolved instanceof ResearchStore ? resolved : null;
-  };
+  /*
+  FNXC:ResearchAgentTools 2026-07-13-23:45:
+  Agent research tools must use the TaskStore-selected research backend. Await the shared sync/async API so PostgreSQL supports execution, reads, cancellation, and retry instead of silently degrading to an unavailable tool surface.
+  */
+  const resolveResearchStore = () => options.store.getResearchStore();
 
   const ensureOrchestrator = async (): Promise<ResearchOrchestrator | null> => {
     const settings = await options.getSettings();
@@ -4293,11 +4292,6 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       return null;
     }
 
-    const syncResearchStore = resolveSyncResearchStore();
-    if (!syncResearchStore) {
-      return null;
-    }
-
     if (!orchestratorState.orchestrator) {
       const stepRunner = new ResearchStepRunner({
         providers: availableProviders
@@ -4305,7 +4299,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
           .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider)),
       });
       orchestratorState.orchestrator = new ResearchOrchestrator({
-        store: syncResearchStore,
+        store: resolveResearchStore(),
         stepRunner,
         maxConcurrentRuns: resolved.limits.maxConcurrentRuns,
       });
@@ -4343,11 +4337,13 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       });
 
       const runPromise = orchestrator.startRun(runId, params.query);
-      orchestratorState.inFlight.set(runId, runPromise.then(() => undefined).catch(() => undefined));
-      void runPromise.finally(() => orchestratorState.inFlight.delete(runId));
+      const trackedRun = runPromise
+        .then(() => undefined, () => undefined)
+        .finally(() => orchestratorState.inFlight.delete(runId));
+      orchestratorState.inFlight.set(runId, trackedRun);
 
       if (!params.wait_for_completion) {
-        const started = resolveSyncResearchStore()?.getRun(runId);
+        const started = await resolveResearchStore().getRun(runId);
         if (!started) {
           return {
             content: [{ type: "text" as const, text: `Started research run ${runId} for: ${params.query}` }],
@@ -4364,8 +4360,16 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       const completed = await Promise.race([
         runPromise,
         new Promise<ResearchRun>((resolve) => setTimeout(() => {
-          const latest = resolveSyncResearchStore()?.getRun(runId);
-          resolve(latest ?? ({
+          void Promise.resolve(resolveResearchStore().getRun(runId)).then((latest) => resolve(latest ?? ({
+            id: runId,
+            query: params.query,
+            status: "running",
+            sources: [],
+            events: [],
+            tags: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as ResearchRun))).catch(() => resolve({
             id: runId,
             query: params.query,
             status: "running",
@@ -4392,10 +4396,10 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     parameters: researchListParams,
     execute: async (_id: string, params: Static<typeof researchListParams>) => {
       const limit = Math.max(1, Math.min(params.limit ?? 10, 50));
-      const runs = resolveSyncResearchStore()?.listRuns({
+      const runs = await resolveResearchStore().listRuns({
         status: params.status as ResearchRunStatus | undefined,
         limit,
-      }) ?? [];
+      });
       const text = runs.length
         ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n")
         : "No research runs found.";
@@ -4412,7 +4416,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     description: "Get one research run with structured findings and citations.",
     parameters: researchGetParams,
     execute: async (_id: string, params: Static<typeof researchGetParams>) => {
-      const run = resolveSyncResearchStore()?.getRun(params.id);
+      const run = await resolveResearchStore().getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
@@ -4438,7 +4442,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
         return researchUnavailable("provider-unavailable", "Research orchestrator is unavailable because research providers are not configured.");
       }
       const cancelled = await orchestrator.cancelRun(params.id);
-      const run = resolveSyncResearchStore()?.getRun(params.id);
+      const run = await resolveResearchStore().getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
@@ -4452,7 +4456,26 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     },
   };
 
-  return [runTool, listTool, getTool, cancelTool];
+  const retryTool: ToolDefinition = {
+    name: "fn_research_retry",
+    label: "Retry Research Run",
+    description: "Create a retry from a failed or cancelled research run.",
+    parameters: researchRetryParams,
+    execute: async (_id: string, params: Static<typeof researchRetryParams>) => {
+      const orchestrator = await ensureOrchestrator();
+      if (!orchestrator) {
+        return researchUnavailable("provider-unavailable", "Research orchestrator is unavailable because research providers are not configured.");
+      }
+      const newRunId = await orchestrator.retryRun(params.id);
+      const run = await resolveResearchStore().getRun(newRunId);
+      return {
+        content: [{ type: "text" as const, text: `Created retry run ${newRunId} from ${params.id}.` }],
+        details: run ? formatResearchRunDetails(run) : { runId: newRunId, status: "retry_waiting", summary: null, findings: [], citations: [], error: null, setup: null },
+      };
+    },
+  };
+
+  return [runTool, listTool, getTool, cancelTool, retryTool];
 }
 
 export function createPostRoomMessageTool(

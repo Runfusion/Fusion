@@ -42,17 +42,20 @@ pgTest("workflow definition create (PostgreSQL backend mode)", () => {
     const created = await store.createWorkflowDefinition({
       name: "My Custom Flow",
       description: "first custom flow",
+      icon: "gear",
       ir,
       layout: { positions: { a: 1 } },
     });
     expect(created.id).toMatch(/^WF-\d{3}$/);
     expect(created.name).toBe("My Custom Flow");
+    expect(created.icon).toBe("gear");
 
     const fetched = await store.getWorkflowDefinition(created.id);
     expect(fetched).toBeDefined();
     expect(fetched!.id).toBe(created.id);
     expect(fetched!.name).toBe("My Custom Flow");
     expect(fetched!.description).toBe("first custom flow");
+    expect(fetched!.icon).toBe("gear");
     expect(fetched!.ir.version).toBe(ir.version);
 
     // SECOND CREATE — the id counter must increment (distinct id, no PK collision).
@@ -71,10 +74,13 @@ pgTest("workflow definition create (PostgreSQL backend mode)", () => {
     // UPDATE — change the description; the row round-trips through the async UPDATE.
     const updated = await store.updateWorkflowDefinition(created.id, {
       description: "edited description",
+      icon: "wrench",
     });
     expect(updated.description).toBe("edited description");
+    expect(updated.icon).toBe("wrench");
     const refetched = await store.getWorkflowDefinition(created.id);
     expect(refetched!.description).toBe("edited description");
+    expect(refetched!.icon).toBe("wrench");
 
     // DELETE — removes the row; getWorkflowDefinition then returns undefined.
     await store.deleteWorkflowDefinition(created.id);

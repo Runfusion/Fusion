@@ -1612,7 +1612,7 @@ export async function upsertMission(handle: QueryHandle, mission: Mission): Prom
       updatedAt: mission.updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.missions.id,
+      target: [schema.project.missions.projectId, schema.project.missions.id],
       set: {
         title: sql`excluded.title`,
         description: sql`excluded.description`,
@@ -1651,7 +1651,7 @@ export async function upsertMilestone(handle: QueryHandle, milestone: Milestone)
       updatedAt: milestone.updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.milestones.id,
+      target: [schema.project.milestones.projectId, schema.project.milestones.id],
       set: {
         title: sql`excluded.title`,
         description: sql`excluded.description`,
@@ -1687,7 +1687,7 @@ export async function upsertSlice(handle: QueryHandle, slice: Slice): Promise<vo
       updatedAt: slice.updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.slices.id,
+      target: [schema.project.slices.projectId, schema.project.slices.id],
       set: {
         title: sql`excluded.title`,
         description: sql`excluded.description`,
@@ -1725,7 +1725,7 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
       generatedFromRunId: feature.generatedFromRunId ?? null,
     })
     .onConflictDoUpdate({
-      target: schema.project.missionFeatures.id,
+      target: [schema.project.missionFeatures.projectId, schema.project.missionFeatures.id],
       set: {
         taskId: sql`excluded.task_id`,
         title: sql`excluded.title`,
@@ -1761,7 +1761,10 @@ export async function upsertContractAssertion(handle: QueryHandle, assertion: Mi
       updatedAt: assertion.updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.missionContractAssertions.id,
+      target: [
+        schema.project.missionContractAssertions.projectId,
+        schema.project.missionContractAssertions.id,
+      ],
       set: {
         title: sql`excluded.title`,
         assertion: sql`excluded.assertion`,

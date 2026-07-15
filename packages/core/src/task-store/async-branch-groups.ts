@@ -524,6 +524,7 @@ export async function recordPrThreadOutcome(
     })
     .onConflictDoUpdate({
       target: [
+        schema.project.pullRequestThreadState.projectId,
         schema.project.pullRequestThreadState.prEntityId,
         schema.project.pullRequestThreadState.threadId,
         schema.project.pullRequestThreadState.headOid,

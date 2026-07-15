@@ -73,4 +73,32 @@ pgTest("MessageStore send (PostgreSQL backend mode)", () => {
     });
     expect((await store.getMessage(msg.id))?.content).toBe("hi user");
   });
+
+  /*
+  FNXC:PostgresMigrationInbox 2026-07-14-12:10:
+  Once-only inbox delivery must use PostgreSQL's primary-key conflict handling as the concurrency authority; parallel callers may share the resulting message, but only one may report inserting it.
+  */
+  it("atomically inserts an idempotent message once under concurrent sends", async () => {
+    const { MessageStore } = await import("../../message-store.js");
+    const store = new MessageStore(null, { asyncLayer: h.layer() });
+    const input = {
+      fromType: "system" as const,
+      toType: "user" as const,
+      toId: "dashboard",
+      content: "migration complete",
+      type: "system" as const,
+      metadata: { kind: "postgres-migration-complete" },
+    };
+
+    const outcomes = await Promise.all([
+      store.sendMessageOnce(input, "postgres-migration-complete"),
+      store.sendMessageOnce(input, "postgres-migration-complete"),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.inserted)).toHaveLength(1);
+    expect(new Set(outcomes.map((outcome) => outcome.message.id)).size).toBe(1);
+    const completionMessages = (await store.getInbox("dashboard", "user"))
+      .filter((message) => message.metadata?.kind === "postgres-migration-complete");
+    expect(completionMessages).toHaveLength(1);
+  });
 });

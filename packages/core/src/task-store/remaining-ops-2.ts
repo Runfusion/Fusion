@@ -43,7 +43,7 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
       "modelPresetId", "modelProvider", "modelId",
       "validatorModelProvider", "validatorModelId",
       "planningModelProvider", "planningModelId",
-      "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "recoveryRetryCount", "taskDoneRetryCount", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
+      "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
       "error", "summary", "thinkingLevel", "validatorThinkingLevel", "planningThinkingLevel", "executionMode",
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenUsagePerModel", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
@@ -620,15 +620,24 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
     // write transaction. Validation/declaration resolution above stays outside
     // since it's async and doesn't read the row being mutated.
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * P1 fix: no backendMode branch existed, so this threw in PG mode. In
-     * backend mode, read-merge-upsert via Drizzle inside a transactionImmediate
-     * (values is jsonb). The lost-update guard is preserved by the transaction.
+     * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+     * PostgreSQL workflow setting patches must read and write the existing JSONB row through the same transaction handle. The synchronous backend getter intentionally returns an empty default; using it here erased every previously saved model lane whenever another lane was patched.
      */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return layer.transactionImmediate(async () => {
-        const current = await store.getWorkflowSettingValues(workflowId, projectId);
+      return layer.transactionImmediate(async (tx) => {
+        const rows = await tx
+          .select({ values: schema.project.workflowSettings.values })
+          .from(schema.project.workflowSettings)
+          .where(and(
+            eq(schema.project.workflowSettings.workflowId, workflowId),
+            eq(schema.project.workflowSettings.projectId, projectId),
+          ))
+          .limit(1);
+        const rawCurrent = rows[0]?.values;
+        const current = rawCurrent && typeof rawCurrent === "object" && !Array.isArray(rawCurrent)
+          ? rawCurrent as Record<string, unknown>
+          : {};
         const next: Record<string, unknown> = { ...current };
         for (const [key, value] of Object.entries(result.accepted)) {
           if (value === null) {
@@ -639,7 +648,7 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
         }
 
         const now = new Date().toISOString();
-        await layer.db
+        await tx
           .insert(schema.project.workflowSettings)
           .values({
             workflowId,
@@ -1458,7 +1467,7 @@ export async function getActivityLogImpl(store: TaskStore, options?: { limit?: n
     // Backend-mode: delegate to the async audit helper.
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getActivityLogAsync(layer.db, options);
+      return getActivityLogAsync(layer.db, layer.projectId ?? "", options);
     }
     let sql = "SELECT * FROM activityLog WHERE 1=1";
     const params: (string | number)[] = [];
@@ -1491,4 +1500,3 @@ export async function getActivityLogImpl(store: TaskStore, options?: { limit?: n
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
     }));
   }
-

@@ -183,6 +183,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Grok CLI binary overrides are global operator settings because executable locations are machine-local. Blank/undefined preserves PATH auto-detection through grok.
   */
   grokCliBinaryPath: undefined,
+  /*
+  FNXC:OmpAcp 2026-07-13-22:50:
+  Oh My Pi (omp) CLI enable + binary override are global operator settings (machine-local), mirroring Grok/Cursor.
+  */
+  useOmpCli: undefined,
+  ompCliBinaryPath: undefined,
   // Global baseline lanes for per-role model selection
   executionGlobalProvider: undefined,
   executionGlobalModelId: undefined,
@@ -672,6 +678,9 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // the first-boot SQLite → PostgreSQL auto-migration; drives the one-time
   // "your data was migrated" dashboard banner. null = no migration.
   sqliteMigrationNotice: null,
+  // FNXC:PostgresMigrationInbox 2026-07-14-12:10: independent from the banner
+  // record so a completion-message marker write cannot revert a concurrent dismissal.
+  postgresMigrationInboxMessageSentAt: undefined,
   agentLogFileRetentionDays: 0,
   chatRoomRecentVerbatimMessages: 25,
   chatRoomCompactionFetchLimit: 200,

@@ -36,6 +36,7 @@ import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
 import {
   TASK_COLUMN_DESCRIPTORS,
+  TASK_JSONB_COLUMNS,
   type TaskPersistSerializationContext,
 } from "./persistence.js";
 
@@ -85,31 +86,6 @@ const TASK_SLIM_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
  * `buildTaskInsertValues` parses the descriptor-produced JSON strings for these
  * columns back into JS values so the round-trip through jsonb preserves shape.
  */
-const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
-  "dependencies",
-  "steps",
-  "customFields",
-  "log",
-  "attachments",
-  "steeringComments",
-  "comments",
-  "review",
-  "reviewState",
-  "workflowStepResults",
-  "prInfo",
-  "prInfos",
-  "issueInfo",
-  "githubTracking",
-  "mergeDetails",
-  "workspaceWorktrees",
-  "enabledWorkflowSteps",
-  "modifiedFiles",
-  "scopeAutoWiden",
-  "sourceMetadata",
-  "tokenUsagePerModel",
-  "tokenBudgetOverride",
-]);
-
 /**
  * Build a Drizzle `values` object for a task from the shared column
  * descriptors. This is the async equivalent of `getTaskPersistValues()` —
@@ -454,7 +430,7 @@ export async function upsertTaskRowInTransaction(
     .insert(schema.project.tasks)
     .values(values as never)
     .onConflictDoUpdate({
-      target: schema.project.tasks.id,
+      target: [schema.project.tasks.projectId, schema.project.tasks.id],
       set: updateValues as never,
     });
 }

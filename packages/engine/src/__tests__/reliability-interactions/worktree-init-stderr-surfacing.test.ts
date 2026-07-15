@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { acquireTaskWorktree } from "../../worktree-acquisition.js";
-import { hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
-describe.skipIf(!hasGit)("reliability interactions: worktree init stderr surfacing", () => {
+describe.skipIf(!hasGit || !hasPg)("reliability interactions: worktree init stderr surfacing", () => {
   const fixtures: Array<Awaited<ReturnType<typeof makeReliabilityFixture>>> = [];
 
   afterEach(async () => {

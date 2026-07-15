@@ -195,7 +195,7 @@ export async function writeAgent(handle: QueryHandle, agent: Agent): Promise<voi
       data,
     })
     .onConflictDoUpdate({
-      target: schema.project.agents.id,
+      target: [schema.project.agents.projectId, schema.project.agents.id],
       set: {
         name: agent.name,
         role: agent.role,
@@ -350,10 +350,11 @@ export async function getHeartbeatHistory(
  * FNXC:AgentStore 2026-06-24-14:35:
  * Upsert a structured heartbeat run record (INSERT ... ON CONFLICT(id) DO UPDATE).
  */
-export async function saveRun(handle: QueryHandle, run: AgentHeartbeatRun): Promise<void> {
+export async function saveRun(handle: QueryHandle, projectId: string, run: AgentHeartbeatRun): Promise<void> {
   await handle
     .insert(schema.project.agentRuns)
     .values({
+      projectId,
       id: run.id,
       agentId: run.agentId,
       data: run,
@@ -362,7 +363,7 @@ export async function saveRun(handle: QueryHandle, run: AgentHeartbeatRun): Prom
       status: run.status,
     })
     .onConflictDoUpdate({
-      target: schema.project.agentRuns.id,
+      target: [schema.project.agentRuns.projectId, schema.project.agentRuns.id],
       set: {
         agentId: run.agentId,
         data: run,
@@ -378,6 +379,7 @@ export async function saveRun(handle: QueryHandle, run: AgentHeartbeatRun): Prom
  */
 export async function getRunDetail(
   handle: QueryHandle,
+  projectId: string,
   agentId: string,
   runId: string,
 ): Promise<AgentHeartbeatRun | null> {
@@ -386,6 +388,7 @@ export async function getRunDetail(
     .from(schema.project.agentRuns)
     .where(
       and(
+        eq(schema.project.agentRuns.projectId, projectId),
         eq(schema.project.agentRuns.agentId, agentId),
         eq(schema.project.agentRuns.id, runId),
       ),
@@ -400,6 +403,7 @@ export async function getRunDetail(
  */
 export async function getRunById(
   handle: QueryHandle,
+  projectId: string,
   runId: string,
 ): Promise<{ agentId: string; run: AgentHeartbeatRun | null } | null> {
   const rows = await handle
@@ -408,7 +412,7 @@ export async function getRunById(
       data: schema.project.agentRuns.data,
     })
     .from(schema.project.agentRuns)
-    .where(eq(schema.project.agentRuns.id, runId));
+    .where(and(eq(schema.project.agentRuns.projectId, projectId), eq(schema.project.agentRuns.id, runId)));
   const row = rows[0] as { agentId: string; data: Record<string, unknown> | null } | undefined;
   if (!row) return null;
   return { agentId: row.agentId, run: (row.data as AgentHeartbeatRun | null) ?? null };
@@ -419,13 +423,14 @@ export async function getRunById(
  */
 export async function getRecentRuns(
   handle: QueryHandle,
+  projectId: string,
   agentId: string,
   limit = 20,
 ): Promise<AgentHeartbeatRun[]> {
   const rows = await handle
     .select({ data: schema.project.agentRuns.data })
     .from(schema.project.agentRuns)
-    .where(eq(schema.project.agentRuns.agentId, agentId))
+    .where(and(eq(schema.project.agentRuns.projectId, projectId), eq(schema.project.agentRuns.agentId, agentId)))
     .orderBy(desc(schema.project.agentRuns.startedAt))
     .limit(limit);
   return rows
@@ -438,11 +443,11 @@ export async function getRecentRuns(
  * List every run currently in `status = 'active'` across all agents. Used by
  * self-healing to detect orphaned runs from prior process incarnations.
  */
-export async function listActiveHeartbeatRuns(handle: QueryHandle): Promise<AgentHeartbeatRun[]> {
+export async function listActiveHeartbeatRuns(handle: QueryHandle, projectId: string): Promise<AgentHeartbeatRun[]> {
   const rows = await handle
     .select({ data: schema.project.agentRuns.data })
     .from(schema.project.agentRuns)
-    .where(eq(schema.project.agentRuns.status, "active"))
+    .where(and(eq(schema.project.agentRuns.projectId, projectId), eq(schema.project.agentRuns.status, "active")))
     .orderBy(asc(schema.project.agentRuns.startedAt));
   return rows
     .map((row) => (row.data as AgentHeartbeatRun | null) ?? null)
@@ -458,6 +463,7 @@ export async function listActiveHeartbeatRuns(handle: QueryHandle): Promise<Agen
  */
 export async function listAllAgentRuns(
   handle: QueryHandle,
+  projectId: string,
   limit?: number,
 ): Promise<AgentHeartbeatRun[]> {
   const normalizedLimit =
@@ -466,11 +472,13 @@ export async function listAllAgentRuns(
     ? await handle
         .select({ data: schema.project.agentRuns.data })
         .from(schema.project.agentRuns)
+        .where(eq(schema.project.agentRuns.projectId, projectId))
         .orderBy(desc(schema.project.agentRuns.startedAt), desc(schema.project.agentRuns.id))
         .limit(normalizedLimit)
     : await handle
         .select({ data: schema.project.agentRuns.data })
         .from(schema.project.agentRuns)
+        .where(eq(schema.project.agentRuns.projectId, projectId))
         .orderBy(asc(schema.project.agentRuns.startedAt), asc(schema.project.agentRuns.id));
   return rows
     .map((row) => (row.data as AgentHeartbeatRun | null) ?? null)
@@ -484,6 +492,7 @@ export async function listAllAgentRuns(
  */
 export async function getRunStatusCounts(
   handle: QueryHandle,
+  projectId: string,
   agentIds?: readonly string[],
 ): Promise<{ completedRuns: number; failedRuns: number }> {
   let rows: Array<{ status: string; count: number }>;
@@ -494,7 +503,7 @@ export async function getRunStatusCounts(
         count: sql<number>`count(*)::int`,
       })
       .from(schema.project.agentRuns)
-      .where(inArray(schema.project.agentRuns.agentId, [...agentIds]))
+      .where(and(eq(schema.project.agentRuns.projectId, projectId), inArray(schema.project.agentRuns.agentId, [...agentIds])))
       .groupBy(schema.project.agentRuns.status);
   } else {
     rows = await handle
@@ -503,6 +512,7 @@ export async function getRunStatusCounts(
         count: sql<number>`count(*)::int`,
       })
       .from(schema.project.agentRuns)
+      .where(eq(schema.project.agentRuns.projectId, projectId))
       .groupBy(schema.project.agentRuns.status);
   }
 
@@ -521,11 +531,13 @@ export async function getRunStatusCounts(
  */
 export async function insertRunIfAbsent(
   handle: QueryHandle,
+  projectId: string,
   run: AgentHeartbeatRun,
 ): Promise<boolean> {
   const result = await handle
     .insert(schema.project.agentRuns)
     .values({
+      projectId,
       id: run.id,
       agentId: run.agentId,
       data: run,
@@ -586,6 +598,7 @@ export async function upsertTaskSession(
     })
     .onConflictDoUpdate({
       target: [
+        schema.project.agentTaskSessions.projectId,
         schema.project.agentTaskSessions.agentId,
         schema.project.agentTaskSessions.taskId,
       ],
@@ -830,7 +843,7 @@ export async function setLastBlockedState(
       updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.agentBlockedStates.agentId,
+      target: [schema.project.agentBlockedStates.projectId, schema.project.agentBlockedStates.agentId],
       set: {
         data: state,
         updatedAt,
@@ -884,11 +897,15 @@ export async function getAllBlockedStates(
 export async function getMetaValue(
   handle: QueryHandle,
   key: string,
+  projectId = "",
 ): Promise<string | undefined> {
   const rows = await handle
     .select({ value: schema.project.projectMeta.value })
     .from(schema.project.projectMeta)
-    .where(eq(schema.project.projectMeta.key, key));
+    .where(and(
+      eq(schema.project.projectMeta.projectId, projectId),
+      eq(schema.project.projectMeta.key, key),
+    ));
   return rows[0]?.value ?? undefined;
 }
 
@@ -899,12 +916,17 @@ export async function upsertMetaValue(
   handle: QueryHandle,
   key: string,
   value: string,
+  projectId = "",
 ): Promise<void> {
+  /*
+  FNXC:PostgresMultiProjectCutover 2026-07-14-11:18:
+  Agent-store migration markers share the project schema but not project ownership. Include the bound project in their composite key; the empty binding remains the explicit project-agnostic compatibility partition.
+  */
   await handle
     .insert(schema.project.projectMeta)
-    .values({ key, value })
+    .values({ projectId, key, value })
     .onConflictDoUpdate({
-      target: schema.project.projectMeta.key,
+      target: [schema.project.projectMeta.projectId, schema.project.projectMeta.key],
       set: { value },
     });
 }

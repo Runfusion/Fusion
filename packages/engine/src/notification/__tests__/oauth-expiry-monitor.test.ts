@@ -70,6 +70,79 @@ describe("OAuthExpiryMonitor", () => {
     monitor.stop();
   });
 
+  it("does not start the durable alert cooldown when every notification provider fails", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const authStorage = createAuthStorage({ type: "oauth", expires: now - 1_000 });
+    const dispatchConfirmed = vi.fn(async () => false);
+    const alertState = new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now });
+    const monitor = new OAuthExpiryMonitor({
+      authStorage,
+      notificationService: { dispatchConfirmed } as any,
+      intervalMs: 100,
+      clock: () => now,
+      alertState,
+    });
+
+    await monitor.start();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(dispatchConfirmed).toHaveBeenCalledTimes(2);
+    expect(alertState.getLastAlertAt("openai-codex")).toBeUndefined();
+    monitor.stop();
+  });
+
+  it("dispatches and records each expired provider with a provider-specific dedupe key", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const credentials: Record<string, TestCredential> = {
+      "openai-codex": { type: "oauth", expires: now - 2_000 },
+      "github-copilot": { type: "oauth", expires: now - 1_000 },
+    };
+    const authStorage: AuthStorageLike = {
+      reload: vi.fn(),
+      getOAuthProviders: () => [
+        { id: "openai-codex", name: "OpenAI Codex" },
+        { id: "github-copilot", name: "GitHub Copilot" },
+      ],
+      get: (providerId: string) => credentials[providerId],
+    };
+    const dispatchConfirmed = vi.fn(async () => true);
+    const alertState = new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now });
+    const monitor = new OAuthExpiryMonitor({
+      authStorage,
+      notificationService: { dispatchConfirmed } as any,
+      intervalMs: 100,
+      clock: () => now,
+      alertState,
+    });
+
+    await monitor.start();
+
+    expect(dispatchConfirmed).toHaveBeenCalledTimes(2);
+    expect(dispatchConfirmed).toHaveBeenNthCalledWith(
+      1,
+      "oauth-token-expired",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          notificationDedupeKey: `oauth-token-expired:openai-codex:${now - 2_000}`,
+        }),
+      }),
+    );
+    expect(dispatchConfirmed).toHaveBeenNthCalledWith(
+      2,
+      "oauth-token-expired",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          notificationDedupeKey: `oauth-token-expired:github-copilot:${now - 1_000}`,
+        }),
+      }),
+    );
+    expect(alertState.getLastAlertAt("openai-codex")).toBe(now);
+    expect(alertState.getLastAlertAt("github-copilot")).toBe(now);
+    monitor.stop();
+  });
+
   /*
   FNXC:ProviderAuth 2026-07-11-18:00:
   Regression coverage for FN-7821: GitHub Copilot's stored OAuth access token is intentionally short-lived and can look expired on an OAuthExpiryMonitor interval tick even though getApiKey() can silently refresh it. The monitor must attempt that refresh and re-check before dispatching so ntfy and OAuthReloginBanner do not disagree.
@@ -138,11 +211,12 @@ describe("OAuthExpiryMonitor", () => {
     expect(dispatch).toHaveBeenCalledWith(
       "oauth-token-expired",
       expect.objectContaining({
-        metadata: {
+        metadata: expect.objectContaining({
           providerId: "github-copilot",
           providerName: "GitHub Copilot",
           expiresAt: new Date(now - 1_000).toISOString(),
-        },
+          notificationDedupeKey: `oauth-token-expired:github-copilot:${now - 1_000}`,
+        }),
       }),
     );
     expect(JSON.stringify(dispatch.mock.calls)).not.toContain("opaque-github-copilot-access-token");

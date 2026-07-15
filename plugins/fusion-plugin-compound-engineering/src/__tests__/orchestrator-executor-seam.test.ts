@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CeOrchestrator, type CeSessionExecutor } from "../session/orchestrator.js";
-import { makeHarness, type TestHarness } from "./_harness.js";
+import { makeHarness, pgDescribe, type TestHarness } from "./_harness.js";
 
 /**
  * U9 CE executor seam contract.
@@ -12,8 +12,8 @@ import { makeHarness, type TestHarness } from "./_harness.js";
  * carries the choice through, per the plugin-skills option-threading learning.
  */
 let h: TestHarness;
-beforeEach(() => {
-  h = makeHarness();
+beforeEach(async () => {
+  h = await makeHarness();
 });
 afterEach(() => {
   h.close();
@@ -28,7 +28,7 @@ function makeOrch(executor?: CeSessionExecutor) {
   });
 }
 
-describe("CE executor seam (U9)", () => {
+pgDescribe("CE executor seam (U9)", () => {
   it("defaults to the model backend when no executor option is supplied", () => {
     expect(makeOrch().resolveExecutor()).toEqual({ kind: "model" });
   });

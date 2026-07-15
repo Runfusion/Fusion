@@ -1,0 +1,46 @@
+{
+  "name": "@fusion-plugin-examples/omp-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Oh My Pi (omp) runtime plugin for Fusion via Agent Client Protocol (omp acp)",
+  "keywords": [
+    "fusion-plugin",
+    "omp",
+    "oh-my-pi",
+    "acp",
+    "agent-client-protocol",
+    "runtime"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./probe": {
+      "types": "./src/probe.ts",
+      "source": "./src/probe.ts",
+      "import": "./dist/probe.js"
+    }
+  },
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.24.0",
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  }
+}

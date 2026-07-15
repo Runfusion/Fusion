@@ -1,7 +1,8 @@
 import type { AutomationStore } from "./automation-store.js";
 import type { ScheduledTask, ScheduledTaskCreateInput } from "./automation.js";
 import type { EvalRun, EvalTaskResultCreateInput } from "./eval-types.js";
-import { EvalLifecycleError, EvalStore } from "./eval-store.js";
+import { EvalLifecycleError } from "./eval-store.js";
+import type { EvalStore } from "./eval-store.js";
 import type { AsyncEvalStore } from "./async-eval-store.js";
 import type { ProjectSettings, Task } from "./types.js";
 
@@ -98,12 +99,7 @@ export type CompletedTaskEvaluator = (
 
 export interface EvalBatchTaskStore {
   listTasks(options?: { column?: string }): Promise<Task[]>;
-  // FNXC:Evals 2026-06-27-12:45:
-  // Widened to the TaskStore union so a backend-mode TaskStore satisfies this
-  // interface at the type level. runScheduledEvalBatch is a sync-EvalStore path
-  // (heavy lifecycle chaining); it instanceof-narrows to the sync EvalStore and
-  // fails fast under PG backend mode (scheduled eval batches are out of scope
-  // for the PG migration's dashboard-read fixes).
+  // Both stores expose the same lifecycle API; the batch awaits every call.
   getEvalStore(): EvalStore | AsyncEvalStore;
 }
 
@@ -128,23 +124,17 @@ export async function runScheduledEvalBatch(
 ): Promise<ScheduledEvalBatchResult> {
   const startedAt = params.startedAt ?? new Date().toISOString();
   const evalStore = params.store.getEvalStore();
-  if (!(evalStore instanceof EvalStore)) {
-    // Scheduled eval batches rely on the synchronous SQLite EvalStore's
-    // lifecycle chaining; the PG-backed AsyncEvalStore path is not yet wired
-    // for this flow (out of scope for the dashboard-read PG fixes).
-    throw new Error("Scheduled eval batch requires the synchronous EvalStore (not available in PostgreSQL backend mode)");
-  }
-  const priorRuns = evalStore
-    .listRuns({ projectId: params.projectId, trigger: "schedule" })
-    .filter((run) => run.status === "completed")
-    .sort((a, b) => {
-      const aWindowEnd = (a.metadata?.windowEndInclusive as string | undefined) ?? a.window.until ?? "";
-      const bWindowEnd = (b.metadata?.windowEndInclusive as string | undefined) ?? b.window.until ?? "";
-      if (aWindowEnd !== bWindowEnd) return aWindowEnd.localeCompare(bWindowEnd);
-      return a.id.localeCompare(b.id);
-    });
-
-  const previousScheduledBatch = priorRuns.at(-1);
+  /*
+  FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
+  Scheduled evaluation is a backend-independent operator workflow. Await the shared EvalStore/AsyncEvalStore contract throughout so PostgreSQL performs the same window selection, lifecycle transitions, scoring, and audit-event writes as the legacy synchronous path.
+  */
+  const [previousScheduledBatch] = await evalStore.listRuns({
+    projectId: params.projectId,
+    trigger: "schedule",
+    status: "completed",
+    order: "desc",
+    limit: 1,
+  });
   const windowStartExclusive =
     (previousScheduledBatch?.metadata?.windowEndInclusive as string | undefined) ??
     previousScheduledBatch?.window.until;
@@ -152,7 +142,7 @@ export async function runScheduledEvalBatch(
 
   let run: EvalRun;
   try {
-    run = evalStore.createRun({
+    run = await evalStore.createRun({
       projectId: params.projectId,
       trigger: "schedule",
       scope: "completed-tasks",
@@ -172,14 +162,14 @@ export async function runScheduledEvalBatch(
     throw error;
   }
 
-  evalStore.appendRunEvent(run.id, {
+  await evalStore.appendRunEvent(run.id, {
     type: "info",
     message: "Scheduled eval batch started",
     status: "pending",
     metadata: { windowStartExclusive, windowEndInclusive },
   });
 
-  evalStore.updateRun(run.id, { status: "running", startedAt });
+  await evalStore.updateRun(run.id, { status: "running", startedAt });
 
   try {
     const doneTasks = (await params.store.listTasks({ column: "done" })).filter((task) =>
@@ -198,7 +188,7 @@ export async function runScheduledEvalBatch(
     });
 
     const selectedTaskIds = doneTasks.map((task) => task.id);
-    evalStore.updateRun(run.id, {
+    await evalStore.updateRun(run.id, {
       counts: { totalTasks: selectedTaskIds.length, scoredTasks: 0, skippedTasks: 0, erroredTasks: 0 },
       metadata: {
         windowStartExclusive,
@@ -209,13 +199,13 @@ export async function runScheduledEvalBatch(
     });
 
     if (doneTasks.length === 0) {
-      evalStore.appendRunEvent(run.id, {
+      await evalStore.appendRunEvent(run.id, {
         type: "info",
         status: "completed",
         message: "Scheduled eval batch completed with no newly done tasks",
         metadata: { tasksSelected: 0 },
       });
-      evalStore.updateRun(run.id, {
+      await evalStore.updateRun(run.id, {
         status: "completed",
         completedAt: new Date().toISOString(),
         summary: "No newly completed tasks found in evaluation window",
@@ -245,7 +235,7 @@ export async function runScheduledEvalBatch(
           window: { windowStartExclusive, windowEndInclusive },
         });
 
-        evalStore.createTaskResult(run.id, {
+        await evalStore.createTaskResult(run.id, {
           ...result,
           taskId: task.id,
           taskSnapshot: {
@@ -268,7 +258,7 @@ export async function runScheduledEvalBatch(
         else if (result.status === "skipped") skippedTasks += 1;
         else erroredTasks += 1;
 
-        evalStore.appendRunEvent(run.id, {
+        await evalStore.appendRunEvent(run.id, {
           type: "task_evaluated",
           message: `Evaluated task ${task.id}`,
           taskId: task.id,
@@ -276,7 +266,7 @@ export async function runScheduledEvalBatch(
         });
       } catch (error) {
         erroredTasks += 1;
-        evalStore.appendRunEvent(run.id, {
+        await evalStore.appendRunEvent(run.id, {
           type: "error",
           message: `Failed evaluating task ${task.id}`,
           taskId: task.id,
@@ -285,7 +275,7 @@ export async function runScheduledEvalBatch(
       }
     }
 
-    evalStore.updateRun(run.id, {
+    await evalStore.updateRun(run.id, {
       status: "completed",
       evaluatedTaskIds,
       counts: {
@@ -304,7 +294,7 @@ export async function runScheduledEvalBatch(
       },
     });
 
-    evalStore.appendRunEvent(run.id, {
+    await evalStore.appendRunEvent(run.id, {
       type: "status_changed",
       status: "completed",
       message: `Scheduled eval batch completed (${doneTasks.length} tasks selected)`,
@@ -320,7 +310,7 @@ export async function runScheduledEvalBatch(
       tasksSelected: selectedTaskIds.length,
     };
   } catch (error) {
-    evalStore.updateRun(run.id, {
+    await evalStore.updateRun(run.id, {
       status: "failed",
       completedAt: new Date().toISOString(),
       error: error instanceof Error ? error.message : String(error),
@@ -329,7 +319,7 @@ export async function runScheduledEvalBatch(
         windowEndInclusive,
       },
     });
-    evalStore.appendRunEvent(run.id, {
+    await evalStore.appendRunEvent(run.id, {
       type: "error",
       status: "failed",
       message: "Scheduled eval batch failed",

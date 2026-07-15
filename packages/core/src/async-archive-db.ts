@@ -87,8 +87,8 @@ The cold-storage archive is ONE shared table across every project on the
 embedded cluster. Writers stamp the owning project's id; list/count/search/
 membership readers take an optional projectId and filter to it (strict
 equality, same convention as taskProjectScope). Undefined projectId preserves
-the pre-isolation behavior for project-agnostic layers; id-keyed get/delete
-stay unscoped (task ids are globally unique via the distributed allocator).
+the administrative behavior for project-agnostic layers; bound runtime RLS
+keeps id-keyed get/delete within the current project because task IDs are reusable.
 */
 function archiveProjectScope(projectId?: string): SQL | undefined {
   return projectId ? eq(schema.archive.archivedTasks.projectId, projectId) : undefined;
@@ -104,7 +104,7 @@ export async function upsertArchivedTask(
     .values({
       id: entry.id,
       // Stable partition key — never rewritten by the conflict update below.
-      projectId: projectId ?? null,
+      projectId: projectId ?? "__legacy_unscoped__",
       taskJson: JSON.stringify(entry),
       prompt: entry.prompt ?? null,
       archivedAt: entry.archivedAt,
@@ -116,7 +116,7 @@ export async function upsertArchivedTask(
       columnMovedAt: entry.columnMovedAt ?? null,
     })
     .onConflictDoUpdate({
-      target: schema.archive.archivedTasks.id,
+      target: [schema.archive.archivedTasks.projectId, schema.archive.archivedTasks.id],
       set: {
         taskJson: JSON.stringify(entry),
         prompt: entry.prompt ?? null,

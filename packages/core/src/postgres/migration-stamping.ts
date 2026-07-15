@@ -48,6 +48,84 @@ export interface StampMigratedProjectRowsResult {
 }
 
 /**
+ * FNXC:ProjectIdentityPromotion 2026-07-14-14:08:
+ * An unregistered project first runs under a stable path-derived partition. If
+ * central registration later assigns its canonical ID, atomically promote all
+ * project and archive rows plus migration bookkeeping so the next boot cannot
+ * strand the project in the fallback partition or repeat its SQLite cutover.
+ */
+export async function rekeyFallbackProjectPartition(
+  db: MigrationDb,
+  fallbackProjectId: string,
+  registeredProjectId: string,
+): Promise<boolean> {
+  if (!fallbackProjectId || fallbackProjectId === registeredProjectId) return false;
+
+  return db.transaction(async (tx) => {
+    const ownedRows = (await tx.execute(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM project.tasks WHERE project_id = ${fallbackProjectId}
+        UNION ALL
+        SELECT 1 FROM archive.archived_tasks WHERE project_id = ${fallbackProjectId}
+      ) AS found
+    `)) as unknown as Array<{ found: boolean }>;
+    const migrationState = (await tx.execute(sql`
+      SELECT to_regclass('public.fusion_sqlite_migrations') IS NOT NULL AS exists
+    `)) as unknown as Array<{ exists: boolean }>;
+    let ownsMigrationState = false;
+    if (migrationState[0]?.exists) {
+      const markerRows = (await tx.execute(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM public.fusion_sqlite_migrations
+          WHERE project_id = ${fallbackProjectId}
+        ) AS found
+      `)) as unknown as Array<{ found: boolean }>;
+      ownsMigrationState = markerRows[0]?.found === true;
+    }
+    if (!ownedRows[0]?.found && !ownsMigrationState) return false;
+
+    await tx.execute(sql`SET CONSTRAINTS ALL DEFERRED`);
+    const tables = (await tx.execute(sql`
+      SELECT table_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND column_name = 'project_id'
+      ORDER BY table_name
+    `)) as unknown as Array<{ table_name: string }>;
+    for (const { table_name: tableName } of tables) {
+      await tx.execute(sql`
+        UPDATE ${sql.identifier("project")}.${sql.identifier(tableName)}
+        SET project_id = ${registeredProjectId}
+        WHERE project_id = ${fallbackProjectId}
+      `);
+    }
+    await tx.execute(sql`
+      UPDATE archive.archived_tasks
+      SET project_id = ${registeredProjectId}
+      WHERE project_id = ${fallbackProjectId}
+    `);
+    if (migrationState[0]?.exists) {
+      await tx.execute(sql`
+        UPDATE public.fusion_sqlite_migrations
+        SET project_id = ${registeredProjectId}, updated_at = now()
+        WHERE project_id = ${fallbackProjectId}
+      `);
+      await tx.execute(sql`
+        INSERT INTO public.fusion_sqlite_migrations(migration_key, project_id, status, last_error, updated_at)
+        SELECT ${`project:${registeredProjectId}`}, ${registeredProjectId}, status, last_error, now()
+        FROM public.fusion_sqlite_migrations
+        WHERE migration_key = ${`project:${fallbackProjectId}`}
+        ON CONFLICT (migration_key) DO UPDATE
+        SET project_id = EXCLUDED.project_id,
+            status = EXCLUDED.status,
+            last_error = EXCLUDED.last_error,
+            updated_at = now()
+      `);
+    }
+    return true;
+  });
+}
+
+/**
  * FNXC:CentralProjectIdentity 2026-07-13-23:10:
  * Re-key just-migrated rows to the booting project's central-registry id.
  *
@@ -92,6 +170,9 @@ export async function stampMigratedProjectRows(
   only, so the previous `if (options.projectId)` guard skipped stamping on
   exactly the boot that performs most real-world migrations. The resolution now
   falls back to a central-registry path lookup (done by the caller).
+
+  FNXC:ProjectDataIsolation 2026-07-14-12:55:
+  Schema migration 0006 quarantines ambiguous ownerless rows as __legacy_unscoped__. Never bulk-stamp that quarantine here: the SQLite migrator reconciles rows against a specific source and project, while this legacy helper may only claim its historical NULL rows.
   */
   await db.execute(
     sql`UPDATE project.tasks SET project_id = ${projectId} WHERE project_id IS NULL`,

@@ -35,14 +35,16 @@ const CUSTOM_WITH_SETTING: WorkflowIr = {
 
 function makeStore(opts: {
   selection?: Record<string, { workflowId: string; stepIds: string[] }>;
+  asyncSelection?: Record<string, { workflowId: string; stepIds: string[] }>;
   selectionThrows?: boolean;
   defs?: Record<string, { ir: string | WorkflowIr } | undefined>;
   values?: Record<string, Record<string, unknown>>; // key: `${workflowId}::${projectId}`
+  asyncValues?: Record<string, Record<string, unknown>>;
   valuesThrows?: boolean;
   projectId?: string;
   projectIdThrows?: boolean;
 }): WorkflowSettingsResolverStore {
-  return {
+  const store: WorkflowSettingsResolverStore = {
     getTaskWorkflowSelection: vi.fn((taskId: string) => {
       if (opts.selectionThrows) throw new Error("boom");
       return opts.selection?.[taskId];
@@ -57,6 +59,14 @@ function makeStore(opts: {
       return opts.projectId ?? PROJECT;
     }),
   };
+  if (opts.asyncSelection) {
+    store.getTaskWorkflowSelectionAsync = vi.fn(async (taskId: string) => opts.asyncSelection?.[taskId]);
+  }
+  if (opts.asyncValues) {
+    store.getWorkflowSettingValuesAsync = vi.fn(async (workflowId: string, projectId: string) =>
+      opts.asyncValues?.[`${workflowId}::${projectId}`] ?? {});
+  }
+  return store;
 }
 
 describe("resolveOptionalReviewRevisionBudget", () => {
@@ -183,6 +193,22 @@ describe("resolveEffectiveSettings (per-task)", () => {
     expect(b.workflowStepTimeoutMs).toBe(12_000);
     // The custom workflow declares ONLY workflowStepTimeoutMs, so nothing else is in its map.
     expect(Object.prototype.hasOwnProperty.call(b, "requirePrApproval")).toBe(false);
+  });
+
+  it("uses authoritative async workflow selection and model-lane values when available", async () => {
+    const store = makeStore({
+      // The sync compatibility surface represents PostgreSQL's intentional
+      // no-selection/empty-values fallback. Async readers are authoritative.
+      selection: {},
+      values: {},
+      asyncSelection: { t1: { workflowId: "wf-custom", stepIds: [] } },
+      defs: { "wf-custom": { ir: CUSTOM_WITH_SETTING } },
+      asyncValues: { "wf-custom::proj-1": { workflowStepTimeoutMs: 12_345 } },
+    });
+    const effective = await resolveEffectiveSettings(store, { id: "t1" });
+    expect(effective.workflowStepTimeoutMs).toBe(12_345);
+    expect(store.getTaskWorkflowSelection).not.toHaveBeenCalled();
+    expect(store.getWorkflowSettingValues).not.toHaveBeenCalled();
   });
 
   it("custom workflow with empty settings → declaration-absent map (read-site fallback applies)", async () => {

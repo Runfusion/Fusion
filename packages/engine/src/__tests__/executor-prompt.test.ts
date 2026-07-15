@@ -1077,7 +1077,7 @@ describe("TaskExecutor pause behavior", () => {
     expect(resumeLogCalls).toHaveLength(1);
   });
 
-  it("clears stale failed state before resuming unpaused in-progress task", async () => {
+  it("does not resurrect a failed in-progress task when an unrelated update is emitted", async () => {
     const store = createMockStore();
 
     mockedCreateFnAgent.mockImplementation(async () => ({
@@ -1100,6 +1100,7 @@ describe("TaskExecutor pause behavior", () => {
       dependencies: [],
       steps: [],
       currentStep: 0,
+      comments: [{ id: "oversight-1", text: "[planner-oversight] inject guidance", author: "agent" }],
       log: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1107,8 +1108,9 @@ describe("TaskExecutor pause behavior", () => {
 
     await new Promise((r) => setTimeout(r, 30));
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
   });
 
   it("clears stale failed state before resuming orphaned in-progress task", async () => {

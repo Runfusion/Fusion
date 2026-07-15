@@ -88,8 +88,11 @@ function run(cmd, { capture = false, allowFail = false, cwd } = {}) {
  * order at the end.
  *
  * FNXC:ReleaseChangelog 2026-07-12-00:00:
- * The root CHANGELOG.md is regenerated during every release, so the pre-0.50 prune must happen in this generator instead of as a manual docs edit.
- * Keep versions greater than or equal to the 0.50.0 cutoff in CHANGELOG.md, and write older versions to CHANGELOG-archive.md so the split survives the next release sync.
+ * The root CHANGELOG.md is regenerated during every release, so the archive prune must happen in this generator instead of as a manual docs edit.
+ * Keep versions greater than or equal to the archive cutoff in CHANGELOG.md, and write older versions to CHANGELOG-archive.md so the split survives the next release sync.
+ *
+ * FNXC:ReleaseChangelog 2026-07-13-22:55:
+ * Cutoff is CHANGELOG_ARCHIVE_CUTOFF (currently 0.60.0) from scripts/lib/changelog-archive.mjs.
  */
 function syncRootChangelog() {
   const pkgsDir = "packages";

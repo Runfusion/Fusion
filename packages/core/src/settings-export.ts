@@ -261,7 +261,7 @@ async function applyWorkflowSettingsSection(
     if (!merge) {
       // Replace mode: null out keys present in the current row but absent here so
       // the row ends up matching the imported workflow exactly.
-      const current = store.getWorkflowSettingValues(workflowId, projectId);
+      const current = await store.getWorkflowSettingValuesAsync(workflowId, projectId);
       for (const key of Object.keys(current)) {
         if (!(key in patch)) {
           patch[key] = null; // null-as-delete

@@ -349,8 +349,9 @@ export function createPluginRouter(
   router.get("/registry", catchHandler(async (req: Request, res: Response) => {
     const q = typeof req.query.q === "string" ? req.query.q : undefined;
     const category = typeof req.query.category === "string" ? req.query.category : undefined;
-    const projectId = typeof req.query.projectId === "string" && req.query.projectId.trim()
-      ? req.query.projectId
+    // FNXC:BranchGroupProjectScoping 2026-07-14-06:15: return the trimmed id, not the raw padded string.
+    const projectId = typeof req.query.projectId === "string"
+      ? (req.query.projectId.trim() || undefined)
       : undefined;
     const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : null;
     const store = scopedStore?.getPluginStore?.() ?? pluginStore;
@@ -706,11 +707,13 @@ export function createPluginRouter(
           throw notFound(`Plugin "${pluginId}" not loaded`);
         }
 
-        const projectId = typeof req.query.projectId === "string" && req.query.projectId.trim()
-          ? req.query.projectId
-          : (req.body && typeof req.body === "object" && typeof (req.body as { projectId?: unknown }).projectId === "string" && (req.body as { projectId: string }).projectId.trim()
-            ? (req.body as { projectId: string }).projectId
-            : undefined);
+        // FNXC:BranchGroupProjectScoping 2026-07-14-06:15: return the trimmed id, not the raw padded string.
+        const queryProjectId = typeof req.query.projectId === "string" ? req.query.projectId.trim() : "";
+        const bodyProjectId =
+          req.body && typeof req.body === "object" && typeof (req.body as { projectId?: unknown }).projectId === "string"
+            ? (req.body as { projectId: string }).projectId.trim()
+            : "";
+        const projectId = queryProjectId || bodyProjectId || undefined;
         const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : null;
         const taskStore = scopedStore ?? defaultTaskStore ?? ({} as import("@fusion/core").TaskStore);
 

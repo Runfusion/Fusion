@@ -172,6 +172,9 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     // capacity check is not a guard (U6 fills the enforcement; U4 leaves a
     // pass-through slot). An explicit option value wins; otherwise derive it.
     const bypassGuards = store.resolveWorkflowBypassGuards(moveSource, options);
+    const effectiveWorkflowIdForMove = useWorkflow
+      ? (await store.getTaskWorkflowSelectionAsync(id))?.workflowId ?? "builtin:coding"
+      : "builtin:coding";
     const workflowIr: WorkflowIr | undefined = useWorkflow
       ? await resolveTaskWorkflowIrForMove(store, id)
       : undefined;
@@ -719,11 +722,10 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         if (useWorkflow && workflowIr && fromColumn !== toColumn) {
           const capacity = resolveColumnCapacity(workflowIr, toColumn, mergedSettingsForMove);
           if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
-            const workflowId = store.resolveEffectiveWorkflowIdSync(id);
             const occupants = await store.countActiveInCapacitySlotAsync({
               tx,
               targetColumn: toColumn,
-              workflowId,
+              workflowId: effectiveWorkflowIdForMove,
               countPending: capacity.countPending,
               excludeTaskId: id,
             });
@@ -851,10 +853,9 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       if (useWorkflow && workflowIr && fromColumn !== toColumn) {
         const capacity = resolveColumnCapacity(workflowIr, toColumn, mergedSettingsForMove);
         if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
-          const workflowId = store.resolveEffectiveWorkflowIdSync(id);
           const occupants = store.countActiveInCapacitySlotSync({
             targetColumn: toColumn,
-            workflowId,
+            workflowId: effectiveWorkflowIdForMove,
             countPending: capacity.countPending,
             excludeTaskId: id,
           });
@@ -1045,4 +1046,3 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     }
     return task;
   }
-

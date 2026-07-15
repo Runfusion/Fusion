@@ -9,7 +9,7 @@
  * and list-with-items grouping. Runs in the blocking gate (test:pg-gate).
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 
 import {
   pgDescribe,
@@ -75,5 +75,84 @@ pgTest("TodoStore (PostgreSQL backend mode)", () => {
 
   it("createItem rejects a missing list with a clear error (parity with sync store)", async () => {
     await expect(todo().createItem("TDL-DOES-NOT-EXIST", { text: "x" })).rejects.toThrow(/not found/);
+  });
+
+  /**
+   * FNXC:PostgresMigrationCoverage 2026-07-13-22:54:
+   * PostgreSQL stores every project's todo lists in one physical table, so list reads must retain the former per-project SQLite-file isolation for empty and populated projects.
+   */
+  it("does not expose another project's lists or items", async () => {
+    const t = todo();
+    const alpha = await t.createList("project-alpha", { title: "Alpha" });
+    const beta = await t.createList("project-beta", { title: "Beta" });
+    await t.createItem(alpha.id, { text: "alpha-only" });
+    await t.createItem(beta.id, { text: "beta-only" });
+
+    expect((await t.getListsWithItems("project-empty"))).toEqual([]);
+    expect((await t.getListsWithItems("project-alpha")).map((list) => list.title)).toEqual(["Alpha"]);
+    expect((await t.getListsWithItems("project-alpha"))[0]?.items.map((item) => item.text)).toEqual(["alpha-only"]);
+    expect((await t.getListsWithItems("project-beta"))[0]?.items.map((item) => item.text)).toEqual(["beta-only"]);
+  });
+
+  /**
+   * FNXC:PostgresMigrationCoverage 2026-07-13-22:54:
+   * Todo mutations must retain the exact SQLite EventEmitter contract because dashboard SSE subscribers use these payloads to refresh lists and items without polling.
+   */
+  it("emits the sync TodoStore event names and payloads after successful mutations", async () => {
+    const t = todo();
+    const onListCreated = vi.fn();
+    const onListUpdated = vi.fn();
+    const onListDeleted = vi.fn();
+    const onItemCreated = vi.fn();
+    const onItemUpdated = vi.fn();
+    const onItemDeleted = vi.fn();
+    const onItemsReordered = vi.fn();
+    t.on("list:created", onListCreated);
+    t.on("list:updated", onListUpdated);
+    t.on("list:deleted", onListDeleted);
+    t.on("item:created", onItemCreated);
+    t.on("item:updated", onItemUpdated);
+    t.on("item:deleted", onItemDeleted);
+    t.on("items:reordered", onItemsReordered);
+
+    const list = await t.createList("project-events", { title: "Before" });
+    expect(onListCreated).toHaveBeenCalledWith(list);
+    const updatedList = await t.updateList(list.id, { title: "After" });
+    expect(onListUpdated).toHaveBeenCalledWith(updatedList);
+
+    const first = await t.createItem(list.id, { text: "first" });
+    const second = await t.createItem(list.id, { text: "second" });
+    expect(onItemCreated).toHaveBeenNthCalledWith(1, first);
+    expect(onItemCreated).toHaveBeenNthCalledWith(2, second);
+    const updatedItem = await t.updateItem(first.id, { completed: true });
+    expect(onItemUpdated).toHaveBeenCalledWith(updatedItem);
+
+    const reordered = await t.reorderItems(list.id, [second.id, first.id]);
+    expect(onItemsReordered).toHaveBeenCalledWith({ listId: list.id, items: reordered });
+    expect(await t.deleteItem(first.id)).toBe(true);
+    expect(onItemDeleted).toHaveBeenCalledWith(first.id);
+    expect(await t.deleteList(list.id)).toBe(true);
+    expect(onListDeleted).toHaveBeenCalledWith(list.id);
+  });
+
+  it("does not emit update or delete events for missing records", async () => {
+    const t = todo();
+    const onListUpdated = vi.fn();
+    const onListDeleted = vi.fn();
+    const onItemUpdated = vi.fn();
+    const onItemDeleted = vi.fn();
+    t.on("list:updated", onListUpdated);
+    t.on("list:deleted", onListDeleted);
+    t.on("item:updated", onItemUpdated);
+    t.on("item:deleted", onItemDeleted);
+
+    expect(await t.updateList("TDL-MISSING", { title: "x" })).toBeUndefined();
+    expect(await t.deleteList("TDL-MISSING")).toBe(false);
+    expect(await t.updateItem("TDI-MISSING", { text: "x" })).toBeUndefined();
+    expect(await t.deleteItem("TDI-MISSING")).toBe(false);
+    expect(onListUpdated).not.toHaveBeenCalled();
+    expect(onListDeleted).not.toHaveBeenCalled();
+    expect(onItemUpdated).not.toHaveBeenCalled();
+    expect(onItemDeleted).not.toHaveBeenCalled();
   });
 });

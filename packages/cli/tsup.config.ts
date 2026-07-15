@@ -14,6 +14,8 @@ const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   // FNXC:GrokAcp 2026-07-11-14:00: Grok ACP ships mcp-schema-server.cjs so
   // session/new can forward executable Fusion fn_* tools to grok agent stdio.
   "fusion-plugin-grok-runtime",
+  // FNXC:OmpAcp 2026-07-14-00:05: OMP ACP ships the same bridge asset for fn_* tools.
+  "fusion-plugin-omp-runtime",
 ]);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -194,6 +196,20 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     logLevel: "warning",
   });
 
+  const skillsSourceDir = join(srcDir, "src", "skills");
+  if (existsSync(skillsSourceDir)) {
+    const skillsDestDir = join(destDir, "skills");
+    /*
+     * FNXC:BundledPlugins 2026-07-14-12:00:
+     * FN-7955 / issue #2094 requires plugin-local runtime-read assets to ship with @runfusion/fusion. esbuild bundle:true only inlines statically imported JS/TS, so files read from disk through resolveBundledSkillsRoot() or PluginSkillContribution.skillFiles, such as nested SKILL.md files under src/skills, must be explicitly staged into dist/plugins/<id>/skills/ or the published npm tarball silently contains zero skill bodies.
+     */
+    cpSync(skillsSourceDir, skillsDestDir, { recursive: true });
+    if (!existsSync(skillsDestDir)) {
+      throw new Error(`[tsup] Missing staged skills for ${pluginId}: expected ${skillsDestDir}`);
+    }
+    console.log(`Staged plugin skills for ${pluginId} to dist/plugins/${pluginId}/skills`);
+  }
+
   if (withMcpAsset) {
     const mcpServerAsset = join(srcDir, "src", "mcp-schema-server.cjs");
     if (!existsSync(mcpServerAsset)) {
@@ -328,8 +344,8 @@ const cliBuildConfig = {
   },
   onSuccess: async () => {
     // FNXC:RuntimeStartupWiring 2026-06-24-11:15:
-    // Stage the PostgreSQL schema baseline (0000_initial.sql + meta) into
-    // dist/migrations so the schema applier can read it at runtime after
+    // FNXC:AutomationIsolation 2026-07-13-22:37: Stage the complete versioned PostgreSQL migration directory (including automation project isolation) into dist/migrations so existing installations upgrade before project cron runners start.
+    // Stage the PostgreSQL schema migrations into dist/migrations so the schema applier can read them at runtime after
     // @fusion/core is bundled into dist/bin.js. Without this, the PG boot
     // path fails with ENOENT for dist/migrations/0000_initial.sql.
     if (existsSync(pgMigrationsSrc)) {
@@ -341,7 +357,7 @@ const cliBuildConfig = {
       console.log("Copied PostgreSQL migrations to dist/migrations/");
     } else {
       console.warn(
-        `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply the schema baseline.`,
+        `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply schema migrations.`,
       );
     }
     if (existsSync(desktopRuntimeDest)) {

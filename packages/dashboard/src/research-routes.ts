@@ -13,6 +13,8 @@ import {
   type ResearchRunStatus,
 } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "./api-error.js";
+import { getScopedStore as resolveScopedRequestStore } from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 
 const DEFAULT_AVAILABILITY = {
   available: true,
@@ -34,12 +36,6 @@ function rethrowAsApiError(error: unknown, fallback = "Internal server error"): 
   }
   if (error instanceof Error) throw new ApiError(500, error.message, { code: "INTERNAL_ERROR" });
   throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
-}
-
-function getProjectId(req: Request): string | undefined {
-  if (typeof req.query.projectId === "string" && req.query.projectId.trim()) return req.query.projectId;
-  if (req.body && typeof req.body === "object" && typeof req.body.projectId === "string" && req.body.projectId.trim()) return req.body.projectId;
-  return undefined;
 }
 
 function toRunListItem(run: ResearchRun) {
@@ -134,21 +130,28 @@ async function addFindingAttachment(
   }
 }
 
-export function createResearchRouter(store: TaskStore): Router {
+export function createResearchRouter(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
   router.use((req: Request, _res: Response, next: NextFunction) => {
-    const projectId = getProjectId(req);
-    if (!projectId) {
-      requestContext.run(store, () => next());
-      return;
-    }
-
-    import("./project-store-resolver.js")
-      .then(({ getOrCreateProjectStore }) => getOrCreateProjectStore(projectId))
+    // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+    // Resolve an explicit central-registry project id via the shared seam
+    // (request id → registered launch project id → raw launch store last resort).
+    // FNXC:CentralProjectIdentity 2026-07-14-00:15:
+    // Catch-and-FORWARD via next(): rethrowAsApiError throws, and a throw inside this
+    // detached promise chain escapes Express (not the request's synchronous call
+    // stack), so a store-resolution failure would hang the request. Mirror the
+    // insights/goals routers' pattern.
+    resolveScopedRequestStore(req, store, options)
       .then((scopedStore) => requestContext.run(scopedStore, () => next()))
-      .catch((error) => rethrowAsApiError(error, "Failed to resolve project store"));
+      .catch((error) => {
+        try {
+          rethrowAsApiError(error, "Failed to resolve project store");
+        } catch (apiError) {
+          next(apiError);
+        }
+      });
   });
 
   // FNXC:ResearchStore 2026-06-27-12:20:

@@ -30,7 +30,7 @@
  */
 import { and, asc, eq, lte, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import type {
   ScheduledTask,
   ScheduledTaskCreateInput,
@@ -39,8 +39,26 @@ import type {
   ScheduleType,
 } from "./automation.js";
 
-/** A query-capable handle: either the top-level db or a transaction handle. */
-type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
+/** The bound project context required by every automation query. */
+type AutomationDataLayer = Pick<AsyncDataLayer, "db" | "projectId">;
+
+/*
+ * FNXC:AutomationIsolation 2026-07-13-22:37:
+ * The embedded PostgreSQL cluster stores every project's automations in one physical table. Every CRUD and due-run operation filters one and only one project partition. Global automations remain global execution-lane entries owned by their creating project, matching the former per-project SQLite file semantics; they are never cross-project rows.
+ *
+ * FNXC:AutomationIsolation 2026-07-14-00:37:
+ * Automation schedules are project-owned, so an unbound async layer is invalid. Fail closed before any query instead of treating a missing project identity as ownership of the legacy empty-string partition.
+ */
+function automationProjectId(layer: AutomationDataLayer): string {
+  if (!layer.projectId) {
+    throw new Error("AutomationStore backend operations require asyncLayer.projectId");
+  }
+  return layer.projectId;
+}
+
+function automationProjectScope(layer: AutomationDataLayer) {
+  return eq(schema.project.automations.projectId, automationProjectId(layer));
+}
 
 /** Row shape for automations (camelCase column aliases via Drizzle). */
 interface AutomationRow {
@@ -111,10 +129,11 @@ function rowToSchedule(row: AutomationRow): ScheduledTask {
  * every persistence path (update, recordRun). Non-destructive on the primary
  * key: an existing row is updated in place.
  */
-export async function upsertSchedule(handle: QueryHandle, schedule: ScheduledTask): Promise<void> {
-  await handle
+export async function upsertSchedule(layer: AutomationDataLayer, schedule: ScheduledTask): Promise<void> {
+  await layer.db
     .insert(schema.project.automations)
     .values({
+      projectId: automationProjectId(layer),
       id: schedule.id,
       name: schedule.name,
       description: schedule.description ?? null,
@@ -134,7 +153,7 @@ export async function upsertSchedule(handle: QueryHandle, schedule: ScheduledTas
       updatedAt: schedule.updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.automations.id,
+      target: [schema.project.automations.projectId, schema.project.automations.id],
       set: {
         name: schedule.name,
         description: schedule.description ?? null,
@@ -161,21 +180,21 @@ export async function upsertSchedule(handle: QueryHandle, schedule: ScheduledTas
  * responsible for computing cronExpression/nextRunAt before calling.
  */
 export async function createScheduleRow(
-  handle: QueryHandle,
+  layer: AutomationDataLayer,
   schedule: ScheduledTask,
 ): Promise<ScheduledTask> {
-  await upsertSchedule(handle, schedule);
+  await upsertSchedule(layer, schedule);
   return schedule;
 }
 
 /**
  * Get a single schedule by id. Throws ENOENT if not found (matches sync shape).
  */
-export async function getSchedule(handle: QueryHandle, id: string): Promise<ScheduledTask> {
-  const rows = await handle
+export async function getSchedule(layer: AutomationDataLayer, id: string): Promise<ScheduledTask> {
+  const rows = await layer.db
     .select(automationColumns)
     .from(schema.project.automations)
-    .where(eq(schema.project.automations.id, id));
+    .where(and(automationProjectScope(layer), eq(schema.project.automations.id, id)));
   const row = rows[0];
   if (!row) {
     throw Object.assign(new Error(`Schedule '${id}' not found`), { code: "ENOENT" });
@@ -187,23 +206,24 @@ export async function getSchedule(handle: QueryHandle, id: string): Promise<Sche
  * Get a single schedule by id, or undefined if not found.
  */
 export async function findSchedule(
-  handle: QueryHandle,
+  layer: AutomationDataLayer,
   id: string,
 ): Promise<ScheduledTask | undefined> {
-  const rows = await handle
+  const rows = await layer.db
     .select(automationColumns)
     .from(schema.project.automations)
-    .where(eq(schema.project.automations.id, id));
+    .where(and(automationProjectScope(layer), eq(schema.project.automations.id, id)));
   return rows[0] ? rowToSchedule(rows[0] as AutomationRow) : undefined;
 }
 
 /**
  * List all schedules ordered by createdAt ASC.
  */
-export async function listSchedules(handle: QueryHandle): Promise<ScheduledTask[]> {
-  const rows = await handle
+export async function listSchedules(layer: AutomationDataLayer): Promise<ScheduledTask[]> {
+  const rows = await layer.db
     .select(automationColumns)
     .from(schema.project.automations)
+    .where(automationProjectScope(layer))
     .orderBy(asc(schema.project.automations.createdAt), asc(schema.project.automations.id));
   return rows.map((row) => rowToSchedule(row as AutomationRow));
 }
@@ -212,10 +232,10 @@ export async function listSchedules(handle: QueryHandle): Promise<ScheduledTask[
  * FNXC:AutomationStore 2026-06-24-12:15:
  * Delete a schedule by id. Returns true if a row was deleted.
  */
-export async function deleteSchedule(handle: QueryHandle, id: string): Promise<boolean> {
-  const result = await handle
+export async function deleteSchedule(layer: AutomationDataLayer, id: string): Promise<boolean> {
+  const result = await layer.db
     .delete(schema.project.automations)
-    .where(eq(schema.project.automations.id, id))
+    .where(and(automationProjectScope(layer), eq(schema.project.automations.id, id)))
     .returning({ id: schema.project.automations.id });
   return result.length > 0;
 }
@@ -226,11 +246,12 @@ export async function deleteSchedule(handle: QueryHandle, id: string): Promise<b
  * optionally filtered by scope.
  */
 export async function getDueSchedules(
-  handle: QueryHandle,
+  layer: AutomationDataLayer,
   nowIso: string,
   scope?: "global" | "project",
 ): Promise<ScheduledTask[]> {
   const conditions = [
+    automationProjectScope(layer),
     eq(schema.project.automations.enabled, 1),
     sql`${schema.project.automations.nextRunAt} IS NOT NULL`,
     lte(schema.project.automations.nextRunAt, nowIso),
@@ -238,11 +259,34 @@ export async function getDueSchedules(
   if (scope !== undefined) {
     conditions.push(eq(schema.project.automations.scope, scope));
   }
-  const rows = await handle
+  const rows = await layer.db
     .select(automationColumns)
     .from(schema.project.automations)
     .where(and(...conditions));
   return rows.map((row) => rowToSchedule(row as AutomationRow));
+}
+
+/**
+ * Atomically advance one due occurrence inside the caller's project partition.
+ */
+export async function claimDueSchedule(
+  layer: AutomationDataLayer,
+  id: string,
+  expectedNextRunAt: string,
+  nextRunAt: string,
+  updatedAt: string,
+): Promise<boolean> {
+  const rows = await layer.db
+    .update(schema.project.automations)
+    .set({ nextRunAt, updatedAt })
+    .where(and(
+      automationProjectScope(layer),
+      eq(schema.project.automations.id, id),
+      eq(schema.project.automations.enabled, 1),
+      eq(schema.project.automations.nextRunAt, expectedNextRunAt),
+    ))
+    .returning({ id: schema.project.automations.id });
+  return rows.length === 1;
 }
 
 // Re-export the input types for callers constructing schedules via the helper.

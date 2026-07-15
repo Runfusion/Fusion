@@ -7,7 +7,7 @@ import "./OAuthReloginBanner.css";
 
 const DISMISS_STORAGE_KEY = "fusion:oauth-relogin-dismissed";
 const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
-const ANTHROPIC_FALLBACK_PROVIDER_IDS = new Set(["anthropic-api-key", "claude-cli"]);
+const ANTHROPIC_FALLBACK_PROVIDER_IDS = new Set(["anthropic-api-key"]);
 
 type ExpiredBannerProvider = { id: string; name: string };
 
@@ -22,8 +22,8 @@ function getVisibleExpiredOAuthProvidersForGlobalBanner(providers: AuthProvider[
     .filter((provider) => provider.type === "oauth" && provider.expired === true)
     .filter((provider) => {
       /*
-      FNXC:ProviderAuth 2026-07-02-12:00:
-      Active Anthropic API-key or Claude CLI auth suppresses only the global urgent Subscription OAuth banner. Settings must still show `anthropic-subscription` as expired/not connected, and CLI/API-key availability must never mark subscription OAuth healthy.
+      FNXC:ProviderAuth 2026-07-14-15:46:
+      An active Anthropic API key can execute direct `anthropic/*` models, but Claude CLI authentication cannot: the execution surfaces intentionally do not reroute. Therefore only a raw API key may suppress the global subscription-expiry banner; a logged-in CLI must not hide the re-auth action while direct-model tasks fail.
       */
       return !(provider.id === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID && hasAuthenticatedAnthropicFallback);
     })

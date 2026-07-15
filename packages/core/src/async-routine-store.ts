@@ -197,7 +197,7 @@ export async function upsertRoutine(handle: QueryHandle, routine: Routine): Prom
       updatedAt: routine.updatedAt,
     })
     .onConflictDoUpdate({
-      target: schema.project.routines.id,
+      target: [schema.project.routines.projectId, schema.project.routines.id],
       set: {
         agentId: routine.agentId,
         name: routine.name,

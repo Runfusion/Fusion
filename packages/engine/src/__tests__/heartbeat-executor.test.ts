@@ -105,6 +105,9 @@ describe("executeHeartbeat", () => {
       } as unknown as TaskDetail),
       selectNextTaskForAgent: vi.fn().mockResolvedValue(null),
       listTasks: vi.fn().mockResolvedValue([]),
+      // FNXC:WakeDeltaMultiAssign 2026-07-13-12:45:
+      // executeHeartbeat loads assigned inventory for Wake Delta; default empty so existing tests stay no-op.
+      getTasksByAssignedAgent: vi.fn().mockResolvedValue([]),
       createTask: vi.fn().mockResolvedValue({
         id: "FN-002",
         description: "Created task",
@@ -1784,6 +1787,75 @@ describe("executeHeartbeat", () => {
       expect(executionPrompt).toContain("autonomous heartbeat run");
     });
 
+    it("Wake Delta includes multi-assign coordination inventory for sibling assignments", async () => {
+      const now = new Date().toISOString();
+      const getTasksByAssignedAgent = vi.fn().mockResolvedValue([
+        {
+          id: "FN-001",
+          column: "in-progress",
+          title: "Bound task",
+          dependencies: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: "FN-220",
+          column: "todo",
+          title: "Sibling todo",
+          dependencies: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+      mockTaskStore = createMockTaskStore({ getTasksByAssignedAgent });
+      const store = createStoreWithAgentForExec({ taskId: "FN-001" });
+      const mockSession = createMockAgentSession();
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0] as string;
+      expect(executionPrompt).toContain("- assigned task: FN-001");
+      expect(executionPrompt).toContain("coordination inventory");
+      expect(executionPrompt).toContain("FN-001");
+      expect(executionPrompt).toContain("FN-220");
+      expect(executionPrompt).toContain("(bound)");
+      expect(getTasksByAssignedAgent).toHaveBeenCalledWith("agent-001", { excludeArchived: true });
+    });
+
+    it("exits checkout_conflict without starting a session when lease is held by another agent", async () => {
+      const now = new Date().toISOString();
+      mockTaskStore = createMockTaskStore({
+        getTask: vi.fn().mockResolvedValue({
+          id: "FN-001",
+          title: "Leased elsewhere",
+          description: "desc",
+          prompt: "",
+          steps: [],
+          column: "todo",
+          checkedOutBy: "agent-other",
+          dependencies: [],
+          log: [],
+          attachments: [],
+          createdAt: now,
+          updatedAt: now,
+        } as unknown as TaskDetail),
+      });
+      const store = createStoreWithAgentForExec({ taskId: "FN-001" });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect(result.status).toBe("completed");
+      expect(result.resultJson).toEqual({
+        reason: "checkout_conflict",
+        taskId: "FN-001",
+        checkedOutBy: "agent-other",
+      });
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    });
+
     it("identity agent without task gets soul in system prompt", async () => {
       const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a CEO who prioritizes high-impact work" });
       const mockSession = createMockAgentSession();
@@ -2985,6 +3057,24 @@ describe("executeHeartbeat", () => {
       expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("## Memory Boundaries");
     });
 
+    it("both system prompts include durable critical rules that survive custom HEARTBEAT.md", () => {
+      for (const prompt of [HEARTBEAT_SYSTEM_PROMPT, HEARTBEAT_NO_TASK_SYSTEM_PROMPT]) {
+        expect(prompt).toContain("## Critical Rules");
+        expect(prompt).toContain("Do NOT implement task body work");
+        expect(prompt).toContain("Checkout/claim conflict");
+        expect(prompt).toContain("Blocked-task dedup");
+        expect(prompt).toContain("coordination inventory");
+      }
+    });
+
+    it("strict procedures include disposition checklist and scoped-wake language", () => {
+      expect(HEARTBEAT_PROCEDURE).toContain("Final disposition checklist");
+      expect(HEARTBEAT_PROCEDURE).toContain("Scoped-wake fast path");
+      expect(HEARTBEAT_PROCEDURE).toContain("Blocked dedup");
+      expect(HEARTBEAT_NO_TASK_PROCEDURE).toContain("Final disposition checklist");
+      expect(HEARTBEAT_NO_TASK_PROCEDURE).not.toContain("fn_task_log");
+    });
+
     it("both prompts instruct replies to include reply_to_message_id", () => {
       expect(HEARTBEAT_SYSTEM_PROMPT).toContain("reply_to_message_id");
       expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("reply_to_message_id");
@@ -3055,7 +3145,7 @@ describe("executeHeartbeat", () => {
       expect(callArgs.tools).toBe("coding");
       // fn_artifact_register/list/view, agent config/provisioning, goals/evaluations/identity,
       // task read discovery, workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(40);
+      expect(callArgs.customTools).toHaveLength(41);
       expect(callArgs.customTools![0]!.name).toBe("fn_task_create");
       expect(callArgs.customTools![1]!.name).toBe("fn_task_log");
       expect(callArgs.customTools![2]!.name).toBe("fn_task_document_write");
@@ -3089,14 +3179,15 @@ describe("executeHeartbeat", () => {
       expect(callArgs.customTools![30]!.name).toBe("fn_research_list");
       expect(callArgs.customTools![31]!.name).toBe("fn_research_get");
       expect(callArgs.customTools![32]!.name).toBe("fn_research_cancel");
-      expect(callArgs.customTools![33]!.name).toBe("fn_workflow_select");
-      expect(callArgs.customTools![34]!.name).toBe("fn_task_promote");
-      expect(callArgs.customTools![35]!.name).toBe("fn_web_fetch");
-      expect(callArgs.customTools![36]!.name).toBe("fn_memory_search");
-      expect(callArgs.customTools![37]!.name).toBe("fn_memory_get");
-      expect(callArgs.customTools![38]!.name).toBe("fn_memory_append");
+      expect(callArgs.customTools![33]!.name).toBe("fn_research_retry");
+      expect(callArgs.customTools![34]!.name).toBe("fn_workflow_select");
+      expect(callArgs.customTools![35]!.name).toBe("fn_task_promote");
+      expect(callArgs.customTools![36]!.name).toBe("fn_web_fetch");
+      expect(callArgs.customTools![37]!.name).toBe("fn_memory_search");
+      expect(callArgs.customTools![38]!.name).toBe("fn_memory_get");
+      expect(callArgs.customTools![39]!.name).toBe("fn_memory_append");
       // fn_heartbeat_done is last (terminal tool)
-      expect(callArgs.customTools![39]!.name).toBe("fn_heartbeat_done");
+      expect(callArgs.customTools![40]!.name).toBe("fn_heartbeat_done");
     });
 
     it("loads workspace memory into system prompt and identity snapshot when inline memory is empty", async () => {
@@ -4202,4 +4293,3 @@ describe("executeHeartbeat", () => {
 });
 
 // ── Task Creation Tracking Tests ──────────────────────────────────────
-

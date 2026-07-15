@@ -24,19 +24,21 @@ import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async-allocator.js";
 import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
+import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
 import { ActivityLogRow } from "./row-types.js";
 import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import { WorkflowDefinition, WorkflowDefinitionInput, WorkflowNodeLayout } from "../workflow-definition-types.js";
+import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
 import { resolveDefaultOnOptionalGroupIds } from "../workflow-optional-steps.js";
 import { resolveSwitchReconciliation } from "../workflow-reconciliation.js";
 import { WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX } from "../store.js";
+import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -259,16 +261,7 @@ export async function readAllWorkflowDefinitionsImpl(store: TaskStore): Promise<
       store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
       return store.workflowDefinitionsCache;
     }
-    const rows = store.db.prepare("SELECT * FROM workflows ORDER BY createdAt ASC").all() as Array<{
-      id: string;
-      name: string;
-      description: string;
-      ir: string;
-      layout: string;
-      kind?: string | null;
-      createdAt: string;
-      updatedAt: string;
-    }>;
+    const rows = store.db.prepare("SELECT * FROM workflows ORDER BY createdAt ASC").all() as StoredWorkflowRow[];
     store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
     return store.workflowDefinitionsCache;
 }
@@ -295,16 +288,7 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
       return asyncRow ? store.toWorkflowDefinition(asyncRow) : undefined;
     }
     const row = store.db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as
-      | {
-          id: string;
-          name: string;
-          description: string;
-          ir: string;
-          layout: string;
-          kind?: string | null;
-          createdAt: string;
-          updatedAt: string;
-        }
+      | StoredWorkflowRow
       | undefined;
     return row ? store.toWorkflowDefinition(row) : undefined;
 }
@@ -350,6 +334,7 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
       id,
       name,
       description: input.description ?? "",
+      icon: normalizeWorkflowIcon(input.icon),
       kind: input.kind === "fragment" ? "fragment" : "workflow",
       ir,
       layout,
@@ -358,13 +343,14 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
     };
     store.db
       .prepare(
-        `INSERT INTO workflows (id, name, description, ir, layout, kind, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         definition.id,
         definition.name,
         definition.description,
+        definition.icon ?? null,
         serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
         JSON.stringify(definition.layout),
         definition.kind,
@@ -496,10 +482,18 @@ Async backend-mode read of a task's workflow selection (PostgreSQL). stepIds is 
 export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined> {
     if (!store.backendMode) return store.getTaskWorkflowSelection(taskId);
     const layer = store.asyncLayer!;
+    /*
+    FNXC:WorkflowModelLanes 2026-07-14-16:34:
+    A task workflow selection is project-owned. Shared PostgreSQL deployments may reuse task ids across projects, so every authoritative selection read must include the bound central project id instead of relying on taskId or connection state alone.
+    */
+    const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
     const rows = await layer.db
       .select({ workflowId: schema.project.taskWorkflowSelection.workflowId, stepIds: schema.project.taskWorkflowSelection.stepIds })
       .from(schema.project.taskWorkflowSelection)
-      .where(eq(schema.project.taskWorkflowSelection.taskId, taskId))
+      .where(and(
+        eq(schema.project.taskWorkflowSelection.projectId, projectId),
+        eq(schema.project.taskWorkflowSelection.taskId, taskId),
+      ))
       .limit(1);
     if (rows.length === 0) return undefined;
     const row = rows[0]!;
@@ -521,7 +515,10 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
         .insert(schema.project.taskWorkflowSelection)
         .values({ taskId, workflowId, stepIds, updatedAt })
         .onConflictDoUpdate({
-          target: schema.project.taskWorkflowSelection.taskId,
+          target: [
+            schema.project.taskWorkflowSelection.projectId,
+            schema.project.taskWorkflowSelection.taskId,
+          ],
           set: { workflowId, stepIds, updatedAt },
         });
       return;
@@ -691,7 +688,9 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     if (!(await store.workflowColumnsFlagOn())) {
       return { enabledWorkflowSteps };
     }
-    const newIr = store.resolveTaskWorkflowIrSync(taskId);
+    const newIr = store.backendMode
+      ? await resolveWorkflowIrForTask(store, taskId)
+      : store.resolveTaskWorkflowIrSync(taskId);
     const current = store.readTaskFromDb(taskId, { includeDeleted: false });
     if (!current) return { enabledWorkflowSteps };
     const fromColumn = current.column;
@@ -852,6 +851,10 @@ export function getSettingsSyncImpl(store: TaskStore): Settings {
 }
 
 export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options);
+    }
     const rows = store.db
       .prepare(
         `SELECT * FROM activityLog
@@ -882,6 +885,10 @@ export async function getInReviewDurationEventsImpl(store: TaskStore, options: {
 }
 
 export async function getTaskMergedTaskIdsImpl(store: TaskStore, options: { since: string; until: string }): Promise<Set<string>> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      return getTaskMergedTaskIdsAsync(layer.db, layer.projectId ?? "", options);
+    }
     const rows = store.db
       .prepare(
         `SELECT DISTINCT taskId FROM activityLog

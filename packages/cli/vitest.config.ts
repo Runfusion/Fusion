@@ -152,6 +152,18 @@ export default defineConfig({
         replacement: resolve(__dirname, "../../plugins/fusion-plugin-grok-runtime/src/index.ts"),
       },
       /*
+      FNXC:OmpAcp 2026-07-11-23:35:
+      runtime-provider-probes imports @fusion-plugin-examples/omp-runtime; alias source for checkout tests.
+      */
+      {
+        find: /^@fusion-plugin-examples\/omp-runtime\/probe$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-omp-runtime/src/probe.ts"),
+      },
+      {
+        find: /^@fusion-plugin-examples\/omp-runtime$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-omp-runtime/src/index.ts"),
+      },
+      /*
       FNXC:PluginTests 2026-07-04-09:30:
       The roadmap plugin (@fusion-plugin-examples/roadmap) is imported by the CLI extension. Without source aliases, Vite resolves to the dist/ exports which don't exist in a source checkout.
       */

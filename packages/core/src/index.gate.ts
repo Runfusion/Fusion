@@ -91,6 +91,17 @@ export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from ".
 export type { NearDuplicateCanonicalState } from "./near-duplicate-canonical.js";
 export * from "./frontend-ux-policy.js";
 export * from "./file-scope-classification.js";
+export {
+  WAKE_DELTA_ASSIGNED_TASKS_CAP,
+  rankAssignedTasksForWakeDelta,
+  formatAssignedTasksWakeDeltaSection,
+} from "./assigned-task-ranking.js";
+export type {
+  AssignedTaskLike,
+  AssignedTaskRankTier,
+  RankedAssignedTaskLine,
+  RankAssignedTasksForWakeDeltaResult,
+} from "./assigned-task-ranking.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./task-list-format.js";
 export { MOCK_PROVIDER_ID } from "./mock-provider-constants.js";
 export type { MockProviderId, MockSessionPurpose } from "./mock-provider-constants.js";

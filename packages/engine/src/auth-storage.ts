@@ -46,35 +46,7 @@ apply so a single stuck token doesn't get hammered).
 const OAUTH_REFRESH_BUFFER_MS = 5 * 60_000;
 const ANTHROPIC_PROVIDER_ID = "anthropic";
 const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
-const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
-const ANTHROPIC_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-/*
-FNXC:ClaudeOAuth 2026-07-05-18:52:
-Anthropic subscription login (delegated to pi-ai) grants the full Claude Code scope set — `user:inference` is what authorizes model calls. Earlier this constant was `["user:profile"]`, which was WRONG twice over: (1) it under-describes the token pi-ai actually obtains, and (2) it was fed into the refresh request's `scope` param, which under RFC 6749 §6 NARROWS the refreshed access token to profile-only and strips `user:inference`. The symptom: the account reads "logged in via OAuth" (token present + unexpired) yet every model call 403s with "OAuth token does not meet scope requirement any_of(user:inference, ...)". The default must mirror pi-ai's granted scopes so any fallback describes a usable token, and the refresh path (below) must NOT send it as a narrowing scope.
-*/
-const ANTHROPIC_DEFAULT_SCOPES = [
-  "org:create_api_key",
-  "user:profile",
-  "user:inference",
-  "user:sessions:claude_code",
-  "user:mcp_servers",
-  "user:file_upload",
-];
-const OAUTH_REFRESH_TIMEOUT_MS = 10_000;
 const OAUTH_REFRESH_FAILURE_COOLDOWN_MS = 30_000;
-
-type OAuthTokenResponse = {
-  access_token?: unknown;
-  accessToken?: unknown;
-  refresh_token?: unknown;
-  refreshToken?: unknown;
-  expires_in?: unknown;
-  expiresIn?: unknown;
-  expires_at?: unknown;
-  expiresAt?: unknown;
-  scope?: unknown;
-  scopes?: unknown;
-};
 
 export function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || homedir();
@@ -179,116 +151,27 @@ function isSameOAuthCredentialIdentity(
     && left.expires === right.expires;
 }
 
-function getOAuthScopes(credential: StoredCredential): string[] {
-  const scopes = Array.isArray(credential.scopes)
-    ? credential.scopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0)
-    : [];
-  return scopes.length > 0 ? scopes : ANTHROPIC_DEFAULT_SCOPES;
-}
-
-function parseExpiryMs(data: OAuthTokenResponse, now: number): number {
-  const expiresAt = data.expires_at ?? data.expiresAt;
-  if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) {
-    return expiresAt;
-  }
-  if (typeof expiresAt === "string") {
-    const parsed = Date.parse(expiresAt);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  const expiresIn = data.expires_in ?? data.expiresIn;
-  if (typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0) {
-    return now + expiresIn * 1000;
-  }
-
-  return now + 3_600_000;
-}
-
-function parseScopes(data: OAuthTokenResponse, fallback: string[]): string[] {
-  if (Array.isArray(data.scopes)) {
-    const scopes = data.scopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0);
-    if (scopes.length > 0) {
-      return scopes;
-    }
-  }
-  if (typeof data.scope === "string") {
-    const scopes = data.scope.split(/\s+/).filter(Boolean);
-    if (scopes.length > 0) {
-      return scopes;
-    }
-  }
-  return fallback;
-}
-
 async function refreshAnthropicOAuthCredential(credential: StoredCredential): Promise<StoredCredential | undefined> {
-  const refresh = credential.refresh;
-  if (!refresh) {
+  if (credential.type !== "oauth" || !credential.refresh) {
     return undefined;
   }
-
-  const scopes = getOAuthScopes(credential);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OAUTH_REFRESH_TIMEOUT_MS);
 
   try {
     /*
-    FNXC:ClaudeOAuth 2026-06-13-22:46:
-    Fusion must renew expired Claude OAuth credentials with the stored refresh token so users are not forced through repeated manual Claude re-login when the access token expires.
-    Persist the rotated access token in Fusion auth storage because model execution and dashboard usage resolve credentials through different runtime paths.
+    FNXC:ClaudeOAuth 2026-07-14-14:25:
+    Refresh through pi-ai's registered Anthropic provider—the same implementation that performs login and owns the endpoint, client id, expiry buffer, and response contract. Fusion's duplicated HTTP implementation drifted, so expired subscription OAuth degraded into a misleading missing-API-key failure after restart or PostgreSQL migration. Preserve Fusion's recorded scopes because the provider refresh result intentionally contains only runtime token fields.
     */
-    /*
-    FNXC:ClaudeOAuth 2026-07-05-18:52:
-    Do NOT send `scope` on refresh. RFC 6749 §6: a refresh request that includes `scope` re-issues the access token with EXACTLY that scope (never broader), so sending our stored/derived scope list can only strip capabilities — and did: it narrowed refreshed tokens to `user:profile` and broke inference. Omitting `scope` makes Anthropic preserve the originally-granted scopes (this is what pi-ai's own `refreshAnthropicToken` does). `scopes` is still resolved above and used only as the parseScopes fallback for the persisted credential record.
-    */
-    const response = await fetch(ANTHROPIC_TOKEN_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "claude-code-fusion-dashboard",
-      },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: refresh,
-        client_id: ANTHROPIC_OAUTH_CLIENT_ID,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      return undefined;
-    }
-
-    const data = await response.json() as OAuthTokenResponse;
-    const access = typeof data.access_token === "string"
-      ? data.access_token
-      : typeof data.accessToken === "string"
-        ? data.accessToken
-        : undefined;
-    if (!access) {
-      return undefined;
-    }
-
-    const now = Date.now();
-    const nextRefresh = typeof data.refresh_token === "string"
-      ? data.refresh_token
-      : typeof data.refreshToken === "string"
-        ? data.refreshToken
-        : refresh;
+    const provider = getOAuthProvider(ANTHROPIC_PROVIDER_ID);
+    if (!provider?.refreshToken) return undefined;
+    const refreshed = await provider.refreshToken(credential as OAuthCredentials);
 
     return {
       ...credential,
-      type: "oauth",
-      access,
-      refresh: nextRefresh,
-      expires: parseExpiryMs(data, now),
-      scopes: parseScopes(data, scopes),
+      ...refreshed,
+      ...(credential.scopes ? { scopes: credential.scopes } : {}),
     };
   } catch {
     return undefined;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

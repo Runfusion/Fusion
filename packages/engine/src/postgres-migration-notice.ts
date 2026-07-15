@@ -1,9 +1,11 @@
-import { DASHBOARD_USER_ID, type MessageStore } from "@fusion/core";
+import { DASHBOARD_USER_ID, type MessageStore, type Settings } from "@fusion/core";
 
 export const POSTGRES_MIGRATION_NOTICE_KIND = "postgres-migration-notice";
+export const POSTGRES_MIGRATION_COMPLETE_NOTICE_KIND = "postgres-migration-complete";
 export const POSTGRES_MIGRATION_HELP_URL = "https://discord.gg/ksrfuy7WYR";
 
 export type PostgresMigrationNoticeResult = "delivered" | "already-delivered" | "version-mismatch" | "no-store";
+export type PostgresMigrationCompleteNoticeResult = "delivered" | "already-delivered" | "no-migration" | "no-store";
 
 export interface PostgresMigrationNoticeLog {
   warn(message: string): void;
@@ -13,6 +15,17 @@ export interface PostgresMigrationNoticeLog {
 export interface DeliverPostgresMigrationNoticeArgs {
   messageStore: MessageStore | undefined;
   version: string | undefined;
+  log?: PostgresMigrationNoticeLog;
+}
+
+type SqliteMigrationNotice = NonNullable<Settings["sqliteMigrationNotice"]>;
+
+export interface DeliverPostgresMigrationCompleteNoticeArgs {
+  messageStore: MessageStore | undefined;
+  notice: SqliteMigrationNotice | null | undefined;
+  projectId?: string;
+  deliveredAt?: string;
+  markDelivered?: (deliveredAt: string) => Promise<void>;
   log?: PostgresMigrationNoticeLog;
 }
 
@@ -106,5 +119,68 @@ export async function deliverPostgresMigrationNoticeIfNeeded({
     const message = error instanceof Error ? error.message : String(error);
     log?.warn(`Postgres migration inbox notice delivery failed (continuing startup): ${message}`);
     return fallbackResult;
+  }
+}
+
+function buildPostgresMigrationCompleteContent(notice: SqliteMigrationNotice): string {
+  const backupLines = notice.sqliteBackups.length > 0
+    ? notice.sqliteBackups.map((path) => `- ${path}`)
+    : ["- No backup paths were recorded."];
+  return [
+    "SQLite to PostgreSQL migration complete",
+    "",
+    `Fusion migrated ${notice.migratedRows.toLocaleString("en-US")} rows across ${notice.tables.toLocaleString("en-US")} tables on ${notice.migratedAt}.`,
+    "Your original SQLite database files were kept as backups:",
+    ...backupLines,
+    "",
+    `Need help or see anything unexpected? [Get help on Discord](${POSTGRES_MIGRATION_HELP_URL}).`,
+  ].join("\n");
+}
+
+/*
+FNXC:PostgresMigrationInbox 2026-07-14-12:10:
+After a successful SQLite cutover, the dashboard user must receive exactly one system inbox message containing the migration timestamp, row/table totals, retained backup paths, and the Fusion Discord help link. A deterministic database primary key atomically arbitrates concurrent delivery, while an independent top-level settings marker remains the durable once-only authority if mailbox retention later prunes the message.
+
+FNXC:PostgresMigrationInbox 2026-07-14-12:10:
+Delivery remains best-effort so an informational message can never make a successfully migrated project fail to start. A failed marker write is retried on restart; the atomic message insert reports the existing notice instead of creating a duplicate.
+*/
+export async function deliverPostgresMigrationCompleteNoticeIfNeeded({
+  messageStore,
+  notice,
+  projectId,
+  deliveredAt: durableDeliveredAt,
+  markDelivered,
+  log,
+}: DeliverPostgresMigrationCompleteNoticeArgs): Promise<PostgresMigrationCompleteNoticeResult> {
+  try {
+    if (!notice) return "no-migration";
+    if (durableDeliveredAt) return "already-delivered";
+    if (!messageStore) return "no-store";
+
+    const deliveredAt = new Date().toISOString();
+    const outcome = await messageStore.sendMessageOnce({
+      fromType: "system",
+      toType: "user",
+      toId: DASHBOARD_USER_ID,
+      type: "system",
+      content: buildPostgresMigrationCompleteContent(notice),
+      metadata: {
+        kind: POSTGRES_MIGRATION_COMPLETE_NOTICE_KIND,
+        migratedAt: notice.migratedAt,
+        migratedRows: notice.migratedRows,
+        tables: notice.tables,
+        sqliteBackups: notice.sqliteBackups,
+        helpUrl: POSTGRES_MIGRATION_HELP_URL,
+        deliveredAt,
+      },
+    }, `${POSTGRES_MIGRATION_COMPLETE_NOTICE_KIND}:${projectId ?? notice.migratedAt}`);
+    await markDelivered?.(deliveredAt);
+    if (!outcome.inserted) return "already-delivered";
+    log?.log?.("Delivered PostgreSQL migration-complete dashboard inbox notice");
+    return "delivered";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log?.warn(`PostgreSQL migration-complete inbox notice delivery failed (continuing startup): ${message}`);
+    return "already-delivered";
   }
 }

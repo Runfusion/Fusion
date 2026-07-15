@@ -103,6 +103,7 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-omp-runtime",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-compound-engineering",
 ]);

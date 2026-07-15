@@ -38,22 +38,27 @@ export function registerIntegratedRouters({
 }: IntegratedRoutersOptions): void {
   router.use(
     "/missions",
-    createMissionRouter(store, options?.missionAutopilot, aiSessionStore, options?.missionExecutionLoop, options?.engineManager, options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3]),
+    createMissionRouter(store, options?.missionAutopilot, aiSessionStore, options?.missionExecutionLoop, options?.engineManager, options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3], options),
   );
 
-  router.use("/insights", createInsightsRouter(store));
-  router.use("/evals", createEvalsRouter(store));
-  router.use("/research", createResearchRouter(store));
+  // FNXC:CentralProjectIdentity 2026-07-13-23:55:
+  // Thread ServerOptions into the project-scoped routers so their request
+  // middleware resolves an explicit central-registry project id (request id →
+  // registered launch project id) via the shared seam instead of the implicit
+  // raw launch-dir store fallback.
+  router.use("/insights", createInsightsRouter(store, options));
+  router.use("/evals", createEvalsRouter(store, options));
+  router.use("/research", createResearchRouter(store, options));
   router.use("/experiments", createExperimentRouter(store));
-  router.use("/todos", createTodoRouter(store));
-  router.use("/goals", createGoalsRouter(store));
+  router.use("/todos", createTodoRouter(store, options));
+  router.use("/goals", createGoalsRouter(store, options));
   router.use("/roadmaps", createRoadmapCompatibilityRouter(store));
   router.use("/stash-recovery", createStashRecoveryRouter(store));
   // T7: resolve the per-project working directory so the group-PR helpers (which
   // otherwise resolve owner/repo from the PROCESS cwd) target the right repo in
   // multi-project servers. Prefer the per-project engine's working directory;
   // fall back to the single engine, then the store's root dir.
-  const resolveProjectCwd = (projectId?: string): string | undefined => {
+  const resolveProjectCwd = (projectId: string | undefined, requestStore: TaskStore): string | undefined => {
     const engine = projectId && options?.engineManager
       ? options.engineManager.getEngine(projectId)
       : options?.engine;
@@ -66,7 +71,7 @@ export function registerIntegratedRouters({
       }
     }
     try {
-      return store.getRootDir();
+      return requestStore.getRootDir();
     } catch {
       return undefined;
     }
@@ -83,7 +88,7 @@ export function registerIntegratedRouters({
       }
       return await promote(groupId);
     },
-    closeGroupPr: async ({ group, projectId }) => {
+    closeGroupPr: async ({ group, projectId, store: requestStore }) => {
       // Best-effort terminal reconciliation: close the single managed GitHub PR
       // (U6, R7). The route still marks the row abandoned/closed if this returns
       // null or throws.
@@ -93,18 +98,18 @@ export function registerIntegratedRouters({
       // Fix #1: forward the configured token so token-only environments (no gh
       // CLI) can still close the PR.
       const client = new GitHubClient(options?.githubToken);
-      const result = await closeGroupPullRequest(client, group, resolveProjectCwd(projectId));
+      const result = await closeGroupPullRequest(client, group, resolveProjectCwd(projectId, requestStore));
       return { prNumber: result.prNumber, prUrl: result.prUrl, prState: result.prState };
     },
-    reconcileGroupPr: async ({ group, projectId }) => {
+    reconcileGroupPr: async ({ group, projectId, store: requestStore }) => {
       // Fix #3: flip prState when the managed PR was merged/closed out-of-band.
       // Build a read-only SyncGroupPrFn over the GitHub client (mirrors the CLI's
       // syncGroupPrCallback shape) and delegate persistence to the engine's
       // reconcileBranchGroupPr primitive.
       const client = new GitHubClient(options?.githubToken);
-      const cwd = resolveProjectCwd(projectId);
+      const cwd = resolveProjectCwd(projectId, requestStore);
       await reconcileBranchGroupPr({
-        store,
+        store: requestStore,
         group,
         // T7: forward the per-project cwd so reconcileGroupPullRequest resolves
         // the repo identity per-project (not from the process cwd).
@@ -114,7 +119,9 @@ export function registerIntegratedRouters({
         fetchMembers: false,
         syncGroupPr: async ({ cwd: projectCwd, group: g }) => reconcileGroupPullRequest(client, g, projectCwd || undefined),
       });
-      return (await store.getBranchGroup(group.id)) ?? group;
+      // FNXC:BranchGroupProjectScoping 2026-07-13-12:00:
+      // Re-read from the request-scoped store after reconcile, and await the async Postgres-era TaskStore API from main.
+      return (await requestStore.getBranchGroup(group.id)) ?? group;
     },
   }));
 

@@ -167,6 +167,10 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // FNXC:WorkflowLifecycle 2026-07-12: FN-7863 execute self-requeue streak (merge port).
   { table: "tasks", column: "execute_requeue_loop_count", type: "integer" },
   { table: "tasks", column: "execute_requeue_loop_signature", type: "text" },
+  // FNXC:PlanReviewReplan 2026-07-13: bounded triage Plan Review REVISE replan counter.
+  // Additive column not present in the baseline snapshot, so existing embedded-PG
+  // databases must self-heal it via ALTER TABLE ADD COLUMN IF NOT EXISTS on boot.
+  { table: "tasks", column: "plan_review_replan_count", type: "integer" },
   // distributed_task_id_state
   { table: "distributed_task_id_state", column: "prefix", type: "text" },
   { table: "distributed_task_id_state", column: "next_sequence", type: "integer" },
@@ -189,6 +193,8 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS alone never
   // upgrades an existing table).
   { table: "chat_sessions", column: "thinking_level", type: "text" },
+  { table: "chat_sessions", column: "validator_thinking_level", type: "text" },
+  { table: "chat_sessions", column: "planning_thinking_level", type: "text" },
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): sqlite v143-145 additive
   // columns — validator/planning task overrides + chat-room default; listed so
   // existing embedded-PG databases self-heal them on boot.

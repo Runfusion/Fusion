@@ -182,19 +182,11 @@ async function getMaxReservationSequence(
  * one past the highest in-use suffix across tasks, archived tasks, and
  * reservations so a newly-allocated id never collides with an existing one.
  *
- * FNXC:CentralProjectIdentity 2026-07-13-22:40:
- * `projectId` is threaded here for ONE purpose only: scoping the config-row read
- * (`getConfiguredPrefixAndLegacyNextId`) so a per-project `config.next_id` legacy
- * floor is read from the bound project's row. That legacy value can only RAISE
- * the floor (via `Math.max`), never lower the shared sequence. The three
- * high-water scans below (tasks / archived_tasks / reservations) stay GLOBAL —
- * they take NO projectId — because the id namespace is global across the cluster
- * (see getMaxTaskSequenceFromTable). Consequently, with two projects sharing a
- * prefix, the returned floor is the max in-use suffix across BOTH projects, and
- * `ensureStateRow`'s `GREATEST(current, floor)` update never moves the shared
- * `distributed_task_id_state.next_sequence` backward. Net: a per-project floor
- * can never lower the shared sequence or emit an id below another project's max,
- * so no cross-project duplicate id is possible.
+ * FNXC:ProjectTaskIdentity 2026-07-14-13:59:
+ * The runtime session binds every scan here to one project through forced RLS.
+ * Config floors, live tasks, archived tasks, reservations, and allocator state
+ * therefore form one independent task-ID namespace per project; two projects
+ * may both allocate FN-1 without sharing or advancing each other's counter.
  */
 export async function computeNextSequenceFloor(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -376,12 +368,10 @@ function formatDistributedTaskId(prefix: string, sequence: number): string {
  * Check whether a task ID already exists in the tasks or archived_tasks table.
  * Used by the async allocator reservation loop to skip past existing IDs.
  *
- * FNXC:CentralProjectIdentity 2026-07-13-22:40:
- * Defense-in-depth existence probe: matched by exact task id ONLY, never scoped
- * by project_id, so it detects an id owned by ANY project on the shared cluster.
- * This backstops the global sequence floor — even if the shared sequence somehow
- * pointed at a taken id, the reserve loop skips forward until it finds one no
- * project holds, keeping the global tasks.id namespace collision-free.
+ * FNXC:ProjectTaskIdentity 2026-07-14-13:59:
+ * The exact-ID predicate is intentionally simple because forced RLS supplies
+ * the project predicate at the database boundary. It detects collisions only
+ * within the allocator's current project-local namespace.
  */
 async function taskIdExists(
   tx: DbTransaction,

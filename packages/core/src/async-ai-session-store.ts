@@ -159,14 +159,14 @@ export async function upsertAiSession(handle: QueryHandle, session: AiSessionRow
       result: resultValue,
       thinkingOutput: thinking,
       error: session.error ?? null,
-      projectId: session.projectId ?? null,
+      ...(session.projectId ? { projectId: session.projectId } : {}),
       createdAt: session.createdAt || now,
       updatedAt: now,
       lockedByTab: null,
       lockedAt: null,
     })
     .onConflictDoUpdate({
-      target: schema.project.aiSessions.id,
+      target: [schema.project.aiSessions.projectId, schema.project.aiSessions.id],
       set: {
         status: session.status,
         title: session.title,

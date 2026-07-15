@@ -27,7 +27,7 @@
  * gate stays green without a running server.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
@@ -44,9 +44,13 @@ function uniqueDbName(): string {
   return `fusion_cas_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/*
+FNXC:PgTestAuthFix 2026-07-14-00:00:
+The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+*/
 function adminExec(statement: string): void {
   execSync(
-    `psql -h localhost -p 5432 -U ${process.env.USER ?? "postgres"} -d postgres -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
 }
@@ -399,5 +403,55 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
     const { AsyncSecretsStore } = await import("../../async-secrets-store.js");
     const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider());
     await expect(store.deleteSecret("nope", "project")).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  /**
+   * FNXC:PostgresMigrationCoverage 2026-07-13-22:54:
+   * Secret audit notifications must cover create, update, read, and delete without ever including plaintext, and a failing observer must remain non-blocking so audit infrastructure cannot break credential operations.
+   */
+  it("SecretsStore: audit events omit plaintext and emitter failures stay non-blocking", async () => {
+    ctx = await setupCtx();
+    const { AsyncSecretsStore } = await import("../../async-secrets-store.js");
+    const events: Array<Record<string, unknown>> = [];
+    const store = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider(), {
+      auditEmitter: (event) => events.push(event),
+    });
+
+    const created = await store.createSecret({
+      scope: "project",
+      key: "AUDITED_TOKEN",
+      plaintextValue: "must-never-enter-audit",
+    });
+    await store.updateSecret(created.id, "project", { plaintextValue: "rotated-secret" });
+    await store.revealSecret(created.id, "project", { agentId: "agent-1" });
+    await store.deleteSecret(created.id, "project");
+
+    expect(events.map((event) => event.mutationType)).toEqual([
+      "secret:create",
+      "secret:update",
+      "secret:read",
+      "secret:delete",
+    ]);
+    expect(events.every((event) => event.secretId === created.id && event.key === "AUDITED_TOKEN")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("must-never-enter-audit");
+    expect(JSON.stringify(events)).not.toContain("rotated-secret");
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const resilientStore = new AsyncSecretsStore(ctx.layer, fixedMasterKeyProvider(), {
+      auditEmitter: () => {
+        throw new Error("audit transport unavailable");
+      },
+    });
+    try {
+      await expect(
+        resilientStore.createSecret({ scope: "project", key: "RESILIENT", plaintextValue: "still-created" }),
+      ).resolves.toMatchObject({ key: "RESILIENT" });
+      expect(warning).toHaveBeenCalledWith(
+        "[async-secrets-store] audit emitter failed",
+        expect.objectContaining({ message: "audit transport unavailable" }),
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 });

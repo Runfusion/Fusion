@@ -76,10 +76,14 @@ export {
 } from "./agent-tools.js";
 export {
   POSTGRES_MIGRATION_HELP_URL,
+  POSTGRES_MIGRATION_COMPLETE_NOTICE_KIND,
   POSTGRES_MIGRATION_NOTICE_KIND,
   deliverPostgresMigrationNoticeIfNeeded,
+  deliverPostgresMigrationCompleteNoticeIfNeeded,
   isPostgresMigrationNoticeVersion,
   type DeliverPostgresMigrationNoticeArgs,
+  type DeliverPostgresMigrationCompleteNoticeArgs,
+  type PostgresMigrationCompleteNoticeResult,
   type PostgresMigrationNoticeLog,
   type PostgresMigrationNoticeResult,
 } from "./postgres-migration-notice.js";

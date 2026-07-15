@@ -365,6 +365,18 @@ export class AgentStore extends EventEmitter {
     this.asyncLayer = options.asyncLayer ?? null;
   }
 
+  private get backendProjectId(): string {
+    const projectId = this.asyncLayer?.projectId;
+    /*
+    FNXC:AgentHeartbeatIsolation 2026-07-14-00:37:
+    Backend heartbeat runs are project-owned. Reject unbound backend heartbeat/run access instead of silently reading or writing the legacy empty-string partition, which could mix ownership on a shared PostgreSQL cluster.
+    */
+    if (!projectId) {
+      throw new Error("AgentStore backend heartbeat/run operations require asyncLayer.projectId");
+    }
+    return projectId;
+  }
+
   private get db(): Database {
     if (this.backendMode) {
       throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
@@ -2119,6 +2131,9 @@ export class AgentStore extends EventEmitter {
     status: AgentHeartbeatEvent["status"],
     runId?: string
   ): Promise<AgentHeartbeatEvent> {
+    if (this.backendMode) {
+      void this.backendProjectId;
+    }
     return this.withLock(agentId, async () => {
       // Verify agent exists
       const agent = await this.getAgent(agentId);
@@ -2183,6 +2198,7 @@ export class AgentStore extends EventEmitter {
     // FNXC:SqliteFinalRemoval 2026-06-26-00:05:
     // Backend mode: read via async Drizzle helper.
     if (this.backendMode) {
+      void this.backendProjectId;
       return getHeartbeatHistoryAsync(this.asyncLayer!.db, agentId, limit);
     }
     const rows = this.db.prepare(`
@@ -2244,7 +2260,7 @@ export class AgentStore extends EventEmitter {
     let agentId: string;
     let existingRun: AgentHeartbeatRun;
     if (this.backendMode) {
-      const found = await getRunByIdAsync(this.asyncLayer!.db, runId);
+      const found = await getRunByIdAsync(this.asyncLayer!.db, this.backendProjectId, runId);
       if (!found) {
         return;
       }
@@ -2324,7 +2340,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle listActiveHeartbeatRuns helper.
      */
     if (this.backendMode) {
-      return listActiveHeartbeatRunsAsync(this.asyncLayer!.db);
+      return listActiveHeartbeatRunsAsync(this.asyncLayer!.db, this.backendProjectId);
     }
     const rows = this.db.prepare(`
       SELECT data FROM agentRuns
@@ -2539,7 +2555,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle saveRun helper.
      */
     if (this.backendMode) {
-      await saveRunAsync(this.asyncLayer!.db, run);
+      await saveRunAsync(this.asyncLayer!.db, this.backendProjectId, run);
       return;
     }
     this.db.prepare(`
@@ -2567,7 +2583,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle getRunDetail helper.
      */
     if (this.backendMode) {
-      return getRunDetailAsync(this.asyncLayer!.db, agentId, runId);
+      return getRunDetailAsync(this.asyncLayer!.db, this.backendProjectId, agentId, runId);
     }
     const row = this.db.prepare(`
       SELECT data FROM agentRuns WHERE agentId = ? AND id = ?
@@ -2587,7 +2603,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle getRecentRuns helper.
      */
     if (this.backendMode) {
-      return getRecentRunsAsync(this.asyncLayer!.db, agentId, limit);
+      return getRecentRunsAsync(this.asyncLayer!.db, this.backendProjectId, agentId, limit);
     }
     const rows = this.db.prepare(`
       SELECT data FROM agentRuns
@@ -2606,7 +2622,7 @@ export class AgentStore extends EventEmitter {
      * Backend-mode: delegate to async Drizzle getRunStatusCounts helper.
      */
     if (this.backendMode) {
-      return getRunStatusCountsAsync(this.asyncLayer!.db, agentIds);
+      return getRunStatusCountsAsync(this.asyncLayer!.db, this.backendProjectId, agentIds);
     }
     let rows: Array<{ status: string; count: number }>;
 

@@ -24,7 +24,9 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import { getWorkflowSettingsProjectIdImpl } from "../../task-store/remaining-ops-6.js";
+import { resolveEffectiveSettingsById } from "../../workflow-settings-resolver.js";
 import type { TaskStore } from "../../store.js";
+import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
 
@@ -101,6 +103,72 @@ pgTest("workflow-settings project identity keys by the central-registry id (Post
     expect(rows.length).toBe(1);
     expect(rows[0].project_id).toBe(BOUND_PROJECT_ID);
     expect(rows[0].project_id).not.toBe(h.rootDir());
+  });
+
+  it("preserves and resolves every workflow model lane across independent PostgreSQL patches", async () => {
+    const store = await boundStore();
+    const workflowId = "builtin:coding";
+
+    /*
+     * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+     * Migrated execution, planning, and validator model lanes (including their fallback lanes) must coexist in one workflow JSONB row. Saving a later lane must not erase an earlier lane, and runtime resolution must consume the PostgreSQL row rather than its synchronous empty fallback.
+     */
+    await store.updateWorkflowSettingValues(workflowId, BOUND_PROJECT_ID, {
+      executionProvider: "openai-codex",
+      executionModelId: "gpt-5.5",
+    });
+    await store.updateWorkflowSettingValues(workflowId, BOUND_PROJECT_ID, {
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-5",
+      planningFallbackProvider: "openai-codex",
+      planningFallbackModelId: "gpt-5.5",
+    });
+    await store.updateWorkflowSettingValues(workflowId, BOUND_PROJECT_ID, {
+      validatorProvider: "xai",
+      validatorModelId: "grok-code-fast-1",
+      validatorFallbackProvider: "anthropic",
+      validatorFallbackModelId: "claude-sonnet-5",
+    });
+
+    const expected = {
+      executionProvider: "openai-codex",
+      executionModelId: "gpt-5.5",
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-5",
+      planningFallbackProvider: "openai-codex",
+      planningFallbackModelId: "gpt-5.5",
+      validatorProvider: "xai",
+      validatorModelId: "grok-code-fast-1",
+      validatorFallbackProvider: "anthropic",
+      validatorFallbackModelId: "claude-sonnet-5",
+    };
+    expect(await store.getWorkflowSettingValuesAsync(workflowId, BOUND_PROJECT_ID)).toMatchObject(expected);
+    expect(await resolveEffectiveSettingsById(store, workflowId, BOUND_PROJECT_ID)).toMatchObject(expected);
+  });
+
+  it("reads task workflow selections only from the bound project", async () => {
+    const store = await boundStore();
+    await h.adminDb().insert(schema.project.taskWorkflowSelection).values([
+      {
+        projectId: BOUND_PROJECT_ID,
+        taskId: "FN-SHARED",
+        workflowId: "builtin:brainstorming",
+        stepIds: [],
+        updatedAt: "2026-07-14T23:34:00.000Z",
+      },
+      {
+        projectId: "proj_other",
+        taskId: "FN-SHARED",
+        workflowId: "builtin:coding",
+        stepIds: [],
+        updatedAt: "2026-07-14T23:34:00.000Z",
+      },
+    ]);
+
+    expect(await store.getTaskWorkflowSelectionAsync("FN-SHARED")).toEqual({
+      workflowId: "builtin:brainstorming",
+      stepIds: [],
+    });
   });
 
   it("an UNBOUND backend layer falls back to rootDir (legacy key), proving the bound path is what changed", () => {

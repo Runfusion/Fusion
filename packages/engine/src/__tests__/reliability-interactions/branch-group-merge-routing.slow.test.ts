@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { type TaskStore } from "@fusion/core";
 import { aiMergeTask } from "../../merger.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: string, fileName: string): Promise<void> {
   const task = await store.getTask(taskId);
@@ -31,7 +32,7 @@ async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: strin
 }
 
 describe("FN-5782 reliability interactions: branch group merge routing", () => {
-  it.skipIf(!hasGit)("routes shared grouped members to branch group integration branch and emits audit", async () => {
+  it.skipIf(!hasGit || !hasPg)("routes shared grouped members to branch group integration branch and emits audit", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5782-RI-SHARED", settings: { testMode: true } as any });
 
     try {
@@ -74,7 +75,7 @@ describe("FN-5782 reliability interactions: branch group merge routing", () => {
     }
   }, 30_000);
 
-  it.skipIf(!hasGit)("routes a shared member to the group branch even when it inherited a sibling fusion/fn-* baseBranch (lost-work regression)", async () => {
+  it.skipIf(!hasGit || !hasPg)("routes a shared member to the group branch even when it inherited a sibling fusion/fn-* baseBranch (lost-work regression)", async () => {
     const fixture = await makeReliabilityFixture({ taskId: "FN-5782-RI-SIBLING", settings: { testMode: true } as any });
 
     try {
@@ -129,7 +130,7 @@ describe("FN-5782 reliability interactions: branch group merge routing", () => {
     }
   }, 45_000);
 
-  it.skipIf(!hasGit)("records shared-member landing even when autoMerge is false", async () => {
+  it.skipIf(!hasGit || !hasPg)("records shared-member landing even when autoMerge is false", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-5819-RI-AUTO-OFF",
       settings: { testMode: true, autoMerge: false } as any,

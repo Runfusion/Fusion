@@ -24,6 +24,7 @@ import { BoardConfig, BranchGroup, MergeRequestRecord, Task, WorkflowStepTemplat
 import { WorkflowFieldDefinition, WorkflowIr, WorkflowIrColumn } from "../workflow-ir-types.js";
 import { applyPromptOverridesToIr } from "../workflow-prompt-overrides.js";
 import { MoveTaskOptions } from "../store.js";
+import { activityProjectPartition } from "./async-audit.js";
 
 export function readTaskRowFromDbImpl(store: TaskStore, id: string, options?: { includeDeleted?: boolean }): TaskRow | undefined {
     const whereClause = options?.includeDeleted ? "id = ?" : `id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`;
@@ -253,7 +254,10 @@ export async function clearActivityLogImpl(store: TaskStore): Promise<void> {
      * Drizzle instead of the SQLite-specific db.prepare() path.
      */
     if (store.backendMode) {
-      await store.asyncLayer!.db.delete(schema.project.activityLog);
+      const layer = store.asyncLayer!;
+      await layer.db
+        .delete(schema.project.activityLog)
+        .where(eq(schema.project.activityLog.projectId, activityProjectPartition(layer.projectId ?? "")));
       return;
     }
     store.db.prepare("DELETE FROM activityLog").run();
@@ -323,6 +327,4 @@ export function getTodoStoreImpl(store: TaskStore): TodoStore | AsyncTodoStore {
     }
     return store.todoStore;
 }
-
-
 

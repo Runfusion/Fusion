@@ -176,6 +176,7 @@ export async function upsertWorkflowWorkItem(
       })
       .onConflictDoUpdate({
         target: [
+          schema.project.workflowWorkItems.projectId,
           schema.project.workflowWorkItems.runId,
           schema.project.workflowWorkItems.taskId,
           schema.project.workflowWorkItems.nodeId,
@@ -379,7 +380,10 @@ export async function recordCompletionHandoff(
       source,
     })
     .onConflictDoUpdate({
-      target: schema.project.completionHandoffMarkers.taskId,
+      target: [
+        schema.project.completionHandoffMarkers.projectId,
+        schema.project.completionHandoffMarkers.taskId,
+      ],
       set: {
         acceptedAt: now,
         source,

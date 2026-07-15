@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   CreateInteractiveAiSessionFactory,
   InteractiveAiSessionEvent,
@@ -6,8 +6,9 @@ import type {
   PlanningQuestion,
 } from "@fusion/core";
 import { buildStageSystemPrompt, CeOrchestrator, CE_EVENTS } from "../session/orchestrator.js";
+import { getCeSessionStore, type CeSession } from "../session/session-store.js";
 import { getStage } from "../session/stage-registry.js";
-import { makeHarness, makeScriptedSession, type TestHarness } from "./_harness.js";
+import { makeHarness, makeScriptedSession, pgDescribe, type TestHarness } from "./_harness.js";
 
 /**
  * Live working-output + steering-protocol coverage:
@@ -23,8 +24,8 @@ import { makeHarness, makeScriptedSession, type TestHarness } from "./_harness.j
 const QUESTION: PlanningQuestion = { id: "q1", type: "text", question: "Topic?" };
 
 let h: TestHarness;
-beforeEach(() => {
-  h = makeHarness();
+beforeEach(async () => {
+  h = await makeHarness();
 });
 afterEach(() => {
   h.close();
@@ -34,6 +35,14 @@ afterEach(() => {
 function deferred<T>() {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+function signal() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
     resolve = r;
   });
   return { promise, resolve };
@@ -60,7 +69,7 @@ function progressFactory(nextEvent: () => Promise<InteractiveAiSessionEvent>) {
   return { factory, captured };
 }
 
-describe("live working output", () => {
+pgDescribe("live working output", () => {
   it("buffers mid-turn progress, emits observable events, and persists the trace on settle (before the question)", async () => {
     const evt = deferred<InteractiveAiSessionEvent>();
     const { factory, captured } = progressFactory(() => evt.promise);
@@ -88,17 +97,17 @@ describe("live working output", () => {
     expect(live[1].done).toBe(true);
     expect(live[1].isError).toBeUndefined();
 
-    // Observable progress event emitted (throttled; the first one is immediate).
-    expect(
+    // Observable progress is emitted only after its durable liveness write succeeds.
+    await vi.waitFor(() => expect(
       h.emitted.some((e) => e.event === CE_EVENTS.turn && (e.data as { kind?: string }).kind === "progress"),
-    ).toBe(true);
+    ).toBe(true));
 
     // Settle the turn → buffer flushed into history BEFORE the question record.
     evt.resolve({ type: "question", data: QUESTION });
-    await vi.waitFor(() => expect(orch.getState(started.session.id)?.status).toBe("awaiting_input"));
+    await vi.waitFor(async () => expect((await orch.getState(started.session.id))?.status).toBe("awaiting_input"));
     expect(orch.getLiveActivity(started.session.id)).toHaveLength(0);
 
-    const history = orch.getState(started.session.id)!.conversationHistory;
+    const history = (await orch.getState(started.session.id))!.conversationHistory;
     const activityIdx = history.findIndex((t) => t.role === "agent" && t.text.startsWith('{"activity"'));
     const questionIdx = history.findIndex((t) => t.role === "agent" && t.text.startsWith('{"question"'));
     expect(activityIdx).toBeGreaterThanOrEqual(0);
@@ -126,18 +135,18 @@ describe("live working output", () => {
       await sleep(45);
       captured.progress!({ type: "thinking", delta: "." });
     }
-    expect(orch.getState(id)?.status).toBe("active");
+    expect((await orch.getState(id))?.status).toBe("active");
 
     // Go quiet → interrupted after the inactivity window, trace preserved.
-    await vi.waitFor(() => expect(orch.getState(id)?.status).toBe("interrupted"), { timeout: 2000 });
-    expect(orch.getState(id)?.error).toMatch(/no agent activity/i);
-    const history = orch.getState(id)!.conversationHistory;
+    await vi.waitFor(async () => expect((await orch.getState(id))?.status).toBe("interrupted"), { timeout: 2000 });
+    expect((await orch.getState(id))?.error).toMatch(/no agent activity/i);
+    const history = (await orch.getState(id))!.conversationHistory;
     expect(history.some((t) => t.text.startsWith('{"activity"'))).toBe(true);
     expect(captured.dispose).toHaveBeenCalled();
   });
 });
 
-describe("detached turns (route posture)", () => {
+pgDescribe("detached turns (route posture)", () => {
   it("answer(detach) returns immediately with status active and converges to the next question", async () => {
     const NEXT: PlanningQuestion = { id: "q2", type: "text", question: "More?" };
     const scripted = makeScriptedSession([
@@ -158,8 +167,8 @@ describe("detached turns (route posture)", () => {
     expect(stepped.session.status).toBe("active");
     expect(stepped.session.currentQuestion).toBeNull();
     // …and the background turn converges to the next question.
-    await vi.waitFor(() => expect(orch.getState(started.session.id)?.currentQuestion?.id).toBe("q2"));
-    expect(orch.getState(started.session.id)?.status).toBe("awaiting_input");
+    await vi.waitFor(async () => expect((await orch.getState(started.session.id))?.currentQuestion?.id).toBe("q2"));
+    expect((await orch.getState(started.session.id))?.status).toBe("awaiting_input");
   });
 
   it("start(detach) without a working factory converges to an error state (never silent)", async () => {
@@ -173,13 +182,165 @@ describe("detached turns (route posture)", () => {
     });
     const started = await orch.start("brainstorm", { openingMessage: "go", detach: true });
     expect(started.session.id).toBeTruthy();
-    await vi.waitFor(() => expect(orch.getState(started.session.id)?.status).toBe("error"));
-    expect(orch.getState(started.session.id)?.error).toContain("factory exploded");
+    await vi.waitFor(async () => expect((await orch.getState(started.session.id))?.status).toBe("error"));
+    expect((await orch.getState(started.session.id))?.error).toContain("factory exploded");
     expect(h.emitted.map((e) => e.event)).toContain(CE_EVENTS.error);
+  });
+
+  it("terminates unexpected detached rejections and persists a visible failure", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const internal = orch as unknown as {
+      runOpeningTurn(sessionId: string): Promise<never>;
+    };
+    vi.spyOn(internal, "runOpeningTurn").mockRejectedValue(new Error("unexpected detached rejection"));
+
+    const started = await orch.start("brainstorm", { openingMessage: "go", detach: true });
+    await vi.waitFor(async () => expect((await orch.getState(started.session.id))?.status).toBe("error"));
+    expect((await orch.getState(started.session.id))?.error).toContain("unexpected detached rejection");
+    expect(h.ctx.logger.error).toHaveBeenCalledWith(expect.stringContaining("unexpected detached rejection"));
+  });
+
+  it("keeps a detached rejection observably terminal when its primary failure write also rejects", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const internal = orch as unknown as {
+      runOpeningTurn(sessionId: string): Promise<never>;
+    };
+    vi.spyOn(internal, "runOpeningTurn").mockRejectedValue(new Error("detached operation failed"));
+
+    const store = getCeSessionStore(h.ctx);
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("primary failure write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    const started = await orch.start("brainstorm", { openingMessage: "go", detach: true });
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("primary failure write failed"),
+    ));
+
+    expect((await store.getAsync(started.session.id))?.status).toBe("launching");
+    expect(await orch.getState(started.session.id)).toMatchObject({
+      status: "error",
+      error: "detached operation failed",
+    });
+    expect(h.emitted).toContainEqual({
+      event: CE_EVENTS.error,
+      data: { sessionId: started.session.id, message: "detached operation failed" },
+    });
+  });
+
+  it("does not let an already-queued progress write invalidate the detached failure fallback", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const store = getCeSessionStore(h.ctx);
+    const session = (await store.updateAsync(
+      (await store.createAsync({ stage: "brainstorm" })).id,
+      { status: "active" },
+    ))!;
+    const progressStarted = signal();
+    const releaseProgress = signal();
+    const touchActivityAsync = store.touchActivityAsync.bind(store);
+    vi.spyOn(store, "touchActivityAsync").mockImplementation(async (sessionId, at) => {
+      progressStarted.resolve();
+      await releaseProgress.promise;
+      return touchActivityAsync(sessionId, at);
+    });
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("primary failure write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    const internal = orch as unknown as {
+      queueProgressPersistence(sessionId: string, at: number, force?: boolean): void;
+      detachTurn(session: () => CeSession, label: string, operation: Promise<unknown>): void;
+    };
+    internal.queueProgressPersistence(session.id, session.lastActivityAt + 100, true);
+    await progressStarted.promise;
+    internal.detachTurn(() => session, "controlled turn", Promise.reject(new Error("detached operation failed")));
+    releaseProgress.resolve();
+
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("primary failure write failed"),
+    ));
+    expect((await store.getAsync(session.id))?.lastActivityAt).toBeGreaterThan(session.lastActivityAt);
+    expect(await orch.getState(session.id)).toMatchObject({
+      status: "error",
+      error: "detached operation failed",
+    });
+
+    await store.updateAsync(session.id, { status: "interrupted", error: "durable recovery advanced" });
+    expect(await orch.getState(session.id)).toMatchObject({
+      status: "interrupted",
+      error: "durable recovery advanced",
+    });
+  });
+
+  it("uses the pre-detach snapshot when the failure read and terminal write both reject", async () => {
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: makeScriptedSession([{ type: "question", data: QUESTION }]) })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const store = getCeSessionStore(h.ctx);
+    const session = await store.createAsync({ stage: "brainstorm" });
+    let accepted = session;
+    let rejectOperation!: (cause: unknown) => void;
+    const operation = new Promise<never>((_resolve, reject) => {
+      rejectOperation = reject;
+    });
+    const internal = orch as unknown as {
+      detachTurn(session: () => CeSession, label: string, operation: Promise<unknown>): void;
+    };
+    internal.detachTurn(() => accepted, "controlled turn", operation);
+    accepted = (await store.updateAsync(session.id, { status: "active" }))!;
+
+    const getAsync = store.getAsync.bind(store);
+    vi.spyOn(store, "getAsync")
+      .mockRejectedValueOnce(new Error("failure snapshot read failed"))
+      .mockImplementation(getAsync);
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "error") return Promise.reject(new Error("terminal write failed"));
+      return updateAsync(sessionId, patch);
+    });
+
+    rejectOperation(new Error("detached operation failed"));
+    await vi.waitFor(() => expect(h.ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("terminal write failed"),
+    ));
+
+    expect(await orch.getState(accepted.id)).toMatchObject({
+      status: "error",
+      error: "detached operation failed",
+    });
+    expect(h.ctx.logger.error).toHaveBeenCalledWith(expect.stringContaining("failure snapshot read failed"));
+
+    await store.updateAsync(accepted.id, { status: "interrupted", error: "durable recovery advanced" });
+    expect(await orch.getState(accepted.id)).toMatchObject({
+      status: "interrupted",
+      error: "durable recovery advanced",
+    });
   });
 });
 
-describe("steering protocol", () => {
+pgDescribe("steering protocol", () => {
   it("the stage system prompt documents direct, value+comment, and feedback-only response shapes", () => {
     const prompt = buildStageSystemPrompt(getStage("brainstorm")!);
     expect(prompt).toContain('"value"');

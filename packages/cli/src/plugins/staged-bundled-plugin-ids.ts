@@ -4,6 +4,8 @@ export const RUNTIME_PLUGIN_IDS = [
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-grok-runtime",
+  // FNXC:OmpAcp 2026-07-11-23:35: Oh My Pi ACP runtime (omp acp) — staged like acp/droid for explicit runtime use.
+  "fusion-plugin-omp-runtime",
   "fusion-plugin-droid-runtime",
   "fusion-plugin-acp-runtime",
 ] as const;

@@ -17,10 +17,11 @@ vi.mock("../../pi.js", () => ({
 
 import { aiMergeTask } from "../../merger.js";
 import { WorktreePool } from "../../worktree-pool.js";
-import { git, hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 describe("FN-4954 reliability interactions: merger pooled release ordering", () => {
-  it.skipIf(!hasGit)("detaches and clears task pointers before pooled release exposes the path", async () => {
+  it.skipIf(!hasGit || !hasPg)("detaches and clears task pointers before pooled release exposes the path", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-4954-RI-A",
       task: { steps: [] as any[] },

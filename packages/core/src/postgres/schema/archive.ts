@@ -11,7 +11,7 @@
  * (fts-replacement feature, U7).
  */
 
-import { pgSchema, text, jsonb, index } from "drizzle-orm/pg-core";
+import { pgSchema, text, jsonb, index, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { ARCHIVE_SCHEMA, tsvector } from "./_shared.js";
 
@@ -22,17 +22,16 @@ import { ARCHIVE_SCHEMA, tsvector } from "./_shared.js";
 export const archiveSchema = pgSchema(ARCHIVE_SCHEMA);
 
 export const archivedTasks = archiveSchema.table("archived_tasks", {
-  id: text("id").primaryKey(),
+  id: text("id").notNull(),
   /*
   FNXC:MultiProjectIsolation 2026-07-12:
   Per-project partition key (see project.tasks.projectId). The cold-storage
   archive is one shared table across every project on the embedded cluster,
   so archived-board listings, counts, and searches must be scoped to the
   owning project — otherwise project A's archived list shows project B's
-  rows. Stamped from the bound layer projectId on archive; NULL for
-  legacy/unbound rows (project-agnostic layers skip the filter).
+  rows. Legacy/unbound rows use the explicit __legacy_unscoped__ quarantine.
   */
-  projectId: text("project_id"),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   taskJson: text("task_json").notNull(),
   prompt: text("prompt"),
   archivedAt: text("archived_at").notNull(),
@@ -55,6 +54,7 @@ export const archivedTasks = archiveSchema.table("archived_tasks", {
     sql`to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))`,
   ),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxArchivedTasksArchivedAt").on(t.archivedAt),
   // FNXC:MultiProjectIsolation 2026-07-12: per-project archived-board scans.
   index("idxArchiveArchivedTasksProjectId").on(t.projectId),

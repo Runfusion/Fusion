@@ -162,6 +162,8 @@ export async function runMonitorOnRegression(
   // storm-guard helpers take the layer's Drizzle `db` handle.
   const ingestDb = backend ? layer! : store.getDatabase();
   const asyncDb = layer ? layer.db : null;
+  // FNXC:MonitorProjectIsolation 2026-07-14-12:35: Keep every storm-guard read and claim in the TaskStore's project partition so identical incident IDs in another project cannot be observed or mutated.
+  const projectId = layer?.projectId ?? "__legacy_unscoped__";
 
   let incidentId: string;
   try {
@@ -169,7 +171,7 @@ export async function runMonitorOnRegression(
     incidentId = incident.incidentId;
 
     const recent = backend
-      ? await countRecentAutoFixTasksAsync(asyncDb!, config, nowMs)
+      ? await countRecentAutoFixTasksAsync(asyncDb!, config, nowMs, projectId)
       : countRecentAutoFixTasks(store.getDatabase(), config, nowMs);
     const decision = decideStormGuard(incident, recent, config, nowMs);
 
@@ -193,7 +195,7 @@ export async function runMonitorOnRegression(
     // still null), both await store.createTask, and both attach, opening two
     // tasks where only the last link wins.
     const claimed = backend
-      ? await claimIncidentForFixTaskAsync(asyncDb!, incidentId)
+      ? await claimIncidentForFixTaskAsync(asyncDb!, incidentId, projectId)
       : claimIncidentForFixTask(store.getDatabase(), incidentId);
     if (!claimed) {
       const linked = decision.incident.fixTaskId ?? null;
@@ -216,7 +218,7 @@ export async function runMonitorOnRegression(
       task = await store.createTask(buildFixTaskInput(signal, incidentId));
     } catch (createErr) {
       if (backend) {
-        await releaseIncidentFixTaskClaimAsync(asyncDb!, incidentId);
+        await releaseIncidentFixTaskClaimAsync(asyncDb!, incidentId, projectId);
       } else {
         releaseIncidentFixTaskClaim(store.getDatabase(), incidentId);
       }
@@ -230,7 +232,7 @@ export async function runMonitorOnRegression(
       };
     }
     if (backend) {
-      await attachFixTaskAsync(asyncDb!, incidentId, task.id);
+      await attachFixTaskAsync(asyncDb!, incidentId, task.id, projectId);
     } else {
       attachFixTask(store.getDatabase(), incidentId, task.id);
     }

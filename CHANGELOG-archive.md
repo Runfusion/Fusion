@@ -1,573 +1,1174 @@
 # Fusion changelog archive
 
-Archived release notes before 0.50.0. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
+Archived release notes before 0.60.0. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
+
+## 0.59.0
+
+### Highlights
+
+- Add per-agent Assignment Policy; guard every task-routing path so liaison agents can never receive product tasks.
+- Add a one-time banner announcing the upcoming SQLite→embedded-Postgres storage change.
+- Artifact-registration mail notifications now show an inline preview and open link.
+- Add a Commit and Push button to the Git Manager commit form.
+- Let users define custom terminal shortcut buttons (label + injected sequence) from the terminal Preferences panel.
+
+### New
+
+- Add per-agent Assignment Policy; guard every task-routing path so liaison agents can never receive product tasks.
+- Add a one-time banner announcing the upcoming SQLite→embedded-Postgres storage change.
+- Artifact-registration mail notifications now show an inline preview and open link.
+- Add a Commit and Push button to the Git Manager commit form.
+- Let users define custom terminal shortcut buttons (label + injected sequence) from the terminal Preferences panel.
+- Storage update banner now has a Get help (Discord) button and notes project DBs move to the central Fusion database.
+- Show user-defined custom terminal shortcuts in the embedded Task Detail terminal's mobile key bar.
+- Deliver a one-time inbox notice about the upcoming Postgres storage migration on first 0.59 startup.
+- Change a chat's thinking level mid-conversation from the composer
+- Add per-step Thinking Level controls to schedule and routine AI actions.
+- Add a persisted Thinking Level selector for manual insight generation.
+- Schedule and routine AI steps now apply the chosen thinking level at run time.
+- Add a project Chat default (model or agent) with prompt-each-time or always-use-default New Chat behavior.
+- Switch an active chat's model or agent mid-conversation from the brain-icon popup.
+- Add a Chat Room thinking-effort override for all room responders.
+- Add `fn workflow validate` to dry-run a custom workflow IR without creating or mutating it.
+- Add `fn plugin publish --dry-run` preflight that validates a plugin before publishing.
+- Artifact-registration mail notifications now include a "View task" link to open the producing task.
+- Add separate Reviewer and Planning thinking-level selectors on task details.
+- Add persisted thinking-level controls to Mission Interview and Planning mode.
+- Release notes open with AI Highlights, and the release script prints a ready-to-post engagement tweet.
+- Add Command Center System controls (rebuild & restart, engine/agent restarts, backups, live logs) and a Plugins tab.
+- Add thinking-level controls to agent and bulk task model selectors.
+- Make Chat go-to-top contextual and inline, with the edit pencil compact beside timestamps.
+
+### Fixed
+
+- Deliver plugin skill bodies to agent sessions and the Skills view.
+- Honor plugin skillFiles paths so plugin skills can live in category subdirectories.
+- Agents now auto-recover from transient OAuth token-rotation 401 errors instead of parking for operator action.
+- Center the Chat composer attach and model icons with the message input box.
+- Ideas-intake cards no longer auto-process on restart; replan and Retry work from Todo; All-workflows shows every card.
+- Update the dashboard TUI splash tagline to "software factory".
+- Keep chat history stable while an agent is mid-turn so prior user and agent messages no longer flicker away.
+- Agent chat exposes the same tools on desktop and browser; messaging tools no longer silently drop.
+- Reloading a path-registered plugin now refreshes its version and settings schema.
+- Per-project plugin-skill toggles now apply to agent sessions, not just the Skills view.
+- Agent inspection tools now show why agents are in error or paused.
+- Unpausing (and pausing) a task now updates the board immediately.
+- Make artifact preview popups full-screen sheets on mobile.
+- Restore reliable mobile header dragging for movable floating modals.
+- Fix cramped spacing on the Command Center System tab (logs and controls).
+- Durable agents retry generic heartbeat failures instead of parking as unrecoverable on first error.
+- Shorten the Settings "Reset Settings" button to "Reset" on mobile.
+- Keep the System tab refresh button inline with its title and far right on mobile.
+- Fix "Copy diagnostics" crash on non-secure origins (mobile/HTTP).
+- Durable agents in error state are cleared and retried automatically on engine restart.
+- Fix copy actions crashing or mis-reporting on non-secure origins (mobile/HTTP).
+- Fix chat "Copy response" falsely reporting failure on non-secure origins (mobile/HTTP).
+- Restore task deletion from the right-dock Tasks list.
+- Fix pinned terminal rendering underneath the status footer.
+- Chat thinking-level Default entries now show the real project default.
+- Fix the in-chat model selector on tablet and mobile.
+- Fix jerky tablet drag for the terminal and other movable modals.
+- Keep the task refinement feedback dialog open after selecting Refine.
+- Fix the in-chat model/thinking popup being cut off inside a narrow floating Chat window.
+- Mailbox artifact "View task" now opens the same movable, resizable task window used elsewhere.
+- Task card priority badges now show icon-only so they no longer wrap to a new line.
+- Keep project MCP tools available across fresh executors and approval resumes.
+- Pausing an in-progress task now sticks — the pause survives session teardown instead of auto-resuming.
+- Remove the "Connected" label and shortcut help text from the terminal footer.
+- Fix terminal workspace drop-down rendering behind the floating terminal modal.
+
+## 0.58.0
+
+### Highlights
+
+- Add an interactive worktree-rooted Terminal tab to the task detail view.
+- The Task Detail Terminal tab is now always available, falling back to the project root when a task has no worktree.
+- Agents can now add files to a task's File Scope while working, so out-of-scope edits aren't stranded at merge.
+- Agents save screenshots, videos, HTML mockups, and PDFs as artifacts, shown in a new category gallery with doc editing.
+- Edit task documents and project files in the Artifacts view; markdown by default; fix the Add comment button.
+
+### New
+
+- Add an interactive worktree-rooted Terminal tab to the task detail view.
+- The Task Detail Terminal tab is now always available, falling back to the project root when a task has no worktree.
+- Agents can now add files to a task's File Scope while working, so out-of-scope edits aren't stranded at merge.
+- Agents save screenshots, videos, HTML mockups, and PDFs as artifacts, shown in a new category gallery with doc editing.
+- Edit task documents and project files in the Artifacts view; markdown by default; fix the Add comment button.
+- Add a persistent Advanced settings toggle that keeps uncommon Settings sections and controls hidden by default.
+- Guide repeatable Compound Engineering cycles from product grounding through reusable learnings.
+- Add persisted thinking-level settings for every fallback model lane.
+- Add Grok CLI runtime support as a bundled plugin with a grok-cli model provider.
+- Mobile Settings search row now collapses by default with a show/hide toggle.
+- Add a policy-gated review-lane bypass for cards stranded by a failed pre-merge review step.
+- Grok can now run through the Grok CLI's NDJSON stream, so CLI-authenticated setups need no Fusion-visible API key.
+- Grok CLI runtime now bridges tool execution events (name/args/result) from the NDJSON stream, not just text.
+- Grok work can now be routed through the Grok CLI streaming runtime, not only the direct xAI endpoint.
+- Add a dedicated permission for who may bypass a failed review gate, separate from task mutations.
+- Add a File Scope agent permission category, allowed by default under the grant-all preset.
+- Update the pi SDK and add support for GPT-5.6 codex-tier models.
+- GPT-5.6 codenamed models (luna, sol, terra) are now selectable in the model picker.
+- Add inline thinking-level selection to task and agent model dropdowns.
+- Add per-lane thinking effort overrides to Settings model lane dropdowns.
+- Add per-node workflow thinking-level controls for custom model bindings.
+- Add per-workflow model lane thinking-level controls for planning, execution, and review.
+- Choose a thinking level when starting a new model chat.
+- Plugin prompt contributions can now gate content on per-project plugin settings.
+- Let task edits toggle optional workflow steps directly.
+- Show a Claude "Weekly (Fable)" usage window in the Usage dropdown.
+- Image attachments now appear in the Artifacts view as artifacts.
+- Apply fallback models' own thinking levels when runtime swaps to them.
+- Add inline thinking-level selectors to every fallback model picker in Settings.
+- Artifacts view — Task Documents now uses a left-sidebar list with a right-pane content viewer.
+- Artifacts view — select text in a Task Document's content pane to comment and send it to a new task.
+- Show a Grok (xAI) card in the Usage dropdown for configured Grok API keys.
+- Show Cursor subscription usage in the Usage dropdown.
+- Add a documented CURSOR_API_KEY credential path for Cursor usage metering.
+- Add a Cost tab to task detail and an optional per-card cost badge (default off).
+- Add a resizable Settings navigation rail that remembers its width.
+- CLI agent cold-start timeouts now default to 2 minutes and are configurable.
+- Artifacts view — the Task Documents list now also shows each task's registered artifacts.
+- Add cost data for GLM-5.2, MiniMax-M3, and Kimi K2.6 so their token usage shows a dollar cost instead of "—".
+- Drive Grok CLI sessions over ACP with Fusion tools, skills, and MCP loaded.
+- Add a simplified workflow editor view with a modern vertical canvas, plus Simple/Advanced/List mode toggle.
+- Task cards now show a "Reviewing" badge while a task is in Plan Review.
+- Usage dropdown now shows the Claude Fable weekly window and Grok CLI subscription credit usage.
+- Task Detail terminal now shows its worktree, is shorter on mobile, and sits with Cost after Comments.
+- Cursor CLI model-picker rows now surface reasoning/context-window metadata when the Cursor CLI reports it.
+- Quick-add composer now shows icon-only priority/Fast controls with GitHub tracking beside attach.
+- Move terminal shortcuts into the footer and collapse crowded terminal tabs into a dropdown.
+- Show task Artifacts-tab documents expanded with Markdown by default.
+- Done task cards group Archive and Revert into one dropdown.
+- Priority selection in quick add and task cards is now color-coded by urgency (blue low, amber high, red urgent).
+
+### Fixed
+
+- Cursor CLI models now appear in Fusion's model picker when the Cursor CLI provider is enabled.
+- Terminal now auto-reconnects on first launch instead of getting stuck on "Disconnected".
+- Task card size badge (S/M/L) no longer drops onto a misaligned second row on cards with extra badges.
+- Task card size badge (S/M/L) now sits flush against the card's right edge.
+- Stop false "Anthropic OAuth expired" notifications when the token is actually valid.
+- Fix the Artifacts preview "Add comment" button doing nothing when clicked, and label the preview as read-only.
+- Tidy the board quick-add composer and add a visible task-card actions menu.
+- Show partial estimated costs across all Command Center cost views when some model pricing is unavailable.
+- Daemon exits non-zero on signal termination so Restart=on-failure restarts it after a memory-pressure kill.
+- Prevent stale Planning notifications from pointing to missing sessions.
+- Fix the GitHub/GitLab import preview panel being cut off on tablet-width screens.
+- Fix misaligned padding on the Cursor CLI authentication card.
+- Fix Cursor CLI model discovery and auth to use the real cursor-agent commands.
+- The Cursor CLI binary path override now also applies to the model picker, not just sign-in/status.
+- Fix the search icon overlapping typed/placeholder text in the Files — Project search input.
+- Fix `fn agent stop`/`fn agent start` hanging up to 60s per retry instead of exiting.
+- Background memory-index refresh no longer keeps short-lived CLI/Node processes alive.
+- qmd-backed project memory search no longer keeps short-lived CLI/Node processes alive.
+- Fix background SQLite integrity checks holding short-lived CLI commands open unnecessarily.
+- Grok and Cursor CLI models now appear in model pickers immediately after enabling the provider.
+- Grok CLI models now run instead of failing with "not found in the pi model registry".
+- Fix Grok CLI model picker showing prompt text instead of real model names.
+- Grok now uses the key from ~/.grok/user-settings.json when GROK_API_KEY is not set.
+- Grok CLI no longer requires a Fusion-visible API key — the CLI's own auth is enough to enable it.
+- Archiving a task now releases its active-session lock so the next task can run Plan Review.
+- Fix agents needing repeated stop/start because a stopped agent's heartbeat timer was never fully cleared.
+- Triage recovers automatically when the planning model hits a provider 404/429 and no fallback is set.
+- Bound durable-agent heartbeat worktree-acquisition retries and count exhausted failures.
+- The engine now reacts to CLI `fn agent stop`/`start` promptly instead of waiting up to a minute for the audit sweep.
+- Preserve prior failed review-step attempts so self-healing re-runs no longer erase the failure history.
+- Board mutations from a tool session no longer silently land in the wrong project database.
+- `fn task show`/`move` now retry through a momentarily locked board database instead of failing.
+- All `fn task` subcommands now retry a momentarily locked board database and exit promptly instead of hanging or leaking.
+- Recovery and oversight now wait for approval-blocked tasks instead of resuming them early.
+- `fn branch-group`/`fn pr` now retry a locked board database and exit promptly instead of hanging or leaking.
+- `fn backup`/`memory-backup`/`mcp`/`db vacuum` now retry a locked board database and exit promptly instead of hanging.
+- CLI research/settings-import/agent-export/git/project commands close board stores promptly and retry a locked database.
+- The planner overseer now detects and recovers stalled in-progress tasks instead of leaving hung executors stuck.
+- Harden the dashboard server so provider API keys keep persisting even if a host forgets to wire auth storage.
+- Fix manual merge hold tasks being marked failed when auto-merge is off.
+- Manual merge hold now applies to shared-branch-group tasks whose group has dissolved.
+- Mobile Settings search icon now sits inline next to the section dropdown.
+- Tighten the mobile Settings layout — dropdown-only section picker, single-row footer, and slimmer header/footer.
+- Grok CLI models now run via the grok CLI when no Fusion-visible API key is set.
+- The latest OpenAI GPT-5.6 models now appear everywhere, not just the Settings model list.
+- Fix empty estimated cost on the dashboard so priced runs show a dollar amount.
+- Route no-key Grok CLI chat and fallback model selections through the bundled CLI runtime.
+- GPT-5.6 codex models (luna, sol, terra) now actually appear in the codex model picker.
+- Fix mobile model drop-down lists so they scroll by touch.
+- Route Grok CLI models through the logged-in grok CLI in packaged hosts without requiring GROK_API_KEY.
+- Fix oversized icons and spacing on the MCP servers settings page.
+- Fix Grok CLI chat failing instantly with a "Response failed" error.
+- Fix the Artifacts tab count for default-scope dashboards.
+- Fix mobile Settings footer spacing so version text no longer overlaps actions.
+- Style the Thinking Level dropdown to match the dark model picker across all surfaces.
+- Fix Skills view showing "Skill not found" when opening any skill's content.
+- Plugin skills now show for the project that enabled them, even when the daemon starts elsewhere.
+- Show a No message placeholder for empty assistant chat replies.
+- Grok CLI failures now show the actual error instead of an empty chat message.
+- Task cards no longer wrap the header when a task was created by an agent — the agent badge moved to a bottom row.
+- Surface Grok CLI runtime failures instead of empty chat replies.
+- Fix Chat header showing thread controls while the conversation list is displayed after re-entering Chat.
+- Tighten margins and padding across all mobile Settings pages for a more compact layout.
+- Estimated cost on the dashboard stays populated as runtime model catalogs drift.
+- Surface Grok CLI immediate no-message exits with actionable diagnostics.
+- Fix the Thinking Level dropdown showing an unstyled white control in model pickers.
+- Fix Grok CLI runtime sends to stream responses from xAI's real grok binary.
+- Make Grok CLI chat replies reliable by using the stable headless JSON response.
+- Usage view now shows meters only for AI providers you have configured.
+- Fix a false "Project directory is not a Git repository" error that blocked all task execution in valid repos.
+- Show the xAI logo for Grok model IDs across dashboard provider surfaces.
+- Recover tasks stranded by missing worktrees during merge/review and allow retry.
+- Mobile Settings footer shows the compact "v0.x" version instead of the full word.
+- Usage view now hides Gemini when it isn't configured for metering or its login has expired.
+- Fix the List view controls and quick-add box being cut off on tablet-width screens.
+- Use the real Cursor logo in the usage dropdown, model selection, and other provider surfaces.
+- Stop false "OAuth token expired" push notifications for providers that silently refresh (e.g. GitHub Copilot).
+- Fix terminal header wrapping and spacing when the panel is narrow.
+- Artifacts view — Task Documents sidebar now shows clearer task grouping and more space between tasks.
+- Agents now auto-clear error state and retry on their next heartbeat instead of getting stuck.
+- Fix the Artifacts Task Documents list rendering as blank rows when documents are loaded.
+- Stop recording advisory "merger awaiting-confirmation" planner interventions that never block auto-merge.
+- Fix the mobile Todo view so the list panel fills full height on selection.
+- Coordinate durable-agent error recovery across heartbeat and self-healing.
+- Fix push to remote after merge never running; pick the push remote and target branch from dropdowns in settings.
+- Make stranded AI merge recovery bind to the reviewed clean-room commit.
+- Honor assigned agent models in execution and warn on default-model fallbacks.
+- Fix cramped padding on the Notifications "Failure notification mode" settings card.
+- Fix Grok CLI chat returning errors or empty replies in the dashboard.
+- Fix header connection pill showing "Desktop Desktop" and mixed font sizes.
+- Fix Memory insights parsing and modernize the Memory, Insights, Todos, and agent Memory views.
+- Polish the Memory view: centered layout, labeled editor toolbar, aligned toggle rows.
+- Reconcile completed and stale generated-fix mission invariants.
+- Settings on mobile now keeps showing the GitHub star count.
+- Keep task detail per-model cost tables horizontally scrollable on mobile.
+- Tasks are no longer stuck "awaiting release authorization" — the over-firing release gate was removed.
+- Fix Settings GitLab row overflowing its panel and the footer Save button clipping.
+- Polish first-run setup: connected providers first, state-driven GitHub step, fixed radios, deduped node picker.
+- Auto-heal wedged SQLite connections in place instead of failing every request until restart.
+- Task API operations no longer fail with 500 when a task's PROMPT.md can't be read; server also logs 500 causes.
+- "Update now" now explains permission (EACCES) failures and how to fix them instead of showing raw npm errors.
+
+### Performance
+
+- Fix a slow dashboard memory leak where archived tasks were never evicted from the in-memory badge cache.
+
+### Internal
+
+- Removed leftover UI/i18n/docs for the deleted "awaiting release authorization" planning hold.
+- Update the bundled pi SDK to 0.80.6.
+- Document the planner-overseer eye badge on task cards.
+
+## 0.57.0
+
+### Highlights
+
+- fn_task_attach now refuses to read files outside the task worktree boundary.
+- Archived tasks now load newest-first in pages of 100 with a Show more button.
+- Planning Mode's "go deeper" prompt now suggests plan-specific topics instead of generic buckets.
+- Edit a chat message and resume the conversation from that point.
+- Built-in runtime plugins (Hermes, Paperclip, OpenClaw, Droid) can now be disabled and stay disabled across restarts.
+
+### New
+
+- Archived tasks now load newest-first in pages of 100 with a Show more button.
+- Planning Mode's "go deeper" prompt now suggests plan-specific topics instead of generic buckets.
+- Edit a chat message and resume the conversation from that point.
+- Built-in runtime plugins (Hermes, Paperclip, OpenClaw, Droid) can now be disabled and stay disabled across restarts.
+- Chat search now matches message content, with a "Search in title only" toggle.
+- Hermes-configured models now appear in Fusion's model picker when the Hermes runtime is available.
+- Edit and resend a message in task-detail Planner Chat.
+- Duplicate tasks are no longer auto-archived on creation by default — they are flagged for review instead.
+
+### Fixed
+
+- fn_task_archive and fn_task_delete now accept removeLineageReferences to clear a lineage-parent block.
+- Agents now know they run inside Fusion and won't plan actions across a platform shutdown.
+- Custom providers can now enable Anthropic-style prompt caching to stop re-billing the full context each turn.
+- Approval cards now show the gated command/arguments and dedupe repeated pending requests.
+- Fix Planning Mode Back button showing a generation screen instead of the previous question.
+- Auto-approve plan toggle now appears only on the planning column, not Todo.
+- Fix Quick Add action-row buttons (Save, Attach, Fast, workflow trigger) rendering at mismatched heights.
+- Quick Add action-row controls now resolve one identical box height, not just a min-height floor.
+- Warn when changing a workflow's model surfaces tasks still pinned to the old model, including default-workflow tasks.
+- Retry transient OAuth token-rotation errors so in-flight agent calls survive rotation without failing the task.
+- Executors now block on pending approvals instead of probing for ungated workarounds.
+- Fix workspace-mode tasks failing auto-merge under the pull-request merge strategy.
+- New tasks now land in the selected workflow's intake column instead of always jumping to Planning/triage.
+- Yes/No chat question buttons now show a clear selected state after clicking.
+- Planning Mode "needs input" now shows a yellow nav badge instead of a top banner.
+- Task-detail Oversight button now matches Priority/Execution-mode height on desktop.
+- Fix mobile dashboard terminal sometimes rendering completely blank on open.
+- Fix the mobile terminal shortcut bar so it truly scrolls horizontally to reach every key.
+- Fix desktop app showing a truncated provider/model list vs. the web build.
+- Fix desktop app plugin install and Browse registry (plugin subsystem now wired into the embedded server).
+- Fix onboarding GitHub sign-in button erroring instead of starting GitHub auth.
+- Authentication settings always lists all supported providers, regardless of connected runtime plugins.
+- Add a close button to the Settings screen on mobile.
+- Hermes Runtime is now additive — connecting it no longer hides your custom providers, models, or auth options.
+- Align Priority and Execution-mode control heights with the Oversight dropdown in task detail.
+- Fix the task-detail Planner Chat stop button rendering narrower than its send button.
+- Fix cards stranded after workspace/out-of-band merges land; node-override end no longer silently no-ops.
+- Code Review/Plan Review/CE gate failures now record a diagnostic instead of "(no feedback captured)".
+- Fix agents on long heartbeat intervals silently going stale for hours.
+- Fix provider API keys being wiped when the desktop and CLI apps share credentials on one machine.
+- Route node settings-sync and mesh credential writes through the coordinated auth store to prevent concurrent clobbers.
+- Fix tasks in planning/intake columns starting execution before they were specified.
+- Switching projects now lands on the Board instead of Settings when the last-visited view was Settings.
+- Removed the chat "Search in title only" toggle; chat search always matches message content and title.
+- Automation live output no longer shows "Run failed" for runs that actually succeed.
+- Planner chat stop button now shows just the stop icon, not a text label.
+- Restore the chat "Working…" indicator immediately when returning to a session with an active generation.
+- Retain GitHub issue import state when leaving and returning to Import Tasks.
+- Built-in workflow boards and Automations editors now label the intake column "Planning", not "Triage".
+- The Command Center SDLC funnel now labels the intake stage "Planning", matching the renamed board column.
+- Auto-recover durable agents stuck in transient error state even when their manager is active.
+- Task cards no longer show the steps breakdown while in the Planning column.
+- Align the quick-add workflow dropdown button height with Save/Fast/Subtask buttons.
+- On tablet widths, move terminal shortcuts/zoom controls into the bottom footer so they no longer overlap header icons.
+- Keep the mobile top header on a single line after a foldable phone is unfolded and refolded.
+- Fix Anthropic-compatible custom providers registering under an unregistered API key.
+- Fix merger awaiting-confirmation copy that implied a hard block when auto-merge proceeds automatically.
+- Fix the terminal rendering blank on mobile even though the shell prompt already loaded.
+- Fix workspace partial-land recovery losing the already-landed sub-repo sha.
+- Fix workspace sub-repo worktree creation failing on absent shared branch.
+- Prevent redundant polling and a re-render loop in agent-card runtime-fallback badges.
+- Clear stale generated mission fix features after their source feature passes validation.
+- Stop the false "OAuth token expired" push notification on startup.
+- Preserve Hermes chat session state and project runtime routing more reliably.
+- Stop the usage telemetry log from growing without bound and bloating the Fusion database.
+
+### Security
+
+- fn_task_attach now refuses to read files outside the task worktree boundary.
+
+### Performance
+
+- Fix dashboard terminal showing a blank screen for seconds before the first prompt appears on open.
+- Add a one-time server log hint pointing to shell-profile-hygiene docs when a login shell is slow to prompt.
+
+## 0.56.1
+
+### Highlights
+
+- Fix Anthropic subscription showing "logged in" while all model calls fail.
+- Fix "Invalid transition" error when moving cards out of a custom workflow column like Coding (Ideas) → Ideas.
+- Fix overlapping Record and Clear buttons in the Keyboard Shortcuts settings rows on desktop and mobile.
+- Fix persistent mobile terminal inter-character spacing (5th recurrence root cause).
+- Fix manual PR actions hidden when a task auto-merge override was on but global auto-merge was off.
+
+### Fixed
+
+- Fix Anthropic subscription showing "logged in" while all model calls fail.
+- Fix "Invalid transition" error when moving cards out of a custom workflow column like Coding (Ideas) → Ideas.
+- Fix overlapping Record and Clear buttons in the Keyboard Shortcuts settings rows on desktop and mobile.
+- Fix persistent mobile terminal inter-character spacing (5th recurrence root cause).
+- Fix manual PR actions hidden when a task auto-merge override was on but global auto-merge was off.
+
+## 0.56.0
+
+### Highlights
+
+- Remove the eye icon markdown/plain toggle from chat; messages always render as Markdown.
+- Expand first-run AI provider quick-start choices beyond Anthropic.
+- Show Git prerequisite guidance during first-run GitHub onboarding.
+- Add GitHub OAuth and CLI setup actions to first-run onboarding.
+- Add configurable dashboard keyboard shortcuts for Quick Chat and Terminal.
+
+### New
+
+- Expand first-run AI provider quick-start choices beyond Anthropic.
+- Show Git prerequisite guidance during first-run GitHub onboarding.
+- Add GitHub OAuth and CLI setup actions to first-run onboarding.
+- Add configurable dashboard keyboard shortcuts for Quick Chat and Terminal.
+- Add search in Settings so operators can find settings faster.
+- Add a pinned below-application layout option for the dashboard terminal.
+- Add a Reset Settings button to restore a menu's or all project settings to defaults.
+- Add a per-workflow planner oversight level setting (Off, Observe, Steer, Autonomous recovery).
+- Tasks can override the workflow planner oversight level (Off, Observe, Steer, Autonomous recovery).
+- Planner oversight now defaults to full steering/control for every workflow unless explicitly changed.
+- Planner oversight now monitors tasks across executor, reviewer, merger, pull-request, and workflow-gate stages.
+- Planner oversight can autonomously inject guidance, retry stuck/failed steps, and request fixes within bounded limits.
+- Planner oversight now requires confirmation before merge/PR actions and destructive/external side effects.
+- Planner overseer now stays fully hands-off for paused tasks and auto-merge-off / human-review tasks.
+- Configure planner oversight level per task and per project in the workflow editor and task create/detail.
+- Add a configurable planner-overseer notification verbosity level (Silent/Errors/Important/All).
+- Add a task-detail planner-overseer intervention timeline (stage, reason, action, outcome, attempts, links).
+- Emit planner-overseer run-audit events for observations, steering, retries, recovery, confirmations, and escalations.
+- Add an AI-undo fallback task when reverting a done task via git conflicts or is unsupported.
+- Add a Revert action to Done/Archived task cards to undo landed changes.
+- Capture a structured performance snapshot when an agent task completes.
+- Task cards can now show the planner overseer's active state (idle/watching/steering/recovering/awaiting-confirmation).
+- Support reverting multi-repo workspace tasks via git, all-or-nothing across sub-repos.
+- Add per-sha revert commit granularity to the task revert API and service.
+- Add a dedicated Keyboard Shortcuts settings section with click-to-record capture and more configurable actions.
+- Open a revert PR for done/archived tasks when autoMerge is disabled instead of refusing.
+- AI-undo tasks now default to a configurable, stricter review workflow.
+- Plan auto-approval is now the default; specified tasks skip manual approval unless you opt into workflow/require-all.
+- Fusion self-repo issue-close comments now show current and target release versions.
+- Open one revert PR per sub-repo for workspace tasks when autoMerge is disabled.
+- Add a Settings → General picker to choose the workflow used for AI-undo (revert) tasks.
+- Add "Ask user question" and "Exit gate" workflow nodes for mid-flow chat reach-out and early exit.
+- Add a built-in "Brainstorming" workflow that talks to you before planning.
+- Add a "Coding (Ideas)" workflow with a manual Ideas intake and a merged Todo planner column.
+- Add a workflow setting to disable automatic large-task triage splitting.
+- Add before-to-after transformation summaries to generated task definitions.
+- Show first-token and tool processing durations in task agent logs.
+- Settings descriptions now show each setting's default value.
+- Add an intelligent git-revert engine service and POST /api/tasks/:id/revert route.
+- Original task prompt now renders as Markdown and is collapsed by default in the task Plan tab.
+- Move the planner intervention timeline into the task Activity view dropdown.
+
+### Fixed
+
+- Show active Plan Review progress on triage task cards.
+- Clarify task-detail oversight Nudge/Explain controls: visible label, disabled reason, always-openable Explain panel.
+- Unify border, radius, and height of the task-detail Priority/Execution/Oversight controls.
+- Keep the task-detail Activity view menu open during mobile iOS taps.
+- Fix Anthropic subscription login when pasted callback URLs contain fragment OAuth parameters.
+- Fix Claude/Anthropic subscription re-login showing "Login did not complete" after logging out.
+- Stop self-healing from killing actively-running tasks after ~30 minutes.
+- Stop Windows Terminal version dialogs from popping up when opening the dashboard or Settings on Windows.
+- Select newly created folders automatically during project setup.
+- Prevent Desktop update banners from using 0.0.0 as the current version.
+- Quit Fusion Desktop on Windows when the window is closed.
+- Open desktop Anthropic Subscription OAuth logins in the system browser.
+- Delay GitHub setup warnings for one day and add a dashboard connect action.
+- Fix a false AI engine not running banner in desktop mode.
+- Clarify the desktop Connection Manager add-remote flow.
+- Restore Local Server in the desktop Switch server list.
+- Make right-dock task list clicks respect the task popup setting.
+- Auto-retry retryable Code Review remediation failures.
+- Fix no-op task branch recovery after a previously landed task.
+- Allow documented source-free task-artifact deliveries to finish without commits.
+- Fix direct merges so Push to remote after merge honors the configured remote and branch.
+- Keep task popups on the board layer with Activity menus above them.
+- Keep accepted chat requests waiting instead of showing false first-event timeout failures.
+- Show each task's original prompt in the Plan tab alongside the generated plan.
+- Restore terminal Ctrl/Cmd copy and paste shortcuts.
+- Fix mobile Chat composer being hidden behind the keyboard accessory bar.
+- Auto-approve now reliably sends specified plans to the board without a manual approval stop.
+- Fix the in-dashboard Switch server menu not switching desktop local/remote.
+- Fix branch group completion checklists to show accurate landed/finished counts.
+- Branch groups no longer report complete (or become promotable) when an unlanded member is archived.
+- Fix the global GitLab integration setting not persisting when saved.
+- Fix task-detail Activity view dropdown not opening reliably on mobile.
+- Manual "Run now" for the Database Backup automation now runs in-process like the scheduler, matching cron behavior.
+- Task cards no longer show the "Auto-recovery" oversight badge unless oversight is explicitly configured.
+- Remove the per-card overseer-state ("Executor") badge from task cards.
+- Fix agent-created artifacts not appearing live in the dashboard artifacts view.
+- Fix the mobile terminal shortcut bar so it scrolls horizontally to reach every key.
+- Planner-oversight intervention timeline now populates from real engine activity.
+- Show the "Global" prefix on the Authentication entry in the mobile Settings picker.
+- Tasks held for release authorization or Plan Review are now shown distinctly, so auto-approve no longer looks broken.
+- Move mobile terminal controls into a bottom footer so they no longer crowd the header, with a scrollable shortcut bar.
+- Stop the release-authorization gate from holding tasks that merely disclaim releasing.
+- Fix mobile terminal text still rendering with excess inter-character gaps after font-load settle.
+- Stop Plan Review from looping tasks forever and fix its "can't find the plan" reviews.
+- Planner-overseer task badge now shows a readable label and explains what it is waiting on.
+- Plan approve/reject API now blocks release-authorization holds, requiring the authorization marker first.
+- Pin the mobile terminal close (X) button to the top-right corner so it is easy to find and tap.
+- Fix mobile terminal excess character spacing that survived earlier font-remeasure fixes.
+- Manual plan approval no longer re-asks you to approve a plan you already approved when it hasn't changed.
+- Expired Claude subscription logins now show disconnected with a re-login prompt; tokens auto-refresh before expiry.
+- Anthropic subscription reads now refresh the OAuth token automatically instead of silently failing when expired.
+- Stop GitHub tracking-issue creation from linking new tasks to old/closed issues.
+- Clarify the oversight "Nudge unavailable" guideline so it no longer reads as an overseer fault.
+- New tasks created under the Coding (Ideas) workflow now land in the Ideas column and wait for you to promote them.
+- Fix tasks vanishing from the board after being added to a workflow like Coding (Ideas).
+- Move the Before → After transformation summary to the top of generated task definitions.
+- Task-detail Priority dropdown now matches the Oversight dropdown's size, border, and typography.
+- Default workflow boards now label the intake column "Planning" instead of "Triage".
+- Fix the task-detail Nudge control staying disabled when the overseer is actively watching.
+- Honor mission branchStrategy when triage omits branchAssignment; skip validation for inactive missions.
+- Planner overseer no longer marks healthy in-progress tasks as "recovering" or steers them.
+
+### Breaking
+
+- Remove the eye icon markdown/plain toggle from chat; messages always render as Markdown.
+
+### Internal
+
+- Rename downloadable CLI release binaries to the fn-cli-<platform> base name.
+
+## 0.55.0
+
+### Highlights
+
+- Allow configuring permissions for ephemeral and permanent agents.
+- Add GitLab instance URL settings for GitLab.com and self-managed servers.
+- Add GitLab access-token settings for personal, project, and group tokens.
+- Add GitLab project issue, group issue, and merge request imports.
+- Add GitLab comment and auto-close lifecycle actions for linked work items.
+
+### New
+
+- Allow configuring permissions for ephemeral and permanent agents.
+- Add GitLab instance URL settings for GitLab.com and self-managed servers.
+- Add GitLab access-token settings for personal, project, and group tokens.
+- Add GitLab project issue, group issue, and merge request imports.
+- Add GitLab comment and auto-close lifecycle actions for linked work items.
+- Add GitLab as a Command Center Signals connector.
+- Add explicit onboarding choices to use, initialize, or clone a git repository.
+- Let chat update existing agents without delete/recreate.
+- Add a bundled Linear import plugin for creating tasks from Linear issues.
+- Add a mandatory Planning Mode deepening checkpoint before final summaries.
+- Add visible create buttons and recursive search to Project Files.
+- Add a GitLab enable toggle and collapsible Settings controls.
+- Add a Settings override for the local Cursor CLI binary path.
+- Display linked GitLab tracking metadata and stale badges on tasks.
+- Add sidebar rename buttons to direct Chat conversations.
+- Collapse mobile Chat thread controls into one compact header row.
+
+### Fixed
+
+- Stop recurring Windows Terminal warning popups during terminal startup.
+- Fix dashboard localStorage quota exhaustion from stale SWR caches and add a Clear local data escape hatch.
+- Fix `fusion desktop` on Windows and published npm installs (Electron dependency, GPU/sandbox flags, dashboard reuse).
+- First-run agent setup no longer errors on a duplicate CEO; desktop Switch-server button now opens the connection menu.
+- Allow operators to delete archived tasks.
+- Show workflow template block boundary connectors in the graph editor.
+- Preserve the selected dashboard project across browser refreshes.
+- Detect Cursor CLI installations that expose Windows cmd or bat shims.
+- Preserve GitLab tracking metadata for CLI and extension imports.
+- Keep Planning Mode Refine Further from getting stuck on duplicate generation.
+- Show task status badges on Documents task groups.
+- Suppress misleading Anthropic Subscription re-login banners when another Anthropic auth method is active.
+- Keep Anthropic authentication cards grouped near the top in Settings.
+- Stop planner model fallback loops with a clear terminal triage error.
+- Recover stale task branch-group references from Task Detail after server restarts.
+- Return GitHub issue import actions to the main issue list.
+- Prevent Planning Mode sessions from failing when MCP resolution returns no shaped result.
+- Fix Android mobile terminal spacing while the keyboard is open.
+- Fix Last 30 days token usage to include every model in Command Center.
+- Include supported chat interactions in Command Center token usage totals.
+- Preserve workflow setting edits made while a values save is still in flight.
+- Preserve migrated workflow settings when project identity is assigned later.
+- Show the bundled Linear Import plugin in Plugin Manager and dashboard plugin surfaces.
+- Fix the mobile Chat header so back navigation and session selection stay on one row.
+- Fix iOS mobile terminal spacing when opening terminals with the keyboard already visible.
+- Default fresh startup and theme reset to System mode.
+- Remember task popup size and position when switching between tasks.
+- Fix iPhone Safari terminal text spacing with the keyboard open.
+- Count planning tasks correctly in the dashboard footer queue metric.
+- Show conversation titles in the mobile Chat dropdown.
+- Merges no longer fail when a task adds a dependency without updating the lockfile.
+
+## 0.54.0
+
+### Highlights
+
+- Add a project setting to allow or block ephemeral agents from creating tasks (default on).
+- Allow completed task planner Chat to answer and create refinements.
+- Disabling ephemeral agents now also stops the workflow engine from running unassigned tasks.
+- Align the task Activity view dropdown under its tab instead of drifting to the left of the modal.
+- Fix the Windows CLI binary failing to build in release.
+
+### New
+
+- Add a project setting to allow or block ephemeral agents from creating tasks (default on).
+- Allow completed task planner Chat to answer and create refinements.
+
+### Fixed
+
+- Disabling ephemeral agents now also stops the workflow engine from running unassigned tasks.
+- Align the task Activity view dropdown under its tab instead of drifting to the left of the modal.
+- Fix the Windows CLI binary failing to build in release.
+- Fix the desktop app crashing on "Local" mode with missing-module errors.
+- Planning mode no longer creates a new draft for every character you type.
+- Preserve project scope when saving task-detail model overrides.
+- Fix the All workflows dropdown counter so it no longer double-counts tasks.
+- Normalize task-detail tab padding across Activity, Chat, and Plan views.
+- Prevent task-bound agents from deleting the task they are currently executing.
+- Reviews stop failing on formatting: approvals pass, trailing-JSON verdicts parse, retries clear stale gate failures.
+- Stop showing "Task Failed" on a task whose code-review remediation is still running.
+- Restore the board search button after closing the search panel.
+
+## 0.53.1
+
+### Highlights
+
+- Fix the Windows CLI binary failing to build in release.
+- Fix desktop app crashing on "Local" mode startup with a missing-module error.
+
+### Fixed
+
+- Fix the Windows CLI binary failing to build in release.
+- Fix desktop app crashing on "Local" mode startup with a missing-module error.
+
+## 0.53.0
+
+### Highlights
+
+- Add exact tool overrides for permanent-agent permission policies.
+- Add a project option to link imported GitHub issues to GitHub tracking.
+- Add Enable GitHub tracking to Board and List task context menus.
+- Let task-detail planner Chat answer current-task token, cost, and timing questions.
+- Add a Glass Silver dashboard theme.
+
+### New
+
+- Add exact tool overrides for permanent-agent permission policies.
+- Add a project option to link imported GitHub issues to GitHub tracking.
+- Add Enable GitHub tracking to Board and List task context menus.
+- Let task-detail planner Chat answer current-task token, cost, and timing questions.
+- Add a Glass Silver dashboard theme.
+- Add a mobile terminal tab dropdown for switching and closing terminal sessions.
+- Branching workflows now run on the graph interpreter; the legacy step-compiler and its interpreter-only banner are gone.
+- Add All workflows to top-level dashboard workflow selectors.
+- Add a Triage column shortcut for plan auto-approval.
+
+### Fixed
+
+- Allow Compound Engineering recovered sessions to answer persisted questions after dashboard restarts.
+- Contain planning parse failures as retryable session errors and add `--supervise` dashboard restart mode.
+- Fix Anthropic Claude subscription chats failing (404/502/429) by restoring direct OAuth execution.
+- Fix tasks looping through triage at the completion-summary node, plus Stats/Routing/Node labels crashing.
+- Prevent task branches from inheriting unrelated checked-out task commits.
+- Fix arrow-key editing for Settings in the terminal dashboard.
+- Make the task Activity tab switch Live, Feed, and Raw views directly.
+- Show Refine in completed task card and list context menus.
+- Fix mobile task action menus so tapped actions run once and close.
+- Reuse the standard Chat surface for task-detail planner chat.
+- Make mobile task-detail chat Send buttons submit on the first tap.
+- Recover explicit Sonnet 5 chat selections with configured model fallbacks.
+- Fix Windows desktop startup failures in packaged builds.
+- Fix Board task context menus so they are not clipped by columns.
+- Prevent mobile Board task long-press menus from selecting card text.
+- Hide task planner chats from the common Chat feed unless enabled in Settings.
+- Let the task popup setting open board tasks as popups on desktop too.
+- Preserve task-detail planner Chat working state after leaving and returning.
+- Keep sent chat messages visible when a provider error interrupts the reply.
+- Let Planning Mode Yes/No questions accept a custom Other answer.
+- Show thinking effort on task log model rows when it is configured.
+- Enforce maxWorktrees as a hard cap on active execution worktrees.
+- Stop force-advertising Anthropic Claude Sonnet 5 when account availability is unknown.
+- Fix the mobile task Activity view dropdown so it opens above the tab strip without clipping.
+- Keep the Planner Chat stop-generation icon visible on mobile while thinking.
+- Hide failed-task banners while task planner chat is maximized.
+- Make Planner Chat clarification questions answerable in task details.
+- Close task details immediately after confirming task deletion.
+- Honor project auto plan approval across task finalization paths.
+- Make chat-created workflows appear immediately across workflow selectors.
+- Recover live worktree conflicts by retrying with a fresh task worktree.
+- Fix Activity expand controls so Live and Feed overlay content and Raw has one fullscreen button.
+- Move destructive task context-menu actions to the bottom.
+- Fix folded Android mobile terminal spacing on initial open.
+- Show eligible Claude Sonnet 5 model rows once in model pickers.
+- Restore Claude Sonnet 5 and latest Anthropic models in the Claude CLI model picker.
+- Fix Anthropic subscription chat failing with 429/502 by routing it through the Claude CLI.
+- Keep hidden task-planner Chat replies from lighting the global Chat unread badge.
+- Fix desktop launch from npm installs in directories with invalid JSON.
+- Keep Anthropic subscription OAuth, Claude CLI, and direct API-key auth separated.
+- Ensure task lifecycle plugins receive runtime context during completion hooks.
+- Show Claude CLI models when Anthropic subscription OAuth and Claude CLI are connected.
+- Fix Compound Engineering Debug stage launches that could fail with a JSON parse error.
+- Include graph-owned workflow step execution in Command Center activity analytics.
+- Restore Claude Sonnet 5 in the model picker (it had disappeared from every surface).
+- Enforce explicit external checkout metadata for review routing.
+- Let proven task merges finalize even when old branch history remains.
+- Widen Project Models dropdown menus so long provider and model names are easier to read.
+- Give workflow review steps a longer default timeout.
+
+### Internal
+
+- Upgrade Fusion's bundled pi SDK dependencies to 0.80.3.
+
+## 0.52.0
+
+### Highlights
+
+- Expose workflow authoring tools through the published agent extension API.
+- Allow task image artifacts to be created from agent tools and viewed in task details.
+- Add a setting to control whether clicking outside the Quick Chat window closes it.
+- Add Anthropic API-key authentication under Authentication.
+- Add a Tasks tab to the right sidebar that shows the last-viewed task or a clickable task list.
+
+### New
+
+- Expose workflow authoring tools through the published agent extension API.
+- Allow task image artifacts to be created from agent tools and viewed in task details.
+- Add a setting to control whether clicking outside the Quick Chat window closes it.
+- Add Anthropic API-key authentication under Authentication.
+- Add a Tasks tab to the right sidebar that shows the last-viewed task or a clickable task list.
+- Let operators sort the board Done column by completion date or task ID.
+- Add a Board dropdown option that shows tasks across all workflows.
+- Show workflow-name badges on Board cards in the All workflows view.
+- Add a terminal worktree picker for opening shells in task worktrees.
+- Let Git Manager jump from worktrees to their read-only commit history.
+- Let Git Manager inspect commit history from known git worktrees.
+- Add task context menus on board and list cards.
+- Add a mobile setting to open board tasks in the existing popup.
+- Add a global setting to control modal backdrop dismissal.
+- Add a project setting for absolute workspace file-browser paths.
+- Add a quick-add workflow selector for Board and List task creation.
+- Show workflow identity with icons instead of built-in text suffixes.
+- Add Command Center task-duration trend lines for average and median completed active time.
+- Add Claude Sonnet 5 across Anthropic model selection and execution paths.
+- Add Activity segments for current task activity, Feed, and Raw Logs.
+- Add a task-detail Chat tab for planner-model conversations.
+- Add starter prompts to the task-detail Chat empty state.
+- Convert clear task chat change requests into steering comments.
+- Make task details open with a focused planner Chat experience.
+- Let workflow review nodes fix issues in the same reviewer session by default.
+- Make Coding use stepwise execution with default-on Plan Review and final Code Review gates.
+- Rename the task Definition tab to Plan and add a PROMPT.md editor action.
+- Make task details open Activity first by default with an opt-in Chat-first setting.
+- Show timestamps on each task-detail chat block.
+- Show workflow names on aggregate board cards and task detail headers when available.
+- Let Git Manager inspect commit history from known worktrees.
+- Refresh custom provider model lists at startup and from Settings.
+- Make Shadcn Ember the default dashboard theme.
+- Show workflow icons in the full New Task workflow picker.
+- Add icon-only Quick Add image attachments with drag-and-drop support.
+- Rename the task-detail Chat tab to Activity and make it first.
+- Add a steering entry affordance to task Activity.
+- Make task-detail Chat answer status and progress questions from bounded task context.
+- Rename task Activity Current to Live and allow expanding all Activity segments.
+
+### Fixed
+
+- Plugin sidebar icons now refresh after a plugin rebuild instead of showing stale glyphs.
+- Restore required safety guidance in fast-mode task planning prompts.
+- Fast-mode tasks now clear optional steps by default while honoring manual selections.
+- Review gates now include user comments and steering context consistently.
+- Show focused auth-token recovery when daemon authorization expires.
+- Prevent workflow task cards from showing later sequential steps active too early.
+- Prevent fast Coding tasks from merging before implementation runs.
+- Keep workflow completion summaries running for fast-mode tasks.
+- Prevent Compound Engineering artifacts from showing stale project files after project switches.
+- Keep the Goals dashboard view scoped to the selected project.
+- Fix mobile Planning Mode description editing so spaces can be entered.
+- Show Compound Engineering workflow stage progress on task cards and details.
+- Chat messages now use the full width in narrow popup and sidebar chats.
+- Concurrency panels now prefer live engine counts so running-agent totals stay accurate.
+- Task-detail chat messages now use the full width in the right sidebar and narrow detail views.
+- Import Tasks view now fills the full height of the screen for Issues and Pull Requests.
+- Fix review tasks stuck when merge retries starve the executor's code-review revision pass.
+- Fix planning/chat failures when image attachment bytes do not match the file extension.
+- Apply task reviewer model overrides consistently to reviewer and code-review lanes.
+- Workflow graph nodes now resume cleanly after engine pause-aborts.
+- Compact collapsed tool-call summaries in task-detail chat.
+- Show Z.ai icons for GLM model rows in Command Center token analytics.
+- Show active tasks by default in the right sidebar and fix its task-detail back button.
+- Keep Compound Engineering tasks running through checkout recovery, PR review policy, and merge handoff.
+- Harden workflow graph recovery against stale plan replays and foreign landed tips.
+- Prevent rebuilt stepwise workflow tasks from failing at parse on stale step pins.
+- Add consistent Plan Review, Code Review, and Browser Verification toggles to engineering workflows.
+- Make dashboard retry clear stale workflow step pins before re-execution.
+- Separate Anthropic API-key auth from Claude subscription login cards.
+- Let workflow graphs prepare task worktrees before coding-mode nodes run.
+- Send ntfy notifications from workflow graph lifecycle and notify-node flows.
+- Auto-retry stale parse pause-resume workflow failures instead of requiring operator action.
+- Prevent Plan Review approvals from looping back into triage as failures.
+- Route failed Plan Review workflow steps back through triage for automatic replanning.
+- Prevent stale pause state from mislabeling workflow retries as engine pauses.
+- Let workflow-owned steps finish out of order without false step-progress failures.
+- Preserve files changed by workflow-owned parallel step sessions on task branches.
+- Make built-in Code Review block merge when it requests revisions.
+- Recover workflow retries that restart after step execution has already begun.
+- Retry unavailable Plan Review without rewriting an accepted task plan.
+- Keep Plan Review status visible while tasks execute after restart.
+- Keep verification steps from starting before earlier workflow steps finish.
+- Keep Plan Review status visible when execution resumes after stale merge cleanup.
+- Stop routing failed workflow execution into the review column.
+- Prevent workflow tasks from reaching Done without durable merge confirmation.
+- Add inner padding to Task Detail chat message blocks.
+- Prevent workflow tasks from completing with stale or partial merge proof.
+- Swiping back on mobile now dismisses the open task detail view.
+- Keep workflow merge nodes moving even when a workflow skips a review handoff.
+- Show post-merge verification as a post-merge optional workflow step.
+- Preserve dashboard workflow selections per project across Board, List, Header, and Graph.
+- Prevent scoped workflow tasks from getting stranded by unrelated branch residue.
+- Footer concurrency markers now line up with the running-agent counts.
+- Keep Workflow simple-editor tabs reachable on mobile.
+- Prevent executor prompt setup from failing when a recovered task has no saved prompt.
+- Make task-detail Chat tool-call text easier to read without expanding collapsed rows.
+- Keep built-in Code Review remediation recovering until review passes.
+- Hide engine remediation banners while daemon auth token recovery is open.
+- Retry unavailable Plan Review without rewriting existing task specs.
+- Preserve explicit empty workflow step dependencies for parallel roots.
+- Footer concurrency controls now ask before saving capacity changes.
+- Show optional workflow block children as connected in the workflow editor.
+- Remove deleted tasks from the board and right sidebar immediately after deletion.
+- Stop logging non-actionable missing configured skill-pattern info messages.
+- Reload the selected file when switching Files modal worktrees.
+- Reuse fresh task data when returning to Board or List views.
+- Dismiss mobile task details when Android Back is pressed before falling back to app exit.
+- Preserve mobile board scroll after returning from task detail.
+- Group Done column sort and archive actions in one accessible actions menu.
+- Prevent fast workflow merges from completing before implementation steps run.
+- Restore reliable terminal keyboard shortcuts in embedded CLI session terminals.
+- Open Workflow simple-editor step details when rows are clicked.
+- Make configured MCP tools available in planning and mission interviews.
+- Preserve workflow setting values and prompt overrides during workflow export/import.
+- Move the mobile task-detail workflow badge beside the updated timestamp.
+- Fix the mobile Engine Controls menu placement.
+- Document workflow-authoring tools in the packaged Fusion skill.
+- Mobile back now reliably dismisses the open task detail, including right after closing and reopening it.
+- Move All workflows Board task-card workflow badges to the bottom-left.
+- Move task-detail workflow badges into the Updated timestamp metadata row.
+- Restore the Board All workflows view after refresh.
+- Fix mobile terminal spacing after folded viewport changes.
+- Fix the mobile terminal workspace picker so its menu stays visible and reachable.
+- Collapse custom shadcn color controls by default in dashboard theme surfaces.
+- Remove the board quick-add Plan button while keeping New Task planning available.
+- Fix mobile terminal spacing when folded phones open with the keyboard already visible.
+- Let Anthropic subscription login power Anthropic model requests without a raw API key.
+- Make built-in Plan Review and Code Review revisions unbounded unless workflows set a cap.
+- Refresh dashboard task state immediately after Retry succeeds.
+- Show workflow icons and wider names in the Quick Add workflow selector.
+- Count ephemeral task-worker runs in Command Center activity stats.
+- Fix mobile terminal character spacing after small font-size changes.
+- Hide Quick Add node pickers when only local execution is available.
+- Make the Quick Add workflow selector compact while keeping long menu names readable.
+- Preserve legacy task feed and raw log access under Activity.
+- Reuse the shared question UI for task-detail planner Chat clarification prompts.
+- Fix mobile Planning Mode summary description Expand and Collapse controls.
+- Collapse task-detail branch groups by default with a more compact summary.
+- Hide branch group chrome while the task Activity chat is maximized.
+- Move the Quick Add attachment button next to Save in the expanded action row.
+- Keep Planner Chat compact while preserving expanded task controls.
+- Rename the task-detail title summarization button to Summarize.
+- Remove the AI Refine action from Quick Add task creation.
+- Make task planner chats appear only after user interaction and expire on archive.
+- Make Shadcn Ember color tokens match Ember exactly.
+- Align footer concurrency current-use dots with Command Center sliders.
+- Replan active tasks after confirming execution-mode changes.
+- Preserve board column scroll during dashboard refresh and viewport stabilization.
+- Remove the extra steering guidance copy from task Activity chat.
+- Replace task Activity subtabs with a compact Live, Feed, Raw dropdown.
+- Persist Remote Access settings when saving from the dashboard on Windows.
+- Keep the mobile Planning Mode New session button pinned at the bottom.
+- Use workflow Plan Review as the single pre-execution plan gate.
+- Keep Plan Review in triage and prevent duplicate execution-time plan reviews.
+- Preserve Quick Add tasks with all workflow optional steps unchecked.
+- Record completion summaries for workflow-driven tasks.
+- Block workflow tasks from bypassing merge proof when finalizing to done.
+- Show workflow review failures as explicit replan and remediation nodes.
+- Stop showing stale in-review stall badges while agents are actively streaming logs.
+- Keep dashboard workflow selection stable after creating refinement tasks.
+- Prevent workflow tasks from duplicating plan review during implementation.
+- Retry workflow merge-node pause aborts while merge review is active.
+- Keep Planner Chat compact on mobile with an inline composer and provider-icon model badge.
+- Add task activity breadcrumbs for workflow pause-abort recovery.
+- Align per-step review coding with default coding gates and session settings.
+- Stop repeat no-op phantom-reservation audit writes and preserve the worktree across phantom binding reclaim.
+- Make the task Plan prompt editor span the full task-detail card width.
+- Scope external-integration plan evidence checks to Coding (per-step review).
+- Keep Planner Chat expanded context visible while removing repeated header guidance.
+- Compact Planner Chat chrome and align Activity Live with the same plain composer row.
+- Keep Planner Chat spacing stable when expanding task details.
+- Keep refinement tasks on the source task workflow board.
+- Refresh branch group task-detail completion live as member tasks change.
+- Remove the icon from the Quick Add Plan action while preserving the text button behavior.
+- Remove redundant workflow labels from expanded task-card step lists.
+- Allow review steps to target a validated external checkout.
+- Keep task-detail Activity segment tabs equal-height with smaller labels.
+- Retry configured fallback models when a selected provider model returns a not-found error.
+- Wait for task store secret database handles to close before cleanup.
+- Add clearer spacing between workflow badge icons and labels.
+- Keep Board and List workflow choices selected across refreshes and route returns.
+- Prevent stale workflow recovery log entries from sending incorrect notifications.
+- Harden workflow lifecycle recovery, post-merge gates, warnings, and notifications.
+
+### Performance
+
+- Skip unchanged plugin builds during workspace builds.
+
+## 0.51.0
+
+### Highlights
+
+- Add a Chat tab to the right sidebar so you can chat inline and pop it out.
+- Tasks with a manually-created open Pull Request are no longer auto-merged.
+- Fast-mode tasks now plan with a lean, speed-first prompt routed through the workflow.
+- CE HTML plans and brainstorm docs now get report-only ce-doc-review instead of being skipped.
+- CE HTML docs now support DOM-validated in-place ce-doc-review fixes with report-only fallback.
+
+### New
+
+- Add a Chat tab to the right sidebar so you can chat inline and pop it out.
+- Tasks with a manually-created open Pull Request are no longer auto-merged.
+- Fast-mode tasks now plan with a lean, speed-first prompt routed through the workflow.
+- CE HTML plans and brainstorm docs now get report-only ce-doc-review instead of being skipped.
+- CE HTML docs now support DOM-validated in-place ce-doc-review fixes with report-only fallback.
+- Close the Quick Chat window by clicking outside it.
+- Emit run-audit telemetry for agent performance reflections.
+- CE HTML docs can define and safely repair malformed checklists in ce-doc-review.
+- Add a project setting to show or hide worktree names and grouping on the board.
+- Refinement tasks are now titled with the source task ID followed by the entered comment.
+- Add a project setting to open task details in the right sidebar instead of the full panel.
+- The Create PR dialog is now movable and resizable like other Fusion pop-outs.
+- Add a pin toggle to the right sidebar to push content aside instead of overlaying it.
+- Task detail Review tab now hides HTML comments and shows comment avatars, human/bot badges, and author-type filtering.
+- Add project settings to customize the AI prompts for PR title and description generation.
+- Improve AI-generated PR titles and descriptions, and show a clear loading state while the description generates.
+- Add an "Address PR feedback" button that starts an AI session to resolve PR review comments.
+- Re-engage an executor when users chat on in-review tasks.
+- Project Dashboard cards now say "Stop engine"/"Start engine" instead of "Pause"/"Resume".
+- The PR number in a task's Pull Request tab now links to the pull request on GitHub.
+
+### Fixed
+
+- Artifact lists now refresh live when new artifacts are registered.
+- Agents no longer pause tasks on failure — pausing is reserved for explicit user requests.
+- Permanent agents can ask the user a question directly without an approval gate.
+- Compound Engineering now uses a distinct sidebar icon instead of duplicating Insights.
+- Compound Engineering sidebar navigation now matches its Boxes header icon.
+- Ephemeral/task-worker agents now show their token usage on the dashboard.
+- Stopping the engine or pausing a project now frees its global agent slots for other projects.
+- Missions tab now always opens the mission overview instead of a specific mission.
+- Theme the quick-entry steps drop-down with canonical dashboard menu tokens.
+- Running-agent counts include active in-review agents, and the concurrency use-marker is no longer off by one.
+- Tasks sent back by Code Review or Browser Verification verdicts now re-run and complete their steps before re-checking.
+- Footer no longer blinks and the concurrency panel stays open across status refreshes.
+- Keep Create PR preview commit SHAs readable on one line.
+- Stuck triage re-queues now resume from the drafted plan instead of restarting planning from scratch.
+- Stuck re-queue no longer loses uncommitted work while keeping steps marked complete.
+- Fix the Create PR dialog spinner, diff preview default, and stray-click dismissal behavior.
+- PR badge color now follows GitHub status: green/gray/purple/red plus a conflict color.
+- Show active project pull requests in the Pull Requests sidebar and main view.
+- Fix "Request revision" error on reviewer-agent task reviews.
+- Fix Compound Engineering, Quick fix, and Review-heavy workflow tasks getting stuck in Todo.
+- Theme quick-add optional-step checkboxes and phase badges consistently.
+- Keep Summary token table model names readable in narrow task detail panels.
+- Pressing q (or Ctrl+C) in the TUI now quits cleanly without engine logs bleeding onto your shell.
+
+## 0.50.0
+
+### Highlights
+
+- Mutating agent tools now obey each agent's permission policy instead of always being allowed.
+- Add confirmation prompts before Command Center concurrency sliders save live capacity changes.
+- Agents now receive more tools, with dangerous actions governed by each agent's permission policy.
+- Reject malformed workflow graphs before they can be saved or launched.
+- Permanent/custom agents can use governed workflow and task-promotion tools.
+
+### New
+
+- Add confirmation prompts before Command Center concurrency sliders save live capacity changes.
+- Agents now receive more tools, with dangerous actions governed by each agent's permission policy.
+- Reject malformed workflow graphs before they can be saved or launched.
+- Permanent/custom agents can use governed workflow and task-promotion tools.
+- Permanent and custom agents can list, show, and search tasks during heartbeat runs.
+- Failed optional workflow steps now send tasks back for a bounded executor fix pass.
+- Footer concurrency panel shows running-agent counts and current-use markers on global and project sliders.
+- Command Center Concurrency now shows running agents and current-use markers on global/project sliders.
+- Configured MCP servers now reach every agent surface, including heartbeat runs.
+- Configured MCP servers now reach dashboard planning helpers like subtask breakdown, text refine, and insights.
+- New projects now default AI merge to sync a dirty checked-out integration branch.
+- Add an "Other" free-text answer to planning and mission interview questions.
+- Imported GitHub issues are now linked as tracked tasks when GitHub tracking is on.
+- Add a per-project plan-approval mode to auto-approve or require approval for all tasks.
+- Add external notifications for CLI agent tool-permission prompts.
+- Add a New Chat button to the mobile chat quick-switch dropdown.
+- Configured MCP servers now connect to chat and agent sessions and expose their tools.
+- Code Review and Browser Verification now cycle fixes until they pass, defaulting to up to 3 fix passes.
+- Workflow steps like Code Review and Browser Verification can set their own max fix revisions.
+- The Browser Verification workflow step now uses the agent-browser tool, checks availability, and logs its actions.
+- Done tasks now open on a new Summary tab showing what changed and what the agents did.
+- Stack multiple queued chat messages above the composer and send them in order.
+- Show an estimated token count against the model's context window in the chat thread header.
+- Done-task Summary tab now shows token usage by model with estimated cost per model and a task total.
+- Add optional Compound Engineering document review to the built-in CE workflow.
+- Add a per-workflow analytics tab to the Command Center dashboard.
+- Settings → Prompts now links to Workflow Editor prompts and clarifies prompt ownership.
+
+### Fixed
+
+- Fix PR-mode auto-merge failing with "error connecting to <branch>".
+- Fix tasks getting stuck in review forever after a pre-merge code-review revision.
+- Fix legacy databases missing newer task columns (e.g. checkout-lease, column dwell) after upgrade.
+- Fusion co-author attribution now lands reliably on every commit it makes.
+- Phantom duplicate tasks no longer break archive with an ENOENT error.
+- Make skill detail metadata render more compactly in the right Skills panel.
+- Fix Files viewer previews for images, video, audio, and PDFs.
+- Task creation no longer leaves orphaned reserved-ID records when a create fails partway.
+- Concurrency panels now show the real number of running agents instead of 0 when tasks are in progress.
+- fn project list/info now show live running-agent counts from in-progress tasks.
+- Recover corrupt messaging indexes during send or report the exact repair command.
+- Database backup automation failures now report which database and the underlying cause.
+- Stop plan-approval tasks from showing an empty-mailbox approval banner.
+- The running-agents count now includes agents actively triaging tasks, not just executors.
+- Project health In-Flight Agents now counts agents actively triaging tasks.
+- Suppress brief footer Connecting flashes after one transient executor stats poll failure.
+- Show every used model in Command Center token-by-model detail charts.
+- Preserve override column-agent models during task execution.
+- Show queued Chat messages above the input box with a divider.
+- The task Workflow tab now shows the configured project Executor/Reviewer/Planning model instead of "Default".
+- Add a visible close button to the footer engine-controls popover.
+- Govern task creation and delegation with the task_agent_mutation permission policy.
+- Permanent agents now obey approval/block policy when creating tasks.
+- Include triage/planning model usage in Command Center Tokens by model.
+- Fix workflow view so the Code Review and Browser Verification blocks show connected edges.
+- Show linked task columns in agent Current Task output.
+- Show linked task columns on dashboard agent task badges.
+- Show every token-consuming model in Command Center token breakdowns.
+- Pressing q (or Ctrl+C) in the TUI now always quits, even if a teardown step stalls.
+
+### Security
+
+- Mutating agent tools now obey each agent's permission policy instead of always being allowed.
+
+### Internal
+
+- The task detail tool is now named fn_task_show consistently across triage, planning, chat, and CLI surfaces.
+- Concurrency panels now read running-agent counts from a single live source shared across the app.
+- Align Compound Engineering brainstorm artifacts with unified plan discovery.
 
 ## 0.49.0
 
-### @fusion/dashboard
+### Highlights
 
-#### Patch Changes
+- Add a default-on, toggleable pre-merge Code Review step to the built-in coding workflows.
+- Verification now runs only the tests affected by a task's changed files, so merge/step checks finish in seconds.
+- Record signed signal connectors in Command Center incident metrics.
+- Add an engine-disconnected dashboard banner with one-click Start engine.
+- Show provider icons next to Command Center model names.
 
-- @fusion/core@0.49.0
-- @fusion/engine@0.49.0
-- @fusion/i18n@0.39.12
-- @fusion-plugin-examples/cli-printing-press@0.1.29
-- @fusion-plugin-examples/compound-engineering@0.1.12
-- @fusion-plugin-examples/dependency-graph@0.1.43
-- @fusion-plugin-examples/roadmap@0.1.31
-- @fusion-plugin-examples/cursor-runtime@0.1.31
-- @fusion-plugin-examples/droid-runtime@0.1.38
-- @fusion-plugin-examples/hermes-runtime@0.2.62
-- @fusion-plugin-examples/openclaw-runtime@0.2.62
-- @fusion-plugin-examples/paperclip-runtime@0.2.62
+### New
 
-### @fusion/desktop
+- Add a default-on, toggleable pre-merge Code Review step to the built-in coding workflows.
+- Verification now runs only the tests affected by a task's changed files, so merge/step checks finish in seconds.
+- Record signed signal connectors in Command Center incident metrics.
+- Add an engine-disconnected dashboard banner with one-click Start engine.
+- Show provider icons next to Command Center model names.
+- Preview images, videos, audio, and PDFs directly in the Files modal.
+- Add optional workflow-step quick dropdowns to task creation surfaces.
+- Add core MCP server settings model with project/global precedence and secret references.
+- Forward configured MCP servers to all AI lanes and add reachability validation.
+- Add `fn mcp` CLI to manage MCP servers, import Claude Desktop config, and export Fusion MCP JSON.
+- Add MCP server management UI in Settings with global/project scopes, validation, and import/export.
+- Automations popup is now movable and resizable like other Fusion pop-outs.
+- Automation AI steps now run with all tools by default, with a per-step tool selector and live run output.
+- Enabled optional workflow steps now run and show in task progress reliably.
+- Make Remote Access settings visible without enabling an experimental flag.
+- Auto-discover MCP servers from Claude/Cursor/Windsurf/VS Code and opt-in to enable them in Settings.
+- Adjust the global concurrency cap from the footer and dashboard; settings grouped by global vs project scope.
+- Add a Worktrees setting for copying repository files into new task worktrees.
 
-#### Patch Changes
+### Fixed
 
-- @fusion/core@0.49.0
-- @fusion/dashboard@0.49.0
-- @fusion/engine@0.49.0
+- Keep task-detail Chat and Workflow tabs aligned on displayed model names.
+- Fix random fusion crashes when multiple dashboards/CLIs run on one host.
+- Fix unreadable info-toast contrast and dashboard CSS token regressions.
+- Fix global settings (including the global concurrency cap) intermittently resetting to defaults.
+- Restore dashboard Settings helper copy and TaskChat tool-call labels.
+- Preserve the selected workflow when Missions creates tasks.
+- Restore animated loading spinners across the Fusion dashboard.
+- Ignore hidden dot paths in overlap scheduling by default with a Settings toggle.
+- Make browser and Android Back close dashboard task detail before leaving the current view.
+- Fix Command Center token usage updating live without manual refresh.
+- Prevent Planning Mode summary buttons from overlapping on tablet screens.
+- Make Plan Mission with AI desktop modal movable and recover cleanly from stream failures.
+- Prevent Planning Mode from crashing on malformed AI summary arrays.
+- Allow Planning Mode generations to continue while meaningful AI output is progressing.
+- Recover mission AI planning from transient stream interruptions.
+- Stop showing branch reattachment warnings in Task Detail.
+- Fix discarding mission interview drafts from the Missions view.
+- Fix excessive spacing in the embedded Automations pane.
+- Fix mobile Missions back navigation from mission detail tabs.
+- Keep New Task mobile dialog controls tappable while the keyboard is open.
+- Exclude engine-down time from task duration badge and stats.
+- Restore horizontal scrolling for mobile task detail tabs.
+- Fix workflow editor so the Browser Verification block shows connected edges.
+- Retry transient ntfy publish failures so one-shot task notifications are less likely to be lost.
+- Command Center date-range presets now correctly filter charts.
+- Make the AI session needs-input banner compact and hide it on Missions or Planning.
+- Prevent long Skills list rows from overflowing the left pane.
+- Open dependency Graph tasks in the shared movable task pop-out.
+- Preview image, video, audio, and PDF files natively in the right-dock Files viewer.
+- Match the optional steps dropdown trigger to shared task creation buttons.
+- Workflow and automation steps now use the configured project Execution model instead of the default.
+- Fix task Workflow tab showing "Step definition not found." for Code Review and other optional steps.
+- Quick task input no longer refocuses itself after you add a task.
+- Capitalize the built-in Code Review step name consistently.
+- Restore mobile swipe scrolling when touching task-detail tab buttons.
+- Restore horizontal swiping on Agent Detail tabs on mobile touch devices.
+- Fix slash/namespaced skill commands not loading in chat and agent sessions.
+- Fix task-detail Workflow tabs so inherited workflow graphs and step details populate.
+- Keep Graph tasks visible when cached workflow assignments reference deleted workflows.
+- Fix npm install failure caused by bundled plugins referencing private @fusion packages.
+- Rename the Remote Access settings section (drops the stale "& Node Sync" suffix).
+- Mobile: hide the executor footer and remove the empty gap above the keyboard while typing.
+- Fix Planning Mode not scrolling on mobile so action buttons stay reachable.
+- Verification (merge/step gate) timeout now scales with command scope instead of a flat 10 minutes.
+- Fix stale overlap-blocker repair edge cases and dashboard display synchronization.
 
-### @fusion/engine
+### Internal
 
-#### Patch Changes
-
-- @fusion/core@0.49.0
-- @fusion/pi-claude-cli@0.49.0
-
-### @fusion/plugin-sdk
-
-#### Patch Changes
-
-- @fusion/core@0.49.0
-
-### @runfusion/fusion
-
-#### Minor Changes
-
-- 7772ab3: summary: Add a default-on, toggleable pre-merge Code Review step to the built-in coding workflows.
-  category: feature
-  dev: New `code-review` optional-group node (defaultOn:true, toolMode readonly, gateMode advisory, phase pre-merge) on the pre-merge success path (execute → browser-verification → code-review → review) of both the built-in coding and stepwise coding workflows. Runs for every coding task by default (seeded into enabledWorkflowSteps via resolveDefaultOnOptionalGroupIds) but is toggleable off per task; advisory so it does not change merge outcomes (operators can promote it to a blocking gate). Also fixes default-workflow task creation to seed default-on optional groups for interpreter-deferred built-ins (previously dropped). Reuses the shared prompt-gate verdict machinery (no engine verification code). The `code-review` WORKFLOW_STEP_TEMPLATE is also available in the editor palette.
-- 744aa2c: summary: Verification now runs only the tests affected by a task's changed files, so merge/step checks finish in seconds.
-  category: feature
-  dev: New deriveFileScopedPnpmTestCommand maps changed test files (and co-located tests of changed source) to a per-package `pnpm --filter <pkg> exec vitest run <files>` command; inferDefaultTestCommand uses it (overriding even an explicit testCommand) when the new project setting scopeVerificationToChangedFiles (default true) is on and git context is available, falling back to the configured command when no tests resolve. The thin merge-gate suite remains the cross-cutting safety net.
-- 98a5052: summary: Record signed signal connectors in Command Center incident metrics.
-  category: feature
-  dev: Adds connector incident ingestion and /api/command-center/signals/connectors configuration status.
-- e46ea00: summary: Add an engine-disconnected dashboard banner with one-click Start engine.
-  category: feature
-  dev: Adds project-scoped engine status/start API routes and dashboard-only guidance for UI-only launches.
-- 9a2709d: summary: Show provider icons next to Command Center model names.
-  category: feature
-  dev: Infers provider icons from model ids for Command Center model tables and bar charts; pie charts remain text-only.
-- 4cc9c2f: summary: Preview images, videos, audio, and PDFs directly in the Files modal.
-  category: feature
-  dev: Adds browser-native previews backed by workspace-safe file download URLs.
-- 541f1f6: summary: Add optional workflow-step quick dropdowns to task creation surfaces.
-  category: feature
-  dev: Surfaces active workflow optional steps in QuickEntryBox and NewTaskModal create payloads.
-- 79c602d: summary: Add core MCP server settings model with project/global precedence and secret references.
-  category: feature
-  dev: New @fusion/core MCP config types, validators, resolveEffectiveMcpServers, secret-resolver seam, and Claude Desktop import/export. Secret material stored only as Fusion-managed secret references.
-- 6c94ee0: summary: Forward configured MCP servers to all AI lanes and add reachability validation.
-  category: feature
-  dev: Adds runtime MCP support gating, materialized MCP forwarding, and POST /api/mcp/validate.
-- 429143e: summary: Add `fn mcp` CLI to manage MCP servers, import Claude Desktop config, and export Fusion MCP JSON.
-  category: feature
-  dev: New `packages/cli/src/commands/mcp.ts`; reuses @fusion/core resolveEffectiveMcpServers, validation, and import/export; sensitive fields stored as secret references via SecretsStore, never plaintext.
-- 301f25d: summary: Add MCP server management UI in Settings with global/project scopes, validation, and import/export.
-  category: feature
-  dev: New SettingsModal sections global-mcp/mcp + McpServersCard; consumes @fusion/core MCP foundation and POST /api/mcp/validate; sensitive fields bind to secret references only.
-- 2ce208e: summary: Automations popup is now movable and resizable like other Fusion pop-outs.
-  category: feature
-  dev: ScheduledTasksModal modal presentation now renders inside the shared FloatingWindow (windowKey "automation", persistGeometryKey "floating-window:automation"); embedded presentation unchanged. Mobile stays full-screen by CSS.
-- 8131d54: summary: Automation AI steps now run with all tools by default, with a per-step tool selector and live run output.
-  category: feature
-  dev: Adds AutomationStep.allowedTools + AUTOMATION_SELECTABLE_TOOLS (core); toolsAllowlist on createFnAgent (engine); SSE GET /automations/:id/run/stream and /routines/:id/run/stream (dashboard).
-- dd1b960: summary: Enabled optional workflow steps now run and show in task progress reliably.
-  category: feature
-  dev: Fixes FN-7039. `Store.optionalGroupIdSet` falls back to `builtin:coding` (matching the executor's unselected-task resolution) so a toggled built-in group id (e.g. `browser-verification`) is no longer materialized into a legacy `WS-xxx` step row the graph never matches. Create-time optional-step controls (QuickEntryBox, TaskForm) resolve `builtin:coding` when no project default workflow is set, so the toggles appear. First unit of the broader graph-native workflow-step refactor.
-- 2442032: summary: Make Remote Access settings visible without enabling an experimental flag.
-  category: feature
-  dev: Graduates the Settings UI section while leaving remoteAccess provider/token gating unchanged.
-- f685518: summary: Auto-discover MCP servers from Claude/Cursor/Windsurf/VS Code and opt-in to enable them in Settings.
-  category: feature
-  dev: New @fusion/core mcp-discovery source resolution + parser, @fusion/engine discoverMcpServers fs reader, GET /api/mcp/discovered route, and a discovered region in McpServersCard. Read-only/opt-in; discovered secrets become Fusion secret references, never plaintext.
-- 1d860ec: summary: Adjust the global concurrency cap from the footer and dashboard; settings grouped by global vs project scope.
-  category: feature
-  dev: Added a Global Max Concurrent slider (wired to fetch/updateGlobalConcurrency) to EngineControlMenu (footer) and the dashboard CommandCenterControls Concurrency card, with debounced saves matching the existing project sliders. SchedulingSection now groups fields under labeled "Global — all projects" and "This project" subheadings with scope badges so the global cap is not mistaken for a per-project setting (clearer on mobile).
-
-#### Patch Changes
-
-- c7cbae1: summary: Keep task-detail Chat and Workflow tabs aligned on displayed model names.
-  category: fix
-  dev: Extracts dashboard effective model display resolution for shared Chat, Agent Log, and Workflow tab use.
-- 50a9471: summary: Fix random fusion crashes when multiple dashboards/CLIs run on one host.
-  category: fix
-  dev: Central DB (~/.fusion/fusion-central.db) now uses journal_mode=DELETE instead of WAL. WAL coordinates concurrent processes via a memory-mapped `-shm` wal-index that SIGBUSes a reader (walIndexReadHdr / `cluster_pagein past EOF`) on macOS/APFS when another process resizes it mid-checkpoint, killing the node process with no JS stack. DELETE mode removes the `-shm` mmap surface and coordinates via POSIX locks (busy_timeout absorbs the added writer serialization). Per-project DBs (db.ts) are unchanged. See central-db.ts open() and central-db.test.ts regression.
-- b293525: summary: Fix unreadable info-toast contrast and dashboard CSS token regressions.
-  category: fix
-  dev: Tokenized raw rgba/undefined CSS vars across ~15 dashboard component stylesheets, defined missing --border-strong / right-dock width tokens, enrolled the shadcn-custom light theme in the dark-text toast correction (WCAG AA). Also repairs ~19 stale dashboard tests that trailed intentional product changes (workflowColumns graduation, onboarding flow, theme relabels, header divider removal).
-- c20c4b7: summary: Fix global settings (including the global concurrency cap) intermittently resetting to defaults.
-  category: fix
-  dev: Several production call sites built `new CentralCore(store.getFusionDir())`, pointing the central/global DB at the project's `.fusion/` instead of `~/.fusion/` and spawning stray per-project central DBs seeded with default global settings that shadowed real global state. Added `TaskStore.getGlobalSettingsDir()`, routed the secrets store plus the secrets/proxy/node/secrets-sync/settings-sync dashboard routes through it, and added a `resolveGlobalDir()` guard that throws on a project-local `.fusion/` dir (parent is a git repo) so the regression can't silently recur. Existing stray DBs were operator-quarantined.
-- d08e8db: summary: Restore dashboard Settings helper copy and TaskChat tool-call labels.
-  category: fix
-  dev: Repairs changed-only dashboard assertions for navigation, pause routes, TaskChat, and theme selector parity.
-- 6df4043: summary: Preserve the selected workflow when Missions creates tasks.
-  category: fix
-  dev: Missions now shares the header workflow selector with Planning and passes workflowId through mission triage APIs.
-- f5e1b96: summary: Add a Worktrees setting for copying repository files into new task worktrees.
-  category: feature
-  dev: Adds project setting `worktreeCopyFiles`; release with the standard changeset workflow, not manual versioning.
-- 0744ab3: summary: Restore animated loading spinners across the Fusion dashboard.
-  category: fix
-  dev: Dashboard spinner utilities now use a collision-proof keyframe and tests guard component CSS chunks.
-- 9fabc9d: summary: Ignore hidden dot paths in overlap scheduling by default with a Settings toggle.
-  category: fix
-  dev: Adds project setting `ignoreHiddenOverlapPaths` and keeps `overlapIgnorePaths` as an additional explicit filter.
-- 0049fb9: summary: Make browser and Android Back close dashboard task detail before leaving the current view.
-  category: fix
-  dev: Updates dashboard task-detail history entries for full-panel and modal detail flows.
-- 4880a0f: summary: Fix Command Center token usage updating live without manual refresh.
-  category: fix
-  dev: Analytics polling now revalidates in the background when prior data exists so token cards, charts, and model rows stay mounted during live refresh.
-- 419d58f: summary: Prevent Planning Mode summary buttons from overlapping on tablet screens.
-  category: fix
-  dev: Adds a tablet responsive CSS contract for Planning Mode summary action wrapping.
-- a0954c7: summary: Make Plan Mission with AI desktop modal movable and recover cleanly from stream failures.
-  category: fix
-  dev: Dashboard mission interview now uses floating desktop geometry and normalizes terminal SSE errors into one retry state.
-- 575e211: summary: Prevent Planning Mode from crashing on malformed AI summary arrays.
-  category: fix
-  dev: Normalizes planning summaries, question options, subtasks, and dependency arrays at UI/API boundaries.
-- f1b3bd8: summary: Allow Planning Mode generations to continue while meaningful AI output is progressing.
-  category: fix
-  dev: Replaces the fixed Planning Mode generation cap with inactivity and repeated-output detection.
-- 7e7b0c6: summary: Recover mission AI planning from transient stream interruptions.
-  category: fix
-  dev: MissionInterviewModal refetches active session state before showing permanent stream errors.
-- 0c53f46: summary: Stop showing branch reattachment warnings in Task Detail.
-  category: fix
-  dev: Removes stale TaskDetailModal rebind-banner CSS/mocks and covers missing-branch workspace shapes.
-- d984fce: summary: Fix discarding mission interview drafts from the Missions view.
-  category: fix
-  dev: Preserves project and owning-tab scope for mission interview draft discard requests.
-- ef6e459: summary: Fix excessive spacing in the embedded Automations pane.
-  category: fix
-  dev: Top-pack embedded Automations grid rows and add regression coverage for the list/detail layout.
-- 2d2dd50: summary: Fix mobile Missions back navigation from mission detail tabs.
-  category: fix
-  dev: Tracks mission detail visibility for mobile history entries instead of selected mission IDs.
-- 3513d5f: summary: Keep New Task mobile dialog controls tappable while the keyboard is open.
-  category: fix
-  dev: Restores hit testing for the NewTaskModal sheet and bounds mobile picker dropdowns.
-- 4dab2b6: summary: Exclude engine-down time from task duration badge and stats.
-  category: fix
-  dev: Adds engineLastActiveAt heartbeat and startup reconcile-engine-downtime-active-timing recovery.
-- 977000c: summary: Restore horizontal scrolling for mobile task detail tabs.
-  category: fix
-  dev: Keeps the task-detail tab strip scrollable across Board modal and List embedded surfaces.
-- 3f66e55: summary: Fix workflow editor so the Browser Verification block shows connected edges.
-  category: fix
-  dev: optional-group/foreach/loop container nodes now render connectable handles without adjacent layer overlap in WorkflowNodeEditor.
-- f5b588c: summary: Retry transient ntfy publish failures so one-shot task notifications are less likely to be lost.
-  category: fix
-  dev: Adds bounded ntfy fetch retries for network, timeout, 5xx, and 429 failures with a per-attempt timeout.
-- 45727f1: summary: Command Center date-range presets now correctly filter charts.
-  category: fix
-  dev: Honors open-ended Command Center analytics bounds and serializes All time explicitly.
-- 775a1f8: summary: Make the AI session needs-input banner compact and hide it on Missions or Planning.
-  category: fix
-  dev: Shrinks SessionNotificationBanner CSS and tests the DashboardBanners visibility guard.
-- ea3cfee: summary: Prevent long Skills list rows from overflowing the left pane.
-  category: fix
-  dev: Constrains SkillsView discovered-skill name, path, and source rows with ellipsis truncation.
-- 0ae4499: summary: Open dependency Graph tasks in the shared movable task pop-out.
-  category: fix
-  dev: Routes graph plugin task-open callbacks through MainContent popOutTaskDetail while preserving non-graph plugin modal behavior.
-- f3f20ac: summary: Preview image, video, audio, and PDF files natively in the right-dock Files viewer.
-  category: fix
-  dev: Reuses the shared file-preview classification and download route in DockFilesView.
-- 6415eed: summary: Match the optional steps dropdown trigger to shared task creation buttons.
-  category: fix
-  dev: Reuses the dashboard `.btn .btn-sm` trigger styling for WorkflowOptionalStepsDropdown.
-- b6b5583: summary: Workflow and automation steps now use the configured project Execution model instead of the default.
-  category: fix
-  dev: Workflow/AI-prompt step model resolution now consults the execution lane (resolveExecutorSessionModel / resolveExecutionSettingsModel) instead of resolveProjectDefaultModel, fixing executeWorkflowStep (executor.ts), cron-runner.ts, and dashboard routes.ts. FN-7039.
-- 2c46cdc: summary: Fix task Workflow tab showing "Step definition not found." for Code Review and other optional steps.
-  category: fix
-  dev: WorkflowResultsTab configuredSteps now shows the not-found message only when a step id is absent from the step lookup, not when a found optional-group step has an empty description.
-- ea5e12e: summary: Quick task input no longer refocuses itself after you add a task.
-  category: fix
-  dev: Removed QuickEntryBox post-submit focus restoration (FNXC:QuickEntryFocus); supersedes FN-6217/FN-6219.
-- 07209a4: summary: Capitalize the built-in Code Review step name consistently.
-  category: fix
-  dev: Updates the compound-engineering built-in workflow node display name and regression coverage.
-- da69e03: summary: Remove the quick-entry keyboard hint from the task creation surface.
-  category: internal
-  dev: Removes the retired quickEntryHint locale key and QuickEntryBox hint shell/CSS.
-- 93da87d: summary: Restore mobile swipe scrolling when touching task-detail tab buttons.
-  category: fix
-  dev: Adds detail-tab touch-action pan-x coverage to override the global mobile pan-y lock.
-- c0d5353: summary: Restore horizontal swiping on Agent Detail tabs on mobile touch devices.
-  category: fix
-  dev: Adds `.agent-detail-tab` touch-action pan-x coverage because the global mobile pan-y lock is non-inherited.
-- 59fc94b: summary: Fix slash/namespaced skill commands not loading in chat and agent sessions.
-  category: fix
-  dev: skill-resolver requested-name matching now reduces a/b, a/b/SKILL.md, and source::a/b forms to the bare token like the dashboard bareSkillName, scoped to requested-name matching (allow/exclude path matching unchanged).
-- afa33b7: summary: Fix task-detail Workflow tabs so inherited workflow graphs and step details populate.
-  category: fix
-  dev: Resets stale task workflow selection/results on task switches and aliases optional step template IDs.
-- d03d6c2: summary: Keep Graph tasks visible when cached workflow assignments reference deleted workflows.
-  category: fix
-  dev: Treat stale Graph `taskWorkflowIds` entries as default-workflow assignments during workflow filtering.
-- 42f46a1: summary: Fix npm install failure caused by bundled plugins referencing private @fusion packages.
-  category: fix
-  dev: Sanitizes copied plugin and vendored extension manifests in tsup.config.ts before publishing.
-- 7a3a9a9: summary: Rename the Remote Access settings section (drops the stale "& Node Sync" suffix).
-  category: fix
-  dev: The standalone Node Sync settings section is unchanged.
-- e48c75c: summary: Mobile: hide the executor footer and remove the empty gap above the keyboard while typing.
-  category: fix
-  dev: computeMobileBarKeyboardFlags no longer iOS-gates footerHidden, so Android keyboard-open now hides ExecutorStatusBar and drops the reserved footer+nav padding-bottom (composer sits flush above the keyboard). footerKeyboardOpen stays iOS-only. Supersedes FN-5707's Android gate.
-- c202053: summary: Fix Planning Mode not scrolling on mobile so action buttons stay reachable.
-  category: fix
-  dev: The global mobile `.modal-lg`/`.modal:not(.confirm-dialog)` 100dvh rule was matching the embedded Planning shell (`.planning-modal--embedded`) and stretching it past its bounded `.planning-view` pane, clipping the footer under `overflow:hidden`. Mobile rule now qualifies as `.planning-view.open .planning-modal--embedded` (specificity 0,3,0) and re-pins `max-height:100%` so the inner flex scroll chain works.
-- efa5d9b: summary: Verification (merge/step gate) timeout now scales with command scope instead of a flat 10 minutes.
-  category: fix
-  dev: verification-utils runVerificationCommand derives its default from the command — package-scoped (pnpm --filter/-F) gets 300s, workspace-scoped gets 900s — matching fn_run_verification (DEFAULT_TIMEOUT_PACKAGE_SEC/WORKSPACE_SEC). Project verificationCommandTimeoutMs still overrides; the 1800s hard cap still applies. Fixes workspace-scoped suites being killed as a 10-min infra timeout during merge/step verification.
-- 7cd660f: summary: Fix stale overlap-blocker repair edge cases and dashboard display synchronization.
-  category: fix
-  dev: Adds effective write-scope repair handling for scheduler/file-scope lease consistency.
-- 9a2e8a7: summary: Post-merge workflow steps now run once via the workflow graph instead of the merger.
-  category: internal
-  dev: Flips `experimentalFeatures.graphNativePostMerge` DEFAULT-ON so the graph is the sole post-merge owner; the legacy merger post-merge path (`runPostMergeWorkflowSteps`/`hasEnabledPostMergeWorkflowSteps`) is inert under the flag (kept until U7c). DB migration 130 rewrites legacy compiled `workflow_steps` enable ids (templateId ∈ built-in optional-group ids: browser-verification, code-review) to the graph node ids in tasks' `enabledWorkflowSteps` (idempotent, de-duped). `workflow_steps` table is retained.
-- 347842f: summary: Retire the legacy workflow-steps store; workflow steps now run entirely graph-native.
-  category: internal
-  dev: U7c removes the last readers/writers of the legacy `workflow_steps` table and drops it via migration 131 (SCHEMA_VERSION 130→131, idempotent DROP). Removed: store CRUD (`create`/`update`/`delete`/`getWorkflowStep`), the workflow-compilation materializer (`materializeWorkflowSteps`), `migrateLegacyWorkflowSteps` + its `POST /api/workflows/migrate-legacy-steps` route and the editor's on-open migration notice, and the merger legacy post-merge execution path (worktree + prompt/script step run). Pre/post-merge steps record into `task.workflowStepResults`; `selectTaskWorkflow` now seeds `enabledWorkflowSteps` with default-on optional-group node ids only (the graph runs the workflow IR directly). `listWorkflowSteps()` returns only the in-memory plugin palette. Executor revive sources gate-ness from the recorded result status, not the table.
-
-### runfusion.ai
-
-#### Patch Changes
-
-- Updated dependencies [c7cbae1]
-- Updated dependencies [50a9471]
-- Updated dependencies [7772ab3]
-- Updated dependencies [744aa2c]
-- Updated dependencies [b293525]
-- Updated dependencies [c20c4b7]
-- Updated dependencies [98a5052]
-- Updated dependencies [e46ea00]
-- Updated dependencies [d08e8db]
-- Updated dependencies [6df4043]
-- Updated dependencies [f5e1b96]
-- Updated dependencies [0744ab3]
-- Updated dependencies [9fabc9d]
-- Updated dependencies [0049fb9]
-- Updated dependencies [9a2709d]
-- Updated dependencies [4880a0f]
-- Updated dependencies [4cc9c2f]
-- Updated dependencies [419d58f]
-- Updated dependencies [a0954c7]
-- Updated dependencies [575e211]
-- Updated dependencies [f1b3bd8]
-- Updated dependencies [7e7b0c6]
-- Updated dependencies [0c53f46]
-- Updated dependencies [d984fce]
-- Updated dependencies [ef6e459]
-- Updated dependencies [2d2dd50]
-- Updated dependencies [3513d5f]
-- Updated dependencies [4dab2b6]
-- Updated dependencies [977000c]
-- Updated dependencies [3f66e55]
-- Updated dependencies [541f1f6]
-- Updated dependencies [f5b588c]
-- Updated dependencies [45727f1]
-- Updated dependencies [775a1f8]
-- Updated dependencies [79c602d]
-- Updated dependencies [6c94ee0]
-- Updated dependencies [429143e]
-- Updated dependencies [301f25d]
-- Updated dependencies [ea3cfee]
-- Updated dependencies [0ae4499]
-- Updated dependencies [f3f20ac]
-- Updated dependencies [6415eed]
-- Updated dependencies [2ce208e]
-- Updated dependencies [8131d54]
-- Updated dependencies [b6b5583]
-- Updated dependencies [dd1b960]
-- Updated dependencies [2c46cdc]
-- Updated dependencies [ea5e12e]
-- Updated dependencies [07209a4]
-- Updated dependencies [da69e03]
-- Updated dependencies [93da87d]
-- Updated dependencies [c0d5353]
-- Updated dependencies [59fc94b]
-- Updated dependencies [afa33b7]
-- Updated dependencies [d03d6c2]
-- Updated dependencies [42f46a1]
-- Updated dependencies [2442032]
-- Updated dependencies [7a3a9a9]
-- Updated dependencies [f685518]
-- Updated dependencies [1d860ec]
-- Updated dependencies [e48c75c]
-- Updated dependencies [c202053]
-- Updated dependencies [efa5d9b]
-- Updated dependencies [7cd660f]
-- Updated dependencies [9a2e8a7]
-- Updated dependencies [347842f]
-  - @runfusion/fusion@0.49.0
+- Remove the quick-entry keyboard hint from the task creation surface.
+- Post-merge workflow steps now run once via the workflow graph instead of the merger.
+- Retire the legacy workflow-steps store; workflow steps now run entirely graph-native.
 
 ## 0.48.0
 
-### @fusion/dashboard
+### Highlights
 
-#### Patch Changes
+- Add a workflow dropdown to filter tasks in the dependency Graph view.
+- Add a New Task dialog picker that seeds prompts from current-remote GitHub issues and PRs.
+- Fix release pipeline so binaries and desktop installers publish again.
+- Let quick-entry text use the full entry box width instead of wrapping early.
+- Match Quick Chat and Terminal typography in the dashboard footer.
 
-- @fusion/core@0.48.0
-- @fusion/engine@0.48.0
-- @fusion/i18n@0.39.11
-- @fusion-plugin-examples/cli-printing-press@0.1.28
-- @fusion-plugin-examples/compound-engineering@0.1.11
-- @fusion-plugin-examples/dependency-graph@0.1.42
-- @fusion-plugin-examples/roadmap@0.1.30
-- @fusion-plugin-examples/cursor-runtime@0.1.30
-- @fusion-plugin-examples/droid-runtime@0.1.37
-- @fusion-plugin-examples/hermes-runtime@0.2.61
-- @fusion-plugin-examples/openclaw-runtime@0.2.61
-- @fusion-plugin-examples/paperclip-runtime@0.2.61
+### New
 
-### @fusion/desktop
+- Add a workflow dropdown to filter tasks in the dependency Graph view.
+- Add a New Task dialog picker that seeds prompts from current-remote GitHub issues and PRs.
 
-#### Patch Changes
+### Fixed
 
-- @fusion/core@0.48.0
-- @fusion/dashboard@0.48.0
-- @fusion/engine@0.48.0
-
-### @fusion/engine
-
-#### Patch Changes
-
-- @fusion/core@0.48.0
-- @fusion/pi-claude-cli@0.48.0
-
-### @fusion/plugin-sdk
-
-#### Patch Changes
-
-- @fusion/core@0.48.0
-
-### @runfusion/fusion
-
-#### Minor Changes
-
-- d7f3c70: summary: Add a workflow dropdown to filter tasks in the dependency Graph view.
-  category: feature
-  dev: Scopes plugin-hosted graph tasks through the dashboard workflow assignment payload.
-
-#### Patch Changes
-
-- a20235b: summary: Fix release pipeline so binaries and desktop installers publish again.
-  category: fix
-  dev: github-release job sparse-checks-out CHANGELOG.md (was missing a checkout, so the release-notes step threw ENOENT and published 0 assets on v0.47.0); desktop esbuild build externalizes @fusion/engine so it no longer tries to bundle node-pty's native .node binaries.
-- 214a60c: summary: Let quick-entry text use the full entry box width instead of wrapping early.
-  category: fix
-  dev: Adds a QuickEntryBox-specific textarea padding override and CSS cascade regression coverage.
-- 5a192ec: summary: Add a New Task dialog picker that seeds prompts from current-remote GitHub issues and PRs.
-  category: feature
-  dev: Reuses existing GitHub remote, issue, and pull list endpoints; PR prompts direct agents to address review comments.
-- a554ceb: summary: Match Quick Chat and Terminal typography in the dashboard footer.
-  category: fix
-  dev: Footer launcher CSS now shares inherited font and color contracts between Quick Chat and Terminal.
-- d359306: summary: Prevent Create PR metadata generation from hanging and provide editable fallback content.
-  category: fix
-  dev: Bounds PR metadata generation and validates non-empty PR bodies before GitHub PR creation.
-- 29530b5: summary: Widen tablet Chat View agent response bubbles for easier reading.
-  category: fix
-  dev: Uses ChatView container queries to target assistant, streaming, and failure bubbles without widening user or Quick Chat bubbles.
-- eb3833a: summary: Retire dual-observe as a workflow-authoritative cutover prerequisite.
-  category: fix
-  dev: Cutover readiness now uses the authoritative flag plus clean populated parity summaries; stale dual-observe settings remain inert.
-- 3ae053e: summary: Keep Planning Mode malformed AI responses retryable instead of stranding sessions.
-  category: fix
-  dev: Hardens planning JSON candidate selection and persists bounded parse failures as retryable AI-session errors.
-- f918896: summary: Keep Git Manager tabs reachable in mobile and docked layouts.
-  category: fix
-  dev: Makes the shared Git Manager tablist a non-wrapping horizontal touch scroller in mobile and embedded narrow containers.
-- bd5a779: summary: Remove helper guidance above the task chat composer.
-  category: fix
-  dev: Task chat placeholders now carry active/idle/done composer guidance without an extra status shell.
-- 7a00811: summary: Open Mission Manager mission-delete confirmations in the standard modal dialog.
-  category: fix
-  dev: Routes mission list and detail delete affordances through ConfirmDialogProvider with regression coverage.
-- e473ba6: summary: Make the task Changes tab inline diff panel wider on narrow screens.
-  category: fix
-  dev: Reclaims task-detail body padding for compact inline diff lists with mobile CSS contract coverage.
-- e702185: summary: Equalize mobile bottom navigation side spacing.
-  category: fix
-  dev: Adds tokenized MobileNavBar horizontal padding while preserving ICB and safe-area behavior.
-
-### runfusion.ai
-
-#### Patch Changes
-
-- Updated dependencies [a20235b]
-- Updated dependencies [d7f3c70]
-- Updated dependencies [214a60c]
-- Updated dependencies [5a192ec]
-- Updated dependencies [a554ceb]
-- Updated dependencies [d359306]
-- Updated dependencies [29530b5]
-- Updated dependencies [eb3833a]
-- Updated dependencies [3ae053e]
-- Updated dependencies [f918896]
-- Updated dependencies [bd5a779]
-- Updated dependencies [7a00811]
-- Updated dependencies [e473ba6]
-- Updated dependencies [e702185]
-  - @runfusion/fusion@0.48.0
+- Fix release pipeline so binaries and desktop installers publish again.
+- Let quick-entry text use the full entry box width instead of wrapping early.
+- Match Quick Chat and Terminal typography in the dashboard footer.
+- Prevent Create PR metadata generation from hanging and provide editable fallback content.
+- Widen tablet Chat View agent response bubbles for easier reading.
+- Retire dual-observe as a workflow-authoritative cutover prerequisite.
+- Keep Planning Mode malformed AI responses retryable instead of stranding sessions.
+- Keep Git Manager tabs reachable in mobile and docked layouts.
+- Remove helper guidance above the task chat composer.
+- Open Mission Manager mission-delete confirmations in the standard modal dialog.
+- Make the task Changes tab inline diff panel wider on narrow screens.
+- Equalize mobile bottom navigation side spacing.
 
 ## 0.47.0
 
-### @fusion/dashboard
+### Highlights
 
-#### Patch Changes
+- Breaking: the WorkflowOptionalStep type, previously exported from @runfusion/fusion, is removed — any consumer importing it must migrate to optional-group nodes / ResolvedWorkflowOptionalStep.
+- Merger unification (master-plan U0): runAiMerge (the FN-5633 clean-room AI merge path) is now the sole merge path. The engine dispatch, the fn task merge CLI command,
+- Add X-Session-Id and X-Session-Affinity request headers to all LLM chat completion requests. These let LLM gateways sticky-route consecutive requests from the same conversation to the same backend,
+- Structured changeset format with AI-distilled release notes for cleaner, user-facing changelogs.
+- Workflow editor: add a Help section to the node detail pane. Every node now documents what it does, how to configure it,
 
-- @fusion/core@0.47.0
-- @fusion/engine@0.47.0
-- @fusion/i18n@0.39.10
-- @fusion-plugin-examples/cli-printing-press@0.1.27
-- @fusion-plugin-examples/compound-engineering@0.1.10
-- @fusion-plugin-examples/dependency-graph@0.1.41
-- @fusion-plugin-examples/roadmap@0.1.29
-- @fusion-plugin-examples/cursor-runtime@0.1.29
-- @fusion-plugin-examples/droid-runtime@0.1.36
-- @fusion-plugin-examples/hermes-runtime@0.2.60
-- @fusion-plugin-examples/openclaw-runtime@0.2.60
-- @fusion-plugin-examples/paperclip-runtime@0.2.60
+### New
 
-### @fusion/desktop
+- Merger unification (master-plan U0): runAiMerge (the FN-5633 clean-room AI merge path) is now the sole merge path. The engine dispatch, the fn task merge CLI command,
+- Add X-Session-Id and X-Session-Affinity request headers to all LLM chat completion requests. These let LLM gateways sticky-route consecutive requests from the same conversation to the same backend,
+- Structured changeset format with AI-distilled release notes for cleaner, user-facing changelogs.
+- Workflow editor: add a Help section to the node detail pane. Every node now documents what it does, how to configure it,
+- Workflow editor: optional steps are now graph-native. A new optional-group container node (foreach/loop-style) holds a subgraph the executor runs once when the group is enabled for a task (per-task enabledWorkflowSteps +…
+- Workspace tasks no longer render blank in the dashboard. Task cards and the task detail view now surface a workspace task's acquired per-sub-repo worktrees as a read-only "N repos acquired" placeholder and flat repo → wo…
+- Add workspace mode: open a folder of git repositories as a single Fusion project. The agent acquires per-repo worktrees on demand via fn_acquire_repo_worktree as it discovers it needs to work in each sub-repo.
+- Workspace mode (Phase A / U2): harden per-repo worktree acquisition. Each sub-repo worktree now gets the task identity guard installed (single-repo parity),
+- Workspace mode (Phase C U3): serialize concurrent same-sub-repo lands with a per-repo file-scope lease. When two workspace tasks try to land onto the SAME sub-repo's local integration ref at the same time,
+- Workspace mode Phase A (U1): executor session scoping. In workspace mode the executor now skips the root worktree acquisition and every rootDir git preflight (base-commit capture, contamination, worktree-liveness),
+- Workspace mode (Phase B, U1): per-repo post-session change capture, contamination detection, and worktree-invariant verification. In workspace mode the executor now loops task.workspaceWorktrees,
+- Workspace mode (Phase B, U2): per-repo review at both review entry points plus per-repo fn_task_done completion + scope-leak verification.
+- Workspace mode Phase C (U1): per-repo merge loop. Extract landOneRepo from the runAiMerge clean-room land closure (single-repo behavior unchanged) and add landWorkspaceTask,
+- Workspace mode Phase C (U2): per-repo landed predicate, finalize-once, and idempotent auto-retry-then-park.
+- Workspace mode Phase D (U1): workspace-aware self-healing. The existing merging-status reconcilers no longer mis-finalize a partial-landed workspace task (recoverInterruptedMergingTasks now clears the transient merging s…
+- Saved agent tool-output details now default off to reduce persisted log payloads, while timeline rows remain logged and detailed tool arguments/results stay available via the global persistAgentToolOutput: true opt-in.
+- Harden the workspace per-repo land loop against partial-failure races. A lost landedSha DB write after a sub-repo's integration ref already advanced no longer silently continues — it escalates to a retryable partial-land…
+- Address Phase C workspace merge-loop review feedback. A sub-repo recognized as already-landed via the Fusion-Task-Id trailer fallback (when its landedSha persist was lost) now resolves and re-records a concrete landedSha…
+- Close task detail dialogs and embedded task-detail hosts immediately after delete confirmations complete, while delete requests continue reporting success or error toasts asynchronously.
+- Stack task-detail Chat agent headers above output blocks in the List View split-pane detail pane while preserving full-width desktop chat layout.
 
-#### Patch Changes
+### Fixed
 
-- @fusion/core@0.47.0
-- @fusion/dashboard@0.47.0
-- @fusion/engine@0.47.0
+- Fix narrow right-sidebar Dev Server preview overlap by replacing the inline preview with an accessible modal launcher when the dock is very narrow, while keeping inline preview for full-page, mobile viewport,
+- Fix ntfy test notifications to honor unsaved Settings form config so users can enable ntfy, enter a valid topic/server/token, and send a test notification before saving.
+- Fix multiworkspace tasks failing to complete. task.workspaceWorktrees is now durably persisted (it previously had no SQLite column,
 
-### @fusion/engine
+### Breaking
 
-#### Patch Changes
-
-- @fusion/core@0.47.0
-- @fusion/pi-claude-cli@0.47.0
-
-### @fusion/plugin-sdk
-
-#### Patch Changes
-
-- @fusion/core@0.47.0
-
-### @runfusion/fusion
-
-#### Minor Changes
-
-- a6252e5: Merger unification (master-plan U0): `runAiMerge` (the FN-5633 clean-room AI merge path) is now the **sole** merge path. The engine dispatch, the `fn task merge` CLI command, and the UI-only (`--no-engine`) dashboard merge all route through `runAiMerge`; the legacy `aiMergeTask` pipeline is soft-deprecated (body retained, `@deprecated`). The `merger.mode` setting is now **inert and deprecated** — the type and field are retained as published surface, but the `"deterministic"` value no longer selects a different pipeline; observing it logs a one-time deprecation warning and proceeds via the unified AI merge path. A new shared `assertNotWorkspaceTaskMerge` guard rejects workspace-mode tasks (populated `workspaceWorktrees`) at every merge entry point with a clear error until per-repo merge support (master-plan U6) lands.
-- e5382f0: **Breaking:** the `WorkflowOptionalStep` type, previously exported from `@runfusion/fusion`, is removed — any consumer importing it must migrate to `optional-group` nodes / `ResolvedWorkflowOptionalStep`.
-
-  Retire the legacy optional-step DECLARATION model now that optional steps are graph-native `optional-group` nodes. Remove the `WorkflowOptionalStep` type and the `WorkflowIrV2.optionalSteps` IR field, drop the workflow node editor's optional-step declaration authoring panel (sidebar section, mobile tab, and collapse state), and stop threading an `optionalSteps` array through `flowToIr`/`serializeGraph`. A legacy persisted `optionalSteps` key on an old v2 workflow row is now tolerated (ignored, not validated) at parse so old rows still load as v2, and the rollback-downgrade heuristic still treats such a row as v2. The per-task optional-step toggle surfaces are unchanged — they continue to list and toggle optional steps sourced from `optional-group` nodes via `resolveWorkflowOptionalSteps` (`ResolvedWorkflowOptionalStep`).
-
-- e17e9bc: Add `X-Session-Id` and `X-Session-Affinity` request headers to all LLM chat completion requests. These let LLM gateways sticky-route consecutive requests from the same conversation to the same backend, and let observability tools (Langfuse, Arize, etc.) group the otherwise-stateless API calls of a session into a single multi-turn trace. Both headers carry the same stable identifier — the task id when available (stable across pause/resume), otherwise the pi session id. (#1675)
-- 2019e5a: summary: Structured changeset format with AI-distilled release notes for cleaner, user-facing changelogs.
-  category: feature
-  dev: Changeset bodies now use labeled fields (summary, category, dev). A linter enforces the format in the PR gate. Release notes are distilled into grouped, end-user-facing sections. See .changeset/README.md for the format guide.
-- 9c6b4dd: Workflow editor: add a Help section to the node detail pane. Every node now documents what it does, how to configure it, and its inputs/outputs/edges — including the engine-managed merge-lifecycle nodes (auto-merge gate, branch-group member integration, branch-group promotion, PR and recovery nodes), which are surfaced read-only with an "Engine-managed" badge.
-- 0c031b8: Workflow editor: optional steps are now graph-native. A new `optional-group` container node (foreach/loop-style) holds a subgraph the executor runs once when the group is enabled for a task (per-task `enabledWorkflowSteps` + workflow `defaultOn`) and bypasses when disabled. All seven built-in add-ons (documentation-review, qa-check, security-audit, performance-review, accessibility-check, browser-verification, frontend-ux-design) are insertable from the node-editor palette as a node or wrapped in an optional-group. The built-in coding and stepwise-coding workflows now express `browser-verification` as an optional-group. Optional-group enable resolution correctly handles id collisions with add-on template ids, so a group's enable state is not silently bypassed during task creation/update. (The legacy declaration-based optional-steps model is retired in a sibling changeset; only the `workflow-step` seam infrastructure removal remains a follow-up.)
-- 023e4b0: Workspace tasks no longer render blank in the dashboard. Task cards and the task
-  detail view now surface a workspace task's acquired per-sub-repo worktrees as a
-  read-only "N repos acquired" placeholder and flat repo → worktree/branch list,
-  instead of an empty branch area (no `task.worktree`/`task.branch`).
-- 8f4098e: Add workspace mode: open a folder of git repositories as a single Fusion
-  project. The agent acquires per-repo worktrees on demand via
-  `fn_acquire_repo_worktree` as it discovers it needs to work in each sub-repo.
-- 12d33c5: Workspace mode (Phase A / U2): harden per-repo worktree acquisition. Each sub-repo worktree now gets the task identity guard installed (single-repo parity), a per-repo base commit SHA captured local-first against that sub-repo's resolved integration branch (shared `integrationBranch` override stripped so each repo falls through to its own `origin/HEAD`), and same-sub-repo acquisition exclusivity registered in the path-keyed active-session registry. Re-acquiring an already-acquired `(taskId, repo)` is idempotent, and acquisition failures surface an error plus an audit event instead of silently stalling.
-- 64e87f9: Workspace mode (Phase C U3): serialize concurrent same-sub-repo lands with a per-repo file-scope lease. When two workspace tasks try to land onto the SAME sub-repo's local integration ref at the same time, the merge phase now registers the sub-repo's absolute path in the path-keyed active-session registry under a distinct `workspace-repo-land` kind before each land and releases it in a `finally` (on land success or failure — no stuck lock). A second task contending for the same sub-repo fast-fails with a retryable `WorkspaceRepoLandBusyError`, which the existing partial-land auto-retry-then-park dispatch handles (consume a `mergeRetry`, re-enqueue with backoff, then operator-park). Disjoint sub-repos lease different paths and never serialize against each other. The lease prevents clean-room ai-merge worktree collisions; ref correctness is already guaranteed by `advanceIntegrationBranchRef`'s CAS (concurrent-advance → rebuild).
-- 09bd01b: Workspace mode Phase A (U1): executor session scoping. In workspace mode the executor now skips the root worktree acquisition and every rootDir git preflight (base-commit capture, contamination, worktree-liveness), runs the agent session rooted at the browse-only workspace root, and tracks acquired sub-repo worktrees as a per-task set. Single-repo tasks are unchanged (one-element set, byte-for-byte preflight parity).
-- fc9423e: Workspace mode (Phase B, U1): per-repo post-session change capture, contamination detection, and worktree-invariant verification. In workspace mode the executor now loops `task.workspaceWorktrees`, reusing `captureModifiedFiles` per sub-repo (diffing each against its own `baseCommitSha`, with a merge-base fallback when undefined) to aggregate repo-prefixed `task.modifiedFiles` and surface per-repo contamination, and un-stubs `verifyWorktreeInvariants` to assert each acquired worktree's git toplevel and `fusion/<id>` branch. Single-repo behavior is unchanged.
-- 81edbee: Workspace mode (Phase B, U2): per-repo review at both review entry points plus per-repo `fn_task_done` completion + scope-leak verification. In workspace mode both review call sites (the in-session `fn_review_step` tool and the step-inversion review seam) now loop the single-cwd `reviewStep` once per acquired sub-repo (cwd = each repo's worktree) and aggregate the repo-tagged verdicts as a conjunction — the task is reviewed only when every sub-repo approves, and the first failing sub-repo's verdict (with repo-tagged findings) drives the existing verdict→edge mapping. `fn_task_done` now verifies worktree invariants per acquired repo and iterates the scope-leak guard per sub-repo (cwd = repo worktree, repo `baseCommitSha`), blocking completion on any sub-repo carrying off-scope changes and naming the repo. Adds a minimal shared repo-prefix-derivation helper (`workspace-paths.ts`). Single-repo behavior is unchanged.
-
-  Phase-B hardening: the per-repo scope-leak guard now fails CLOSED — a thrown capture/diff error in any sub-repo refuses `fn_task_done` (naming the repo) instead of failing open, and a scoped task that acquired zero sub-repo worktrees is blocked rather than silently passing. A legitimate per-repo `.changeset/` file is no longer falsely flagged off-scope (the always-allowed carve-out now runs against the repo-local path). Per-repo review stops at the first non-APPROVE sub-repo so a later repo's reviewer error can't mask an already-determined REVISE/RETHINK. Per-repo capture failures are isolated (one repo's error no longer drops the whole modified-files write), and the reported offending/failing repo is now deterministic (sorted repo iteration). Single-repo behavior remains unchanged.
-
-- 744ed09: Workspace mode Phase C (U1): per-repo merge loop. Extract `landOneRepo` from the
-  `runAiMerge` clean-room land closure (single-repo behavior unchanged) and add
-  `landWorkspaceTask`, which lands each acquired sub-repo's `fusion/<id>` branch onto
-  that repo's OWN local integration ref (re-resolved per repo with overrides stripped),
-  land-as-you-go with no remote push. The engine merge dispatch and the user-facing
-  CLI/dashboard merge doors now route workspace tasks through this loop instead of
-  throwing; `store.mergeTask`, `aiMergeTask`, and the `runAiMerge` chokepoint keep
-  throwing `WorkspaceTaskMergeError` as defense-in-depth.
-- 7544346: Workspace mode Phase C (U2): per-repo landed predicate, finalize-once, and idempotent
-  auto-retry-then-park. `landWorkspaceTask` now records each sub-repo's `landedSha` after
-  its branch advances that repo's local integration ref, and on a re-run SKIPS any repo
-  whose recorded `landedSha` is an ancestor of (or equals) its current integration tip — so
-  an interrupted multi-repo land retries only the un-landed repos and never re-advances an
-  already-landed ref. When every acquired repo's landed predicate holds, the task moves to
-  `done` EXACTLY ONCE via the task-global finalize path with an aggregate `mergeDetails`
-  (representative `commitSha` + a `workspaceLandedShas` map). A partial land (some repos
-  unlanded) does not move the task done; the engine merge dispatch surfaces it as a
-  retryable failure that consumes a `mergeRetry` and auto-retries the merge (skipping landed
-  repos) up to the configured max, then operator-parks the task as failed.
-- 7cd204e: Workspace mode Phase D (U1): workspace-aware self-healing. The existing merging-status reconcilers no longer mis-finalize a partial-landed workspace task (recoverInterruptedMergingTasks now clears the transient `merging` status and re-enqueues the idempotent per-repo land instead of running the single-commit finalize over the non-git workspace root), and recoverMergeableReviewTasks now admits workspace tasks (task.worktree is null). Adds three reconcilers: partial-land recovery (re-enqueue via enqueueMerge, FORK-A unrecoverable → park failed; guarded by autoMerge:false + user-pause + workspace-aware liveness), phantom `workspace-repo-land` lease reclaim (new `entriesByKind` registry seam), and per-repo worktree cleanup from stored paths (no temp walk). New run-audit events: `task:reconcile-workspace-partial-land`(`-no-action`), `task:reclaim-phantom-workspace-land-lease`, `task:reconcile-orphaned-workspace-worktree`.
-
-  Phase D P1 TOCTOU fix (merge-queue dispatch blind spot): the workspace partial-land and phantom-land-lease reconcilers now consult a new `ProjectEngine.isMergePending(taskId)` seam (true if the task is in the engine's in-memory `mergeQueue` or `mergeActive`). This closes the dequeue→rawMerge window where a workspace task is being merged but no other liveness signal fires yet (the id is shifted out of `mergeQueue` while `activeMergeTaskId` / `merging` status / the `workspace-repo-land` lease are not yet set inside `landWorkspaceTask`). The partial-land reconciler skips a merge-pending candidate (emitting `task:reconcile-workspace-partial-land-no-action` with reason `merge-pending`) instead of launching a second concurrent `landWorkspaceTask` (double-squash risk, since a same-task land lease is not contention), and lease reclaim leaves a merge-pending owner's not-yet-registered lease alone. Wired via `InProcessRuntime.setMergePendingProvider`; undefined (unwired) is treated as not-pending so existing guards still apply.
-
-  Phase D review hardening: every single-commit-finalize self-healing site is now workspace-gated so a partial-landed workspace task can never be marked fully merged on one repo's commit — `recoverStuckMergeDeadlocks` (the twin of recoverInterruptedMergingTasks), `recoverOrphanOnlyScopeViolations`, `recoverAlreadyMergedReviewTasks`, `recoverBranchMisboundInReviewTasks`, and `recoverDoneTaskMergeMetadata` all skip workspace tasks and defer recovery to the workspace partial-land reconciler. The partial-land reconciler now bounds its `enqueueMerge` re-enqueue (parks `failed` after repeated queue rejections instead of looping forever) and treats a branch-gone-and-not-landed sub-repo as unrecoverable even when a stale unreachable `landedSha` is present. Phantom land-lease reclaim now only reclaims a demonstrably TERMINAL owner (never an `in-progress` executing task that registered its lease early). Orphan per-repo worktree removal failures are now engine-logged and retry-bounded. The canonical `isRepoLanded` predicate moved to a new dependency-free `workspace-land-predicate` module, dissolving the self-healing ↔ merger-ai import cycle (public export preserved).
-
-#### Patch Changes
-
-- 038ac30: Saved agent tool-output details now default off to reduce persisted log payloads, while timeline rows remain logged and detailed tool arguments/results stay available via the global `persistAgentToolOutput: true` opt-in.
-- 627bdcf: Harden the workspace per-repo land loop against partial-failure races. A lost `landedSha` DB write after a sub-repo's integration ref already advanced no longer silently continues — it escalates to a retryable partial-land error, and the landed predicate now recognizes an already-landed repo via its `Fusion-Task-Id` trailer on retry, so a re-run never produces a second squash commit. The land lease is now taskId-aware across registry kinds: a merging task can no longer clobber an executing task's acquire lease on a shared sub-repo (any foreign-task holder is treated as contention), and the active-session registry rejects foreign-task overwrites instead of silently clobbering. The transient `merging` status is always reset before any throw escapes the land loop (no stuck-`merging` leak), and finalize re-reads the latest task and no longer swallows the merge-details persist failure (no finalizing on a stale row).
-
-  Harden the workspace merge dispatch and user-facing merge doors. The partial-land retry catch now fails closed when the task row can't be read (DB outage no longer triggers an indefinite retry storm). The merge-confirmed reachability fast-path skips workspace tasks (whose recorded commitSha lives in a sub-repo, not the workspace root) so a fully-landed workspace task is no longer demoted/parked. The dashboard and CLI merge doors now report `merged: true` (and `mergeConfirmed`/`commitSha`) when a workspace fully lands, mirroring the engine result. Transient sub-repo land-lease contention (`WorkspaceRepoLandBusyError`) is re-enqueued with capped backoff on a separate bounded counter instead of burning the merge-retry quota, so pure contention can't park a never-failed task. Retry backoff is capped at 60s.
-
-- 3a71237: Address Phase C workspace merge-loop review feedback. A sub-repo recognized as already-landed via the `Fusion-Task-Id` trailer fallback (when its `landedSha` persist was lost) now resolves and re-records a concrete `landedSha`, so finalize no longer drops it and mis-reports a fully-landed workspace task as a no-op (`mergeConfirmed:false`). A manual merge that hits sub-repo land-lease contention now surfaces the busy error to the user without consuming the persisted `mergeRetries` quota (matching the auto path's separate busy counter). The partial-land retry persists the incremented retry count before arming the backoff timer — a failed write now fails closed instead of looping without consuming budget — and clears the stale busy-contention counter when a real partial land supersedes transient busy failures. The CLI and dashboard merge doors use the shared `isWorkspaceTask` predicate instead of re-inlining the workspace check, and integration-branch shell interpolation in base-commit capture uses POSIX single-quote escaping.
-- e9a6955: Fix narrow right-sidebar Dev Server preview overlap by replacing the inline preview with an accessible modal launcher when the dock is very narrow, while keeping inline preview for full-page, mobile viewport, and expanded pop-out hosts.
-- 7b60539: Fix ntfy test notifications to honor unsaved Settings form config so users can enable ntfy, enter a valid topic/server/token, and send a test notification before saving.
-- cf2f3ba: Close task detail dialogs and embedded task-detail hosts immediately after delete confirmations complete, while delete requests continue reporting success or error toasts asynchronously.
-- b9821ee: Stack task-detail Chat agent headers above output blocks in the List View split-pane detail pane while preserving full-width desktop chat layout.
-- f062819: Fix multiworkspace tasks failing to complete. `task.workspaceWorktrees` is now durably persisted (it previously had no SQLite column, so `fn_acquire_repo_worktree`'s write was dropped on every persist and `fn_task_done` always reported "acquired no sub-repo worktrees"). Concurrent workspace tasks no longer collide on the shared browse-root active-session path — each task gets a task-scoped session key, so a second workspace task no longer fails with "active-session path … is held by …".
-
-### runfusion.ai
-
-#### Patch Changes
-
-- Updated dependencies [038ac30]
-- Updated dependencies [627bdcf]
-- Updated dependencies [3a71237]
-- Updated dependencies [e9a6955]
-- Updated dependencies [7b60539]
-- Updated dependencies [cf2f3ba]
-- Updated dependencies [b9821ee]
-- Updated dependencies [a6252e5]
-- Updated dependencies [f062819]
-- Updated dependencies [e5382f0]
-- Updated dependencies [e17e9bc]
-- Updated dependencies [2019e5a]
-- Updated dependencies [9c6b4dd]
-- Updated dependencies [0c031b8]
-- Updated dependencies [023e4b0]
-- Updated dependencies [8f4098e]
-- Updated dependencies [12d33c5]
-- Updated dependencies [64e87f9]
-- Updated dependencies [09bd01b]
-- Updated dependencies [fc9423e]
-- Updated dependencies [81edbee]
-- Updated dependencies [744ed09]
-- Updated dependencies [7544346]
-- Updated dependencies [7cd204e]
-  - @runfusion/fusion@0.47.0
+- Breaking: the WorkflowOptionalStep type, previously exported from @runfusion/fusion, is removed — any consumer importing it must migrate to optional-group nodes / ResolvedWorkflowOptionalStep.
 
 ## 0.46.0
 

@@ -48,6 +48,7 @@ interface NewTaskModalProps {
   onCreateTask: (input: NewTaskCreateInput) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
   initialDescription?: string;
+  initialWorkflowId?: string | null;
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
   onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
 }
@@ -396,7 +397,7 @@ function NewTaskGitHubReferencePicker({ isOpen, projectId, disabled = false, onS
   );
 }
 
-export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, initialDescription = "", onPlanningMode, onSubtaskBreakdown }: NewTaskModalProps) {
+export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, initialDescription = "", initialWorkflowId, onPlanningMode, onSubtaskBreakdown }: NewTaskModalProps) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const viewportMode = useViewportMode();
@@ -634,9 +635,14 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
       setDescription(initialDescription);
+      /*
+      FNXC:TaskWorkflowSelection 2026-07-14-14:22:
+      A New Task dialog opened from a workflow board lane must inherit that viewed workflow atomically; global/sidebar opens omit this value and continue inheriting the project default (Coding). This prevents a task created while viewing Coding (Ideas) from silently landing in plain Coding.
+      */
+      setSelectedWorkflowId(initialWorkflowId);
     }
     wasOpenRef.current = isOpen;
-  }, [initialDescription, isOpen]);
+  }, [initialDescription, initialWorkflowId, isOpen]);
 
   // Load agents for agent picker
   const loadAgents = useCallback(() => {

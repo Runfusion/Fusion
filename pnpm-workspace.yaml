@@ -6,10 +6,26 @@ ignoredBuiltDependencies:
   - sharp
   - ssh2
 onlyBuiltDependencies:
+  - '@embedded-postgres/darwin-arm64'
+  - '@embedded-postgres/darwin-x64'
+  - '@embedded-postgres/linux-arm64'
+  - '@embedded-postgres/linux-x64'
+  - '@embedded-postgres/windows-x64'
   - '@homebridge/node-pty-prebuilt-multiarch'
   - esbuild
   - koffi
   - protobufjs
+# FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+# Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
+# optional native payloads for both CPU families on the current OS so each
+# packaged macOS/Linux app contains the Postgres binaries selected at runtime.
+# Upstream publishes Windows x64 only, so unsupported Windows ARM64 is not listed.
+supportedArchitectures:
+  os:
+    - current
+  cpu:
+    - x64
+    - arm64
 packages:
   - "packages/*"
   - "plugins/examples/*"
@@ -22,6 +38,7 @@ packages:
   - "plugins/fusion-plugin-acp-runtime"
   - "plugins/fusion-plugin-cursor-runtime"
   - "plugins/fusion-plugin-grok-runtime"
+  - "plugins/fusion-plugin-omp-runtime"
   - "plugins/fusion-plugin-agent-browser"
   - "plugins/fusion-plugin-whatsapp-chat"
   - "plugins/fusion-plugin-roadmap"

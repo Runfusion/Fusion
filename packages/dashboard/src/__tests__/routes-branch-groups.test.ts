@@ -2,17 +2,28 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { TaskStore } from "@fusion/core";
 import type { BranchGroup, Task } from "@fusion/core";
+import {
+  createTaskStoreForTest,
+  PG_AVAILABLE,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
+import { createConnectionSetFromUrl } from "../../../core/src/postgres/connection.js";
+import { createAsyncDataLayer } from "../../../core/src/postgres/data-layer.js";
 import { evaluateBranchGroupCompletion, ProjectEngine } from "@fusion/engine";
 import { createApiRoutes } from "../routes.js";
 import { createBranchGroupsRouter } from "../routes/register-branch-groups-routes.js";
 import { ApiError, sendErrorResponse } from "../api-error.js";
 import { request as REQUEST } from "../test-request.js";
+
+const projectStoreResolverMocks = vi.hoisted(() => ({
+  getOrCreateProjectStore: vi.fn(),
+}));
+
+vi.mock("../project-store-resolver.js", async () => {
+  const actual = await vi.importActual<typeof import("../project-store-resolver.js")>("../project-store-resolver.js");
+  return { ...actual, getOrCreateProjectStore: projectStoreResolverMocks.getOrCreateProjectStore };
+});
 
 // Standalone routers (mounted without createApiRoutes) need the same error
 // middleware createApiRoutes provides, so thrown ApiErrors become HTTP responses
@@ -221,39 +232,362 @@ describe("branch group routes", () => {
   });
 });
 
-describe("branch group routes with durable TaskStore", () => {
+describe("branch group routes project-store scoping", () => {
+  function scopedGroup(id: string, project: string, overrides: Partial<BranchGroup> = {}): BranchGroup {
+    return {
+      id,
+      sourceType: "planning",
+      sourceId: `PS-${project}`,
+      branchName: `feature/${project}`,
+      autoMerge: false,
+      prState: "none",
+      status: "open",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...overrides,
+    };
+  }
+
+  function scopedTask(id: string, groupId: string, project: string, landed = true): Task {
+    return {
+      ...buildTask(id, groupId, landed),
+      description: `${project} task`,
+      title: `${project} task`,
+      mergeDetails: landed
+        ? {
+            mergeConfirmed: true,
+            mergeTargetSource: "branch-group-integration",
+            mergeTargetBranch: `feature/${project}`,
+          }
+        : undefined,
+    } as Task;
+  }
+
+  function scopedStore(rootDir: string, initialGroups: BranchGroup[], initialTasks: Task[]): TaskStore {
+    const groups = new Map(initialGroups.map((entry) => [entry.id, { ...entry }]));
+    const tasks = new Map(initialTasks.map((entry) => [entry.id, { ...entry }]));
+    return {
+      getRootDir: vi.fn(() => rootDir),
+      listBranchGroups: vi.fn((filter?: { status?: BranchGroup["status"] }) =>
+        [...groups.values()].filter((entry) => !filter?.status || entry.status === filter.status),
+      ),
+      getBranchGroup: vi.fn((id: string) => groups.get(id) ?? null),
+      listTasks: vi.fn(async () => [...tasks.values()]),
+      listTasksByBranchGroup: vi.fn(async (groupId: string) =>
+        [...tasks.values()].filter((task) => task.branchContext?.groupId === groupId),
+      ),
+      getTask: vi.fn(async (id: string) => {
+        const task = tasks.get(id);
+        if (!task) throw new Error(`Task ${id} not found`);
+        return task;
+      }),
+      setTaskBranchGroup: vi.fn(async (taskId: string, groupId: string | null) => {
+        const task = tasks.get(taskId);
+        if (!task) throw new Error(`Task ${taskId} not found`);
+        task.branchContext = groupId
+          ? { groupId, source: "planning", assignmentMode: "shared" }
+          : undefined;
+      }),
+      ensureBranchGroupForSource: vi.fn((_sourceType, _sourceId, input: { branchName: string; autoMerge: boolean }) => {
+        const created = scopedGroup(`BG-CREATED-${rootDir}`, rootDir, {
+          branchName: input.branchName,
+          autoMerge: input.autoMerge,
+        });
+        groups.set(created.id, created);
+        return created;
+      }),
+      updateBranchGroup: vi.fn((id: string, patch: Partial<BranchGroup>) => {
+        const current = groups.get(id);
+        if (!current) throw new Error(`Branch group ${id} not found`);
+        const updated = { ...current, ...patch, updatedAt: Date.now() };
+        groups.set(id, updated);
+        return updated;
+      }),
+    } as unknown as TaskStore;
+  }
+
+  function mountScopedRouter(
+    defaultStore: TaskStore,
+    options: Parameters<typeof createBranchGroupsRouter>[1] = {},
+  ): express.Express {
+    const app = express();
+    app.use(express.json());
+    app.use("/branch-groups", createBranchGroupsRouter(defaultStore, options));
+    attachErrorHandler(app);
+    return app;
+  }
+
+  beforeEach(() => {
+    projectStoreResolverMocks.getOrCreateProjectStore.mockReset();
+  });
+
+  it("canonicalizes padded projectId so store and callback keys match the bare id", async () => {
+    // FNXC:BranchGroupProjectScoping 2026-07-14-06:15:
+    // `?projectId=secondary%20` must resolve the same store key as `secondary`, not a distinct padded key.
+    const secondaryGroup = scopedGroup("BG-PAD", "secondary");
+    const defaultStore = scopedStore("/projects/default", [], []);
+    const secondaryStore = scopedStore("/projects/secondary", [secondaryGroup], [
+      scopedTask("FN-PAD", secondaryGroup.id, "secondary"),
+    ]);
+    projectStoreResolverMocks.getOrCreateProjectStore.mockResolvedValue(secondaryStore);
+    const promoteBranchGroup = vi.fn(async () => ({ promoted: true }));
+    const app = mountScopedRouter(defaultStore, { promoteBranchGroup });
+
+    const read = await REQUEST(app, "GET", "/branch-groups/BG-PAD?projectId=secondary%20");
+    expect(read.status).toBe(200);
+    expect(read.body.group.branchName).toBe("feature/secondary");
+    expect(projectStoreResolverMocks.getOrCreateProjectStore).toHaveBeenCalledWith("secondary");
+
+    const promote = await REQUEST(
+      app,
+      "POST",
+      "/branch-groups/BG-PAD/promote?projectId=%20secondary%20",
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+    expect(promote.status).toBe(200);
+    expect(promoteBranchGroup).toHaveBeenCalledWith({
+      groupId: "BG-PAD",
+      projectId: "secondary",
+      store: secondaryStore,
+    });
+  });
+
+  it("replays non-default GET and reset requests without consulting the mounted default store", async () => {
+    const duplicateDefault = scopedGroup("BG-DUPLICATE", "default");
+    const duplicateSecondary = scopedGroup("BG-DUPLICATE", "secondary");
+    const secondaryOnly = scopedGroup("BG-SECONDARY-ONLY", "secondary-only");
+    const defaultStore = scopedStore("/projects/default", [duplicateDefault], [
+      scopedTask("FN-DUPLICATE", duplicateDefault.id, "default"),
+    ]);
+    const secondaryStore = scopedStore("/projects/secondary", [duplicateSecondary, secondaryOnly], [
+      scopedTask("FN-DUPLICATE", duplicateSecondary.id, "secondary"),
+      scopedTask("FN-SECONDARY-ONLY", secondaryOnly.id, "secondary-only"),
+    ]);
+    projectStoreResolverMocks.getOrCreateProjectStore.mockResolvedValue(secondaryStore);
+    const app = mountScopedRouter(defaultStore);
+
+    const duplicate = await REQUEST(app, "GET", "/branch-groups/BG-DUPLICATE?projectId=secondary");
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.group.branchName).toBe("feature/secondary");
+    expect(duplicate.body.group.members[0].title).toBe("secondary task");
+
+    const secondaryOnlyResponse = await REQUEST(app, "GET", "/branch-groups/BG-SECONDARY-ONLY?projectId=secondary");
+    expect(secondaryOnlyResponse.status).toBe(200);
+    expect(secondaryOnlyResponse.body.group.branchName).toBe("feature/secondary-only");
+
+    const reset = await REQUEST(
+      app,
+      "POST",
+      "/branch-groups/assign?projectId=secondary",
+      JSON.stringify({ taskId: "FN-SECONDARY-ONLY", groupId: null }),
+      { "content-type": "application/json" },
+    );
+    expect(reset.status).toBe(200);
+    expect(reset.body).toEqual({ taskId: "FN-SECONDARY-ONLY", groupId: null });
+    expect(secondaryStore.setTaskBranchGroup).toHaveBeenCalledWith("FN-SECONDARY-ONLY", null);
+    expect(defaultStore.getBranchGroup).not.toHaveBeenCalled();
+    expect(defaultStore.getTask).not.toHaveBeenCalled();
+    expect(defaultStore.setTaskBranchGroup).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected store across list, body assignment, promotion, abandon, and callbacks", async () => {
+    const defaultStore = scopedStore("/projects/default", [], []);
+    const secondaryGroup = scopedGroup("BG-SECONDARY", "secondary", {
+      prState: "open",
+      prNumber: 42,
+      prUrl: "https://example/pr/42",
+    });
+    const secondaryStore = scopedStore("/projects/secondary", [secondaryGroup], [
+      scopedTask("FN-SECONDARY", secondaryGroup.id, "secondary"),
+    ]);
+    projectStoreResolverMocks.getOrCreateProjectStore.mockResolvedValue(secondaryStore);
+    const promoteBranchGroup = vi.fn(async () => ({ promoted: true }));
+    const closeGroupPr = vi.fn(async () => ({
+      prNumber: 42,
+      prUrl: "https://example/pr/42",
+      prState: "closed" as const,
+    }));
+    const app = mountScopedRouter(defaultStore, { promoteBranchGroup, closeGroupPr });
+
+    const list = await REQUEST(app, "GET", "/branch-groups?projectId=secondary");
+    expect(list.status).toBe(200);
+    expect(list.body.groups.map((entry: BranchGroup) => entry.id)).toEqual(["BG-SECONDARY"]);
+
+    const assign = await REQUEST(
+      app,
+      "POST",
+      "/branch-groups/assign",
+      JSON.stringify({ projectId: "secondary", taskId: "FN-SECONDARY", groupId: "BG-SECONDARY" }),
+      { "content-type": "application/json" },
+    );
+    expect(assign.status).toBe(200);
+
+    const promote = await REQUEST(
+      app,
+      "POST",
+      "/branch-groups/BG-SECONDARY/promote",
+      JSON.stringify({ projectId: "secondary" }),
+      { "content-type": "application/json" },
+    );
+    expect(promote.status).toBe(200);
+    expect(promoteBranchGroup).toHaveBeenCalledWith({
+      groupId: "BG-SECONDARY",
+      projectId: "secondary",
+      store: secondaryStore,
+    });
+
+    const abandon = await REQUEST(
+      app,
+      "POST",
+      "/branch-groups/BG-SECONDARY/abandon?projectId=secondary",
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+    expect(abandon.status).toBe(200);
+    expect(closeGroupPr).toHaveBeenCalledWith({
+      group: expect.objectContaining({ id: "BG-SECONDARY" }),
+      projectId: "secondary",
+      store: secondaryStore,
+    });
+    expect(secondaryStore.updateBranchGroup).toHaveBeenCalledWith(
+      "BG-SECONDARY",
+      expect.objectContaining({ status: "abandoned", prState: "closed" }),
+    );
+    expect(defaultStore.listBranchGroups).not.toHaveBeenCalled();
+    expect(defaultStore.listTasks).not.toHaveBeenCalled();
+    expect(defaultStore.getBranchGroup).not.toHaveBeenCalled();
+    expect(defaultStore.getTask).not.toHaveBeenCalled();
+    expect(defaultStore.updateBranchGroup).not.toHaveBeenCalled();
+  });
+
+  it("persists and re-reads reconciliation through the query-selected store", async () => {
+    const duplicateDefault = scopedGroup("BG-RECONCILE", "default", {
+      prState: "open",
+      prNumber: 11,
+      prUrl: "https://example/pr/11",
+    });
+    const duplicateSecondary = scopedGroup("BG-RECONCILE", "secondary", {
+      prState: "open",
+      prNumber: 22,
+      prUrl: "https://example/pr/22",
+    });
+    const defaultStore = scopedStore("/projects/default", [duplicateDefault], []);
+    const secondaryStore = scopedStore("/projects/secondary", [duplicateSecondary], []);
+    projectStoreResolverMocks.getOrCreateProjectStore.mockResolvedValue(secondaryStore);
+    const reconcileGroupPr = vi.fn(async ({ group, store: requestStore }: { group: BranchGroup; store: TaskStore }) => {
+      // FNXC:BranchGroupProjectScoping 2026-07-13-12:00: await async TaskStore branch-group methods after Postgres cutover on main.
+      await requestStore.updateBranchGroup(group.id, { prState: "merged" });
+      return (await requestStore.getBranchGroup(group.id)) ?? group;
+    });
+    const app = mountScopedRouter(defaultStore, { reconcileGroupPr });
+
+    const response = await REQUEST(app, "GET", "/branch-groups/BG-RECONCILE?projectId=secondary");
+    expect(response.status).toBe(200);
+    expect(response.body.group.prState).toBe("merged");
+    expect(reconcileGroupPr).toHaveBeenCalledWith({
+      group: expect.objectContaining({ prNumber: 22 }),
+      projectId: "secondary",
+      store: secondaryStore,
+    });
+    expect(secondaryStore.updateBranchGroup).toHaveBeenCalledWith("BG-RECONCILE", { prState: "merged" });
+    expect(defaultStore.getBranchGroup).not.toHaveBeenCalled();
+    expect(defaultStore.updateBranchGroup).not.toHaveBeenCalled();
+  });
+
+  it("falls back only when projectId is absent and keeps unknown groups project-local", async () => {
+    const defaultGroup = scopedGroup("BG-DEFAULT", "default");
+    const secondaryGroup = scopedGroup("BG-SECONDARY", "secondary");
+    const defaultStore = scopedStore("/projects/default", [defaultGroup], [
+      scopedTask("FN-DEFAULT", defaultGroup.id, "default"),
+    ]);
+    const secondaryStore = scopedStore("/projects/secondary", [secondaryGroup], [
+      scopedTask("FN-SECONDARY", secondaryGroup.id, "secondary"),
+    ]);
+    projectStoreResolverMocks.getOrCreateProjectStore.mockResolvedValue(secondaryStore);
+    const app = mountScopedRouter(defaultStore);
+
+    const fallbackGet = await REQUEST(app, "GET", "/branch-groups/BG-DEFAULT");
+    expect(fallbackGet.status).toBe(200);
+    expect(fallbackGet.body.group.branchName).toBe("feature/default");
+    const fallbackAssign = await REQUEST(
+      app,
+      "POST",
+      "/branch-groups/assign",
+      JSON.stringify({ taskId: "FN-DEFAULT", groupId: null }),
+      { "content-type": "application/json" },
+    );
+    expect(fallbackAssign.status).toBe(200);
+    expect(projectStoreResolverMocks.getOrCreateProjectStore).not.toHaveBeenCalled();
+    expect(defaultStore.setTaskBranchGroup).toHaveBeenCalledWith("FN-DEFAULT", null);
+    expect(secondaryStore.getBranchGroup).not.toHaveBeenCalled();
+    expect(secondaryStore.getTask).not.toHaveBeenCalled();
+    expect(secondaryStore.setTaskBranchGroup).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    projectStoreResolverMocks.getOrCreateProjectStore.mockResolvedValue(secondaryStore);
+    const missing = await REQUEST(app, "GET", "/branch-groups/BG-DEFAULT?projectId=secondary");
+    expect(missing.status).toBe(404);
+    expect(secondaryStore.getBranchGroup).toHaveBeenCalledWith("BG-DEFAULT");
+    expect(defaultStore.getBranchGroup).not.toHaveBeenCalled();
+  });
+});
+
+/*
+FNXC:BranchGroupProjectScoping 2026-07-13-12:05:
+FN-7438 durable-route coverage used bare `new TaskStore` (SQLite). Main removed that path for Postgres backend mode.
+Rebind the restart fixture to createTaskStoreForTest, reopening a second TaskStore on the same AsyncDataLayer so group/member rows still prove request routing against durable storage.
+*/
+const durableDescribe = PG_AVAILABLE ? describe : describe.skip;
+
+durableDescribe("branch group routes with durable TaskStore", () => {
   async function withRestartedStore<T>(callback: (store: TaskStore, app: express.Express) => Promise<T>): Promise<T> {
-    const rootDir = mkdtempSync(join(tmpdir(), "fusion-branch-group-route-"));
-    const globalDir = join(rootDir, ".fusion-global");
-    let store = new TaskStore(rootDir, globalDir);
-    await store.init();
+    const harness = await createTaskStoreForTest({ prefix: "fusion_bg_route" });
+    let restartedStore: TaskStore | null = null;
     try {
-      const group = store.ensureBranchGroupForSource("planning", "PS-route-restart", {
+      const group = await harness.store.ensureBranchGroupForSource("planning", "PS-route-restart", {
         branchName: "feature/route-restart",
         autoMerge: true,
       });
-      await store.createTask({
+      await harness.store.createTask({
         description: "route member after restart",
         branchContext: { groupId: group.id, source: "planning", assignmentMode: "shared" },
       });
-      store.close();
-      store = new TaskStore(rootDir, globalDir);
-      await store.init();
+      // TaskStore.close() also closes the AsyncDataLayer pool. Rebuild a fresh
+      // connection set to the same database URL so we prove durability across a
+      // real store/process restart rather than reusing a closed pool.
+      await harness.store.close();
+      const connections = await createConnectionSetFromUrl(
+        {
+          mode: "external",
+          runtimeUrl: harness.testUrl,
+          migrationUrl: harness.testUrl,
+          migrationUrlOverridden: false,
+        },
+        { poolMax: 5, connectTimeoutSeconds: 5 },
+      );
+      const layer = createAsyncDataLayer(connections);
+      restartedStore = new TaskStore(harness.rootDir, undefined, { asyncLayer: layer });
+      await restartedStore.init();
 
       const app = express();
       app.use(express.json());
-      app.use("/api/branch-groups", createBranchGroupsRouter(store));
+      app.use("/api/branch-groups", createBranchGroupsRouter(restartedStore));
       attachErrorHandler(app);
-      return await callback(store, app);
+      return await callback(restartedStore, app);
     } finally {
-      store.close();
-      await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      try {
+        await restartedStore?.close();
+      } catch {
+        // best-effort; harness.teardown drops the database either way
+      }
+      await harness.teardown();
     }
   }
 
   it("FN-7438: lists and shows persisted branch groups after a server/store restart", async () => {
     await withRestartedStore(async (store, app) => {
-      const group = store.getBranchGroupBySource("planning", "PS-route-restart");
+      const group = await store.getBranchGroupBySource("planning", "PS-route-restart");
       expect(group?.id).toMatch(/^BG-/);
 
       const listRes = await REQUEST(app, "GET", "/api/branch-groups");

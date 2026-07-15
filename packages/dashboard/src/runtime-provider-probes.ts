@@ -36,6 +36,16 @@ import {
   type GrokBinaryStatus,
 } from "@fusion-plugin-examples/grok-runtime";
 
+/*
+FNXC:OmpAcp 2026-07-13-22:50:
+Oh My Pi (omp) ACP runtime probe façade — same boundary as Grok/Cursor so route handlers and tests mock here without importing the plugin package directly.
+*/
+import {
+  discoverOmpProviderModels,
+  probeOmpBinary,
+  type OmpBinaryStatus,
+} from "@fusion-plugin-examples/omp-runtime";
+
 import {
   agentsMe,
   discoverPaperclipCliConfig,
@@ -62,6 +72,7 @@ export type {
   OpenClawBinaryStatus,
   CursorBinaryStatus,
   GrokBinaryStatus,
+  OmpBinaryStatus,
   PaperclipAgentSummary,
   PaperclipCliDiscoveryResult,
   PaperclipCompanySummary,
@@ -75,6 +86,19 @@ export async function probeCursorCliProvider(opts?: { binaryPath?: string }): Pr
 
 export async function probeGrokCliProvider(opts?: { binaryPath?: string }): Promise<GrokBinaryStatus> {
   return probeGrokBinary(opts);
+}
+
+/*
+FNXC:OmpAcp 2026-07-11-23:35:
+Oh My Pi (omp) ACP runtime probe façade — same boundary pattern as Grok/Cursor so
+route handlers and tests mock here without importing the plugin package directly.
+*/
+export async function probeOmpCliProvider(opts?: { binaryPath?: string }): Promise<OmpBinaryStatus> {
+  return probeOmpBinary(opts);
+}
+
+export async function discoverOmpCliModels(opts?: { binaryPath?: string; timeoutMs?: number }) {
+  return discoverOmpProviderModels(opts);
 }
 
 /**

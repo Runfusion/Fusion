@@ -56,20 +56,106 @@ export function classifyRemoteRouteError(error: unknown): RemoteRouteErrorClassi
   };
 }
 
+// FNXC:CentralProjectIdentity 2026-07-14-00:15: normalize with .trim() and treat a
+// whitespace-only projectId as absent so it falls through to the launch-id resolution
+// instead of binding a bogus id (restores strictness the seam replaced).
 export function getProjectIdFromRequest(req: Request): string | undefined {
-  if (req.query && typeof req.query.projectId === "string" && req.query.projectId.length > 0) {
-    return req.query.projectId;
+  if (req.query && typeof req.query.projectId === "string" && req.query.projectId.trim().length > 0) {
+    return req.query.projectId.trim();
   }
-  if (req.body && typeof req.body.projectId === "string" && req.body.projectId.length > 0) {
-    return req.body.projectId;
+  if (req.body && typeof req.body.projectId === "string" && req.body.projectId.trim().length > 0) {
+    return req.body.projectId.trim();
   }
   return undefined;
 }
 
-export async function getScopedStore(req: Request, store: TaskStore): Promise<TaskStore> {
-  const projectId = getProjectIdFromRequest(req);
-  if (!projectId) return store;
-  return getOrCreateProjectStore(projectId);
+/*
+FNXC:CentralProjectIdentity 2026-07-13-23:50:
+Directive: dashboard API requests operate on an EXPLICIT central-registry project id, never a silent bind to the raw launch-directory TaskStore.
+Resolution order for a request's project identity:
+  1. request `projectId` (query/body),
+  2. else the daemon's registered launch project id (`options.engine.getProjectId()`),
+  3. else undefined — the caller is an unregistered/legacy launch directory and the raw injected store is a last resort (see warnLaunchDirFallbackOnce).
+Once an id resolves it ALWAYS flows through the same bound-store path used for explicit ids (engine store when a live engine exists, else getOrCreateProjectStore), so store identity always comes from the central registry — with one dedup: the launch project reuses the injected registry-bound store instead of booting a second connection pool for the same id.
+*/
+export function resolveRequestProjectId(req: Request, options?: ServerOptions): string | undefined {
+  return getProjectIdFromRequest(req) ?? options?.engine?.getProjectId?.() ?? undefined;
+}
+
+/*
+FNXC:CentralProjectIdentity 2026-07-13-23:51:
+The launch-dir raw-store fallback is legacy behavior preserved ONLY for unregistered directories (no request id AND no registered launch engine). Warn once per process (not per request) so the signal is visible without flooding logs; a single flag is shared with server.ts's resolveScopedStore via this exported helper.
+*/
+let warnedLaunchDirFallback = false;
+export function warnLaunchDirFallbackOnce(options?: ServerOptions): void {
+  if (warnedLaunchDirFallback) return;
+  warnedLaunchDirFallback = true;
+  const message =
+    "project-scope fallback: request without projectId on an unregistered launch directory — using launch-dir store";
+  const logger = options?.runtimeLogger;
+  if (logger?.warn) {
+    logger.warn(message);
+  } else {
+    console.warn(message);
+  }
+}
+
+/*
+FNXC:CentralProjectIdentity 2026-07-14-00:15:
+Single id-based store-resolution core shared by both routes/context.ts getScopedStore
+and server.ts resolveScopedStore (the realtime path). Deduplicates the previously
+mirrored resolution so identity semantics can never drift between the two entry points.
+Given an ALREADY-resolved id (request id → launch id folded in by the caller):
+  1. no id → one-time launch-dir fallback warn + return the raw injected store,
+  2. live engineManager engine for the id → its TaskStore,
+  3. id === launch project id → reuse the injected registry-bound store (no duplicate pool),
+  4. else → getOrCreateProjectStore(id).
+
+FNXC:CentralProjectIdentity 2026-07-14-00:15 (F6 caveat):
+Launch-store reuse (step 3) assumes the injected store belongs to a live launch engine.
+When an engineManager is present but getEngine(launchId) is undefined, this cannot
+distinguish a launch engine that was never started (store still valid) from one that was
+explicitly stopped/paused (store may be closed). ProjectEngineManager exposes no synchronous
+engine-liveness/paused introspection (getEngine returns undefined for a stopped engine since
+it is deleted from the engines map, and paused status lives async in CentralCore), so no
+correct fall-through to getOrCreateProjectStore(launchId) is implementable here without
+inventing an API. Behavior is preserved; a live engine store (step 2) always wins first.
+*/
+export async function resolveStoreForProjectId(
+  resolvedId: string | undefined,
+  store: TaskStore,
+  options?: ServerOptions,
+): Promise<TaskStore> {
+  if (!resolvedId) {
+    warnLaunchDirFallbackOnce(options);
+    return store;
+  }
+
+  const engineManager = options?.engineManager;
+  if (engineManager) {
+    const engine = engineManager.getEngine(resolvedId);
+    if (engine) {
+      return engine.getTaskStore();
+    }
+  }
+
+  // Launch project: the injected store is already registry-bound to this id, so
+  // reuse it instead of booting a duplicate connection pool via
+  // getOrCreateProjectStore. See the F6 caveat above.
+  if (options?.engine?.getProjectId?.() === resolvedId) {
+    return store;
+  }
+
+  return getOrCreateProjectStore(resolvedId);
+}
+
+export async function getScopedStore(
+  req: Request,
+  store: TaskStore,
+  options?: ServerOptions,
+): Promise<TaskStore> {
+  const projectId = resolveRequestProjectId(req, options);
+  return resolveStoreForProjectId(projectId, store, options);
 }
 
 export async function getProjectContext(
@@ -77,10 +163,17 @@ export async function getProjectContext(
   store: TaskStore,
   options?: ServerOptions,
 ): Promise<ProjectContext> {
-  const projectId = getProjectIdFromRequest(req);
+  const projectId = resolveRequestProjectId(req, options);
   const engineManager = options?.engineManager;
 
-  if (projectId && engineManager) {
+  if (!projectId) {
+    // No request id and no registered launch engine: unregistered/legacy launch
+    // directory. Preserve the raw-store last resort with a one-time warn.
+    warnLaunchDirFallbackOnce(options);
+    return { store, engine: undefined, projectId: undefined };
+  }
+
+  if (engineManager) {
     const engine = engineManager.getEngine(projectId);
     if (!engine) {
       // Trigger lazy engine start as fire-and-forget so this request is not
@@ -94,7 +187,11 @@ export async function getProjectContext(
     }
   }
 
-  if (!projectId && options?.engine) {
+  // Launch project: reuse the live launch engine + its registry-bound store
+  // rather than a duplicate boot. The resolved projectId is returned explicitly
+  // (never undefined) so downstream context is always attributable to a
+  // central-registry id.
+  if (options?.engine && options.engine.getProjectId?.() === projectId) {
     try {
       return { store: options.engine.getTaskStore(), engine: options.engine, projectId };
     } catch {
@@ -102,7 +199,7 @@ export async function getProjectContext(
     }
   }
 
-  const scopedStore = await getScopedStore(req, store);
+  const scopedStore = await getScopedStore(req, store, options);
   return { store: scopedStore, engine: undefined, projectId };
 }
 
@@ -170,7 +267,7 @@ export function createApiRoutesContext(store: TaskStore, options?: ServerOptions
     return [...projects].sort((a, b) => rankProject(b.path) - rankProject(a.path));
   }
 
-  const resolveScopedStore = (req: Request): Promise<TaskStore> => getScopedStore(req, store);
+  const resolveScopedStore = (req: Request): Promise<TaskStore> => getScopedStore(req, store, options);
   const resolveProjectContext = (req: Request): Promise<ProjectContext> => getProjectContext(req, store, options);
   const disposeCallbacks: Array<() => void> = [];
 

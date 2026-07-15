@@ -2,11 +2,12 @@
 // without re-measuring under pnpm test:full. (FN-4839)
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertSquashOverlapsFileScope, FileScopeViolationError } from "../../merger.js";
-import { makeReliabilityFixture, hasGit, git } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { makeReliabilityFixture, hasGit, hasPg, git } from "./_helpers.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const describeIfGit = hasGit ? describe : describe.skip;
+const describeIfGit = hasGit && hasPg ? describe : describe.skip;
 
 describeIfGit("reliability interactions: workflow + file-scope", () => {
   const fixtures: Array<Awaited<ReturnType<typeof makeReliabilityFixture>>> = [];

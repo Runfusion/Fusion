@@ -82,6 +82,8 @@ Rules:
 - thinkingLevel must be off|minimal|low|medium|high
 - maxTurns must be a positive integer
 - Use instructionsText for starter operating guidance/playbook content; do not create a separate playbook field
+- Prefer structuring instructionsText with these markdown sections when drafting: ## Description, ## Expertise, ## Priorities, ## Boundaries, ## Communication, ## Collaboration & Escalation
+- Freeform instructionsText is still acceptable for compatibility; sectioned structure is preferred for new agents
 - modelHint and runtimeHint are optional draft suggestions only (not final runtime selection)
 - heartbeatProcedurePath, heartbeatIntervalMs, and heartbeatEnabled are optional draft hints only.`;
 

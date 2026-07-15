@@ -315,12 +315,20 @@ export async function appendInsightRunEvent(
   let seq = 1;
   const createdAt = new Date().toISOString();
   await layer.transactionImmediate(async (tx) => {
+    const runRows = await tx
+      .select({ projectId: schema.project.projectInsightRuns.projectId })
+      .from(schema.project.projectInsightRuns)
+      .where(eq(schema.project.projectInsightRuns.id, input.runId))
+      .limit(1);
+    const projectId = runRows[0]?.projectId;
+    if (!projectId) throw new Error(`Insight run not found: ${input.runId}`);
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.projectInsightRunEvents.seq}), 0) + 1` })
       .from(schema.project.projectInsightRunEvents)
       .where(eq(schema.project.projectInsightRunEvents.runId, input.runId));
     seq = Number(seqRows[0]?.nextSeq ?? 1);
     await tx.insert(schema.project.projectInsightRunEvents).values({
+      projectId,
       id: input.id,
       runId: input.runId,
       seq,

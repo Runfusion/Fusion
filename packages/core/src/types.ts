@@ -2481,6 +2481,16 @@ export interface Task {
    *  Review defaults to unbounded recovery so ordinary REVISE feedback does not
    *  terminal-fail the task. */
   postReviewFixCount?: number;
+  /** Number of consecutive triage pre-execution Plan Review REVISE replans this task
+   *  has consumed. Incremented by the triage Plan Review gate
+   *  (packages/engine/src/triage.ts runPlanReviewBeforeExecution) each time it blocks
+   *  execution with a REVISE verdict and routes the task back to `needs-replan`. When it
+   *  reaches `PLAN_REVIEW_GATE_REPLAN_CAP` the task is escalated to `awaiting-approval`
+   *  (awaitingApprovalReason `plan-review-replan-cap`) instead of replanning again, so a
+   *  planner/reviewer disagreement can never loop forever. Reset when the gate passes
+   *  (APPROVE) or on a manual retry. Distinct from `postReviewFixCount`, which bounds the
+   *  executor graph's post-merge/advisory optional-step REVISE budget. */
+  planReviewReplanCount?: number;
   /** Number of bounded recovery retry attempts for transient executor/triage failures.
    *  Distinct from `mergeRetries` (merge-conflict-specific). Incremented by the
    *  recovery-policy module on each recoverable failure; cleared when work restarts
@@ -2560,7 +2570,7 @@ export interface Task {
    * any such hold as an ordinary manual plan-approval hold (Approve/Reject Plan render
    * normally). Undefined means either no hold or a manual-approval hold.
    */
-  awaitingApprovalReason?: "release-authorization";
+  awaitingApprovalReason?: "release-authorization" | "plan-review-replan-cap";
   /*
    * FNXC:PlanApproval 2026-07-04-22:41:
    * FN-7569 — records the computePlanApprovalFingerprint (packages/core/src/plan-approval.ts)
@@ -3462,6 +3472,18 @@ export interface GlobalSettings {
    * Operators need a global machine-local Grok CLI executable override when PATH discovery resolves the wrong `grok`/`.cmd`/`.bat` shim. Blank/undefined means Fusion must keep auto-detecting through PATH candidates.
    */
   grokCliBinaryPath?: string;
+  /**
+   * FNXC:OmpAcp 2026-07-13-22:50:
+   * When true, enable Oh My Pi (omp) CLI model-provider support (provider ID: `omp-cli`)
+   * through an operator-local `omp` install driven over ACP (`omp acp`).
+   */
+  useOmpCli?: boolean;
+  /**
+   * FNXC:OmpAcp 2026-07-13-22:50:
+   * Global machine-local OMP CLI executable override when PATH discovery resolves the wrong
+   * `omp`/`.cmd`/`.bat` shim. Blank/undefined means PATH auto-detection.
+   */
+  ompCliBinaryPath?: string;
   /** Global baseline AI model provider for task execution (executor agent).
    *  This is the global lane that project-level `executionProvider` can override.
    *  Must be set together with `executionGlobalModelId`. Falls back to
@@ -4873,8 +4895,9 @@ export interface ProjectSettings {
   auto-migration succeeds, so the dashboard can show a one-time banner telling
   the operator their data was migrated and the original SQLite files were
   kept as backups. Dismissing the banner sets dismissed: true (the notice is
-  retained for support/audit rather than deleted). null/absent = no migration
-  happened on this project.
+  retained for support/audit rather than deleted). Inbox delivery has a
+  separate top-level marker so writing it cannot revert a concurrent banner
+  dismissal. null/absent = no migration happened on this project.
   */
   sqliteMigrationNotice?: {
     /** ISO timestamp of the auto-migration. */
@@ -4888,6 +4911,8 @@ export interface ProjectSettings {
     /** True once the operator dismissed the banner. */
     dismissed?: boolean;
   } | null;
+  /** ISO timestamp after the one-time post-migration system inbox message was durably inserted. */
+  postgresMigrationInboxMessageSentAt?: string;
   /** Number of days to retain per-task agent-log JSONL files for soft-deleted
    *  and archived tasks. Only affects tasks that are no longer active. Entries
    *  older than this window are removed from the JSONL file during periodic

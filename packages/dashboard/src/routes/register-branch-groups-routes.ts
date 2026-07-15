@@ -2,9 +2,14 @@ import { Router, type Request } from "express";
 import type { BranchGroup, Task, TaskStore } from "@fusion/core";
 import { isBranchGroupComplete, isBranchGroupMemberLanded, filterTasksByBranchGroup } from "@fusion/core";
 import { badRequest, notFound } from "../api-error.js";
+import { getProjectIdFromRequest, getScopedStore } from "./context.js";
 
 export interface BranchGroupsRouterOptions {
-  promoteBranchGroup?: (input: { groupId: string; projectId?: string }) => Promise<Record<string, unknown>>;
+  promoteBranchGroup?: (input: {
+    groupId: string;
+    projectId?: string;
+    store: TaskStore;
+  }) => Promise<Record<string, unknown>>;
   /**
    * Terminal reconciliation when a group is abandoned (U6, R7): best-effort
    * close the single managed GitHub PR. Returns the reconciled prState so the
@@ -15,6 +20,7 @@ export interface BranchGroupsRouterOptions {
   closeGroupPr?: (input: {
     group: BranchGroup;
     projectId?: string;
+    store: TaskStore;
   }) => Promise<{ prNumber: number; prUrl: string; prState: BranchGroup["prState"] } | null>;
   /**
    * Out-of-band PR reconciliation on single-group read (Fix #3): when a group has
@@ -27,12 +33,26 @@ export interface BranchGroupsRouterOptions {
   reconcileGroupPr?: (input: {
     group: BranchGroup;
     projectId?: string;
+    store: TaskStore;
   }) => Promise<BranchGroup>;
 }
 
-function parseProjectId(req: Request): string | undefined {
-  const value = req.query.projectId ?? req.body?.projectId;
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+interface BranchGroupRequestContext {
+  projectId?: string;
+  store: TaskStore;
+}
+
+/*
+FNXC:BranchGroupProjectScoping 2026-07-13-00:00:
+Every branch-group request must resolve one TaskStore from its query/body projectId and carry that store through reads, writes, serialization, and injected callbacks. Only requests without projectId may fall back to the store mounted with the router.
+
+FNXC:BranchGroupProjectScoping 2026-07-13-12:00:
+Main made branch-group TaskStore methods async for the Postgres cutover. Keep request-scoped store selection from FN-001 and await those methods so multi-project routes stay correct after merge with main.
+*/
+async function resolveRequestContext(req: Request, mountedStore: TaskStore): Promise<BranchGroupRequestContext> {
+  const projectId = getProjectIdFromRequest(req);
+  const store = await getScopedStore(req, mountedStore);
+  return { projectId, store };
 }
 
 /**
@@ -69,25 +89,27 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
   const router = Router();
 
   router.get("/", async (req, res) => {
+    const { store: requestStore } = await resolveRequestContext(req, store);
     const statusRaw = req.query.status;
     const status = typeof statusRaw === "string" && statusRaw.trim() ? statusRaw.trim() : undefined;
     if (status && status !== "open" && status !== "finalized" && status !== "abandoned") {
       throw badRequest("status must be one of: open, finalized, abandoned");
     }
 
-    const groups = await store.listBranchGroups(status ? { status: status as BranchGroup["status"] } : undefined);
+    const groups = await requestStore.listBranchGroups(status ? { status: status as BranchGroup["status"] } : undefined);
     // Fix #8/#9: fetch tasks ONCE and filter per group in memory rather than one
     // full scan per group (the old N+1). Membership semantics (incl. legacy
     // synthetic-groupId fallback) come from the shared `filterTasksByBranchGroup`.
-    const allTasks = await store.listTasks({ includeArchived: false, slim: true });
-    const data = await Promise.all(groups.map((group) => serializeGroup(store, group, allTasks)));
+    const allTasks = await requestStore.listTasks({ includeArchived: false, slim: true });
+    const data = await Promise.all(groups.map((group) => serializeGroup(requestStore, group, allTasks)));
     res.json({ groups: data });
   });
 
   router.get("/:id", async (req, res) => {
+    const { projectId, store: requestStore } = await resolveRequestContext(req, store);
     const id = String(req.params.id ?? "").trim();
     if (!id) throw badRequest("id is required");
-    let group = await store.getBranchGroup(id);
+    let group = await requestStore.getBranchGroup(id);
     if (!group) throw notFound("Branch group not found");
 
     // Fix #3: reconcile an out-of-band merged/closed PR before serializing so the
@@ -95,26 +117,27 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
     // must not break the read; we serialize the (possibly stale) persisted state.
     if (group.prNumber != null && group.prState === "open" && options?.reconcileGroupPr) {
       try {
-        group = await options.reconcileGroupPr({ group, projectId: parseProjectId(req) });
+        group = await options.reconcileGroupPr({ group, projectId, store: requestStore });
       } catch {
-        group = (await store.getBranchGroup(id)) ?? group;
+        group = (await requestStore.getBranchGroup(id)) ?? group;
       }
     }
 
-    res.json({ group: await serializeGroup(store, group) });
+    res.json({ group: await serializeGroup(requestStore, group) });
   });
 
   router.post("/assign", async (req, res) => {
+    const { store: requestStore } = await resolveRequestContext(req, store);
     const taskId = typeof req.body?.taskId === "string" ? req.body.taskId.trim() : "";
     if (!taskId) throw badRequest("taskId is required");
 
-    const task = await store.getTask(taskId);
+    const task = await requestStore.getTask(taskId);
     const groupIdBody = req.body?.groupId;
     const branchNameRaw = req.body?.branchName;
     const branchName = typeof branchNameRaw === "string" && branchNameRaw.trim() ? branchNameRaw.trim() : undefined;
 
     if (groupIdBody === null) {
-      await store.setTaskBranchGroup(taskId, null);
+      await requestStore.setTaskBranchGroup(taskId, null);
       res.json({ taskId, groupId: null });
       return;
     }
@@ -124,26 +147,27 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
       if (!branchName) throw badRequest("branchName is required when groupId is not provided");
       const sourceType = task.branchContext?.source ?? "planning";
       const sourceId = `task:${task.id}`;
-      const created = await store.ensureBranchGroupForSource(sourceType, sourceId, {
+      const created = await requestStore.ensureBranchGroupForSource(sourceType, sourceId, {
         branchName,
         autoMerge: task.autoMerge ?? false,
       });
       groupId = created.id;
-    } else if (!(await store.getBranchGroup(groupId))) {
+    } else if (!(await requestStore.getBranchGroup(groupId))) {
       throw notFound("Branch group not found");
     }
 
-    await store.setTaskBranchGroup(taskId, groupId);
+    await requestStore.setTaskBranchGroup(taskId, groupId);
     res.json({ taskId, groupId });
   });
 
   router.post("/:id/promote", async (req, res) => {
+    const { projectId, store: requestStore } = await resolveRequestContext(req, store);
     const id = String(req.params.id ?? "").trim();
     if (!id) throw badRequest("id is required");
-    const group = await store.getBranchGroup(id);
+    const group = await requestStore.getBranchGroup(id);
     if (!group) throw notFound("Branch group not found");
 
-    const members = await store.listTasksByBranchGroup(group.id);
+    const members = await requestStore.listTasksByBranchGroup(group.id);
     if (!isBranchGroupComplete(members, group)) {
       throw badRequest("Branch group completion gate not satisfied");
     }
@@ -153,7 +177,7 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
       throw badRequest("Branch-group promotion is unavailable");
     }
 
-    const result = await promote({ groupId: id, projectId: parseProjectId(req) });
+    const result = await promote({ groupId: id, projectId, store: requestStore });
     res.json({ groupId: id, ...result });
   });
 
@@ -163,9 +187,10 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
   // wired, the row is still marked abandoned/closed (the GitHub PR is left for
   // out-of-band reconciliation on the next read/sync).
   router.post("/:id/abandon", async (req, res) => {
+    const { projectId, store: requestStore } = await resolveRequestContext(req, store);
     const id = String(req.params.id ?? "").trim();
     if (!id) throw badRequest("id is required");
-    const group = await store.getBranchGroup(id);
+    const group = await requestStore.getBranchGroup(id);
     if (!group) throw notFound("Branch group not found");
 
     // Fix #2: a finalized, already-abandoned, or already-merged group is terminal
@@ -186,7 +211,7 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
 
     if (group.prNumber != null && group.prState === "open" && options?.closeGroupPr) {
       try {
-        const reconciled = await options.closeGroupPr({ group, projectId: parseProjectId(req) });
+        const reconciled = await options.closeGroupPr({ group, projectId, store: requestStore });
         if (reconciled) {
           prState = reconciled.prState;
           prNumber = reconciled.prNumber;
@@ -197,13 +222,13 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
       }
     }
 
-    const updated = await store.updateBranchGroup(id, {
+    const updated = await requestStore.updateBranchGroup(id, {
       status: "abandoned",
       prState,
       prNumber: prNumber ?? null,
       prUrl: prUrl ?? null,
     });
-    res.json({ groupId: id, group: await serializeGroup(store, updated) });
+    res.json({ groupId: id, group: await serializeGroup(requestStore, updated) });
   });
 
   return router;

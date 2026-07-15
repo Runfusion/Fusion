@@ -33,9 +33,11 @@ function defaultCodingWorkflowIr(): WorkflowIr {
 /** Minimal store surface the resolver needs (public APIs only). */
 export interface WorkflowIrResolverStore {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
+  getTaskWorkflowSelectionAsync?(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined>;
   getWorkflowDefinition(id: string): Promise<{ ir: string | WorkflowIr } | undefined>;
   getWorkflowSettingsProjectId?(): string;
   getWorkflowPromptOverrides?(workflowId: string, projectId: string): Record<string, string>;
+  getWorkflowPromptOverridesAsync?(workflowId: string, projectId: string): Promise<Record<string, string>>;
 }
 
 /**
@@ -93,7 +95,7 @@ export async function resolveTaskPlanningPrompt(
  *   sweep. Hits short-circuit before any builtin/db lookup.
  */
 export async function resolveWorkflowIrById(
-  store: Pick<WorkflowIrResolverStore, "getWorkflowDefinition"> & Partial<Pick<WorkflowIrResolverStore, "getWorkflowSettingsProjectId" | "getWorkflowPromptOverrides">>,
+  store: Pick<WorkflowIrResolverStore, "getWorkflowDefinition"> & Partial<Pick<WorkflowIrResolverStore, "getWorkflowSettingsProjectId" | "getWorkflowPromptOverrides" | "getWorkflowPromptOverridesAsync">>,
   workflowId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<WorkflowIr> {
@@ -116,7 +118,10 @@ export async function resolveWorkflowIrById(
     const builtin = getBuiltinWorkflow(workflowId);
     const ir = builtin?.ir ?? defaultCodingWorkflowIr();
     const resolved = typeof ir === "string" ? parseWorkflowIr(ir) : ir;
-    const overrides = projectId ? store.getWorkflowPromptOverrides?.(workflowId, projectId) : undefined;
+    const overrides = projectId
+      ? await (store.getWorkflowPromptOverridesAsync?.(workflowId, projectId)
+        ?? store.getWorkflowPromptOverrides?.(workflowId, projectId))
+      : undefined;
     // FNXC:CustomWorkflows 2026-06-21-19:12:
     // Public IR resolution must see the same project-scoped built-in prompt overrides as task execution, while callers without the new store methods keep the canonical built-in IR.
     const effective = applyPromptOverridesToIr(resolved, overrides);
@@ -146,7 +151,14 @@ export async function resolveWorkflowIrForTask(
 ): Promise<WorkflowIr> {
   let workflowId: string | undefined;
   try {
-    workflowId = store.getTaskWorkflowSelection(taskId)?.workflowId;
+    /*
+     * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+     * Backend-mode task workflow selection is asynchronous. Execution must resolve the migrated task selection before loading its workflow graph; the synchronous PostgreSQL fallback intentionally reports no selection and previously forced every task onto builtin:coding.
+     */
+    const selection = store.getTaskWorkflowSelectionAsync
+      ? await store.getTaskWorkflowSelectionAsync(taskId)
+      : store.getTaskWorkflowSelection(taskId);
+    workflowId = selection?.workflowId;
   } catch {
     return defaultCodingWorkflowIr();
   }

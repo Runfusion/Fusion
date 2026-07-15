@@ -3653,6 +3653,40 @@ describe("usage", () => {
       expect(mockRequest).toHaveBeenCalledTimes(1);
     });
 
+    it("treats an omitted exhausted percentage as 100% used for a valid weekly CLI billing period", async () => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("Keychain item not found");
+      });
+      const periodEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      mockGrokBillingResponse(200, {
+        config: {
+          currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start: new Date().toISOString(), end: periodEnd },
+          billingPeriodEnd: periodEnd,
+          onDemandCap: { val: 0 },
+          onDemandUsed: { val: 0 },
+          prepaidBalance: { val: 0 },
+          isUnifiedBillingUser: true,
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.status).toBe("ok");
+      expect(grok.windows).toHaveLength(1);
+      expect(grok.windows[0]).toMatchObject({
+        label: "Weekly (credits)",
+        percentUsed: 100,
+        percentLeft: 0,
+      });
+      expect(grok.windows[0].resetText).toContain("resets in");
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
     it("falls back to the xAI API-key validity card when CLI billing fails", async () => {
       vi.stubEnv("GROK_API_KEY", "env-grok-key");
       mockReadFile.mockImplementation(async (filePath: string) => {

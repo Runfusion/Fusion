@@ -362,8 +362,8 @@ Desktop packaging is configured in `electron-builder.yml`.
 
 - Output directory: `packages/desktop/dist-electron`
 - Targets: macOS (`dmg`, `zip`), Windows (`nsis`, `portable`), Linux (`AppImage`, `deb`, `tar.gz`)
-- Windows NSIS installer artifacts: `Fusion-<version>-win-x64.exe` and `Fusion-<version>-win-arm64.exe` in `packages/desktop/dist-electron/`
-- Windows portable artifacts: `Fusion-<version>-win-x64-portable.exe` and `Fusion-<version>-win-arm64-portable.exe` in `packages/desktop/dist-electron/`
+- Windows NSIS installer artifact: `Fusion-<version>-win-x64.exe` in `packages/desktop/dist-electron/`
+- Windows portable artifact: `Fusion-<version>-win-x64-portable.exe` in `packages/desktop/dist-electron/`
 - Silent NSIS installs support a custom destination with `/S /D=<absolute path>`; keep `/D=...` as the final installer argument (for example, `Fusion-<version>-win-x64.exe /S /D=C:\\Users\\me\\Tools\\fusion`).
 - The Windows packaging workflow verifies `win*-unpacked` contains Electron root runtime resources (`chrome_100_percent.pak`, `chrome_200_percent.pak`, and `resources.pak`) before uploading artifacts.
 - Binary GitHub Release workflow (`.github/workflows/release.yml`) now attaches desktop artifacts for all supported platforms:
@@ -405,8 +405,8 @@ gpg --import KEYS && gpg --verify Fusion-<version>-linux-x64.AppImage.asc Fusion
 ```
 
 The public key (`KEYS`) must be distributed out-of-band. See `docs/CODE_SIGNING.md` for canonical setup, key publication, and troubleshooting guidance.
-- Isolated manual Windows build path: `.github/workflows/desktop-windows.yml` (`workflow_dispatch` on `windows-latest`) runs `electron-builder --win --x64 --arm64 --publish never`.
-- ARM64 artifacts are cross-built on the `windows-latest` x64 runner; execution/validation still requires a Windows ARM64 device or emulator.
+- Isolated manual Windows build path: `.github/workflows/desktop-windows.yml` (`workflow_dispatch` on `windows-latest`) runs `electron-builder --win --x64 --publish never`.
+- Windows desktop artifacts are x64. Windows ARM64 users run the x64 build through Windows compatibility because upstream `embedded-postgres` does not publish a native Windows ARM64 payload.
 - Deep link protocol: `fusion://`
 - Publish provider: GitHub (`gsxdsm/fusion`)
 

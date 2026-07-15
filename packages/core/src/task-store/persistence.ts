@@ -52,6 +52,7 @@ export interface TaskRow {
   executeRequeueLoopCount: number | null;
   executeRequeueLoopSignature: string | null;
   postReviewFixCount: number | null;
+  planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
   taskDoneRetryCount: number | null;
   worktreeSessionRetryCount: number | null;
@@ -88,6 +89,11 @@ export interface TaskRow {
   columnMovedAt: string | null;
   firstExecutionAt: string | null;
   cumulativeActiveMs: number | null;
+  columnDwellMs: string | null;
+  workflowTransitionNotification: string | null;
+  plannerOversightLevel: string | null;
+  awaitingApprovalReason: string | null;
+  approvedPlanFingerprint: string | null;
   executionStartedAt: string | null;
   executionCompletedAt: string | null;
   dependencies: string | null;
@@ -154,6 +160,18 @@ export type TaskColumnDescriptor = {
   serialize: (task: Task, context: TaskPersistSerializationContext) => unknown;
 };
 
+/*
+FNXC:TaskLifecyclePersistence 2026-07-14-13:27:
+PostgreSQL task JSONB conversion must use one registry for both descriptor writes and SQLite-shaped row hydration. Separate read/write lists drifted when late lifecycle columns were added, allowing JSON strings or parsed objects to cross the wrong serialization boundary.
+*/
+export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
+  "dependencies", "steps", "customFields", "log", "attachments", "steeringComments",
+  "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
+  "issueInfo", "githubTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
+  "modifiedFiles", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
+  "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification",
+]);
+
 export function defineTaskColumn(
   column: keyof TaskRow,
   serialize: TaskColumnDescriptor["serialize"],
@@ -210,6 +228,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("executeRequeueLoopCount", (task) => task.executeRequeueLoopCount ?? 0),
   defineTaskColumn("executeRequeueLoopSignature", (task) => task.executeRequeueLoopSignature ?? null),
   defineTaskColumn("postReviewFixCount", (task) => task.postReviewFixCount ?? 0),
+  defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
   defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),
@@ -247,6 +266,15 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("columnMovedAt", (task) => task.columnMovedAt ?? null),
   defineTaskColumn("firstExecutionAt", (task) => task.firstExecutionAt ?? null),
   defineTaskColumn("cumulativeActiveMs", (task) => task.cumulativeActiveMs ?? null),
+  /*
+  FNXC:TaskLifecyclePersistence 2026-07-14-13:17:
+  Persist the late task lifecycle fields through the shared descriptor seam so both SQLite and PostgreSQL retain per-column timing, workflow transition dedupe, oversight overrides, and manual-plan approval state after migration.
+  */
+  defineTaskColumn("columnDwellMs", (task) => toJsonNullable(task.columnDwellMs)),
+  defineTaskColumn("workflowTransitionNotification", (task) => toJsonNullable(task.workflowTransitionNotification)),
+  defineTaskColumn("plannerOversightLevel", (task) => task.plannerOversightLevel ?? null),
+  defineTaskColumn("awaitingApprovalReason", (task) => task.awaitingApprovalReason ?? null),
+  defineTaskColumn("approvedPlanFingerprint", (task) => task.approvedPlanFingerprint ?? null),
   defineTaskColumn("executionStartedAt", (task) => task.executionStartedAt ?? null),
   defineTaskColumn("executionCompletedAt", (task) => task.executionCompletedAt ?? null),
   defineTaskColumn("dependencies", (task) => toJson(task.dependencies || [])),

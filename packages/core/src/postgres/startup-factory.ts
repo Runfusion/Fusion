@@ -45,7 +45,8 @@
 
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { sql as drizzleSql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
 import { createLogger } from "../logger.js";
 import { TaskStore } from "../store.js";
@@ -61,6 +62,11 @@ import {
 } from "./connection.js";
 import { applySchemaBaseline } from "./schema-applier.js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
+import {
+  lookupRegisteredProjectIdByPath,
+  rekeyFallbackProjectPartition,
+  stampMigratedProjectRows,
+} from "./migration-stamping.js";
 
 // FNXC:RuntimeStartupWiring 2026-06-24-10:55:
 // The embedded PostgreSQL lifecycle module imports the `embedded-postgres`
@@ -79,6 +85,14 @@ type EmbeddedLifecycleLike = {
 };
 
 const log = createLogger("startup-factory");
+
+/**
+ * FNXC:ProjectDataIsolation 2026-07-14-12:10:
+ * An unregistered project still needs a stable, non-shared PostgreSQL partition. Derive a deterministic identity from its canonical root path so first-boot migration and every later runtime session select the same isolated rows without inventing cross-project ownership.
+ */
+function fallbackProjectIdForRoot(rootDir: string): string {
+  return `local-${createHash("sha256").update(resolve(rootDir)).digest("hex").slice(0, 24)}`;
+}
 
 /**
  * FNXC:BackendFlip 2026-06-26-14:10:
@@ -382,32 +396,61 @@ export async function createTaskStoreForBackend(
   is not registered (legacy/unregistered single-project setups stay unbound,
   matching their unfiltered readers).
   */
-  const lookupRegisteredProjectIdByPath = async (): Promise<string | undefined> => {
-    if (!rootDir) return undefined;
-    try {
-      const projectRows = (await connections.migration.execute(
-        drizzleSql`SELECT id FROM central.projects WHERE path = ${rootDir} LIMIT 1`,
-      )) as Array<{ id: string }>;
-      return projectRows[0]?.id;
-    } catch {
-      return undefined;
-    }
-  };
   if (rootDir) {
     try {
       const fusionDir = join(rootDir, ".fusion");
       const legacySqlitePath = join(fusionDir, "fusion.db");
       if (existsSync(legacySqlitePath)) {
+        let globalDir = options.globalSettingsDir;
+        if (!globalDir) {
+          try {
+            const { resolveGlobalDir } = await import("../global-settings.js");
+            globalDir = resolveGlobalDir();
+          } catch {
+            globalDir = undefined;
+          }
+        }
+
+        let migrationProjectId = options.projectId
+          ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir));
+        const legacyCentralPath = globalDir ? join(globalDir, "fusion-central.db") : undefined;
+        if (!migrationProjectId && legacyCentralPath && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
+          const { DatabaseSync } = await import("../sqlite-adapter.js");
+          const legacyCentral = new DatabaseSync(legacyCentralPath);
+          try {
+            const row = legacyCentral.prepare(`SELECT id FROM projects WHERE path = ? LIMIT 1`).get(rootDir) as
+              | { id: string }
+              | undefined;
+            migrationProjectId = row?.id;
+          } catch {
+            // A pre-registry central database leaves legacy single-project startup unbound.
+          } finally {
+            legacyCentral.close();
+          }
+        }
+        const fallbackProjectId = fallbackProjectIdForRoot(rootDir);
+        migrationProjectId ??= fallbackProjectId;
+        if (migrationProjectId !== fallbackProjectId) {
+          await rekeyFallbackProjectPartition(
+            connections.migration,
+            fallbackProjectId,
+            migrationProjectId,
+          );
+        }
         /*
         FNXC:MultiProjectIsolation 2026-07-11:
         With per-project task partitioning (project_id on project.tasks), the
         first-boot emptiness check must be scoped to THIS project — otherwise
         the second project booting against the shared embedded cluster sees the
         first project's rows and silently skips migrating its own legacy
-        fusion.db (the exact data-loss trap Step 5.5 exists to close). NULL
-        project_id rows are counted as blocking: they may be this project's
-        pre-isolation data, and migrating on top of them risks id collisions.
-        Without a bound projectId the pre-isolation whole-table check applies.
+        fusion.db (the exact data-loss trap Step 5.5 exists to close).
+
+        FNXC:MultiProjectMigration 2026-07-13-22:37:
+        Resolve identity from PostgreSQL or the legacy central registry before
+        the emptiness check, then count only that partition. NULL or another
+        project's rows cannot suppress this migration; global-key collisions
+        instead surface through scoped post-copy verification and fail closed.
+        Without a registered identity the legacy whole-table check applies.
 
         FNXC:PostgresCutover 2026-07-13-20:50:
         Order matters: the PostgreSQL emptiness count runs BEFORE the SQLite
@@ -419,31 +462,49 @@ export async function createTaskStoreForBackend(
         only on the rare empty-PG path where auto-migration is actually being
         considered.
         */
-        const countRows = (await connections.migration.execute(
-          options.projectId
-            ? drizzleSql`SELECT count(*)::int AS count FROM project.tasks WHERE project_id = ${options.projectId} OR project_id IS NULL`
-            : drizzleSql`SELECT count(*)::int AS count FROM project.tasks`,
-        )) as Array<{ count: number }>;
-        const pgTaskCount = Number(countRows[0]?.count ?? 0);
-        if (pgTaskCount === 0 && isValidSqliteDatabaseFile(legacySqlitePath)) {
-          const { migrateSqliteToPostgres, defaultMigrationSources } = await import("./sqlite-migrator.js");
+        const migrationKey = `project:${migrationProjectId ?? rootDir}`;
+        const { migrateSqliteToPostgres, defaultMigrationSources, formatMigrationProgress, isSqliteMigrationComplete, completeSqliteMigration, recordSqliteMigrationComplete, CENTRAL_SQLITE_MIGRATION_KEY } = await import("./sqlite-migrator.js");
+        const migrationComplete = await isSqliteMigrationComplete(connections.migration, migrationKey);
+        if (!migrationComplete && isValidSqliteDatabaseFile(legacySqlitePath)) {
           // The central (global-dir) source is optional: when no global dir is
           // resolvable (e.g. tests without an explicit dir), migrate only the
           // project-local sources rather than failing the boot.
-          let globalDir = options.globalSettingsDir;
-          if (!globalDir) {
-            try {
-              const { resolveGlobalDir } = await import("../global-settings.js");
-              globalDir = resolveGlobalDir();
-            } catch {
-              globalDir = undefined;
-            }
-          }
+          /*
+          FNXC:PostgresMultiProjectCutover 2026-07-14-11:18:
+          The central SQLite database is cluster-global, not a per-project source. Migrate and verify it once, then exclude it from later registered-project cutovers so mutable global rows are not compared with each project's accumulated PostgreSQL state.
+          */
+          const centralMigrationComplete = await isSqliteMigrationComplete(
+            connections.migration, CENTRAL_SQLITE_MIGRATION_KEY,
+          );
           const sources = defaultMigrationSources(fusionDir, globalDir ?? join(fusionDir, "__no-global-dir__"))
+            .filter((source) => !centralMigrationComplete || source.pgSchema !== "central")
             .filter((source) => existsSync(source.sqlitePath) && isValidSqliteDatabaseFile(source.sqlitePath));
           if (sources.length > 0) {
             log.log(`startup-factory: empty PostgreSQL database with legacy SQLite data present — auto-migrating ${sources.length} source(s) (SQLite files are kept as backups)`);
-            const report = await migrateSqliteToPostgres(connections.migration, sources, { skipBaseline: true });
+            const report = await migrateSqliteToPostgres(connections.migration, sources, {
+              skipBaseline: true,
+              projectId: migrationProjectId,
+              migrationKey,
+              deferCompletion: true,
+              /*
+              FNXC:CliMigrationProgress 2026-07-14-13:47:
+              First-boot migration can copy hundreds of thousands of rows. Forward structured phase, table, quarter-copy, and terminal events to the CLI logger so an operator sees forward progress and an explicit rollback instead of a silent startup wait.
+              */
+              onProgress: (event) => {
+                log.log(`startup-factory: SQLite migration — ${formatMigrationProgress(event)}`);
+              },
+            });
+            /*
+            FNXC:PostgresMigrationVerification 2026-07-13-22:37:
+            Startup may advertise and bind a migrated database only after every non-disposable source table passes row-count and content verification. Fail before project stamping and before the migration notice so conflicts and unmapped operator tables remain diagnosable rather than becoming a false successful cutover.
+            */
+            const failedTables = report.tables.filter((table) => !table.skipped && !table.verified);
+            if (failedTables.length > 0) {
+              const failures = failedTables
+                .map((table) => `${table.schema}.${table.table} (${table.skipReason ?? `source=${table.sourceRows}, target=${table.targetRows}`})`)
+                .join(", ");
+              throw new Error(`${failedTables.length} table(s) failed verification: ${failures}`);
+            }
             const migratedRows = report.tables.reduce((sum, table) => sum + table.insertedRows, 0);
             /*
             FNXC:MultiProjectIsolation 2026-07-11:
@@ -470,7 +531,8 @@ export async function createTaskStoreForBackend(
             centrally, leave rows NULL — readers for unregistered
             single-project setups use an unbound layer with no scope filter.
             */
-            const stampProjectId = options.projectId ?? (await lookupRegisteredProjectIdByPath());
+            const stampProjectId = migrationProjectId
+              ?? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir));
             if (stampProjectId) {
               /*
               FNXC:CentralProjectIdentity 2026-07-13-23:10:
@@ -480,11 +542,16 @@ export async function createTaskStoreForBackend(
               stampMigratedProjectRows. rootDir is the pre-isolation key for the
               workflow tables, so it is passed alongside the stamp id.
               */
-              const { stampMigratedProjectRows } = await import("./migration-stamping.js");
               await stampMigratedProjectRows(connections.migration, {
                 projectId: stampProjectId,
                 rootDir,
               });
+            }
+            await completeSqliteMigration(connections.migration, migrationKey);
+            if (sources.some((source) => source.pgSchema === "central")) {
+              await recordSqliteMigrationComplete(
+                connections.migration, CENTRAL_SQLITE_MIGRATION_KEY, stampProjectId,
+              );
             }
             /*
             FNXC:PostgresMigrationBanner 2026-07-12:
@@ -533,7 +600,36 @@ export async function createTaskStoreForBackend(
   Unregistered paths resolve to undefined and boot unbound, preserving legacy
   single-project behavior.
   */
-  const resolvedProjectId = options.projectId ?? (await lookupRegisteredProjectIdByPath());
+  const resolvedProjectId = options.projectId
+    ?? (rootDir
+      ? (await lookupRegisteredProjectIdByPath(connections.migration, rootDir))
+        ?? fallbackProjectIdForRoot(rootDir)
+      : undefined);
+
+  if (rootDir && resolvedProjectId) {
+    await rekeyFallbackProjectPartition(
+      connections.migration,
+      fallbackProjectIdForRoot(rootDir),
+      resolvedProjectId,
+    );
+  }
+
+  /*
+  FNXC:ProjectDataIsolation 2026-07-14-12:10:
+  Schema application and SQLite copy require an administrative connection, but application stores must never inherit that bypass. Replace the bootstrap pools with project-bound sessions before constructing any store so every agent and satellite query is constrained by forced RLS.
+  */
+  if (resolvedProjectId) {
+    const runtimeRoleRows = (await connections.migration.execute(sql`
+      SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime')
+        AND pg_has_role(current_user, 'fusion_runtime', 'MEMBER') AS usable
+    `)) as unknown as Array<{ usable: boolean }>;
+    await connections.close();
+    connections = await createConnectionSetFromUrl(resolvedBackend, {
+      poolMax: options.poolMax,
+      projectId: resolvedProjectId,
+      useRuntimeRole: runtimeRoleRows[0]?.usable === true,
+    });
+  }
   const asyncLayer = createAsyncDataLayer(connections, { projectId: resolvedProjectId });
 
   // Step 7: construct the TaskStore in backend mode.

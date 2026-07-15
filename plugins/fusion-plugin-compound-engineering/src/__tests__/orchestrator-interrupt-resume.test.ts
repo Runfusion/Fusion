@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import type { InteractiveAiSession, InteractiveAiSessionEvent, PlanningQuestion } from "@fusion/core";
 import { vi } from "vitest";
 import { CeOrchestrator, CE_EVENTS } from "../session/orchestrator.js";
 import { CeSessionStore, getCeSessionStore } from "../session/session-store.js";
-import { makeHarness, makeScriptedSession, scriptedFactory, type TestHarness } from "./_harness.js";
+import { makeHarness, makeScriptedSession, pgDescribe, scriptedFactory, type TestHarness } from "./_harness.js";
 
 /**
  * CHARACTERIZATION TEST — written first (U5 execution note: cover the
@@ -24,8 +24,8 @@ const QUESTION: PlanningQuestion = {
 
 let h: TestHarness;
 
-beforeEach(() => {
-  h = makeHarness();
+beforeEach(async () => {
+  h = await makeHarness();
 });
 
 afterEach(() => {
@@ -54,7 +54,7 @@ function questionThenHangSession(): InteractiveAiSession {
   };
 }
 
-describe("interrupt + resume (no silent loss)", () => {
+pgDescribe("interrupt + resume (no silent loss)", () => {
   it("auto-saves progress on a turn timeout, marks interrupted, emits an event", async () => {
     const session = questionThenHangSession();
     const orch = new CeOrchestrator({
@@ -87,26 +87,26 @@ describe("interrupt + resume (no silent loss)", () => {
     // with currentQuestion set, lastActivity well past the interval stale band.
     // Human response time is unbounded, so this is NOT a crashed turn — the
     // interval rubric must not misclassify it as stale.
-    const store = new CeSessionStore(h.db);
-    const created = store.create({
+    const store = new CeSessionStore(null, h.layer);
+    const created = await store.createAsync({
       stage: "brainstorm",
       artifactPath: "docs/plans/2026-06-27-001-topic-plan.md",
       turnIntervalMs: 1000,
     });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, { role: "agent", text: JSON.stringify({ question: QUESTION }), at: new Date().toISOString() });
-    store.update(created.id, {
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, { role: "agent", text: JSON.stringify({ question: QUESTION }), at: new Date().toISOString() });
+    await store.updateAsync(created.id, {
       status: "awaiting_input",
       currentQuestion: QUESTION,
       // 10× interval old → far past the band, yet legitimately awaiting a human.
       lastActivityAt: Date.now() - 10_000,
     });
 
-    const recovered = store.recoverStaleSessions();
+    const recovered = await store.recoverStaleSessionsAsync();
     // Not flagged stale / not recovered — a human wait is not a crashed turn.
     expect(recovered).not.toContain(created.id);
 
-    const after = store.get(created.id)!;
+    const after = (await store.getAsync(created.id))!;
     // Awaiting-input session with a question stays resumable, unchanged.
     expect(after.status).toBe("awaiting_input");
     expect(after.currentQuestion?.id).toBe("q1");
@@ -130,14 +130,14 @@ describe("interrupt + resume (no silent loss)", () => {
 
   it("answer() rehydrates an old awaiting_input session with no live handle and drives the answer to completion", async () => {
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 5000 });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
 
     const rehydrated = makeScriptedSession([
       { type: "question", data: QUESTION },
@@ -191,18 +191,18 @@ describe("interrupt + resume (no silent loss)", () => {
 
   it("answer() without a live handle and without a factory reports an honest error without corrupting the question", async () => {
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 5000 });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
     const orch = new CeOrchestrator({ ctx: h.ctx, projectRoot: h.projectRoot, turnTimeoutMs: 5000 });
 
     await expect(orch.answer(created.id, "q1", "a")).rejects.toThrow(/cannot be continued in this process/i);
-    const after = store.get(created.id)!;
+    const after = (await store.getAsync(created.id))!;
     expect(after.status).toBe("awaiting_input");
     expect(after.currentQuestion?.id).toBe("q1");
     expect(after.conversationHistory.some((t) => t.text.includes('"answer"'))).toBe(false);
@@ -210,14 +210,14 @@ describe("interrupt + resume (no silent loss)", () => {
 
   it("answer() rejects a stale questionId before rehydration and leaves state untouched", async () => {
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 5000 });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
     const factory = scriptedFactory(makeScriptedSession([{ type: "question", data: QUESTION }]));
     const orch = new CeOrchestrator({
       ctx: h.ctx,
@@ -228,7 +228,7 @@ describe("interrupt + resume (no silent loss)", () => {
 
     await expect(orch.answer(created.id, "stale-q", "a")).rejects.toThrow(/q1|stale-q/);
     expect(factory).not.toHaveBeenCalled();
-    const after = store.get(created.id)!;
+    const after = (await store.getAsync(created.id))!;
     expect(after.status).toBe("awaiting_input");
     expect(after.currentQuestion?.id).toBe("q1");
     expect(after.conversationHistory.some((t) => t.text.includes("stale-q"))).toBe(false);
@@ -236,8 +236,8 @@ describe("interrupt + resume (no silent loss)", () => {
 
   it("answer() preserves the existing not-awaiting guard before rehydration", async () => {
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 5000 });
-    store.update(created.id, { status: "active", currentQuestion: QUESTION });
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.updateAsync(created.id, { status: "active", currentQuestion: QUESTION });
     const factory = scriptedFactory(makeScriptedSession([{ type: "question", data: QUESTION }]));
     const orch = new CeOrchestrator({
       ctx: h.ctx,
@@ -248,19 +248,19 @@ describe("interrupt + resume (no silent loss)", () => {
 
     await expect(orch.answer(created.id, "q1", "a")).rejects.toThrow(/not awaiting input/);
     expect(factory).not.toHaveBeenCalled();
-    expect(store.get(created.id)!.status).toBe("active");
+    expect((await store.getAsync(created.id))!.status).toBe("active");
   });
 
   it("detached answer() rehydrates an old awaiting_input session in the background", async () => {
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 5000 });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
     const rehydrated = makeScriptedSession([
       { type: "question", data: QUESTION },
       { type: "complete", data: { artifact: "# Done\n" } },
@@ -275,14 +275,50 @@ describe("interrupt + resume (no silent loss)", () => {
     const returned = await orch.answer(created.id, "q1", "a", { detach: true });
     expect(returned.session.status).toBe("active");
 
-    await new Promise((resolve) => setImmediate(resolve));
-    const after = store.get(created.id)!;
-    expect(after.status).toBe("completed");
+    await vi.waitFor(async () => expect((await store.getAsync(created.id))?.status).toBe("completed"));
+    const after = (await store.getAsync(created.id))!;
     expect(rehydrated.answer).toHaveBeenCalledTimes(1);
     const hasAnswerTurn = after.conversationHistory.some(
       (t) => t.text === JSON.stringify({ answer: "a", questionId: "q1" }),
     );
     expect(hasAnswerTurn).toBe(true);
+  });
+
+  it("keeps detached answer rehydration failure terminal when the interrupted write returns no row", async () => {
+    const store = getCeSessionStore(h.ctx);
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
+      role: "agent",
+      text: JSON.stringify({ question: QUESTION }),
+      at: new Date().toISOString(),
+    });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => {
+        throw new Error("rehydration failed");
+      }),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const updateAsync = store.updateAsync.bind(store);
+    vi.spyOn(store, "updateAsync").mockImplementation((sessionId, patch) => {
+      if (patch.status === "interrupted") return Promise.resolve(undefined);
+      return updateAsync(sessionId, patch);
+    });
+
+    const returned = await orch.answer(created.id, "q1", "a", { detach: true });
+    expect(returned.session.status).toBe("active");
+    await vi.waitFor(async () => expect(await orch.getState(created.id)).toMatchObject({
+      status: "interrupted",
+      error: "rehydration failed",
+    }));
+    expect((await store.getAsync(created.id))?.status).toBe("active");
+    expect(h.emitted).toContainEqual({
+      event: CE_EVENTS.interrupted,
+      data: { sessionId: created.id, message: "rehydration failed" },
+    });
   });
 
   it("Bug 5: an interrupted/awaiting session with a currentQuestion + history can be resumed (rehydrated) and then ANSWERED to continue to completion", async () => {
@@ -291,14 +327,14 @@ describe("interrupt + resume (no silent loss)", () => {
     // handle was disposed and removed from this.live. This is exactly the state
     // resume() must be able to back with a real live handle.
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 5000 });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.appendHistory(created.id, {
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 5000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.appendHistoryAsync(created.id, {
       role: "agent",
       text: JSON.stringify({ question: QUESTION }),
       at: new Date().toISOString(),
     });
-    store.update(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
+    await store.updateAsync(created.id, { status: "awaiting_input", currentQuestion: QUESTION });
     const sessionId = created.id;
 
     // The rehydration factory: replays the opening prompt (yields the question,
@@ -347,7 +383,7 @@ describe("interrupt + resume (no silent loss)", () => {
     await expect(orch.answer(started.session.id, "WRONG-ID", "a")).rejects.toThrow(/q1|WRONG-ID/);
 
     // The recovery anchor is intact: still awaiting_input with currentQuestion.
-    const after = orch.getState(started.session.id)!;
+    const after = (await orch.getState(started.session.id))!;
     expect(after.status).toBe("awaiting_input");
     expect(after.currentQuestion?.id).toBe("q1");
     // No spurious answer turn was appended to history.
@@ -360,14 +396,14 @@ describe("interrupt + resume (no silent loss)", () => {
     expect(accepted.session.status).toBe("interrupted");
   });
 
-  it("a crash with no pending question is marked interrupted (progress preserved), not silently dropped", () => {
+  it("a crash with no pending question is marked interrupted (progress preserved), not silently dropped", async () => {
     const store = getCeSessionStore(h.ctx);
-    const created = store.create({ stage: "brainstorm", turnIntervalMs: 1000 });
-    store.appendHistory(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
-    store.update(created.id, { status: "active", lastActivityAt: Date.now() - 10_000 });
+    const created = await store.createAsync({ stage: "brainstorm", turnIntervalMs: 1000 });
+    await store.appendHistoryAsync(created.id, { role: "user", text: "kick off", at: new Date().toISOString() });
+    await store.updateAsync(created.id, { status: "active", lastActivityAt: Date.now() - 10_000 });
 
-    store.recoverStaleSessions();
-    const after = store.get(created.id)!;
+    await store.recoverStaleSessionsAsync();
+    const after = (await store.getAsync(created.id))!;
     expect(after.status).toBe("interrupted");
     expect(after.error).toMatch(/progress preserved/i);
     expect(after.conversationHistory).toHaveLength(1);

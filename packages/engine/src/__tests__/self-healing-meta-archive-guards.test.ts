@@ -2,7 +2,8 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { activeSessionRegistry } from "../active-session-registry.js";
-import { git, makeReliabilityFixture } from "./reliability-interactions/_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { git, hasGit, hasPg, makeReliabilityFixture } from "./reliability-interactions/_helpers.js";
 
 async function createResolvedMetaPair(settingsOverrides: Record<string, unknown> = {}) {
   const fixture = await makeReliabilityFixture({
@@ -37,7 +38,8 @@ afterEach(() => {
   activeSessionRegistry.clear();
 });
 
-describe("SelfHealingManager meta auto-archive guards", () => {
+const canRun = hasGit && hasPg;
+(canRun ? describe : describe.skip)("SelfHealingManager meta auto-archive guards", () => {
   it("skips resolved auto-archive when branch has unique commits", async () => {
     const { fixture, meta } = await createResolvedMetaPair();
     const branchName = `fusion/${meta.id.toLowerCase()}`;

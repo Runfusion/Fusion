@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { GIT_INSTALL_URL, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { probeClaudeCli } from "../claude-cli-probe.js";
 import { probeDroidCli } from "../droid-cli-probe.js";
-import { probeCursorCliProvider, probeGrokCliProvider } from "../runtime-provider-probes.js";
+import { probeCursorCliProvider, probeGrokCliProvider, probeOmpCliProvider } from "../runtime-provider-probes.js";
 import { probeLlamaCpp } from "../llama-cpp-probe.js";
 import { ApiError, badRequest, conflict } from "../api-error.js";
 import { clearUsageCache } from "../usage.js";
@@ -31,6 +31,20 @@ export function parseGitHubCopilotDeviceCode(instructions: string): string | und
 export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, options, store, getScopedStore, rethrowAsApiError } = ctx;
   const authStorage = options?.authStorage;
+
+  /*
+  FNXC:ProviderAuth 2026-07-14-14:22:
+  CLI-backed providers own their credentials and have dedicated status rows below. Runtime model registration can also expose those ids through getApiKeyProviders(); exclude them from the generic API-key union so Grok cannot render twice as both "missing API key" and ready via its authenticated CLI.
+  */
+  const syntheticCliProviderIds = new Set([
+    "claude-cli",
+    "pi-claude-cli",
+    "droid-cli",
+    "cursor-cli",
+    "grok-cli",
+    "omp-cli",
+    "llama-cpp",
+  ]);
 
   // Use injected AuthStorage or fail gracefully if not provided.
   // When running via the CLI/engine, AuthStorage is passed in via ServerOptions.
@@ -75,6 +89,24 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
   async function probeGrokCliWithStoredBinary() {
     return probeGrokCliProvider({ binaryPath: await readGrokCliBinaryPath() });
+  }
+
+  /*
+  FNXC:OmpAcp 2026-07-13-22:50:
+  Mirrors Grok/Cursor binary path helpers so auth provider list, status, enable, and path-save validation probe the same trimmed global OMP CLI override.
+  */
+  function normalizeOmpCliBinaryPath(value: unknown): string | undefined {
+    return typeof value === "string" ? value.trim() || undefined : undefined;
+  }
+
+  async function readOmpCliBinaryPath(): Promise<string | undefined> {
+    if (!store) return undefined;
+    const globalSettings = await store.getGlobalSettingsStore().getSettings();
+    return normalizeOmpCliBinaryPath((globalSettings as Record<string, unknown>).ompCliBinaryPath);
+  }
+
+  async function probeOmpCliWithStoredBinary() {
+    return probeOmpCliProvider({ binaryPath: await readOmpCliBinaryPath() });
   }
 
   /**
@@ -583,6 +615,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         const scopeLoginError = missingInferenceScope
           ? "This Anthropic login is missing the model-access (inference) scope, so model calls will fail. Re-login to grant full access."
           : undefined;
+        /*
+        FNXC:ProviderAuth 2026-07-14-15:54:
+        Expired OAuth must carry an actionable card message, not only authenticated:false. Refresh failures such as invalid_grant cannot repair themselves; tell the operator to re-login while preserving a more specific background-login or inference-scope error when available.
+        */
+        const expiryLoginError = expired
+          ? "This OAuth session expired and could not be refreshed. Re-login to restore model access."
+          : undefined;
         return {
           id: statusProvider.id,
           name: statusProvider.name,
@@ -591,7 +630,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           expired: expired || missingInferenceScope,
           loginInProgress: loginInProgress.has(statusProvider.id),
           requiresManualCode: getManualCodeConfig(toOauthLoginProviderId(statusProvider.id), origin) !== undefined || undefined,
-          loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError,
+          loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError ?? expiryLoginError,
         };
       }));
 
@@ -600,7 +639,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       // storage.getApiKeyProviders may be absent/narrowed, but the catalog
       // entries must still surface as present-but-unauthenticated.
       {
-        const runtimeApiKeyProviders = storage.getApiKeyProviders ? storage.getApiKeyProviders() : [];
+        const runtimeApiKeyProviders = storage.getApiKeyProviders
+          ? storage.getApiKeyProviders().filter((provider) => !syntheticCliProviderIds.has(provider.id))
+          : [];
         const apiKeyProviders = unionProviderCatalog(STATIC_API_KEY_PROVIDER_CATALOG, runtimeApiKeyProviders);
         for (const p of apiKeyProviders) {
           let keyHint: string | undefined;
@@ -709,6 +750,27 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           id: "grok-cli",
           name: "Grok — via Grok CLI",
           authenticated: grokEnabled && grokBinary.available,
+          type: "cli" as const,
+        });
+      }
+
+      /*
+      FNXC:OmpAcp 2026-07-13-22:50:
+      Inject synthetic "Oh My Pi — via omp ACP" provider. authenticated = toggle + binary available; omp owns credentials under ~/.omp.
+      */
+      if (store) {
+        let ompEnabled = false;
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          ompEnabled = (globalSettings as Record<string, unknown>).useOmpCli === true;
+        } catch {
+          // best effort
+        }
+        const ompBinary = await probeOmpCliWithStoredBinary();
+        providers.push({
+          id: "omp-cli",
+          name: "Oh My Pi — via omp ACP",
+          authenticated: ompEnabled && ompBinary.available,
           type: "cli" as const,
         });
       }
@@ -1170,6 +1232,90 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         try {
           const globalSettings = await store.getGlobalSettingsStore().getSettings();
           enabled = (globalSettings as Record<string, unknown>).useGrokCli === true;
+        } catch {
+          // best effort
+        }
+      }
+      res.json({ binary, enabled, binaryPath, extension: null, ready: enabled && binary.available });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:OmpAcp 2026-07-13-22:50:
+  POST /auth/omp-cli mirrors Grok/Cursor enable/disable + binaryPath contract. Enable requires binary available; omp auth stays under ~/.omp.
+  */
+  router.post("/auth/omp-cli", async (req, res) => {
+    try {
+      if (!store) {
+        throw new ApiError(500, "Settings store unavailable");
+      }
+      const requestedEnabled = req.body?.enabled;
+      const hasEnabledPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled");
+      const requestedBinaryPath = req.body?.binaryPath;
+      const hasBinaryPathPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "binaryPath");
+      if (!hasEnabledPatch && !hasBinaryPathPatch) {
+        throw badRequest("enabled or binaryPath is required");
+      }
+      if (hasEnabledPatch && typeof requestedEnabled !== "boolean") {
+        throw badRequest("enabled must be a boolean");
+      }
+      if (hasBinaryPathPatch && requestedBinaryPath !== null && typeof requestedBinaryPath !== "string") {
+        throw badRequest("binaryPath must be a string or null");
+      }
+
+      const currentSettings = await store.getGlobalSettingsStore().getSettings();
+      const enabled = hasEnabledPatch ? requestedEnabled : (currentSettings as Record<string, unknown>).useOmpCli === true;
+      const currentBinaryPath = normalizeOmpCliBinaryPath((currentSettings as Record<string, unknown>).ompCliBinaryPath);
+      const nextBinaryPath = hasBinaryPathPatch
+        ? normalizeOmpCliBinaryPath(requestedBinaryPath)
+        : currentBinaryPath;
+
+      if (hasBinaryPathPatch && nextBinaryPath) {
+        const binary = await probeOmpCliProvider({ binaryPath: nextBinaryPath });
+        if (!binary.available || !binary.usingConfiguredBinaryPath) {
+          throw new ApiError(400, `Cannot save OMP CLI binary path: ${binary.reason ?? "configured binary not available"}`);
+        }
+      }
+
+      if (enabled) {
+        const binary = await probeOmpCliProvider({ binaryPath: nextBinaryPath });
+        if (!binary.available) {
+          throw new ApiError(400, `Cannot enable OMP CLI routing: ${binary.reason ?? "omp binary not available"}`);
+        }
+      }
+
+      const patch: Record<string, unknown> = {};
+      if (hasEnabledPatch) {
+        patch.useOmpCli = enabled;
+      }
+      if (hasBinaryPathPatch) {
+        patch.ompCliBinaryPath = nextBinaryPath ?? null;
+      }
+      const settings = await store.updateGlobalSettings(patch);
+      invalidateAllGlobalSettingsCaches();
+      res.json({
+        enabled: (settings as Record<string, unknown>).useOmpCli === true,
+        binaryPath: normalizeOmpCliBinaryPath((settings as Record<string, unknown>).ompCliBinaryPath),
+        restartRequired: false,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/providers/omp-cli/status", async (_req, res) => {
+    try {
+      const binaryPath = await readOmpCliBinaryPath();
+      const binary = await probeOmpCliProvider({ binaryPath });
+      let enabled = false;
+      if (store) {
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          enabled = (globalSettings as Record<string, unknown>).useOmpCli === true;
         } catch {
           // best effort
         }

@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "./db.js";
 import { fromJson, toJsonNullable } from "./db.js";
 import { createLogger } from "./logger.js";
@@ -83,6 +83,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
 
   // Prepared statements for frequently-run queries (SQLite path only)
   private stmtInsert!: ReturnType<Database["prepare"]>;
+  private stmtInsertOnce!: ReturnType<Database["prepare"]>;
   private stmtGetById!: ReturnType<Database["prepare"]>;
   private stmtUpdateRead!: ReturnType<Database["prepare"]>;
   private stmtDelete!: ReturnType<Database["prepare"]>;
@@ -105,6 +106,10 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     const sqliteDb = this.db!;
     this.stmtInsert = sqliteDb.prepare(`
       INSERT INTO messages (id, fromId, fromType, toId, toType, content, type, read, metadata, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.stmtInsertOnce = sqliteDb.prepare(`
+      INSERT OR IGNORE INTO messages (id, fromId, fromType, toId, toType, content, type, read, metadata, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
@@ -233,6 +238,77 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     }
 
     return message;
+  }
+
+  /**
+   * Atomically send one message for a globally scoped idempotency key.
+   *
+   * FNXC:PostgresMigrationInbox 2026-07-14-12:10:
+   * Once-only system notices use a deterministic message primary key and each backend's conflict-ignore insert. This closes the check-then-send race between concurrent engine starts while preserving normal MessageStore events only for the winning insert.
+   */
+  async sendMessageOnce(
+    input: MessageCreateInput,
+    idempotencyKey: string,
+  ): Promise<{ message: Message; inserted: boolean }> {
+    validateMessageMetadata(input.metadata);
+    const now = new Date().toISOString();
+    const digest = createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 24);
+    const from = normalizeMessageParticipant(input.fromId ?? "system", input.fromType ?? "system");
+    const to = normalizeMessageParticipant(input.toId, input.toType);
+    const message: Message = {
+      id: `msg-once-${digest}`,
+      fromId: from.id,
+      fromType: from.type,
+      toId: to.id,
+      toType: to.type,
+      content: input.content,
+      type: input.type,
+      read: false,
+      metadata: input.metadata,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    let inserted: boolean;
+    if (this.asyncLayer) {
+      inserted = await asyncMessageStore.sendMessageOnce(this.asyncLayer.db, {
+        ...message,
+        metadata: message.metadata ?? null,
+      });
+    } else {
+      const result = this.stmtInsertOnce.run(
+        message.id,
+        message.fromId,
+        message.fromType,
+        message.toId,
+        message.toType,
+        message.content,
+        message.type,
+        0,
+        toJsonNullable(message.metadata),
+        message.createdAt,
+        message.updatedAt,
+      );
+      inserted = result.changes === 1;
+      if (inserted) this.db!.bumpLastModified();
+    }
+
+    if (!inserted) return { message, inserted: false };
+
+    this.emit("message:sent", message);
+    this.emit("message:received", message);
+    if (message.toType === "agent" && this.onMessageToAgent) {
+      try {
+        await this.onMessageToAgent(message);
+      } catch (err) {
+        messageStoreLog.warn(
+          `MessageStore onMessageToAgent hook failed for once-only id=${message.id} (send still succeeded): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return { message, inserted: true };
   }
 
   /**

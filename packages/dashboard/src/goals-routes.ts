@@ -16,7 +16,8 @@ import { Router, type Request, type Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Goal, GoalStatus, GoalUpdateInput, Mission, TaskStore } from "@fusion/core";
 import { ApiError, badRequest, catchHandler, conflict, internalError, notFound } from "./api-error.js";
-import { getOrCreateProjectStore } from "./project-store-resolver.js";
+import { getScopedStore as resolveScopedRequestStore } from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 
 // FNXC:GoalStore 2026-06-27-18:10:
 // getGoalStore() returns GoalStore | AsyncGoalStore (sync SQLite vs PG-backed).
@@ -35,16 +36,6 @@ type GoalStoreLike = {
 
 const GOAL_ID_RE = /^G-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i;
 const GOAL_STATUSES: GoalStatus[] = ["active", "archived"];
-
-function getProjectIdFromRequest(req: Request): string | undefined {
-  if (typeof req.query.projectId === "string" && req.query.projectId.trim()) {
-    return req.query.projectId;
-  }
-  if (req.body && typeof req.body === "object" && typeof req.body.projectId === "string" && req.body.projectId.trim()) {
-    return req.body.projectId;
-  }
-  return undefined;
-}
 
 function getGoalStore(store: TaskStore): GoalStoreLike {
   // FNXC:GoalStore 2026-06-27-18:10:
@@ -115,7 +106,7 @@ function rethrowGoalCapError(error: unknown): never {
   throw internalError("Internal server error");
 }
 
-export function createGoalsRouter(store: TaskStore): Router {
+export function createGoalsRouter(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
@@ -125,8 +116,10 @@ export function createGoalsRouter(store: TaskStore): Router {
 
   router.use(async (req: Request, _res: Response, next) => {
     try {
-      const projectId = getProjectIdFromRequest(req);
-      const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : store;
+      // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+      // Resolve an explicit central-registry project id via the shared seam
+      // (request id → registered launch project id → raw launch store last resort).
+      const scopedStore = await resolveScopedRequestStore(req, store, options);
       requestContext.run(scopedStore, next);
     } catch (error) {
       next(error);

@@ -168,7 +168,7 @@ const plugin = definePlugin({
         ctx.logger.error(`Compound Engineering agent install failed: ${message}`);
       }
 
-      recoverStaleSessionsForContext(ctx, { reason: "load", force: true, emitEvent: true });
+      await recoverStaleSessionsForContext(ctx, { reason: "load", force: true, emitEvent: true });
     },
   },
   // Expose the plugin-local ce-* persona-definition directory to executor /

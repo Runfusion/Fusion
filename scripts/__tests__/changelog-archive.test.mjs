@@ -8,38 +8,38 @@ import {
   partitionVersionsByCutoff,
 } from "../lib/changelog-archive.mjs";
 
-test("partitions versions at the pre-0.50 archive cutoff", () => {
+test("partitions versions at the pre-0.60 archive cutoff", () => {
   assert.deepEqual(
-    partitionVersionsByCutoff(["0.58.0", "0.50.0", "0.49.0", "0.11.1"]),
+    partitionVersionsByCutoff(["0.60.0", "0.59.0", "0.50.0", "0.11.1"]),
     {
-      current: ["0.58.0", "0.50.0"],
-      archived: ["0.49.0", "0.11.1"],
+      current: ["0.60.0"],
+      archived: ["0.59.0", "0.50.0", "0.11.1"],
     },
   );
 });
 
-test("keeps the 0.50.0 boundary and newer patch versions current", () => {
-  const partitioned = partitionVersionsByCutoff(["0.53.1", "0.50.0", "0.49.0"]);
+test("keeps the 0.60.0 boundary and newer patch versions current", () => {
+  const partitioned = partitionVersionsByCutoff(["0.61.0", "0.60.0", "0.59.0"]);
 
-  assert.deepEqual(partitioned.current, ["0.53.1", "0.50.0"]);
-  assert.deepEqual(partitioned.archived, ["0.49.0"]);
+  assert.deepEqual(partitioned.current, ["0.61.0", "0.60.0"]);
+  assert.deepEqual(partitioned.archived, ["0.59.0"]);
 });
 
 test("preserves input order and archives non-parseable version keys", () => {
   const partitioned = partitionVersionsByCutoff([
-    "0.51.0",
+    "0.61.0",
     "legacy notes",
-    "0.50.0 (pre-release, unpublished)",
-    "0.49.9",
-    "0.53.0",
+    "0.60.0 (pre-release, unpublished)",
+    "0.59.9",
+    "0.62.0",
   ]);
 
   assert.deepEqual(partitioned.current, [
-    "0.51.0",
-    "0.50.0 (pre-release, unpublished)",
-    "0.53.0",
+    "0.61.0",
+    "0.60.0 (pre-release, unpublished)",
+    "0.62.0",
   ]);
-  assert.deepEqual(partitioned.archived, ["legacy notes", "0.49.9"]);
+  assert.deepEqual(partitioned.archived, ["legacy notes", "0.59.9"]);
 });
 
 test("supports a custom cutoff with release.mjs semver-ish parsing", () => {
@@ -54,5 +54,6 @@ test("archive pointer references the archive file and cutoff", () => {
 
   assert.ok(pointer.includes(CHANGELOG_ARCHIVE_FILE));
   assert.ok(pointer.includes(CHANGELOG_ARCHIVE_CUTOFF));
+  assert.equal(CHANGELOG_ARCHIVE_CUTOFF, "0.60.0");
   assert.match(pointer, /\.\/CHANGELOG-archive\.md/);
 });

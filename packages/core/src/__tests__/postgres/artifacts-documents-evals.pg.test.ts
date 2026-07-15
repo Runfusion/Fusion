@@ -12,7 +12,7 @@
  * joined parent-task fields. Runs in the blocking gate (test:pg-gate).
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 
 import {
   pgDescribe,
@@ -20,8 +20,63 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import { AsyncEvalStore } from "../../async-eval-store.js";
+import { runScheduledEvalBatch } from "../../eval-automation.js";
+import type { AsyncDataLayer } from "../../postgres/data-layer.js";
+import type { EvalRunStatus } from "../../eval-types.js";
 
 const pgTest = pgDescribe;
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * FNXC:ScheduledEvalsPostgres 2026-07-14-01:41:
+ * Eval lifecycle race tests coordinate at the transaction's advisory-lock query. The first updater pauses after acquiring the real PostgreSQL lock, while the second signals before its lock attempt blocks, proving terminal transition serialization without sleeps or polling.
+ */
+function controlledEvalUpdateLayer(
+  layer: AsyncDataLayer,
+  mode: "hold-after-first-query" | "signal-first-query",
+): { layer: AsyncDataLayer; reached: Promise<void>; release: () => void } {
+  const reached = deferred();
+  const release = deferred();
+  let firstTransaction = true;
+  const controlled = {
+    ...layer,
+    transactionImmediate: async <T>(
+      fn: Parameters<AsyncDataLayer["transactionImmediate"]>[0],
+      options?: Parameters<AsyncDataLayer["transactionImmediate"]>[1],
+    ): Promise<T> => layer.transactionImmediate(async (tx) => {
+      if (!firstTransaction) return fn(tx) as Promise<T>;
+      firstTransaction = false;
+      let firstQuery = true;
+      const proxy = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "execute")
+            return Reflect.get(target, property, receiver);
+          return async (...args: Parameters<typeof tx.execute>) => {
+            if (!firstQuery) return tx.execute(...args);
+            firstQuery = false;
+            if (mode === "signal-first-query") {
+              reached.resolve();
+              return tx.execute(...args);
+            }
+            const result = await tx.execute(...args);
+            reached.resolve();
+            await release.promise;
+            return result;
+          };
+        },
+      });
+      return fn(proxy) as Promise<T>;
+    }, options),
+  } as AsyncDataLayer;
+  return { layer: controlled, reached: reached.promise, release: release.resolve };
+}
 
 pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -182,5 +237,97 @@ pgTest("Artifacts / Documents / Evals (PostgreSQL backend mode)", () => {
     const got = await evalStore.getTaskResult(result.id);
     expect(got?.overallScore).toBe(87);
     expect(got?.taskSnapshot.title).toBe("Snapshot title");
+  });
+
+  it.each<[EvalRunStatus, EvalRunStatus]>([
+    ["completed", "failed"],
+    ["failed", "cancelled"],
+    ["cancelled", "completed"],
+  ])(
+    "serializes concurrent terminal transitions after %s wins",
+    async (winningStatus, losingStatus) => {
+      const setup = new AsyncEvalStore(h.layer());
+      const run = await setup.createRun({
+        projectId: "P-EVAL-CONCURRENCY",
+        scope: "all",
+        trigger: "manual",
+      });
+      const firstControl = controlledEvalUpdateLayer(
+        h.layer(),
+        "hold-after-first-query",
+      );
+      const secondControl = controlledEvalUpdateLayer(
+        h.layer(),
+        "signal-first-query",
+      );
+      const first = new AsyncEvalStore(firstControl.layer);
+      const second = new AsyncEvalStore(secondControl.layer);
+
+      const winningUpdate = first.updateRun(run.id, { status: winningStatus });
+      await firstControl.reached;
+      const losingUpdate = second.updateRun(run.id, { status: losingStatus });
+      await secondControl.reached;
+      firstControl.release();
+
+      await expect(winningUpdate).resolves.toMatchObject({
+        status: winningStatus,
+      });
+      await expect(losingUpdate).rejects.toMatchObject({
+        name: "EvalLifecycleError",
+        code: "invalid_transition",
+      });
+      expect(await setup.getRun(run.id)).toMatchObject({ status: winningStatus });
+    },
+  );
+
+  /*
+  FNXC:ScheduledEvalsPostgres 2026-07-13-22:38:
+  Scheduled evaluation must use the same lifecycle on PostgreSQL as manual dashboard runs. This integration proof drives the real TaskStore and AsyncEvalStore through selection, scoring, event persistence, and terminal completion.
+  */
+  it("runs a scheduled evaluation batch through AsyncEvalStore", async () => {
+    const store = h.store();
+    const completedAt = "2026-07-13T20:00:00.000Z";
+    const task = await store.createTask({ description: "Scheduled evaluation candidate" });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    await store.moveTask(task.id, "in-review");
+    await store.moveTask(task.id, "done");
+    await store.updateTask(task.id, { executionCompletedAt: completedAt });
+
+    const result = await runScheduledEvalBatch({
+      store,
+      projectId: "P-EVAL-SCHEDULED",
+      startedAt: "2026-07-13T21:00:00.000Z",
+      evaluator: async () => ({ status: "scored", overallScore: 91, maxScore: 100 }),
+    });
+
+    expect(result).toMatchObject({ status: "completed", selectedTaskIds: [task.id], tasksSelected: 1 });
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect((await evalStore.getRun(result.runId))?.status).toBe("completed");
+    expect(await evalStore.listTaskResults({ runId: result.runId })).toHaveLength(1);
+    expect((await evalStore.listRunEvents(result.runId)).map((event) => event.status)).toContain("completed");
+  });
+
+  it("persists a failed lifecycle when scheduled task selection fails", async () => {
+    const store = h.store();
+    const result = await runScheduledEvalBatch({
+      store: {
+        getEvalStore: () => store.getEvalStore(),
+        listTasks: async () => { throw new Error("selection unavailable"); },
+      },
+      projectId: "P-EVAL-FAILURE",
+      startedAt: "2026-07-13T22:00:00.000Z",
+      evaluator: async () => ({ status: "scored", overallScore: 100, maxScore: 100 }),
+    });
+
+    expect(result.status).toBe("failed");
+    const evalStore = store.getEvalStore() as AsyncEvalStore;
+    expect(await evalStore.getRun(result.runId)).toMatchObject({
+      status: "failed",
+      error: "selection unavailable",
+    });
+    expect(await evalStore.listRunEvents(result.runId)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "failed", type: "error" })]),
+    );
   });
 });

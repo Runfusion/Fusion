@@ -1333,7 +1333,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       const { store: scopedStore } = await getProjectContext(req);
-      const { getSession, cleanupSession, formatInterviewQA, mergePlanningSubtaskDrafts } = await import("../planning.js");
+      const { getSession, releaseSession, formatInterviewQA, mergePlanningSubtaskDrafts } = await import("../planning.js");
 
       const session = await getSession(planningSessionId);
       if (!session) {
@@ -1494,9 +1494,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         );
       }
 
+      // FNXC:PlanningMode 2026-07-13-00:00: release the live in-memory planning
+      // runtime but KEEP the persisted completed row so the multi-task path
+      // matches single-task create-task — completed planning sessions must remain
+      // listable/restorable in the saved-sessions history. Using cleanupSession
+      // here deleted the ai_sessions row, so a session that ran to completion and
+      // created tasks vanished from history (GET /ai-sessions returned it no more).
       await runPlanningCreateSideEffect(
-        "Planning create-tasks session cleanup failed",
-        () => cleanupSession(planningSessionId),
+        "Planning create-tasks session release failed",
+        () => releaseSession(planningSessionId),
         { planningSessionId },
       );
 

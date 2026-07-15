@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -143,6 +143,72 @@ export const desktopDeployDir = process.env.FUSION_DESKTOP_DEPLOY_DIR
   ? resolve(process.env.FUSION_DESKTOP_DEPLOY_DIR)
   : resolve(packageRoot, "deploy");
 
+export type EmbeddedPostgresDesktopPlatform = "darwin" | "linux" | "win32";
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+ * These are the native Postgres payloads shipped by each desktop release job.
+ * macOS and Linux jobs cross-build x64 and ARM64 from one staged closure;
+ * Windows is x64-only because embedded-postgres has no Windows ARM64 binary.
+ */
+export function requiredEmbeddedPostgresPackages(
+  platform: EmbeddedPostgresDesktopPlatform,
+): readonly string[] {
+  switch (platform) {
+    case "darwin":
+      return ["@embedded-postgres/darwin-x64", "@embedded-postgres/darwin-arm64"];
+    case "linux":
+      return ["@embedded-postgres/linux-x64", "@embedded-postgres/linux-arm64"];
+    case "win32":
+      return ["@embedded-postgres/windows-x64"];
+  }
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
+ * A desktop build is incomplete unless the staged production closure contains
+ * embedded-postgres plus every native executable needed by the artifacts that
+ * job emits. Fail before electron-builder so a host-only optional-dependency
+ * install cannot silently produce an app that crashes on another architecture.
+ */
+export async function verifyEmbeddedPostgresPayloads(
+  deployDir = desktopDeployDir,
+  platform: EmbeddedPostgresDesktopPlatform = process.platform as EmbeddedPostgresDesktopPlatform,
+): Promise<void> {
+  if (platform !== "darwin" && platform !== "linux" && platform !== "win32") {
+    throw new Error(`Unsupported desktop platform for embedded Postgres: ${platform}`);
+  }
+
+  const executableSuffix = platform === "win32" ? ".exe" : "";
+  const requiredPaths = [
+    resolve(deployDir, "node_modules", "embedded-postgres", "package.json"),
+    ...requiredEmbeddedPostgresPackages(platform).flatMap((packageName) => {
+      const packageRoot = resolve(deployDir, "node_modules", ...packageName.split("/"));
+      return [
+        resolve(packageRoot, "package.json"),
+        resolve(packageRoot, "native", "bin", `initdb${executableSuffix}`),
+        resolve(packageRoot, "native", "bin", `pg_ctl${executableSuffix}`),
+        resolve(packageRoot, "native", "bin", `postgres${executableSuffix}`),
+      ];
+    }),
+  ];
+
+  const missing: string[] = [];
+  for (const requiredPath of requiredPaths) {
+    try {
+      await stat(requiredPath);
+    } catch {
+      missing.push(requiredPath);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Desktop embedded Postgres payload is incomplete for ${platform}: ${missing.join(", ")}. ` +
+        "Run pnpm install with pnpm-workspace.yaml supportedArchitectures before packaging.",
+    );
+  }
+}
+
 export async function stageDesktopDeploy(): Promise<void> {
   console.log("[desktop:build] Staging complete production closure via pnpm deploy...");
   await rm(desktopDeployDir, { recursive: true, force: true });
@@ -164,6 +230,7 @@ export async function stageDesktopDeploy(): Promise<void> {
     ? config.replace(/output:\s*dist-electron/, "output: ../dist-electron")
     : `directories:\n  output: ../dist-electron\n${config}`;
   await writeFile(stagedConfig, patched);
+  await verifyEmbeddedPostgresPayloads();
   console.log(`[desktop:build] Deploy staged at ${desktopDeployDir}`);
 }
 

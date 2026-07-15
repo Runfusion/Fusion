@@ -475,7 +475,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       await assertWorkflowExists(store, workflowId);
       const projectId = store.getWorkflowSettingsProjectId();
       const declarations = await resolveSettingDeclarations(store, workflowId);
-      const stored = store.getWorkflowSettingValues(workflowId, projectId);
+      const stored = await store.getWorkflowSettingValuesAsync(workflowId, projectId);
       res.json({
         stored,
         effective: resolveEffectiveSettingValues(declarations, stored),
@@ -543,7 +543,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       await assertWorkflowExists(store, workflowId);
       const projectId = store.getWorkflowSettingsProjectId();
       const defaults = await resolvePromptOverrideDefaults(store, workflowId);
-      const stored = store.getWorkflowPromptOverrides(workflowId, projectId);
+      const stored = await store.getWorkflowPromptOverridesAsync(workflowId, projectId);
       res.json({
         stored,
         effective: resolveEffectivePromptOverrides(defaults, stored),
@@ -600,7 +600,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
   router.get("/tasks/:taskId/workflow", async (req, res) => {
     try {
       const { store } = await getProjectContext(req);
-      const selection = store.getTaskWorkflowSelection(req.params.taskId);
+      const selection = await store.getTaskWorkflowSelectionAsync(req.params.taskId);
       res.json({
         workflowId: selection?.workflowId ?? null,
         enabledWorkflowSteps: selection ? selection.stepIds : null,
@@ -774,8 +774,8 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         ir: def.ir,
         layout: def.layout,
         ...(def.icon ? { icon: def.icon } : {}),
-        settingValues: store.getWorkflowSettingValues(def.id, projectId),
-        promptOverrides: store.getWorkflowPromptOverrides(def.id, projectId),
+        settingValues: await store.getWorkflowSettingValuesAsync(def.id, projectId),
+        promptOverrides: await store.getWorkflowPromptOverridesAsync(def.id, projectId),
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

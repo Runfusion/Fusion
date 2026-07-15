@@ -111,6 +111,11 @@ vi.mock("../Column", () => ({
             quick-create-{column}
           </button>
         ) : null}
+        {onNewTask ? (
+          <button type="button" data-testid={`mock-new-task-${column}`} onClick={() => (onNewTask as () => void)()}>
+            new-task-{column}
+          </button>
+        ) : null}
         {tasks.map((task) => (
           <article key={task.id} data-testid={`board-task-card-${task.id}`}>
             {task.title ?? task.description ?? task.id}
@@ -1630,6 +1635,17 @@ describe("Board", () => {
       expect(JSON.parse(intakeColumn.getAttribute("data-workflow-options") || "[]")).toEqual(["builtin:coding", "wf-custom"]);
     });
 
+    it("opens the full task dialog with the selected workflow context", async () => {
+      const onNewTask = vi.fn();
+      enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })], onNewTask });
+
+      await selectWorkflow(CUSTOM_WORKFLOW.id);
+      fireEvent.click(screen.getByTestId("mock-new-task-intake"));
+
+      expect(onNewTask).toHaveBeenCalledWith(CUSTOM_WORKFLOW.id);
+    });
+
     it("defaults All workflows quick-add to the default workflow and resolves selected workflow columns", async () => {
       const onQuickCreate = vi.fn().mockResolvedValue({ id: "FN-new", workflowId: "wf-custom" });
       enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
@@ -1647,6 +1663,17 @@ describe("Board", () => {
         column: "intake",
       })));
       expect(onQuickCreate).not.toHaveBeenCalledWith(expect.objectContaining({ workflowId: "__all_workflows__" }));
+    });
+
+    it("opens the All workflows task dialog with its resolved real workflow context", async () => {
+      const onNewTask = vi.fn();
+      enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      renderBoard({ onNewTask });
+
+      await selectWorkflow("__all_workflows__");
+      fireEvent.click(screen.getByTestId("mock-new-task-triage"));
+
+      expect(onNewTask).toHaveBeenCalledWith(DEFAULT_WORKFLOW.id);
     });
 
     it("restores all-workflows after remount and then persists a real workflow selection", async () => {

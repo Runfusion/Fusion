@@ -74,6 +74,7 @@ export {
   getAppliedMigrations,
   readBaselineMigrationSql,
   SCHEMA_BASELINE_VERSION,
+  PROJECT_OWNERSHIP_SCHEMA_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
 } from "./schema-applier.js";
 export {
@@ -155,12 +156,17 @@ export {
  */
 export {
   migrateSqliteToPostgres,
+  isSqliteMigrationComplete,
+  completeSqliteMigration,
   defaultMigrationSources,
+  formatMigrationProgress,
   toSnakeCase,
   type SqliteMigrationSource,
   type SchemaName,
   type MigrationOptions,
   type MigrationReport,
+  type MigrationProgressEvent,
+  type MigrationProgressPhase,
   type TableMigrationResult,
 } from "./sqlite-migrator.js";
 

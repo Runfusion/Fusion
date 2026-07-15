@@ -220,30 +220,7 @@ export async function aggregateActivityAnalytics(
   // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
   // instead of the broken `"transactionImmediate" in dbOrLayer`.
   if ("ping" in dbOrLayer) {
-    const monitor = await aggregateMonitorMetrics(dbOrLayer, query);
-    return {
-      from: query.from ?? null,
-      to: query.to ?? null,
-      sessions: 0,
-      messages: 0,
-      activeNodes: 0,
-      activeAgents: 0,
-      agentRuns: { total: 0, active: 0, completed: 0, failed: 0 },
-      stickiness: 0,
-      daily: [],
-      mttr: monitor.mttr,
-      monitor,
-      funnel: {
-        from: query.from ?? null,
-        to: query.to ?? null,
-        stages: [],
-        enteredInRange: 0,
-        doneInRange: 0,
-        completionRate: null,
-        rangeDays: 0,
-        throughputPerDay: 0,
-      },
-    };
+    return aggregatePostgresActivityAnalytics(dbOrLayer, query);
   }
   const db = dbOrLayer as Database;
   // Sessions from cli_sessions (by createdAt).
@@ -354,6 +331,129 @@ export async function aggregateActivityAnalytics(
     // callers with a custom workflow IR should call aggregateSdlcFunnel directly
     // with that workflow's columns so custom column ids map correctly.
     funnel: aggregateSdlcFunnel(db, query),
+  };
+}
+
+/*
+FNXC:ActivityAnalyticsPostgres 2026-07-13-22:38:
+Command Center activity must never substitute plausible zeroes for unported PostgreSQL queries. Aggregate the same session, usage-event, agent-run, daily-stickiness, monitor, and funnel inputs as SQLite so operators can distinguish no activity from a storage regression.
+*/
+interface PostgresEventSummaryRow {
+  messages?: number;
+  active_nodes?: number;
+  agent_ids?: string[];
+}
+
+interface PostgresEventDailyRow extends PostgresEventSummaryRow {
+  day: string;
+}
+
+interface PostgresRunDailyRow {
+  day: string;
+  count: number;
+  agent_ids?: string[];
+}
+
+async function aggregatePostgresActivityAnalytics(
+  layer: AsyncDataLayer,
+  query: ActivityAnalyticsQuery,
+): Promise<ActivityAnalytics> {
+  const eventFrom = query.from ? sql`AND ts >= ${query.from}` : sql``;
+  const eventTo = query.to ? sql`AND ts <= ${query.to}` : sql``;
+  const runFrom = query.from ? sql`AND started_at >= ${query.from}` : sql``;
+  const runTo = query.to ? sql`AND started_at <= ${query.to}` : sql``;
+  const sessionFrom = query.from ? sql`AND created_at >= ${query.from}` : sql``;
+  const sessionTo = query.to ? sql`AND created_at <= ${query.to}` : sql``;
+  /*
+  FNXC:ActivityAnalyticsPostgres 2026-07-14-00:37:
+  An unbound analytics layer is deliberately project-agnostic and must aggregate every project partition consistently. A bound layer scopes sessions, usage, agent runs, and funnel activity to its project; never reinterpret an absent binding as the legacy empty-string partition.
+  */
+  const analyticsProject = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
+
+  const [sessionResult, eventSummaryResult, eventDailyResult, runStatusResult, runDailyResult, runAgentResult, monitor, funnel] = await Promise.all([
+    layer.db.execute(sql`SELECT count(*)::int AS count FROM project.cli_sessions WHERE 1=1 ${analyticsProject} ${sessionFrom} ${sessionTo}`),
+    layer.db.execute(sql`
+      SELECT
+        count(*) FILTER (WHERE kind = 'user_message')::int AS messages,
+        count(DISTINCT node_id) FILTER (WHERE node_id IS NOT NULL)::int AS active_nodes,
+        array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids
+      FROM project.usage_events WHERE 1=1 ${analyticsProject} ${eventFrom} ${eventTo}
+    `),
+    layer.db.execute(sql`
+      SELECT left(ts, 10) AS day,
+        count(DISTINCT node_id) FILTER (WHERE node_id IS NOT NULL)::int AS active_nodes,
+        count(*) FILTER (WHERE kind = 'user_message')::int AS messages,
+        array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids
+      FROM project.usage_events WHERE 1=1 ${analyticsProject} ${eventFrom} ${eventTo}
+      GROUP BY left(ts, 10) ORDER BY day
+    `),
+    layer.db.execute(sql`SELECT status, count(*)::int AS count FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY status`),
+    /*
+    FNXC:ActivityAnalyticsPostgres 2026-07-14-01:41:
+    Null agent IDs may survive in legacy or schema-drift run rows. Count those rows as runs, but remove NULL from the daily identity set so daily active agents and stickiness use the same non-null population as the range summary.
+    */
+    layer.db.execute(sql`SELECT left(started_at, 10) AS day, count(*)::int AS count, array_remove(array_agg(DISTINCT agent_id), NULL) AS agent_ids FROM project.agent_runs WHERE 1=1 ${analyticsProject} ${runFrom} ${runTo} GROUP BY left(started_at, 10) ORDER BY day`),
+    layer.db.execute(sql`SELECT DISTINCT agent_id FROM project.agent_runs WHERE agent_id IS NOT NULL ${analyticsProject} ${runFrom} ${runTo}`),
+    aggregateMonitorMetrics(layer, query),
+    aggregatePostgresSdlcFunnel(layer, query),
+  ]);
+  const sessionRows = sessionResult as unknown as Array<{ count?: number }>;
+  const eventSummaryRows = eventSummaryResult as unknown as PostgresEventSummaryRow[];
+  const eventDailyRows = eventDailyResult as unknown as PostgresEventDailyRow[];
+  const runStatusRows = runStatusResult as unknown as Array<{ status: string; count: number }>;
+  const runDailyRows = runDailyResult as unknown as PostgresRunDailyRow[];
+  const runAgentRows = runAgentResult as unknown as Array<{ agent_id: string }>;
+
+  const eventSummary = eventSummaryRows[0];
+  const rangeAgentIds = new Set<string>(eventSummary?.agent_ids ?? []);
+  for (const row of runAgentRows) rangeAgentIds.add(row.agent_id);
+
+  const agentRuns = zeroAgentRunSummary();
+  for (const row of runStatusRows) {
+    agentRuns.total += row.count;
+    if (row.status === "active") agentRuns.active = row.count;
+    if (row.status === "completed") agentRuns.completed = row.count;
+    if (row.status === "failed") agentRuns.failed = row.count;
+  }
+
+  const dailyByDay = new Map<string, DailyActivity>();
+  const eventAgentIdsByDay = new Map<string, readonly string[]>();
+  for (const row of eventDailyRows) {
+    eventAgentIdsByDay.set(row.day, row.agent_ids ?? []);
+    dailyByDay.set(row.day, {
+      day: row.day,
+      activeNodes: row.active_nodes ?? 0,
+      activeAgents: new Set(row.agent_ids ?? []).size,
+      messages: row.messages ?? 0,
+      agentRuns: 0,
+    });
+  }
+  for (const row of runDailyRows) {
+    const existing = dailyByDay.get(row.day) ?? { day: row.day, activeNodes: 0, activeAgents: 0, messages: 0, agentRuns: 0 };
+    const eventAgents = eventAgentIdsByDay.get(row.day) ?? [];
+    existing.activeAgents = new Set([...eventAgents, ...(row.agent_ids ?? [])]).size;
+    existing.agentRuns = row.count;
+    dailyByDay.set(row.day, existing);
+  }
+  const daily = [...dailyByDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  const activeAgents = rangeAgentIds.size;
+  const dau = daily.length > 0 ? daily.reduce((sum, day) => sum + day.activeAgents, 0) / daily.length : 0;
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    sessions: Number(sessionRows[0]?.count ?? 0),
+    messages: Number(eventSummary?.messages ?? 0),
+    activeNodes: Number(eventSummary?.active_nodes ?? 0),
+    activeAgents,
+    agentRuns,
+    daily,
+    stickiness: activeAgents > 0 ? dau / activeAgents : 0,
+    mttr: monitor.mttr,
+    monitor,
+    funnel,
   };
 }
 
@@ -646,12 +746,6 @@ export function aggregateSdlcFunnel(
   query: SdlcFunnelQuery = {},
 ): SdlcFunnel {
   const columns = query.columns ?? defaultColumns();
-  const stageMap = buildColumnStageMap(columns);
-  const stageOf = (columnId: string | null): SdlcStageKey => {
-    if (columnId === null) return OTHER_STAGE;
-    return stageMap.get(columnId) ?? OTHER_STAGE;
-  };
-
   const range = rangeClauses("timestamp", query);
   const where = range.where
     ? `${range.where} AND type = 'task:moved'`
@@ -670,7 +764,36 @@ export function aggregateSdlcFunnel(
     )
     .all(...range.params) as MoveRow[];
 
-  // Distinct tasks per stage.
+  return buildSdlcFunnelFromRows(rows, query, columns);
+}
+
+async function aggregatePostgresSdlcFunnel(
+  layer: AsyncDataLayer,
+  query: SdlcFunnelQuery,
+): Promise<SdlcFunnel> {
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
+  const from = query.from ? sql`AND timestamp >= ${query.from}` : sql``;
+  const to = query.to ? sql`AND timestamp <= ${query.to}` : sql``;
+  const rows = await layer.db.execute(sql`
+    SELECT task_id AS "taskId", metadata ->> 'to' AS "to", timestamp AS ts
+    FROM project.activity_log
+    WHERE type = 'task:moved' ${projectScope} ${from} ${to}
+  `) as unknown as MoveRow[];
+  return buildSdlcFunnelFromRows(rows, query, query.columns ?? defaultColumns());
+}
+
+function buildSdlcFunnelFromRows(
+  rows: readonly MoveRow[],
+  query: SdlcFunnelQuery,
+  columns: readonly FunnelColumnTraitSource[],
+): SdlcFunnel {
+  const stageMap = buildColumnStageMap(columns);
+  const stageOf = (columnId: string | null): SdlcStageKey => {
+    if (columnId === null) return OTHER_STAGE;
+    return stageMap.get(columnId) ?? OTHER_STAGE;
+  };
   const perStage = new Map<SdlcStageKey, Set<string>>();
   const ensure = (s: SdlcStageKey): Set<string> => {
     let set = perStage.get(s);
@@ -783,11 +906,18 @@ export async function aggregateMonitorMetrics(
     // deployments read previously sat OUTSIDE the try/catch, so this error 500'd
     // the whole /command-center/activity route instead of degrading. Deployment
     // frequency filters on deployed_at (deploy time), not the incident openedAt.
+    /*
+    FNXC:MonitorAnalyticsIsolation 2026-07-14-01:04:
+    A bound PostgreSQL layer must apply one shared tenant predicate to every deployment and incident metric, including the point-in-time open count and MTTR sample. An unbound layer deliberately omits it for global Command Center aggregation.
+    */
+    const projectScope = layer.projectId !== undefined
+      ? sql`AND project_id = ${layer.projectId}`
+      : sql``;
     let deployments = 0;
     try {
       const depFrom = query.from ? sql`AND deployed_at >= ${query.from}` : sql``;
       const depTo = query.to ? sql`AND deployed_at <= ${query.to}` : sql``;
-      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${depFrom} ${depTo}`);
+      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${projectScope} ${depFrom} ${depTo}`);
       deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
     } catch (err) {
       // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
@@ -802,15 +932,15 @@ export async function aggregateMonitorMetrics(
       const openedTo = query.to ? sql`AND opened_at <= ${query.to}` : sql``;
       const resolvedFrom = query.from ? sql`AND resolved_at >= ${query.from}` : sql``;
       const resolvedTo = query.to ? sql`AND resolved_at <= ${query.to}` : sql``;
-      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`);
+      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}`);
       const incidentsOpened = (incidentsOpenedRows[0] as { count?: number } | undefined)?.count ?? 0;
-      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open'`);
+      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${projectScope}`);
       const openIncidents = (openIncidentsRows[0] as { count?: number } | undefined)?.count ?? 0;
       // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
       // resolvedDetailRows already returns every resolved-in-range incident, so
       // incidentsResolved is its row count — drop the separate COUNT query that
       // had an identical WHERE clause (one fewer round-trip per activity load).
-      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${projectScope} ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
       const incidentsResolved = resolvedDetailRows.length;
       let totalMs = 0;
       let sampleCount = 0;
@@ -1058,25 +1188,32 @@ async function aggregateSignalsAnalyticsAsync(
   layer: AsyncDataLayer,
   query: ActivityAnalyticsQuery,
 ): Promise<SignalsAnalytics> {
+  /*
+  FNXC:SignalsAnalyticsIsolation 2026-07-14-01:26:
+  A project-bound Signals read must apply the same tenant predicate to totals, open incidents, resolved/MTTR samples, and every breakdown. An unbound Command Center layer deliberately omits the predicate to preserve global aggregation.
+  */
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
   const openedFrom = query.from !== undefined ? sql`AND opened_at >= ${query.from}` : sql``;
   const openedTo = query.to !== undefined ? sql`AND opened_at <= ${query.to}` : sql``;
   const resolvedFrom = query.from !== undefined ? sql`AND resolved_at >= ${query.from}` : sql``;
   const resolvedTo = query.to !== undefined ? sql`AND resolved_at <= ${query.to}` : sql``;
 
   const totalRows = (await layer.db.execute(
-    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`,
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}`,
   )) as Array<{ count: number }>;
   const totalSignals = Number(totalRows[0]?.count ?? 0);
 
   const openRows = (await layer.db.execute(
-    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${openedFrom} ${openedTo}`,
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${projectScope} ${openedFrom} ${openedTo}`,
   )) as Array<{ count: number }>;
   const open = Number(openRows[0]?.count ?? 0);
 
   const resolvedRows = (await layer.db.execute(
     sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt"
         FROM project.incidents
-        WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`,
+        WHERE resolved_at IS NOT NULL ${projectScope} ${resolvedFrom} ${resolvedTo}`,
   )) as Array<{ openedAt: string; resolvedAt: string }>;
   const resolved = resolvedRows.length;
 
@@ -1085,7 +1222,7 @@ async function aggregateSignalsAnalyticsAsync(
     const rows = (await layer.db.execute(
       sql`SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'unknown') AS key, count(*)::int AS count
           FROM project.incidents
-          WHERE 1=1 ${openedFrom} ${openedTo}
+          WHERE 1=1 ${projectScope} ${openedFrom} ${openedTo}
           GROUP BY 1
           ORDER BY count DESC, key ASC`,
     )) as Array<{ key: string | null; count: number }>;

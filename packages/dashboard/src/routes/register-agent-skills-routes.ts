@@ -21,7 +21,7 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
       }
 
       const rootDir = scopedStore.getRootDir();
-      const skills = await skillsAdapter.discoverSkills(rootDir);
+      const skills = await skillsAdapter.discoverSkills(rootDir, scopedStore);
 
       res.json({ skills });
     } catch (err: unknown) {
@@ -57,7 +57,7 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
       const skillId = req.params.id as string;
 
       const rootDir = scopedStore.getRootDir();
-      const content = await skillsAdapter.readSkillContent(rootDir, skillId);
+      const content = await skillsAdapter.readSkillContent(rootDir, skillId, scopedStore);
 
       res.json({ content });
     } catch (err: unknown) {
@@ -107,7 +107,7 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
       }
 
       const rootDir = scopedStore.getRootDir();
-      const file = await skillsAdapter.readSkillFileContent(rootDir, skillId, rawPath);
+      const file = await skillsAdapter.readSkillFileContent(rootDir, skillId, rawPath, scopedStore);
 
       res.json({ file });
     } catch (err: unknown) {
@@ -160,7 +160,7 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
       }
 
       const rootDir = scopedStore.getRootDir();
-      const persistence = await skillsAdapter.toggleExecutionSkill(rootDir, { skillId, enabled });
+      const persistence = await skillsAdapter.toggleExecutionSkill(rootDir, { skillId, enabled }, scopedStore);
 
       res.json({
         success: true,

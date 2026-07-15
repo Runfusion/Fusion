@@ -2,7 +2,21 @@ import { MOCK_PROVIDER_ID } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const mcpRuntimeLog = createLogger("mcp-runtime");
-const SUPPORTED_RUNTIME_IDS = new Set(["pi", "default-pi", "claude", "claude-code", "claude-acp", "acp"]);
+/*
+FNXC:OmpAcp 2026-07-11-23:35:
+`omp` is the Oh My Pi ACP runtime (fusion-plugin-omp-runtime). It speaks
+session/new.mcpServers like other ACP agents, so operator MCP must be eligible
+for forwarding when that runtime is selected.
+*/
+const SUPPORTED_RUNTIME_IDS = new Set([
+  "pi",
+  "default-pi",
+  "claude",
+  "claude-code",
+  "claude-acp",
+  "acp",
+  "omp",
+]);
 
 function normalizeId(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? "";

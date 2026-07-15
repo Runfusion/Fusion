@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { InteractiveAiSession } from "@fusion/core";
 import { CE_EVENTS, CeOrchestrator } from "../session/orchestrator.js";
 import { getCeSessionStore, type CeActivityTurn, type CeSessionStatus } from "../session/session-store.js";
-import { makeHarness, type TestHarness } from "./_harness.js";
+import { makeHarness, pgDescribe, type TestHarness } from "./_harness.js";
 
 interface OrchestratorInternals {
   live: Map<string, InteractiveAiSession>;
@@ -22,25 +22,25 @@ function liveHandle(): InteractiveAiSession {
   };
 }
 
-describe("CeOrchestrator.cancel", () => {
+pgDescribe("CeOrchestrator.cancel", () => {
   let h: TestHarness;
 
   afterEach(() => {
     h?.close();
   });
 
-  it("interrupts an in-flight session with a live handle, flushes progress, disposes, and emits", () => {
-    h = makeHarness();
+  it("interrupts an in-flight session with a live handle, flushes progress, disposes, and emits", async () => {
+    h = await makeHarness();
     const store = getCeSessionStore(h.ctx);
     const orch = new CeOrchestrator({ ctx: h.ctx });
-    const session = store.update(store.create({ stage: "brainstorm" }).id, { status: "active" })!;
+    const session = (await store.updateAsync((await store.createAsync({ stage: "brainstorm" })).id, { status: "active" }))!;
     const handle = liveHandle();
     internals(orch).live.set(session.id, handle);
     internals(orch).activity.set(session.id, [
       { kind: "thinking", text: "drafting cancellable progress", at: new Date().toISOString() },
     ]);
 
-    const cancelled = orch.cancel(session.id)!;
+    const cancelled = (await orch.cancel(session.id))!;
 
     expect(cancelled.status).toBe("interrupted");
     expect(cancelled.error).toBe("Cancelled by user");
@@ -55,13 +55,13 @@ describe("CeOrchestrator.cancel", () => {
 
   it.each<CeSessionStatus>(["launching", "active", "awaiting_input"])(
     "interrupts %s without requiring a live handle",
-    (status) => {
-      h = makeHarness();
+    async (status) => {
+      h = await makeHarness();
       const store = getCeSessionStore(h.ctx);
       const orch = new CeOrchestrator({ ctx: h.ctx });
-      const session = store.update(store.create({ stage: "brainstorm" }).id, { status })!;
+      const session = (await store.updateAsync((await store.createAsync({ stage: "brainstorm" })).id, { status }))!;
 
-      const cancelled = orch.cancel(session.id)!;
+      const cancelled = (await orch.cancel(session.id))!;
 
       expect(cancelled.status).toBe("interrupted");
       expect(cancelled.error).toBe("Cancelled by user");
@@ -71,31 +71,31 @@ describe("CeOrchestrator.cancel", () => {
 
   it.each<CeSessionStatus>(["completed", "error", "interrupted"])(
     "is idempotent for terminal status %s",
-    (status) => {
-      h = makeHarness();
+    async (status) => {
+      h = await makeHarness();
       const store = getCeSessionStore(h.ctx);
       const orch = new CeOrchestrator({ ctx: h.ctx });
-      const session = store.update(store.create({ stage: "brainstorm" }).id, {
+      const session = (await store.updateAsync((await store.createAsync({ stage: "brainstorm" })).id, {
         status,
         error: status === "completed" ? null : "already settled",
-      })!;
+      }))!;
       const handle = liveHandle();
       internals(orch).live.set(session.id, handle);
 
-      const cancelled = orch.cancel(session.id)!;
+      const cancelled = (await orch.cancel(session.id))!;
 
       expect(cancelled).toEqual(session);
       expect(handle.dispose).not.toHaveBeenCalled();
       expect(h.emitted).toEqual([]);
-      expect(store.get(session.id)!.status).toBe(status);
+      expect((await store.getAsync(session.id))!.status).toBe(status);
     },
   );
 
-  it("returns undefined for an unknown session", () => {
-    h = makeHarness();
+  it("returns undefined for an unknown session", async () => {
+    h = await makeHarness();
     const orch = new CeOrchestrator({ ctx: h.ctx });
 
-    expect(orch.cancel("missing")).toBeUndefined();
+    expect(await orch.cancel("missing")).toBeUndefined();
     expect(h.emitted).toEqual([]);
   });
 });

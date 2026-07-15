@@ -1,0 +1,67 @@
+.omp-cli-provider-card .auth-provider-cli-actions,
+.omp-cli-provider-card .onboarding-provider-card__actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+/*
+FNXC:OmpAcp 2026-07-13-22:50:
+Compact card body inset to match auth-provider-header horizontal padding (same as Grok CLI card).
+*/
+.omp-cli-provider-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md) var(--space-sm);
+}
+
+.omp-cli-provider-card__hint {
+  opacity: 0.75;
+}
+
+.omp-cli-binary-path-control {
+  display: grid;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.omp-cli-binary-path-label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.omp-cli-binary-path-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.omp-cli-binary-path-input {
+  min-width: 0;
+  flex: 1 1 18rem;
+  height: 2rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  padding: 0 var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .omp-cli-provider-card .auth-provider-cli-actions,
+  .omp-cli-provider-card .onboarding-provider-card__actions,
+  .omp-cli-binary-path-row {
+    flex-wrap: wrap;
+  }
+
+  .omp-cli-binary-path-row .btn,
+  .omp-cli-binary-path-input {
+    width: 100%;
+  }
+
+  .omp-cli-provider-card__body {
+    padding: 0 var(--space-sm) var(--space-sm);
+  }
+}

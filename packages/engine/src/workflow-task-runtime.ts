@@ -290,7 +290,10 @@ export class WorkflowTaskRuntime {
   private async resolveRuntimeTarget(taskId: string): Promise<WorkflowRuntimeTarget> {
     let workflowId: string | undefined;
     try {
-      workflowId = this.deps.store.getTaskWorkflowSelection(taskId)?.workflowId;
+      const selection = this.deps.store.getTaskWorkflowSelectionAsync
+        ? await this.deps.store.getTaskWorkflowSelectionAsync(taskId)
+        : this.deps.store.getTaskWorkflowSelection(taskId);
+      workflowId = selection?.workflowId;
     } catch (err) {
       throw new Error(`workflow-selection-failed: ${err instanceof Error ? err.message : String(err)}`);
     }

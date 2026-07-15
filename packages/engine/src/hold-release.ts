@@ -96,9 +96,9 @@ export interface HoldReleaseResult {
 // resolveWorkflowIrForTask (GitHub #1402); the optional per-sweep irCache Map is
 // threaded straight through.
 
-function effectiveWorkflowId(store: TaskStore, taskId: string): string {
+async function effectiveWorkflowId(store: TaskStore, taskId: string): Promise<string> {
   try {
-    return store.getTaskWorkflowSelection(taskId)?.workflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+    return (await store.getTaskWorkflowSelectionAsync(taskId))?.workflowId ?? DEFAULT_WORKFLOW_POOL_ID;
   } catch {
     return DEFAULT_WORKFLOW_POOL_ID;
   }
@@ -370,7 +370,7 @@ export async function runHoldReleaseSweep(
   const irCache = new Map<string, WorkflowIr>();
   const effectiveWorkflowIdByTask = new Map<string, string>();
   for (const t of allTasks) {
-    effectiveWorkflowIdByTask.set(t.id, effectiveWorkflowId(store, t.id));
+    effectiveWorkflowIdByTask.set(t.id, await effectiveWorkflowId(store, t.id));
   }
 
   for (const task of allTasks) {

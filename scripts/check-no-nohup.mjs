@@ -36,10 +36,22 @@ export function scanFileContent(content, filePath) {
   return matches;
 }
 
-export function scanTrackedFiles(files = listTrackedTargets()) {
+export function scanTrackedFiles(files = listTrackedTargets(), readFile = readFileSync) {
   const matches = [];
   for (const filePath of files) {
-    const content = readFileSync(filePath, "utf8");
+    let content;
+    try {
+      content = readFile(filePath, "utf8");
+    } catch (error) {
+      /*
+      FNXC:MergeGateSourceScan 2026-07-14-01:41:
+      Git continues listing an unstaged deletion as tracked, so source guards may skip ENOENT while the deletion awaits commit. Permission, I/O, and other read failures must still fail the gate rather than silently omitting tracked source from enforcement.
+      */
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
     matches.push(...scanFileContent(content, filePath));
   }
   return matches;

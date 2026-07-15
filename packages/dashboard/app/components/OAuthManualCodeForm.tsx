@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTouchActionGesture } from "../hooks/useTouchActionGesture";
 import "./OAuthManualCodeForm.css";
 
 interface OAuthManualCodeFormProps {
@@ -27,6 +28,15 @@ export function OAuthManualCodeForm({
   const formRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
+  // FNXC:OAuthManualCodeForm 2026-07-14-00:00: on mobile, tapping "Submit code"
+  // while the textarea above still has focus can cause the browser to consume
+  // that first tap solely to blur the textarea and dismiss the on-screen
+  // keyboard, suppressing the resulting click — requiring a second, separate
+  // tap to actually submit (FN-7953). Reuse the same gesture handling already
+  // proven for the chat Send/Stop button (`useStandardChatActionGesture` in
+  // StandardChatSurface.tsx) via the generic, non-chat-coupled
+  // useTouchActionGesture() hook so a single tap submits immediately.
+  const { beginTouchActionGesture, markHandledSendTouch, consumeHandledSendTouch } = useTouchActionGesture();
 
   const shouldUseMobileScrollAssist = useCallback(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -116,8 +126,27 @@ export function OAuthManualCodeForm({
         <button
           type="button"
           className="btn btn-sm"
-          onClick={onSubmit}
+          onPointerDown={(event) => {
+            if (event.pointerType && event.pointerType !== "mouse") {
+              event.preventDefault();
+              if (!beginTouchActionGesture()) return;
+              markHandledSendTouch();
+              if (!disabled) onSubmit();
+            }
+          }}
+          onTouchStart={(event) => {
+            event.preventDefault();
+            if (!beginTouchActionGesture()) return;
+            markHandledSendTouch();
+            if (!disabled) onSubmit();
+          }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (consumeHandledSendTouch()) return;
+            if (!disabled) onSubmit();
+          }}
           disabled={disabled}
+          style={{ touchAction: "manipulation" }}
         >
           {submitLabel}
         </button>

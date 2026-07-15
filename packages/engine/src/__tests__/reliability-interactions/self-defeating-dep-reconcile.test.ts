@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { hasGit, makeReliabilityFixture } from "./_helpers.js";
+// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+import { hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
-const describeIfGit = hasGit ? describe : describe.skip;
+const describeIfGit = hasGit && hasPg ? describe : describe.skip;
 
 describeIfGit("reliability interactions: self-defeating dep reconciliation", () => {
   const fixtures: Array<Awaited<ReturnType<typeof makeReliabilityFixture>>> = [];

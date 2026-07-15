@@ -50,6 +50,7 @@ import {
   writeProjectConfig,
   patchProjectSettings,
 } from "../../task-store/async-settings.js";
+import type { WorkflowTransitionNotificationMarker } from "../../types.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
@@ -62,9 +63,13 @@ function uniqueDbName(): string {
   return `fusion_u12_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/*
+FNXC:PgTestAuthFix 2026-07-14-00:00:
+The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+*/
 function adminExec(statement: string): void {
   execSync(
-    `psql -h localhost -p 5432 -U ${process.env.USER ?? "postgres"} -d postgres -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
 }
@@ -168,6 +173,12 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
     ctx = await setupCtx();
     // The column descriptors read nested fields (e.g. task.tokenUsage.perModel),
     // so the task record carries the canonical Task shape for JSON-backed columns.
+    const workflowTransitionNotification: WorkflowTransitionNotificationMarker = {
+      kind: "recovery-requeue",
+      column: "in-progress",
+      transitionId: "transition-a",
+      createdAt: "2026-01-01T00:02:00Z",
+    };
     const task = {
       ...makeMinimalTask("KB-002"),
       dependencies: ["KB-001", "FN-100"],
@@ -186,6 +197,11 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
         modelId: "claude",
         perModel: [{ provider: "anthropic", modelId: "claude", inputTokens: 10 }],
       },
+      columnDwellMs: { todo: 125, "in-progress": 250 },
+      workflowTransitionNotification,
+      plannerOversightLevel: "observe",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      approvedPlanFingerprint: "sha256:approved",
     };
     await insertTaskRow(ctx.layer, task, { lineageId: null });
 
@@ -199,6 +215,11 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
     expect(row!.tokenUsagePerModel).toEqual([
       { provider: "anthropic", modelId: "claude", inputTokens: 10 },
     ]);
+    expect(row!.columnDwellMs).toEqual({ todo: 125, "in-progress": 250 });
+    expect(row!.workflowTransitionNotification).toEqual(workflowTransitionNotification);
+    expect(row!.plannerOversightLevel).toBe("observe");
+    expect(row!.awaitingApprovalReason).toBe("plan-review-replan-cap");
+    expect(row!.approvedPlanFingerprint).toBe("sha256:approved");
 
     // Verify the PostgreSQL column type is actually jsonb (not text).
     const colType = await ctx.adminDb.execute(sql`

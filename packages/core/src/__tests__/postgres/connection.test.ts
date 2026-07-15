@@ -9,9 +9,13 @@ import {
 import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
 import { redactConnectionString } from "../../postgres/credential-redact.js";
 
+// FNXC:PgTestAuthFix 2026-07-14-07:35:
+// Use FUSION_PG_TEST_URL_BASE (which includes credentials on CI) instead of the
+// bare FUSION_PG_TEST_URL default that omits user/password, causing postgres.js
+// to fall back to the OS user ('runner' on GitHub Actions) and fail auth.
 const PG_TEST_URL =
   process.env.FUSION_PG_TEST_URL ??
-  "postgresql://localhost:5432/postgres";
+  `${process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432"}/postgres`;
 
 const PG_AVAILABLE =
   process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL);
@@ -108,6 +112,19 @@ pgDescribe("connection: external PostgreSQL integration (VAL-CONN-002)", () => {
     expect(result).toBeDefined();
   });
 
+  it("reserves migration work on a session separate from the runtime pool", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 3, connectTimeoutSeconds: 5 });
+    const runtimeRows = await connections.runtime.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    const migrationRows = await connections.migration.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    expect(migrationRows[0]?.pid).not.toBe(runtimeRows[0]?.pid);
+  });
+
   it("close() cleanly shuts down the pool without error", async () => {
     const backend: ResolvedBackend = {
       mode: "external",
@@ -118,6 +135,42 @@ pgDescribe("connection: external PostgreSQL integration (VAL-CONN-002)", () => {
     connections = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
     await connections.close();
     connections = null; // prevent double-close in afterEach
+  });
+
+  it("binds runtime sessions to one project while migration sessions retain explicit bypass", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    const bootstrap = await createConnectionSetFromUrl(backend, {
+      poolMax: 1,
+      connectTimeoutSeconds: 5,
+    });
+    await bootstrap.migration.execute(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+          CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER;
+        END IF;
+        EXECUTE format('GRANT fusion_runtime TO %I', current_user);
+      END $$
+    `);
+    await bootstrap.close();
+    connections = await createConnectionSetFromUrl(backend, {
+      poolMax: 1,
+      connectTimeoutSeconds: 5,
+      projectId: "project-a",
+      useRuntimeRole: true,
+    });
+    const runtime = await connections.runtime.execute(
+      "SELECT current_user AS current_user, current_setting('fusion.project_id', true) AS project_id, current_setting('fusion.project_bypass', true) AS bypass",
+    ) as unknown as Array<{ current_user: string; project_id: string; bypass: string | null }>;
+    const migration = await connections.migration.execute(
+      "SELECT current_setting('fusion.project_bypass', true) AS bypass",
+    ) as unknown as Array<{ bypass: string }>;
+    expect(runtime[0]).toEqual({ current_user: "fusion_runtime", project_id: "project-a", bypass: null });
+    expect(migration[0]).toEqual({ bypass: "on" });
   });
 });
 

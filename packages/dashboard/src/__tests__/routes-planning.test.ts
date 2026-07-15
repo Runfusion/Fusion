@@ -2594,6 +2594,77 @@ describe("Planning Mode Routes", () => {
         expect(res.body.tasks).toHaveLength(2);
       });
 
+      it("keeps the completed planning session in history after multi-task creation", async () => {
+        // Bug C: /planning/create-tasks used cleanupSession() which deleted the
+        // persisted ai_sessions row, so a session that ran to completion AND
+        // created tasks vanished from the saved-sessions history. It must instead
+        // release only the in-memory runtime (like single-task create-task) and
+        // keep the persisted completed row.
+        const mockStore = new MockAiSessionStore();
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        (store.createTask as ReturnType<typeof vi.fn>)
+          .mockResolvedValueOnce({
+            id: "FN-270",
+            description: "First",
+            column: "triage",
+            dependencies: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          })
+          .mockResolvedValueOnce({
+            id: "FN-271",
+            description: "Second",
+            column: "triage",
+            dependencies: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const planningSessionId = await createCompletedPlanningSession();
+
+        // Precondition: the completed planning session is persisted as history.
+        const persistedBefore = mockStore.get(planningSessionId);
+        expect(persistedBefore).not.toBeNull();
+        expect(persistedBefore?.type).toBe("planning");
+        expect(persistedBefore?.status).toBe("complete");
+
+        const breakdownRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-breakdown",
+          JSON.stringify({ sessionId: planningSessionId }),
+          { "Content-Type": "application/json" }
+        );
+        const generatedSubtasks = breakdownRes.body.subtasks as Array<{ id: string }>;
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-tasks",
+          JSON.stringify({
+            planningSessionId,
+            subtasks: [
+              { id: generatedSubtasks[0]!.id, title: "Auth backend", description: "Implement backend", suggestedSize: "L", dependsOn: [] },
+              { id: generatedSubtasks[1]!.id, title: "Auth frontend", description: "Implement frontend", dependsOn: [generatedSubtasks[0]!.id] },
+            ],
+          }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.tasks).toHaveLength(2);
+
+        // Regression assertion: the completed planning session row must survive
+        // task creation so it remains listable/restorable in history.
+        const persistedAfter = mockStore.get(planningSessionId);
+        expect(persistedAfter).not.toBeNull();
+        expect(persistedAfter?.type).toBe("planning");
+        expect(persistedAfter?.status).toBe("complete");
+      });
+
       it("creates task with explicit summary priority", async () => {
         (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
           id: "FN-100",

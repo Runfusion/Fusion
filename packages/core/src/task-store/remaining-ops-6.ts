@@ -624,7 +624,7 @@ export async function resetPromptCheckboxesImpl(store: TaskStore, dir: string): 
 
 export async function updateTaskImpl(store: TaskStore,
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined },
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined },
     runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
@@ -844,6 +844,30 @@ export function getWorkflowSettingValuesImpl(store: TaskStore, workflowId: strin
     }
 }
 
+/**
+ * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+ * PostgreSQL-backed workflow execution must read the migrated per-project workflow values instead of the synchronous backend fallback. Model lanes, fallback lanes, thinking levels, and other workflow policy are authoritative in this row after the settings hard-move.
+ */
+export async function getWorkflowSettingValuesAsyncImpl(
+    store: TaskStore,
+    workflowId: string,
+    projectId: string,
+  ): Promise<Record<string, unknown>> {
+    if (!store.backendMode) return store.getWorkflowSettingValues(workflowId, projectId);
+    const rows = await store.asyncLayer!.db
+      .select({ values: schema.project.workflowSettings.values })
+      .from(schema.project.workflowSettings)
+      .where(and(
+        eq(schema.project.workflowSettings.workflowId, workflowId),
+        eq(schema.project.workflowSettings.projectId, projectId),
+      ))
+      .limit(1);
+    const values = rows[0]?.values;
+    return values && typeof values === "object" && !Array.isArray(values)
+      ? values as Record<string, unknown>
+      : {};
+}
+
 export function parseWorkflowPromptOverrideJsonImpl(store: TaskStore, raw: string | null | undefined): Record<string, string> {
     if (!raw) return {};
     try {
@@ -862,22 +886,54 @@ export function parseWorkflowPromptOverrideJsonImpl(store: TaskStore, raw: strin
     }
 }
 
+/** FNXC:WorkflowModelLanes 2026-07-14-16:26: Async workflow resolution must retain migrated project-scoped prompt overrides in PostgreSQL backend mode. */
+export async function getWorkflowPromptOverridesAsyncImpl(
+    store: TaskStore,
+    workflowId: string,
+    projectId: string,
+  ): Promise<Record<string, string>> {
+    if (!store.backendMode) return store.getWorkflowPromptOverrides(workflowId, projectId);
+    const rows = await store.asyncLayer!.db
+      .select({ overrides: schema.project.workflowPromptOverrides.overrides })
+      .from(schema.project.workflowPromptOverrides)
+      .where(and(
+        eq(schema.project.workflowPromptOverrides.workflowId, workflowId),
+        eq(schema.project.workflowPromptOverrides.projectId, projectId),
+      ))
+      .limit(1);
+    const overrides = rows[0]?.overrides;
+    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return {};
+    const out: Record<string, string> = {};
+    for (const [nodeId, value] of Object.entries(overrides as Record<string, unknown>)) {
+      if (typeof value === "string" && value.trim()) out[nodeId] = value;
+    }
+    return out;
+}
+
 export async function updateWorkflowPromptOverridesImpl(store: TaskStore,
     workflowId: string,
     projectId: string,
     patch: Record<string, string | null | undefined>,
   ): Promise<Record<string, string>> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * P1 fix: no backendMode branch existed, so this threw in PG mode. In
-     * backend mode, read-merge-upsert the workflow_prompt_overrides row via
-     * Drizzle inside a transactionImmediate (preserving the lost-update guard
-     * the sync path's transactionImmediate provides). overrides is jsonb.
+     * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+     * Keep PostgreSQL prompt override patches on the same authoritative transaction path as workflow settings; a backend sync-default read must never erase sibling overrides.
      */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return layer.transactionImmediate(async () => {
-        const current = await store.getWorkflowPromptOverrides(workflowId, projectId);
+      return layer.transactionImmediate(async (tx) => {
+        const rows = await tx
+          .select({ overrides: schema.project.workflowPromptOverrides.overrides })
+          .from(schema.project.workflowPromptOverrides)
+          .where(and(
+            eq(schema.project.workflowPromptOverrides.workflowId, workflowId),
+            eq(schema.project.workflowPromptOverrides.projectId, projectId),
+          ))
+          .limit(1);
+        const rawCurrent = rows[0]?.overrides;
+        const current = rawCurrent && typeof rawCurrent === "object" && !Array.isArray(rawCurrent)
+          ? rawCurrent as Record<string, string>
+          : {};
         const next: Record<string, string> = { ...current };
         for (const [nodeId, value] of Object.entries(patch)) {
           if (typeof value !== "string" || value.trim().length === 0) {
@@ -888,7 +944,7 @@ export async function updateWorkflowPromptOverridesImpl(store: TaskStore,
         }
 
         const now = new Date().toISOString();
-        await layer.db
+        await tx
           .insert(schema.project.workflowPromptOverrides)
           .values({
             workflowId,
@@ -1050,7 +1106,7 @@ export async function upsertMergeRequestRecordImpl(store: TaskStore,
             lastError,
           })
           .onConflictDoUpdate({
-            target: schema.project.mergeRequests.taskId,
+            target: [schema.project.mergeRequests.projectId, schema.project.mergeRequests.taskId],
             set: {
               state: input.state,
               updatedAt: now,
@@ -1279,4 +1335,3 @@ export async function getWorkflowWorkItemImpl(store: TaskStore, id: string): Pro
     const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
     return row ? store.rowToWorkflowWorkItem(row) : null;
 }
-

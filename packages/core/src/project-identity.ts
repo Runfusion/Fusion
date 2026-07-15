@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { DatabaseSync } from "./sqlite-adapter.js";
 import { createLogger } from "./logger.js";
 import * as schema from "./postgres/schema/index.js";
@@ -111,20 +111,28 @@ export function writeProjectIdentity(fusionDir: string, identity: ProjectIdentit
 // ─────────────────────────────────────────────────────────────────────
 
 async function readMetaAsync(layer: AsyncDataLayer, key: string): Promise<string | null> {
+  const projectId = layer.projectId ?? "";
   const rows = await layer.db
     .select({ value: schema.project.projectMeta.value })
     .from(schema.project.projectMeta)
-    .where(eq(schema.project.projectMeta.key, key));
+    .where(and(
+      eq(schema.project.projectMeta.projectId, projectId),
+      eq(schema.project.projectMeta.key, key),
+    ));
   return rows[0]?.value ?? null;
 }
 
 async function upsertMetaAsync(layer: AsyncDataLayer, key: string, value: string): Promise<void> {
-  // The __meta table has a primary key on `key`; upsert via ON CONFLICT.
+  const projectId = layer.projectId ?? "";
+  /*
+  FNXC:PostgresMultiProjectCutover 2026-07-14-11:18:
+  Backend identity reads and writes must use the data layer's project binding so one registered project cannot inherit or overwrite another project's PostgreSQL __meta stamp.
+  */
   await layer.db
     .insert(schema.project.projectMeta)
-    .values({ key, value })
+    .values({ projectId, key, value })
     .onConflictDoUpdate({
-      target: schema.project.projectMeta.key,
+      target: [schema.project.projectMeta.projectId, schema.project.projectMeta.key],
       set: { value },
     });
 }

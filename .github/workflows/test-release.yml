@@ -113,7 +113,8 @@ jobs:
 
   # ── Build Windows desktop EXE artifacts ──────────────────────────────
   # Code-signing with WINDOWS_CERTIFICATE_BASE64 / WINDOWS_CERTIFICATE_PASSWORD
-  # is intentionally deferred to FN-5592; ARM64 support is tracked in FN-5594.
+  # is intentionally deferred to FN-5592. Desktop Windows remains x64 because
+  # embedded-postgres does not publish a native Windows ARM64 payload.
   build-desktop-windows:
     name: Build Desktop Windows EXE
     runs-on: windows-latest
@@ -124,6 +125,11 @@ jobs:
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # Test releases use the same native database proof as production releases.
+      - name: Smoke embedded Postgres on Windows
+        run: pnpm --filter @fusion/core test:embedded-postgres
 
       - name: Build
         run: pnpm build
@@ -176,6 +182,9 @@ jobs:
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
+
+      - name: Smoke embedded Postgres on macOS
+        run: pnpm --filter @fusion/core test:embedded-postgres
 
       - name: Build
         run: pnpm build
@@ -275,6 +284,9 @@ jobs:
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
+
+      - name: Smoke embedded Postgres on Linux
+        run: pnpm --filter @fusion/core test:embedded-postgres
 
       - name: Build
         run: pnpm build

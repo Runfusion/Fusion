@@ -1,5 +1,4 @@
 import type { Goal } from "@fusion/core";
-import { MissionStore, GoalStore } from "@fusion/core";
 import { buildGoalContextSection, type GoalInjectionResult } from "./goal-context-injector.js";
 import type { TaskStore } from "@fusion/core";
 import type { GoalAnchoringLane } from "./goal-anchoring-audit.js";
@@ -136,33 +135,36 @@ export function resolveGoalContextForDiagnostics(input: ResolveGoalContextInput)
 }
 
 export async function resolveAndEmitGoalContext(input: ResolveAndEmitGoalContextInput): Promise<GoalContextResolution> {
-  // FNXC:GoalStore 2026-06-27-18:25:
-  // resolveGoalContextForDiagnostics consumes a SYNC listActiveGoals (() => Goal[])
-  // on the synchronous agent-execution path. The PG-backed AsyncGoalStore returns
-  // Promises, so only the sync SQLite GoalStore can supply this. Guard with
-  // instanceof GoalStore (mirrors the AsyncMissionStore guard below) and leave it
-  // undefined in PG backend mode — goal context degrades to store-unavailable
-  // rather than injecting an unresolved Promise. Converting the injection pipeline
-  // to async is out of scope for the GoalStore port.
-  const resolvedGoalStore =
-    typeof input.store.getGoalStore === "function" ? input.store.getGoalStore() : undefined;
-  const syncGoalStore = resolvedGoalStore instanceof GoalStore ? resolvedGoalStore : undefined;
-  const resolution = resolveGoalContextForDiagnostics({
-    listActiveGoals: syncGoalStore
-      ? () => syncGoalStore.listGoals({ status: "active" })
-      : undefined,
-  });
+  /*
+  FNXC:GoalStore 2026-07-14-16:13:
+  Goal injection is an async prompt-construction lane and must await either the SQLite GoalStore or PostgreSQL AsyncGoalStore. Treating the async store as unavailable silently removed active goals from every migrated triage, executor, and heartbeat prompt.
+  */
+  let resolution: GoalContextResolution;
+  if (typeof input.store.getGoalStore !== "function") {
+    resolution = { goalContext: "", classification: classifyGoalInjectionFailure("store-unavailable") };
+  } else {
+    try {
+      const goalStore = input.store.getGoalStore();
+      const activeGoals = await goalStore.listGoals({ status: "active" });
+      const injectionResult = buildGoalContextSection({ activeGoals });
+      resolution = {
+        goalContext: injectionResult.text,
+        classification: classifyGoalInjectionResult(injectionResult),
+      };
+    } catch (listError) {
+      resolution = {
+        goalContext: "",
+        classification: classifyGoalInjectionFailure("list-failed", listError),
+      };
+    }
+  }
 
   let provenanceGoalIds: string[] = [];
   if (input.taskId && typeof input.store.getMissionStore === "function") {
     try {
-      // FNXC:MissionStore 2026-06-27-15:40:
-      // listGoalIdsForTask is a sync-only MissionStore method (not ported to the
-      // AsyncMissionStore). In PG backend mode getMissionStore() returns the async
-      // store; guard with instanceof and leave provenance empty (graceful fallback).
       const resolvedMissionStore = input.store.getMissionStore();
-      if (resolvedMissionStore instanceof MissionStore) {
-        provenanceGoalIds = resolvedMissionStore.listGoalIdsForTask(input.taskId);
+      if ("listGoalIdsForTask" in resolvedMissionStore && typeof resolvedMissionStore.listGoalIdsForTask === "function") {
+        provenanceGoalIds = await Promise.resolve(resolvedMissionStore.listGoalIdsForTask(input.taskId));
       }
     } catch (error) {
       diagnosticsLog.warn(

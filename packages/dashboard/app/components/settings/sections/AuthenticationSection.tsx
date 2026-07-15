@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { ClaudeCliProviderCard } from "../../ClaudeCliProviderCard";
 import { CursorCliProviderCard } from "../../CursorCliProviderCard";
 import { GrokCliProviderCard } from "../../GrokCliProviderCard";
+import { OmpCliProviderCard } from "../../OmpCliProviderCard";
 import { LlamaCppProviderCard } from "../../LlamaCppProviderCard";
 import { ProviderIcon } from "../../ProviderIcon";
 import { PluginSlot } from "../../PluginSlot";
@@ -83,7 +84,8 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
     const visibleAuthProviders = hasSeparatedAnthropicProvider
         ? authProviders.filter((p) => p.id !== "anthropic")
         : authProviders;
-    const isSupportedCliProvider = (provider: AuthProvider) => provider.id === "claude-cli" || provider.id === "cursor-cli" || provider.id === "grok-cli" || provider.id === "llama-cpp";
+    // FNXC:OmpAcp 2026-07-13-22:50: include omp-cli among supported CLI auth cards.
+    const isSupportedCliProvider = (provider: AuthProvider) => provider.id === "claude-cli" || provider.id === "cursor-cli" || provider.id === "grok-cli" || provider.id === "omp-cli" || provider.id === "llama-cpp";
     /*
     FNXC:ProviderAuth 2026-07-02-12:20:
     Authentication ordering must sort supported CLI and non-CLI provider cards in one list so Cursor CLI or llama.cpp cannot split Claude CLI from Anthropic subscription/API-key entries.
@@ -118,11 +120,21 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
         if (provider.id === "grok-cli") {
             return (<GrokCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
         }
+        if (provider.id === "omp-cli") {
+            return (<OmpCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
+        }
         return (<LlamaCppProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
     };
     const showAuthenticatedGroup = authenticatedProviders.length > 0;
     const showAvailableGroup = unauthenticatedProviders.length > 0;
     const providerSupportsApiKey = (provider: AuthProvider) => provider.type === "api_key";
+    /*
+    FNXC:ProviderAuth 2026-07-14-15:54:
+    Provider authentication failures must remain visible on the affected card. Toasts are transient and can fire while Settings is closed, so render the server's loginError beside the provider actions as the durable re-auth remediation.
+    */
+    const renderProviderAuthError = (provider: AuthProvider) => provider.loginError
+        ? (<small className="form-error" role="alert">{provider.loginError}</small>)
+        : null;
     const renderApiKeySection = (provider: AuthProvider) => (<div className="auth-apikey-section">
       <div className="auth-apikey-input-row">
         <input type="password" className="auth-apikey-input" placeholder={t("settings.authentication.enterAPIKey", "Enter API key")} value={apiKeyInputs[provider.id] ?? ""} onChange={(e) => setApiKeyInputs((prev) => ({ ...prev, [provider.id]: e.target.value }))} disabled={authActionInProgress === provider.id}/>
@@ -218,7 +230,7 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
                       </span>
                       {provider.authenticated && provider.keyHint && (<span className="auth-key-hint">{t("settings.authentication.key", "Key: ")}{provider.keyHint}</span>)}
                     </div>
-                    {provider.type !== "api_key" && renderAuthenticatedOAuthActions(provider)}
+                    {provider.type !== "api_key" && <div>{renderAuthenticatedOAuthActions(provider)}{renderProviderAuthError(provider)}</div>}
                     {providerSupportsApiKey(provider) && renderApiKeySection(provider)}
                   </div>
                 </div>))}
@@ -238,7 +250,7 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
                       </span>
                       {provider.keyHint && (<span className="auth-key-hint">{t("settings.authentication.key", "Key: ")}{provider.keyHint}</span>)}
                     </div>
-                    {provider.type !== "api_key" && renderAvailableOAuthActions(provider)}
+                    {provider.type !== "api_key" && <div>{renderAvailableOAuthActions(provider)}{renderProviderAuthError(provider)}</div>}
                     {providerSupportsApiKey(provider) && renderApiKeySection(provider)}
                   </div>
                 </div>))}

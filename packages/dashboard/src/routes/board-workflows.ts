@@ -156,7 +156,8 @@ async function describeWorkflow(
  * can return early and the client renders the legacy board.
  */
 export async function buildBoardWorkflowsPayload(
-  store: Pick<TaskStore, "getWorkflowDefinition" | "getTaskWorkflowSelection" | "getSettings" | "listWorkflowDefinitions">,
+  store: Pick<TaskStore, "getWorkflowDefinition" | "getTaskWorkflowSelection" | "getSettings" | "listWorkflowDefinitions"> &
+    Partial<Pick<TaskStore, "getTaskWorkflowSelectionAsync">>,
   taskIds: string[],
   settingsOverride?: Pick<Settings, "experimentalFeatures">,
 ): Promise<BoardWorkflowsPayload> {
@@ -177,7 +178,9 @@ export async function buildBoardWorkflowsPayload(
   for (const taskId of taskIds) {
     let workflowId = DEFAULT_WORKFLOW_LANE_ID;
     try {
-      const selection = store.getTaskWorkflowSelection(taskId);
+      const selection = store.getTaskWorkflowSelectionAsync
+        ? await store.getTaskWorkflowSelectionAsync(taskId)
+        : store.getTaskWorkflowSelection(taskId);
       if (selection?.workflowId) workflowId = selection.workflowId;
     } catch {
       workflowId = DEFAULT_WORKFLOW_LANE_ID;

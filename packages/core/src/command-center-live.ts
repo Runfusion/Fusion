@@ -212,6 +212,13 @@ export async function composeLiveSnapshot(
  */
 async function composeLiveSnapshotAsync(layer: AsyncDataLayer, now?: number): Promise<LiveSnapshot> {
   const capturedAt = new Date(now ?? Date.now()).toISOString();
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-14-00:49:
+  An unbound live Command Center layer is deliberately project-agnostic. Sessions, heartbeat runs, and board-column counts must all omit the project predicate together, while an explicitly bound layer remains isolated to its project.
+  */
+  const projectScope = layer.projectId !== undefined
+    ? sql`AND project_id = ${layer.projectId}`
+    : sql``;
 
   const sessionRows = (await layer.db.execute(
     sql`SELECT id,
@@ -223,6 +230,7 @@ async function composeLiveSnapshotAsync(layer: AsyncDataLayer, now?: number): Pr
                updated_at     AS "updatedAt"
         FROM project.cli_sessions
         WHERE agent_state NOT IN ('done', 'dead')
+          ${projectScope}
           AND termination_reason IS NULL
         ORDER BY updated_at DESC`,
   )) as Array<Record<string, unknown>>;
@@ -245,7 +253,7 @@ async function composeLiveSnapshotAsync(layer: AsyncDataLayer, now?: number): Pr
   const runRows = (await layer.db.execute(
     sql`SELECT id, agent_id AS "agentId", started_at AS "startedAt", data
         FROM project.agent_runs
-        WHERE status = 'active'
+        WHERE status = 'active' ${projectScope}
         ORDER BY started_at DESC`,
   )) as Array<{ id: string; agentId: string; startedAt: string; data: unknown }>;
   const runs: LiveRun[] = runRows.map((r) => {
@@ -260,6 +268,7 @@ async function composeLiveSnapshotAsync(layer: AsyncDataLayer, now?: number): Pr
   const columnRows = (await layer.db.execute(
     sql`SELECT "column" AS column, count(*)::int AS count
         FROM project.tasks
+        WHERE 1=1 ${projectScope}
         GROUP BY "column"
         ORDER BY count DESC`,
   )) as Array<{ column: string; count: number }>;

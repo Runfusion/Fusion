@@ -53,8 +53,10 @@ describe("SqliteMigrationBanner", () => {
     render(<SqliteMigrationBanner projectId="p1" />);
     const banner = await screen.findByRole("status");
     expect(banner).toHaveTextContent("Your data was migrated to PostgreSQL");
+    expect(banner).toHaveTextContent("42 row(s) across 7 table(s)");
+    expect(banner).toHaveTextContent("2026-07-12T00:00:00.000Z");
     expect(banner).toHaveTextContent("/proj/.fusion/fusion.db");
-    const help = screen.getByRole("link", { name: "Need help?" });
+    const help = screen.getByRole("link", { name: "Get help on Discord" });
     expect(help).toHaveAttribute("href", FUSION_DISCORD_URL);
     expect(help).toHaveAttribute("target", "_blank");
   });

@@ -60,6 +60,12 @@ export interface CreateConnectionOptions {
   readonly connectTimeoutSeconds?: number;
   readonly idleTimeoutSeconds?: number;
   readonly onWarning?: (message: string) => void;
+  /** FNXC:ProjectDataIsolation 2026-07-14-14:25: Bind runtime queries to one project partition. */
+  readonly projectId?: string;
+  /** FNXC:ProjectDataIsolation 2026-07-14-14:25: Permit intentional schema/migration/cross-project administration. */
+  readonly bypassProjectIsolation?: boolean;
+  /** FNXC:ProjectDataIsolation 2026-07-14-14:25: Use the non-superuser role only after startup proves it exists and is grantable. */
+  readonly useRuntimeRole?: boolean;
 }
 
 /** A live PostgreSQL connection set with runtime + migration Drizzle instances. */
@@ -165,18 +171,9 @@ export async function createConnectionSetFromUrl(
     onWarning(warning);
   }
 
-  // FNXC:PostgresCutover 2026-06-27-10:35:
-  // Multi-project isolation warning: when using an external DATABASE_URL,
-  // schema names (project/central/archive) are fixed. Two projects pointing
-  // at the same DATABASE_URL will share the same schemas, causing cross-project
-  // data leakage. The embedded mode avoids this (one PG per ~/.fusion/ dir).
-  if (backend.mode === "external") {
-    onWarning(
-      "WARNING: External DATABASE_URL shares fixed schema names (project/central/archive). " +
-      "Two projects pointing at the same DATABASE_URL will share data. " +
-      "Use a distinct database per project for isolation."
-    );
-  }
+  // FNXC:ProjectDataIsolation 2026-07-14-12:10:
+  // External and embedded databases may safely host multiple projects because
+  // forced RLS partitions every project-owned table at the session boundary.
 
   const runtimeUrl = backend.runtimeUrl;
   if (!runtimeUrl) {
@@ -191,11 +188,25 @@ export async function createConnectionSetFromUrl(
   const runtimeIsPooler = looksLikePoolerUrl(runtimeUrl);
   const runtimePrepare = backend.migrationUrlOverridden ? true : !runtimeIsPooler;
 
+  /*
+  FNXC:ProjectDataIsolation 2026-07-14-12:10:
+  PostgreSQL row-level security reads these startup parameters on every pooled session. Production project runtimes must provide projectId; unbound maintenance and existing test/admin callers default to the explicit bypass while the migration connection always bypasses isolation.
+  */
+  const runtimeConnectionParameters = options.projectId
+    ? {
+        ...(options.useRuntimeRole ? { role: "fusion_runtime" } : {}),
+        "fusion.project_id": options.projectId,
+      }
+    : options.bypassProjectIsolation === false
+      ? {}
+      : { "fusion.project_bypass": "on" };
+
   const runtimeSql = postgres(runtimeUrl, {
     max: poolMax,
     connect_timeout: connectTimeout,
     idle_timeout: idleTimeout,
     prepare: runtimePrepare,
+    connection: runtimeConnectionParameters,
     // Suppress the default onnotice (which logs to console.log) to avoid
     // leaking connection-parameter notices that might contain sensitive info.
     onnotice: () => {},
@@ -206,37 +217,29 @@ export async function createConnectionSetFromUrl(
   // Always prepare: false for migration work (DDL under a pooler must not use
   // prepared statements).
   const migrationUrl = backend.migrationUrl ?? runtimeUrl;
-  const migrationIsSameUrl = migrationUrl === runtimeUrl;
-  let migrationSql: ReturnType<typeof postgres>;
-  let migrationDb: PostgresJsDatabase<AnySchema>;
-
-  if (migrationIsSameUrl && runtimePrepare) {
-    // Reuse the runtime connection when there's no split and prepared statements
-    // are safe. This avoids opening a second pool unnecessarily.
-    migrationSql = runtimeSql;
-    migrationDb = runtimeDb;
-  } else {
-    migrationSql = postgres(migrationUrl, {
-      max: 1, // Migration work is serial; a single direct connection suffices.
-      connect_timeout: connectTimeout,
-      idle_timeout: idleTimeout,
-      prepare: false,
-      onnotice: () => {},
-    });
-    migrationDb = drizzle(migrationSql);
-  }
+  /*
+  FNXC:PostgresMigrationSession 2026-07-14-00:05:
+  Migration work always owns a dedicated single-connection pool, even when runtime and migration URLs match. Session advisory locks and session_replication_role must cover the same backend session for the entire copy and must never leak trigger-disabled state into runtime traffic.
+  */
+  const migrationSql = postgres(migrationUrl, {
+    max: 1,
+    connect_timeout: connectTimeout,
+    idle_timeout: idleTimeout,
+    prepare: false,
+    connection: { "fusion.project_bypass": "on" },
+    onnotice: () => {},
+  });
+  const migrationDb: PostgresJsDatabase<AnySchema> = drizzle(migrationSql);
 
   const connections: PostgresConnections = {
     runtime: runtimeDb,
     migration: migrationDb,
     backend,
     async close() {
-      // Always close the migration connection first if it's separate.
-      const closePromises: Promise<unknown>[] = [];
-      if (migrationSql !== runtimeSql) {
-        closePromises.push(migrationSql.end({ timeout: 5 }));
-      }
-      closePromises.push(runtimeSql.end({ timeout: 5 }));
+      const closePromises: Promise<unknown>[] = [
+        migrationSql.end({ timeout: 5 }),
+        runtimeSql.end({ timeout: 5 }),
+      ];
       await Promise.allSettled(closePromises);
     },
     async ping() {

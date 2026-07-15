@@ -324,7 +324,7 @@ describe("createFusionAuthStorage", () => {
       });
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({
+        text: async () => JSON.stringify({
           access_token: "refreshed-legacy-access-token",
           refresh_token: "rotated-legacy-refresh-token",
           expires_in: 3600,
@@ -400,7 +400,7 @@ describe("createFusionAuthStorage", () => {
 
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({
+        text: async () => JSON.stringify({
           access_token: "refreshed-subscription-access-token",
           refresh_token: "rotated-subscription-refresh-token",
           expires_in: 3600,
@@ -469,7 +469,7 @@ describe("createFusionAuthStorage", () => {
 
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({
+        text: async () => JSON.stringify({
           access_token: "proactively-refreshed-access-token",
           refresh_token: "rotated-refresh-token",
           expires_in: 3600,
@@ -516,7 +516,11 @@ describe("createFusionAuthStorage", () => {
           expires: Date.now() - 60_000,
         },
       });
-      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false } as Response) as typeof fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: "invalid_grant" }),
+      } as Response) as typeof fetch;
 
       const authStorage = createFusionAuthStorage();
 
@@ -732,7 +736,7 @@ describe("createFusionAuthStorage", () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
+      text: async () => JSON.stringify({
         access_token: "refreshed-claude-access-token",
         refresh_token: "rotated-claude-refresh-token",
         expires_in: 3600,
@@ -788,7 +792,7 @@ describe("createFusionAuthStorage", () => {
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ expires_in: 3600 }),
+      text: async () => JSON.stringify({ expires_in: 3600 }),
     } as Response) as typeof fetch;
 
     const authStorage = createFusionAuthStorage();
@@ -813,7 +817,11 @@ describe("createFusionAuthStorage", () => {
       }),
     );
 
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false } as Response);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: "invalid_grant" }),
+    } as Response);
     globalThis.fetch = fetchMock as typeof fetch;
 
     const authStorage = createFusionAuthStorage();
@@ -843,8 +851,9 @@ describe("createFusionAuthStorage", () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
+      text: async () => JSON.stringify({
         access_token: "refreshed-claude-access-token",
+        refresh_token: "rotated-claude-refresh-token",
         expires_in: 3600,
       }),
     } as Response);
@@ -879,11 +888,11 @@ describe("createFusionAuthStorage", () => {
       }),
     );
 
-    let resolveJson: ((value: unknown) => void) | undefined;
+    let resolveText: ((value: string) => void) | undefined;
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => new Promise((resolve) => {
-        resolveJson = resolve;
+      text: () => new Promise<string>((resolve) => {
+        resolveText = resolve;
       }),
     } as Response);
     globalThis.fetch = fetchMock as typeof fetch;
@@ -899,11 +908,11 @@ describe("createFusionAuthStorage", () => {
       expires: Date.now() + 3_600_000,
     });
 
-    resolveJson?.({
+    resolveText?.(JSON.stringify({
       access_token: "stale-refresh-access-token",
       refresh_token: "stale-refresh-refresh-token",
       expires_in: 3600,
-    });
+    }));
 
     await expect(pendingRefresh).resolves.toBe("fresh-login-access-token");
     expect(authStorage.get("anthropic")).toEqual({

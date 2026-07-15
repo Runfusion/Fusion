@@ -32,8 +32,8 @@ describe("electron-builder desktop config", () => {
     const extractArchValues = (archBlock: string) =>
       Array.from(archBlock.matchAll(/-\s*(x64|arm64)/g), (match) => match[1]).sort();
 
-    expect(extractArchValues(nsisArchMatch![1])).toEqual(["arm64", "x64"]);
-    expect(extractArchValues(portableArchMatch![1])).toEqual(["arm64", "x64"]);
+    expect(extractArchValues(nsisArchMatch![1])).toEqual(["x64"]);
+    expect(extractArchValues(portableArchMatch![1])).toEqual(["x64"]);
 
     expect(builderConfig).toMatch(/nsis:\s*[\s\S]*?artifactName:\s*"\$\{productName\}-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}"/m);
     expect(builderConfig).toMatch(/nsis:\s*[\s\S]*?oneClick:\s*false/m);
@@ -75,6 +75,18 @@ describe("electron-builder desktop config", () => {
 
     expect(builderConfig).toMatch(/mac:\s*[\s\S]*?target:\s*[\s\S]*?-\s*target:\s*dmg/m);
     expect(builderConfig).toMatch(/mac:\s*[\s\S]*?target:\s*[\s\S]*?-\s*target:\s*zip/m);
+
+    const macSection = builderConfig.match(/mac:\s*([\s\S]*?)(?=\nwin:)/m)?.[1] ?? "";
+    const macArchBlocks = Array.from(
+      macSection.matchAll(/-\s*target:\s*(dmg|zip)\s*arch:\s*([\s\S]*?)(?=\n\s*-\s*target:|\n\w|$)/g),
+    );
+    expect(macArchBlocks).toHaveLength(2);
+    for (const [, , archBlock] of macArchBlocks) {
+      expect(Array.from(archBlock.matchAll(/-\s*(x64|arm64)/g), (entry) => entry[1]).sort()).toEqual([
+        "arm64",
+        "x64",
+      ]);
+    }
 
     const linuxSectionMatch = builderConfig.match(/linux:\s*[\s\S]*$/m);
     expect(linuxSectionMatch?.[0]).toBeDefined();
@@ -118,6 +130,14 @@ describe("electron-builder desktop config", () => {
     for (const requiredPak of ["chrome_100_percent.pak", "chrome_200_percent.pak", "resources.pak"]) {
       expect(builderConfig).not.toMatch(new RegExp(`!.*${requiredPak.replaceAll(".", "\\.")}`));
     }
+  });
+
+  it("unpacks native embedded Postgres processes from app.asar", async () => {
+    const builderConfig = await readDesktopFile("electron-builder.yml");
+
+    expect(builderConfig).toMatch(
+      /asarUnpack:\s*[\s\S]*?-\s*"node_modules\/@embedded-postgres\/\*\/native\/\*\*\/\*"/m,
+    );
   });
 
   it("packages @fusion/core runtime dependencies used during desktop startup", async () => {

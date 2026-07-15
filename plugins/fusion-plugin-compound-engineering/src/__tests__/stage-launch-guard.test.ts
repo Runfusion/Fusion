@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CreateInteractiveAiSessionFactory, InteractiveAiSessionEvent, PlanningQuestion } from "@fusion/core";
 import { CeOrchestrator } from "../session/orchestrator.js";
-import { makeHarness, makeScriptedSession, type TestHarness } from "./_harness.js";
+import { makeHarness, makeScriptedSession, pgDescribe, type TestHarness } from "./_harness.js";
 
 /*
 FNXC:CompoundEngineering 2026-06-17-13:22:
@@ -26,11 +26,11 @@ function debugProtocolSensitiveFactory(question: PlanningQuestion): CreateIntera
   });
 }
 
-describe("CE stage launch guard", () => {
+pgDescribe("CE stage launch guard", () => {
   let h: TestHarness;
 
-  beforeEach(() => {
-    h = makeHarness();
+  beforeEach(async () => {
+    h = await makeHarness();
   });
 
   afterEach(() => {

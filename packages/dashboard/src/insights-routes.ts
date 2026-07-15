@@ -46,6 +46,8 @@ import {
   sweepStaleInsightRuns,
 } from "./insight-run-sweeper.js";
 import { createFnAgent, promptWithFallback, resolveMcpServersForStore, resolvePlanningThinkingLevel } from "@fusion/engine";
+import { getScopedStore as resolveScopedRequestStore } from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 
 /**
  * Re-throws an error as an ApiError, converting unknown errors to internal errors.
@@ -60,11 +62,14 @@ function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server er
  * Extract projectId from query params or body.
  */
 function getProjectId(req: Request): string | undefined {
-  if (typeof req.query.projectId === "string" && req.query.projectId.trim()) {
-    return req.query.projectId;
+  // FNXC:BranchGroupProjectScoping 2026-07-14-06:15: return the trimmed id, not the raw padded string.
+  if (typeof req.query.projectId === "string") {
+    const projectId = req.query.projectId.trim();
+    if (projectId) return projectId;
   }
-  if (req.body && typeof req.body === "object" && typeof req.body.projectId === "string" && req.body.projectId.trim()) {
-    return req.body.projectId;
+  if (req.body && typeof req.body === "object" && typeof req.body.projectId === "string") {
+    const projectId = req.body.projectId.trim();
+    if (projectId) return projectId;
   }
   return undefined;
 }
@@ -273,7 +278,7 @@ function toInsightTitle(content: string): string {
 /**
  * Create the insights router.
  */
-export function createInsightsRouter(store: TaskStore): Router {
+export function createInsightsRouter(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
@@ -325,11 +330,10 @@ export function createInsightsRouter(store: TaskStore): Router {
    */
   router.use(async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const projectId = getProjectId(req);
-      const scopedStore = projectId
-        // Import here to avoid circular dependency issues
-        ? await import("./project-store-resolver.js").then(({ getOrCreateProjectStore }) => getOrCreateProjectStore(projectId))
-        : store;
+      // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+      // Resolve an explicit central-registry project id via the shared seam
+      // (request id → registered launch project id → raw launch store last resort).
+      const scopedStore = await resolveScopedRequestStore(req, store, options);
       requestContext.run(scopedStore, () => {
         next();
       });

@@ -8,6 +8,7 @@
  */
 import {TaskStore, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import * as schema from "../postgres/schema/index.js";
 import type {MoveTaskOptions, MoveTaskInternalOptions} from "../store.js";
 import {TASK_BRANCH_CONTEXT_METADATA_KEY} from "../store.js";
@@ -20,7 +21,7 @@ import {resolveAllowedColumns, workflowHasColumn} from "../workflow-transitions.
 import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
 import {validateCustomFieldPatch, applyFieldDefaults, reconcileFieldsOnWorkflowChange, type CustomFieldRejection} from "../task-fields.js";
 import "../builtin-traits.js";
-import type {WorkflowDefinition} from "../workflow-definition-types.js";
+import type {StoredWorkflowRow, WorkflowDefinition} from "../workflow-definition-types.js";
 import {resolveDefaultOnOptionalGroupIds} from "../workflow-optional-steps.js";
 import {toJson} from "../db.js";
 import {GoalStore} from "../goal-store.js";
@@ -372,7 +373,10 @@ export async function prepareWorkflowMovePolicyPreflightImpl(store: TaskStore, i
     if (!isWorkflowColumnsCompatibilityFlagEnabled(mergedSettingsForMove)) return undefined;
     if (task.column === toColumn) return undefined;
 
-    const workflowIr = store.resolveTaskWorkflowIrSync(id);
+    /* FNXC:WorkflowModelLanes 2026-07-14-16:31: PostgreSQL move preflight must validate against the task's migrated workflow selection, not the synchronous builtin:coding fallback. */
+    const workflowIr = store.backendMode
+      ? await resolveWorkflowIrForTask(store, id)
+      : store.resolveTaskWorkflowIrSync(id);
     const workflowSignature = serializeWorkflowIr(workflowIr);
     const bypassGuards = store.resolveWorkflowBypassGuards(moveSource, options);
     const fromColumn = task.column;
@@ -610,11 +614,12 @@ export async function deleteWorkflowStepImpl(store: TaskStore, id: string): Prom
     }
   }
 
-export function toWorkflowDefinitionImpl(store: TaskStore, row: { id: string; name: string; description: string; ir: string; layout: string; kind?: string | null; createdAt: string; updatedAt: string; }): WorkflowDefinition {
+export function toWorkflowDefinitionImpl(store: TaskStore, row: StoredWorkflowRow): WorkflowDefinition {
     return {
       id: row.id,
       name: row.name,
       description: row.description,
+      icon: row.icon || undefined,
       // Legacy rows (pre-migration-109) have no kind column; default to "workflow".
       kind: row.kind === "fragment" ? "fragment" : "workflow",
       ir: parseWorkflowIr(row.ir),
@@ -669,7 +674,7 @@ export async function getTaskMovedCountsByDayImpl(store: TaskStore, options: { s
     // Backend-mode: delegate to the async audit helper.
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getTaskMovedCountsByDayAsync(layer.db, options);
+      return getTaskMovedCountsByDayAsync(layer.db, layer.projectId ?? "", options);
     }
     let sql =
       "SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS count FROM activityLog WHERE type = 'task:moved' AND timestamp > ? AND timestamp <= ?";
@@ -753,6 +758,7 @@ export async function upsertTaskCommitAssociationImpl(store: TaskStore, input: O
         })
         .onConflictDoUpdate({
           target: [
+            schema.project.taskCommitAssociations.projectId,
             schema.project.taskCommitAssociations.taskLineageId,
             schema.project.taskCommitAssociations.commitSha,
             schema.project.taskCommitAssociations.matchedBy,
@@ -800,4 +806,3 @@ export async function upsertTaskCommitAssociationImpl(store: TaskStore, input: O
     );
     return association;
   }
-

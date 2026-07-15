@@ -17,6 +17,7 @@ import {
   superviseSpawn,
 } from "@fusion/core";
 export { computeSkillId, getSkillSettingState, parseSkillId } from "@fusion/core";
+import type { TaskStore } from "@fusion/core";
 import type { ChildProcess } from "node:child_process";
 
 /**
@@ -162,7 +163,7 @@ export interface SkillsAdapter {
    * Discover all skills available in the project.
    * Combines top-level skills and package-scoped skills.
    */
-  discoverSkills(rootDir: string): Promise<DiscoveredSkill[]>;
+  discoverSkills(rootDir: string, projectStore?: TaskStore): Promise<DiscoveredSkill[]>;
 
   /**
    * Toggle a skill's enabled/disabled state.
@@ -171,6 +172,7 @@ export interface SkillsAdapter {
   toggleExecutionSkill(
     rootDir: string,
     input: { skillId: string; enabled: boolean },
+    projectStore?: TaskStore,
   ): Promise<ToggleSkillResult>;
 
   /**
@@ -186,13 +188,13 @@ export interface SkillsAdapter {
   /**
    * Read the contents of a skill's SKILL.md file and list supplementary files.
    */
-  readSkillContent(rootDir: string, skillId: string): Promise<SkillContent>;
+  readSkillContent(rootDir: string, skillId: string, projectStore?: TaskStore): Promise<SkillContent>;
 
   /*
   FNXC:Skills 2026-06-23-04:15:
   Read a single supplementary file's text for the detail-pane file viewer. The SkillsView detail pane lists referenced files; clicking one must show its content. The `files` array carried only name/path/type, so a per-file content endpoint is required. `relativePath` is the skill-dir-relative path returned by readSkillContent; it is resolved + path-traversal-guarded against the skill directory so a request can never escape the skill root.
   */
-  readSkillFileContent(rootDir: string, skillId: string, relativePath: string): Promise<SkillFileContent>;
+  readSkillFileContent(rootDir: string, skillId: string, relativePath: string, projectStore?: TaskStore): Promise<SkillFileContent>;
 }
 
 /*
@@ -282,7 +284,7 @@ export function createSkillsAdapter(options: {
    * skill catalog omits them. Lazy thunk: plugins may load after the adapter is
    * created, so it is invoked per discovery rather than captured eagerly.
    */
-  getPluginSkills?: (rootDir: string) =>
+  getPluginSkills?: (rootDir: string, projectStore?: TaskStore) =>
     | Array<{
       pluginId: string;
       pluginRoot?: string;
@@ -297,7 +299,7 @@ export function createSkillsAdapter(options: {
   superviseSpawn?: typeof superviseSpawn;
 }): SkillsAdapter {
   return {
-    async discoverSkills(rootDir: string): Promise<DiscoveredSkill[]> {
+    async discoverSkills(rootDir: string, projectStore?: TaskStore): Promise<DiscoveredSkill[]> {
       // Resolve all resources including skills
       const resolved = await options.packageManager.resolve();
       const skillResources = resolved.skills ?? [];
@@ -354,7 +356,13 @@ export function createSkillsAdapter(options: {
        * FNXC:PluginSkills 2026-07-12-00:00:
        * Plugin skill body paths now come from skillFiles (GitHub #2018) through @fusion/core's traversal-guarded resolver when pluginRoot is available. Discovered plugin skill path is the absolute on-disk SKILL.md location for FN-7857 consumers, while missing pluginRoot keeps the old name-derived relative path for compatibility.
        */
-      const pluginSkills = await (options.getPluginSkills?.(rootDir) ?? []);
+      /*
+       * FNXC:Skills 2026-07-14-16:13:
+       * Plugin skill discovery receives the already-resolved project TaskStore so PostgreSQL callers reuse its AsyncDataLayer-backed PluginStore. Creating a root-only PluginStore here re-entered the removed SQLite Database path and made the Skills page fail after migration.
+       */
+      const pluginSkills = await (projectStore
+        ? options.getPluginSkills?.(rootDir, projectStore)
+        : options.getPluginSkills?.(rootDir)) ?? [];
       if (pluginSkills.length > 0) {
         const seenBareNames = new Set(discoveredSkills.map((s) => bareSkillName(s.name)));
         for (const { pluginId, pluginRoot, skill } of pluginSkills) {
@@ -396,6 +404,7 @@ export function createSkillsAdapter(options: {
     async toggleExecutionSkill(
       rootDir: string,
       input: { skillId: string; enabled: boolean },
+      projectStore?: TaskStore,
     ): Promise<ToggleSkillResult> {
       const { skillId, enabled } = input;
       const parsed = parseSkillId(skillId);
@@ -406,7 +415,7 @@ export function createSkillsAdapter(options: {
       const { source, relativePath } = parsed;
 
       // Validate that the skill exists in discovered skills
-      const discovered = await this.discoverSkills(rootDir);
+      const discovered = await this.discoverSkills(rootDir, projectStore);
       const skillExists = discovered.some((s) => s.id === skillId);
       if (!skillExists) {
         throw new Error(`Skill not found: ${skillId}`);
@@ -656,13 +665,13 @@ export function createSkillsAdapter(options: {
       }
     },
 
-    async readSkillContent(rootDir: string, skillId: string): Promise<SkillContent> {
+    async readSkillContent(rootDir: string, skillId: string, projectStore?: TaskStore): Promise<SkillContent> {
       const parsed = parseSkillId(skillId);
       if (!parsed) {
         throw new Error(`Invalid skill ID format: ${skillId}`);
       }
 
-      const discovered = await this.discoverSkills(rootDir);
+      const discovered = await this.discoverSkills(rootDir, projectStore);
       const skill = discovered.find((entry) => entry.id === skillId);
       if (!skill) {
         throw new Error(`Skill not found: ${skillId}`);
@@ -711,13 +720,13 @@ export function createSkillsAdapter(options: {
     FNXC:Skills 2026-06-23-04:15:
     Per-file content read for the detail-pane viewer. Resolves the skill directory the same way readSkillContent does, then joins the requested relativePath. Guards against path traversal (resolved target must stay inside the skill dir) and refuses to read SKILL.md through this path (the SKILL.md view has its own endpoint). Binary/oversized files return isText:false with empty content so the UI shows a non-previewable notice rather than garbled output.
     */
-    async readSkillFileContent(rootDir: string, skillId: string, relativePath: string): Promise<SkillFileContent> {
+    async readSkillFileContent(rootDir: string, skillId: string, relativePath: string, projectStore?: TaskStore): Promise<SkillFileContent> {
       const parsed = parseSkillId(skillId);
       if (!parsed) {
         throw new Error(`Invalid skill ID format: ${skillId}`);
       }
 
-      const discovered = await this.discoverSkills(rootDir);
+      const discovered = await this.discoverSkills(rootDir, projectStore);
       const skill = discovered.find((entry) => entry.id === skillId);
       if (!skill) {
         throw new Error(`Skill not found: ${skillId}`);

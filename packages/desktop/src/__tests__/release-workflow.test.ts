@@ -41,6 +41,28 @@ describe("desktop release workflow wiring", () => {
     }
   });
 
+  it("boots embedded Postgres on every native desktop release host", async () => {
+    const release = await readRepoFile(".github/workflows/release.yml");
+    const testRelease = await readRepoFile(".github/workflows/test-release.yml");
+    const manualWindows = await readRepoFile(".github/workflows/desktop-windows.yml");
+    const advisoryPackaging = await readRepoFile(".github/workflows/desktop-packaging.yml");
+
+    // FNXC:DesktopEmbeddedPostgres 2026-07-14-09:40:
+    // Installer assembly alone cannot prove native Postgres starts. Keep a real
+    // lifecycle smoke on Windows, macOS, and Linux release hosts, plus the
+    // isolated Windows and advisory packaging paths.
+    for (const workflow of [release, testRelease]) {
+      for (const platform of ["Windows", "macOS", "Linux"]) {
+        expect(workflow).toContain(`Smoke embedded Postgres on ${platform}`);
+      }
+      expect(workflow.match(/pnpm --filter @fusion\/core test:embedded-postgres/g)).toHaveLength(3);
+    }
+    expect(manualWindows).toContain("Smoke embedded Postgres on Windows");
+    expect(manualWindows).toContain("pnpm --filter @fusion/core test:embedded-postgres");
+    expect(advisoryPackaging).toContain("Smoke embedded Postgres lifecycle");
+    expect(advisoryPackaging).toContain("pnpm --filter @fusion/core test:embedded-postgres");
+  });
+
   it("wires release aggregation to include desktop assets across platforms", async () => {
     const release = await readRepoFile(".github/workflows/release.yml");
 

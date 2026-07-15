@@ -1552,6 +1552,21 @@ describe("NewTaskModal", () => {
       });
     });
 
+    it("submits the workflow supplied by the contextual board opener", async () => {
+      await mockWorkflows([{ id: "WF-IDEAS", name: "Coding (Ideas)" }]);
+      const { props } = renderNewTaskModal({ initialWorkflowId: "WF-IDEAS" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("task-workflow-dropdown-trigger")).toHaveTextContent("Coding (Ideas)");
+      });
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Stay in Ideas" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(expect.objectContaining({ workflowId: "WF-IDEAS" }));
+      });
+    });
+
     it("sends workflowId: null when 'No workflow' is chosen", async () => {
       await mockWorkflows([{ id: "WF-1", name: "QA" }]);
       const { props } = renderNewTaskModal();

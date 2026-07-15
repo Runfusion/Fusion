@@ -19,7 +19,21 @@
 
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage, AgentMemoryInclusionMode } from "@fusion/core";
 import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./auto-claim-snapshot.js";
-import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, evaluateImplementationTaskBind, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode, FUSION_RUNTIME_SELF_AWARENESS, AWAITING_APPROVAL_PAUSE_REASON } from "@fusion/core";
+import {
+  ApprovalRequestStore,
+  buildExecutionMemoryInstructions,
+  isEphemeralAgent,
+  hasAgentIdentity,
+  resolveEffectiveAgentPermissionPolicy,
+  canAgentTakeImplementationTask,
+  evaluateImplementationTaskBind,
+  resolvePersistAgentThinkingLog,
+  resolveAgentMemoryInclusionMode,
+  FUSION_RUNTIME_SELF_AWARENESS,
+  AWAITING_APPROVAL_PAUSE_REASON,
+  rankAssignedTasksForWakeDelta,
+  formatAssignedTasksWakeDeltaSection,
+} from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
@@ -417,7 +431,28 @@ export function taskRelevanceScore(agent: Agent, task: RelevanceScorableTask): n
 FNXC:AgentPauseGuidance 2026-06-28-00:05:
 Coordination agents must not pause tasks to handle failures or blockers because a pause suppresses scheduler and self-healing recovery.
 Only use task pause when the user explicitly requests manual control; otherwise log blockers, route follow-up work, or let the task surface as failed.
+
+FNXC:HeartbeatCriticalRules 2026-07-13-12:00:
+Permanent-agent heartbeats need durable operating law that survives custom HEARTBEAT.md overrides.
+Critical rules live in the system prompt (not only procedure text) so checkout no-retry, blocked dedup, one-action, and implement-from-executor stay in force for every wake.
 */
+/**
+ * Always-on critical rules for permanent-agent heartbeats.
+ * Injected into both task-scoped and no-task system prompts so custom HEARTBEAT.md cannot erase them.
+ */
+export const HEARTBEAT_CRITICAL_RULES = `## Critical Rules
+
+- ONE concrete coordination action per tick, then call fn_heartbeat_done (or an explicit no-op with reason).
+- Do NOT implement task body work (code, tests, commits, multi-step coding) in a heartbeat — that is the executor path.
+- Do NOT call fn_task_pause for failures or blockers; pause is only for explicit user manual control.
+- Checkout/claim conflict: do NOT retry. Treat as terminal for this tick; pick other work or exit.
+- Blocked-task dedup: if the same blocker is already logged and Wake Delta shows no new context, do not re-chase or re-comment — no-op with reason.
+- Before fn_task_create, scan open tasks; do not create duplicates of work already covered.
+- Prefer create/delegate to another agent over asking a human when an agent can do the work.
+- Escalate via reports-to / chain of command when stuck after a concrete chase attempt.
+- Progress notes: short status line + done / remaining / next owner + task ids (FN-####).
+- Your assigned tasks list (when present) is coordination inventory, not an implement-from-heartbeat queue.`;
+
 export const HEARTBEAT_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}
 
 You are a heartbeat agent running in a short execution window.
@@ -429,6 +464,8 @@ execution path handled by the executor. Do NOT do task body work or implementati
 
 Your purpose is to keep momentum through coordination: surface blockers, respond to messages, manage memory,
 delegate, and route work to the right place. Think in single-pass interventions, not coding sessions.
+
+${HEARTBEAT_CRITICAL_RULES}
 
 Your job:
 1. Check your assigned task context — review its state, blockedBy field, and any new comments.
@@ -480,8 +517,9 @@ Prefer fn_delegate_task when immediate ownership by a specific agent materially 
 
 ## Common Patterns
 
-- **Blocked task:** log the concrete blocker, chase the dependency via fn_send_message, create a narrowly scoped unblocker task if needed; do not pause it unless the user explicitly requested manual control.
+- **Blocked task:** log the concrete blocker once, chase the dependency via fn_send_message, create a narrowly scoped unblocker task if needed; do not pause it unless the user explicitly requested manual control. If you already logged the same blocker and nothing new arrived, no-op with reason.
 - **Stuck task with no blockedBy:** log the observation and create a follow-up task to investigate the root cause; do not use fn_task_pause as failure handling.
+- **Checkout conflict:** never retry claim/checkout for a task held by another agent this tick.
 - **Completed task with follow-up risk:** create explicit follow-up task(s) for residual risk instead of burying notes in a long log.
 - **New user/agent comments:** summarize what changed, identify required action, and route via task creation/delegation.
 - **Dependency drift:** log the mismatch and create reconciliation tasks with clear dependencies.
@@ -535,6 +573,8 @@ You are a heartbeat agent running in a short execution window with no task assig
 You are an ambient coordinator. You scan signals (messages, memory, board state), make one high-leverage move, and hand execution to the right workflow.
 You are not expected to implement large code changes in no-task mode.
 
+${HEARTBEAT_CRITICAL_RULES}
+
 Your job:
 1. Review your context — check messages, memory, and project state.
 2. Do ONE useful action: analyze, create follow-up tasks, delegate work, or update memory.
@@ -562,7 +602,7 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_read_evaluations and fn_update_identity (available in no-task runs)
 - fn_reflect_on_performance when reflection is enabled for this run
 - fn_workflow_list, fn_workflow_get, fn_workflow_validate, fn_workflow_create, fn_workflow_update, fn_workflow_delete, fn_workflow_settings, and fn_trait_list for workflow discovery/authoring
-- fn_research_run, fn_research_list, fn_research_get, and fn_research_cancel for bounded research when configured
+- fn_research_run, fn_research_list, fn_research_get, fn_research_cancel, and fn_research_retry for bounded research when configured
 - fn_ask_question to ask the dashboard user for structured clarification
 - fn_web_fetch
 - fn_memory_search, fn_memory_get, and fn_memory_append
@@ -580,7 +620,8 @@ If unsure who should do the work, prefer fn_task_create and let scheduler routin
 
 ## Common Patterns
 
-- **Failed or blocked task:** do NOT call fn_task_pause to handle the failure or blocker. Pausing is reserved for explicit user requests for manual control; instead surface the blocker through available task or message context, create/delegate follow-up work, or let the task surface as failed.
+- **Failed or blocked task:** do NOT call fn_task_pause to handle the failure or blocker. Pausing is reserved for explicit user requests for manual control; instead surface the blocker through available task or message context, create/delegate follow-up work, or let the task surface as failed. If the same blocker was already chased and Wake Delta has no new context, no-op with reason.
+- **Checkout conflict:** never retry claim/checkout for a task held by another agent this tick.
 - **Unowned risk discovered:** create one focused task with concrete acceptance language.
 - **Known specialist needed:** list agents, then delegate to matching role/capability.
 - **Repeated confusion across runs:** append a concise memory entry so future agents avoid the same mistake.
@@ -645,6 +686,9 @@ export const HEARTBEAT_PROCEDURE_STRICT = `## Heartbeat Procedure (run every tic
 3. **Wake delta** — read the Wake Delta block above. The wake reason is the
    highest-priority change for this heartbeat. If you were woken by a comment
    or a message, acknowledge it before doing anything else.
+   **Scoped-wake fast path:** if the wake is a message, comment, or task_assigned
+   signal with one clear coordination action, take that action, complete the
+   disposition checklist, and exit — skip ambient board thrash.
 4. **Classify the bound task** — if you have an assigned task, classify it as
    exactly one of:
    - **executor-class** — implementation work: writing code, tests,
@@ -658,19 +702,29 @@ export const HEARTBEAT_PROCEDURE_STRICT = `## Heartbeat Procedure (run every tic
      blocker risk, do not re-read PROMPT.md to advance it, and pivot this
      heartbeat to broader board signals (in-progress risk scan, stale in-review
      queue, idle direct reports, and strategic themes in memory). Inbox is
-     already handled in step 2.
+     already handled in step 2. **Blocked dedup:** if you already logged the
+     same blocker and Wake Delta shows no new context, do not re-chase — no-op.
    - If the bound task is **coordination-class**, engage directly with the
      bound task.
+   Treat any multi-assign list in Wake Delta as coordination inventory only —
+   not an implement-from-heartbeat queue.
 5. **Pick the next concrete action** — exactly ONE useful action this heartbeat:
    advance the task, create a follow-up, log findings, delegate, or update
    memory. Don't stop at planning unless the task is a planning task.
+   Never retry checkout/claim when another agent holds the lease.
 6. **Persist progress** — fn_task_log for observations, fn_task_document_write
    for durable findings, status updates only when the work warrants it.
+   Progress note style: short status line + done / remaining / next owner + FN-####.
 7. **Per-tick self-check** — before exiting, verify all three:
    - Was the inbox processed?
    - Is the chosen action on a coordination-shaped lever?
    - If the bound task was executor-class, did I avoid re-planning it?
-8. **Exit** — call fn_heartbeat_done with a one-line summary of what changed
+8. **Final disposition checklist** — choose exactly one before exit:
+   - acted with evidence (log, document, message, delegation, or status change)
+   - follow-up created or delegated with clear owner
+   - blocked with named owner/action (or structured blockedBy)
+   - explicit no-op with reason (including blocked dedup / empty wake)
+9. **Exit** — call fn_heartbeat_done with a one-line summary of what changed
    this tick. If you took no action, say so and explain why.
 
 Critical: a heartbeat without observable progress (a log, a document write, a
@@ -690,10 +744,11 @@ export const HEARTBEAT_PROCEDURE_LITE = `## Heartbeat Procedure (run every tick,
 3. **Wake delta** — read the Wake Delta block above. The wake reason is the
    highest-priority change for this heartbeat. If you were woken by a comment
    or a message, acknowledge it before doing anything else.
+   Scoped-wake: message/comment/task_assigned with one clear action → act and exit.
 4. **Assignment review** — if you have an assigned task, re-read its current
    description, latest comments, and any task documents. Decide whether the
    prior plan is still valid given the wake delta. Do not assume yesterday's
-   plan is still correct.
+   plan is still correct. Blocked dedup: same blocker + no new context → no-op.
 5. **Classify scope before acting** — label the next action as either:
    - **In-scope execution:** directly advances the assigned task's current
      acceptance criteria.
@@ -702,10 +757,12 @@ export const HEARTBEAT_PROCEDURE_LITE = `## Heartbeat Procedure (run every tick,
 6. **Pick the next concrete action** — exactly ONE useful action this heartbeat:
    advance the task, create a follow-up, log findings, delegate, or update
    memory. Don't stop at planning unless the task is a planning task.
+   Never retry checkout/claim conflicts.
 7. **Persist progress** — fn_task_log for observations, fn_task_document_write
    for durable findings, status updates only when the work warrants it.
-8. **Exit** — call fn_heartbeat_done with a one-line summary of what changed
-   this tick. If you took no action, say so and explain why.
+   Note style: status line + done / remaining / next owner + FN-####.
+8. **Final disposition** — acted with evidence / delegated / blocked with owner /
+   explicit no-op with reason — then call fn_heartbeat_done with a one-line summary.
 
 Critical: a heartbeat without observable progress (a log, a document write, a
 status change, a comment, a delegation, or an explicit "no-op with reason") is
@@ -716,9 +773,9 @@ export const HEARTBEAT_PROCEDURE_OFF = `## Heartbeat Procedure (run every tick, 
 1. **Identity & context** — review the **Identity Snapshot** at the top of this prompt.
 2. **Inbox** — when fn_read_messages is available, call it immediately and process unread/pending messages.
 3. **Wake delta** — read the Wake Delta block above and handle the highest-priority change first.
-4. **Pick one concrete action** — do exactly one useful thing this tick.
+4. **Pick one concrete action** — do exactly one useful thing this tick. Never retry checkout/claim conflicts. Same-blocker no news → no-op with reason.
 5. **Persist progress** — record the action via available task/memory tools.
-6. **Exit** — call fn_heartbeat_done with a one-line summary.
+6. **Disposition + exit** — acted / delegated / blocked / no-op with reason, then fn_heartbeat_done with a one-line summary.
 
 Critical: a heartbeat without observable progress (or an explicit no-op reason) is a bug.`;
 
@@ -749,9 +806,13 @@ export const HEARTBEAT_NO_TASK_PROCEDURE_STRICT = `## Heartbeat Procedure (run e
 3. **Wake delta** — read the Wake Delta block above. The wake reason is the
    highest-priority change for this heartbeat. If you were woken by a comment
    or a message, acknowledge it before doing anything else.
+   **Scoped-wake fast path:** message/comment with one clear ambient action →
+   act, disposition, exit without broad board thrash.
 4. **Ambient review** — since you have no assigned task, review board/project
    signals and recent memory context before acting. No-task heartbeat runs are
    inherently coordination-class because no bound task exists to classify.
+   If Wake Delta lists assigned open tasks while bind failed, treat them as
+   coordination inventory (unblock/reassign/delegate), not code work.
 5. **Classify scope before acting** — label the next action as either:
    - **Board-scope execution:** work that can be completed now with ambient
      tools (coordination, delegation, messaging, memory updates).
@@ -759,10 +820,13 @@ export const HEARTBEAT_NO_TASK_PROCEDURE_STRICT = `## Heartbeat Procedure (run e
      create a focused task instead of attempting unscheduled implementation.
 6. **Pick the next concrete action** — exactly ONE useful action this heartbeat:
    create a focused task, delegate work, send/reply to a message, or append
-   durable memory.
+   durable memory. Never retry checkout/claim conflicts.
 7. **Persist progress** — use available ambient tools only:
    fn_task_create, fn_delegate_task, fn_send_message, fn_memory_append.
-8. **Exit** — call fn_heartbeat_done with a one-line summary of what changed
+   Note style when messaging or memory-appending: status + next owner.
+8. **Final disposition checklist** — acted with evidence / follow-up created or
+   delegated / explicit no-op with reason.
+9. **Exit** — call fn_heartbeat_done with a one-line summary of what changed
    this tick. If you took no action, say so and explain why.
 
 Critical: a heartbeat without observable progress (a created task, delegation,
@@ -782,6 +846,7 @@ export const HEARTBEAT_NO_TASK_PROCEDURE_LITE = `## Heartbeat Procedure (run eve
 3. **Wake delta** — read the Wake Delta block above. The wake reason is the
    highest-priority change for this heartbeat. If you were woken by a comment
    or a message, acknowledge it before doing anything else.
+   Scoped-wake: one clear message action → act and exit.
 4. **Ambient review** — since you have no assigned task, review board/project
    signals and recent memory context before acting.
 5. **Classify scope before acting** — label the next action as either:
@@ -791,11 +856,11 @@ export const HEARTBEAT_NO_TASK_PROCEDURE_LITE = `## Heartbeat Procedure (run eve
      create a focused task instead of attempting unscheduled implementation.
 6. **Pick the next concrete action** — exactly ONE useful action this heartbeat:
    create a focused task, delegate work, send/reply to a message, or append
-   durable memory.
+   durable memory. Never retry checkout/claim conflicts.
 7. **Persist progress** — use available ambient tools only:
    fn_task_create, fn_delegate_task, fn_send_message, fn_memory_append.
-8. **Exit** — call fn_heartbeat_done with a one-line summary of what changed
-   this tick. If you took no action, say so and explain why.
+8. **Disposition + exit** — acted / delegated / no-op with reason, then
+   fn_heartbeat_done with a one-line summary.
 
 Critical: a heartbeat without observable progress (a created task, delegation,
 message reply, memory append, or explicit "no-op with reason") is a bug. Do
@@ -806,9 +871,9 @@ export const HEARTBEAT_NO_TASK_PROCEDURE_OFF = `## Heartbeat Procedure (run ever
 1. **Identity & context** — review the **Identity Snapshot** at the top of this prompt.
 2. **Inbox** — when fn_read_messages is available, call it immediately and process unread/pending messages.
 3. **Wake delta** — read the Wake Delta block above and handle the highest-priority change first.
-4. **Pick one concrete action** — do exactly one useful thing this tick.
+4. **Pick one concrete action** — do exactly one useful thing this tick. Never retry checkout/claim conflicts.
 5. **Persist progress** — use available ambient tools only.
-6. **Exit** — call fn_heartbeat_done with a one-line summary.
+6. **Disposition + exit** — acted / no-op with reason, then fn_heartbeat_done with a one-line summary.
 
 Critical: a heartbeat without observable progress (or an explicit no-op reason) is a bug.`;
 
@@ -3169,6 +3234,35 @@ export class HeartbeatMonitor {
               : "no triggering-message metadata"}`)
             : null;
 
+          /*
+          FNXC:WakeDeltaMultiAssign 2026-07-13-12:20:
+          Inject compact ranked multi-assignment inventory into Wake Delta so permanent agents see siblings beyond singular agent.taskId.
+          Coordination inventory only — not an implement-from-heartbeat queue. Cap 8; fully unactionable blocked stay count-only.
+
+          FNXC:WakeDeltaMultiAssign 2026-07-14-12:00:
+          Skip getTasksByAssignedAgent for ephemeral agents — multi-assign inventory is permanent-agent coordination only.
+          */
+          let multiAssignWakeDeltaLines: string[] = [];
+          if (!isAgentEphemeral && this.taskStore && typeof this.taskStore.getTasksByAssignedAgent === "function") {
+            try {
+              const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
+              const ranked = rankAssignedTasksForWakeDelta(assignedOpen, {
+                agentId,
+                boundTaskId: isNoTaskRun ? null : taskId,
+              });
+              const section = formatAssignedTasksWakeDeltaSection(ranked, {
+                boundTaskId: isNoTaskRun ? null : taskId,
+              });
+              if (section) {
+                multiAssignWakeDeltaLines = section.split("\n");
+              }
+            } catch (err: unknown) {
+              heartbeatLog.warn(
+                `Failed to build multi-assign Wake Delta for ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+
           // Per-agent override of the default HEARTBEAT_PROCEDURE: if the agent
           // configured a heartbeatProcedurePath pointing to a markdown file in
           // the project, use that instead. Reloaded fresh each tick (matches the
@@ -3271,6 +3365,7 @@ export class HeartbeatMonitor {
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `- wake reason: ${wakeReason}`,
               `- assigned task: none`,
+              ...multiAssignWakeDeltaLines,
               wakeInboxSnapshotLine,
               ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
               `- pending messages: ${pendingMessages.length}`,
@@ -3377,6 +3472,7 @@ export class HeartbeatMonitor {
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `- wake reason: ${wakeReason}`,
               `- assigned task: ${taskId}`,
+              ...multiAssignWakeDeltaLines,
               wakeInboxSnapshotLine,
               ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
               `- pending messages: ${pendingMessages.length}`,

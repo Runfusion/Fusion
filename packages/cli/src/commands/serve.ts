@@ -15,7 +15,6 @@ import {
   CentralCore,
   TaskStore,
   PluginLoader,
-  PluginStore,
   getTaskMergeBlocker,
   INSIGHT_EXTRACTION_SCHEDULE_NAME,
   processAndAuditInsightExtraction,
@@ -856,11 +855,12 @@ export async function runServe(
     string,
     { enabledKey: string; skills: ReturnType<PluginLoader["getPluginSkills"]> }
   >();
-  const getProjectScopedPluginSkills = async (rootDir: string): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
+  const getProjectScopedPluginSkills = async (rootDir: string, resolvedProjectStore?: TaskStore): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
     const normalizedRootDir = pathResolve(rootDir);
-    const stateStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+    const targetStore = resolvedProjectStore ?? (normalizedRootDir === pathResolve(store.getRootDir()) ? store : undefined);
+    if (!targetStore) return [];
+    const stateStore = targetStore.getPluginStore();
     await stateStore.init();
-    try {
       const enabledPlugins = await stateStore.listPlugins({ enabled: true });
       const enabledKey = enabledPlugins
         .map((plugin) => `${plugin.id}:${plugin.updatedAt}`)
@@ -885,12 +885,10 @@ export async function runServe(
         return skills;
       }
 
-      const scopedPluginStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
-      const scopedTaskStore = new TaskStore(normalizedRootDir);
-      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: scopedTaskStore });
+      const scopedPluginStore = targetStore.getPluginStore();
+      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: targetStore });
       try {
         await scopedPluginStore.init();
-        await scopedTaskStore.init();
         const { errors } = await scopedPluginLoader.loadAllPlugins();
         if (errors > 0) {
           console.warn(`[plugins] Project-scoped plugin skill loading for ${normalizedRootDir} had ${errors} error(s)`);
@@ -900,12 +898,7 @@ export async function runServe(
         return skills;
       } finally {
         await scopedPluginLoader.stopAllPlugins();
-        scopedPluginStore.close();
-        scopedTaskStore.close();
       }
-    } finally {
-      stateStore.close();
-    }
   };
 
   const skillsAdapter = packageManager

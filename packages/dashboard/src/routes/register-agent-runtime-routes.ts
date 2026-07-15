@@ -657,7 +657,8 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
           -- FNXC:PostgresBackend 2026-06-27-00:40: schema-qualify project.agent_runs
           -- (the async connection does not put the project schema on search_path).
           FROM project.agent_runs
-          WHERE data->>'agentId' = ${req.params.id}
+          WHERE project_id = ${asyncLayer.projectId ?? ""}
+            AND data->>'agentId' = ${req.params.id}
           ORDER BY started_at DESC
           LIMIT ${limit}
         `);

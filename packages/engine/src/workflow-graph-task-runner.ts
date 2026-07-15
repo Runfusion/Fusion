@@ -61,6 +61,7 @@ export interface WorkflowGraphTaskRunResult {
 /** The minimal store surface the runner needs — keeps tests fake-friendly. */
 export interface WorkflowGraphRunnerStore {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
+  getTaskWorkflowSelectionAsync?(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined>;
   getWorkflowDefinition(id: string): Promise<WorkflowDefinition | undefined>;
   getTask?(taskId: string): Promise<TaskDetail>;
 }
@@ -180,7 +181,9 @@ export class WorkflowGraphTaskRunner {
   ): Promise<WorkflowGraphTaskRunResult> {
     let selection: { workflowId: string; stepIds: string[] } | undefined;
     try {
-      selection = this.deps.store.getTaskWorkflowSelection(task.id);
+      selection = this.deps.store.getTaskWorkflowSelectionAsync
+        ? await this.deps.store.getTaskWorkflowSelectionAsync(task.id)
+        : this.deps.store.getTaskWorkflowSelection(task.id);
     } catch (err) {
       return this.fallBack(task.id, `selection-error: ${err instanceof Error ? err.message : String(err)}`);
     }

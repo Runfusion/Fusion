@@ -51,6 +51,20 @@ type TaskListFormatter = (
 const TRIAGE_STUCK_RESUME_LOG_ACTION = "Triage stuck re-queue will resume existing planning draft";
 const TRIAGE_STUCK_RESUME_FEEDBACK = "The previous triage session was killed by the stuck-task detector after writing a non-empty planning draft. Resume from the existing draft below: preserve useful structure and decisions, fill gaps, and continue toward review instead of restarting planning from scratch.";
 
+/*
+FNXC:PlanReviewReplan 2026-07-13-00:00:
+The triage pre-execution Plan Review gate (runPlanReviewBeforeExecution) routes a REVISE
+verdict back to `needs-replan`, which re-plans and re-reviews. Without a ceiling, a planner
+and reviewer that persistently disagree loop plan → Plan Review REVISE → replan forever
+(observed on TC-002), and in `planApprovalMode: require-all` there is no human escape because
+the task never reaches `awaiting-approval`. Bound the consecutive REVISE replans with a small
+cap (mirroring the executor graph's PLAN_REVIEW_REPLAN_HARD_CAP backstop): after this many
+replans the gate escalates the task to `awaiting-approval` for a human decision instead of
+replanning again. The counter (Task.planReviewReplanCount) resets when the gate passes.
+*/
+const PLAN_REVIEW_GATE_REPLAN_CAP = 3;
+const PLAN_REVIEW_REPLAN_CAP_LOG_ACTION = "Plan Review replan cap reached — escalating to manual approval";
+
 export function inlineTaskListFallback(
   lines: string[],
   opts: { maxChars?: number } = {},
@@ -114,7 +128,7 @@ import {
   checkSessionError,
   type UsageLimitPauser,
 } from "./usage-limit-detector.js";
-import { isTransientError, isSilentTransientError } from "./transient-error-detector.js";
+import { isOperatorActionableAgentError, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector } from "./stuck-task-detector.js";
@@ -1258,6 +1272,28 @@ export class TriageProcessor {
               feedback = latestUserComment?.text;
             }
 
+            /*
+            FNXC:PlanReviewReplan 2026-07-13-00:00:
+            When re-planning and neither an explicit user/AI re-specification comment nor a
+            user comment supplied feedback, fall back to the most recent Plan Review REVISE
+            verdict recorded in `workflowStepResults`. The pre-execution Plan Review gate
+            (runPlanReviewBeforeExecution) stores its rejection reasoning there authoritatively
+            (it is upserted every cycle and never evicted by the activity-log cap), so this
+            keeps the planner regenerating against the reviewer's actual objections instead of
+            reproducing the same rejected plan with `feedback: undefined` and looping. Explicit
+            comment-derived feedback still wins because this only runs when none was found.
+            */
+            if (!feedback) {
+              const latestPlanReviewRevise = [...(currentTask.workflowStepResults || [])]
+                .reverse()
+                .find((result) =>
+                  result.workflowStepId === PLAN_REVIEW_GROUP_ID
+                  && result.verdict === "REVISE"
+                  && Boolean((result.output ?? result.notes)?.trim()),
+                );
+              feedback = latestPlanReviewRevise?.output ?? latestPlanReviewRevise?.notes ?? feedback;
+            }
+
             planLog.log(
               `${task.id} re-planning with feedback: ${feedback?.slice(0, 100)}...`,
             );
@@ -1486,6 +1522,31 @@ export class TriageProcessor {
             planLog.warn(`${task.id}: failed to persist planner fallback exhaustion: ${msg}`);
           });
           this.options.onSpecifyError?.(task, err);
+          return;
+        } else if (isOperatorActionableAgentError(errorMessage) && !isTransientError(errorMessage)) {
+          /*
+          FNXC:TriageAuth 2026-07-14-15:46:
+          Provider credentials, OAuth grants, billing, and model-access failures require operator action. Triage must park the task as failed instead of restoring its claimable status, because the scheduler otherwise repeats the same specification attempt every poll while no external state has changed.
+
+          FNXC:TriageAuth 2026-07-14-16:08:
+          Transient infrastructure signals take precedence when an error also mentions credentials, such as a connection reset during refresh. Those mixed failures keep the bounded retry policy; only genuinely permanent authentication failures park immediately.
+          */
+          const failureMessage = `Specification failed: ${errorMessage}`;
+          planLog.error(`✗ ${task.id} planning needs operator action: ${errorDetail}`);
+          await this.store.logEntry(task.id, failureMessage, errorStack).catch((logErr: unknown) => {
+            const msg = logErr instanceof Error ? logErr.message : String(logErr);
+            planLog.warn(`${task.id}: failed to persist operator-actionable specification failure: ${msg}`);
+          });
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: failureMessage,
+            recoveryRetryCount: null,
+            nextRecoveryAt: null,
+          }).catch((updateErr: unknown) => {
+            const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
+            planLog.warn(`${task.id}: failed to park operator-actionable specification failure: ${msg}`);
+          });
+          this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         } else if (isTransientError(errorMessage)) {
           // Transient network/infrastructure error — use bounded recovery policy
@@ -1969,9 +2030,11 @@ export class TriageProcessor {
      * FNXC:PlanValidation 2026-06-30-09:20:
      * Triage may run Plan Review before the graph reaches `plan-review`; the graph later skips an already-passed Plan Review result. Read the selected workflow's Plan Review template flag here so Coding (per-step review) enforces external-integration evidence in the same Plan Review gate, while default Coding and other workflows stay unblocked.
      */
-    const selection = typeof this.store.getTaskWorkflowSelection === "function"
-      ? this.store.getTaskWorkflowSelection(task.id)
-      : undefined;
+    const selection = typeof this.store.getTaskWorkflowSelectionAsync === "function"
+      ? await this.store.getTaskWorkflowSelectionAsync(task.id)
+      : typeof this.store.getTaskWorkflowSelection === "function"
+        ? this.store.getTaskWorkflowSelection(task.id)
+        : undefined;
     const workflowId = selection?.workflowId;
     if (!workflowId || typeof this.store.getWorkflowDefinition !== "function") return false;
     const definition = await this.store.getWorkflowDefinition(workflowId).catch((error: unknown) => {
@@ -2002,6 +2065,55 @@ export class TriageProcessor {
     */
     const existing = upsertWorkflowStepResult(live?.workflowStepResults, result);
     await this.store.updateTask(task.id, { workflowStepResults: existing });
+  }
+
+  /*
+  FNXC:PlanReviewReplan 2026-07-13-00:00:
+  Shared terminal step for a triage Plan Review gate REVISE. Increments the consecutive-replan
+  counter and routes the task back to `needs-replan` for another planning pass — until the count
+  reaches PLAN_REVIEW_GATE_REPLAN_CAP, after which it escalates to `awaiting-approval` (with a
+  clear log entry and a distinct awaitingApprovalReason) so a persistent planner/reviewer
+  disagreement surfaces to a human instead of looping forever. Callers still record the workflow
+  step result and the "AI spec revision requested" feedback log before invoking this.
+  */
+  private async blockAfterPlanReviewRevise(task: Task, latestFeedback: string): Promise<void> {
+    const priorCount = task.planReviewReplanCount ?? 0;
+    if (priorCount >= PLAN_REVIEW_GATE_REPLAN_CAP) {
+      await this.store.logEntry(
+        task.id,
+        PLAN_REVIEW_REPLAN_CAP_LOG_ACTION,
+        `The triage Plan Review gate requested a planning revision ${priorCount} consecutive times without converging (cap ${PLAN_REVIEW_GATE_REPLAN_CAP}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is being routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${latestFeedback}`,
+      );
+      /*
+      FNXC:PlanReviewReplan 2026-07-13-00:00:
+      `awaitingApprovalReason` is not a persisted `updateTask` column in the PostgreSQL
+      store (it survives only as a Task type field after the release-authorization gate
+      was removed), so the distinct reason is written through a Record<string, unknown>
+      the same way the manual plan-approval hold clears it below. The escalated task
+      renders as an ordinary manual plan-approval hold (only the legacy
+      "release-authorization" value is special-cased in the dashboard), which is exactly
+      the intended human Approve/Reject decision point.
+      */
+      const escalationUpdates: Record<string, unknown> = {
+        status: "awaiting-approval",
+        awaitingApprovalReason: "plan-review-replan-cap",
+        error: null,
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      };
+      await this.store.updateTask(task.id, escalationUpdates);
+      planLog.warn(
+        `${task.id} Plan Review replan cap (${PLAN_REVIEW_GATE_REPLAN_CAP}) reached after ${priorCount} REVISE replans — escalating to awaiting-approval instead of replanning`,
+      );
+      return;
+    }
+    await this.store.updateTask(task.id, {
+      status: "needs-replan",
+      planReviewReplanCount: priorCount + 1,
+      error: null,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    });
   }
 
   private async runPlanReviewBeforeExecution(task: Task, promptContent: string, settings: Settings): Promise<"approved" | "blocked"> {
@@ -2048,12 +2160,7 @@ export class TriageProcessor {
           "AI spec revision requested",
           `Plan Review deterministic external-integration evidence check requested a planning revision before execution.\n\nFeedback:\n${diagnostic}`,
         );
-        await this.store.updateTask(task.id, {
-          status: "needs-replan",
-          error: null,
-          recoveryRetryCount: null,
-          nextRecoveryAt: null,
-        });
+        await this.blockAfterPlanReviewRevise(task, diagnostic);
         return "blocked";
       }
     }
@@ -2117,6 +2224,11 @@ export class TriageProcessor {
         startedAt,
         completedAt,
       });
+      // FNXC:PlanReviewReplan 2026-07-13-00:00: a passing gate clears the consecutive-REVISE
+      // replan counter so a later, unrelated revision cycle starts from a fresh budget.
+      if ((task.planReviewReplanCount ?? 0) > 0) {
+        await this.store.updateTask(task.id, { planReviewReplanCount: null });
+      }
       await this.store.logEntry(task.id, "[pre-merge] Workflow step completed: Plan Review", review.summary);
       return "approved";
     }
@@ -2134,17 +2246,13 @@ export class TriageProcessor {
         completedAt,
       });
       await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", review.review);
+      const reviseFeedback = review.review || review.summary || "(no feedback captured)";
       await this.store.logEntry(
         task.id,
         "AI spec revision requested",
-        `Plan Review requested a planning revision before execution.\n\nStatus: ${review.verdict}\nFeedback:\n${review.review || review.summary || "(no feedback captured)"}`,
+        `Plan Review requested a planning revision before execution.\n\nStatus: ${review.verdict}\nFeedback:\n${reviseFeedback}`,
       );
-      await this.store.updateTask(task.id, {
-        status: "needs-replan",
-        error: null,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-      });
+      await this.blockAfterPlanReviewRevise(task, reviseFeedback);
       return "blocked";
     }
 

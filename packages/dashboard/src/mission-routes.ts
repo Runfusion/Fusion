@@ -17,7 +17,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { TaskStore, resolvePlanningSettingsModel, AgentStore, THINKING_LEVELS } from "@fusion/core";
 import type { Goal, ThinkingLevel } from "@fusion/core";
 import { listEligibleExecutorAgents } from "@fusion/engine";
-import { getOrCreateProjectStore } from "./project-store-resolver.js";
+import {
+  getScopedStore as resolveScopedRequestStore,
+  getProjectContext as resolveSharedProjectContext,
+} from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 import type {
   Mission,
   MissionBranchStrategy,
@@ -290,19 +294,10 @@ export function createMissionRouter(
   },
   engineManager?: import("@fusion/engine").ProjectEngineManager,
   pluginRunner?: Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3],
+  options?: ServerOptions,
 ): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
-
-  function getProjectIdFromRequest(req: Request): string | undefined {
-    if (typeof req.query.projectId === "string" && req.query.projectId.trim()) {
-      return req.query.projectId;
-    }
-    if (req.body && typeof req.body === "object" && typeof req.body.projectId === "string" && req.body.projectId.trim()) {
-      return req.body.projectId;
-    }
-    return undefined;
-  }
 
   function getScopedStore(): TaskStore {
     return requestContext.getStore() ?? store;
@@ -414,8 +409,10 @@ export function createMissionRouter(
 
   router.use(async (req, _res, next) => {
     try {
-      const projectId = getProjectIdFromRequest(req);
-      const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : store;
+      // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+      // Resolve an explicit central-registry project id via the shared seam
+      // (request id → registered launch project id → raw launch store last resort).
+      const scopedStore = await resolveScopedRequestStore(req, store, options);
       requestContext.run(scopedStore, next);
     } catch (error) {
       next(error);
@@ -508,26 +505,18 @@ export function createMissionRouter(
   /**
    * Helper to resolve scoped store for the current request's project scope.
    */
-  async function getScopedStoreForRequest(req: Request) {
-    const projectId = getProjectIdFromRequest(req);
-    return projectId ? await getOrCreateProjectStore(projectId) : store;
-  }
-
   /**
    * Helper to resolve project context for the current request.
    * When engineManager is available and the request targets a known project,
    * returns the engine's TaskStore so callers share the same in-memory state.
+   *
+   * FNXC:CentralProjectIdentity 2026-07-13-23:54:
+   * Delegates to the shared seam so identity always resolves an explicit
+   * central-registry id (request id → registered launch project id) instead of
+   * the implicit raw-store fallback.
    */
   async function getProjectContext(req: Request) {
-    const projectId = getProjectIdFromRequest(req);
-    if (projectId && engineManager) {
-      const engine = engineManager.getEngine(projectId);
-      if (engine) {
-        return { store: engine.getTaskStore(), engine, projectId };
-      }
-    }
-    const scopedStore = await getScopedStoreForRequest(req);
-    return { store: scopedStore, engine: undefined, projectId };
+    return resolveSharedProjectContext(req, store, options);
   }
 
   /**
@@ -762,9 +751,11 @@ export function createMissionRouter(
   router.get(
     "/interview/drafts",
     catchTypedHandler(async (req, res) => {
-      const projectId = typeof req.query.projectId === "string" && req.query.projectId.trim().length > 0
-        ? req.query.projectId.trim()
-        : undefined;
+      // FNXC:CentralProjectIdentity 2026-07-14-00:15:
+      // Read drafts under the SAME resolved id that POST /interview/start stamped on
+      // write (request id → registered launch project id). Filtering by the raw
+      // request projectId (undefined on a launch-dir request) hid launch-owned drafts.
+      const { projectId } = await getProjectContext(req);
       const { listMissionInterviewDrafts } = await import("./mission-interview.js");
       res.json({ drafts: await listMissionInterviewDrafts(projectId) });
     })
@@ -777,9 +768,10 @@ export function createMissionRouter(
       const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
         ? req.body.tabId.trim()
         : undefined;
-      const projectId = typeof req.query.projectId === "string" && req.query.projectId.trim().length > 0
-        ? req.query.projectId.trim()
-        : undefined;
+      // FNXC:CentralProjectIdentity 2026-07-14-00:15:
+      // Discard against the SAME resolved id writes stamped (request id → launch id),
+      // matching GET /interview/drafts, so a launch-dir discard finds the session.
+      const { projectId } = await getProjectContext(req);
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");

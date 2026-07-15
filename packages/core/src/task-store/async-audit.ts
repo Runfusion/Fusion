@@ -23,7 +23,7 @@
  *   These helpers are the async target the migrating store and the PostgreSQL
  *   integration tests consume.
  */
-import { and, count, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, isNotNull, lte, or, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import {
@@ -170,6 +170,14 @@ export async function countRunAuditEvents(
 // ── Activity log ─────────────────────────────────────────────────────
 
 /**
+ * FNXC:ReliabilityHealth 2026-07-14-16:29:
+ * PostgreSQL rewrites an empty activity project id to the explicit legacy quarantine. Normalize both writes and reads identically so unbound compatibility stores can still observe their own telemetry; bound runtime stores continue using their central project id.
+ */
+export function activityProjectPartition(projectId: string): string {
+  return projectId.trim() || "__legacy_unscoped__";
+}
+
+/**
  * Convert a raw `activity_log` row into the public `ActivityLogEntry` shape.
  * The `metadata` column is jsonb in PostgreSQL (already-parsed).
  */
@@ -204,6 +212,7 @@ function rowToActivityLogEntry(row: ActivityLogRow): ActivityLogEntry {
  */
 export async function recordActivityLogEntry(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   entry: Omit<ActivityLogEntry, "id" | "timestamp">,
 ): Promise<ActivityLogEntry> {
   const fullEntry: ActivityLogEntry = {
@@ -214,6 +223,7 @@ export async function recordActivityLogEntry(
 
   try {
     await db.insert(schema.project.activityLog).values({
+      projectId: activityProjectPartition(projectId),
       id: fullEntry.id,
       timestamp: fullEntry.timestamp,
       type: fullEntry.type,
@@ -243,9 +253,10 @@ export async function recordActivityLogEntry(
  */
 export async function getActivityLog(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   options?: { limit?: number; since?: string; type?: ActivityEventType },
 ): Promise<ActivityLogEntry[]> {
-  const conditions = [];
+  const conditions = [eq(schema.project.activityLog.projectId, activityProjectPartition(projectId))];
   if (options?.since) {
     conditions.push(gte(schema.project.activityLog.timestamp, options.since));
   }
@@ -283,9 +294,11 @@ export async function getActivityLog(
  */
 export async function getTaskMovedCountsByDay(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
   options: { since: string; until: string; fromColumn?: string; toColumn?: string },
 ): Promise<Record<string, number>> {
   const conditions = [
+    eq(schema.project.activityLog.projectId, activityProjectPartition(projectId)),
     eq(schema.project.activityLog.type, "task:moved"),
     gte(schema.project.activityLog.timestamp, options.since),
     lte(schema.project.activityLog.timestamp, options.until),
@@ -315,4 +328,52 @@ export async function getTaskMovedCountsByDay(
     countsByDay[row.day] = Number(row.value);
   }
   return countsByDay;
+}
+
+/*
+FNXC:ReliabilityHealth 2026-07-14-16:13:
+Reliability metrics must query PostgreSQL activity rows through the async data layer. Keep the bounded duration-event shape and project scope used by the dashboard without falling through to the unavailable SQLite TaskStore database.
+*/
+export async function getInReviewDurationEvents(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
+  options: { since: string; until: string },
+): Promise<ActivityLogEntry[]> {
+  const rows = await db
+    .select()
+    .from(schema.project.activityLog)
+    .where(and(
+      eq(schema.project.activityLog.projectId, activityProjectPartition(projectId)),
+      eq(schema.project.activityLog.type, "task:moved"),
+      gt(schema.project.activityLog.timestamp, options.since),
+      lte(schema.project.activityLog.timestamp, options.until),
+      or(
+        sql`${schema.project.activityLog.metadata}->>'to' = 'in-review'`,
+        and(
+          sql`${schema.project.activityLog.metadata}->>'from' = 'in-review'`,
+          sql`${schema.project.activityLog.metadata}->>'to' = 'done'`,
+        ),
+      ),
+    ))
+    .orderBy(asc(schema.project.activityLog.timestamp))
+    .limit(200_000);
+  return (rows as ActivityLogRow[]).map((row) => rowToActivityLogEntry(row));
+}
+
+export async function getTaskMergedTaskIds(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  projectId: string,
+  options: { since: string; until: string },
+): Promise<Set<string>> {
+  const rows = await db
+    .selectDistinct({ taskId: schema.project.activityLog.taskId })
+    .from(schema.project.activityLog)
+    .where(and(
+      eq(schema.project.activityLog.projectId, activityProjectPartition(projectId)),
+      eq(schema.project.activityLog.type, "task:merged"),
+      gt(schema.project.activityLog.timestamp, options.since),
+      lte(schema.project.activityLog.timestamp, options.until),
+      isNotNull(schema.project.activityLog.taskId),
+    ));
+  return new Set(rows.flatMap((row) => row.taskId ? [row.taskId] : []));
 }

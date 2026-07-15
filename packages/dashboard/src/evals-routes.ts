@@ -3,16 +3,13 @@ import type { NextFunction, Request, Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { EvalRun, EvalTaskResult, TaskStore } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "./api-error.js";
+import { getScopedStore as resolveScopedRequestStore } from "./routes/context.js";
+import type { ServerOptions } from "./server.js";
 
 function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server error"): never {
   if (error instanceof ApiError) throw error;
   if (error instanceof Error) throw new ApiError(500, error.message);
   throw new ApiError(500, fallbackMessage);
-}
-
-function getProjectId(req: Request): string | undefined {
-  if (typeof req.query.projectId === "string" && req.query.projectId.trim()) return req.query.projectId;
-  return undefined;
 }
 
 function parseOptionalInt(value: unknown, key: string): number | undefined {
@@ -36,21 +33,28 @@ function normalizeEvalText(result: EvalTaskResult): string {
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).join(" ").toLowerCase();
 }
 
-export function createEvalsRouter(store: TaskStore): Router {
+export function createEvalsRouter(store: TaskStore, options?: ServerOptions): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
   router.use((req: Request, _res: Response, next: NextFunction) => {
-    const projectId = getProjectId(req);
-    if (projectId) {
-      import("./project-store-resolver.js").then(({ getOrCreateProjectStore }) => {
-        getOrCreateProjectStore(projectId).then((scopedStore) => {
-          requestContext.run(scopedStore, () => next());
-        }).catch((err) => rethrowAsApiError(err, "Failed to get project store"));
+    // FNXC:CentralProjectIdentity 2026-07-13-23:54:
+    // Resolve an explicit central-registry project id via the shared seam
+    // (request id → registered launch project id → raw launch store last resort).
+    // FNXC:CentralProjectIdentity 2026-07-14-00:15:
+    // Catch-and-FORWARD via next(): rethrowAsApiError throws, and a throw inside this
+    // detached promise chain escapes Express (it is not the request's synchronous
+    // call stack), so a store-resolution failure would hang the request instead of
+    // returning an error. Mirror the insights/goals routers' pattern.
+    resolveScopedRequestStore(req, store, options)
+      .then((scopedStore) => requestContext.run(scopedStore, () => next()))
+      .catch((err) => {
+        try {
+          rethrowAsApiError(err, "Failed to get project store");
+        } catch (apiError) {
+          next(apiError);
+        }
       });
-      return;
-    }
-    requestContext.run(store, () => next());
   });
 
   function getEvalStore() {

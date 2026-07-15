@@ -71,6 +71,13 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: pnpm --filter @fusion/desktop build
 
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # The advisory Linux packaging lane also executes the real bundled
+      # lifecycle, catching native payload regressions before a release run.
+      - name: Smoke embedded Postgres lifecycle
+        if: steps.changes.outputs.relevant == 'true'
+        run: pnpm --filter @fusion/core test:embedded-postgres
+
       # Authoritative check: electron-builder's production-dependency walk over the staged closure.
       # --dir skips installer/signing but still FAILS if any production dependency's declared version
       # range is unsatisfied in the closure — which is exactly the aws-sdk skew that broke the release.

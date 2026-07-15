@@ -41,6 +41,7 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
     await db.execute(sql.raw(`
       CREATE TABLE IF NOT EXISTS project.roadmaps (
         id text PRIMARY KEY,
+        project_id text,
         title text NOT NULL,
         description text,
         created_at text NOT NULL,
@@ -49,6 +50,7 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
 
       CREATE TABLE IF NOT EXISTS project.roadmap_milestones (
         id text PRIMARY KEY,
+        project_id text,
         roadmap_id text NOT NULL,
         title text NOT NULL,
         description text,
@@ -63,6 +65,7 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
 
       CREATE TABLE IF NOT EXISTS project.roadmap_features (
         id text PRIMARY KEY,
+        project_id text,
         milestone_id text NOT NULL,
         title text NOT NULL,
         description text,
@@ -74,6 +77,82 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
       );
       CREATE INDEX IF NOT EXISTS "idxRoadmapFeaturesMilestoneOrder"
         ON project.roadmap_features(milestone_id, order_index, created_at, id);
+
+      /*
+       * FNXC:PluginPostgresIsolation 2026-07-13-22:37:
+       * Bundled plugin rows share one embedded PostgreSQL schema, so every roadmap hierarchy row must carry the bound project ID. The upgrade below derives or rejects legacy ownership before enforcing non-null, while runtime stores reject unbound layers and always filter these columns.
+       */
+      ALTER TABLE project.roadmaps ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.roadmap_milestones ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.roadmap_features ADD COLUMN IF NOT EXISTS project_id text;
+
+      /*
+       * FNXC:RoadmapPostgresUpgrade 2026-07-13-23:40:
+       * Project-bound Roadmap readers must never silently hide pre-partition PostgreSQL rows. Derive child ownership from an owned parent first, use the sole registered project only when that mapping is unambiguous, and abort schema startup when multiple/no projects leave ownership unknowable. Validate the complete hierarchy before making ownership mandatory.
+       */
+      UPDATE project.roadmap_milestones milestone
+      SET project_id = roadmap.project_id
+      FROM project.roadmaps roadmap
+      WHERE milestone.roadmap_id = roadmap.id
+        AND (milestone.project_id IS NULL OR milestone.project_id = '')
+        AND roadmap.project_id IS NOT NULL
+        AND roadmap.project_id <> '';
+      UPDATE project.roadmap_features feature
+      SET project_id = milestone.project_id
+      FROM project.roadmap_milestones milestone
+      WHERE feature.milestone_id = milestone.id
+        AND (feature.project_id IS NULL OR feature.project_id = '')
+        AND milestone.project_id IS NOT NULL
+        AND milestone.project_id <> '';
+
+      DO $roadmap_upgrade$
+      DECLARE
+        unowned_count bigint;
+        registered_project_count bigint;
+        singleton_project_id text;
+        ownership_conflicts bigint;
+      BEGIN
+        SELECT
+          (SELECT count(*) FROM project.roadmaps WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.roadmap_milestones WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.roadmap_features WHERE project_id IS NULL OR project_id = '')
+        INTO unowned_count;
+
+        IF unowned_count > 0 THEN
+          SELECT count(*), min(id) INTO registered_project_count, singleton_project_id
+          FROM central.projects;
+          IF registered_project_count <> 1 THEN
+            RAISE EXCEPTION 'Roadmap PostgreSQL upgrade cannot assign % pre-project row(s) across % registered projects',
+              unowned_count, registered_project_count;
+          END IF;
+          UPDATE project.roadmaps SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.roadmap_milestones SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.roadmap_features SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+        END IF;
+
+        SELECT
+          (SELECT count(*) FROM project.roadmap_milestones milestone
+            JOIN project.roadmaps roadmap ON roadmap.id = milestone.roadmap_id
+            WHERE milestone.project_id IS DISTINCT FROM roadmap.project_id)
+          + (SELECT count(*) FROM project.roadmap_features feature
+            JOIN project.roadmap_milestones milestone ON milestone.id = feature.milestone_id
+            WHERE feature.project_id IS DISTINCT FROM milestone.project_id)
+        INTO ownership_conflicts;
+        IF ownership_conflicts > 0 THEN
+          RAISE EXCEPTION 'Roadmap PostgreSQL upgrade found % cross-project hierarchy relationship(s)', ownership_conflicts;
+        END IF;
+      END
+      $roadmap_upgrade$;
+
+      ALTER TABLE project.roadmaps ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.roadmap_milestones ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.roadmap_features ALTER COLUMN project_id SET NOT NULL;
+      CREATE INDEX IF NOT EXISTS "idxRoadmapsProject" ON project.roadmaps(project_id, created_at, id);
+      CREATE INDEX IF NOT EXISTS "idxRoadmapMilestonesProject" ON project.roadmap_milestones(project_id, roadmap_id, order_index, id);
+      CREATE INDEX IF NOT EXISTS "idxRoadmapFeaturesProject" ON project.roadmap_features(project_id, milestone_id, order_index, id);
     `));
   },
 };
@@ -124,6 +203,16 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
       CREATE INDEX IF NOT EXISTS "idxCeSessionsProject"
         ON project.ce_sessions(project_id, updated_at DESC, id);
 
+      CREATE TABLE IF NOT EXISTS project.ce_plan_handoff_claims (
+        project_id text NOT NULL,
+        artifact_path text NOT NULL,
+        session_id text NOT NULL,
+        created_at text NOT NULL,
+        PRIMARY KEY (project_id, artifact_path),
+        CONSTRAINT ce_plan_handoff_claims_session_id_fkey
+          FOREIGN KEY (session_id) REFERENCES project.ce_sessions(id) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS project.ce_pipeline_links (
         id text PRIMARY KEY,
         task_id text NOT NULL,
@@ -164,6 +253,49 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
         ON project.ce_pipeline_sync_queue(processed_at, enqueued_at, id);
       CREATE INDEX IF NOT EXISTS "idxCePipelineSyncQueuePipeline"
         ON project.ce_pipeline_sync_queue(ce_pipeline_id, enqueued_at, id);
+    `));
+  },
+};
+
+/**
+ * FNXC:WhatsAppPostgresPersistence 2026-07-13-22:37:
+ * WhatsApp credentials, Signal keys, replay protection, and conversation history are durable plugin data. Store them in PostgreSQL and include project_id in every key so two projects using the bundled plugin cannot share auth state or suppress each other's inbound messages.
+ */
+export const whatsappPluginSchemaInit: PluginSchemaInitHook = {
+  pluginId: "fusion-plugin-whatsapp-chat",
+  async init(db) {
+    await db.execute(sql.raw(`
+      CREATE TABLE IF NOT EXISTS project.whatsapp_chat_sessions (
+        project_id text NOT NULL,
+        sender text NOT NULL,
+        history text NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, sender)
+      );
+      CREATE TABLE IF NOT EXISTS project.whatsapp_chat_dedupe (
+        project_id text NOT NULL,
+        message_id text NOT NULL,
+        sender text NOT NULL,
+        received_at text NOT NULL,
+        PRIMARY KEY (project_id, message_id)
+      );
+      CREATE INDEX IF NOT EXISTS "idxWhatsAppDedupeRetention"
+        ON project.whatsapp_chat_dedupe(project_id, received_at);
+      CREATE TABLE IF NOT EXISTS project.whatsapp_auth_creds (
+        project_id text NOT NULL,
+        id text NOT NULL,
+        value text NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id)
+      );
+      CREATE TABLE IF NOT EXISTS project.whatsapp_auth_keys (
+        project_id text NOT NULL,
+        category text NOT NULL,
+        key_id text NOT NULL,
+        value text NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, category, key_id)
+      );
     `));
   },
 };
@@ -322,6 +454,7 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
 export const DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS: readonly PluginSchemaInitHook[] = [
   roadmapPluginSchemaInit,
   cePluginSchemaInit,
+  whatsappPluginSchemaInit,
   reportsPluginSchemaInit,
   cliPressPluginSchemaInit,
 ];

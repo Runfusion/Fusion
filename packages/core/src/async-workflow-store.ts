@@ -17,24 +17,17 @@
 import { asc, eq } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import type { StoredWorkflowRow } from "./workflow-definition-types.js";
 
 /** SQLite-shaped workflow row (ir/layout as JSON strings) consumed by toWorkflowDefinition. */
-export interface WorkflowRow {
-  id: string;
-  name: string;
-  description: string;
-  ir: string;
-  layout: string;
-  kind: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export type WorkflowRow = StoredWorkflowRow;
 
 function rowToWorkflowRow(r: typeof schema.project.workflows.$inferSelect): WorkflowRow {
   return {
     id: r.id,
     name: r.name,
     description: r.description ?? "",
+    icon: r.icon ?? null,
     ir: typeof r.ir === "string" ? r.ir : JSON.stringify(r.ir ?? {}),
     layout: typeof r.layout === "string" ? r.layout : JSON.stringify(r.layout ?? {}),
     kind: r.kind ?? null,

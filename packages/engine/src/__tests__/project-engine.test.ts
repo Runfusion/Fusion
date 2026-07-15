@@ -38,8 +38,17 @@ const mocks = vi.hoisted(() => ({
   oauthRefreshSchedulerStart: vi.fn(async () => undefined),
   oauthRefreshSchedulerStop: vi.fn(),
   runtimeConfigurePrMonitoring: vi.fn(),
+  deliverPostgresMigrationCompleteNotice: vi.fn(async () => "no-migration"),
   prHandlerCreateFollowUpTask: vi.fn(async () => undefined),
 }));
+
+vi.mock("../postgres-migration-notice.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../postgres-migration-notice.js")>();
+  return {
+    ...actual,
+    deliverPostgresMigrationCompleteNoticeIfNeeded: mocks.deliverPostgresMigrationCompleteNotice,
+  };
+});
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");
@@ -346,6 +355,8 @@ function createEngine(options?: ConstructorParameters<typeof ProjectEngine>[2]) 
 }
 
 beforeEach(() => {
+  mocks.deliverPostgresMigrationCompleteNotice.mockReset();
+  mocks.deliverPostgresMigrationCompleteNotice.mockResolvedValue("no-migration");
   mocks.runtimeResumeAfterUnpause.mockClear();
   mocks.notifierStart.mockClear();
   mocks.notifierStop.mockClear();
@@ -453,6 +464,31 @@ describe("ProjectEngine notification ownership wiring", () => {
     expect(OAuthExpiryMonitor).not.toHaveBeenCalled();
     expect(OAuthValidityLogger).not.toHaveBeenCalled();
     expect(NtfyNotifier).not.toHaveBeenCalled();
+
+    await engine.stop();
+  });
+
+  /*
+  FNXC:PostgresMigrationInbox 2026-07-14-12:10:
+  Post-migration inbox delivery is informational background work. Project startup must complete even while the database-backed notice operation is still pending.
+  */
+  it("does not block startup on post-migration inbox delivery", async () => {
+    const mockStore = createMockStore({
+      ...baseSettings,
+      sqliteMigrationNotice: {
+        migratedAt: "2026-07-14T18:00:00.000Z",
+        migratedRows: 10,
+        tables: 2,
+        sqliteBackups: ["/tmp/fusion.db"],
+        dismissed: false,
+      },
+    });
+    mocks.currentStore = mockStore.store;
+    mocks.deliverPostgresMigrationCompleteNotice.mockImplementation(() => new Promise(() => {}));
+
+    const engine = createEngine();
+    await expect(engine.start()).resolves.toBeUndefined();
+    expect(mocks.deliverPostgresMigrationCompleteNotice).toHaveBeenCalledOnce();
 
     await engine.stop();
   });

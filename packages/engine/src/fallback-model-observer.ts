@@ -24,7 +24,20 @@ function buildFallbackLogMessage(
   label: string,
   payload: FallbackModelUsedPayload,
 ): string {
-  return `[fallback] ${label} switched from ${payload.primaryModel} to ${payload.fallbackModel} (${payload.triggerPoint})`;
+  const reason = payload.failureCategory === "authentication"
+    ? "; primary provider authentication failed"
+    : payload.failureCategory === "rate-limit"
+      ? "; primary provider rate limit reached"
+      : payload.failureCategory === "model-selection"
+        ? "; primary model was unavailable"
+        : payload.failureCategory === "provider-error"
+          ? "; primary provider failed"
+          : "";
+  /*
+  FNXC:ModelFallback 2026-07-14-15:58:
+  A successful fallback must still explain the primary failure on the task. Persist a bounded category rather than raw provider text so operators can distinguish authentication from capacity/model failures without leaking credentials or arbitrary response bodies into activity logs.
+  */
+  return `[fallback] ${label} switched from ${payload.primaryModel} to ${payload.fallbackModel} (${payload.triggerPoint}${reason})`;
 }
 
 export function createFallbackModelObserver(options: FallbackModelObserverOptions) {

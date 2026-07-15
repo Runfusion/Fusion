@@ -25,6 +25,8 @@ import { projectSchema } from "./project.js";
  */
 export const roadmaps = projectSchema.table("roadmaps", {
   id: text("id").primaryKey(),
+  /** FNXC:RoadmapPostgresUpgrade 2026-07-13-23:40: Runtime Roadmap rows always carry the project partition enforced by the plugin upgrade hook. */
+  projectId: text("project_id").notNull(),
   title: text("title").notNull(),
   description: text("description"),
   createdAt: text("created_at").notNull(),
@@ -33,6 +35,7 @@ export const roadmaps = projectSchema.table("roadmaps", {
 
 export const roadmapMilestones = projectSchema.table("roadmap_milestones", {
   id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
   roadmapId: text("roadmap_id").notNull(),
   title: text("title").notNull(),
   description: text("description"),
@@ -46,6 +49,7 @@ export const roadmapMilestones = projectSchema.table("roadmap_milestones", {
 
 export const roadmapFeatures = projectSchema.table("roadmap_features", {
   id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
   milestoneId: text("milestone_id").notNull(),
   title: text("title").notNull(),
   description: text("description"),

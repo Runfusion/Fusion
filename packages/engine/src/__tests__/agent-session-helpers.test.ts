@@ -229,7 +229,7 @@ describe("resolve session model parity", () => {
     });
   });
 
-  it("does not let a stale complete runtime model mask newer task or settings models", () => {
+  it("does not let a stale complete runtime model mask newer task or settings models outside heartbeat", () => {
     const staleRuntimeConfig = { model: "openai-codex/gpt-5.3-codex" };
 
     expect(resolveExecutorSessionModel("task-provider", "task-model", settings, staleRuntimeConfig)).toEqual({
@@ -248,12 +248,6 @@ describe("resolve session model parity", () => {
       provider: "anthropic",
       modelId: "claude-sonnet-4-5",
     });
-    expect(resolveHeartbeatSessionModels(settings, staleRuntimeConfig)).toEqual({
-      defaultProvider: "openai",
-      defaultModelId: "gpt-4.1",
-      fallbackProvider: undefined,
-      fallbackModelId: undefined,
-    });
     expect(resolveValidatorSessionModel("validator-task-provider", "validator-task-model", settings, staleRuntimeConfig)).toEqual({
       provider: "validator-task-provider",
       modelId: "validator-task-model",
@@ -269,6 +263,23 @@ describe("resolve session model parity", () => {
     expect(resolveMergerSessionModel(settings, staleRuntimeConfig)).toEqual({
       provider: "google",
       modelId: "gemini-2.5-pro",
+    });
+  });
+
+  it("uses the durable agent's complete assigned model for heartbeat instead of shared execution settings", () => {
+    expect(resolveHeartbeatSessionModels(
+      {
+        defaultProviderOverride: "anthropic",
+        defaultModelIdOverride: "claude-sonnet-5",
+        defaultProvider: "openai-codex",
+        defaultModelId: "gpt-5.5",
+      },
+      { modelProvider: "grok-cli", modelId: "grok-4.5", model: "grok-cli/grok-4.5" },
+    )).toEqual({
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-4.5",
+      fallbackProvider: undefined,
+      fallbackModelId: undefined,
     });
   });
 
@@ -391,7 +402,7 @@ describe("resolve session model parity", () => {
   });
 });
 
-describe("project model override precedence invariant", () => {
+describe("non-heartbeat project model override precedence invariant", () => {
   const staleRuntimeConfig = { model: "stale-provider/stale-model" };
   const partialRuntimeConfigs: Array<Record<string, unknown>> = [
     { modelProvider: "stale-provider" },
@@ -429,18 +440,6 @@ describe("project model override precedence invariant", () => {
           validatorModelId: "project-validator-model",
         }, runtimeConfig),
       expected: { provider: "project-validator-provider", modelId: "project-validator-model" },
-    },
-    {
-      label: "heartbeat execution lane",
-      settings: { executionProvider: "project-heartbeat-provider", executionModelId: "project-heartbeat-model" },
-      resolve: (runtimeConfig?: Record<string, unknown>) => {
-        const resolved = resolveHeartbeatSessionModels({
-          executionProvider: "project-heartbeat-provider",
-          executionModelId: "project-heartbeat-model",
-        }, runtimeConfig);
-        return { provider: resolved.defaultProvider, modelId: resolved.defaultModelId };
-      },
-      expected: { provider: "project-heartbeat-provider", modelId: "project-heartbeat-model" },
     },
     {
       label: "merger default lane",
@@ -924,6 +923,24 @@ describe("resolveImplicitPlanningFallbackModel (FN-7719)", () => {
     ).toEqual({
       provider: undefined,
       modelId: undefined,
+    });
+  });
+
+  it("uses the inherited global default when a project override equals the planning primary", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel(
+        {
+          defaultProviderOverride: "anthropic",
+          defaultModelIdOverride: "claude-sonnet-5",
+          defaultProvider: "openai-codex",
+          defaultModelId: "gpt-5.5",
+        },
+        "anthropic",
+        "claude-sonnet-5",
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
     });
   });
 

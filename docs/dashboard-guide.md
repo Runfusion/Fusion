@@ -1966,6 +1966,9 @@ The dashboard now exposes branch-group visibility and controls for shared planni
 - `GET /api/branch-groups/:id` returns group details (shared branch, members, per-member landed state, completion, PR state).
 - `POST /api/branch-groups/assign` is the supported online grouping path to attach/detach tasks (`{ taskId, groupId|null, branchName? }`). Passing `groupId: null` clears only that task's branch-group context and preserves unrelated task source metadata.
 - `POST /api/branch-groups/:id/promote` triggers the engine promotion flow (`promoteBranchGroup`) and returns promotion/PR status.
+- `POST /api/branch-groups/:id/abandon` marks an open group abandoned and best-effort closes its managed PR.
+
+Every branch-group endpoint is project-scoped per request. Pass `projectId` in the query string for any endpoint or in a POST JSON body; reads, writes, member serialization, promotion, and PR reconciliation all use that selected project's store. Omitting `projectId` preserves compatibility by using the dashboard's mounted default store.
 
 UI surfaces:
 

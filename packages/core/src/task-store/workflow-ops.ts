@@ -13,7 +13,7 @@ import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedCol
 import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
 import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
-import type {WorkflowDefinition, WorkflowDefinitionUpdate} from "../workflow-definition-types.js";
+import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionUpdate} from "../workflow-definition-types.js";
 import {resolveDefaultOnOptionalGroupIds} from "../workflow-optional-steps.js";
 import {isBuiltinWorkflowId} from "../builtin-workflows.js";
 import {fromJson} from "../db.js";
@@ -455,6 +455,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         ...existing,
         name,
         description: updates.description !== undefined ? updates.description : existing.description,
+        icon: updates.icon !== undefined ? normalizeWorkflowIcon(updates.icon) : existing.icon,
         ir,
         layout: updates.layout !== undefined ? updates.layout : existing.layout,
         updatedAt: new Date().toISOString(),
@@ -465,6 +466,7 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         await layer.db.update(schema.project.workflows).set({
           name: next.name,
           description: next.description,
+          icon: next.icon ?? null,
           ir: flagOn ? next.ir : downgradeIrToV1IfPure(next.ir),
           layout: next.layout,
           updatedAt: next.updatedAt,
@@ -472,11 +474,12 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
       } else {
         store.db
           .prepare(
-            `UPDATE workflows SET name = ?, description = ?, ir = ?, layout = ?, updatedAt = ? WHERE id = ?`,
+            `UPDATE workflows SET name = ?, description = ?, icon = ?, ir = ?, layout = ?, updatedAt = ? WHERE id = ?`,
           )
           .run(
             next.name,
             next.description,
+            next.icon ?? null,
             // Rollback compat (#1405): persist v1 shape when pure and flag OFF.
             serializeWorkflowIr(flagOn ? next.ir : downgradeIrToV1IfPure(next.ir)),
             JSON.stringify(next.layout),
@@ -691,4 +694,3 @@ export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, w
       return ids;
     });
   }
-

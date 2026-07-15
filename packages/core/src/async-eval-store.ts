@@ -18,16 +18,17 @@
  *   flip. These helpers are the async target the PostgreSQL integration tests
  *   consume.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
-import { EvalLifecycleError } from "./eval-store.js";
+import { EvalLifecycleError, applyEvalRunUpdate } from "./eval-store.js";
 import type {
   EvalRun,
   EvalRunCreateInput,
   EvalRunListOptions,
   EvalRunStatus,
+  EvalRunUpdateInput,
   EvalTaskResult,
   EvalTaskResultCreateInput,
   EvalTaskResultListOptions,
@@ -183,16 +184,17 @@ export async function listEvalRuns(handle: QueryHandle, options: EvalRunListOpti
   if (options.projectId) conditions.push(eq(schema.project.evalRuns.projectId, options.projectId));
   if (options.status) conditions.push(eq(schema.project.evalRuns.status, options.status));
   if (options.trigger) conditions.push(eq(schema.project.evalRuns.trigger, options.trigger));
-  const query = handle
+  let query = handle
     .select()
     .from(schema.project.evalRuns)
-    .orderBy(asc(schema.project.evalRuns.createdAt), asc(schema.project.evalRuns.id));
-  const rows = conditions.length > 0
-    ? await query.where(and(...conditions))
-    : await query;
-  const limited = options.limit !== undefined ? rows.slice(0, options.limit) : rows;
-  const offsetted = options.offset !== undefined ? limited.slice(options.offset) : limited;
-  return offsetted.map(rowToRun);
+    .$dynamic();
+  if (conditions.length > 0) query = query.where(and(...conditions));
+  query = options.order === "desc"
+    ? query.orderBy(desc(schema.project.evalRuns.createdAt), desc(schema.project.evalRuns.id))
+    : query.orderBy(asc(schema.project.evalRuns.createdAt), asc(schema.project.evalRuns.id));
+  if (options.offset !== undefined) query = query.offset(options.offset);
+  if (options.limit !== undefined) query = query.limit(options.limit);
+  return (await query).map(rowToRun);
 }
 
 /**
@@ -230,9 +232,17 @@ export async function upsertEvalTaskResult(
   handle: QueryHandle,
   result: EvalTaskResult,
 ): Promise<void> {
+  const runRows = await handle
+    .select({ projectId: schema.project.evalRuns.projectId })
+    .from(schema.project.evalRuns)
+    .where(eq(schema.project.evalRuns.id, result.runId))
+    .limit(1);
+  const projectId = runRows[0]?.projectId;
+  if (!projectId) throw new Error(`Eval run not found: ${result.runId}`);
   await handle
     .insert(schema.project.evalTaskResults)
     .values({
+      projectId,
       id: result.id,
       runId: result.runId,
       taskId: result.taskId,
@@ -253,7 +263,11 @@ export async function upsertEvalTaskResult(
       updatedAt: result.updatedAt,
     })
     .onConflictDoUpdate({
-      target: [schema.project.evalTaskResults.runId, schema.project.evalTaskResults.taskId],
+      target: [
+        schema.project.evalTaskResults.projectId,
+        schema.project.evalTaskResults.runId,
+        schema.project.evalTaskResults.taskId,
+      ],
       set: {
         taskSnapshot: result.taskSnapshot,
         status: result.status,
@@ -332,6 +346,13 @@ export async function appendEvalRunEvent(
   input: { id: string; runId: string; type: string; message: string; status?: EvalRunStatus; taskId?: string; metadata?: Record<string, unknown> },
 ): Promise<EvalRunEvent> {
   return layer.transactionImmediate(async (tx) => {
+    const runRows = await tx
+      .select({ projectId: schema.project.evalRuns.projectId })
+      .from(schema.project.evalRuns)
+      .where(eq(schema.project.evalRuns.id, input.runId))
+      .limit(1);
+    const projectId = runRows[0]?.projectId;
+    if (!projectId) throw new Error(`Eval run not found: ${input.runId}`);
     const seqRows = await tx
       .select({ maxSeq: sql<number | null>`max(${schema.project.evalRunEvents.seq})` })
       .from(schema.project.evalRunEvents)
@@ -339,6 +360,7 @@ export async function appendEvalRunEvent(
     const seq = (seqRows[0]?.maxSeq ?? 0) + 1;
     const createdAt = new Date().toISOString();
     await tx.insert(schema.project.evalRunEvents).values({
+      projectId,
       id: input.id,
       runId: input.runId,
       seq,
@@ -428,6 +450,23 @@ export class AsyncEvalStore {
       updatedAt: now,
     });
     return run;
+  }
+
+  /*
+  FNXC:ScheduledEvalsPostgres 2026-07-14-01:41:
+  PostgreSQL scheduled batches require one serialized lifecycle mutation per run. Hold a transaction-scoped run lock across the authoritative read, applyEvalRunUpdate validation, and persistence so concurrent terminal transitions cannot both validate a stale active row and the later writer cannot overwrite the committed terminal state. Preserve terminal immutability, transition validation, nullable clears, and metadata/provenance merge semantics through the shared helper.
+  */
+  async updateRun(id: string, input: EvalRunUpdateInput): Promise<EvalRun | undefined> {
+    return this.layer.transactionImmediate(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:eval-run-update:${id}`}, 0))`,
+      );
+      const existing = await getEvalRun(tx, id);
+      if (!existing) return undefined;
+      const updated = applyEvalRunUpdate(existing, input);
+      await persistEvalRun(tx, updated);
+      return updated;
+    });
   }
 
   async getTaskResult(id: string): Promise<EvalTaskResult | undefined> {

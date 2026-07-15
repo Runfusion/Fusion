@@ -452,6 +452,7 @@ export function AppModals({
           addToast={addToast}
           projectId={projectId}
           initialDescription={modalManager.newTaskInitialDescription ?? ""}
+          initialWorkflowId={modalManager.newTaskInitialWorkflowId}
           onPlanningMode={onPlanningMode}
           onSubtaskBreakdown={onSubtaskBreakdown}
         />

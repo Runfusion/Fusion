@@ -5682,6 +5682,8 @@
       "title": "外观",
       "openTasksInRightSidebarHelp": "",
       "openMobileTasksInPopupHelp": "",
+      "taskPopupsBoardListOnly": "",
+      "taskPopupsBoardListOnlyHelp": "",
       "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": ""
@@ -8959,14 +8961,12 @@
     "done": "Done",
     "inProgress": "In Progress",
     "label": "Workflow",
-    "merging": "合并中",
-    "mergingTitle": "{{count}} 个合并中任务{{plural}}",
+    "merging": "",
+    "mergingTitle": "",
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow",
-    "merging": "",
-    "mergingTitle": ""
+    "newWorkflow": "New workflow"
   },
   "workspace": {
     "projectRoot": "项目根目录",

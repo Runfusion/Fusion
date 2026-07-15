@@ -22,6 +22,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
+      # The manual Windows installer path must boot the same embedded database
+      # payload used by Local mode before it can publish an installer artifact.
+      - name: Smoke embedded Postgres on Windows
+        run: pnpm --filter @fusion/core test:embedded-postgres
+
       # FNXC:WindowsDesktopPackaging 2026-07-01-19:45:
       # Mirror release.yml: build every workspace package's tsc dist (incl.
       # @fusion/core and @fusion/engine, which are gitignored) before packaging.
@@ -38,7 +44,7 @@ jobs:
       # Code-signing hardening is intentionally deferred to FN-5592.
       - name: Package signed Windows EXE
         if: ${{ env.WINDOWS_CERTIFICATE_BASE64 != '' }}
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --x64 --arm64 --publish never
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --x64 --publish never
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
@@ -48,7 +54,7 @@ jobs:
 
       - name: Package unsigned Windows EXE
         if: ${{ env.WINDOWS_CERTIFICATE_BASE64 == '' }}
-        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --x64 --arm64 --publish never
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --win --x64 --publish never
         env:
           WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"

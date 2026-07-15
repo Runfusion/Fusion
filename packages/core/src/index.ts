@@ -79,6 +79,17 @@ export * from "./overseer-emission-guard.js";
 export * from "./frontend-ux-policy.js";
 export * from "./file-scope-classification.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./task-list-format.js";
+export {
+  WAKE_DELTA_ASSIGNED_TASKS_CAP,
+  rankAssignedTasksForWakeDelta,
+  formatAssignedTasksWakeDeltaSection,
+} from "./assigned-task-ranking.js";
+export type {
+  AssignedTaskLike,
+  AssignedTaskRankTier,
+  RankedAssignedTaskLine,
+  RankAssignedTasksForWakeDeltaResult,
+} from "./assigned-task-ranking.js";
 export { MOCK_PROVIDER_ID } from "./mock-provider-constants.js";
 export type { MockProviderId, MockSessionPurpose } from "./mock-provider-constants.js";
 export {
@@ -2232,7 +2243,10 @@ export {
   PROJECT_BACKUP_SCHEMAS,
   CENTRAL_BACKUP_SCHEMAS,
   migrateSqliteToPostgres,
+  isSqliteMigrationComplete,
+  completeSqliteMigration,
   defaultMigrationSources,
+  formatMigrationProgress,
   // FNXC:CentralProjectIdentity 2026-07-13-23:10:
   // Post-migration project-partition stamping, shared by the startup-factory
   // first-boot auto-migration and `fn db migrate` so migrated rows are re-keyed
@@ -2275,6 +2289,8 @@ export type {
   SqliteMigrationSource,
   SchemaName,
   MigrationReport,
+  MigrationProgressEvent,
+  MigrationProgressPhase,
   TableMigrationResult,
   StampMigratedProjectRowsInput,
   StampMigratedProjectRowsResult,
@@ -2339,7 +2355,7 @@ export type {
 // Re-export the drizzle-orm `sql` template tag so dashboard/engine consumers
 // can build raw queries against the AsyncDataLayer without depending on
 // drizzle-orm directly.
-export { sql as drizzleSql } from "drizzle-orm";
+export { sql as drizzleSql, eq as drizzleEq } from "drizzle-orm";
 
 // FNXC:PostgresSchema 2026-07-04-00:00:
 // Re-export the PostgreSQL Drizzle schema namespace so plugin stores (which
@@ -2353,3 +2369,6 @@ export {
   upsertWorkflowStepResult,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
 } from "./workflow-step-results.js";
+// FNXC:SqliteRemoval 2026-07-14: Export async audit reader so engine tests can
+// query run-audit events in backend mode (sync getRunAuditEvents returns [] in PG mode).
+export { queryRunAuditEvents } from "./task-store/async-audit.js";

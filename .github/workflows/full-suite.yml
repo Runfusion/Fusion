@@ -197,8 +197,6 @@ jobs:
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
-        with:
-          skip-install: "true"
 
       # FNXC:TestInfrastructure 2026-06-21-10:26:
       # Keep line-count drift visible in automated post-merge signal without restoring it to the blocking PR gate.
@@ -214,6 +212,27 @@ jobs:
   test-slow:
     name: Engine slow tier
     runs-on: ubuntu-latest
+    # FNXC:FixPgTestsAndCi 2026-07-14-00:00:
+    # Provision a PostgreSQL service container so reliability-interaction test
+    # helpers (which now require a PG-backed TaskStore after SQLite removal
+    # VAL-REMOVAL-005) can run in the engine-slow tier too.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -p 5432 -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      FUSION_PG_TEST_URL_BASE: "postgresql://postgres:postgres@localhost:5432"
+      PGPASSWORD: "postgres"
     # Real-git slow suites; same backstop rationale as test-shards. Sits above
     # the L2 per-invocation ceiling so the watchdog fires first on a single hang.
     timeout-minutes: 60

@@ -168,6 +168,7 @@ describe("register-agent-skills-routes", () => {
       "/tmp/file-root",
       "npm::skills/test-skill",
       "reference.md",
+      expect.objectContaining({ getRootDir: expect.any(Function) }),
     );
   });
 

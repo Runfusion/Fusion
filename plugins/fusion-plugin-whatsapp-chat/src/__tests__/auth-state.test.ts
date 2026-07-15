@@ -5,6 +5,9 @@ function createInMemoryDb() {
   const creds = new Map<string, string>();
   const keys = new Map<string, string>();
   const makeKey = (category: string, id: string) => `${category}:${id}`;
+  let transactionSnapshot: { creds: Map<string, string>; keys: Map<string, string> } | null = null;
+  let failKeyId: string | null = null;
+  let failAuthKeysClear = false;
 
   return {
     prepare(sql: string) {
@@ -29,37 +32,57 @@ function createInMemoryDb() {
             creds.clear();
           }
           if (sql.includes("INSERT INTO whatsapp_auth_keys")) {
+            if (args[1] === failKeyId) throw new Error("injected auth-key write failure");
             keys.set(makeKey(args[0] as string, args[1] as string), args[2] as string);
           }
           if (sql.includes("DELETE FROM whatsapp_auth_keys WHERE category")) {
             keys.delete(makeKey(args[0] as string, args[1] as string));
           }
           if (sql.includes("DELETE FROM whatsapp_auth_keys")) {
+            if (failAuthKeysClear) throw new Error("injected auth-key clear failure");
             keys.clear();
           }
         },
       };
     },
-    exec() {},
+    exec(sql: string) {
+      if (sql === "BEGIN IMMEDIATE") {
+        transactionSnapshot = { creds: new Map(creds), keys: new Map(keys) };
+      }
+      if (sql === "COMMIT") transactionSnapshot = null;
+      if (sql === "ROLLBACK" && transactionSnapshot) {
+        creds.clear();
+        for (const [key, value] of transactionSnapshot.creds) creds.set(key, value);
+        keys.clear();
+        for (const [key, value] of transactionSnapshot.keys) keys.set(key, value);
+        transactionSnapshot = null;
+      }
+    },
     _creds: creds,
     _keys: keys,
+    failAuthKeyWrite(id: string | null) {
+      failKeyId = id;
+    },
+    failAuthKeyClear(value: boolean) {
+      failAuthKeysClear = value;
+    },
   };
 }
 
 describe("auth-state", () => {
   it("round-trips creds", async () => {
     const db = createInMemoryDb();
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
     auth.state.creds.me = { id: "123@s.whatsapp.net", name: "Fusion" } as any;
     await auth.saveCreds();
 
-    const next = createPluginDbAuthState(db as any);
+    const next = await createPluginDbAuthState(db as any);
     expect(next.state.creds.me?.id).toBe("123@s.whatsapp.net");
   });
 
   it("sets, gets, and deletes key categories", async () => {
     const db = createInMemoryDb();
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
 
     await auth.state.keys.set({
       session: { alpha: { foo: "bar" } as any },
@@ -75,24 +98,60 @@ describe("auth-state", () => {
     expect((removed as any).alpha).toBeUndefined();
   });
 
+  it("rolls back every SQLite auth-key category when a later category write fails", async () => {
+    const db = createInMemoryDb();
+    const auth = await createPluginDbAuthState(db as any);
+    await auth.state.keys.set({ session: { alpha: { version: "old" } as any } });
+    db.failAuthKeyWrite("beta");
+
+    await expect(auth.state.keys.set({
+      session: { alpha: { version: "new" } as any },
+      "sender-key": {
+        beta: { version: "new" } as any,
+      },
+    })).rejects.toThrow("injected auth-key write failure");
+
+    db.failAuthKeyWrite(null);
+    const session = await auth.state.keys.get("session", ["alpha"]);
+    const senderKey = await auth.state.keys.get("sender-key", ["beta"]);
+    expect((session as any).alpha).toEqual({ version: "old" });
+    expect((senderKey as any).beta).toBeUndefined();
+  });
+
   it("clears auth state", async () => {
     const db = createInMemoryDb();
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
     auth.state.creds.me = { id: "123@s.whatsapp.net", name: "Fusion" } as any;
     await auth.saveCreds();
     await auth.state.keys.set({ session: { alpha: { ok: true } as any } });
 
-    clearAuthState(db as any);
+    await clearAuthState(db as any);
 
     expect(db._creds.size).toBe(0);
     expect(db._keys.size).toBe(0);
+  });
+
+  it("rolls back credentials and keys when the second SQLite auth clear fails", async () => {
+    const db = createInMemoryDb();
+    const auth = await createPluginDbAuthState(db as any);
+    auth.state.creds.me = { id: "123@s.whatsapp.net", name: "Fusion" } as any;
+    await auth.saveCreds();
+    await auth.state.keys.set({ session: { alpha: { ok: true } as any } });
+    db.failAuthKeyClear(true);
+
+    await expect(clearAuthState(db as any)).rejects.toThrow("injected auth-key clear failure");
+
+    db.failAuthKeyClear(false);
+    const restored = await createPluginDbAuthState(db as any);
+    expect(restored.state.creds.me?.id).toBe("123@s.whatsapp.net");
+    expect((await restored.state.keys.get("session", ["alpha"]) as any).alpha).toEqual({ ok: true });
   });
 
   it("handles corrupt json gracefully", async () => {
     const db = createInMemoryDb();
     db._keys.set("session:bad", "not-json");
 
-    const auth = createPluginDbAuthState(db as any);
+    const auth = await createPluginDbAuthState(db as any);
     const loaded = await auth.state.keys.get("session", ["bad"]);
     expect((loaded as any).bad).toBeUndefined();
   });

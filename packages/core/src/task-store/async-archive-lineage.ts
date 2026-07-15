@@ -91,7 +91,7 @@ export async function upsertArchivedTaskEntry(
       // FNXC:MultiProjectIsolation 2026-07-12: stamp the owning project so the
       // shared cold-storage archive can be scoped per project on reads. Stable
       // for the row's lifetime — the conflict-update below never rewrites it.
-      projectId: projectId ?? null,
+      projectId: projectId ?? "__legacy_unscoped__",
       taskJson: JSON.stringify(entry),
       prompt: entry.prompt ?? null,
       archivedAt: entry.archivedAt,
@@ -103,7 +103,7 @@ export async function upsertArchivedTaskEntry(
       columnMovedAt: entry.columnMovedAt ?? null,
     })
     .onConflictDoUpdate({
-      target: schema.archive.archivedTasks.id,
+      target: [schema.archive.archivedTasks.projectId, schema.archive.archivedTasks.id],
       set: {
         taskJson: JSON.stringify(entry),
         prompt: entry.prompt ?? null,

@@ -22,6 +22,7 @@ export interface WorkflowAuthoritativeDriverStore {
   getSettings(): Promise<Settings>;
   getTask(taskId: string): Promise<TaskDetail>;
   getTaskWorkflowSelection?(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
+  getTaskWorkflowSelectionAsync?(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined>;
   getWorkflowParitySummary?(options?: { since?: string; limit?: number }): WorkflowParitySummary;
 }
 
@@ -160,7 +161,13 @@ export class WorkflowAuthoritativeDriver {
       };
     }
 
-    const existingSelection = this.deps.store.getTaskWorkflowSelection?.(task.id);
+    /*
+    FNXC:WorkflowSelection 2026-07-14-17:06:
+    The authoritative cutover guard must await PostgreSQL workflow-selection storage before deciding a task is unselected. Keep the synchronous branch only for narrow legacy/in-memory driver doubles.
+    */
+    const existingSelection = this.deps.store.getTaskWorkflowSelectionAsync
+      ? await this.deps.store.getTaskWorkflowSelectionAsync(task.id)
+      : this.deps.store.getTaskWorkflowSelection?.(task.id);
     if (existingSelection) {
       return {
         handled: false,

@@ -81,7 +81,10 @@ import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { isTransientError } from "./transient-error-detector.js";
 import { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
-import { deliverPostgresMigrationNoticeIfNeeded } from "./postgres-migration-notice.js";
+import {
+  deliverPostgresMigrationCompleteNoticeIfNeeded,
+  deliverPostgresMigrationNoticeIfNeeded,
+} from "./postgres-migration-notice.js";
 import type {
   ExternalTunnelInfo,
   TunnelProvider,
@@ -642,6 +645,19 @@ export class ProjectEngine {
     const store = this.runtime.getTaskStore();
     const cwd = this.config.workingDirectory;
     const settings = await store.getSettings();
+    const migrationNotice = settings.sqliteMigrationNotice;
+    void deliverPostgresMigrationCompleteNoticeIfNeeded({
+      messageStore: this.runtime.getMessageStore(),
+      notice: migrationNotice,
+      projectId: this.config.projectId,
+      deliveredAt: settings.postgresMigrationInboxMessageSentAt,
+      markDelivered: migrationNotice
+        ? async (inboxMessageSentAt) => {
+            await store.updateSettings({ postgresMigrationInboxMessageSentAt: inboxMessageSentAt });
+          }
+        : undefined,
+      log: runtimeLog,
+    });
 
     /*
      * FNXC:BackendFlip 2026-06-26-15:30:

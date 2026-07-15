@@ -41,9 +41,13 @@ function uniqueDbName(): string {
   return `fusion_fdir_test_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/*
+FNXC:PgTestAuthFix 2026-07-14-00:00:
+The inline adminExec used process.env.USER for the psql -U flag, which is 'runner' on GitHub Actions (not 'postgres'). Use the PG_TEST_URL_BASE connection string instead so credentials are always correct.
+*/
 function adminExec(statement: string): void {
   execSync(
-    `psql -h localhost -p 5432 -U ${process.env.USER ?? "postgres"} -d postgres -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
 }
@@ -106,6 +110,7 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
   it("AutomationStore: create → get → list → update (upsert) → due query → delete", async () => {
     ctx = await setupCtx();
     const { upsertSchedule, getSchedule, findSchedule, listSchedules, deleteSchedule, getDueSchedules } = await import("../../async-automation-store.js");
+    const layer = { ...ctx.layer, projectId: "automation-round-trip" } as AsyncDataLayer;
     const now = new Date().toISOString();
     const past = new Date(Date.now() - 60_000).toISOString();
 
@@ -129,8 +134,8 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
       updatedAt: now,
     };
 
-    await upsertSchedule(ctx.layer.db, schedule);
-    const fetched = await getSchedule(ctx.layer.db, schedule.id);
+    await upsertSchedule(layer, schedule);
+    const fetched = await getSchedule(layer, schedule.id);
     expect(fetched.name).toBe("Nightly Build");
     expect(fetched.enabled).toBe(true);
     expect(fetched.steps).toHaveLength(1);
@@ -146,31 +151,96 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
       runHistory: [{ success: true, output: "ok", startedAt: past, completedAt: now }],
       updatedAt: now,
     };
-    await upsertSchedule(ctx.layer.db, updated);
-    const afterUpdate = await getSchedule(ctx.layer.db, schedule.id);
+    await upsertSchedule(layer, updated);
+    const afterUpdate = await getSchedule(layer, schedule.id);
     expect(afterUpdate.enabled).toBe(false);
     expect(afterUpdate.runCount).toBe(1);
     expect(afterUpdate.lastRunResult).toEqual(updated.lastRunResult);
     expect(afterUpdate.runHistory).toHaveLength(1);
 
     // List
-    const all = await listSchedules(ctx.layer.db);
+    const all = await listSchedules(layer);
     expect(all).toHaveLength(1);
 
     // Due query (enabled=false now, so not due)
-    const dueDisabled = await getDueSchedules(ctx.layer.db, now, "project");
+    const dueDisabled = await getDueSchedules(layer, now, "project");
     expect(dueDisabled).toHaveLength(0);
 
     // Re-enable and check due
-    await upsertSchedule(ctx.layer.db, { ...updated, enabled: true });
-    const dueEnabled = await getDueSchedules(ctx.layer.db, now, "project");
+    await upsertSchedule(layer, { ...updated, enabled: true });
+    const dueEnabled = await getDueSchedules(layer, now, "project");
     expect(dueEnabled).toHaveLength(1);
     expect(dueEnabled[0]!.id).toBe(schedule.id);
 
     // findSchedule returns the row, deleteSchedule removes it
-    expect((await findSchedule(ctx.layer.db, schedule.id))?.id).toBe(schedule.id);
-    expect(await deleteSchedule(ctx.layer.db, schedule.id)).toBe(true);
-    expect(await findSchedule(ctx.layer.db, schedule.id)).toBeUndefined();
+    expect((await findSchedule(layer, schedule.id))?.id).toBe(schedule.id);
+    expect(await deleteSchedule(layer, schedule.id)).toBe(true);
+    expect(await findSchedule(layer, schedule.id)).toBeUndefined();
+  });
+
+  /**
+   * FNXC:AutomationIsolation 2026-07-13-22:37:
+   * Embedded PostgreSQL shares one physical automations table across projects, while SQLite provided isolation through one file per project. Every automation operation must therefore use the bound AsyncDataLayer projectId. This regression covers unbound rejection, empty, duplicate-ID, and populated states and proves that listing, mutation, deletion, and the due-run claim boundary cannot cross projects. A `global` scope remains an execution lane owned by the project that created it; it is not permission for another project's cron runner to execute the command.
+   *
+   * FNXC:AutomationIsolation 2026-07-14-00:37:
+   * Missing project ownership is an invalid automation-store state. Unbound helpers must reject rather than creating an invisible schedule in the empty-string partition.
+   */
+  it("AutomationStore: isolates duplicate IDs and due-run claims across two bound projects", async () => {
+    ctx = await setupCtx();
+    const { upsertSchedule, listSchedules } = await import("../../async-automation-store.js");
+    const { AutomationStore } = await import("../../automation-store.js");
+    const layerA = { ...ctx.layer, projectId: "project-a" } as AsyncDataLayer;
+    const layerB = { ...ctx.layer, projectId: "project-b" } as AsyncDataLayer;
+    const now = new Date().toISOString();
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const duplicateId = "shared-automation-id";
+    const schedule = (name: string, scope: "global" | "project") => ({
+      id: duplicateId,
+      name,
+      scheduleType: "custom" as const,
+      cronExpression: "* * * * *",
+      command: `echo ${name}`,
+      enabled: true,
+      runCount: 0,
+      runHistory: [],
+      nextRunAt: past,
+      scope,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(await listSchedules(layerA)).toEqual([]);
+    expect(await listSchedules(layerB)).toEqual([]);
+
+    await expect(
+      upsertSchedule(ctx.layer, { ...schedule("unbound", "project"), id: "unbound-id" }),
+    ).rejects.toThrow("AutomationStore backend operations require asyncLayer.projectId");
+    expect(await listSchedules(layerA)).toEqual([]);
+    expect(await listSchedules(layerB)).toEqual([]);
+
+    await upsertSchedule(layerA, schedule("project-a", "project"));
+    await upsertSchedule(layerB, schedule("project-b-global", "global"));
+
+    const storeA = new AutomationStore("/tmp/fusion-automation-project-a", { asyncLayer: layerA });
+    const storeB = new AutomationStore("/tmp/fusion-automation-project-b", { asyncLayer: layerB });
+    expect((await storeA.listSchedules()).map(({ name }) => name)).toEqual(["project-a"]);
+    expect((await storeB.listSchedules()).map(({ name }) => name)).toEqual(["project-b-global"]);
+
+    await storeA.updateSchedule(duplicateId, { name: "project-a-updated" });
+    expect((await storeA.getSchedule(duplicateId)).name).toBe("project-a-updated");
+    expect((await storeB.getSchedule(duplicateId)).name).toBe("project-b-global");
+
+    expect((await storeA.getDueSchedules("project")).map(({ name }) => name)).toEqual(["project-a-updated"]);
+    expect((await storeB.getDueSchedules("project"))).toEqual([]);
+    expect((await storeB.getDueSchedules("global")).map(({ name }) => name)).toEqual(["project-b-global"]);
+
+    expect(await storeA.claimDueSchedule(duplicateId, past)).toBe(true);
+    expect(await storeA.getDueSchedules("project")).toEqual([]);
+    expect((await storeB.getDueSchedules("global")).map(({ name }) => name)).toEqual(["project-b-global"]);
+
+    await storeA.deleteSchedule(duplicateId);
+    expect(await storeA.listSchedules()).toEqual([]);
+    expect((await storeB.listSchedules()).map(({ name }) => name)).toEqual(["project-b-global"]);
   });
 
   // ── RoutineStore ──
@@ -396,6 +466,36 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
 
   // ── AgentStore ──
 
+  /**
+   * FNXC:AgentHeartbeatIsolation 2026-07-14-00:37:
+   * Heartbeat and run APIs are project-owned in backend mode. An unbound AgentStore must reject before it can read or write the shared PostgreSQL heartbeat/run state.
+   */
+  it("AgentStore: unbound backend heartbeat/run APIs fail closed", async () => {
+    ctx = await setupCtx();
+    const { AgentStore } = await import("../../agent-store.js");
+    const store = new AgentStore({ rootDir: "/tmp/fusion-unbound-agent-store", asyncLayer: ctx.layer });
+    const run = {
+      id: "unbound-run",
+      agentId: "unbound-agent",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      status: "active" as const,
+    };
+
+    await expect(store.saveRun(run)).rejects.toThrow(
+      "AgentStore backend heartbeat/run operations require asyncLayer.projectId",
+    );
+    await expect(store.listActiveHeartbeatRuns()).rejects.toThrow(
+      "AgentStore backend heartbeat/run operations require asyncLayer.projectId",
+    );
+    await expect(store.recordHeartbeat(run.agentId, "ok", run.id)).rejects.toThrow(
+      "AgentStore backend heartbeat/run operations require asyncLayer.projectId",
+    );
+    await expect(store.getHeartbeatHistory(run.agentId)).rejects.toThrow(
+      "AgentStore backend heartbeat/run operations require asyncLayer.projectId",
+    );
+  });
+
   it("AgentStore: write/read agent (jsonb data) → list → find by name → delete", async () => {
     ctx = await setupCtx();
     const { writeAgent, readAgent, listAgentRows, findAgentRowsByName, deleteAgent, agentToData } = await import("../../async-agent-store.js");
@@ -482,30 +582,30 @@ pgDescribe("PostgreSQL satellite fusion-dir stores (VAL-DATA-015, VAL-DATA-016)"
       status: "active" as const,
     };
 
-    await saveRun(ctx.layer.db, run);
-    expect((await getRunDetail(ctx.layer.db, agentId, run.id))?.id).toBe(run.id);
-    const byId = await getRunById(ctx.layer.db, run.id);
+    await saveRun(ctx.layer.db, ctx.layer.projectId ?? "", run);
+    expect((await getRunDetail(ctx.layer.db, ctx.layer.projectId ?? "", agentId, run.id))?.id).toBe(run.id);
+    const byId = await getRunById(ctx.layer.db, ctx.layer.projectId ?? "", run.id);
     expect(byId?.agentId).toBe(agentId);
     expect(byId?.run?.id).toBe(run.id);
 
     // recent runs
-    const recent = await getRecentRuns(ctx.layer.db, agentId, 10);
+    const recent = await getRecentRuns(ctx.layer.db, ctx.layer.projectId ?? "", agentId, 10);
     expect(recent).toHaveLength(1);
 
     // active list
-    const active = await listActiveHeartbeatRuns(ctx.layer.db);
+    const active = await listActiveHeartbeatRuns(ctx.layer.db, ctx.layer.projectId ?? "");
     expect(active).toHaveLength(1);
     expect(active[0]!.id).toBe(run.id);
 
     // end the run
     const endedRun = { ...run, endedAt: new Date().toISOString(), status: "completed" as const };
-    await saveRun(ctx.layer.db, endedRun);
-    const counts = await getRunStatusCounts(ctx.layer.db, [agentId]);
+    await saveRun(ctx.layer.db, ctx.layer.projectId ?? "", endedRun);
+    const counts = await getRunStatusCounts(ctx.layer.db, ctx.layer.projectId ?? "", [agentId]);
     expect(counts.completedRuns).toBe(1);
     expect(counts.failedRuns).toBe(0);
 
     // insertRunIfAbsent is a no-op on existing
-    expect(await insertRunIfAbsent(ctx.layer.db, run)).toBe(false);
+    expect(await insertRunIfAbsent(ctx.layer.db, ctx.layer.projectId ?? "", run)).toBe(false);
   });
 
   it("AgentStore: task session upsert/get/delete", async () => {

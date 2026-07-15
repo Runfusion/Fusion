@@ -46,6 +46,10 @@ interface MessageRow {
   updatedAt: string;
 }
 
+type PersistedMessage = Omit<Message, "metadata"> & {
+  metadata: NonNullable<Message["metadata"]> | null;
+};
+
 const messageColumns = {
   id: schema.project.messages.id,
   fromId: schema.project.messages.fromId,
@@ -89,19 +93,7 @@ function participantIdsForLookup(ownerId: string, ownerType: ParticipantType): s
  */
 export async function sendMessage(
   handle: QueryHandle,
-  message: {
-    id: string;
-    fromId: string;
-    fromType: string;
-    toId: string;
-    toType: string;
-    content: string;
-    type: string;
-    read: boolean;
-    metadata: Record<string, unknown> | null;
-    createdAt: string;
-    updatedAt: string;
-  },
+  message: PersistedMessage,
 ): Promise<Message> {
   await handle.insert(schema.project.messages).values({
     id: message.id,
@@ -120,6 +112,34 @@ export async function sendMessage(
     ...message,
     read: message.read ? 1 : 0,
   });
+}
+
+/*
+FNXC:PostgresMigrationInbox 2026-07-14-12:10:
+Database conflict handling, rather than an inbox read followed by an insert, arbitrates once-only system messages. The caller supplies a deterministic primary-key id so concurrent project starts cannot both create the same logical notice.
+*/
+export async function sendMessageOnce(
+  handle: QueryHandle,
+  message: PersistedMessage,
+): Promise<boolean> {
+  const inserted = await handle
+    .insert(schema.project.messages)
+    .values({
+      id: message.id,
+      fromId: message.fromId,
+      fromType: message.fromType,
+      toId: message.toId,
+      toType: message.toType,
+      content: message.content,
+      type: message.type,
+      read: message.read ? 1 : 0,
+      metadata: message.metadata,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+    })
+    .onConflictDoNothing({ target: [schema.project.messages.projectId, schema.project.messages.id] })
+    .returning({ id: schema.project.messages.id });
+  return inserted.length === 1;
 }
 
 /**

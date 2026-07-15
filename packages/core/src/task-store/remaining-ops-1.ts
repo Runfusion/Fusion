@@ -19,7 +19,7 @@ import {makeTransitionRejection} from "../transition-types.js";
 import {getWorkflowExtensionRegistry} from "../workflow-extension-registry.js";
 import type {WorkflowMovePolicyInput} from "../workflow-extension-types.js";
 import "../builtin-traits.js";
-import type {WorkflowDefinition, WorkflowDefinitionInput} from "../workflow-definition-types.js";
+import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput} from "../workflow-definition-types.js";
 import {WORKFLOW_PARITY_OBSERVED_MUTATION, WORKFLOW_PARITY_DRIFT_MUTATION, type WorkflowParityDiff, type WorkflowParitySummary} from "../workflow-parity.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import {toJsonNullable} from "../db.js";
@@ -910,6 +910,7 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
         id,
         name,
         description: input.description ?? "",
+        icon: normalizeWorkflowIcon(input.icon),
         // KTD-1: fragments are pure-v1 IRs and pass through downgradeIrToV1IfPure
         // unchanged; default to "workflow" when the caller omits the kind.
         kind: input.kind === "fragment" ? "fragment" : "workflow",
@@ -929,6 +930,7 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
           id: definition.id,
           name: definition.name,
           description: definition.description,
+          icon: definition.icon ?? null,
           ir: (flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir)) as unknown as object,
           layout: definition.layout as unknown as object,
           kind: definition.kind,
@@ -941,13 +943,14 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
 
       store.db
         .prepare(
-          `INSERT INTO workflows (id, name, description, ir, layout, kind, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           definition.id,
           definition.name,
           definition.description,
+          definition.icon ?? null,
           serializeWorkflowIr(
             flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir),
           ),
@@ -1114,7 +1117,7 @@ export async function recordActivityImpl(store: TaskStore, entry: Omit<ActivityL
     // Backend-mode: delegate to the async audit helper (async-audit.ts).
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return recordActivityLogEntryAsync(layer.db, entry);
+      return recordActivityLogEntryAsync(layer.db, layer.projectId ?? "", entry);
     }
     const fullEntry: ActivityLogEntry = {
       ...entry,
@@ -1170,4 +1173,3 @@ export function getEvalStoreImpl(store: TaskStore): EvalStore | AsyncEvalStore {
     }
     return store.evalStore;
   }
-

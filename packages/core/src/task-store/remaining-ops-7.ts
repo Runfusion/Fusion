@@ -565,7 +565,7 @@ export async function getAttachmentImpl(store: TaskStore,
 export async function emitUsageEventImpl(store: TaskStore, event: UsageEventInput): Promise<boolean> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return emitUsageEventAsync(layer.db, event);
+      return emitUsageEventAsync(layer.db, layer.projectId ?? "", event);
     }
     return emitUsageEventToDb(store.db, event);
 }
@@ -1086,4 +1086,3 @@ export async function getAgentLogCountImpl(store: TaskStore, taskId: string): Pr
     }
     return countAgentLogEntries(store.taskDir(taskId));
 }
-

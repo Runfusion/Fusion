@@ -40,7 +40,7 @@ interface BoardProps {
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
-  onNewTask: () => void;
+  onNewTask: (workflowId?: string | null) => void;
   autoMerge: boolean;
   /** Project merge strategy passed to Board-owned card context menus. */
   mergeStrategy?: string;
@@ -617,6 +617,10 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       ?? selectedWorkflowColumns.find((column) => !column.flags.archived)?.id;
   }, [selectedWorkflowColumns]);
 
+  const handleSelectedWorkflowNewTask = useCallback(() => {
+    onNewTask(selectedWorkflow?.id);
+  }, [onNewTask, selectedWorkflow?.id]);
+
   const workflowContextMenuColumnsByWorkflowId = useMemo(() => {
     const map = new Map<string, readonly TaskContextMenuColumnMetadata[]>();
     for (const workflow of boardWorkflows?.workflows ?? []) {
@@ -785,6 +789,10 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     }
     return null;
   }, [boardWorkflows]);
+
+  const handleAggregateWorkflowNewTask = useCallback(() => {
+    onNewTask(aggregateQuickCreateTarget?.workflowId);
+  }, [aggregateQuickCreateTarget?.workflowId, onNewTask]);
 
   const aggregateVisibleBoardColumns = useMemo(
     () => aggregateBoardColumns.filter((column) => column.flags.archived !== true),
@@ -972,7 +980,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   mergeStrategy={mergeStrategy}
                   // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                   {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask, onSubtaskBreakdown } : {})}
+                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask: handleAggregateWorkflowNewTask, onSubtaskBreakdown } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                   {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
                   {...(isDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
@@ -1055,7 +1063,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 mergeStrategy={mergeStrategy}
                 // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
                 {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
-                {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, onNewTask, onSubtaskBreakdown } : {})}
+                {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, onNewTask: handleSelectedWorkflowNewTask, onSubtaskBreakdown } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
                 {...(isWorkflowDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}

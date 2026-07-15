@@ -5682,6 +5682,8 @@
       "title": "Apparence",
       "openTasksInRightSidebarHelp": "",
       "openMobileTasksInPopupHelp": "",
+      "taskPopupsBoardListOnly": "",
+      "taskPopupsBoardListOnlyHelp": "",
       "taskDetailChatFirstHelp": "",
       "showCostBadgeOnCards": "",
       "showCostBadgeOnCardsHelp": ""
@@ -8959,14 +8961,12 @@
     "done": "Done",
     "inProgress": "In Progress",
     "label": "Workflow",
-    "merging": "Fusion",
-    "mergingTitle": "{{count}} tâche{{plural}} en fusion",
+    "merging": "",
+    "mergingTitle": "",
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow",
-    "merging": "",
-    "mergingTitle": ""
+    "newWorkflow": "New workflow"
   },
   "workspace": {
     "projectRoot": "Racine du projet",

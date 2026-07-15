@@ -156,6 +156,24 @@ describe("research commands", () => {
     expect(researchStoreMock.listRuns).toHaveBeenCalledWith({ status: "completed", limit: 3 });
   });
 
+  /*
+  FNXC:ResearchCliPostgres 2026-07-13-22:38:
+  The CLI must accept the PostgreSQL-backed research store's promise-returning API instead of requiring the legacy ResearchStore prototype. Awaiting both backends preserves the synchronous test path while proving PG list results reach the operator.
+  */
+  it("lists runs through an async PostgreSQL research store", async () => {
+    const asyncStore = {
+      getRun: vi.fn(async () => mockRun),
+      listRuns: vi.fn(async () => [mockRun]),
+      createExport: vi.fn(async () => undefined),
+    };
+    storeMock.getResearchStore.mockReturnValueOnce(asyncStore as never);
+
+    await runResearchList({ json: true, status: "completed", limit: 3 });
+
+    expect(asyncStore.listRuns).toHaveBeenCalledWith({ status: "completed", limit: 3 });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"runs"'));
+  });
+
   it("rejects invalid list status", async () => {
     await expect(runResearchList({ status: "wat" })).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith("Error: Invalid status: wat");

@@ -91,9 +91,32 @@ import type { GhostBugDecision } from "./triage-preflight.js";
 import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
+import { extractRuntimeModel } from "./agent-session-helpers.js";
 
 const log = createLogger("self-healing");
 const OPTIONAL_STEP_REVISION_KEY_MARKER = "Workflow revision key:";
+const HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON = "heartbeat-model-unavailable";
+
+function extractHeartbeatUnavailableProvider(error: string | undefined): string | undefined {
+  if (!error) return undefined;
+  const rawProvider = /no api key for provider:\s*([^\s)]+)/i.exec(error)?.[1]
+    ?? /configured primary model\s+([^/\s]+)\//i.exec(error)?.[1];
+  return rawProvider?.replace(/["'.,:;]+$/g, "").trim() || undefined;
+}
+
+function isMisattributedHeartbeatModelPark(agent: Agent): boolean {
+  if (agent.state !== "paused" || agent.pauseReason !== HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON) {
+    return false;
+  }
+  const assignedModel = extractRuntimeModel((agent.runtimeConfig ?? {}) as Record<string, unknown>);
+  const failedProvider = extractHeartbeatUnavailableProvider(agent.lastError);
+  return Boolean(
+    assignedModel.provider
+      && assignedModel.modelId
+      && failedProvider
+      && assignedModel.provider.toLowerCase() !== failedProvider.toLowerCase(),
+  );
+}
 
 function normalizeOptionalStepRevisionKey(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase();
@@ -10571,6 +10594,9 @@ export class SelfHealingManager {
   /*
   FNXC:AgentHeartbeat 2026-07-12-17:26:
   FN-7884: Engine restart is an explicit operator retry boundary for durable heartbeat agents. Startup recovery must immediately clear recoverable `error` and `error-retry-exhausted` parks, reset shared heartbeatErrorRecovery/durableErrorRecovery budget state, and re-arm heartbeats without steady-state staleness/cooldown/exhaustion gates; operator-actionable, stale-module, user-paused, error-unrecoverable, disabled, ephemeral, and actively executing agents remain suppressed.
+
+  FNXC:AgentHeartbeat 2026-07-14-16:13:
+  Startup must also recover a `heartbeat-model-unavailable` park when its recorded failing provider differs from the agent's complete assigned runtime model. This repairs agents falsely parked by the former shared-project-model precedence while preserving genuine assigned-provider authentication failures for operator action.
   */
   async resetDurableAgentErrorStateOnStartup(): Promise<number> {
     const agentStore = this.options.agentStore;
@@ -10584,7 +10610,8 @@ export class SelfHealingManager {
       for (const agent of allAgents) {
         const isErrorRetryExhaustedPark =
           agent.state === "paused" && agent.pauseReason === HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON;
-        if (agent.state !== "error" && !isErrorRetryExhaustedPark) {
+        const isMisattributedModelPark = isMisattributedHeartbeatModelPark(agent);
+        if (agent.state !== "error" && !isErrorRetryExhaustedPark && !isMisattributedModelPark) {
           continue;
         }
         if (isEphemeralAgent(agent)) {
@@ -10597,7 +10624,7 @@ export class SelfHealingManager {
         if (this.options.hasActiveAgentExecution?.(agent.id) === true) {
           continue;
         }
-        if (!isHeartbeatErrorRecoverable(agent) || isStaleWorktreeModuleResolutionError(agent.lastError ?? "")) {
+        if ((!isMisattributedModelPark && !isHeartbeatErrorRecoverable(agent)) || isStaleWorktreeModuleResolutionError(agent.lastError ?? "")) {
           log.warn(`Startup durable-agent error reset suppressed for ${agent.id}: unrecoverable or stale-module error requires existing recovery path`);
           continue;
         }

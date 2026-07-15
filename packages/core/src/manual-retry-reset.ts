@@ -13,6 +13,7 @@ export const MANUAL_RETRY_RESET_COUNTER_KEYS = [
   "workflowStepRetries",
   "verificationFailureCount",
   "postReviewFixCount",
+  "planReviewReplanCount",
   "mergeConflictBounceCount",
   "branchConflictRecoveryCount",
   "reviewerContextRetryCount",
