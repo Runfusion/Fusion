@@ -4,6 +4,15 @@ import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { AgentStore } from "@fusion/core";
+
+vi.mock("../../project-context.js", () => ({
+  resolveAgentStoreBase: vi.fn(async () => ({
+    rootDir: process.cwd(),
+    asyncLayer: null,
+    cleanup: vi.fn(async () => undefined),
+  })),
+}));
+
 import { runAgentImport } from "../agent-import.js";
 
 function makeAgentManifest(options: {

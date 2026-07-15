@@ -63,18 +63,12 @@ async function importCore() {
  * - `shutdown` — releases the pool and stops an embedded cluster this boot
  *   started. Always call it in `finally`.
  *
- * Throws when the factory opts out (FUSION_NO_EMBEDDED_PG=1): these scripts
- * must never fall back to the removed SQLite runtime.
+ * Throws when PostgreSQL cannot start. These scripts must never fall back to
+ * the removed SQLite runtime.
  */
 export async function openBackend(rootDir = process.cwd()) {
   const core = await importCore();
   const boot = await core.createTaskStoreForBackend({ rootDir });
-  if (!boot) {
-    throw new Error(
-      "PostgreSQL backend unavailable (FUSION_NO_EMBEDDED_PG=1 opt-out is set). " +
-        "This script requires the PostgreSQL backend; the SQLite runtime was removed.",
-    );
-  }
   const asyncLayer = boot.taskStore.getAsyncLayer();
   if (!asyncLayer) {
     await boot.shutdown().catch(() => {});

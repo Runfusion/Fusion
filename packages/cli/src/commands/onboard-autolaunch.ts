@@ -130,9 +130,13 @@ export async function maybeAutoLaunchOnboarding(deps: MaybeAutoLaunchDeps): Prom
     const pathExists = deps.pathExists ?? existsSync;
     const centralDbPath = deps.centralDbPath ?? getDefaultCentralDbPath();
     const cwd = deps.cwd ?? process.cwd();
-    const projectDbPath = join(cwd, ".fusion", "fusion.db");
+    const projectMarkerPath = join(cwd, ".fusion", "project.json");
+    const legacyProjectDbPath = join(cwd, ".fusion", "fusion.db");
     centralDbExists = pathExists(centralDbPath);
-    projectInitialized = deps.projectInitialized ?? pathExists(projectDbPath);
+    // FNXC:ProjectIdentityMarker 2026-07-14-17:20: Onboarding probes the new
+    // marker first and recognizes fusion.db only as a pre-cutover project signal.
+    projectInitialized = deps.projectInitialized
+      ?? (pathExists(projectMarkerPath) || pathExists(legacyProjectDbPath));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[onboard-autolaunch] central DB probe failed; skipping auto-launch: ${message}`);

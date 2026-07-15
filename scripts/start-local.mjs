@@ -205,8 +205,8 @@ function projectNameFromPackage() {
 }
 
 function ensureProjectInitialized() {
-  if (existsSync(resolve(repoRoot, ".fusion/fusion.db"))) {
-    ok("Project database exists");
+  if (existsSync(resolve(repoRoot, ".fusion/project.json"))) {
+    ok("Project marker exists");
     return;
   }
 

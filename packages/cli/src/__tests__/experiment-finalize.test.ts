@@ -22,6 +22,7 @@ const previewPlan = vi.fn();
 const finalize = vi.fn();
 const init = vi.fn();
 const getExperimentSessionStore = vi.fn(() => ({}));
+const backendShutdown = vi.fn(async () => undefined);
 
 const mockErrors = vi.hoisted(() => ({
   CherryPickConflictError: class extends Error {
@@ -33,6 +34,7 @@ const mockErrors = vi.hoisted(() => ({
 }));
 
 vi.mock("@fusion/core", () => ({
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: { init, getExperimentSessionStore }, shutdown: backendShutdown })),
   TaskStore: makeConstructibleMock(() => ({ init, getExperimentSessionStore })),
 }));
 
@@ -66,6 +68,7 @@ describe("runExperimentFinalize", () => {
     expect(previewPlan).toHaveBeenCalledWith({ sessionId: "EXP-1", integrationBranch: undefined });
     expect(finalize).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalled();
+    expect(backendShutdown).toHaveBeenCalledTimes(1);
   });
 
   it("plan-file loads override and passes to finalize", async () => {

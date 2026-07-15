@@ -230,9 +230,16 @@ export async function runAgentImport(
   // FNXC:PostgresCutover 2026-07-04: construct AgentStore in backend mode by
   // borrowing the asyncLayer from the resolved project store (SQLite runtime
   // removed under VAL-REMOVAL-005), mirroring extension.ts getAgentStore.
-  const { rootDir: projectPath, asyncLayer } = await resolveAgentStoreBase(options?.project);
-  const agentStore = new AgentStore({ rootDir: projectPath + "/.fusion", asyncLayer: asyncLayer ?? undefined });
-  await agentStore.init();
+  const base = await resolveAgentStoreBase(options?.project);
+  const projectPath = base.rootDir;
+  const agentStore = new AgentStore({ rootDir: projectPath + "/.fusion", asyncLayer: base.asyncLayer });
+  const exitWithCleanup = async (code: number): Promise<never> => {
+    agentStore.close();
+    await base.cleanup();
+    return process.exit(code);
+  };
+  try {
+    await agentStore.init();
 
   const existingAgents = await agentStore.listAgents();
   const existingNames = new Set(existingAgents.map((a) => a.name));
@@ -308,16 +315,16 @@ export async function runAgentImport(
   } catch (err) {
     if (err instanceof AgentCompaniesParseError) {
       console.error(`Parse error: ${err.message}`);
-      process.exit(1);
+      return await exitWithCleanup(1);
     }
 
     if (err instanceof Error && err.message === UNSUPPORTED_FORMAT_MESSAGE) {
       console.error(err.message);
-      process.exit(1);
+      return await exitWithCleanup(1);
     }
 
     console.error(`Error reading source: ${(err as Error).message}`);
-    process.exit(1);
+    return await exitWithCleanup(1);
   }
 
   if (result.created.length === 0 && result.skipped.length === 0 && result.errors.length === 0) {
@@ -381,5 +388,9 @@ export async function runAgentImport(
     ? await importSkillsToProject(projectPath, skills, companySlug, false)
     : undefined;
 
-  printSummary(companyName, agentCount, teamCount, created, result.skipped, errors, false, skillResult);
+    printSummary(companyName, agentCount, teamCount, created, result.skipped, errors, false, skillResult);
+  } finally {
+    agentStore.close();
+    await base.cleanup();
+  }
 }

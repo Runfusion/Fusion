@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -54,18 +54,15 @@ export async function ensureCwdProjectRegistered(
 
   try {
     const fusionDir = join(cwd, ".fusion");
-    const dbPath = join(fusionDir, "fusion.db");
 
     if (!existsSync(fusionDir)) {
       mkdirSync(fusionDir, { recursive: true });
     }
 
-    if (!existsSync(dbPath)) {
-      writeFileSync(dbPath, "");
-    }
-
     const projectName = await detectProjectName(cwd);
-    const identity: ProjectIdentity | null = existsSync(dbPath) ? readProjectIdentity(fusionDir) : null;
+    // FNXC:ProjectIdentityMarker 2026-07-14-17:20: Auto-registration writes
+    // project.json and reads fusion.db only through the legacy identity migrator.
+    const identity: ProjectIdentity | null = readProjectIdentity(fusionDir);
 
     const ensured = await central.ensureProjectForPath({
       path: cwd,
@@ -79,7 +76,7 @@ export async function ensureCwdProjectRegistered(
 
     if (ensured.outcome === "reattached") {
       console.log(
-        `[${logPrefix}] Recovered project identity ${project.id} from ${dbPath} (central had no row)`,
+        `[${logPrefix}] Recovered project identity ${project.id} from ${fusionDir} (central had no row)`,
       );
     } else if (ensured.outcome === "registered") {
       console.log(`[${logPrefix}] Auto-registered project "${project.name}" at ${cwd}`);

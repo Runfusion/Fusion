@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { openBackend } from "./lib/backend-db.mjs";
 
 function createSummary() {
   return { total_input: 0, total_cached: 0, total_cache_write: 0, total_output: 0, n_tasks: 0, hit_ratio: 0 };
@@ -54,24 +55,33 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const asJson = argv.includes("--json");
   const projectDir = process.cwd();
 
-  const { taskStore, agentStore, isEphemeralAgent } = deps.stores ?? (await (async () => {
-    const { TaskStore, AgentStore, isEphemeralAgent } = await import("../packages/core/dist/index.js");
-    const store = new TaskStore(projectDir);
-    await store.init();
-    const aStore = new AgentStore({ rootDir: store.getFusionDir() });
-    await aStore.init();
-    return { taskStore: store, agentStore: aStore, isEphemeralAgent };
-  })());
+  let backend;
+  try {
+    const { taskStore, agentStore, isEphemeralAgent } = deps.stores ?? (await (async () => {
+      backend = await openBackend(projectDir);
+      const { AgentStore, isEphemeralAgent } = backend.core;
+      const aStore = new AgentStore({
+        rootDir: backend.store.getFusionDir(),
+        taskStore: backend.store,
+        asyncLayer: backend.asyncLayer,
+      });
+      await aStore.init();
+      return { taskStore: backend.store, agentStore: aStore, isEphemeralAgent };
+    })());
 
-  const result = await collectCacheStats({ taskStore, agentStore, isEphemeralAgent });
-  if (asJson) {
-    console.log(JSON.stringify(result, null, 2));
+    /* FNXC:PostgresOperationalScripts 2026-07-14-18:18: Operator reports must read the authoritative PostgreSQL store and release embedded backend ownership after collection. */
+    const result = await collectCacheStats({ taskStore, agentStore, isEphemeralAgent });
+    if (asJson) {
+      console.log(JSON.stringify(result, null, 2));
+      return 0;
+    }
+
+    printTable("Cache stats by role", result.byRole);
+    printTable("Cache stats by permanent agent", result.byAgent);
     return 0;
+  } finally {
+    await backend?.shutdown();
   }
-
-  printTable("Cache stats by role", result.byRole);
-  printTable("Cache stats by permanent agent", result.byAgent);
-  return 0;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

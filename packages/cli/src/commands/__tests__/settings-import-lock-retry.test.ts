@@ -37,7 +37,10 @@ vi.mock("node:fs", () => ({
 
 vi.mock("@fusion/core", () => ({
   // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async () => ({
+    taskStore: { init: mockStoreInit, close: mockStoreClose },
+    shutdown: vi.fn(async () => mockStoreClose()),
+  })),
   TaskStore: makeConstructibleMock(() => ({
     init: mockStoreInit,
     close: mockStoreClose,
@@ -159,7 +162,7 @@ describe("fn settings import — leak/lock reproduction (FN-7740)", () => {
     }
 
     expect(mockStoreClose).toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("board database stayed locked"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("board database stayed contended"));
   });
 
   it("propagates a non-lock importSettings failure immediately without retrying", async () => {

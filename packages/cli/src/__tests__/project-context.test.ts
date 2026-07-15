@@ -54,7 +54,7 @@ describe("project-context", () => {
     } catch {
       // Ignore close errors
     }
-    clearStoreCache();
+    await clearStoreCache();
 
     // Filesystem cleanup last
     try {
@@ -95,6 +95,19 @@ describe("project-context", () => {
       expect(found).toBeDefined();
       expect(found?.path).toBe(resolve(projectPath));
       expect(found?.name).toBe("legacy-project");
+    });
+
+    it("detects an unregistered project.json marker without fusion.db", async () => {
+      const projectPath = join(tempDir, "postgres-project");
+      mkdirSync(join(projectPath, ".fusion"), { recursive: true });
+      writeFileSync(join(projectPath, ".fusion", "project.json"), JSON.stringify({
+        id: "proj_1234567890abcdef",
+        createdAt: "2026-07-14T00:00:00.000Z",
+      }));
+
+      const found = await detectProjectFromCwd(projectPath, central);
+
+      expect(found).toMatchObject({ path: resolve(projectPath), name: "postgres-project" });
     });
 
     it("should not inherit an unregistered parent project from a nested cwd", async () => {
@@ -224,7 +237,7 @@ pgDescribe("project-context (PostgreSQL-backed CentralCore)", () => {
     } catch {
       // Ignore close errors
     }
-    clearStoreCache();
+    await clearStoreCache();
     try {
       rmSync(tempDir, { recursive: true, force: true });
       rmSync(homeDir, { recursive: true, force: true });

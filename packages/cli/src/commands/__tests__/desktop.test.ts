@@ -99,6 +99,13 @@ const mocks = vi.hoisted(() => {
     getPluginStore: vi.fn(() => pluginStore),
     close: vi.fn(),
   };
+  const backendShutdown = vi.fn(async () => undefined);
+  const createTaskStoreForBackend = vi.fn(async () => ({
+    taskStore: store,
+    asyncLayer: {},
+    backend: { mode: "embedded" },
+    shutdown: backendShutdown,
+  }));
   const project = { id: "project-1", name: "Repo", path: "/repo", status: "active" };
   const centralCore = {
     init: vi.fn().mockResolvedValue(undefined),
@@ -140,6 +147,8 @@ const mocks = vi.hoisted(() => {
     state,
     createMockChild,
     store,
+    backendShutdown,
+    createTaskStoreForBackend,
     server,
     app,
     spawn,
@@ -174,6 +183,7 @@ vi.mock("node:fs", () => ({
 vi.mock("@fusion/core", () => ({
   TaskStore: mocks.taskStoreCtor,
   CentralCore: mocks.centralCoreCtor,
+  createTaskStoreForBackend: mocks.createTaskStoreForBackend,
   // FNXC:PluginSubsystem 2026-07-08-00:00: desktop.ts imports PluginLoader
   // from @fusion/core and constructs it for the embedded dashboard server.
   PluginLoader: vi.fn(),
@@ -258,7 +268,7 @@ describe("runDesktop", () => {
       expect.arrayContaining(["--filter", "@fusion/desktop", "build"]),
       expect.anything(),
     );
-    expect(mocks.taskStoreCtor).toHaveBeenCalledWith("/repo");
+    expect(mocks.createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: "/repo" });
     expect(mocks.store.updateSettings).toHaveBeenCalledWith({ enginePaused: true });
     expect(mocks.ensureCwdProjectRegistered).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/repo", central: mocks.centralCore, autoRegister: true }),
@@ -414,7 +424,8 @@ describe("runDesktop", () => {
 
     expect(mocks.server.close).toHaveBeenCalledTimes(1);
     expect(mocks.engineManager.stopAll).toHaveBeenCalledTimes(1);
-    expect(mocks.store.close).toHaveBeenCalledTimes(1);
+    expect(mocks.store.close).not.toHaveBeenCalled();
+    expect(mocks.backendShutdown).toHaveBeenCalledTimes(1);
     expect(process.exit).toHaveBeenCalledWith(7);
   });
 
@@ -427,7 +438,18 @@ describe("runDesktop", () => {
     expect(mocks.state.electronChild.kill).toHaveBeenCalledWith("SIGTERM");
     expect(mocks.server.close).toHaveBeenCalledTimes(1);
     expect(mocks.engineManager.stopAll).toHaveBeenCalledTimes(1);
-    expect(mocks.store.close).toHaveBeenCalledTimes(1);
+    expect(mocks.store.close).not.toHaveBeenCalled();
+    expect(mocks.backendShutdown).toHaveBeenCalledTimes(1);
     expect(process.exit).toHaveBeenCalledWith(0);
+  });
+
+  it("still releases the PostgreSQL owner when an earlier desktop cleanup fails", async () => {
+    mocks.centralCore.close.mockRejectedValueOnce(new Error("central cleanup failed"));
+    await runDesktop();
+
+    mocks.state.electronChild.emit("exit", 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mocks.backendShutdown).toHaveBeenCalledTimes(1);
   });
 });
