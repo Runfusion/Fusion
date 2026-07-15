@@ -58,11 +58,7 @@ import { createRequire } from "node:module";
 import { createLogger } from "../logger.js";
 import { redactConnectionString } from "./credential-redact.js";
 import type { ResolvedBackend } from "./backend-resolver.js";
-import {
-  isWindowsElevatedAdmin,
-  startServerAsNonAdminUser,
-  type NonAdminServerHandle,
-} from "./embedded-windows-admin.js";
+import { isWindowsElevatedAdmin } from "./embedded-windows-admin.js";
 
 const require = createRequire(import.meta.url);
 
@@ -289,25 +285,6 @@ function resolveMacosEmbeddedPostgresNativeRoot(): string | null {
   }
 }
 
-/**
- * FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
- * Resolve the bundled @embedded-postgres/windows-x64 native root (.../native,
- * containing bin/postgres.exe + lib + share). Used to launch the server under a
- * dedicated non-admin user when the process is elevated; see
- * embedded-windows-admin.ts.
- */
-function resolveWindowsEmbeddedPostgresNativeRoot(): string | null {
-  if (process.platform !== "win32") return null;
-  const packageName = process.arch === "x64" ? "@embedded-postgres/windows-x64" : null;
-  if (!packageName) return null;
-  try {
-    const entrypoint = require.resolve(packageName);
-    return join(dirname(entrypoint), "..", "native");
-  } catch {
-    return resolvePnpmPlatformPackageNativeRoot(packageName);
-  }
-}
-
 function normalizeBundledMacosDylibs(onLog: (message: string) => void): void {
   const nativeRoot = resolveMacosEmbeddedPostgresNativeRoot();
   if (!nativeRoot) return;
@@ -451,14 +428,6 @@ export class EmbeddedPostgresLifecycle {
    * on a failure that is handled before the timeout fires.
    */
   private startTimer: NodeJS.Timeout | null = null;
-  /**
-   * FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
-   * When the process is an elevated Windows admin, the server is booted under a
-   * dedicated non-admin user (see embedded-windows-admin.ts) and this holds the
-   * handle used to stop it. Null in the normal (non-elevated / non-Windows)
-   * path, where stop() delegates to the embedded-postgres instance.
-   */
-  private nonAdminHandle: NonAdminServerHandle | null = null;
 
   constructor(opts: EmbeddedLifecycleOptions) {
     this.options = {
@@ -647,67 +616,23 @@ export class EmbeddedPostgresLifecycle {
       await this.pg.initialise();
     }
 
-    // FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
-    // Under an elevated Windows admin token, postgres refuses to inherit the
-    // process token ("Execution of PostgreSQL by a user with administrative
-    // permissions is not permitted"). initdb + the pg client above ran as the
-    // launching (admin) process and work unchanged; only the SERVER start is
-    // re-homed under a dedicated non-admin local user. Normal (non-elevated /
-    // non-Windows) launches use the inherited-token path as before.
+    // FNXC:WindowsDesktopPackaging 2026-07-15-02:35:
+    // PostgreSQL refuses to start under an elevated Windows admin token
+    // ("Execution of PostgreSQL by a user with administrative permissions is
+    // not permitted"). Rather than re-home the server under a helper user here
+    // (which proved non-deterministic across Windows process-kill / file-lock
+    // teardown), fail fast with an actionable message. The GitHub windows-latest
+    // runner runs elevated, so CI runs the embedded-PG smoke AS a non-admin
+    // helper user (the process token is then non-admin and this path is not
+    // taken). An end user should launch Fusion non-elevated (the default).
     if (isWindowsElevatedAdmin()) {
-      const nativeRoot = resolveWindowsEmbeddedPostgresNativeRoot();
-      if (!nativeRoot) {
-        throw new Error(
-          "embedded postgres: the process is running elevated on Windows, where " +
-            "PostgreSQL refuses to start under an administrative token, and the " +
-            "non-admin boot path could not locate the bundled " +
-            "@embedded-postgres/windows-x64 native binaries to stage. Run Fusion " +
-            "non-elevated, or ensure the embedded-postgres platform package is installed.",
-        );
-      }
-      this.nonAdminHandle = await startServerAsNonAdminUser({
-        nativeRoot,
-        dataDir: this.options.dataDir,
-        port,
-        postgresFlags: this.options.postgresFlags,
-        onLog: this.options.onLog,
-        onError: this.options.onError,
-        startTimeoutMs: this.options.startTimeoutMs,
-        // FNXC:WindowsDesktopPackaging 2026-07-14-23:20:
-        // Real readiness probe for the non-admin path: a short-timeout SELECT 1.
-        // During crash recovery postgres rejects the startup handshake fast
-        // ("the database system is starting up"), so this resolves true only
-        // once the server is actually accepting queries — unlike a bare TCP
-        // connect, which succeeds the moment the port is bound.
-        probeReady: async () => {
-          const pg = this.pg;
-          if (!pg) return false;
-          const client = pg.getPgClient("postgres", "localhost");
-          // FNXC:WindowsDesktopPackaging 2026-07-14-23:40:
-          // pg copies connectionTimeoutMillis into _connectionTimeoutMillis
-          // only in the Client constructor, so setting it after getPgClient()
-          // does not bound connect(). Race connect+SELECT against a hard 1.5s
-          // timeout so the probe resolves fast even if postgres accepts the
-          // socket but stalls its startup response during crash recovery.
-          const { promise: timeout, reject: timeoutReject } = Promise.withResolvers<never>();
-          const timer = setTimeout(() => timeoutReject(new Error("probe timeout")), 1500);
-          try {
-            await Promise.race([
-              client.connect().then(() => client.query("SELECT 1")),
-              timeout,
-            ]);
-            return true;
-          } catch {
-            return false;
-          } finally {
-            clearTimeout(timer);
-            await client.end().catch(() => {});
-          }
-        },
-      });
-    } else {
-      await this.pg.start();
+      throw new Error(
+        "embedded postgres: the process is running elevated on Windows, where " +
+          "PostgreSQL refuses to start under an administrative token. Launch " +
+          "Fusion non-elevated (the default); do not use 'Run as administrator'.",
+      );
     }
+    await this.pg.start();
     this.running = true;
     this.ownsProcess = true;
 
@@ -749,19 +674,7 @@ export class EmbeddedPostgresLifecycle {
     }
     const exists = await this.databaseExists(this.options.database);
     if (exists) return;
-    // FNXC:WindowsDesktopPackaging 2026-07-15-01:20:
-    // Create the DB directly over TCP. embedded-postgres.createDatabase guards
-    // on its internal this.process, which is null on the non-admin Windows path
-    // (we boot the server ourselves, not via this.pg.start()), so it would
-    // throw "cluster must be running". The server IS up — start() probed it.
-    const client = this.pg.getPgClient("postgres", "localhost");
-    try {
-      await client.connect();
-      const ident = this.options.database.replace(/"/g, '""');
-      await client.query(`CREATE DATABASE "${ident}"`);
-    } finally {
-      await client.end().catch(() => {});
-    }
+    await this.pg.createDatabase(this.options.database);
   }
 
   /** Check whether a database with the given name exists on the cluster. */
@@ -804,16 +717,7 @@ export class EmbeddedPostgresLifecycle {
       return;
     }
     try {
-      // FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
-      // Elevated-Windows path: the server was booted under a dedicated
-      // non-admin user; stop it via the handle instead of the embedded-postgres
-      // instance (which never owned a process in this path).
-      if (this.nonAdminHandle) {
-        await this.nonAdminHandle.stop();
-        this.nonAdminHandle = null;
-      } else {
-        await this.pg.stop();
-      }
+      await this.pg.stop();
     } catch (err) {
       this.options.onError(`embedded postgres: error during stop: ${String(err)}`);
     } finally {

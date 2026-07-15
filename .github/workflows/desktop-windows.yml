@@ -45,22 +45,49 @@ jobs:
       # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:39:
       # The manual Windows installer path must boot the same embedded database
       # payload used by Local mode before it can publish an installer artifact.
+      # FNXC:WindowsDesktopPackaging 2026-07-15-02:40:
+      # The runner executes jobs elevated, and PostgreSQL refuses an elevated
+      # (admin) token. Run the WHOLE smoke AS the non-admin helper user
+      # (fusion-pg): the test process, its tmpdir() data dirs, AND postgres all
+      # run as fusion-pg, so postgres inherits a non-admin token and boots via
+      # the normal embedded-postgres path — no in-launcher Start-Process
+      # -Credential / staging / process-kill races.
       - name: Smoke embedded Postgres on Windows
-        # FNXC:WindowsDesktopPackaging 2026-07-15-00:35:
-        # The embedded-PG smoke boots the server under a non-admin helper user
-        # (the runner runs elevated, which Postgres refuses). The test creates
-        # data dirs via tmpdir(), which defaults to the launching user's profile
-        # temp — not traversable by the helper user, and granting traverse
-        # through it is prohibitively slow. Redirect TMP/TEMP to a fresh
-        # Users-traversable root so data dirs land there and the helper user
-        # (a member of Users) can reach them with no per-user ACL grants.
         shell: pwsh
         run: |
-          $env:TMP = "C:\fusionpg-tmp"
-          $env:TEMP = "C:\fusionpg-tmp"
-          New-Item -ItemType Directory -Force -Path $env:TMP | Out-Null
-          icacls $env:TMP /grant "*S-1-5-32-545:(OI)(CI)F" | Out-Null
-          pnpm --filter @fusion/core test:embedded-postgres
+          $user = "fusion-pg"
+          $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
+          net user $user $pass /y 2>&1 | Out-Null
+          # Grant the helper user (via BUILTIN\Users) access to the workspace,
+          # the pnpm store, and the pnpm/node tooling so it can run the test.
+          icacls D:\a\Fusion\Fusion /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
+          icacls D:\.pnpm-store /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          icacls C:\Users\runneradmin /grant "*S-1-5-32-545:RX" /C 2>&1 | Out-Null
+          icacls C:\Users\runneradmin\setup-pnpm /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          $nodeDir = Split-Path (Get-Command node).Source -Parent
+          icacls $nodeDir /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          # Traversable HOME/TEMP for the helper user (its tmpdir() lands here).
+          $h = "C:\fusionpg-home"
+          New-Item -ItemType Directory -Force -Path "$h\tmp" | Out-Null
+          icacls $h /grant "*S-1-5-32-545:(OI)(CI)F" /T /C 2>&1 | Out-Null
+          $pnpmDir = Split-Path (Get-Command pnpm).Source -Parent
+          $bat = Join-Path $h "smoke.bat"
+          Set-Content -Path $bat -Encoding ASCII -Value @(
+            "@echo off",
+            "set `"USERPROFILE=$h`"",
+            "set `"APPDATA=$h\AppData\Roaming`"",
+            "set `"LOCALAPPDATA=$h\AppData\Local`"",
+            "set `"TEMP=$h\tmp`"",
+            "set `"TMP=$h\tmp`"",
+            "set `"PATH=$nodeDir;$pnpmDir;%PATH%`"",
+            "cd /d D:\a\Fusion\Fusion\packages\core",
+            "call pnpm run test:embedded-postgres",
+            "exit /b %ERRORLEVEL%"
+          )
+          $sec = ConvertTo-SecureString $pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$user", $sec)
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList '/c',$bat -Credential $cred -Wait -PassThru -WindowStyle Hidden
+          if ($p.ExitCode -ne 0) { Write-Error "embedded-PG smoke failed (exit $($p.ExitCode))"; exit 1 }
 
       # FNXC:WindowsDesktopPackaging 2026-07-01-19:45:
       # Mirror release.yml: build every workspace package's tsc dist (incl.

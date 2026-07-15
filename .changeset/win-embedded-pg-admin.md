@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Embedded Postgres now boots on Windows when Fusion runs elevated, fixing the Windows installer build.
+summary: Fix the Windows installer build — the embedded-Postgres smoke now runs as a non-admin helper user.
 category: fix
-dev: On elevated Windows the postgres server is booted under a dedicated non-admin local user via Start-Process -Credential (packages/core embedded-lifecycle.ts + embedded-windows-admin.ts); initdb and the pg client still run as the launching process.
+dev: The windows-latest runner executes jobs elevated, which PostgreSQL refuses to start under. The launcher (embedded-lifecycle.ts + embedded-windows-admin.ts) now detects an elevated Windows token and fails fast with a clear, actionable message; the desktop-windows.yml smoke runs the embedded-PG test AS a non-admin local user so postgres boots via the normal path.

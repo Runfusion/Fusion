@@ -198,15 +198,7 @@ describe("embedded-lifecycle: macOS dylib compatibility links", () => {
   });
 });
 
-// FNXC:WindowsDesktopPackaging 2026-07-15-01:50:
-// On an elevated Windows runner the embedded server boots under a non-admin
-// helper user (the elevated token is refused). That path pays one-time costs
-// the normal path does not: staging the native binaries (~5s), the helper
-// user's first profile logon, and per-start initdb (~5s). The default 15s test
-// timeout sits right on the edge of initdb+staging and flakes. 30s comfortably
-// covers the slowest case (a multi-start test) while staying well below any
-// runaway; these real-process tests are not in the merge gate.
-embeddedDescribe("embedded-lifecycle: real process (VAL-CONN-001, VAL-CONN-006, VAL-CONN-007)", { timeout: 30_000 }, () => {
+embeddedDescribe("embedded-lifecycle: real process (VAL-CONN-001, VAL-CONN-006, VAL-CONN-007)", () => {
   it("first start runs initdb, ensures DB exists, and serves traffic (VAL-CONN-001)", async () => {
     const dataDir = makeDataDir();
     const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
