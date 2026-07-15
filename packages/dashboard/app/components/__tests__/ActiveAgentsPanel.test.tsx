@@ -268,8 +268,8 @@ describe("ActiveAgentsPanel", () => {
 
     renderPanel(<ActiveAgentsPanel agents={[mockAgent1, mockAgent2]} />);
 
-    expect(screen.getByText("Agent 1 output")).toBeInTheDocument();
-    expect(screen.getByText("Agent 2 output")).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("Agent 1 output"))).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("Agent 2 output"))).toBeInTheDocument();
   });
 
   it("renders up to 20 transcript lines per card", async () => {

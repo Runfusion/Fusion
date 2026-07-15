@@ -10,8 +10,8 @@ import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../hooks/useToast", () => ({
-  useToast: () => ({
   useOptionalToast: () => null,
+  useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),
     toasts: [],
