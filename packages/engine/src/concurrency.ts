@@ -18,12 +18,63 @@ interface PriorityWaiter {
 
 export const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
 
+/*
+FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+Operators reported live running-agent counts above the global concurrency cap (e.g. 5 running with cap 4). Live utilization counts every top-level slot holder (in-progress, planning triage, active in-review), but the scheduler only preflighted capacity and acquired the shared semaphore later inside the executor — so a card could sit in-progress (and count as running) while triage still saw free semaphore slots and filled the rest of the cap. Pre-held executor slots close that gap: tryAcquire before todo→in-progress, keep the slot until the executor/graph run claims and releases it, and admit triage against max(semaphore.activeCount, live running count).
+*/
+const preHeldExecutorSlots = new Set<string>();
+
+/** Register a semaphore slot already acquired for a task that is about to enter (or just entered) in-progress. */
+export function registerPreHeldExecutorSlot(taskId: string): void {
+  preHeldExecutorSlots.add(taskId);
+}
+
+/**
+ * Transfer ownership of a pre-held executor slot to the caller.
+ * Returns true when a slot was registered; the caller MUST release the underlying semaphore in its finally path.
+ */
+export function takePreHeldExecutorSlot(taskId: string): boolean {
+  return preHeldExecutorSlots.delete(taskId);
+}
+
+/** Drop a pre-held slot without transferring ownership (failed reserve / cancelled dispatch). Optionally releases the semaphore. */
+export function dropPreHeldExecutorSlot(taskId: string, semaphore?: { release(): void }): void {
+  if (!preHeldExecutorSlots.delete(taskId)) return;
+  semaphore?.release();
+}
+
+/** Test/helper: whether a task currently has an unclaimed pre-held executor slot. */
+export function hasPreHeldExecutorSlot(taskId: string): boolean {
+  return preHeldExecutorSlots.has(taskId);
+}
+
+/** Test helper: clear all pre-held registrations without releasing semaphore slots. */
+export function clearPreHeldExecutorSlotsForTests(): void {
+  preHeldExecutorSlots.clear();
+}
+
 /**
  * FNXC:GlobalConcurrencyControls 2026-06-27-00:00:
  * Persisted semaphore repair must use the same top-level slot predicate as dashboard and CLI live counts, including active in-review agents, so read-layer utilization and engine recovery cannot drift.
  */
 export function persistedTopLevelAgentSlots(tasks: Task[]): number {
   return countRunningAgentTasks(tasks);
+}
+
+/**
+ * FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+ * Admission control for new top-level agents must use the same running-agent predicate the dashboard shows next to the global/project caps. Prefer the larger of live task-based holders and in-memory semaphore activeCount so neither under-counts the other during the brief window between column/status writes and acquire/release.
+ */
+export function computeTopLevelConcurrencyClaimed(params: {
+  tasks: readonly Task[];
+  semaphoreActiveCount?: number;
+  /** specifyTask calls that have entered `processing` but not yet written status:"planning". */
+  pendingSpecifyCount?: number;
+}): number {
+  const persisted = countRunningAgentTasks(params.tasks);
+  const pending = Math.max(0, Math.floor(params.pendingSpecifyCount ?? 0));
+  const active = Math.max(0, Math.floor(params.semaphoreActiveCount ?? 0));
+  return Math.max(active, persisted + pending);
 }
 
 export interface IdleSemaphoreLeakRecoveryResult {

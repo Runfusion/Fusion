@@ -112,7 +112,12 @@ import {
   formatExternalIntegrationEvidenceDiagnostic,
 } from "./spec-validation/external-integration-evidence.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
-import { PRIORITY_SPECIFY, recoverIdleSemaphoreLeakCandidate, type AgentSemaphore } from "./concurrency.js";
+import {
+  PRIORITY_SPECIFY,
+  computeTopLevelConcurrencyClaimed,
+  recoverIdleSemaphoreLeakCandidate,
+  type AgentSemaphore,
+} from "./concurrency.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructions,
@@ -866,6 +871,10 @@ export class TriageProcessor {
 
       // Respect both per-project maxTriageConcurrent and the global semaphore.
       // Only planning tasks count against the triage limit; execution is governed by maxConcurrent.
+      /*
+      FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+      Live utilization counts in-progress executors and active planners toward the same global cap. Cap new triage starts by remaining room under that shared claim (not only semaphore.availableCount), so planning cannot fill the entire global max while an in-progress executor is already counted as running.
+      */
       const maxTriageConcurrent = settings.maxTriageConcurrent ?? settings.maxConcurrent ?? 2;
       const planning = allTasks.filter(
         (t) => (t.column === "triage" || t.column === "todo") && t.status === "planning" && !t.paused,
@@ -876,7 +885,21 @@ export class TriageProcessor {
       const semaphoreAvailable = this.options.semaphore
         ? Math.max(0, this.options.semaphore.availableCount)
         : Infinity;
-      const maxToStart = Math.min(perProjectAvailable, semaphoreAvailable);
+      // processing entries that have not yet written status:"planning" still claim a future slot.
+      let pendingSpecifyCount = 0;
+      for (const id of this.processing) {
+        const row = allTasks.find((t) => t.id === id);
+        if (!row || row.status !== "planning") pendingSpecifyCount += 1;
+      }
+      const claimed = computeTopLevelConcurrencyClaimed({
+        tasks: allTasks,
+        semaphoreActiveCount: this.options.semaphore?.activeCount,
+        pendingSpecifyCount,
+      });
+      const globalRoom = this.options.semaphore
+        ? Math.max(0, this.options.semaphore.limit - claimed)
+        : Infinity;
+      const maxToStart = Math.min(perProjectAvailable, semaphoreAvailable, globalRoom);
 
       if (maxToStart <= 0 && triageTasks.length > 0) {
         const semaphoreSnapshot = this.options.semaphore?.snapshot();
@@ -885,10 +908,14 @@ export class TriageProcessor {
           : ", semaphore unavailable";
         const processingIds = [...this.processing].slice(0, 5);
         const eligibleIds = triageTasks.slice(0, 5).map((t) => t.id);
-        const blockedBy = perProjectAvailable <= 0 ? "triage concurrency" : "global semaphore";
+        const blockedBy = perProjectAvailable <= 0
+          ? "triage concurrency"
+          : globalRoom <= 0
+            ? "global running-agent cap"
+            : "global semaphore";
         planLog.log(
           `Plan throttled by ${blockedBy}: eligible=${triageTasks.length} [${eligibleIds.join(", ")}], ` +
-          `planning=${activeAgents}/${maxTriageConcurrent}, processing=${this.processing.size}` +
+          `planning=${activeAgents}/${maxTriageConcurrent}, claimed=${claimed}, processing=${this.processing.size}` +
           `${processingIds.length > 0 ? ` [${processingIds.join(", ")}]` : ""}${semaphoreDetail}`,
         );
       }

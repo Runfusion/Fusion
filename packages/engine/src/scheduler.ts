@@ -19,7 +19,13 @@ import {
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { recoverIdleSemaphoreLeakCandidate, type AgentSemaphore } from "./concurrency.js";
+import {
+  computeTopLevelConcurrencyClaimed,
+  dropPreHeldExecutorSlot,
+  recoverIdleSemaphoreLeakCandidate,
+  registerPreHeldExecutorSlot,
+  type AgentSemaphore,
+} from "./concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
@@ -394,6 +400,12 @@ function computeConcurrencyGateDiagnostic(params: {
   semaphore?: AgentSemaphore;
   inProgressTaskIds: string[];
   startedThisTick?: number;
+  /**
+   * Live top-level running-agent claim (planning + in-progress + active in-review,
+   * optionally merged with semaphore.activeCount). When provided, the shared
+   * semaphore gate uses this instead of only in-progress agentSlots.
+   */
+  topLevelClaimedSlots?: number;
   /** U6: additive per-column capacity gates (flag-ON only). Omitted → the legacy
    *  three-gate report is byte-identical. */
   perColumnGates?: PerColumnCapacityGate[];
@@ -413,7 +425,13 @@ function computeConcurrencyGateDiagnostic(params: {
   };
   const semaphoreGate = params.semaphore
     ? (() => {
-      const used = Math.max(0, params.semaphore.activeCount, params.agentSlots) + startedThisTick;
+      /*
+      FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+      Global semaphore pressure must include every live top-level agent holder (planning triage and active in-review), not only in-progress WIP, otherwise the hold/release sweep can admit an executor on top of a full planner fleet and the footer shows running > cap.
+      */
+      const claimed = params.topLevelClaimedSlots
+        ?? Math.max(0, params.semaphore.activeCount, params.agentSlots);
+      const used = Math.max(0, claimed) + startedThisTick;
       return {
         used,
         limit: params.semaphore.limit,
@@ -1398,6 +1416,10 @@ export class Scheduler {
           maxWorktrees,
           semaphore: this.options.semaphore,
           inProgressTaskIds,
+          topLevelClaimedSlots: computeTopLevelConcurrencyClaimed({
+            tasks,
+            semaphoreActiveCount: this.options.semaphore?.activeCount,
+          }),
           startedThisTick: started,
           perColumnGates,
         });
@@ -2690,6 +2712,11 @@ export class Scheduler {
             }
           }
 
+          const topLevelClaimedSlots = computeTopLevelConcurrencyClaimed({
+            tasks,
+            // Prior tryAcquire reservations in this sweep already bump activeCount.
+            semaphoreActiveCount: this.options.semaphore?.activeCount,
+          });
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
             maxConcurrent,
@@ -2697,10 +2724,14 @@ export class Scheduler {
             maxWorktrees,
             semaphore: this.options.semaphore,
             inProgressTaskIds,
+            topLevelClaimedSlots,
           });
           /*
           FNXC:WorkflowScheduling 2026-06-23-20:58:
-          The workflow hold/release sweep is the only todo pickup path, so it must honor the same maxConcurrent, maxWorktrees, and shared semaphore pressure before releasing a task to in-progress. This is deliberately a non-mutating preflight: executor owns the actual semaphore acquire, and the scheduler only prevents capacity-obvious over-release without double-acquiring slots.
+          The workflow hold/release sweep is the only todo pickup path, so it must honor the same maxConcurrent, maxWorktrees, and shared semaphore pressure before releasing a task to in-progress.
+
+          FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+          Preflight is no longer non-mutating for the shared semaphore: tryAcquire reserves a real slot before the move so triage cannot fill the global cap while this card is already counted as an in-progress runner. On move failure the reservation is released; on success the pre-held slot is transferred to the executor/graph run.
           */
           if (concurrencyDiagnostic.available <= 0) {
             if (reservedScope) {
@@ -2711,6 +2742,25 @@ export class Scheduler {
             await this.store.updateTask(task.id, { status: "queued" });
             await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
             return null;
+          }
+
+          const sem = this.options.semaphore;
+          if (sem && !sem.tryAcquire()) {
+            if (reservedScope) {
+              activeScopes.delete(task.id);
+              activeScopeColumns.delete(task.id);
+            }
+            const reason = formatConcurrencyLimitReason({
+              ...concurrencyDiagnostic,
+              available: 0,
+              bindingGates: [...new Set([...concurrencyDiagnostic.bindingGates, "semaphore" as const])],
+            });
+            await this.store.updateTask(task.id, { status: "queued" });
+            await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
+            return null;
+          }
+          if (sem) {
+            registerPreHeldExecutorSlot(task.id);
           }
 
           dispatchPrepByTaskId.set(task.id, {
@@ -2736,6 +2786,7 @@ export class Scheduler {
               reservedWorktreeSlots = Math.max(0, reservedWorktreeSlots - 1);
               reservedConcurrentSlots = Math.max(0, reservedConcurrentSlots - 1);
               dispatchPrepByTaskId.delete(task.id);
+              dropPreHeldExecutorSlot(task.id, sem);
             },
           };
         },

@@ -101,7 +101,13 @@ import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } fro
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
+import {
+  PRIORITY_EXECUTE,
+  dropPreHeldExecutorSlot,
+  registerPreHeldExecutorSlot,
+  takePreHeldExecutorSlot,
+  type AgentSemaphore,
+} from "./concurrency.js";
 // FNXC:Workspace 2026-06-21-15:00: F5/F8 — wire in the previously dead workspace-path helpers.
 // `normalizeRepoRelPath` is the single shared scope-path normalizer (F8); `deriveRepoScopeSubset`
 // maps the task's repo-prefixed declared File Scope to a repo-LOCAL subset so the per-repo scope-leak
@@ -2989,6 +2995,42 @@ export class TaskExecutor {
     return assertMcpResolutionSucceeded(resolved);
   }
 
+  /**
+   * Tasks whose graph run already owns a top-level concurrency slot (scheduler pre-held handoff).
+   * Seam re-entry under that graph must not acquire a second slot.
+   */
+  private outerConcurrencyClaims = new Set<string>();
+
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+  Prefer a scheduler pre-held global slot when present so the hold/release tryAcquire and the executor share one top-level claim. Without this handoff the executor would acquire a second slot (or leave a gap if the pre-held slot were dropped) and live running counts could drift above the global cap again. While this outer claim is active, seam/step sessions must not acquire again — a second top-level acquire under a full global cap deadlocks (parent holds the last slot, child waits forever).
+  */
+  private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> {
+    const sem = this.options.semaphore;
+    if (!sem) return work();
+    if (this.outerConcurrencyClaims.has(taskId)) {
+      return work();
+    }
+
+    const runUnderOuterClaim = async (): Promise<T> => {
+      this.outerConcurrencyClaims.add(taskId);
+      try {
+        return await work();
+      } finally {
+        this.outerConcurrencyClaims.delete(taskId);
+      }
+    };
+
+    if (takePreHeldExecutorSlot(taskId)) {
+      try {
+        return await runUnderOuterClaim();
+      } finally {
+        sem.release();
+      }
+    }
+    return sem.run(runUnderOuterClaim, PRIORITY_EXECUTE);
+  }
+
   constructor(
     private store: TaskStore,
     private rootDir: string,
@@ -5116,6 +5158,16 @@ export class TaskExecutor {
     // the same task cannot both enter graph routing (mirrors executingTaskLock).
     this.graphRouting.add(task.id);
     let graphAbortController: AbortController | undefined;
+    /*
+    FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+    The hold/release sweep may have already tryAcquired a global slot for this card before moving it to in-progress. Claim that pre-held slot for the full graph run so utilization stays honest between workflow nodes and triage cannot overfill the cap while this task is still graph-owned.
+    */
+    const hadPreHeldExecutorSlot = takePreHeldExecutorSlot(task.id);
+    if (hadPreHeldExecutorSlot) {
+      this.outerConcurrencyClaims.add(task.id);
+    }
+    /** When true, re-register the pre-held slot for the legacy execute path instead of releasing it. */
+    let transferPreHeldToLegacy = false;
     try {
       let settings: Settings;
       try {
@@ -5168,6 +5220,7 @@ export class TaskExecutor {
           });
           return true;
         }
+        transferPreHeldToLegacy = true;
         return false;
       }
       try {
@@ -5413,6 +5466,14 @@ export class TaskExecutor {
         await this.terminateAllChildren(task.id);
       } catch (err) {
         executorLog.warn(`terminateAllChildren failed for graph task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (hadPreHeldExecutorSlot) {
+        this.outerConcurrencyClaims.delete(task.id);
+        if (transferPreHeldToLegacy) {
+          registerPreHeldExecutorSlot(task.id);
+        } else {
+          this.options.semaphore?.release();
+        }
       }
       if (graphAbortController && this.activeWorkflowGraphAbortControllers.get(task.id) === graphAbortController) {
         this.activeWorkflowGraphAbortControllers.delete(task.id);
@@ -9679,13 +9740,20 @@ export class TaskExecutor {
         executorLog.log(`execute() called for ${task.id} while graph routing is active — skipping duplicate`);
         return;
       }
-      if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) return;
+      if (await this.blockOuterDispatchWhenDependenciesUnmet(task)) {
+        // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: release any scheduler pre-held slot when outer dispatch aborts before agent work starts.
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        return;
+      }
       // FNXC:EphemeralAgents 2026-07-01-00:00: gate ALL workflow dispatch paths
       // (graph/authoritative/work-engine) on ephemeralAgentsEnabled before any of
       // them can claim the task. Placed inside the outer-dispatch block so seam
       // re-entry (interceptor registered) is unaffected, and ahead of every path
       // so the single check covers all three entry points.
-      if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) return;
+      if (await this.blockOuterDispatchWhenEphemeralDisabled(task)) {
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        return;
+      }
       const graphOwned = await this.maybeExecuteWorkflowGraph(task);
       if (graphOwned) return;
       const authoritativeOwned = await this.options.workflowAuthoritativeDispatch?.(task);
@@ -10264,7 +10332,8 @@ export class TaskExecutor {
           worktreePath,
           rootDir: this.rootDir,
           settings,
-          semaphore: this.options.semaphore,
+          // FNXC:GlobalConcurrencyControls 2026-07-14-18:30: When the graph run already owns a top-level slot (outerConcurrencyClaims), do not pass the semaphore into per-step sessions — each step would acquire a second slot and can deadlock under a full global cap.
+          semaphore: this.outerConcurrencyClaims.has(task.id) ? undefined : this.options.semaphore,
           stuckTaskDetector: this.options.stuckTaskDetector,
           pluginRunner: this.options.pluginRunner,
           runtimeHint: stepSessionRuntimeHint,
@@ -10609,11 +10678,7 @@ export class TaskExecutor {
         });
 
         try {
-          if (this.options.semaphore) {
-            await this.options.semaphore.run(retryableStepWork, PRIORITY_EXECUTE);
-          } else {
-            await retryableStepWork();
-          }
+          await this.runWithExecutorSemaphore(task.id, retryableStepWork);
         } catch (err: unknown) {
           const { message: errorMessage, detail: errorDetail, stack: errorStack } = formatError(err);
           if (this.depAborted.has(task.id)) {
@@ -11812,11 +11877,7 @@ export class TaskExecutor {
         },
       });
 
-      if (this.options.semaphore) {
-        await this.options.semaphore.run(retryableWork, PRIORITY_EXECUTE);
-      } else {
-        await retryableWork();
-      }
+      await this.runWithExecutorSemaphore(task.id, retryableWork);
     } catch (err: unknown) {
       const { message: errorMessage, detail: errorDetail, stack: errorStack } = formatError(err);
       if (this.depAborted.has(task.id)) {

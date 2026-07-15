@@ -2260,6 +2260,51 @@ describe("TriageProcessor", () => {
     });
 
     /*
+    FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
+    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling maxTriageConcurrent purely from semaphore.availableCount.
+    */
+    it("leaves global concurrency room for live in-progress agents when admitting planners", async () => {
+      const tasks: Task[] = [
+        createTriageTask({ id: "FN-300", priority: "urgent" }),
+        createTriageTask({ id: "FN-301", priority: "urgent" }),
+        createTriageTask({ id: "FN-302", priority: "urgent" }),
+        createTriageTask({ id: "FN-303", priority: "urgent" }),
+        {
+          ...createTriageTask({ id: "FN-EXEC", priority: "normal" }),
+          column: "in-progress",
+          status: null,
+        } as Task,
+      ];
+
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 4,
+          maxTriageConcurrent: 4,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const semaphore = {
+        availableCount: 4,
+        activeCount: 0,
+        limit: 4,
+        snapshot: vi.fn(() => ({ activeCount: 0, waitingCount: 0, availableCount: 4, limit: 4 })),
+      };
+      const triageProcessor = new TriageProcessor(triageStore, rootDir, { semaphore: semaphore as any });
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      // Global cap 4 with 1 in-progress holder → at most 3 new planners.
+      expect(specifySpy).toHaveBeenCalledTimes(3);
+    });
+
+    /*
     FNXC:PlanReview 2026-06-29-15:42:
     Polling must honor Plan Review retry backoff as a dispatch boundary: future `nextRecoveryAt` rows stay parked, elapsed reviewer-outage rows bypass the planner, and ordinary null/needs-replan rows still launch planning.
     */

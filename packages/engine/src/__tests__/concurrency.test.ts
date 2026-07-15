@@ -6,8 +6,14 @@ import {
   PRIORITY_MERGE,
   PRIORITY_EXECUTE,
   PRIORITY_SPECIFY,
+  clearPreHeldExecutorSlotsForTests,
+  computeTopLevelConcurrencyClaimed,
+  dropPreHeldExecutorSlot,
+  hasPreHeldExecutorSlot,
   persistedTopLevelAgentSlots,
   recoverIdleSemaphoreLeakCandidate,
+  registerPreHeldExecutorSlot,
+  takePreHeldExecutorSlot,
 } from "../concurrency.js";
 
 describe("ScopedAgentSemaphore", () => {
@@ -403,6 +409,45 @@ describe("AgentSemaphore", () => {
     ] as Task[];
 
     expect(persistedTopLevelAgentSlots(tasks)).toBe(7);
+  });
+
+  it("claims top-level concurrency as max(live running agents, semaphore active, pending specify)", () => {
+    const tasks = [
+      { column: "in-progress" },
+      { column: "triage", status: "planning", paused: false },
+      { column: "triage", status: "planning", paused: false },
+      { column: "triage", status: "planning", paused: false },
+      { column: "triage", status: "planning", paused: false },
+      { column: "todo" },
+    ] as Task[];
+
+    // 4 planning + 1 in-progress = 5 live holders (the reported over-cap symptom).
+    expect(computeTopLevelConcurrencyClaimed({ tasks })).toBe(5);
+    // Prefer the larger of live holders and in-memory activeCount.
+    expect(computeTopLevelConcurrencyClaimed({ tasks, semaphoreActiveCount: 2 })).toBe(5);
+    expect(computeTopLevelConcurrencyClaimed({ tasks: [], semaphoreActiveCount: 3, pendingSpecifyCount: 2 })).toBe(3);
+    expect(computeTopLevelConcurrencyClaimed({ tasks: [], semaphoreActiveCount: 1, pendingSpecifyCount: 2 })).toBe(2);
+  });
+
+  it("hands off pre-held executor slots without double-registering", () => {
+    clearPreHeldExecutorSlotsForTests();
+    const sem = new AgentSemaphore(2);
+    expect(sem.tryAcquire()).toBe(true);
+    registerPreHeldExecutorSlot("FN-1");
+    expect(hasPreHeldExecutorSlot("FN-1")).toBe(true);
+
+    expect(takePreHeldExecutorSlot("FN-1")).toBe(true);
+    expect(hasPreHeldExecutorSlot("FN-1")).toBe(false);
+    expect(takePreHeldExecutorSlot("FN-1")).toBe(false);
+
+    // Failed dispatch path releases both the registry entry and the semaphore slot.
+    expect(sem.tryAcquire()).toBe(true);
+    registerPreHeldExecutorSlot("FN-2");
+    dropPreHeldExecutorSlot("FN-2", sem);
+    expect(hasPreHeldExecutorSlot("FN-2")).toBe(false);
+    expect(sem.activeCount).toBe(1);
+    sem.release();
+    clearPreHeldExecutorSlotsForTests();
   });
 
   it("recovers idle semaphore leaks only after a stable persisted-idle window", async () => {
