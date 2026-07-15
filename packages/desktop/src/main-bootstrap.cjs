@@ -5,6 +5,12 @@ Platform package entrypoints resolve native binaries via import.meta.url to
 `.../app.asar/.../native/bin/postgres`, and spawn against that path fails with ENOTDIR.
 CJS mutation of child_process.spawn must run BEFORE any ESM importer binds spawn.
 This bootstrap is the package main: patch builtins, then dynamically import the ESM main.
+
+FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+After CJS reassignment of child_process.spawn / fs.promises.stat|chmod, already-resolved
+ESM named imports keep the pre-patch functions until module.syncBuiltinESMExports() runs.
+Call it after every CJS mutation so the subsequent dynamic import of main.js (and any
+ESM embedded-postgres import) observes the rewritten paths.
 */
 "use strict";
 
@@ -13,6 +19,7 @@ const path = require("path");
 const os = require("os");
 const cp = require("child_process");
 const fsp = require("fs/promises");
+const { syncBuiltinESMExports } = require("module");
 
 const BIN_NAMES = new Set([
   "postgres",
@@ -63,6 +70,9 @@ function installSpawnPatch() {
     const fixed = typeof p === "string" ? resolveAsarUnpacked(p) : p;
     return originalChmod(fixed, ...rest);
   };
+
+  // Propagate CJS mutations to ESM named exports before main.js loads.
+  syncBuiltinESMExports();
 }
 
 installSpawnPatch();

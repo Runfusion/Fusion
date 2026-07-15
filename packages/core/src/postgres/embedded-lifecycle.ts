@@ -50,6 +50,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   rmSync,
   statSync,
@@ -62,7 +63,7 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { dirname, join, basename, sep } from "node:path";
-import { createRequire } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { createLogger } from "../logger.js";
 import { redactConnectionString } from "./credential-redact.js";
 import type { ResolvedBackend } from "./backend-resolver.js";
@@ -78,8 +79,13 @@ const EMBEDDED_PG_BIN_NAMES = new Set([
   "pg_ctl.exe",
 ]);
 
-/** Materialization marker schema version; bump when the marker payload shape changes. */
-const MATERIALIZATION_MARKER_VERSION = 1;
+/*
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Bump when the marker payload shape or fingerprint algorithm changes so older
+ * host-local caches always rematerialize after a desktop update that ships a
+ * new fingerprinting strategy (e.g. content-hashing lib/share, not path+size).
+ */
+const MATERIALIZATION_MARKER_VERSION = 2;
 
 /**
  * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
@@ -129,6 +135,12 @@ export function embeddedPostgresRuntimeBinRoot(
  * postgres binaries and libraries; path-only markers would reuse stale payload.
  * Fingerprint mixes binary content hashes + sizes so both binary and library-only
  * payload changes invalidate the host-local materialization cache.
+ *
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Greptile P1: path+size for lib files missed same-size content patches, and
+ * share/ was copied into runtime-bin but omitted from the fingerprint. Hash full
+ * file contents under bin/ + lib/ + share/ so any payload byte change forces
+ * rematerialization after an in-place app update.
  */
 export function fingerprintEmbeddedPostgresNativeRoot(nativeRoot: string): string {
   const hash = createHash("sha256");
@@ -151,28 +163,36 @@ export function fingerprintEmbeddedPostgresNativeRoot(nativeRoot: string): strin
     }
     hash.update("\0");
   }
-  // Library / extension tree can change without bin renames (e.g. security patch
-  // to a shared library). Walk lib/ and record relative path + size for regular
-  // files so payload-only library updates also invalidate the cache.
-  const libDir = join(nativeRoot, "lib");
-  if (existsSync(libDir)) {
-    try {
-      hashLibTreeFingerprint(libDir, "", hash);
-    } catch {
-      hash.update("lib-unreadable");
+  // Full content walk of every tree that materialize() copies (lib + share).
+  // Budget bounds pathological trees; real embedded-postgres installs are well under it.
+  const budget = { remaining: 4096 };
+  for (const tree of ["lib", "share"] as const) {
+    const treeDir = join(nativeRoot, tree);
+    hash.update(`tree:${tree}\0`);
+    if (existsSync(treeDir)) {
+      try {
+        hashPayloadTreeContents(treeDir, tree, hash, budget);
+      } catch {
+        hash.update(`${tree}-unreadable`);
+      }
+    } else {
+      hash.update(`${tree}-missing`);
     }
-  } else {
-    hash.update("lib-missing");
   }
   return hash.digest("hex");
 }
 
-/** Bounded lib-tree walk for materialization fingerprints (path + size only). */
-function hashLibTreeFingerprint(
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Recursive content fingerprint for a payload subtree (lib/ or share/). Records
+ * relative path + full file bytes so same-size security patches invalidate the
+ * materialization marker. Directory entries are structural markers only.
+ */
+function hashPayloadTreeContents(
   absDir: string,
   relPrefix: string,
   hash: ReturnType<typeof createHash>,
-  budget: { remaining: number } = { remaining: 256 },
+  budget: { remaining: number },
 ): void {
   if (budget.remaining <= 0) return;
   let entries: string[];
@@ -186,13 +206,30 @@ function hashLibTreeFingerprint(
     const abs = join(absDir, entry);
     const rel = relPrefix ? `${relPrefix}/${entry}` : entry;
     try {
-      const st = statSync(abs);
-      if (st.isDirectory()) {
+      // lstat so macOS dylib compatibility symlinks are fingerprinted by target
+      // name (not followed) and same-size file content patches still hash bytes.
+      const st = lstatSync(abs);
+      if (st.isSymbolicLink()) {
+        budget.remaining -= 1;
+        hash.update(`l:${rel}:`);
+        try {
+          hash.update(readlinkSync(abs));
+        } catch {
+          hash.update("?");
+        }
+        hash.update("\0");
+      } else if (st.isDirectory()) {
         hash.update(`d:${rel}\0`);
-        hashLibTreeFingerprint(abs, rel, hash, budget);
+        hashPayloadTreeContents(abs, rel, hash, budget);
       } else if (st.isFile()) {
         budget.remaining -= 1;
-        hash.update(`f:${rel}:${st.size}\0`);
+        hash.update(`f:${rel}\0`);
+        try {
+          hash.update(readFileSync(abs));
+        } catch {
+          hash.update("unreadable");
+        }
+        hash.update("\0");
       }
     } catch {
       hash.update(`?:${rel}\0`);
@@ -297,6 +334,8 @@ export function materializeEmbeddedPostgresRuntimeBinaries(
 }
 
 let electronAsarNativePathPatchInstalled = false;
+/** Restores the pre-patch CJS/ESM builtins; used by unit tests only. */
+let electronAsarNativePathPatchRestore: (() => void) | null = null;
 
 type MutableSpawnModule = {
   spawn: (...args: unknown[]) => unknown;
@@ -314,10 +353,14 @@ type MutableFsPromisesModule = {
  * Postgres (ENOTDIR).
  *
  * Mutate the CJS exports objects (`require("child_process")` / `require("fs/promises")`)
- * rather than the frozen ESM namespace (`import * as ...`). Node's builtin ESM named
- * exports are live bindings onto those CJS export properties, so spawn/stat/chmod
- * sites in both CJS and ESM observe the rewrite. Safe outside Electron — rewrite
- * is a no-op without asar.
+ * rather than the frozen ESM namespace (`import * as ...`).
+ *
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Replacing CJS export properties does NOT automatically update already-resolved
+ * ESM named imports of the same builtins — they keep the pre-patch function until
+ * `syncBuiltinESMExports()` runs. Call it after every CJS mutation so ESM importers
+ * of child_process/fs.promises (including embedded-postgres) observe the rewrite.
+ * Safe outside Electron — rewrite is a no-op without asar.
  */
 export function installElectronAsarNativePathPatch(): void {
   if (electronAsarNativePathPatchInstalled) return;
@@ -356,6 +399,28 @@ export function installElectronAsarNativePathPatch(): void {
     const fixedPath = typeof path === "string" ? resolveElectronAsarUnpackedPath(path) : path;
     return originalChmod(fixedPath, ...rest);
   };
+
+  // Propagate CJS mutations to ESM named exports (spawn/stat/chmod).
+  syncBuiltinESMExports();
+
+  electronAsarNativePathPatchRestore = () => {
+    childProcessMod.spawn = originalSpawn;
+    fsPromisesMod.stat = originalStat;
+    fsPromisesMod.chmod = originalChmod;
+    syncBuiltinESMExports();
+    electronAsarNativePathPatchInstalled = false;
+    electronAsarNativePathPatchRestore = null;
+  };
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Test-only undo for {@link installElectronAsarNativePathPatch} so unit tests can
+ * install a recording bottom-layer spawn/stat/chmod stub, then reinstall the
+ * production patch on top and assert rewritten paths without real processes.
+ */
+export function uninstallElectronAsarNativePathPatchForTests(): void {
+  electronAsarNativePathPatchRestore?.();
 }
 
 /**

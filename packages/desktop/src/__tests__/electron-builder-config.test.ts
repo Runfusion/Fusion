@@ -172,10 +172,25 @@ describe("electron-builder desktop config", () => {
       "node_modules/yallist/**/*",
       "node_modules/yaml/**/*",
       // FNXC:DesktopEmbeddedPostgres 2026-07-14-18:25: local-mode Postgres boot deps
+      // FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11: assert the full pg transitive
+      // allowlist (protocol/types/pgpass/codecs/split2/xtend) so dropping any glob
+      // fails this regression and cannot silently break packaged startup.
       "node_modules/embedded-postgres/**/*",
       "node_modules/@embedded-postgres/**/*",
-      "node_modules/postgres/**/*",
       "node_modules/pg/**/*",
+      "node_modules/pg-connection-string/**/*",
+      "node_modules/pg-int8/**/*",
+      "node_modules/pg-pool/**/*",
+      "node_modules/pg-protocol/**/*",
+      "node_modules/pg-types/**/*",
+      "node_modules/pgpass/**/*",
+      "node_modules/postgres-array/**/*",
+      "node_modules/postgres-bytea/**/*",
+      "node_modules/postgres-date/**/*",
+      "node_modules/postgres-interval/**/*",
+      "node_modules/split2/**/*",
+      "node_modules/xtend/**/*",
+      "node_modules/postgres/**/*",
       "node_modules/async-exit-hook/**/*",
       // FNXC:DesktopOmpPlugin 2026-07-14-18:55: dashboard-static plugin packages
       "node_modules/@fusion-plugin-examples/**/*",
