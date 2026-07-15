@@ -773,10 +773,8 @@ function openSqlite(path: string): DatabaseSync {
   // ":memory:". The migrator is a cutover tool run by operators against a
   // real .fusion path, so the real-path guard is bypassed only when the path
   // is explicit. Here we use the standard constructor; tests pass temp paths.
-  const db = new DatabaseSync(path);
-  // Read-only guard: open with immutable so we never modify the source.
-  // (node:sqlite does not have a read-only open flag in the constructor; we
-  // simply never issue writes against the source.)
+  // FNXC:LegacySqliteBoundary 2026-07-14-18:42: the cutover migrator reads legacy sources without checkpointing or modifying them.
+  const db = new DatabaseSync(path, { readOnly: true });
   return db;
 }
 

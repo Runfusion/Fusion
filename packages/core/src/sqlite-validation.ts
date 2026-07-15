@@ -4,9 +4,10 @@ import { DatabaseSync } from "./sqlite-adapter.js";
 /**
  * Validate that a path points to a SQLite database file that can be opened.
  *
- * Zero-byte files are treated as valid bootstrap databases because SQLite
- * upgrades them in place on first open. Non-existent paths and unreadable or
- * malformed files return false.
+ * This legacy-migration probe is read-only. A zero-byte bootstrap file remains
+ * a valid migration signal, while non-existent, unreadable, or malformed files
+ * return false. PostgreSQL-era startup never creates or upgrades a SQLite file
+ * as a side effect of project discovery.
  */
 export function isValidSqliteDatabaseFile(dbPath: string): boolean {
   if (!existsSync(dbPath)) {
@@ -23,7 +24,8 @@ export function isValidSqliteDatabaseFile(dbPath: string): boolean {
 
   let db: DatabaseSync | null = null;
   try {
-    db = new DatabaseSync(dbPath);
+    // FNXC:LegacySqliteBoundary 2026-07-14-18:42: validation may inspect a legacy migration input but must never mutate it.
+    db = new DatabaseSync(dbPath, { readOnly: true });
     db.prepare("PRAGMA schema_version").get();
     return true;
   } catch {

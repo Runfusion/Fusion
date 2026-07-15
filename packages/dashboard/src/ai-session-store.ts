@@ -2,7 +2,7 @@
  * AI Session Store
  *
  * Persists long-running AI session state (planning, subtask breakdown,
- * mission interview) to SQLite so users can dismiss modals and return
+ * mission interview) to PostgreSQL so users can dismiss modals and return
  * later — even from a different browser.
  *
  * The in-memory session Maps in planning.ts / subtask-breakdown.ts /
@@ -11,7 +11,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import { THINKING_LEVELS, type Database, type AsyncDataLayer, type ThinkingLevel } from "@fusion/core";
+import { THINKING_LEVELS, type AsyncDataLayer, type ThinkingLevel } from "@fusion/core";
 import {
   upsertAiSession,
   getAiSession,
@@ -63,64 +63,28 @@ export interface AiSessionSummary {
   type: AiSessionType;
   status: AiSessionStatus;
   title: string;
-  /**
-   * For draft planning sessions only: a short, derived preview of the
-   * persisted initialPlan so the sidebar can distinguish multiple drafts
-   * before the user has started any of them. Computed at read time from
-   * inputPayload — never persisted as the title — so unfinished keystrokes
-   * don't end up baked into the row's permanent title.
-   */
   preview?: string;
   projectId: string | null;
   updatedAt: string;
   archived?: boolean;
 }
 
-/** Max characters of initialPlan surfaced as a sidebar preview for drafts. */
 const DRAFT_PREVIEW_MAX_CHARS = 80;
 
 export interface AiSessionStoreEvents {
   "ai_session:updated": [AiSessionSummary];
-  "ai_session:deleted": [string]; // session id
+  "ai_session:deleted": [string];
 }
 
-// ── Constants ───────────────────────────────────────────────────────────
-
-/** Max stored thinking output (50 KB). Older content trimmed from front. */
-const MAX_THINKING_BYTES = 50 * 1024;
-
-/** Debounce interval for thinking-only writes (ms). */
 const THINKING_DEBOUNCE_MS = 2000;
 
-/** Default max age before stale AI sessions are eligible for cleanup (7 days). */
 export const SESSION_CLEANUP_DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** Default scheduled interval for stale session cleanup runs (6 hours). */
 export const SESSION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
  * FNXC:AiSessionStore 2026-07-13-00:00:
- * FN-7949 — deleting a Planning Mode session while its background generation
- * is still in flight let the session silently reappear. Root cause:
- * `runGenerationWithTimeout` (planning.ts) and the equivalent wrappers in
- * subtask-breakdown.ts/mission-interview.ts/milestone-slice-interview.ts use
- * `Promise.race([operation(...), abortPromise])` to abort generation — that
- * only stops the *caller* from awaiting `operation`, it does NOT cancel the
- * underlying `session.agent.session.prompt()` call. If the session is deleted
- * while that promise is still pending, the abandoned call later resolves and
- * calls `persistSession(...)` -> `upsert()`, which used to unconditionally
- * re-INSERT the row and re-emit `ai_session:updated`, resurrecting a session
- * the user explicitly deleted.
- *
- * Fix: `AiSessionStore` remembers deleted ids in a bounded-TTL tombstone map.
- * `upsert()` drops (no-ops) any write for an id tombstoned within the TTL
- * window, so a straggling write can never resurrect a deleted session. This
- * lives here — the single shared store — rather than being duplicated in each
- * producer, so the invariant holds for every AiSessionType (planning, subtask,
- * mission_interview, milestone_interview, slice_interview) without forking
- * the fix per-producer. 10 minutes is generously longer than any realistic
- * straggling generation write (session ids are UUIDs, never legitimately
- * reused), so id-reuse racing past the TTL is not an expected production path.
+ * Deleted session ids remain tombstoned long enough to reject writes from an
+ * already-abandoned generation promise after the user deletes that session.
  */
 export const DELETE_TOMBSTONE_TTL_MS = 10 * 60 * 1000;
 
@@ -135,42 +99,28 @@ const diagnostics = createSessionDiagnostics("ai-session-store");
 // ── Store ───────────────────────────────────────────────────────────────
 
 export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
-  /** Pending debounce timers for thinking-only writes, keyed by session id. */
   private thinkingTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Interval used for periodic stale-session cleanup. */
   private cleanupTimer: ReturnType<typeof setInterval> | undefined;
   /**
-   * FNXC:AiSessionStore 2026-06-24-23:50:
-   * When non-null, the store is in backend (PostgreSQL) mode and delegates to
-   * the async helpers. The sync db is unused in this mode. This is the dual-path
-   * pattern for the AI session system.
+   * FNXC:PostgresAiSessionStore 2026-07-14-19:20:
+   * Background AI-session persistence is PostgreSQL-only. Requiring the
+   * project AsyncDataLayer prevents deleted or resumed sessions from landing
+   * in a disconnected SQLite shadow store.
    */
-  private readonly asyncLayer: AsyncDataLayer | null;
+  private readonly asyncLayer: AsyncDataLayer;
   /**
    * FN-7949 delete tombstones: id -> deletion timestamp (ms since epoch).
    * Consulted by `upsert()` to drop straggling writes for ids deleted within
    * `DELETE_TOMBSTONE_TTL_MS`. See the FNXC:AiSessionStore comment above.
    */
   private deletedIds = new Map<string, number>();
-
-
-  constructor(private db: Database, options?: { asyncLayer?: AsyncDataLayer | null }) {
+  constructor(asyncLayer: AsyncDataLayer) {
     super();
-    this.asyncLayer = options?.asyncLayer ?? null;
+    this.asyncLayer = asyncLayer;
   }
 
-  /** True when the store is backed by PostgreSQL (AsyncDataLayer present). */
-  private get backendMode(): boolean {
-    return this.asyncLayer !== null;
-  }
-
-  /**
-   * FNXC:AiSessionStore 2026-06-24-23:50:
-   * Returns the async layer db handle for delegation. Throws if not in backend
-   * mode (should never be called when backendMode is false).
-   */
   private get dbAsync(): AsyncDataLayer["db"] {
-    return this.asyncLayer!.db;
+    return this.asyncLayer.db;
   }
 
   // ── CRUD ────────────────────────────────────────────────────────────
@@ -181,7 +131,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    */
   async upsert(session: AiSessionRow): Promise<void> {
     // FNXC:AiSessionStore 2026-07-13-00:00: FN-7949 tombstone guard — drop any
-    // upsert for an id that was deleted within the TTL window (both backends),
+    // upsert for an id that was deleted within the TTL window,
     // so a straggling post-delete generation write can never resurrect a
     // deleted session.
     if (this.isTombstoned(session.id)) {
@@ -191,55 +141,10 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       });
       return;
     }
-
-    if (this.backendMode) {
-      this.clearThinkingTimer(session.id);
-      const row = await upsertAiSession(this.dbAsync, session as import("@fusion/core").AsyncAiSessionRow);
-      this.emit("ai_session:updated", toSummary(row as AiSessionRow, row.updatedAt));
-      return;
-    }
-    const now = new Date().toISOString();
-    // FNXC:PlanningMode 2026-07-02-00:00: Planning checkpoints persist pending summaries inside inputPayload, so every session upsert must refresh inputPayload on existing rows instead of treating it as create-only draft metadata.
-    const thinking = trimThinking(session.thinkingOutput);
-
-    this.db
-      .prepare(
-        `INSERT INTO ai_sessions (id, type, status, title, inputPayload, conversationHistory, currentQuestion, result, thinkingOutput, error, projectId, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           status = excluded.status,
-           title = excluded.title,
-           inputPayload = excluded.inputPayload,
-           conversationHistory = excluded.conversationHistory,
-           currentQuestion = excluded.currentQuestion,
-           result = excluded.result,
-           thinkingOutput = excluded.thinkingOutput,
-           error = excluded.error,
-           updatedAt = excluded.updatedAt`,
-      )
-      .run(
-        session.id,
-        session.type,
-        session.status,
-        session.title,
-        session.inputPayload,
-        session.conversationHistory,
-        session.currentQuestion ?? null,
-        session.result ?? null,
-        thinking,
-        session.error ?? null,
-        session.projectId ?? null,
-        session.createdAt || now,
-        now,
-      );
-
-    // Cancel any pending thinking debounce for this session
     this.clearThinkingTimer(session.id);
-
-    const row = await this.get(session.id);
-    if (row) {
-      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
+    const row = await upsertAiSession(this.dbAsync, session as import("@fusion/core").AsyncAiSessionRow);
+    this.emit("ai_session:updated", toSummary(row as AiSessionRow, row.updatedAt));
+    return;
   }
 
   /**
@@ -266,13 +171,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Fetch a single session by ID. Returns null if not found.
    */
   async get(id: string): Promise<AiSessionRow | null> {
-    if (this.backendMode) {
-      return getAiSession(this.dbAsync, id) as Promise<AiSessionRow | null>;
-    }
-    const row = this.db
-      .prepare("SELECT * FROM ai_sessions WHERE id = ?")
-      .get(id) as unknown as AiSessionRow | undefined;
-    return row ?? null;
+    return getAiSession(this.dbAsync, id) as Promise<AiSessionRow | null>;
   }
 
   /**
@@ -280,65 +179,21 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Returns false when the session does not exist.
    */
   async updateStatus(id: string, status: AiSessionStatus, error?: string): Promise<boolean> {
-    if (this.backendMode) {
-      const changed = await updateAiSessionStatus(this.dbAsync, id, status, error);
-      if (changed) {
-        const row = await this.get(id);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return changed;
+    const changed = await updateAiSessionStatus(this.dbAsync, id, status, error);
+    if (changed) {
+      const row = await this.get(id);
+      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET status = ?, error = ?, updatedAt = ?
-         WHERE id = ?`,
-      )
-      .run(status, error ?? null, now, id) as { changes?: number };
-
-    const changed = Number(result.changes ?? 0) > 0;
-    if (!changed) {
-      return false;
-    }
-
-    const row = await this.get(id);
-    if (row) {
-      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-
-    return true;
+    return changed;
   }
 
   async updateTitle(id: string, title: string): Promise<boolean> {
-    if (this.backendMode) {
-      const changed = await updateAiSessionTitle(this.dbAsync, id, title);
-      if (changed) {
-        const row = await this.get(id);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return changed;
+    const changed = await updateAiSessionTitle(this.dbAsync, id, title);
+    if (changed) {
+      const row = await this.get(id);
+      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET title = ?, updatedAt = ?
-         WHERE id = ?`,
-      )
-      .run(title, now, id) as { changes?: number };
-
-    const changed = Number(result.changes ?? 0) > 0;
-    if (!changed) {
-      return false;
-    }
-
-    const row = await this.get(id);
-    if (row) {
-      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-
-    return true;
+    return changed;
   }
 
   /**
@@ -349,55 +204,22 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * are preserved by merge — this method only touches `summarizedFor`.
    */
   async markDraftSummarized(id: string, title: string, summarizedFor: string): Promise<boolean> {
-    if (this.backendMode) {
-      const existing = await this.get(id);
-      if (!existing || existing.type !== "planning") return false;
-      let payload: Record<string, unknown> = {};
-      if (existing.inputPayload) {
-        try {
-          const parsed = JSON.parse(existing.inputPayload);
-          if (parsed && typeof parsed === "object") payload = parsed as Record<string, unknown>;
-        } catch { /* ignore */ }
-      }
-      payload.summarizedFor = summarizedFor;
-      const changed = await markDraftSummarizedAsync(this.dbAsync, id, title, JSON.stringify(payload));
-      if (changed) {
-        const row = await this.get(id);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return changed;
-    }
     const existing = await this.get(id);
     if (!existing || existing.type !== "planning") return false;
-
     let payload: Record<string, unknown> = {};
     if (existing.inputPayload) {
       try {
         const parsed = JSON.parse(existing.inputPayload);
         if (parsed && typeof parsed === "object") payload = parsed as Record<string, unknown>;
-      } catch {
-        // Fall through with empty payload — better to lose stale fields than
-        // to refuse the update and leave the title out of sync with reality.
-      }
+      } catch { /* ignore */ }
     }
     payload.summarizedFor = summarizedFor;
-    const inputPayload = JSON.stringify(payload);
-
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET title = ?, inputPayload = ?, updatedAt = ?
-         WHERE id = ? AND type = 'planning'`,
-      )
-      .run(title, inputPayload, now, id) as { changes?: number };
-
-    const changed = Number(result.changes ?? 0) > 0;
-    if (!changed) return false;
-
-    const row = await this.get(id);
-    if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    return true;
+    const changed = await markDraftSummarizedAsync(this.dbAsync, id, title, JSON.stringify(payload));
+    if (changed) {
+      const row = await this.get(id);
+      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+    return changed;
   }
 
   /**
@@ -417,56 +239,6 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     id: string,
     draft: { initialPlan: string; modelProvider?: string; modelId?: string; thinkingLevel?: ThinkingLevel },
   ): Promise<boolean> {
-    if (this.backendMode) {
-      const existing = await this.get(id);
-      let preservedSummarizedFor: string | undefined;
-      let preservedThinkingLevel: ThinkingLevel | undefined;
-      if (existing?.inputPayload) {
-        try {
-          const prev = JSON.parse(existing.inputPayload) as {
-            summarizedFor?: unknown;
-            modelProvider?: unknown;
-            modelId?: unknown;
-            thinkingLevel?: unknown;
-          };
-          if (THINKING_LEVELS.includes(prev.thinkingLevel as ThinkingLevel)) {
-            preservedThinkingLevel = prev.thinkingLevel as ThinkingLevel;
-          }
-          const trimmedPlan = draft.initialPlan.trim();
-          const hasModelOverride = Boolean(draft.modelProvider && draft.modelId);
-          const prevProvider = typeof prev.modelProvider === "string" ? prev.modelProvider : undefined;
-          const prevModelId = typeof prev.modelId === "string" ? prev.modelId : undefined;
-          const newProvider = hasModelOverride ? draft.modelProvider : undefined;
-          const newModelId = hasModelOverride ? draft.modelId : undefined;
-          const modelUnchanged = prevProvider === newProvider && prevModelId === newModelId;
-          if (typeof prev.summarizedFor === "string" && prev.summarizedFor === trimmedPlan && modelUnchanged) {
-            preservedSummarizedFor = prev.summarizedFor;
-          }
-        } catch { /* ignore */ }
-      }
-      const inputPayload = JSON.stringify({
-        initialPlan: draft.initialPlan.trim(),
-        ...(draft.modelProvider && draft.modelId ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
-        ...(preservedSummarizedFor ? { summarizedFor: preservedSummarizedFor } : {}),
-        ...((draft.thinkingLevel ?? preservedThinkingLevel) ? { thinkingLevel: draft.thinkingLevel ?? preservedThinkingLevel } : {}),
-      });
-      const changed = await updateDraftAsync(this.dbAsync, id, inputPayload);
-      if (changed) {
-        const row = await this.get(id);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return changed;
-    }
-    const now = new Date().toISOString();
-    const trimmedPlan = draft.initialPlan.trim();
-    const hasModelOverride = Boolean(draft.modelProvider && draft.modelId);
-
-    // Preserve the prior `summarizedFor` field so summarize results aren't
-    // wiped on every draft sync, but only when both the plan text AND the
-    // model identity are unchanged. A model switch invalidates the prior
-    // summary even with identical text — otherwise startExistingSession
-    // would skip re-summarize and run the session with a title produced
-    // under a model the user just abandoned.
     const existing = await this.get(id);
     let preservedSummarizedFor: string | undefined;
     let preservedThinkingLevel: ThinkingLevel | undefined;
@@ -478,51 +250,33 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
           modelId?: unknown;
           thinkingLevel?: unknown;
         };
+        if (THINKING_LEVELS.includes(prev.thinkingLevel as ThinkingLevel)) {
+          preservedThinkingLevel = prev.thinkingLevel as ThinkingLevel;
+        }
+        const trimmedPlan = draft.initialPlan.trim();
+        const hasModelOverride = Boolean(draft.modelProvider && draft.modelId);
         const prevProvider = typeof prev.modelProvider === "string" ? prev.modelProvider : undefined;
         const prevModelId = typeof prev.modelId === "string" ? prev.modelId : undefined;
         const newProvider = hasModelOverride ? draft.modelProvider : undefined;
         const newModelId = hasModelOverride ? draft.modelId : undefined;
         const modelUnchanged = prevProvider === newProvider && prevModelId === newModelId;
-        if (THINKING_LEVELS.includes(prev.thinkingLevel as ThinkingLevel)) {
-          preservedThinkingLevel = prev.thinkingLevel as ThinkingLevel;
-        }
-        if (
-          typeof prev.summarizedFor === "string"
-          && prev.summarizedFor === trimmedPlan
-          && modelUnchanged
-        ) {
+        if (typeof prev.summarizedFor === "string" && prev.summarizedFor === trimmedPlan && modelUnchanged) {
           preservedSummarizedFor = prev.summarizedFor;
         }
-      } catch {
-        // Ignore malformed prior payloads — treat as no summary on file.
-      }
+      } catch { /* ignore */ }
     }
-
     const inputPayload = JSON.stringify({
-      initialPlan: trimmedPlan,
-      ...(hasModelOverride ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
-      ...((draft.thinkingLevel ?? preservedThinkingLevel) ? { thinkingLevel: draft.thinkingLevel ?? preservedThinkingLevel } : {}),
+      initialPlan: draft.initialPlan.trim(),
+      ...(draft.modelProvider && draft.modelId ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
       ...(preservedSummarizedFor ? { summarizedFor: preservedSummarizedFor } : {}),
+      ...((draft.thinkingLevel ?? preservedThinkingLevel) ? { thinkingLevel: draft.thinkingLevel ?? preservedThinkingLevel } : {}),
     });
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET inputPayload = ?, updatedAt = ?
-         WHERE id = ? AND type = 'planning'`,
-      )
-      .run(inputPayload, now, id) as { changes?: number };
-
-    const changed = Number(result.changes ?? 0) > 0;
-    if (!changed) {
-      return false;
+    const changed = await updateDraftAsync(this.dbAsync, id, inputPayload);
+    if (changed) {
+      const row = await this.get(id);
+      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     }
-
-    const row = await this.get(id);
-    if (row) {
-      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-
-    return true;
+    return changed;
   }
 
   /**
@@ -531,15 +285,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * `ai_session:updated` to avoid high-frequency SSE broadcasts.
    */
   async ping(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      return pingAiSession(this.dbAsync, id);
-    }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id = ?")
-      .run(now, id) as { changes?: number };
-
-    return Number(result.changes ?? 0) > 0;
+    return pingAiSession(this.dbAsync, id);
   }
 
   /**
@@ -547,37 +293,16 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Optionally filtered by projectId.
    */
   async listActive(projectId?: string): Promise<AiSessionSummary[]> {
-    if (this.backendMode) {
-      const rows = await listActiveAiSessions(this.dbAsync, projectId) as Array<Record<string, unknown>>;
-      return rows.map((row) => ({
-        id: row.id as string,
-        type: row.type as AiSessionType,
-        status: row.status as AiSessionStatus,
-        title: row.title as string,
-        projectId: (row.projectId as string | null) ?? null,
-        updatedAt: row.updatedAt as string,
-        archived: Number(row.archived ?? 0) === 1,
-      }));
-    }
-    if (projectId) {
-      return this.db
-        .prepare(
-          `SELECT id, type, status, title, projectId, updatedAt, archived FROM ai_sessions
-           WHERE status IN ('generating', 'awaiting_input', 'error')
-             AND COALESCE(archived, 0) = 0
-             AND projectId = ?
-           ORDER BY updatedAt DESC`,
-        )
-        .all(projectId) as unknown as AiSessionSummary[];
-    }
-    return this.db
-      .prepare(
-        `SELECT id, type, status, title, projectId, updatedAt, archived FROM ai_sessions
-         WHERE status IN ('generating', 'awaiting_input', 'error')
-           AND COALESCE(archived, 0) = 0
-         ORDER BY updatedAt DESC`,
-      )
-      .all() as unknown as AiSessionSummary[];
+    const rows = await listActiveAiSessions(this.dbAsync, projectId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      type: row.type as AiSessionType,
+      status: row.status as AiSessionStatus,
+      title: row.title as string,
+      projectId: (row.projectId as string | null) ?? null,
+      updatedAt: row.updatedAt as string,
+      archived: Number(row.archived ?? 0) === 1,
+    }));
   }
 
   /**
@@ -590,35 +315,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * the configured TTL, so this list does not grow unbounded.
    */
   async listAll(projectId?: string, options?: { includeArchived?: boolean }): Promise<AiSessionSummary[]> {
-    if (this.backendMode) {
-      const rows = await listAllAiSessions(this.dbAsync, projectId, options) as Array<Record<string, unknown>>;
-      return rows.map((row) => toSidebarSummaryAsync(row));
-    }
-    // Pull `inputPayload` alongside the summary columns so we can derive the
-    // sidebar preview for draft rows. Non-draft rows ignore the payload —
-    // toSidebarSummary only inspects it when status === "draft".
-    const archivedClause = options?.includeArchived ? "" : " WHERE COALESCE(archived, 0) = 0";
-    if (projectId) {
-      const where = options?.includeArchived
-        ? "WHERE projectId = ?"
-        : "WHERE projectId = ? AND COALESCE(archived, 0) = 0";
-      const rows = this.db
-        .prepare(
-          `SELECT id, type, status, title, inputPayload, projectId, updatedAt, archived FROM ai_sessions
-           ${where}
-           ORDER BY updatedAt DESC`,
-        )
-        .all(projectId) as Array<Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "type" | "status" | "title" | "inputPayload" | "updatedAt">>;
-      return rows.map(toSidebarSummary);
-    }
-    const rows = this.db
-      .prepare(
-        `SELECT id, type, status, title, inputPayload, projectId, updatedAt, archived FROM ai_sessions
-         ${archivedClause}
-         ORDER BY updatedAt DESC`,
-      )
-      .all() as Array<Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "type" | "status" | "title" | "inputPayload" | "updatedAt">>;
-    return rows.map(toSidebarSummary);
+    const rows = await listAllAiSessions(this.dbAsync, projectId, options) as Array<Record<string, unknown>>;
+    return rows.map((row) => toSidebarSummaryAsync(row));
   }
 
   /**
@@ -628,24 +326,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * the row was updated. Emits `ai_session:updated` so other tabs sync.
    */
   async archive(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      const changed = await archiveAiSession(this.dbAsync, id);
-      if (changed) {
-        const row = await this.get(id);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return changed;
-    }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET archived = 1, updatedAt = ?
-         WHERE id = ? AND status IN ('complete', 'error')`,
-      )
-      .run(now, id) as { changes?: number };
-
-    const changed = Number(result.changes ?? 0) > 0;
+    const changed = await archiveAiSession(this.dbAsync, id);
     if (changed) {
       const row = await this.get(id);
       if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
@@ -655,24 +336,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
   /** Restore an archived session so it reappears in the sidebar. */
   async unarchive(id: string): Promise<boolean> {
-    if (this.backendMode) {
-      const changed = await unarchiveAiSession(this.dbAsync, id);
-      if (changed) {
-        const row = await this.get(id);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return changed;
-    }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET archived = 0, updatedAt = ?
-         WHERE id = ?`,
-      )
-      .run(now, id) as { changes?: number };
-
-    const changed = Number(result.changes ?? 0) > 0;
+    const changed = await unarchiveAiSession(this.dbAsync, id);
     if (changed) {
       const row = await this.get(id);
       if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
@@ -685,26 +349,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Returns full rows for sessions still in progress.
    */
   async listRecoverable(projectId?: string): Promise<AiSessionRow[]> {
-    if (this.backendMode) {
-      return listRecoverableAiSessions(this.dbAsync, projectId) as Promise<AiSessionRow[]>;
-    }
-    if (projectId) {
-      return this.db
-        .prepare(
-          `SELECT * FROM ai_sessions
-           WHERE status IN ('generating', 'awaiting_input') AND projectId = ?
-           ORDER BY updatedAt DESC`,
-        )
-        .all(projectId) as unknown as AiSessionRow[];
-    }
-
-    return this.db
-      .prepare(
-        `SELECT * FROM ai_sessions
-         WHERE status IN ('generating', 'awaiting_input')
-         ORDER BY updatedAt DESC`,
-      )
-      .all() as unknown as AiSessionRow[];
+    return listRecoverableAiSessions(this.dbAsync, projectId) as Promise<AiSessionRow[]>;
   }
 
   /*
@@ -713,6 +358,10 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   here with the rest of the per-tab session lock. AI interview sessions are multi-tab: this
   persisted row is the shared source of truth and every tab may read and interact. See the dead
   `lockedByTab`/`lockedAt` columns in core's project schema for why they still exist in the DB.
+
+  FNXC:PostgresConflictResolution 2026-07-14-19:47:
+  Preserve main's lock-free multi-tab contract while keeping AI-session persistence PostgreSQL-only.
+  Resolving the storage cutover must not restore the deleted lock API or SQLite summary fields.
   */
 
   /**
@@ -720,40 +369,20 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    */
   async delete(id: string): Promise<void> {
     this.clearThinkingTimer(id);
-    if (this.backendMode) {
-      await deleteAiSession(this.dbAsync, id);
-      this.emit("ai_session:deleted", id);
-      return;
-    }
-    this.db.prepare("DELETE FROM ai_sessions WHERE id = ?").run(id);
     this.deletedIds.set(id, Date.now());
+    await deleteAiSession(this.dbAsync, id);
     this.emit("ai_session:deleted", id);
+    return;
   }
 
   async deleteByIdAndType(id: string, type: AiSessionType): Promise<boolean> {
-    if (this.backendMode) {
-      this.clearThinkingTimer(id);
-      const removed = await deleteAiSessionByIdAndType(this.dbAsync, id, type);
-      if (removed) this.emit("ai_session:deleted", id);
-      return removed;
-    }
-    const existing = this.db
-      .prepare("SELECT id FROM ai_sessions WHERE id = ? AND type = ?")
-      .get(id, type) as { id: string } | undefined;
-
-    if (!existing) {
-      return false;
-    }
-
     this.clearThinkingTimer(id);
-    const result = this.db
-      .prepare("DELETE FROM ai_sessions WHERE id = ? AND type = ?")
-      .run(id, type) as { changes?: number };
-
-    const removed = Number(result.changes ?? 0) > 0;
+    this.deletedIds.set(id, Date.now());
+    const removed = await deleteAiSessionByIdAndType(this.dbAsync, id, type);
     if (removed) {
-      this.deletedIds.set(id, Date.now());
       this.emit("ai_session:deleted", id);
+    } else {
+      this.deletedIds.delete(id);
     }
     return removed;
   }
@@ -764,37 +393,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * - `generating` sessions without -> `error`
    */
   async recoverStaleSessions(): Promise<number> {
-    if (this.backendMode) {
-      return recoverStaleAiSessions(this.dbAsync);
-    }
-    const now = new Date().toISOString();
-    let recovered = 0;
-
-    // Sessions that were generating and had a pending question — recoverable
-    const withQuestion = this.db
-      .prepare(
-        `UPDATE ai_sessions SET status = 'awaiting_input', updatedAt = ?
-         WHERE status = 'generating' AND currentQuestion IS NOT NULL`,
-      )
-      .run(now) as { changes?: number };
-    recovered += Number(withQuestion.changes ?? 0);
-
-    // Sessions that were generating with no question — unrecoverable
-    const withoutQuestion = this.db
-      .prepare(
-        `UPDATE ai_sessions SET status = 'error', error = 'Session interrupted — please restart', updatedAt = ?
-         WHERE status = 'generating' AND currentQuestion IS NULL`,
-      )
-      .run(now) as { changes?: number };
-    recovered += Number(withoutQuestion.changes ?? 0);
-
-    if (recovered > 0) {
-      diagnostics.info("Recovered stale sessions after restart", {
-        recovered,
-        operation: "recover-stale-sessions",
-      });
-    }
-    return recovered;
+    return recoverStaleAiSessions(this.dbAsync);
   }
 
   /**
@@ -802,35 +401,9 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * Returns the number of deleted sessions.
    */
   async cleanupOld(maxAgeMs: number): Promise<number> {
-    if (this.backendMode) {
-      const deletedIds = await cleanupOldAiSessions(this.dbAsync, maxAgeMs);
-      this.emitDeletedSessions(deletedIds.map((id) => ({ id })));
-      return deletedIds.length;
-    }
-    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-
-    const stale = this.db
-      .prepare(
-        `SELECT id FROM ai_sessions
-         WHERE updatedAt < ?
-           AND status IN ('complete', 'error')`,
-      )
-      .all(cutoff) as Array<{ id: string }>;
-
-    if (stale.length === 0) {
-      return 0;
-    }
-
-    this.db
-      .prepare(
-        `DELETE FROM ai_sessions
-         WHERE updatedAt < ?
-           AND status IN ('complete', 'error')`,
-      )
-      .run(cutoff);
-
-    this.emitDeletedSessions(stale);
-    return stale.length;
+    const deletedIds = await cleanupOldAiSessions(this.dbAsync, maxAgeMs);
+    this.emitDeletedSessions(deletedIds.map((id) => ({ id })));
+    return deletedIds.length;
   }
 
   /**
@@ -842,63 +415,22 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   async cleanupStaleSessions(maxAgeMs = SESSION_CLEANUP_DEFAULT_MAX_AGE_MS): Promise<AiSessionCleanupSummary> {
     // FN-7949: piggyback tombstone-map pruning on the existing cleanup cadence.
     this.pruneExpiredTombstones();
-
-    if (this.backendMode) {
-      const result = await cleanupStaleAiSessions(this.dbAsync, maxAgeMs);
-      this.emitDeletedSessions([
-        ...result.terminalDeletedIds.map((id) => ({ id })),
-        ...result.orphanedDeletedIds.map((id) => ({ id })),
-      ]);
-      diagnostics.info("Cleanup removed stale sessions", {
-        terminalDeleted: result.terminalDeletedIds.length,
-        orphanedDeleted: result.orphanedDeletedIds.length,
-        totalDeleted: result.terminalDeletedIds.length + result.orphanedDeletedIds.length,
-        maxAgeMs,
-        operation: "cleanup-stale-sessions",
-      });
-      return {
-        terminalDeleted: result.terminalDeletedIds.length,
-        orphanedDeleted: result.orphanedDeletedIds.length,
-        totalDeleted: result.terminalDeletedIds.length + result.orphanedDeletedIds.length,
-      };
-    }
-    const terminalDeleted = await this.cleanupOld(maxAgeMs);
-    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-
-    const orphaned = this.db
-      .prepare(
-        `SELECT id FROM ai_sessions
-         WHERE updatedAt < ?
-           AND status IN ('generating', 'awaiting_input')`,
-      )
-      .all(cutoff) as Array<{ id: string }>;
-
-    let orphanedDeleted = 0;
-    if (orphaned.length > 0) {
-      const result = this.db
-        .prepare(
-          `DELETE FROM ai_sessions
-           WHERE updatedAt < ?
-             AND status IN ('generating', 'awaiting_input')`,
-        )
-        .run(cutoff) as { changes?: number };
-      orphanedDeleted = Number(result.changes ?? 0);
-      this.emitDeletedSessions(orphaned);
-    }
-
-    const totalDeleted = terminalDeleted + orphanedDeleted;
+    const result = await cleanupStaleAiSessions(this.dbAsync, maxAgeMs);
+    this.emitDeletedSessions([
+      ...result.terminalDeletedIds.map((id) => ({ id })),
+      ...result.orphanedDeletedIds.map((id) => ({ id })),
+    ]);
     diagnostics.info("Cleanup removed stale sessions", {
-      terminalDeleted,
-      orphanedDeleted,
-      totalDeleted,
+      terminalDeleted: result.terminalDeletedIds.length,
+      orphanedDeleted: result.orphanedDeletedIds.length,
+      totalDeleted: result.terminalDeletedIds.length + result.orphanedDeletedIds.length,
       maxAgeMs,
       operation: "cleanup-stale-sessions",
     });
-
     return {
-      terminalDeleted,
-      orphanedDeleted,
-      totalDeleted,
+      terminalDeleted: result.terminalDeletedIds.length,
+      orphanedDeleted: result.orphanedDeletedIds.length,
+      totalDeleted: result.terminalDeletedIds.length + result.orphanedDeletedIds.length,
     };
   }
 
@@ -909,14 +441,12 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     this.stopScheduledCleanup();
 
     const runCleanup = () => {
-      try {
-        this.cleanupStaleSessions(ttlMs);
-      } catch (error) {
+      void this.cleanupStaleSessions(ttlMs).catch((error) => {
         diagnostics.errorFromException("Scheduled cleanup failed", error, {
           ttlMs,
           operation: "scheduled-cleanup",
         });
-      }
+      });
     };
 
     this.cleanupTimer = setInterval(runCleanup, cleanupIntervalMs);
@@ -978,14 +508,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
   }
 
   private async writeThinking(sessionId: string, thinkingOutput: string): Promise<void> {
-    if (this.backendMode) {
-      await updateThinkingAsync(this.dbAsync, sessionId, thinkingOutput);
-      return;
-    }
-    const now = new Date().toISOString();
-    this.db
-      .prepare("UPDATE ai_sessions SET thinkingOutput = ?, updatedAt = ? WHERE id = ?")
-      .run(trimThinking(thinkingOutput), now, sessionId);
+    await updateThinkingAsync(this.dbAsync, sessionId, thinkingOutput);
+    return;
   }
 
   private clearThinkingTimer(id: string): void {
@@ -999,17 +523,12 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function trimThinking(output: string): string {
-  if (output.length <= MAX_THINKING_BYTES) return output;
-  return output.slice(output.length - MAX_THINKING_BYTES);
-}
-
 /**
  * FNXC:AiSessionStore 2026-06-25-00:00:
  * Converts a raw Drizzle row (from the async listAllAiSessions helper) into
  * an AiSessionSummary with the draft preview derived from inputPayload. The
- * async helper returns inputPayload as a parsed jsonb value, while the sync
- * path stores it as TEXT-serialized JSON. This normalizer handles both shapes.
+ * async helper returns inputPayload as a parsed jsonb value. This normalizer also
+ * accepts serialized fixture values to keep public row mapping tolerant.
  */
 function toSidebarSummaryAsync(row: Record<string, unknown>): AiSessionSummary {
   const inputPayload = row.inputPayload;
@@ -1051,43 +570,6 @@ function toSummary(session: AiSessionRow, updatedAt: string): AiSessionSummary {
     projectId: session.projectId,
     updatedAt,
     archived: Number(session.archived ?? 0) === 1,
-  };
-}
-
-/**
- * Lighter-weight summary builder for `listAll` rows that don't carry every
- * column of `AiSessionRow`. Keeps the same preview-derivation behavior as
- * `toSummary` (drafts only) without forcing the bulk-list query to SELECT
- * conversationHistory / thinkingOutput / etc.
- */
-function toSidebarSummary(
-  row: Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "type" | "status" | "title" | "inputPayload" | "updatedAt">,
-): AiSessionSummary {
-  const previewSource: AiSessionRow = {
-    id: row.id,
-    type: row.type,
-    status: row.status,
-    title: row.title,
-    inputPayload: row.inputPayload,
-    conversationHistory: "",
-    currentQuestion: null,
-    result: null,
-    thinkingOutput: "",
-    error: null,
-    projectId: row.projectId ?? null,
-    createdAt: "",
-    updatedAt: row.updatedAt,
-    archived: row.archived,
-  };
-  return {
-    id: row.id,
-    type: row.type,
-    status: row.status,
-    title: row.title,
-    preview: extractDraftPreview(previewSource),
-    projectId: row.projectId ?? null,
-    updatedAt: row.updatedAt,
-    archived: Number(row.archived ?? 0) === 1,
   };
 }
 

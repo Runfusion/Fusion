@@ -36,6 +36,7 @@ import {
   LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION,
   MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION,
   MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
+  MISSION_FIX_IDEMPOTENCY_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
@@ -82,7 +83,12 @@ describe("schema-applier: immutable migration identities", () => {
 
   it("keeps session advisor enabled column assigned to version 0008", () => {
     expect(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION).toBe("0008");
-    expect(SCHEMA_BASELINE_VERSION).toBe(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION));
+  });
+
+  it("keeps mission fix idempotency assigned to version 0009", () => {
+    expect(MISSION_FIX_IDEMPOTENCY_VERSION).toBe("0009");
+    expect(SCHEMA_BASELINE_VERSION).toBe(MISSION_FIX_IDEMPOTENCY_VERSION);
   });
 });
 
@@ -935,7 +941,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     const versions = (await ctx.db.execute(sql`
       SELECT version FROM public.fusion_schema_migrations ORDER BY version
     `)) as unknown as Array<{ version: string }>;
-    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SCHEMA_BASELINE_VERSION]);
+    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, SCHEMA_BASELINE_VERSION]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
@@ -959,14 +965,14 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       applySchemaBaseline(ctx.db, { pluginHooks: [] }),
     ]);
     expect(results.filter(({ applied }) => applied)).toHaveLength(1);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SCHEMA_BASELINE_VERSION]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, SCHEMA_BASELINE_VERSION]);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0002', '0003', '0004', '0005', '0006', '0007', '0008');
+      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009');
       DROP POLICY fusion_project_isolation ON project.activity_log;
       DROP POLICY fusion_project_isolation ON project.agent_runs;
       DROP POLICY fusion_project_isolation ON project.usage_events;
@@ -995,7 +1001,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
   });
 
   /**
@@ -1006,7 +1012,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0003', '0004', '0005', '0006', '0007', '0008');
+      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0003', '0004', '0005', '0006', '0007', '0008', '0009');
       DROP POLICY fusion_project_isolation ON project.deployments;
       DROP POLICY fusion_project_isolation ON project.incidents;
       DROP POLICY fusion_project_isolation ON project.approval_request_audit_events;
@@ -1033,7 +1039,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
   });
 
   /*
@@ -1044,7 +1050,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     await ctx.db.execute(sql.raw(`
-      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0004', '0005', '0006', '0007', '0008');
+      DELETE FROM public.fusion_schema_migrations WHERE version IN ('0004', '0005', '0006', '0007', '0008', '0009');
       DROP TABLE project.project_auth_sessions;
       DROP TABLE project.project_auth_providers;
       DROP TABLE project.project_auth_memberships;
@@ -1071,7 +1077,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       "project_auth_users",
       "task_reviewer_runs",
     ]);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
   });
 });
 
@@ -1369,6 +1375,45 @@ pgDescribe("schema-applier: VAL-SCHEMA-007 plugin-owned tables materialize via s
       "roadmap_milestones",
       "roadmaps",
     ]);
+  });
+
+  /* FNXC:EvenRealitiesPostgres 2026-07-14-17:45: Fresh PostgreSQL databases must include the glasses notification snapshot with project-local task identity. */
+  it("default plugin hooks materialize project-isolated Even Realities snapshots", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    const tables = (await ctx.db.execute(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'project' AND table_name = 'even_realities_seen_tasks'
+    `)) as unknown as Array<{ table_name: string }>;
+    expect(tables).toEqual([{ table_name: "even_realities_seen_tasks" }]);
+    await ctx.db.execute(sql`
+      INSERT INTO project.even_realities_seen_tasks(project_id, task_id, last_column, updated_at)
+      VALUES ('project-a', 'FN-1', 'todo', '2026-07-14'),
+             ('project-b', 'FN-1', 'done', '2026-07-14')
+    `);
+    const rows = (await ctx.db.execute(sql`
+      SELECT project_id, task_id FROM project.even_realities_seen_tasks ORDER BY project_id
+    `)) as unknown as Array<{ project_id: string; task_id: string }>;
+    expect(rows).toEqual([
+      { project_id: "project-a", task_id: "FN-1" },
+      { project_id: "project-b", task_id: "FN-1" },
+    ]);
+  });
+
+  it("repairs an already-versioned database that predates the Even Realities PostgreSQL hook", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    await ctx.db.execute(sql`DROP TABLE project.even_realities_seen_tasks`);
+
+    const result = await applySchemaBaseline(ctx.db);
+    expect(result.pluginHooksRun).toBeGreaterThan(0);
+    const rows = (await ctx.db.execute(sql`
+      SELECT c.relrowsecurity AS rls, c.relforcerowsecurity AS forced
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'project' AND c.relname = 'even_realities_seen_tasks'
+    `)) as unknown as Array<{ rls: boolean; forced: boolean }>;
+    expect(rows).toEqual([{ rls: true, forced: true }]);
   });
 
   it("roadmap FK cascade: deleting a roadmap removes its milestones and features", async () => {

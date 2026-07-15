@@ -33,6 +33,7 @@ U10 OTLP exporter (PR #1683): export Command Center analytics as OTLP/HTTP JSON 
 import type { TaskStore } from "@fusion/core";
 import { aggregateTokenAnalytics, aggregateActivityAnalytics, mapAnalyticsToOtlp } from "@fusion/core";
 import { redactSecrets } from "@fusion/core";
+import { requireAsyncLayer } from "./require-async-layer.js";
 import type { RuntimeLogger } from "./runtime-logger.js";
 
 /** Resolved, validated exporter configuration. */
@@ -244,14 +245,8 @@ export function startOtelExporter(deps: OtelExporterDeps): OtelExporterHandle {
     // Mapping + DB read are guarded so a malformed snapshot never throws out.
     let body: string;
     try {
-      // FNXC:PostgresCutover 2026-07-04:
-      // aggregateTokenAnalytics / aggregateActivityAnalytics are already
-      // dual-path (they dispatch to the async Drizzle path only when handed an
-      // AsyncDataLayer). Previously this passed getDatabase() unconditionally,
-      // which throws in backend mode; the surrounding try/catch swallowed it so
-      // the OTLP export silently emitted empty metrics. Now the async layer is
-      // passed through so the PostgreSQL path actually runs.
-      const dbOrLayer = store.getAsyncLayer() ?? store.getDatabase();
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: OTLP exports read the authoritative PostgreSQL analytics layer and never reopen SQLite. */
+      const dbOrLayer = requireAsyncLayer(store, "OTLP analytics exporter");
       const tokens = await aggregateTokenAnalytics(dbOrLayer, { groupBy: "model", now: now() });
       const activity = await aggregateActivityAnalytics(dbOrLayer, {});
       const nowMs = now();

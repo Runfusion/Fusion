@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -7,7 +7,6 @@ import {
   readProjectIdentity,
   writeProjectIdentity,
 } from "../project-identity.js";
-import { DatabaseSync } from "../sqlite-adapter.js";
 
 describe("project identity", () => {
   it("returns null for missing db", () => {
@@ -22,6 +21,9 @@ describe("project identity", () => {
     mkdirSync(fusionDir);
     writeProjectIdentity(fusionDir, { id: "proj_0123456789abcdef", createdAt: "2026-01-01T00:00:00.000Z" });
     expect(readProjectIdentity(fusionDir)?.id).toBe("proj_0123456789abcdef");
+    expect(JSON.parse(readFileSync(join(fusionDir, "project.json"), "utf8"))).toMatchObject({
+      id: "proj_0123456789abcdef",
+    });
   });
 
   it("throws mismatch on different id", () => {
@@ -54,9 +56,7 @@ describe("project identity", () => {
     const fusionDir = join(dir, ".fusion");
     mkdirSync(fusionDir);
     writeProjectIdentity(fusionDir, { id: "proj_0123456789abcdef", createdAt: "2026-01-01T00:00:00.000Z" });
-    const db = new DatabaseSync(join(fusionDir, "fusion.db"));
-    db.prepare("UPDATE __meta SET value = 'bad' WHERE key = 'projectId'").run();
-    db.close();
+    writeFileSync(join(fusionDir, "project.json"), JSON.stringify({ id: "bad", createdAt: "2026-01-01T00:00:00.000Z" }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect(readProjectIdentity(fusionDir)).toBeNull();
     warn.mockRestore();

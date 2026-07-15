@@ -24,7 +24,12 @@ import { OVERSEER_INTERVENTION_MUTATION } from "./types.js";
 /** Minimal store seam this module depends on (satisfied by `TaskStore`). */
 export interface PlannerInterventionStore {
   recordRunAuditEvent(input: RunAuditEventInput): RunAuditEvent | Promise<RunAuditEvent>;
-  getRunAuditEvents(options?: RunAuditEventFilter): RunAuditEvent[];
+}
+
+/** Read-capable seam used only by timeline queries. */
+export interface PlannerInterventionTimelineStore extends PlannerInterventionStore {
+  /* FNXC:PostgresStackSplit 2026-07-14-20:56: Keep event emitters compatible with write-only overseer adapters while requiring the asynchronous PostgreSQL reader only for timeline queries. */
+  getRunAuditEventsAsync(options?: RunAuditEventFilter): Promise<RunAuditEvent[]>;
 }
 
 /** Input for recording a planner-intervention timeline entry. */
@@ -202,12 +207,12 @@ export function parseInterventionEntry(event: RunAuditEvent): PlannerInterventio
 }
 
 /** Reads the planner-intervention timeline for a task, newest-first. Returns `[]` when there are none. */
-export function getPlannerInterventionTimeline(
-  store: PlannerInterventionStore,
+export async function getPlannerInterventionTimeline(
+  store: PlannerInterventionTimelineStore,
   taskId: string,
   opts?: { limit?: number },
-): PlannerInterventionEntry[] {
-  const events = store.getRunAuditEvents({
+): Promise<PlannerInterventionEntry[]> {
+  const events = await store.getRunAuditEventsAsync({
     taskId,
     mutationType: OVERSEER_INTERVENTION_MUTATION,
     limit: opts?.limit,

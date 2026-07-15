@@ -653,7 +653,7 @@ function formatInProcessBackupError(err: unknown, fusionDir: string): string {
   if (cause.includes("project DB") || cause.includes("central DB")) {
     return cause;
   }
-  return `project DB run backup command failed; source: ${fusionDir}/fusion.db; cause: ${cause}`;
+  return `project PostgreSQL run backup command failed; project state: ${fusionDir}; cause: ${cause}`;
 }
 
 function truncateOutput(stdout: string, stderr: string): string {

@@ -16,10 +16,16 @@ import {validateDocumentKey} from "../types.js";
 import "../builtin-traits.js";
 import {toJsonNullable} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
-import {upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
+import {getLiveTaskColumn, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
 import type {TaskDocumentRow} from "../task-store/row-types.js";
 
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
+      if (state === null) throw new Error(`Task ${id} not found`);
+    }
     // Phase 1: Add comment under lock
     const task = await store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
@@ -329,4 +335,3 @@ export async function upsertTaskDocumentImpl(store: TaskStore, taskId: string, i
 
     return document;
   }
-

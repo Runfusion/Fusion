@@ -266,6 +266,10 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       const hydration = await hydrateWorktreeDb({ rootDir, worktreePath: path, taskId: task.id, store, logger: logger ?? { warn: () => {} } });
       if (hydration.degraded) {
         await store.logEntry(task.id, `Worktree DB hydration degraded: ${hydration.reason ?? "unknown"}`, undefined, runContext);
+      } else if (hydration.reason === "postgres_shared_store") {
+        // FNXC:PostgresWorktreeStorage 2026-07-14-18:35:
+        // Worktrees use the authoritative project-scoped PostgreSQL store; record readiness without implying that a local SQLite database was copied.
+        await store.logEntry(task.id, "Worktree uses shared PostgreSQL task storage", undefined, runContext);
       } else {
         await store.logEntry(task.id, `Hydrated worktree DB: ${hydration.tasksCopied} tasks, ${hydration.documentsCopied} task_documents, ${hydration.artifactsCopied} artifacts`, undefined, runContext);
       }

@@ -848,6 +848,22 @@ describe("MissionExecutionLoop", () => {
       expect(missionStore.reapValidatorRun).toHaveBeenCalledTimes(2);
       expect(taskStore.recordRunAuditEvent).toHaveBeenCalledTimes(1);
     });
+
+    it("awaits an asynchronous mission store instead of skipping validator recovery", async () => {
+      const run = createMockValidatorRun({ id: "VR-async", featureId: "F-async" });
+      missionStore.listStaleRunningValidatorRuns = vi.fn().mockResolvedValue([run]);
+      missionStore.reapValidatorRun = vi.fn().mockResolvedValue({ ...run, status: "error" });
+      missionStore.getMilestone = vi.fn().mockResolvedValue(createMockMilestone());
+      missionStore.getMission = vi.fn().mockResolvedValue(createMockMission());
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+
+      await expect(loop.reapStaleValidatorRuns(1)).resolves.toEqual({ reapedCount: 1 });
+      expect(missionStore.reapValidatorRun).toHaveBeenCalledWith("VR-async", expect.stringContaining("reaped"));
+    });
   });
 
   // ── processTaskOutcome ───────────────────────────────────────────────────

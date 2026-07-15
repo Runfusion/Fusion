@@ -16,7 +16,7 @@
  * while still materializing on a fresh database.
  */
 
-import { text, integer, bigint, boolean, foreignKey, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { text, integer, bigint, boolean, foreignKey, index, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
 import { projectSchema } from "./project.js";
 
 /**
@@ -70,6 +70,23 @@ export const roadmapPluginTableNames = [
   "roadmap_milestones",
   "roadmap_features",
 ] as const;
+
+// ── Even Realities plugin tables ───────────────────────────────────
+/**
+ * FNXC:EvenRealitiesPostgres 2026-07-14-17:25:
+ * Notification dedupe state is durable, project-private plugin data. The PostgreSQL runtime stores one snapshot row per project/task so identical task IDs in separate projects never suppress each other's glasses notifications.
+ */
+export const evenRealitiesSeenTasks = projectSchema.table("even_realities_seen_tasks", {
+  projectId: text("project_id").notNull(),
+  taskId: text("task_id").notNull(),
+  lastColumn: text("last_column").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId] }),
+  index("idxEvenRealitiesSeenTasksProjectUpdated").on(t.projectId, t.updatedAt, t.taskId),
+]);
+
+export const evenRealitiesPluginTableNames = ["even_realities_seen_tasks"] as const;
 
 // ── Compound Engineering plugin tables ──────────────────────────────
 // FNXC:PostgresSchema 2026-07-04-00:00:

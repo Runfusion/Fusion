@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, InsightStore, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const reporterLog = createLogger("backlog-pressure");
@@ -111,15 +111,9 @@ export class BacklogPressureReporter {
         if (!this.projectId) {
           throw new Error("empty projectId");
         }
-        // FNXC:InsightStore 2026-06-27-09:25:
-        // getInsightStore() now returns InsightStore | AsyncInsightStore. This
-        // reporter calls the store synchronously and stays on graceful fallback
-        // in PG backend mode (not ported this unit) — route async into the catch.
-        const resolved = this.store.getInsightStore();
-        if (!(resolved instanceof InsightStore)) {
-          throw new Error("InsightStore not available in PG backend mode");
-        }
-        insightStore = resolved;
+        // FNXC:PostgresInsights 2026-07-14-17:25: Await the common store surface
+        // so scheduled advisories persist instead of degrading to task logs.
+        insightStore = this.store.getInsightStore();
       } catch (error) {
         await this.store.logEntry(candidates[0].id, `[backlog-pressure] ${content}`);
         this.logger.warn("[backlog-pressure] insight store unavailable; logged fallback payload", error);
@@ -128,7 +122,7 @@ export class BacklogPressureReporter {
       }
 
       if (cooldownMs > 0 && Number.isFinite(cooldownMs)) {
-        const insights = insightStore.listInsights({
+        const insights = await insightStore.listInsights({
           projectId: this.projectId,
           category: "workflow",
           status: "generated",
@@ -146,7 +140,7 @@ export class BacklogPressureReporter {
       }
 
       const fingerprint = computeInsightFingerprint(title, "workflow");
-      insightStore.upsertInsight(this.projectId, {
+      await insightStore.upsertInsight(this.projectId, {
         title,
         content,
         category: "workflow",

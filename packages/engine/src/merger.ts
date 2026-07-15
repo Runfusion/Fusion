@@ -10757,7 +10757,7 @@ export async function aiMergeTask(
     // conflict-suffixed branch), null it so the dependent task doesn't
     // hard-fail at worktree creation once this branch is gone.
     try {
-      const cleared = store.clearStaleExecutionStartBranchReferences([branch], taskId);
+      const cleared = await store.clearStaleExecutionStartBranchReferences([branch], taskId);
       if (cleared.length > 0) {
         mergerLog.log(`${taskId}: cleared stale baseBranch on ${cleared.length} dependent task(s): ${cleared.join(", ")}`);
       }

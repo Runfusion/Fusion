@@ -435,7 +435,7 @@ export function uninstallElectronAsarNativePathPatchForTests(): void {
  * first call. Throws if the package is not installed (e.g. a stripped-down
  * build that omitted the embedded binary).
  */
-type EmbeddedPostgresCtor = new (opts: Record<string, unknown>) => {
+export type EmbeddedPostgresCtor = new (opts: Record<string, unknown>) => {
   initialise(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -449,6 +449,12 @@ type EmbeddedPostgresCtor = new (opts: Record<string, unknown>) => {
 /** Instance type produced by the embedded-postgres constructor. */
 type EmbeddedPostgresInstance = InstanceType<EmbeddedPostgresCtor>;
 let embeddedPostgresCtorCache: EmbeddedPostgresCtor | null = null;
+
+/** Test-only constructor seam for deterministic lifecycle cancellation coverage. */
+export function __setEmbeddedPostgresCtorForTests(ctor: EmbeddedPostgresCtor | null): void {
+  embeddedPostgresCtorCache = ctor;
+}
+
 function getEmbeddedPostgresCtor(): EmbeddedPostgresCtor {
   if (embeddedPostgresCtorCache) return embeddedPostgresCtorCache;
   // FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
@@ -976,9 +982,12 @@ export class EmbeddedPostgresLifecycle {
     if (this.options.startTimeoutMs <= 0) {
       return this.startInternal();
     }
+    const controller = new AbortController();
+    const startAttempt = this.startInternal(controller.signal);
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        controller.abort();
         reject(
           new EmbeddedStartTimeoutError(
             this.options.startTimeoutMs,
@@ -991,8 +1000,9 @@ export class EmbeddedPostgresLifecycle {
     });
     this.startTimer = timer ?? null;
     try {
-      return await Promise.race([this.startInternal(), timeout]);
+      return await Promise.race([startAttempt, timeout]);
     } catch (err) {
+      controller.abort();
       // On timeout (or any failure), best-effort clean up the partial state so
       // a retry starts fresh. stop() is safe to call even when not fully running.
       await this.stop().catch(() => undefined);
@@ -1007,15 +1017,16 @@ export class EmbeddedPostgresLifecycle {
    * The actual start sequence, with no timeout wrapper. Called by {@link start}
    * either directly (timeout disabled) or via Promise.race with the timeout.
    */
-  private async startInternal(): Promise<ResolvedBackend> {
+  private async startInternal(signal?: AbortSignal): Promise<ResolvedBackend> {
     const port = this.options.port ?? (await findFreePort());
+    if (signal?.aborted) throw new EmbeddedStartCancelledError(this.options.dataDir);
     this.resolvedPort = port;
 
     const alreadyInitialized = isDataDirInitialized(this.options.dataDir);
 
     normalizeBundledMacosDylibs(this.options.onLog);
 
-    this.pg = new (getEmbeddedPostgresCtor())({
+    const pg = new (getEmbeddedPostgresCtor())({
       databaseDir: this.options.dataDir,
       user: this.options.user,
       password: this.options.password,
@@ -1027,6 +1038,7 @@ export class EmbeddedPostgresLifecycle {
       onLog: this.options.onLog,
       onError: this.options.onError,
     });
+    this.pg = pg;
 
     // FNXC:PostgresEmbedded 2026-06-24-09:06:
     // initialise() always runs initdb, which fails on an existing data dir.
@@ -1039,7 +1051,12 @@ export class EmbeddedPostgresLifecycle {
       this.options.onLog(
         `embedded postgres: initializing new data directory at ${this.options.dataDir} (initdb)`,
       );
-      await this.pg.initialise();
+      await pg.initialise();
+    }
+
+    if (signal?.aborted) {
+      await this.settleCancelledStart(pg);
+      throw new EmbeddedStartCancelledError(this.options.dataDir);
     }
 
     // FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
@@ -1049,8 +1066,9 @@ export class EmbeddedPostgresLifecycle {
     // launching (admin) process and work unchanged; only the SERVER start is
     // re-homed under a dedicated non-admin local user. Normal (non-elevated /
     // non-Windows) launches use the inherited-token path as before.
-    // Proven on windows-latest: without this path, CI's embedded-postgres smoke
-    // (and elevated "Run as administrator" desktop) cannot boot Local mode.
+    // FNXC:WindowsDesktopPackaging 2026-07-15-05:20:
+    // Pass AbortSignal so outer start() timeout can cancel a still-polling
+    // non-admin launch and kill the wrapper before readiness assigns a handle.
     if (isWindowsElevatedAdmin()) {
       const nativeRoot = resolveWindowsEmbeddedPostgresNativeRoot();
       if (!nativeRoot) {
@@ -1070,9 +1088,23 @@ export class EmbeddedPostgresLifecycle {
         onLog: this.options.onLog,
         onError: this.options.onError,
         startTimeoutMs: this.options.startTimeoutMs,
+        signal,
+        // Assign handle as soon as the wrapper PID is known so outer start()
+        // timeout cleanup can taskkill orphans mid-readiness poll.
+        onLaunched: (handle) => {
+          this.nonAdminHandle = handle;
+        },
       });
     } else {
-      await this.pg.start();
+      await pg.start();
+    }
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-18:42:
+    Promise.race does not cancel the losing embedded-postgres startup. Check the cooperative cancellation signal after every delayed phase and stop the exact late instance before it can publish running state, registry ownership, or process hooks. A timeout may already have attempted stop while pg.start() was pending, so the post-resolution stop is intentionally repeated to catch a postmaster that appeared after that first cleanup.
+    */
+    if (signal?.aborted) {
+      await this.settleCancelledStart(pg);
+      throw new EmbeddedStartCancelledError(this.options.dataDir);
     }
     this.running = true;
     this.ownsProcess = true;
@@ -1083,7 +1115,20 @@ export class EmbeddedPostgresLifecycle {
       database: this.options.database,
     });
 
-    await this.ensureDatabase();
+    try {
+      await this.ensureDatabase();
+    } catch (error) {
+      if (signal?.aborted) {
+        await this.settleCancelledStart(pg);
+        throw new EmbeddedStartCancelledError(this.options.dataDir);
+      }
+      throw error;
+    }
+
+    if (signal?.aborted) {
+      await this.settleCancelledStart(pg);
+      throw new EmbeddedStartCancelledError(this.options.dataDir);
+    }
 
     this.installShutdownHook();
 
@@ -1098,6 +1143,33 @@ export class EmbeddedPostgresLifecycle {
       migrationUrl: runtimeUrl,
       migrationUrlOverridden: false,
     };
+  }
+
+  private async settleCancelledStart(pg: EmbeddedPostgresInstance): Promise<void> {
+    // FNXC:WindowsDesktopPackaging 2026-07-15-05:20:
+    // Prefer stopping a non-admin handle (if already assigned) before asking
+    // embedded-postgres to stop a process it never started.
+    if (this.nonAdminHandle) {
+      try {
+        await this.nonAdminHandle.stop();
+      } catch (error) {
+        this.options.onError(
+          `embedded postgres: cancelled non-admin cleanup failed: ${String(error)}`,
+        );
+      } finally {
+        this.nonAdminHandle = null;
+      }
+    }
+    try {
+      await pg.stop();
+    } catch (error) {
+      this.options.onError(`embedded postgres: cancelled startup cleanup failed: ${String(error)}`);
+    } finally {
+      if (this.pg === pg) this.pg = null;
+      this.running = false;
+      runningInstances.delete(this.options.dataDir);
+      this.uninstallShutdownHook();
+    }
   }
 
   /**
@@ -1122,7 +1194,7 @@ export class EmbeddedPostgresLifecycle {
     }
     const exists = await this.databaseExists(this.options.database);
     if (exists) return;
-    const sql = await this.openMaintenanceSql();
+    const sql = this.openMaintenanceSql();
     try {
       const safeName = this.options.database.replace(/"/g, '""');
       await sql.unsafe(`CREATE DATABASE "${safeName}"`);
@@ -1134,7 +1206,7 @@ export class EmbeddedPostgresLifecycle {
   /** Check whether a database with the given name exists on the cluster. */
   private async databaseExists(name: string): Promise<boolean> {
     if (!this.running || this.getPort() === undefined) return false;
-    const sql = await this.openMaintenanceSql();
+    const sql = this.openMaintenanceSql();
     try {
       const rows = await sql`SELECT 1 AS one FROM pg_database WHERE datname = ${name}`;
       return rows.length > 0;
@@ -1305,6 +1377,13 @@ export class EmbeddedPostgresLifecycle {
       }
     }
   };
+}
+
+class EmbeddedStartCancelledError extends Error {
+  constructor(dataDir: string) {
+    super(`embedded postgres: cancelled late startup for ${dataDir}`);
+    this.name = "EmbeddedStartCancelledError";
+  }
 }
 
 /**

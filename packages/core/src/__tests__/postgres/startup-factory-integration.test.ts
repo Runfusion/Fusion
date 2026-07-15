@@ -412,6 +412,7 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
     const { createConnectionSetFromUrl } = await import("../../postgres/connection.js");
     const { applySchemaBaseline } = await import("../../postgres/schema-applier.js");
     const { stampMigratedProjectRows } = await import("../../postgres/migration-stamping.js");
+    const { recordSqliteMigrationComplete } = await import("../../postgres/sqlite-migrator.js");
     const { resolveBackendWithOptions } = await import("../../postgres/backend-resolver.js");
 
     const connections = await createConnectionSetFromUrl(
@@ -422,11 +423,14 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
       await applySchemaBaseline(connections.migration);
       const db = connections.migration;
 
-      // Current migrators stamp task ownership during copy; the helper still
-      // re-keys historical config/workflow identities.
+      /*
+      FNXC:ProjectMigrationStamping 2026-07-14-16:50:
+      Migration 0006 rewrites explicit empty ownership to the quarantine before this post-copy helper runs. A unique migration-ledger owner makes those freshly quarantined rows safe to claim; a second project marker must leave later quarantine rows untouched.
+      */
+      await recordSqliteMigrationComplete(db, "project:proj_help", "proj_help");
       await db.execute(
         `INSERT INTO project.tasks (project_id, id, description, "column", created_at, updated_at)
-         VALUES ('proj_help', 'FN-HELP-1', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
+         VALUES ('', 'FN-HELP-1', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
       );
       await db.execute(
         `INSERT INTO project.config (project_id, settings, updated_at)
@@ -450,6 +454,32 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
         `INSERT INTO project.workflow_prompt_overrides (workflow_id, project_id, overrides, updated_at)
          VALUES ('wf_a', '${fakeRootDir}', '{"executor":"x"}'::jsonb, '2026-06-01T00:00:00Z')`,
       );
+
+      /*
+      FNXC:ProjectMigrationStamping 2026-07-14-21:55:
+      Force the last table promotion to fail and prove earlier task/config/workflow updates roll back with it; a retry after removing the fault must then stamp the complete project.
+      */
+      await db.execute(`
+        CREATE FUNCTION public.fail_migration_stamp_for_test() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced migration stamp failure'; END $$;
+        CREATE TRIGGER fail_migration_stamp_for_test
+        BEFORE UPDATE ON project.workflow_prompt_overrides
+        FOR EACH ROW EXECUTE FUNCTION public.fail_migration_stamp_for_test();
+      `);
+      await expect(stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir }))
+        .rejects.toThrow("Failed query: UPDATE project.workflow_prompt_overrides");
+      const rolledBackTask = (await db.execute(
+        `SELECT project_id FROM project.tasks WHERE id = 'FN-HELP-1'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(rolledBackTask[0]?.project_id).toBe("__legacy_unscoped__");
+      const rolledBackWorkflow = (await db.execute(
+        `SELECT project_id FROM project.workflow_settings WHERE workflow_id = 'wf_a'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(rolledBackWorkflow[0]?.project_id).toBe(fakeRootDir);
+      await db.execute(`
+        DROP TRIGGER fail_migration_stamp_for_test ON project.workflow_prompt_overrides;
+        DROP FUNCTION public.fail_migration_stamp_for_test();
+      `);
 
       const result = await stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir });
       expect(result.stamped).toBe(true);
@@ -485,6 +515,17 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
         `SELECT project_id FROM project.workflow_prompt_overrides WHERE workflow_id = 'wf_a'`,
       )) as unknown as Array<{ project_id: string }>;
       expect(overrides[0]?.project_id).toBe("proj_help");
+
+      await recordSqliteMigrationComplete(db, "project:other", "other");
+      await db.execute(
+        `INSERT INTO project.tasks (project_id, id, description, "column", created_at, updated_at)
+         VALUES ('', 'FN-AMBIGUOUS', 'd', 'todo', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')`,
+      );
+      await stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir });
+      const ambiguous = (await db.execute(
+        `SELECT project_id FROM project.tasks WHERE id = 'FN-AMBIGUOUS'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(ambiguous[0]?.project_id, "multi-project quarantine must not be claimed").toBe("__legacy_unscoped__");
 
       // No-op when projectId is empty.
       const noop = await stampMigratedProjectRows(db, { projectId: "", rootDir: fakeRootDir });

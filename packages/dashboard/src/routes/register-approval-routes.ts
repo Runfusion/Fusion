@@ -10,6 +10,7 @@ import { assertNoSecretPlaintext, executeApprovedAgentProvisioning, executeAppro
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { emitApprovalSseEvent } from "../sse.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 const DEFAULT_ACTOR: ApprovalRequestActorSnapshot = {
   actorId: "user",
@@ -257,8 +258,8 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
   router.get("/approvals", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const layer = scopedStore.getAsyncLayer();
-      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+      const layer = requireAsyncLayer(scopedStore, "Dashboard approval store");
+      const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
       const status = parseStatus(req.query.status);
       const limit = parseOptionalInt(req.query.limit, "limit") ?? 50;
       const offset = parseOptionalInt(req.query.offset, "offset") ?? 0;
@@ -281,8 +282,8 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
   router.get("/approvals/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const layer = scopedStore.getAsyncLayer();
-      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+      const layer = requireAsyncLayer(scopedStore, "Dashboard approval store");
+      const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
       const requestId = String(req.params.id);
       const request = await approvalStore.get(requestId);
       if (!request) throw notFound("Approval request not found");
@@ -305,8 +306,8 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
       }
 
       const { store: scopedStore, projectId } = await getProjectContext(req);
-      const layer = scopedStore.getAsyncLayer();
-      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+      const layer = requireAsyncLayer(scopedStore, "Dashboard approval store");
+      const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
       const requestId = String(req.params.id);
       const existing = await approvalStore.get(requestId);
       if (!existing) throw notFound("Approval request not found");

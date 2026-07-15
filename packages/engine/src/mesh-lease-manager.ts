@@ -166,7 +166,7 @@ export class MeshLeaseManager {
       });
 
     try {
-      const released = tryRelease();
+      const released = await tryRelease();
       if (released.ok) {
         return "released";
       }
@@ -191,7 +191,7 @@ export class MeshLeaseManager {
     } catch (_error) {
       await new Promise((resolve) => setTimeout(resolve, 120));
       try {
-        const released = tryRelease();
+        const released = await tryRelease();
         if (released.ok) {
           return "released";
         }
@@ -235,7 +235,7 @@ export class MeshLeaseManager {
       return false;
     }
 
-    const claim = centralClaimStore.getTaskClaim(projectId, taskId);
+    const claim = await centralClaimStore.getTaskClaim(projectId, taskId);
     const localHasOwner = Boolean(task.checkedOutBy || task.checkoutNodeId);
 
     if (!claim && localHasOwner) {
@@ -262,7 +262,7 @@ export class MeshLeaseManager {
       const renewedAtMs = Date.parse(claim.leaseRenewedAt);
       const staleByTime = Number.isFinite(renewedAtMs) && Date.now() - renewedAtMs > staleCutoff;
       if (status === "offline" || status === "error" || staleByTime) {
-        const released = centralClaimStore.releaseTaskClaim({
+        const released = await centralClaimStore.releaseTaskClaim({
           projectId,
           taskId,
           nodeId: claim.ownerNodeId,

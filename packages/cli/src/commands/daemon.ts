@@ -544,28 +544,12 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
   try {
+    /*
+    FNXC:PluginPostgresSchema 2026-07-14-21:48:
+    PluginLoader initializes each plugin's schema before publishing that plugin as loaded. Daemon startup must not replay every loaded schema contract as a second batch after loadAllPlugins.
+    */
     const { loaded, errors } = await pluginLoader.loadAllPlugins();
     console.log(`[plugins] Loaded ${loaded} plugins (${errors} errors)`);
-
-    const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
-    if (schemaHooks.length > 0) {
-      try {
-        /*
-         * FNXC:SqliteFinalRemoval 2026-06-25-16:25:
-         * Skip SQLite-specific plugin schema init in backend mode (PostgreSQL
-         * uses Drizzle migrations for schema management).
-         */
-        if (store.isBackendMode()) {
-          console.log("[plugins] Schema initialization skipped — backend mode (PostgreSQL Drizzle migrations)");
-        } else {
-          await store.getDatabase().runPluginSchemaInits(schemaHooks);
-        }
-      } catch (err) {
-        console.error(
-          `[plugins] Schema initialization failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
   } catch (err) {
     console.error(
       `[plugins] Failed to load plugins: ${err instanceof Error ? err.message : err}`
@@ -941,14 +925,11 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       centralCore = null;
     }
   }
-  let localNodeId: string | undefined;
-
   try {
     if (centralCore) {
       const nodes = await centralCore.listNodes();
       const localNode = nodes.find((node) => node.type === "local");
       if (localNode) {
-        localNodeId = localNode.id;
         await centralCore.updateNode(localNode.id, { status: "online" });
       }
     }
@@ -993,12 +974,31 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     if (shuttingDown) return;
     shuttingDown = true;
 
-    // Stop all project engines uniformly
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-21:48:
+    CentralCore adopts an engine TaskStore layer but retains ownership of its original embedded backend lifecycle. Persist the local-node offline state while the adopted pool is live, then stop engine-owned stores, and only then close CentralCore so its retained backend lifecycle cannot terminate PostgreSQL under a live engine.
+    */
+    if (centralCore) {
+      try {
+        await centralCore.markLocalNodeOffline();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[daemon] Failed to set local node offline: ${message}`);
+      }
+    }
+
+    // Stop all project engines uniformly; their runtimes own their TaskStores.
     if (hybridExecutor) {
       await hybridExecutor.shutdown();
     }
 
     await engineManager.stopAll();
+
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-22:07:
+    Preserve the command-level TaskStore close barrier before CentralCore releases its retained backend. Runtime shutdown normally closes this store first; the idempotent explicit close also covers partial-start and test-owned runtimes.
+    */
+    await store.close();
 
     // Stop peer exchange service
     if (peerExchangeService) {
@@ -1007,15 +1007,6 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[daemon] Failed to stop peer exchange service: ${message}`);
-      }
-    }
-
-    if (centralCore && localNodeId) {
-      try {
-        await centralCore.updateNode(localNodeId, { status: "offline" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[daemon] Failed to set local node offline: ${message}`);
       }
     }
 
@@ -1032,7 +1023,6 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       // best-effort
     }
 
-    store.close();
     process.exit(signal ? (SIGNAL_EXIT_CODES[signal] ?? 128) : 0);
   };
 

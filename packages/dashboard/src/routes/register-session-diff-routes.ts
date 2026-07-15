@@ -256,7 +256,7 @@ type DoneTaskAggregationTask = {
 type DoneTaskAggregationStore = {
   getRootDir: () => string;
   getTaskCommitAssociationsByLineageId: (lineageId: string) => Promise<Array<{ commitSha: string; authoredAt?: string | null }>>;
-  getRunAuditEvents?: (options?: RunAuditEventFilter) => RunAuditEvent[] | Promise<RunAuditEvent[]>;
+  getRunAuditEventsAsync?: (options?: RunAuditEventFilter) => Promise<RunAuditEvent[]>;
 };
 
 async function resolveCommitDiffSpec(sha: string, rootDir: string): Promise<
@@ -620,12 +620,12 @@ function extractCommitShaCandidate(event: { target?: unknown; metadata?: unknown
 }
 
 async function resolveAuditCommitSha(taskId: string, scopedStore: DoneTaskAggregationStore): Promise<string | undefined> {
-  if (!scopedStore.getRunAuditEvents) return undefined;
+  if (!scopedStore.getRunAuditEventsAsync) return undefined;
 
   const rootDir = scopedStore.getRootDir();
   const mutationTypes = ["git:commit", "commit:create", "commit:amend"];
   for (const mutationType of mutationTypes) {
-    const eventsRaw = await Promise.resolve(scopedStore.getRunAuditEvents({ taskId, domain: "git", mutationType: mutationType as RunAuditEventFilter["mutationType"], limit: 5 }));
+    const eventsRaw = await scopedStore.getRunAuditEventsAsync({ taskId, domain: "git", mutationType: mutationType as RunAuditEventFilter["mutationType"], limit: 5 });
     const events = Array.isArray(eventsRaw) ? eventsRaw : [];
     for (const event of events as Array<{ target?: unknown; metadata?: unknown; payload?: unknown; newValue?: unknown }>) {
       const candidate = extractCommitShaCandidate(event);

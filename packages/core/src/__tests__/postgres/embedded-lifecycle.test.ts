@@ -14,7 +14,7 @@
  *   - VAL-CONN-007: graceful shutdown stops the Postgres process; no orphan.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   mkdtempSync,
   existsSync,
@@ -37,6 +37,7 @@ import {
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
   readPortFromPostmasterPid,
+  __setEmbeddedPostgresCtorForTests,
   resolveElectronAsarUnpackedPath,
   fingerprintEmbeddedPostgresNativeRoot,
   buildEmbeddedPostgresMaterializationMarker,
@@ -58,6 +59,8 @@ const tracked: Array<{
 }> = [];
 
 afterEach(async () => {
+  __setEmbeddedPostgresCtorForTests(null);
+  vi.useRealTimers();
   while (tracked.length > 0) {
     const { lifecycle, dataDir } = tracked.pop()!;
     try {
@@ -709,6 +712,61 @@ describe("embedded-lifecycle: startup timeout (P1 #24)", () => {
     // constructor must not throw and the instance is usable.
     expect(lifecycle).toBeDefined();
     expect(lifecycle.isRunning()).toBe(false);
+  });
+
+  it("cancels a delayed postmaster start without publishing hooks or a running instance", async () => {
+    vi.useFakeTimers();
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    let releaseStart!: () => void;
+    const delayedStart = new Promise<void>((resolve) => { releaseStart = resolve; });
+    let resolveLateStop!: () => void;
+    const lateStop = new Promise<void>((resolve) => { resolveLateStop = resolve; });
+    const running = { value: false };
+    const stop = vi.fn(async () => {
+      running.value = false;
+      if (stop.mock.calls.length === 2) resolveLateStop();
+    });
+
+    class DelayedEmbeddedPostgres {
+      initialise = vi.fn(async () => {});
+      async start() {
+        await delayedStart;
+        running.value = true;
+      }
+      stop = stop;
+      createDatabase = vi.fn(async () => {});
+      getPgClient() {
+        return {
+          connect: vi.fn(async () => {}),
+          query: vi.fn(() => ({ rowCount: 1 })),
+          end: vi.fn(async () => {}),
+        };
+      }
+    }
+
+    __setEmbeddedPostgresCtorForTests(DelayedEmbeddedPostgres as never);
+    const beforeExitListeners = process.listenerCount("beforeExit");
+    const lifecycle = new EmbeddedPostgresLifecycle({
+      ...baseOptions(dataDir),
+      port: 55439,
+      startTimeoutMs: 25,
+    });
+
+    const start = lifecycle.start();
+    const timeoutRejection = expect(start).rejects.toBeInstanceOf(EmbeddedStartTimeoutError);
+    await vi.advanceTimersByTimeAsync(25);
+    await timeoutRejection;
+    expect(running.value).toBe(false);
+
+    releaseStart();
+    await lateStop;
+
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(running.value).toBe(false);
+    expect(lifecycle.isRunning()).toBe(false);
+    expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+    rmSync(dataDir, { recursive: true, force: true });
   });
 });
 

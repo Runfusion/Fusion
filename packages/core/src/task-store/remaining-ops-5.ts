@@ -495,7 +495,7 @@ export function findLiveDependentsImpl(store: TaskStore, id: string): string[] {
 export async function findLiveLineageChildrenImpl(store: TaskStore, id: string): Promise<string[]> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return findLiveLineageChildrenAsync(layer.db, id);
+      return findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
     }
     const rows = store.db
       .prepare(
@@ -907,4 +907,3 @@ export async function createBranchGroupImpl(store: TaskStore, input: BranchGroup
     const created = await store.getBranchGroup(id);
     return created!;
 }
-

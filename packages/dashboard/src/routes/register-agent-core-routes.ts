@@ -6,7 +6,6 @@ import {
   ApprovalRequestStore,
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
   AGENT_PERMISSIONS,
-  aggregateTaskTokenTotalsByAgentLink,
   aggregateTaskTokenTotalsByAgentLinkAsync,
   getDefaultHeartbeatProcedurePath,
   isAgentPermissionPolicyPresetId,
@@ -16,6 +15,7 @@ import {
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { ensureDefaultHeartbeatProcedureFile, HEARTBEAT_PROCEDURE } from "@fusion/engine";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 interface AgentCoreRouteDeps {
   sanitizeAgentTaskLinks: (agents: Agent[], scopedStore: TaskStore) => Promise<Agent[]>;
@@ -125,10 +125,8 @@ async function withTaskDerivedTokenTotals<T extends Agent>(agents: T[], scopedSt
     // this unconditionally called getDatabase(), which throws in backend mode;
     // the surrounding try/catch swallowed it so the feature silently degraded
     // to zero task-derived totals. Now the async path actually runs.
-    const layer = scopedStore.getAsyncLayer();
-    const tokenTotalsByAgentId = layer
-      ? await aggregateTaskTokenTotalsByAgentLinkAsync(layer.db)
-      : aggregateTaskTokenTotalsByAgentLink(scopedStore.getDatabase());
+    const layer = requireAsyncLayer(scopedStore, "Agent token aggregation");
+    const tokenTotalsByAgentId = await aggregateTaskTokenTotalsByAgentLinkAsync(layer.db);
 
     return agents.map((agent) => {
       const storedInputTokens = agent.totalInputTokens ?? 0;
@@ -162,8 +160,8 @@ async function withTaskDerivedTokenTotals<T extends Agent>(agents: T[], scopedSt
 
 async function withPendingApprovalCounts<T extends Agent>(agents: T[], scopedStore: TaskStore): Promise<Array<T & { pendingApprovalCount: number }>> {
   try {
-    const layer = scopedStore.getAsyncLayer();
-    const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+    const layer = requireAsyncLayer(scopedStore, "Agent approval store");
+    const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
     const counts = await approvalStore.getPendingCountsByActor();
 
     return agents.map((agent) => ({

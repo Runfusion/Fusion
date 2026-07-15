@@ -191,7 +191,10 @@ export async function softDeleteTaskRow(
       allowResurrection: allowResurrection ? 1 : 0,
       updatedAt: deletedAt,
     })
-    .where(eq(schema.project.tasks.id, id));
+    .where(and(
+      eq(schema.project.tasks.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
+      eq(schema.project.tasks.id, id),
+    ));
 }
 
 /**
@@ -219,7 +222,12 @@ export async function softDeleteTaskRowInTransaction(
   id: string,
   deletedAt: string,
   allowResurrection = false,
+  projectId?: string,
 ): Promise<void> {
+  /*
+  FNXC:ArchiveProjectIsolation 2026-07-14-16:20:
+  Transactional archive/delete helpers receive the owning project explicitly because task IDs repeat across projects. The composite predicate is required for atomicity to protect the intended row instead of whichever same-ID row PostgreSQL returns first.
+  */
   await tx
     .update(schema.project.tasks)
     .set({
@@ -228,7 +236,10 @@ export async function softDeleteTaskRowInTransaction(
       allowResurrection: allowResurrection ? 1 : 0,
       updatedAt: deletedAt,
     })
-    .where(eq(schema.project.tasks.id, id));
+    .where(and(
+      eq(schema.project.tasks.projectId, projectId?.trim() || "__legacy_unscoped__"),
+      eq(schema.project.tasks.id, id),
+    ));
 }
 
 /**
@@ -283,8 +294,12 @@ export async function readTaskRowInTransaction(
   tx: DbTransaction,
   id: string,
   options?: { includeDeleted?: boolean },
+  projectId?: string,
 ): Promise<Record<string, unknown> | undefined> {
-  const conditions = [eq(schema.project.tasks.id, id)];
+  const conditions = [
+    eq(schema.project.tasks.projectId, projectId?.trim() || "__legacy_unscoped__"),
+    eq(schema.project.tasks.id, id),
+  ];
   if (!options?.includeDeleted) {
     conditions.push(ACTIVE_TASK_FILTER);
   }
@@ -454,7 +469,10 @@ export async function updateTaskColumns(
   await layer.db
     .update(schema.project.tasks)
     .set(updates as never)
-    .where(eq(schema.project.tasks.id, id));
+    .where(and(
+      eq(schema.project.tasks.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
+      eq(schema.project.tasks.id, id),
+    ));
 }
 
 /**

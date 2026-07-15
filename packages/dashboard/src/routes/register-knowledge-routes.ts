@@ -1,13 +1,14 @@
 import { ApiError } from "../api-error.js";
 import {
-  queryKnowledgePages,
-  countKnowledgePages,
+  queryKnowledgePagesAsync,
+  countKnowledgePagesAsync,
   refreshKnowledgeForTask,
   KNOWLEDGE_QUERY_DEFAULT_LIMIT,
   KNOWLEDGE_QUERY_MAX_LIMIT,
   type KnowledgeSourceKind,
 } from "../knowledge-index.js";
 import type { ApiRouteRegistrar } from "./types.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 /**
  * Persistent knowledge-index API (U14).
@@ -52,22 +53,15 @@ export const registerKnowledgeRoutes: ApiRouteRegistrar = (ctx) => {
   router.get("/knowledge/query", async (req, res) => {
     try {
       const store = await getScopedStore(req);
-      // FNXC:RuntimeSatelliteAsync 2026-06-24-22:15:
-      // Knowledge index uses sync SQLite FTS; skip in backend mode.
-      if (store.isBackendMode()) {
-        res.json({ query: typeof req.query.q === "string" ? req.query.q : "", pages: [], total: 0 });
-        return;
-      }
       const q = typeof req.query.q === "string" ? req.query.q : "";
-      const pages = queryKnowledgePages(store.getDatabase(), {
-        query: q,
-        sourceKind: resolveSourceKind(req.query),
-        limit: resolveLimit(req.query),
-      });
+      const options = { query: q, sourceKind: resolveSourceKind(req.query), limit: resolveLimit(req.query) };
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Knowledge queries require the bound PostgreSQL partition; missing runtime wiring must not fall through to SQLite. */
+      const layer = requireAsyncLayer(store, "Knowledge query");
+      const pages = await queryKnowledgePagesAsync(layer, options);
       res.json({
         query: q,
         pages,
-        total: countKnowledgePages(store.getDatabase()),
+        total: await countKnowledgePagesAsync(layer),
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

@@ -32,7 +32,10 @@ import { join, dirname } from "node:path";
 
 /** Handle returned by {@link startServerAsNonAdminUser}; call stop() to kill it. */
 export interface NonAdminServerHandle {
-  /** OS pid of the running postgres server process (from postmaster.pid). */
+  /**
+   * Best-effort OS pid of the running postgres server (from postmaster.pid when
+   * available). May be the cmd wrapper pid until postmaster.pid appears.
+   */
   readonly postgresPid: number;
   /** Stop the non-admin postgres process (taskkill). Safe to call once. */
   stop(): Promise<void>;
@@ -51,6 +54,17 @@ export interface NonAdminStartOptions {
   readonly onError: (messageOrError: string | Error | unknown) => void;
   /** Hard timeout (ms) on reaching "ready to accept connections". */
   readonly startTimeoutMs: number;
+  /**
+   * FNXC:WindowsDesktopPackaging 2026-07-15-05:20:
+   * Cooperative cancellation from EmbeddedPostgresLifecycle.start()'s AbortController.
+   * When aborted during readiness polling, kill the wrapper/postmaster immediately.
+   */
+  readonly signal?: AbortSignal;
+  /**
+   * Invoked as soon as the cmd wrapper PID is known (before readiness) so the
+   * lifecycle can stop orphans if the outer start() timeout wins the race.
+   */
+  readonly onLaunched?: (handle: NonAdminServerHandle) => void;
 }
 
 let elevatedCache: boolean | null = null;
@@ -72,37 +86,54 @@ const DEDICATED_USER = "fusion-pg";
 let dedicatedPassword: string | null = null;
 
 /**
- * FNXC:WindowsDesktopPackaging 2026-07-14-21:35:
- * Generate a strong password that does NOT contain the account name token.
- * Windows complexity policy rejects a password containing the user's account
- * name; `net user` then re-prompts non-interactively ("No valid response was
- * provided") and creates NOTHING, which cascades into a misleading
- * "user name or password is incorrect" downstream.
+ * FNXC:WindowsDesktopPackaging 2026-07-15-05:25:
+ * Fully randomized password with all four complexity classes and no fixed
+ * prefix/suffix (review feedback: constant frames reduce entropy). Avoids the
+ * account-name token so Windows complexity policy accepts it.
  */
 function generatePassword(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%^*_-+=?";
+  const all = upper + lower + digits + symbols;
   const seed =
-    spawnSync("powershell", ["-NoProfile", "-Command", "[BitConverter]::ToString([guid]::NewGuid().ToByteArray())"], {
-      encoding: "utf8",
-    }).stdout ?? Math.random().toString(36);
-  let s = "";
+    spawnSync(
+      "powershell",
+      ["-NoProfile", "-Command", "[BitConverter]::ToString([guid]::NewGuid().ToByteArray()) + [BitConverter]::ToString([guid]::NewGuid().ToByteArray())"],
+      { encoding: "utf8" },
+    ).stdout ?? Math.random().toString(36) + Math.random().toString(36);
+
+  const required = [
+    upper[Math.floor(Math.random() * upper.length)]!,
+    lower[Math.floor(Math.random() * lower.length)]!,
+    digits[Math.floor(Math.random() * digits.length)]!,
+    symbols[Math.floor(Math.random() * symbols.length)]!,
+  ];
+  let body = "";
   for (const ch of seed) {
     if (/[a-zA-Z0-9]/.test(ch)) {
       const idx = parseInt(ch.toLowerCase(), 16);
-      if (Number.isFinite(idx)) s += chars[idx % chars.length];
+      if (Number.isFinite(idx)) body += all[idx % all.length]!;
     }
-    if (s.length >= 22) break;
+    if (body.length >= 20) break;
   }
-  while (s.length < 22) s += chars[Math.floor(Math.random() * chars.length)];
-  // Guarantee the 4 complexity categories (upper, lower, digit, symbol).
-  return `Fx9!${s}#kP`;
+  while (body.length < 20) body += all[Math.floor(Math.random() * all.length)]!;
+  const chars = [...required, ...body.split("")];
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = chars[i]!;
+    chars[i] = chars[j]!;
+    chars[j] = tmp;
+  }
+  return chars.join("");
 }
 
 /**
  * Ensure the dedicated non-admin local user exists and we know its password.
  * Idempotent: creates the user if absent, or resets its password if present
- * (so a leftover account from a prior run still works). Created users default
- * to the standard Users group — never Administrators.
+ * (so a leftover account from a prior run still works). Always strips
+ * Administrators membership so a reused account cannot stay elevated.
  */
 function ensureNonAdminUser(): { user: string; password: string } {
   if (dedicatedPassword) return { user: DEDICATED_USER, password: dedicatedPassword };
@@ -123,6 +154,12 @@ function ensureNonAdminUser(): { user: string; password: string } {
       );
     }
   }
+  // FNXC:WindowsDesktopPackaging 2026-07-15-05:25:
+  // A leftover fusion-pg that was manually promoted to Administrators would
+  // still be refused by postgres. Best-effort demote; ignore "not a member".
+  spawnSync("net", ["localgroup", "Administrators", DEDICATED_USER, "/delete"], {
+    encoding: "utf8",
+  });
   dedicatedPassword = password;
   return { user: DEDICATED_USER, password };
 }
@@ -197,6 +234,31 @@ function readTail(file: string, max: number): string {
   }
 }
 
+/**
+ * FNXC:WindowsDesktopPackaging 2026-07-15-05:25:
+ * Reject postgresFlags that would break cmd.exe quoting or enable injection
+ * when embedded into launch.bat (review: arbitrary flags with % " & | etc.).
+ */
+function sanitizePostgresFlags(flags: readonly string[]): string[] {
+  const safe: string[] = [];
+  for (const flag of flags) {
+    if (typeof flag !== "string" || flag.length === 0) {
+      throw new Error(`embedded postgres: invalid postgresFlags entry (empty/non-string)`);
+    }
+    if (/[\r\n"%&|<>^!]/.test(flag)) {
+      throw new Error(
+        `embedded postgres: postgresFlags entry contains cmd.exe-sensitive characters: ${JSON.stringify(flag)}`,
+      );
+    }
+    safe.push(flag);
+  }
+  return safe;
+}
+
+/** Quote a path for cmd.exe double-quoted args (escape embedded quotes). */
+function cmdQuote(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
 
 let pwshCache: string | null | undefined;
 /**
@@ -267,28 +329,33 @@ export async function startServerAsNonAdminUser(
   writeFileSync(logFile, "", "utf8");
   writeFileSync(wrapperLog, "", "utf8");
   const bat = join(runDir, "launch.bat");
-  const args = ["-D", opts.dataDir, "-p", String(opts.port), ...opts.postgresFlags];
+  const safeFlags = sanitizePostgresFlags(opts.postgresFlags);
+  const args = ["-D", opts.dataDir, "-p", String(opts.port), ...safeFlags];
   // Set TMP/TEMP inside the granted data dir so the non-admin postgres process
   // never writes outside an accessible location.
-  const argStr = args.map((a) => `"${a}"`).join(" ");
+  const argStr = args.map((a) => cmdQuote(a)).join(" ");
+  // FNXC:WindowsDesktopPackaging 2026-07-15-05:25:
+  // UTF-8 + chcp 65001 so non-ASCII profile paths (e.g. C:\Users\José) are not
+  // corrupted when cmd.exe reads the bat (review: ASCII encoding broke paths).
   writeFileSync(
     bat,
     [
       "@echo off",
+      "chcp 65001 >nul",
       `set "TMP=${runDir}"`,
       `set "TEMP=${runDir}"`,
-      `call :main >> "${wrapperLog}" 2>&1`,
+      `call :main >> ${cmdQuote(wrapperLog)} 2>&1`,
       "exit /b",
       ":main",
       "echo launch-start",
       "whoami",
       "cd",
-      `echo cmd: "${pgExe}" ${argStr}`,
-      `"${pgExe}" ${argStr} > "${logFile}" 2>&1`,
+      `echo cmd: ${cmdQuote(pgExe)} ${argStr}`,
+      `${cmdQuote(pgExe)} ${argStr} > ${cmdQuote(logFile)} 2>&1`,
       "echo exit=%ERRORLEVEL%",
       "",
     ].join("\r\n"),
-    "ascii",
+    "utf8",
   );
 
   const computerName = process.env.COMPUTERNAME ?? "";
@@ -322,7 +389,7 @@ export async function startServerAsNonAdminUser(
       "Write-Output $p.Id",
       "",
     ].join("\r\n"),
-    "ascii",
+    "utf8",
   );
   const powerShell = resolvePowerShell();
   const launch = spawnSync(
@@ -353,6 +420,29 @@ export async function startServerAsNonAdminUser(
         `stderr=${(launch.stderr || "").trim().slice(0, 2000)}).`,
     );
   }
+
+  let stopped = false;
+  const killAll = (): void => {
+    if (stopped) return;
+    stopped = true;
+    const pid = readPostgresPid(opts.dataDir);
+    if (pid) spawnSync("taskkill", ["/pid", String(pid), "/f", "/t"], { encoding: "utf8" });
+    spawnSync("taskkill", ["/pid", String(wrapperPid), "/f", "/t"], { encoding: "utf8" });
+  };
+
+  // FNXC:WindowsDesktopPackaging 2026-07-15-05:20:
+  // Publish a stop handle immediately so lifecycle timeout cleanup can kill the
+  // wrapper even while readiness is still polling (review: orphan on timeout).
+  const handle: NonAdminServerHandle = {
+    get postgresPid() {
+      return readPostgresPid(opts.dataDir) ?? wrapperPid;
+    },
+    async stop() {
+      killAll();
+    },
+  };
+  opts.onLaunched?.(handle);
+
   opts.onLog(
     `embedded postgres: launched postgres as non-admin user '${user}' (wrapper pid ${wrapperPid}); ` +
       `waiting for port ${opts.port}`,
@@ -363,6 +453,12 @@ export async function startServerAsNonAdminUser(
   let ready = false;
   let lastSnapshot = "";
   while (Date.now() < deadline) {
+    if (opts.signal?.aborted) {
+      killAll();
+      throw new Error(
+        `embedded postgres: non-admin launch cancelled before ready (wrapper pid ${wrapperPid}).`,
+      );
+    }
     // FNXC:WindowsDesktopPackaging 2026-07-14-23:05:
     // Lightweight poll: readFileSync only. Do NOT spawn tasklist/probePort in
     // the hot loop — a synchronous tasklist per iteration blocked ~16s between
@@ -390,11 +486,13 @@ export async function startServerAsNonAdminUser(
       }
     }
     if (/\bFATAL\b|\bPANIC\b|could not (bind|start|create|access|connect|load)|not permitted|Permission denied|is not the owner/i.test(tail)) {
+      killAll();
       throw new Error(
         `embedded postgres: non-admin postgres reported a startup error before opening the port.\n${tail}`,
       );
     }
     if (/^exit=/m.test(wrapperTail)) {
+      killAll();
       throw new Error(
         `embedded postgres: non-admin postgres exited before becoming ready.\nwrapper={${wrapperTail}}\npg={${tail}}`,
       );
@@ -407,12 +505,16 @@ export async function startServerAsNonAdminUser(
 
   if (!ready) {
     const tail = readTail(logFile, 1500);
-    // Best-effort cleanup of the dead/hung process.
-    spawnSync("taskkill", ["/pid", String(wrapperPid), "/f", "/t"], { encoding: "utf8" });
-    const pgPid = readPostgresPid(opts.dataDir);
-    if (pgPid) spawnSync("taskkill", ["/pid", String(pgPid), "/f", "/t"], { encoding: "utf8" });
+    killAll();
     throw new Error(
       `embedded postgres: non-admin postgres did not become ready within ${opts.startTimeoutMs}ms.\n${tail}`,
+    );
+  }
+
+  if (opts.signal?.aborted) {
+    killAll();
+    throw new Error(
+      `embedded postgres: non-admin launch cancelled after ready (wrapper pid ${wrapperPid}).`,
     );
   }
 
@@ -421,21 +523,11 @@ export async function startServerAsNonAdminUser(
     opts.onError("embedded postgres: started but could not read postmaster.pid");
   }
 
-  let stopped = false;
   const resolvedPid = postgresPid ?? wrapperPid;
   opts.onLog(
     `embedded postgres: non-admin server ready on 127.0.0.1:${opts.port} (pid ${resolvedPid})`,
   );
-  return {
-    postgresPid: resolvedPid,
-    async stop() {
-      if (stopped) return;
-      stopped = true;
-      const pid = readPostgresPid(opts.dataDir) ?? resolvedPid;
-      spawnSync("taskkill", ["/pid", String(pid), "/f", "/t"], { encoding: "utf8" });
-      spawnSync("taskkill", ["/pid", String(wrapperPid), "/f", "/t"], { encoding: "utf8" });
-    },
-  };
+  return handle;
 }
 
 /** True when a TCP accept is available on 127.0.0.1:port within timeoutMs. */

@@ -51,7 +51,7 @@ interface RawDatabase {
   deserialize?: (data: Uint8Array) => void;
 }
 
-type DatabaseCtor = new (path: string) => RawDatabase;
+type DatabaseCtor = new (path: string, options?: Record<string, unknown>) => RawDatabase;
 
 let cachedCtor: DatabaseCtor | null = null;
 
@@ -75,10 +75,18 @@ function loadDatabaseCtor(): DatabaseCtor {
 export class DatabaseSync {
   private impl: RawDatabase;
 
-  constructor(path: string) {
+  constructor(path: string, options?: { readOnly?: boolean }) {
     assertOutsideRealFusionPath(path, "SQLite database open");
     const Ctor = loadDatabaseCtor();
-    this.impl = new Ctor(path);
+    /* FNXC:LegacySqliteBoundary 2026-07-14-18:42:
+     * Remaining SQLite access is migration/import/validation only. Open those
+     * sources read-only so discovery cannot create files, recover WALs, or
+     * checkpoint legacy databases during normal PostgreSQL startup.
+     */
+    const runtimeOptions = options?.readOnly
+      ? (isBun ? { readonly: true } : { readOnly: true })
+      : undefined;
+    this.impl = runtimeOptions ? new Ctor(path, runtimeOptions) : new Ctor(path);
   }
 
   exec(sql: string): void {

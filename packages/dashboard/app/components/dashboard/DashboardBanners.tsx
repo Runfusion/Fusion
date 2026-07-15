@@ -11,7 +11,6 @@ import { EngineStatusBanner } from "../EngineStatusBanner";
 import { OAuthReloginBanner } from "../OAuthReloginBanner";
 import { SessionNotificationBanner } from "../SessionNotificationBanner";
 import { CliBinaryInstallBanner } from "../CliBinaryInstallBanner";
-import { StorageMigrationNoticeBanner } from "../StorageMigrationNoticeBanner";
 import { OnboardingResumeCard } from "../OnboardingResumeCard";
 import { PostOnboardingRecommendations } from "../PostOnboardingRecommendations";
 import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
@@ -108,8 +107,7 @@ export function DashboardBanners({
       )}
       {viewMode === "project" && currentProject && (
         <>
-          {/* FNXC:StorageMigrationNotice 2026-07-12-00:00: Keep the one-time storage-backend announcement beside other project-scoped passive notices while its localStorage dismissal remains app-wide. */}
-          <StorageMigrationNoticeBanner />
+          {/* FNXC:PostgresMigrationNotice 2026-07-14-18:36: The PostgreSQL cutover is complete, so the dashboard must not advertise it as a future release. Active migration failures remain visible through SqliteMigrationBanner above. */}
           <CliBinaryInstallBanner
             onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
           />

@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { appendFileSync } from "node:fs";
 import type { Server } from "node:http";
+import type { AsyncDataLayer, LoadedPluginSchemaContract } from "@fusion/core";
 import type { AddressInfo } from "node:net";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
@@ -46,14 +47,13 @@ export interface DesktopRuntimeStatus {
  * members this wiring needs beyond the pre-existing init/watch/close surface.
  */
 type PluginStoreLike = { init(): Promise<void> };
-type PluginDatabaseLike = { runPluginSchemaInits(hooks: Array<{ pluginId: string; hook: unknown }>): Promise<void> };
-
 type TaskStoreLike = {
   init(): Promise<void>;
   watch(): Promise<void>;
   close(): void;
   getPluginStore(): PluginStoreLike;
-  getDatabase(): PluginDatabaseLike;
+  runPluginSchemaInits(hooks: LoadedPluginSchemaContract[]): Promise<void>;
+  getAsyncLayer(): AsyncDataLayer;
 };
 
 type RuntimeCleanup = () => Promise<void> | void;
@@ -99,21 +99,17 @@ async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
   // FNXC:BackendFlip 2026-06-26-14:40:
   // Consult the startup factory to boot a PostgreSQL-backed TaskStore. Post
   // default-flip: the factory boots embedded PG by default when DATABASE_URL
-  // is unset, external PG when DATABASE_URL is set, and returns null only
-  // when the operator opted out via FUSION_NO_EMBEDDED_PG=1 (legacy SQLite
-  // path). The backend shutdown handle is stashed on the returned object so
+  // is unset and external PG when DATABASE_URL is set. The backend shutdown handle is stashed on the returned object so
   // the runtime manager's stop path can release the pool / stop an embedded
   // cluster.
-  const { TaskStore, createTaskStoreForBackend } = await import("@fusion/core");
+  const { createTaskStoreForBackend } = await import("@fusion/core");
   const backendBoot = await createTaskStoreForBackend({ rootDir });
-  if (backendBoot) {
-    const store = backendBoot.taskStore as unknown as TaskStoreLike;
-    // Attach the backend shutdown so LocalRuntimeManager can invoke it on stop.
-    (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
-      backendBoot.shutdown;
-    return store;
-  }
-  return new TaskStore(rootDir) as TaskStoreLike;
+  /* FNXC:PostgresDesktopRuntime 2026-07-14-18:34: Desktop startup must fail visibly if PostgreSQL cannot boot; the removed opt-out must never construct an unbacked SQLite TaskStore. */
+  const store = backendBoot.taskStore as unknown as TaskStoreLike;
+  // Attach the backend shutdown so LocalRuntimeManager can invoke it on stop.
+  (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
+    backendBoot.shutdown;
+  return store;
 }
 
 /*
@@ -174,7 +170,8 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
    * FNXC:DesktopRuntime 2026-06-20-23:39:
    * Embedded desktop local mode should be an executable Fusion node, not a dashboard-only shell. Start all registered project engines and pass the manager to the API server so project-scoped routes can start newly accessed engines.
    */
-  const centralCore = new CentralCore();
+  /* FNXC:PostgresDesktopLifecycle 2026-07-14-19:10: Desktop engines and the dashboard share the TaskStore's AsyncDataLayer; constructing a layerless CentralCore would boot a second pool and repeat schema initialization. */
+  const centralCore = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() });
   const engineManager = new ProjectEngineManager(centralCore);
   const providerSeeding: { dispose?: () => void } = {};
   const cleanup = async () => {
@@ -282,7 +279,8 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       strace(`createDashboardServer: plugins loaded=${loaded} errors=${errors}`);
       const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
       if (schemaHooks.length > 0) {
-        await store.getDatabase().runPluginSchemaInits(schemaHooks);
+        /* FNXC:DesktopPluginSchema 2026-07-14-17:30: Embedded desktop must not open the removed sync database in PostgreSQL mode; TaskStore selects the registered PG schema hook. */
+        await store.runPluginSchemaInits(schemaHooks);
       }
 
       ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
@@ -306,6 +304,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
         }
       };
     } catch (error) {
+      console.error(`[plugins] Desktop plugin initialization failed: ${error instanceof Error ? error.message : String(error)}`);
       strace(
         `createDashboardServer: plugin subsystem init FAILED (non-fatal, dashboard still boots) — ${error instanceof Error ? error.stack : String(error)}`,
       );
@@ -524,9 +523,11 @@ export class LocalRuntimeManager {
           server!.close(() => resolve());
         });
       }
-      await cleanup?.();
+      await Promise.resolve(cleanup?.()).catch(() => undefined);
       if (store) {
-        store.close();
+        const backendShutdown = (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
+        if (backendShutdown) await backendShutdown().catch(() => undefined);
+        else store.close();
       }
       this.runtime = null;
       strace(`startEmbedded: CATCH/ERROR ${error instanceof Error ? error.stack : String(error)}`);
@@ -552,8 +553,12 @@ export class LocalRuntimeManager {
       const runtime = this.runtime;
       this.runtime = null;
       await new Promise<void>((resolve) => runtime.server.close(() => resolve()));
-      await runtime.cleanup?.();
-      runtime.store.close();
+      let cleanupError: unknown;
+      try {
+        await runtime.cleanup?.();
+      } catch (error) {
+        cleanupError = error;
+      }
       // FNXC:RuntimeStartupWiring 2026-06-24-10:30:
       // Release the backend connection pool / embedded PG cluster if the store
       // was booted via the startup factory. store.close() already closes the
@@ -561,7 +566,10 @@ export class LocalRuntimeManager {
       const backendShutdown = (runtime.store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
       if (backendShutdown) {
         await backendShutdown().catch(() => undefined);
+      } else {
+        runtime.store.close();
       }
+      if (cleanupError) throw cleanupError;
       this.status = { source: "none", state: "stopped" };
       return this.status;
     }

@@ -27,7 +27,7 @@ import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 
 /** The latest PostgreSQL schema version known to this applier. */
-export const SCHEMA_BASELINE_VERSION = "0008";
+export const SCHEMA_BASELINE_VERSION = "0009";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -46,6 +46,7 @@ export const SQLITE_SCHEMA_PARITY_VERSION = "0007";
  * advisor overrides. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
  */
 export const SESSION_ADVISOR_ENABLED_SCHEMA_VERSION = "0008";
+export const MISSION_FIX_IDEMPOTENCY_VERSION = "0009";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -91,6 +92,11 @@ const SESSION_ADVISOR_ENABLED_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0008_session_advisor_enabled.sql",
+);
+const MISSION_FIX_IDEMPOTENCY_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0009_mission_fix_idempotency.sql",
 );
 
 /**
@@ -157,6 +163,7 @@ export async function applySchemaBaseline(
     const projectOwnershipAlreadyApplied = applied.includes(PROJECT_OWNERSHIP_SCHEMA_VERSION);
     const sqliteSchemaParityAlreadyApplied = applied.includes(SQLITE_SCHEMA_PARITY_VERSION);
     const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
+    const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -360,6 +367,22 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(sessionAdvisorEnabledSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SESSION_ADVISOR_ENABLED_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionFixIdempotency 2026-07-14-18:55:
+    Existing PostgreSQL databases receive the validator-run lineage uniqueness invariant independently of earlier schema versions. Duplicate historical rows fail the migration visibly instead of being silently discarded.
+
+    FNXC:PostgresConflictResolution 2026-07-14-20:52:
+    Main assigned migration 0008 to session-advisor state before the cutover landed, so mission lineage uniqueness advances to 0009. Both migrations must run in order; sharing a bookkeeping version would silently skip one invariant.
+    */
+    if (!missionFixIdempotencyAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_FIX_IDEMPOTENCY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_FIX_IDEMPOTENCY_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

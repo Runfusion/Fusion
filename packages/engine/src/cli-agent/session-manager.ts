@@ -473,6 +473,11 @@ export class CliSessionManager {
       });
     }
 
+    // FNXC:CliAgentPostgres 2026-07-14-12:00:
+    // The durable session row must commit before its PTY starts; otherwise an
+    // engine crash between spawn and the queued write would defeat recovery.
+    await this.store.flush();
+
     const allowlist = adapter.buildEnvAllowlist(launchCtx);
     const env = this.buildEnv(allowlist);
 
@@ -487,11 +492,19 @@ export class CliSessionManager {
         env: env as { [key: string]: string },
       });
     } catch (err) {
-      // Spawn failure: release the (not-yet-held) record into a dead state.
-      this.store.updateSession(record.id, {
-        agentState: "dead",
-        terminationReason: "crashed",
-      });
+      /*
+      FNXC:CliAgentPostgres 2026-07-14-21:33:
+      A failed PTY spawn is the actionable launch error. Persisting its dead session state is best-effort so an update or flush failure cannot replace the original spawn exception reported to callers.
+      */
+      try {
+        this.store.updateSession(record.id, {
+          agentState: "dead",
+          terminationReason: "crashed",
+        });
+        await this.store.flush();
+      } catch {
+        // Preserve the original PTY spawn failure.
+      }
       throw err;
     }
 
