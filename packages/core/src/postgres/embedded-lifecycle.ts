@@ -72,6 +72,12 @@ import {
   startServerAsNonAdminUser,
   type NonAdminServerHandle,
 } from "./embedded-windows-admin.js";
+// FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
+// Static import so tsup/esbuild bundles postgres.js into packages/cli/dist/bin.js.
+// A runtime require("postgres") resolved via the CLI createRequire banner against
+// packages/cli/dist and failed boot-smoke with "Cannot find module 'postgres'"
+// because @runfusion/fusion does not list postgres as a direct dependency.
+import postgres from "postgres";
 
 export { isWindowsElevatedAdmin } from "./embedded-windows-admin.js";
 
@@ -449,10 +455,18 @@ export type EmbeddedPostgresCtor = new (opts: Record<string, unknown>) => {
 /** Instance type produced by the embedded-postgres constructor. */
 type EmbeddedPostgresInstance = InstanceType<EmbeddedPostgresCtor>;
 let embeddedPostgresCtorCache: EmbeddedPostgresCtor | null = null;
+/**
+ * FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
+ * True while tests inject a mock EmbeddedPostgres ctor. Elevated Windows CI
+ * would otherwise take the real non-admin boot path and ignore the mock's
+ * delayed start() used by cancellation coverage.
+ */
+let embeddedPostgresCtorIsTestOverride = false;
 
 /** Test-only constructor seam for deterministic lifecycle cancellation coverage. */
 export function __setEmbeddedPostgresCtorForTests(ctor: EmbeddedPostgresCtor | null): void {
   embeddedPostgresCtorCache = ctor;
+  embeddedPostgresCtorIsTestOverride = ctor !== null;
 }
 
 function getEmbeddedPostgresCtor(): EmbeddedPostgresCtor {
@@ -1069,7 +1083,10 @@ export class EmbeddedPostgresLifecycle {
     // FNXC:WindowsDesktopPackaging 2026-07-15-05:20:
     // Pass AbortSignal so outer start() timeout can cancel a still-polling
     // non-admin launch and kill the wrapper before readiness assigns a handle.
-    if (isWindowsElevatedAdmin()) {
+    // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
+    // Skip the real non-admin path when tests inject a mock ctor so delayed
+    // start/cancellation coverage exercises pg.start() even on elevated CI.
+    if (isWindowsElevatedAdmin() && !embeddedPostgresCtorIsTestOverride) {
       const nativeRoot = resolveWindowsEmbeddedPostgresNativeRoot();
       if (!nativeRoot) {
         throw new Error(
@@ -1220,6 +1237,11 @@ export class EmbeddedPostgresLifecycle {
   /**
    * Open a short-lived maintenance connection to the embedded cluster's
    * built-in `postgres` database (for CREATE DATABASE / existence checks).
+   *
+   * FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
+   * Uses the statically imported postgres.js client (bundled into CLI) rather
+   * than embedded-postgres getPgClient, which requires this.process set by
+   * library start() — unavailable on the elevated Windows non-admin path.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private openMaintenanceSql(): any {
@@ -1227,14 +1249,6 @@ export class EmbeddedPostgresLifecycle {
     if (port === undefined) {
       throw new Error("openMaintenanceSql: no port assigned");
     }
-    // Lazy require so CLI bundles that never touch embedded PG do not need
-    // the postgres.js runtime in their static graph for this path alone.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const postgres = require("postgres") as (opts: Record<string, unknown>) => {
-      (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>;
-      unsafe(query: string): Promise<unknown>;
-      end(opts?: { timeout?: number }): Promise<void>;
-    };
     const host = process.platform === "win32" ? "127.0.0.1" : "localhost";
     return postgres({
       host,

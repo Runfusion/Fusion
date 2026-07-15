@@ -156,10 +156,33 @@ function ensureNonAdminUser(): { user: string; password: string } {
   }
   // FNXC:WindowsDesktopPackaging 2026-07-15-05:25:
   // A leftover fusion-pg that was manually promoted to Administrators would
-  // still be refused by postgres. Best-effort demote; ignore "not a member".
-  spawnSync("net", ["localgroup", "Administrators", DEDICATED_USER, "/delete"], {
-    encoding: "utf8",
-  });
+  // still be refused by postgres. Demote and fail closed unless the account is
+  // already not a member (review: ignore silent demote failures).
+  // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
+  // net localgroup /delete status 0 = removed; non-zero is OK only when the
+  // account was already not in Administrators ("not a member" / "could not find").
+  const demote = spawnSync(
+    "net",
+    ["localgroup", "Administrators", DEDICATED_USER, "/delete"],
+    { encoding: "utf8" },
+  );
+  if (demote.status !== 0) {
+    const demoteOut = `${demote.stdout || ""}\n${demote.stderr || ""}`.toLowerCase();
+    const alreadyNotMember =
+      demoteOut.includes("not a member") ||
+      demoteOut.includes("could not find") ||
+      demoteOut.includes("no such") ||
+      demoteOut.includes("does not exist");
+    if (!alreadyNotMember) {
+      throw new Error(
+        `embedded postgres: failed to remove '${DEDICATED_USER}' from Administrators ` +
+          `(net localgroup status=${demote.status}): ` +
+          `${(demote.stderr || demote.stdout || "").trim().slice(0, 400)}. ` +
+          "PostgreSQL refuses to start under an administrative token; demote the " +
+          "account or run Fusion non-elevated.",
+      );
+    }
+  }
   dedicatedPassword = password;
   return { user: DEDICATED_USER, password };
 }
@@ -449,7 +472,15 @@ export async function startServerAsNonAdminUser(
   );
 
   // Poll for readiness until the server accepts connections or the timeout hits.
-  const deadline = Date.now() + Math.max(opts.startTimeoutMs, 1000);
+  // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
+  // startTimeoutMs <= 0 means unbounded (matches outer lifecycle: 0 disables
+  // the start timeout). Math.max(..., 1000) previously forced a 1s deadline and
+  // killed elevated boots when callers disabled the timeout (review feedback).
+  const hasDeadline =
+    opts.startTimeoutMs > 0 && Number.isFinite(opts.startTimeoutMs);
+  const deadline = hasDeadline
+    ? Date.now() + opts.startTimeoutMs
+    : Number.POSITIVE_INFINITY;
   let ready = false;
   let lastSnapshot = "";
   while (Date.now() < deadline) {
@@ -507,7 +538,9 @@ export async function startServerAsNonAdminUser(
     const tail = readTail(logFile, 1500);
     killAll();
     throw new Error(
-      `embedded postgres: non-admin postgres did not become ready within ${opts.startTimeoutMs}ms.\n${tail}`,
+      `embedded postgres: non-admin postgres did not become ready` +
+        (hasDeadline ? ` within ${opts.startTimeoutMs}ms` : "") +
+        `.\n${tail}`,
     );
   }
 
