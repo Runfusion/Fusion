@@ -1367,6 +1367,36 @@ Limits are controlled by project settings (`maxSpawnedAgentsPerParent`, `maxSpaw
 ### Custom instructions
 `packages/engine/src/agent-instructions.ts` resolves per-agent instruction text/path with path-traversal and extension validation.
 
+### Planner overseer session advisor (OMP advisor parity)
+
+/*
+FNXC:PlannerOversight 2026-07-13-23:10 / 2026-07-14-12:00:
+Session-advisor layer shadows executor agent-log deltas with a second model,
+severity-routed notes, and an emission guard. **Off by default** via workflow
+setting `plannerOverseerAdvisorEnabled` (false). When enabled, also requires
+both `plannerOverseerAdvisorProvider` and `plannerOverseerAdvisorModelId`.
+Lifecycle supervisor (FN-7511–7520) remains authoritative for stage signals,
+retry, and merge confirmation and does not depend on the LLM advisor.
+*/
+
+When enabled and a model is configured, `OverseerAdvisorService` (engine) queues
+transcript deltas from `AgentLogger.onEntriesFlushed` and the planner-overseer
+poll's agent-log cursor, prompts an isolated advisor model, and — after
+`OverseerEmissionGuard` — injects `[session-advisor]` steering comments for
+levels `steer`/`autonomous` (observe logs only). The system prompt
+(`OVERSEER_ADVISOR_SYSTEM_PROMPT`) ports oh-my-pi advisor judgment policy
+(peer-programmer role, critical silence rules, nit/concern/blocker criteria)
+with Fusion anchors (PROMPT.md, File Scope, verification) and a JSON
+`note`/`severity` or `silence` reply contract. Human-control withhold still
+applies at inject time.
+
+**Watchdog / review-priority discovery** (`discoverOverseerWatchdogFiles` in
+`overseer-watchdog.ts`) loads every readable `OVERSEER.md` and `WATCHDOG.md`
+from: (1) the user agent dir when configured, (2) each directory from the task
+worktree/cwd upward to the repo root (or home), including both bare and
+`.fusion/` / `.omp/` nested variants. Multiple files concatenate; user-level
+first, then project ancestor→leaf so the leaf is most prominent.
+
 ### Planner overseer monitoring (records-only)
 
 /*

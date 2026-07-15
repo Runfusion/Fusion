@@ -2,7 +2,7 @@ import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, MoreVertical } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, MoreVertical, Eye, EyeOff } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -1077,6 +1077,8 @@ export function TaskDetailContent({
   const [isSavingInlineNoCommitsExpected, setIsSavingInlineNoCommitsExpected] = useState(false);
   // FNXC:PlannerOversight 2026-07-04-17:00: FN-7517 quick oversight-level-change + nudge/stop/explain control state.
   const [isSavingOversightLevel, setIsSavingOversightLevel] = useState(false);
+  // FNXC:PlannerOversight 2026-07-14-18:11: saving state for per-task session advisor toggle.
+  const [isSavingSessionAdvisor, setIsSavingSessionAdvisor] = useState(false);
   const [isNudgingOverseer, setIsNudgingOverseer] = useState(false);
   const [isStoppingOverseer, setIsStoppingOverseer] = useState(false);
   const [overseerExplainOpen, setOverseerExplainOpen] = useState(false);
@@ -2053,6 +2055,62 @@ export function TaskDetailContent({
       }
     }
   }, [task.id, projectId, inlineNoCommitsExpected, onTaskUpdated, addToast]);
+
+  /*
+  FNXC:PlannerOversight 2026-07-14-18:11:
+  Per-task session advisor (LLM overseer agent). Unset inherits project
+  sessionAdvisorEnabledByDefault; explicit boolean forces on/off. Toggle writes
+  an override when it differs from the project default and clears to null when
+  it matches (same inheritance model as Quick Add eye).
+  */
+  const projectSessionAdvisorDefault = settings?.sessionAdvisorEnabledByDefault === true;
+  const hasSessionAdvisorOverride = typeof workingTask.sessionAdvisorEnabled === "boolean";
+  const effectiveSessionAdvisorEnabled = hasSessionAdvisorOverride
+    ? workingTask.sessionAdvisorEnabled === true
+    : projectSessionAdvisorDefault;
+
+  const handleSessionAdvisorToggle = useCallback(async () => {
+    setIsSavingSessionAdvisor(true);
+    try {
+      const nextEnabled = !effectiveSessionAdvisorEnabled;
+      const nextValue: boolean | null =
+        nextEnabled === projectSessionAdvisorDefault ? null : nextEnabled;
+      const updatedTask = await updateTask(task.id, { sessionAdvisorEnabled: nextValue }, projectId);
+      onTaskUpdated?.(updatedTask);
+      addToast(
+        nextValue === null
+          ? t("taskDetail.sessionAdvisor.reset", "Session advisor follows project default ({{default}})", {
+              default: projectSessionAdvisorDefault
+                ? t("tasks.sessionAdvisorDefaultOn", "on")
+                : t("tasks.sessionAdvisorDefaultOff", "off"),
+            })
+          : nextValue
+            ? t("taskDetail.sessionAdvisor.enabled", "Session advisor enabled for this task")
+            : t("taskDetail.sessionAdvisor.disabled", "Session advisor disabled for this task"),
+        "success",
+      );
+    } catch (err) {
+      addToast(
+        t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", {
+          id: task.id,
+          error: getErrorMessage(err),
+        }),
+        "error",
+      );
+    } finally {
+      if (mountedRef.current) {
+        setIsSavingSessionAdvisor(false);
+      }
+    }
+  }, [
+    effectiveSessionAdvisorEnabled,
+    projectSessionAdvisorDefault,
+    task.id,
+    projectId,
+    onTaskUpdated,
+    addToast,
+    t,
+  ]);
 
   /*
   FNXC:PlannerOversight 2026-07-04-17:00:
@@ -4078,6 +4136,59 @@ export function TaskDetailContent({
                                 ))}
                               </select>
                             </label>
+                            {/*
+                            FNXC:PlannerOversight 2026-07-14-18:11:
+                            Per-task session advisor toggle inside the Oversight menu.
+                            */}
+                            <button
+                              type="button"
+                              className={`detail-oversight-menu-item ${effectiveSessionAdvisorEnabled ? "detail-oversight-menu-item--active" : ""}`}
+                              role="menuitem"
+                              data-testid="detail-session-advisor-toggle"
+                              onClick={() => {
+                                void handleSessionAdvisorToggle();
+                              }}
+                              onKeyDown={handleOversightMenuKeyDown}
+                              disabled={isSavingSessionAdvisor}
+                              aria-pressed={effectiveSessionAdvisorEnabled}
+                              title={
+                                hasSessionAdvisorOverride
+                                  ? t(
+                                      "taskDetail.sessionAdvisor.overrideTitle",
+                                      "Session advisor {{state}} (task override; project default {{default}})",
+                                      {
+                                        state: effectiveSessionAdvisorEnabled
+                                          ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                          : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                        default: projectSessionAdvisorDefault
+                                          ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                          : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                      },
+                                    )
+                                  : t(
+                                      "taskDetail.sessionAdvisor.inheritTitle",
+                                      "Session advisor {{state}} (follows project default)",
+                                      {
+                                        state: effectiveSessionAdvisorEnabled
+                                          ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                          : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                      },
+                                    )
+                              }
+                              aria-label={t("taskDetail.sessionAdvisor.ariaLabel", "Toggle session advisor for this task")}
+                            >
+                              {isSavingSessionAdvisor ? <Loader2 className="spin" aria-hidden="true" /> : effectiveSessionAdvisorEnabled ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+                              <span>
+                                {t("taskDetail.sessionAdvisor.label", "Session advisor: {{state}}", {
+                                  state: effectiveSessionAdvisorEnabled
+                                    ? t("tasks.sessionAdvisorDefaultOn", "on")
+                                    : t("tasks.sessionAdvisorDefaultOff", "off"),
+                                })}
+                                {hasSessionAdvisorOverride
+                                  ? ""
+                                  : t("taskDetail.sessionAdvisor.inheritSuffix", " (project)")}
+                              </span>
+                            </button>
                             {!oversightIsOff && (
                               <span className="detail-oversight-controls-label" data-testid="detail-oversight-controls-label">
                                 {t("taskDetail.oversight.controlsLabel", "Overseer controls")}

@@ -90,7 +90,15 @@ describe("workflow-native built-in workflow settings", () => {
       "plannerOversightLevel",
       "plannerOversightNotificationLevel",
       "plannerOverseerExecutorStuckAfterMs",
+      "plannerOverseerAdvisorEnabled",
+      "plannerOverseerAdvisorProvider",
+      "plannerOverseerAdvisorModelId",
     ]);
+    // FNXC:PlannerOversight 2026-07-14-12:00: LLM session advisor must default OFF.
+    expect(BUILTIN_OVERSIGHT_SETTINGS.find((s) => s.id === "plannerOverseerAdvisorEnabled")).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
     const oversight = BUILTIN_OVERSIGHT_SETTINGS[0];
     expect(oversight).toMatchObject({
       type: "enum",

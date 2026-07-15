@@ -51,6 +51,14 @@ export interface PlannerOverseerRuntimeSnapshot {
    * has been dispatched/recorded yet for the current watched stage.
    */
   lastAction?: string;
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor runtime enrichment (OMP parity). Optional; absent when the
+  session advisor is soft-disabled or not active for the task.
+  */
+  advisorActive?: boolean;
+  advisorBacklog?: number;
+  lastAdviceSeverity?: "nit" | "concern" | "blocker";
 }
 
 /** Pure input the state derivation reads — no engine types, no side effects. */

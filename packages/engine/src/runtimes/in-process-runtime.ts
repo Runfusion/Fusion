@@ -1594,6 +1594,14 @@ export class InProcessRuntime
   }
 
   /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Expose TaskExecutor so ProjectEngine can wire session-advisor log flush.
+   */
+  getExecutor(): TaskExecutor | undefined {
+    return this.executor;
+  }
+
+  /**
    * Get the AgentStore instance (if initialized).
    * Returns undefined before start() or if init fails.
    */

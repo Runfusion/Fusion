@@ -429,6 +429,7 @@ describe("settings key parity", () => {
 
   it("keeps github tracking keys in expected scopes with documented defaults", () => {
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingEnabledByDefault).toBe(false);
+    expect(DEFAULT_PROJECT_SETTINGS.sessionAdvisorEnabledByDefault).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.githubLinkImportedIssuesToTracking).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingDefaultRepo).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.githubAuthMode).toBe("gh-cli");
@@ -437,6 +438,8 @@ describe("settings key parity", () => {
 
     expect(isProjectSettingsKey("githubTrackingEnabledByDefault")).toBe(true);
     expect(isGlobalSettingsKey("githubTrackingEnabledByDefault")).toBe(false);
+    expect(isProjectSettingsKey("sessionAdvisorEnabledByDefault")).toBe(true);
+    expect(isGlobalSettingsKey("sessionAdvisorEnabledByDefault")).toBe(false);
     expect(isProjectSettingsKey("githubLinkImportedIssuesToTracking")).toBe(true);
     expect(isGlobalSettingsKey("githubLinkImportedIssuesToTracking")).toBe(false);
     expect(isGlobalOnlySettingsKey("githubLinkImportedIssuesToTracking")).toBe(false);

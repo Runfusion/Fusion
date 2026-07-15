@@ -1705,6 +1705,15 @@ export interface TaskExecutorOptions {
   workflowAuthoritativeDispatch?: (task: Task) => Promise<boolean>;
   onAgentText?: (taskId: string, delta: string) => void;
   onAgentTool?: (taskId: string, toolName: string) => void;
+  /*
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor live delta path — AgentLogger invokes this after durable
+  log flushes. Fail-soft; must not throw.
+  */
+  onExecutorLogFlushed?: (
+    taskId: string,
+    entries: Array<{ type?: string; text?: string; detail?: string; agent?: string }>,
+  ) => void;
   autoRecoveryDispatcher?: AutoRecoveryDispatcher;
   /** PR-entity node deps (U3): assembled `PrNodeDeps` (store + injected GitHub
    *  callbacks) for the `pr-create`/`pr-respond`/`pr-merge` workflow nodes. The
@@ -3029,6 +3038,15 @@ export class TaskExecutor {
       }
     }
     return sem.run(runUnderOuterClaim, PRIORITY_EXECUTE);
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-13-23:05:
+   * Wire session-advisor live log flush after ProjectEngine starts (options are
+   * captured at TaskExecutor construction time; this setter updates the callback).
+   */
+  setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void {
+    this.options = { ...this.options, onExecutorLogFlushed: cb };
   }
 
   constructor(
@@ -11063,6 +11081,14 @@ export class TaskExecutor {
         onAgentTool: (taskId, toolName) => {
           stuckDetector?.recordActivity(taskId);
           this.options.onAgentTool?.(taskId, toolName);
+        },
+        // FNXC:PlannerOversight 2026-07-13-23:05: live session-advisor delta path (fail-soft).
+        onEntriesFlushed: (taskId, entries) => {
+          try {
+            this.options.onExecutorLogFlushed?.(taskId, entries);
+          } catch {
+            /* ignore */
+          }
         },
       });
 

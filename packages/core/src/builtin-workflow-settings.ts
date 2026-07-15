@@ -540,6 +540,41 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
     description:
       "Milliseconds of executor-stage inactivity (no progress since the task's last column move/update) before the planner overseer reports the in-progress task as stuck, triggering bounded autonomous recovery (Autonomous level only). Default 7200000 (2 hours). Set higher to avoid nagging long-running steps; set lower to recover hung executors faster.",
   },
+  /*
+  FNXC:PlannerOversight 2026-07-14-12:00:
+  Session-advisor (OMP parity) is OFF by default. Operators must flip
+  `plannerOverseerAdvisorEnabled` and set both provider + model id before any
+  second-model transcript review runs — even when plannerOversightLevel is
+  autonomous. Lifecycle supervisor (stall/retry/confirm) is unaffected.
+
+  FNXC:PlannerOversight 2026-07-13-23:05:
+  Session-advisor model gate. Both provider + model id must be set for live
+  transcript advising when the feature is enabled.
+  */
+  {
+    id: "plannerOverseerAdvisorEnabled",
+    name: "Session advisor (LLM)",
+    type: "boolean",
+    default: false,
+    description:
+      "Workflow-level enable for the planner overseer session advisor (live LLM transcript review). Prefer project Settings → General → Session advisor (and per-task / Quick Add eye toggle) for day-to-day control; this workflow flag still enables when the project default is off (backward compatible). When enabled, also set Session advisor model provider and model id. Does not change lifecycle stage watching, stall recovery, or merge confirmation.",
+  },
+  {
+    id: "plannerOverseerAdvisorProvider",
+    name: "Session advisor model provider",
+    type: "string",
+    default: "",
+    description:
+      "Provider id for the planner overseer session advisor (live transcript review). Used only when Session advisor (LLM) is enabled. Must be set together with Session advisor model id.",
+  },
+  {
+    id: "plannerOverseerAdvisorModelId",
+    name: "Session advisor model id",
+    type: "string",
+    default: "",
+    description:
+      "Model id for the planner overseer session advisor. Used only when Session advisor (LLM) is enabled. Must be set together with Session advisor model provider.",
+  },
 ];
 
 export const BUILTIN_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [

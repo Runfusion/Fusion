@@ -580,6 +580,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   githubCommentTemplate: undefined,
   githubCloseSourceIssueOnDone: false,
   githubTrackingEnabledByDefault: false,
+  // FNXC:PlannerOversight 2026-07-14-18:11: session advisor (LLM overseer agent) off by default; operators opt in per project / task.
+  sessionAdvisorEnabledByDefault: false,
   githubLinkImportedIssuesToTracking: false,
   githubTrackingDefaultRepo: undefined,
   gitlabEnabled: undefined,

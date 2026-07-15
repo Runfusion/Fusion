@@ -200,6 +200,8 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // existing embedded-PG databases self-heal them on boot.
   { table: "tasks", column: "validator_thinking_level", type: "text" },
   { table: "tasks", column: "planning_thinking_level", type: "text" },
+  // FNXC:PlannerOversight 2026-07-14-18:11: per-task session advisor override (null/0/1).
+  { table: "tasks", column: "session_advisor_enabled", type: "integer" },
   { table: "chat_rooms", column: "thinking_level", type: "text" },
 ];
 
