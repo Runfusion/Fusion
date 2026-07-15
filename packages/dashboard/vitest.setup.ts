@@ -230,4 +230,23 @@ afterEach(async () => {
   }
 });
 
+afterAll(async () => {
+  /*
+  FNXC:DashboardTests 2026-07-14-21:20:
+  File-level cleanup: reset SSE again and clear fake timers so thread/fork workers do not retain intervals after the last test of a backfill file (shard-2 hang canary).
+  */
+  try {
+    vi.useRealTimers();
+    vi.clearAllTimers();
+  } catch {
+    // ignore
+  }
+  try {
+    const { __resetSseBus } = await import("./app/sse-bus");
+    __resetSseBus();
+  } catch {
+    // ignore
+  }
+});
+
 export { MockEventSource };

@@ -51,11 +51,15 @@ export const qualityLanes = [
     group: "app",
     args: ["--heap=6144", "run", "--project", "dashboard-app-quality-settings", "--reporter=default", "--silent=passed-only", ...EXCLUDE_BUILD_OUTPUT],
   },
-  ...[1, 2, 3, 4].map((shard) => ({
-    name: `app:backfill-${shard}`,
+  /*
+  FNXC:DashboardTests 2026-07-14-21:25:
+  Vitest --shard=N/4 for dashboard-app-quality-backfill shard 2 finished every test then never exited (open-handle hang until the 900s watchdog). Explicit file lists of the same specs exit cleanly. Run one unsharded backfill lane instead of four shard processes so the quality suite always terminates; curated shards remain the fast path.
+  */
+  {
+    name: "app:backfill",
     group: "app",
-    args: ["--heap=6144", "run", "--project", "dashboard-app-quality-backfill", "--silent=passed-only", "--reporter=dot", `--shard=${shard}/4`],
-  })),
+    args: ["--heap=6144", "run", "--project", "dashboard-app-quality-backfill", "--silent=passed-only", "--reporter=dot", ...EXCLUDE_BUILD_OUTPUT],
+  },
   {
     name: "api:curated",
     group: "api",
