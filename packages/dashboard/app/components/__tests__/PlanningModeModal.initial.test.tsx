@@ -295,6 +295,180 @@ describe("PlanningModeModal", () => {
       }
     });
 
+    it("focuses the initial textarea when New session is clicked while already composing", () => {
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        expect(document.activeElement).not.toBe(textarea);
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        expect(rafSpy).toHaveBeenCalled();
+        expect(document.activeElement).toBe(textarea);
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
+    it("resets a selected desktop session to compose view and focuses New session", async () => {
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+      mockFetchAiSessions.mockResolvedValue([
+        {
+          id: "session-existing",
+          type: "planning",
+          status: "complete",
+          title: "Existing session",
+          preview: "An existing planning session",
+          projectId: null,
+          lockedByTab: null,
+          updatedAt: new Date().toISOString(),
+          archived: false,
+        },
+      ]);
+      mockFetchAiSession.mockResolvedValue({
+        id: "session-existing",
+        type: "planning",
+        status: "complete",
+        title: "Existing session",
+        inputPayload: JSON.stringify({ initialPlan: "Existing selected plan" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(mockSummary),
+        error: null,
+      });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        fireEvent.click(await screen.findByText("Existing session"));
+
+        await waitFor(() => {
+          expect(mockFetchAiSession).toHaveBeenCalledWith("session-existing");
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        expect(textarea.value).toBe("");
+        expect(document.activeElement).toBe(textarea);
+        expect(screen.getByRole("button", { name: /Start Planning/ })).toBeDisabled();
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
+    it("shows the mobile detail pane and focuses compose when New session is clicked from the list", async () => {
+      mockViewport("mobile");
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+      mockFetchAiSessions.mockResolvedValue([
+        {
+          id: "session-mobile",
+          type: "planning",
+          status: "complete",
+          title: "Mobile session",
+          preview: "A mobile planning session",
+          projectId: null,
+          lockedByTab: null,
+          updatedAt: new Date().toISOString(),
+          archived: false,
+        },
+      ]);
+
+      try {
+        const { container } = render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        await screen.findByText("Mobile session");
+        const body = container.querySelector(".planning-modal-body");
+        await waitFor(() => {
+          expect(body?.classList.contains("planning-modal-body--show-list")).toBe(true);
+        });
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        expect(body?.classList.contains("planning-modal-body--show-detail")).toBe(true);
+        expect(document.activeElement).toBe(textarea);
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
+    it("preserves existing compose draft text and moves the caret to the end on New session focus", () => {
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        });
+
+      try {
+        render(
+          <PlanningModeModal
+            isOpen={true}
+            onClose={mockOnClose}
+            onTaskCreated={mockOnTaskCreated}
+            onTasksCreated={vi.fn()}
+            tasks={mockTasks}
+          />,
+        );
+
+        const textarea = screen.getByLabelText("What do you want to build?") as HTMLTextAreaElement;
+        fireEvent.change(textarea, { target: { value: "Keep this restored draft" } });
+        textarea.setSelectionRange(0, 0);
+
+        fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+        expect(textarea.value).toBe("Keep this restored draft");
+        expect(document.activeElement).toBe(textarea);
+        expect(textarea.selectionStart).toBe(textarea.value.length);
+        expect(textarea.selectionEnd).toBe(textarea.value.length);
+      } finally {
+        rafSpy.mockRestore();
+      }
+    });
+
     it("mobile close path blurs focused input and resets viewport scroll", () => {
       mockViewport("mobile");
       const scrollToSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);

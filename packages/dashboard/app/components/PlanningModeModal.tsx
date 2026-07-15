@@ -349,6 +349,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     textareaRef.current = node;
     initialPlanAutosizeRef(node);
   }, [initialPlanAutosizeRef]);
+  /*
+  FNXC:Planning 2026-07-14-00:00:
+  FN-7959 requires New session to focus the compose textarea even when the blank compose view is already active, so this is a click-driven signal instead of a view/selectedSessionId effect whose dependencies can no-op. The focus runs after requestAnimationFrame because mobile swaps the detail pane from display:none to visible after mobileShowDetail commits.
+  */
+  const [newSessionFocusSignal, setNewSessionFocusSignal] = useState(0);
   const modalRef = useRef<HTMLDivElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
@@ -382,6 +387,26 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    if (newSessionFocusSignal === 0 || !isOpen) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      const valueEnd = textarea.value.length;
+      textarea.setSelectionRange(valueEnd, valueEnd);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [isOpen, newSessionFocusSignal]);
 
   const resetPlanningAutoRetryBudget = useCallback(() => {
     planningAutoRetryAttemptRef.current = 0;
@@ -669,8 +694,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     };
   }, [projectId, resetPlanningAutoRetryBudget, t, view.type]);
 
-  const resetDetailState = useCallback(() => {
-    setInitialPlan("");
+  const resetDetailState = useCallback((options?: { preserveInitialPlan?: boolean }) => {
+    if (!options?.preserveInitialPlan) {
+      setInitialPlan("");
+    }
     setView({ type: "initial" });
     setError(null);
     setResponseHistory([]);
@@ -1421,10 +1448,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (resumeSessionId) {
       dismissedResumeRef.current = resumeSessionId;
     }
-    resetDetailState();
+    const preserveActiveDraft = selectedSessionId === null && viewRef.current.type === "initial";
+    resetDetailState({ preserveInitialPlan: preserveActiveDraft });
     setSelectedSessionId(null);
     setMobileShowDetail(true);
-  }, [resetDetailState, resumeSessionId]);
+    setNewSessionFocusSignal((signal) => signal + 1);
+  }, [resetDetailState, resumeSessionId, selectedSessionId]);
 
   const handleBackToList = useCallback(() => {
     setMobileShowDetail(false);
