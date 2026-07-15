@@ -185,6 +185,11 @@
       "file": "packages/dashboard/src/routes/__tests__/workflow-validate-route.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: fails via sync SQLite Database.init in TaskStore/AiSessionStore setup. Local active-lane 2026-07-14 dashboard-api-quality-backfill shard 1/2. Mirrored in packages/dashboard/vitest.config.ts. Rescue by rewriting to createPg* harness or pure mocks without Database.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/mcp-helper-forwarding.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: createInsightTaskStore still calls TaskStore/Database.init. Local 2026-07-14 dashboard-api-quality-backfill. Mirrored in packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
     }
   ]
 }
