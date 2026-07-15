@@ -70,6 +70,22 @@ type TurnBehavior =
   | { kind: "reject"; error: Error }
   | { kind: "hang" };
 
+/*
+FNXC:PlanningRetry 2026-07-14-18:20:
+Repo test policy forbids real polling loops (5ms timers) in unit tests. setupAgent exposes
+deterministic promises for "first question emitted" and "hung turn entered" so callers await
+agent seams instead of wall-clock polls.
+*/
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 /**
  * Fake agent whose Nth prompt call follows the Nth behavior. Hung turns are
  * released via the returned controls so tests can assert mid-generation state.
@@ -78,6 +94,9 @@ function setupAgent(behaviors: TurnBehavior[]) {
   const messages: Array<{ role: string; content: string }> = [];
   const promptCalls: string[] = [];
   let releaseHungTurn: ((payload: string) => void) | undefined;
+  let firstQuestionEmitted = deferred<void>();
+  let firstQuestionSignaled = false;
+  let hungTurnEntered = deferred<void>();
 
   __setCreateFnAgent(vi.fn(async () => ({
     session: {
@@ -89,13 +108,26 @@ function setupAgent(behaviors: TurnBehavior[]) {
           throw behavior.error;
         }
         if (behavior.kind === "hang") {
+          // Capture/resolve the "entered" signal before parking so callers that
+          // grabbed hungTurnEntered before submit never race a replaced promise.
+          const entered = hungTurnEntered;
+          hungTurnEntered = deferred<void>();
           const payload = await new Promise<string>((resolve) => {
             releaseHungTurn = resolve;
+            entered.resolve();
           });
           messages.push({ role: "assistant", content: payload });
           return;
         }
         messages.push({ role: "assistant", content: behavior.payload });
+        if (!firstQuestionSignaled) {
+          firstQuestionSignaled = true;
+          // Resolve after continueAgentConversation finishes its post-prompt sync
+          // work (parse + set currentQuestion) on the next microtask turn.
+          queueMicrotask(() => {
+            queueMicrotask(() => firstQuestionEmitted.resolve());
+          });
+        }
       }),
       dispose: vi.fn(),
     },
@@ -103,24 +135,26 @@ function setupAgent(behaviors: TurnBehavior[]) {
 
   return {
     promptCalls,
+    /** Resolves once the first respond turn has produced a session.currentQuestion. */
+    firstQuestionEmitted: firstQuestionEmitted.promise,
+    /**
+     * Promise for the next hung turn entering. Capture before triggering the
+     * hang-producing call (submit/retry), then await.
+     */
+    get hungTurnEntered() {
+      return hungTurnEntered.promise;
+    },
     releaseHungTurn: (payload: string) => {
       if (!releaseHungTurn) throw new Error("no hung turn to release");
       releaseHungTurn(payload);
       releaseHungTurn = undefined;
     },
-    hasHungTurn: () => Boolean(releaseHungTurn),
   };
 }
 
-async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
-  const start = Date.now();
-  while (!check()) {
-    if (Date.now() - start > timeoutMs) throw new Error("Timed out waiting for condition");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-async function startSessionAtFirstQuestion(): Promise<string> {
+async function startSessionAtFirstQuestion(
+  agent: ReturnType<typeof setupAgent>,
+): Promise<string> {
   const sessionId = await createSessionWithAgent(
     "10.0.2.20",
     "Plan a feature",
@@ -128,12 +162,12 @@ async function startSessionAtFirstQuestion(): Promise<string> {
     MOCK_TASK_STORE,
   );
   planningStreamManager.consumeInitialTurn(sessionId)?.();
-  for (let i = 0; i < 200; i++) {
-    const session = await getSession(sessionId);
-    if (session?.currentQuestion) return sessionId;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+  await agent.firstQuestionEmitted;
+  const session = await getSession(sessionId);
+  if (!session?.currentQuestion) {
+    throw new Error("first question never arrived");
   }
-  throw new Error("first question never arrived");
+  return sessionId;
 }
 
 describe("answered planning questions are never re-emittable", () => {
@@ -146,11 +180,12 @@ describe("answered planning questions are never re-emittable", () => {
       { kind: "respond", payload: questionPayload(Q1) },
       { kind: "hang" },
     ]);
-    const sessionId = await startSessionAtFirstQuestion();
+    const sessionId = await startSessionAtFirstQuestion(agent);
 
+    const hungEntered = agent.hungTurnEntered;
     const submitPromise = submitResponse(sessionId, { q1: "ship auth first" }, "/tmp/project", undefined, MOCK_TASK_STORE);
     submitPromise.catch(() => {});
-    await waitFor(() => agent.hasHungTurn());
+    await hungEntered;
 
     // The regression: this used to still be Q1 while generating, and the SSE
     // stream route's catch-up emit hands currentQuestion to fresh connections.
@@ -165,11 +200,11 @@ describe("answered planning questions are never re-emittable", () => {
   });
 
   it("keeps currentQuestion cleared when generation fails, while preserving the legacy 200 respond contract", async () => {
-    setupAgent([
+    const agent = setupAgent([
       { kind: "respond", payload: questionPayload(Q1) },
       { kind: "reject", error: new Error("provider exploded") },
     ]);
-    const sessionId = await startSessionAtFirstQuestion();
+    const sessionId = await startSessionAtFirstQuestion(agent);
 
     const result = await submitResponse(sessionId, { q1: "ship auth first" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
@@ -188,16 +223,17 @@ describe("answered planning questions are never re-emittable", () => {
       { kind: "reject", error: new Error("provider exploded") },
       { kind: "hang" },
     ]);
-    const sessionId = await startSessionAtFirstQuestion();
+    const sessionId = await startSessionAtFirstQuestion(agent);
     await submitResponse(sessionId, { q1: "ship auth first" }, "/tmp/project", undefined, MOCK_TASK_STORE);
 
     // Simulate a row persisted by a pre-fix build where the answered question lingered.
     const session = await getSession(sessionId);
     session!.currentQuestion = Q1;
 
+    const hungEntered = agent.hungTurnEntered;
     const retryPromise = retrySession(sessionId, "/tmp/project", undefined, MOCK_TASK_STORE);
     retryPromise.catch(() => {});
-    await waitFor(() => agent.hasHungTurn());
+    await hungEntered;
 
     expect((await getSession(sessionId))?.currentQuestion).toBeUndefined();
 
@@ -212,12 +248,13 @@ describe("answered planning questions are never re-emittable", () => {
       { kind: "respond", payload: COMPLETE_PAYLOAD },
       { kind: "hang" },
     ]);
-    const sessionId = await startSessionAtFirstQuestion();
+    const sessionId = await startSessionAtFirstQuestion(agent);
 
     const checkpointResult = await submitResponse(sessionId, { q1: "ship auth first" }, "/tmp/project", undefined, MOCK_TASK_STORE);
     expect(checkpointResult.type).toBe("question");
     expect((checkpointResult as { data: { id: string } }).data.id).toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
 
+    const hungEntered = agent.hungTurnEntered;
     const submitPromise = submitResponse(
       sessionId,
       { [PLANNING_DEEPEN_CHECKPOINT_ID]: [], _other: "explore security hardening" },
@@ -226,7 +263,7 @@ describe("answered planning questions are never re-emittable", () => {
       MOCK_TASK_STORE,
     );
     submitPromise.catch(() => {});
-    await waitFor(() => agent.hasHungTurn());
+    await hungEntered;
 
     expect((await getSession(sessionId))?.currentQuestion).toBeUndefined();
 

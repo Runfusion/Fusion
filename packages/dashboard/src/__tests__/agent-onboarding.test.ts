@@ -515,10 +515,16 @@ describe("agent-onboarding", () => {
   session is no longer awaiting input. currentQuestion must clear immediately (so the SSE
   catch-up path cannot re-emit the answered question) and retry after a failed turn must ask
   the next question instead of re-asking the answered one.
+
+  FNXC:AgentOnboarding 2026-07-14-18:20:
+  Generation failure after an answer must still resolve a successful respond payload (the
+  answered question) instead of throwing — the route used to 400 with "Session did not produce
+  a question", which bounced the client out of SSE-driven retry.
   */
   it("clears the answered question during generation and retries with the next-question prompt", async () => {
     const promptCalls: string[] = [];
     const messages: Array<{ role: string; content: string }> = [];
+    const answeredQuestion = { id: "goal", type: "text" as const, question: "What is the agent's goal?" };
     mockCreateFnAgent.mockResolvedValue({
       session: {
         state: { messages },
@@ -529,7 +535,7 @@ describe("agent-onboarding", () => {
               role: "assistant",
               content: JSON.stringify({
                 type: "question",
-                data: { id: "goal", type: "text", question: "What is the agent's goal?" },
+                data: answeredQuestion,
               }),
             });
             return;
@@ -556,7 +562,10 @@ describe("agent-onboarding", () => {
     );
     await waitFor(() => Boolean(getAgentOnboardingSession(sessionId)?.currentQuestion));
 
-    await respondToAgentOnboarding(sessionId, { goal: "Keep CI green" });
+    const result = await respondToAgentOnboarding(sessionId, { goal: "Keep CI green" });
+
+    // Successful respond contract even on generation failure (Planning Mode parity).
+    expect(result).toEqual({ type: "question", data: answeredQuestion });
 
     const session = getAgentOnboardingSession(sessionId);
     expect(session?.error).toMatch(/provider exploded/);

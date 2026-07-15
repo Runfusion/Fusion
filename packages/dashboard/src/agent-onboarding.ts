@@ -409,7 +409,22 @@ async function continueConversation(session: Session, message: string): Promise<
   }
 }
 
-export async function respondToAgentOnboarding(sessionId: string, responses: Record<string, unknown>): Promise<void> {
+/*
+FNXC:AgentOnboarding 2026-07-14-18:20:
+When generation fails after an answer is accepted, summary and currentQuestion are both empty.
+The respond route used to return HTTP 400 "Session did not produce a question", which bounced
+the client back to the already-answered view. Mirror Planning Mode's submitResponse contract:
+return a successful { type:"question"|"complete" } payload (including the just-answered question
+on generation failure) so SSE-driven retry remains the recovery path instead of a 400.
+*/
+export type AgentOnboardingRespondResult =
+  | { type: "question"; data: PlanningQuestion }
+  | { type: "complete"; data: AgentOnboardingSummary };
+
+export async function respondToAgentOnboarding(
+  sessionId: string,
+  responses: Record<string, unknown>,
+): Promise<AgentOnboardingRespondResult> {
   const session = sessions.get(sessionId);
   if (!session) throw new SessionNotFoundError(`Agent onboarding session ${sessionId} not found or expired`);
   if (!session.currentQuestion) throw new InvalidSessionStateError("No active question in session");
@@ -421,10 +436,27 @@ export async function respondToAgentOnboarding(sessionId: string, responses: Rec
   input, so clear currentQuestion before generating. This stops the onboarding SSE catch-up from
   re-emitting the answered question to fresh connections and stops retry from prompting the agent
   to "continue from" a question the user already answered.
+
+  FNXC:AgentOnboarding 2026-07-14-18:20:
+  answeredQuestion is retained for the generation-error 200 body below; currentQuestion stays
+  cleared so SSE catch-up never re-emits the answered question while the modal retries via SSE.
   */
   session.currentQuestion = undefined;
   const formatted = `Question: ${answeredQuestion.question}\nAnswer: ${JSON.stringify(responses)}`;
   await continueConversation(session, formatted);
+
+  if (session.summary) {
+    return { type: "complete", data: session.summary };
+  }
+  if (session.currentQuestion) {
+    return { type: "question", data: session.currentQuestion };
+  }
+  // Generation failed after the answer was accepted (session.error set + broadcast via SSE).
+  // Preserve the successful respond contract like Planning Mode; do not throw 400.
+  if (session.error && answeredQuestion) {
+    return { type: "question", data: answeredQuestion };
+  }
+  throw new InvalidSessionStateError("AI agent did not return a question or summary");
 }
 
 export async function retryAgentOnboardingSession(sessionId: string, store?: TaskStore): Promise<void> {
