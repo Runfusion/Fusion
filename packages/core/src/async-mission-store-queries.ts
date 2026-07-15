@@ -42,7 +42,7 @@
  *   These helpers are the production MissionStore persistence path and program
  *   against AsyncDataLayer rather than a synchronous SQLite database.
  */
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import { normalizeMissionAssertionType } from "./mission-types.js";
@@ -101,6 +101,18 @@ export function missionBranchStrategyDefaults(strategy?: MissionBranchStrategy):
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 export type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
+
+/*
+FNXC:MissionProjectIsolation 2026-07-14-21:35:
+Mission data lives in the shared PostgreSQL project schema, so every mission-owned insert and predicate must use the session's authoritative project partition even when an administrative connection bypasses row-level security. An unbound maintenance session is confined to the explicit legacy quarantine rather than becoming a cross-project reader.
+*/
+function missionProjectId(): SQL<string> {
+  return sql<string>`COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')`;
+}
+
+function missionProjectScope(column: AnyColumn): SQL {
+  return eq(column, missionProjectId());
+}
 
 // ── Row shapes (camelCase column aliases via Drizzle) ───────────────
 
@@ -600,6 +612,7 @@ export async function createMission(
   input: { id: string } & MissionCreateInput & { createdAt: string; updatedAt: string; status: string; interviewState: string; autoAdvance: boolean; autopilotEnabled: boolean; autopilotState: string },
 ): Promise<Mission> {
   await handle.insert(schema.project.missions).values({
+    projectId: missionProjectId(),
     id: input.id,
     title: input.title,
     description: input.description ?? null,
@@ -623,7 +636,7 @@ export async function getMission(handle: QueryHandle, id: string): Promise<Missi
   const rows = await handle
     .select(missionColumns)
     .from(schema.project.missions)
-    .where(eq(schema.project.missions.id, id));
+    .where(and(missionProjectScope(schema.project.missions.projectId), eq(schema.project.missions.id, id)));
   return rows[0] ? rowToMission(rows[0] as MissionRow) : undefined;
 }
 
@@ -632,6 +645,7 @@ export async function listMissions(handle: QueryHandle): Promise<Mission[]> {
   const rows = await handle
     .select(missionColumns)
     .from(schema.project.missions)
+    .where(missionProjectScope(schema.project.missions.projectId))
     .orderBy(desc(schema.project.missions.createdAt));
   return rows.map((row) => rowToMission(row as MissionRow));
 }
@@ -660,14 +674,14 @@ export async function updateMission(
       lastAutopilotActivityAt: mission.lastAutopilotActivityAt ?? null,
       updatedAt: mission.updatedAt,
     })
-    .where(eq(schema.project.missions.id, mission.id));
+    .where(and(missionProjectScope(schema.project.missions.projectId), eq(schema.project.missions.id, mission.id)));
 }
 
 /** Delete a mission by id (cascades to milestones/slices/features/events). Returns true if a row was deleted. */
 export async function deleteMission(handle: QueryHandle, id: string): Promise<boolean> {
   const result = await handle
     .delete(schema.project.missions)
-    .where(eq(schema.project.missions.id, id))
+    .where(and(missionProjectScope(schema.project.missions.projectId), eq(schema.project.missions.id, id)))
     .returning({ id: schema.project.missions.id });
   return result.length > 0;
 }
@@ -677,7 +691,7 @@ export async function missionExists(handle: QueryHandle, id: string): Promise<bo
   const rows = await handle
     .select({ id: schema.project.missions.id })
     .from(schema.project.missions)
-    .where(eq(schema.project.missions.id, id));
+    .where(and(missionProjectScope(schema.project.missions.projectId), eq(schema.project.missions.id, id)));
   return rows.length > 0;
 }
 
@@ -694,6 +708,7 @@ export async function createMilestone(
   milestone: Milestone,
 ): Promise<Milestone> {
   await handle.insert(schema.project.milestones).values({
+    projectId: missionProjectId(),
     id: milestone.id,
     missionId: milestone.missionId,
     title: milestone.title,
@@ -717,7 +732,7 @@ export async function getMilestone(handle: QueryHandle, id: string): Promise<Mil
   const rows = await handle
     .select(milestoneColumns)
     .from(schema.project.milestones)
-    .where(eq(schema.project.milestones.id, id));
+    .where(and(missionProjectScope(schema.project.milestones.projectId), eq(schema.project.milestones.id, id)));
   return rows[0] ? rowToMilestone(rows[0] as MilestoneRow) : undefined;
 }
 
@@ -726,7 +741,7 @@ export async function listMilestones(handle: QueryHandle, missionId: string): Pr
   const rows = await handle
     .select(milestoneColumns)
     .from(schema.project.milestones)
-    .where(eq(schema.project.milestones.missionId, missionId))
+    .where(and(missionProjectScope(schema.project.milestones.projectId), eq(schema.project.milestones.missionId, missionId)))
     .orderBy(asc(schema.project.milestones.orderIndex));
   return rows.map((row) => rowToMilestone(row as MilestoneRow));
 }
@@ -736,6 +751,7 @@ export async function listAllMilestones(handle: QueryHandle): Promise<Milestone[
   const rows = await handle
     .select(milestoneColumns)
     .from(schema.project.milestones)
+    .where(missionProjectScope(schema.project.milestones.projectId))
     .orderBy(asc(schema.project.milestones.orderIndex));
   return rows.map((row) => rowToMilestone(row as MilestoneRow));
 }
@@ -757,14 +773,14 @@ export async function updateMilestone(handle: QueryHandle, milestone: Milestone)
       validationState: milestone.validationState || "not_started",
       updatedAt: milestone.updatedAt,
     })
-    .where(eq(schema.project.milestones.id, milestone.id));
+    .where(and(missionProjectScope(schema.project.milestones.projectId), eq(schema.project.milestones.id, milestone.id)));
 }
 
 /** Delete a milestone by id (cascades to slices/features). Returns true if deleted. */
 export async function deleteMilestone(handle: QueryHandle, id: string): Promise<boolean> {
   const result = await handle
     .delete(schema.project.milestones)
-    .where(eq(schema.project.milestones.id, id))
+    .where(and(missionProjectScope(schema.project.milestones.projectId), eq(schema.project.milestones.id, id)))
     .returning({ id: schema.project.milestones.id });
   return result.length > 0;
 }
@@ -785,7 +801,7 @@ export async function reorderMilestones(
       await tx
         .update(schema.project.milestones)
         .set({ orderIndex: i, updatedAt: now })
-        .where(eq(schema.project.milestones.id, orderedIds[i]!));
+        .where(and(missionProjectScope(schema.project.milestones.projectId), eq(schema.project.milestones.id, orderedIds[i]!)));
     }
   });
 }
@@ -800,6 +816,7 @@ export async function reorderMilestones(
  */
 export async function createSlice(handle: QueryHandle, slice: Slice): Promise<Slice> {
   await handle.insert(schema.project.slices).values({
+    projectId: missionProjectId(),
     id: slice.id,
     milestoneId: slice.milestoneId,
     title: slice.title,
@@ -821,7 +838,7 @@ export async function getSlice(handle: QueryHandle, id: string): Promise<Slice |
   const rows = await handle
     .select(sliceColumns)
     .from(schema.project.slices)
-    .where(eq(schema.project.slices.id, id));
+    .where(and(missionProjectScope(schema.project.slices.projectId), eq(schema.project.slices.id, id)));
   return rows[0] ? rowToSlice(rows[0] as SliceRow) : undefined;
 }
 
@@ -830,7 +847,7 @@ export async function listSlices(handle: QueryHandle, milestoneId: string): Prom
   const rows = await handle
     .select(sliceColumns)
     .from(schema.project.slices)
-    .where(eq(schema.project.slices.milestoneId, milestoneId))
+    .where(and(missionProjectScope(schema.project.slices.projectId), eq(schema.project.slices.milestoneId, milestoneId)))
     .orderBy(asc(schema.project.slices.orderIndex));
   return rows.map((row) => rowToSlice(row as SliceRow));
 }
@@ -840,6 +857,7 @@ export async function listAllSlices(handle: QueryHandle): Promise<Slice[]> {
   const rows = await handle
     .select(sliceColumns)
     .from(schema.project.slices)
+    .where(missionProjectScope(schema.project.slices.projectId))
     .orderBy(asc(schema.project.slices.orderIndex));
   return rows.map((row) => rowToSlice(row as SliceRow));
 }
@@ -859,14 +877,14 @@ export async function updateSlice(handle: QueryHandle, slice: Slice): Promise<vo
       verification: slice.verification ?? null,
       updatedAt: slice.updatedAt,
     })
-    .where(eq(schema.project.slices.id, slice.id));
+    .where(and(missionProjectScope(schema.project.slices.projectId), eq(schema.project.slices.id, slice.id)));
 }
 
 /** Delete a slice by id (cascades to features). Returns true if deleted. */
 export async function deleteSlice(handle: QueryHandle, id: string): Promise<boolean> {
   const result = await handle
     .delete(schema.project.slices)
-    .where(eq(schema.project.slices.id, id))
+    .where(and(missionProjectScope(schema.project.slices.projectId), eq(schema.project.slices.id, id)))
     .returning({ id: schema.project.slices.id });
   return result.length > 0;
 }
@@ -882,7 +900,7 @@ export async function reorderSlices(
       await tx
         .update(schema.project.slices)
         .set({ orderIndex: i, updatedAt: now })
-        .where(eq(schema.project.slices.id, orderedIds[i]!));
+        .where(and(missionProjectScope(schema.project.slices.projectId), eq(schema.project.slices.id, orderedIds[i]!)));
     }
   });
 }
@@ -897,6 +915,7 @@ export async function reorderSlices(
  */
 export async function createFeature(handle: QueryHandle, feature: MissionFeature): Promise<MissionFeature> {
   await handle.insert(schema.project.missionFeatures).values({
+    projectId: missionProjectId(),
     id: feature.id,
     sliceId: feature.sliceId,
     taskId: feature.taskId ?? null,
@@ -922,7 +941,7 @@ export async function getFeature(handle: QueryHandle, id: string): Promise<Missi
   const rows = await handle
     .select(featureColumns)
     .from(schema.project.missionFeatures)
-    .where(eq(schema.project.missionFeatures.id, id));
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, id)));
   return rows[0] ? rowToFeature(rows[0] as FeatureRow) : undefined;
 }
 
@@ -935,7 +954,7 @@ export async function listFeaturesByIds(handle: QueryHandle, ids: string[]): Pro
   const rows = await handle
     .select(featureColumns)
     .from(schema.project.missionFeatures)
-    .where(inArray(schema.project.missionFeatures.id, [...new Set(ids)]));
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), inArray(schema.project.missionFeatures.id, [...new Set(ids)])));
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
 
@@ -944,7 +963,7 @@ export async function listFeatures(handle: QueryHandle, sliceId: string): Promis
   const rows = await handle
     .select(featureColumns)
     .from(schema.project.missionFeatures)
-    .where(eq(schema.project.missionFeatures.sliceId, sliceId))
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.sliceId, sliceId)))
     .orderBy(asc(schema.project.missionFeatures.createdAt));
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
@@ -954,8 +973,11 @@ export async function listFeaturesForMilestone(handle: QueryHandle, milestoneId:
   const rows = await handle
     .select(featureColumns)
     .from(schema.project.missionFeatures)
-    .innerJoin(schema.project.slices, eq(schema.project.slices.id, schema.project.missionFeatures.sliceId))
-    .where(eq(schema.project.slices.milestoneId, milestoneId))
+    .innerJoin(schema.project.slices, and(
+      eq(schema.project.slices.projectId, schema.project.missionFeatures.projectId),
+      eq(schema.project.slices.id, schema.project.missionFeatures.sliceId),
+    ))
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.slices.milestoneId, milestoneId)))
     .orderBy(asc(schema.project.missionFeatures.createdAt));
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
@@ -965,6 +987,7 @@ export async function listAllFeatures(handle: QueryHandle): Promise<MissionFeatu
   const rows = await handle
     .select(featureColumns)
     .from(schema.project.missionFeatures)
+    .where(missionProjectScope(schema.project.missionFeatures.projectId))
     .orderBy(asc(schema.project.missionFeatures.createdAt));
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
@@ -992,14 +1015,14 @@ export async function updateFeature(handle: QueryHandle, feature: MissionFeature
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
       generatedFromRunId: feature.generatedFromRunId ?? null,
     })
-    .where(eq(schema.project.missionFeatures.id, feature.id));
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, feature.id)));
 }
 
 /** Delete a feature by id. Returns true if deleted. */
 export async function deleteFeature(handle: QueryHandle, id: string): Promise<boolean> {
   const result = await handle
     .delete(schema.project.missionFeatures)
-    .where(eq(schema.project.missionFeatures.id, id))
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, id)))
     .returning({ id: schema.project.missionFeatures.id });
   return result.length > 0;
 }
@@ -1009,7 +1032,7 @@ export async function getFeatureByTaskId(handle: QueryHandle, taskId: string): P
   const rows = await handle
     .select(featureColumns)
     .from(schema.project.missionFeatures)
-    .where(eq(schema.project.missionFeatures.taskId, taskId));
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.taskId, taskId)));
   return rows[0] ? rowToFeature(rows[0] as FeatureRow) : undefined;
 }
 
@@ -1023,7 +1046,7 @@ export async function unlinkFeatureFromTaskId(handle: QueryHandle, featureId: st
   await handle
     .update(schema.project.missionFeatures)
     .set({ taskId: null, updatedAt: now })
-    .where(eq(schema.project.missionFeatures.id, featureId));
+    .where(and(missionProjectScope(schema.project.missionFeatures.projectId), eq(schema.project.missionFeatures.id, featureId)));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1038,7 +1061,8 @@ export async function unlinkFeatureFromTaskId(handle: QueryHandle, featureId: st
 export async function getMaxEventSeq(handle: QueryHandle): Promise<number> {
   const rows = await handle
     .select({ maxSeq: sql<number | null>`max(${schema.project.missionEvents.seq})` })
-    .from(schema.project.missionEvents);
+    .from(schema.project.missionEvents)
+    .where(missionProjectScope(schema.project.missionEvents.projectId));
   return rows[0]?.maxSeq ?? 0;
 }
 
@@ -1048,6 +1072,7 @@ export async function getMaxEventSeq(handle: QueryHandle): Promise<number> {
  */
 export async function insertMissionEvent(handle: QueryHandle, event: MissionEvent): Promise<void> {
   await handle.insert(schema.project.missionEvents).values({
+    projectId: missionProjectId(),
     id: event.id,
     missionId: event.missionId,
     eventType: event.eventType,
@@ -1066,6 +1091,7 @@ export async function insertMissionEventIfAbsent(handle: QueryHandle, event: Mis
   await handle
     .insert(schema.project.missionEvents)
     .values({
+      projectId: missionProjectId(),
       id: event.id,
       missionId: event.missionId,
       eventType: event.eventType,
@@ -1082,7 +1108,7 @@ export async function countMissionEvents(handle: QueryHandle, missionId: string)
   const rows = await handle
     .select({ count: sql<number>`count(*)::int` })
     .from(schema.project.missionEvents)
-    .where(eq(schema.project.missionEvents.missionId, missionId));
+    .where(and(missionProjectScope(schema.project.missionEvents.projectId), eq(schema.project.missionEvents.missionId, missionId)));
   return rows[0]?.count ?? 0;
 }
 
@@ -1095,7 +1121,7 @@ export async function listMissionEvents(
   let query = handle
     .select(eventColumns)
     .from(schema.project.missionEvents)
-    .where(eq(schema.project.missionEvents.missionId, missionId))
+    .where(and(missionProjectScope(schema.project.missionEvents.projectId), eq(schema.project.missionEvents.missionId, missionId)))
     .orderBy(desc(schema.project.missionEvents.seq), desc(schema.project.missionEvents.id));
   if (limit !== undefined) {
     query = query.limit(limit) as typeof query;
@@ -1112,6 +1138,7 @@ export async function countEventsByMission(handle: QueryHandle): Promise<Map<str
       count: sql<number>`count(*)::int`,
     })
     .from(schema.project.missionEvents)
+    .where(missionProjectScope(schema.project.missionEvents.projectId))
     .groupBy(schema.project.missionEvents.missionId);
   return new Map(rows.map((row) => [row.missionId, row.count]));
 }
@@ -1129,7 +1156,7 @@ export async function listErrorEventsForHealth(handle: QueryHandle): Promise<Arr
       description: schema.project.missionEvents.description,
     })
     .from(schema.project.missionEvents)
-    .where(eq(schema.project.missionEvents.eventType, "error"))
+    .where(and(missionProjectScope(schema.project.missionEvents.projectId), eq(schema.project.missionEvents.eventType, "error")))
     .orderBy(desc(schema.project.missionEvents.seq), desc(schema.project.missionEvents.id));
 }
 
@@ -1148,6 +1175,7 @@ export async function getMissionGoalLink(
     .from(schema.project.missionGoals)
     .where(
       and(
+        missionProjectScope(schema.project.missionGoals.projectId),
         eq(schema.project.missionGoals.missionId, missionId),
         eq(schema.project.missionGoals.goalId, goalId),
       ),
@@ -1167,7 +1195,7 @@ export async function insertMissionGoalLink(
 ): Promise<void> {
   await handle
     .insert(schema.project.missionGoals)
-    .values({ missionId, goalId, createdAt })
+    .values({ projectId: missionProjectId(), missionId, goalId, createdAt })
     .onConflictDoNothing();
 }
 
@@ -1181,6 +1209,7 @@ export async function deleteMissionGoalLink(
     .delete(schema.project.missionGoals)
     .where(
       and(
+        missionProjectScope(schema.project.missionGoals.projectId),
         eq(schema.project.missionGoals.missionId, missionId),
         eq(schema.project.missionGoals.goalId, goalId),
       ),
@@ -1194,7 +1223,7 @@ export async function listGoalIdsForMission(handle: QueryHandle, missionId: stri
   const rows = await handle
     .select({ goalId: schema.project.missionGoals.goalId })
     .from(schema.project.missionGoals)
-    .where(eq(schema.project.missionGoals.missionId, missionId))
+    .where(and(missionProjectScope(schema.project.missionGoals.projectId), eq(schema.project.missionGoals.missionId, missionId)))
     .orderBy(asc(schema.project.missionGoals.createdAt), asc(schema.project.missionGoals.goalId));
   return rows.map((row) => row.goalId);
 }
@@ -1204,7 +1233,7 @@ export async function listMissionIdsForGoal(handle: QueryHandle, goalId: string)
   const rows = await handle
     .select({ missionId: schema.project.missionGoals.missionId })
     .from(schema.project.missionGoals)
-    .where(eq(schema.project.missionGoals.goalId, goalId))
+    .where(and(missionProjectScope(schema.project.missionGoals.projectId), eq(schema.project.missionGoals.goalId, goalId)))
     .orderBy(asc(schema.project.missionGoals.createdAt), asc(schema.project.missionGoals.missionId));
   return rows.map((row) => row.missionId);
 }
@@ -1217,6 +1246,7 @@ export async function countGoalsByMission(handle: QueryHandle): Promise<Map<stri
       count: sql<number>`count(*)::int`,
     })
     .from(schema.project.missionGoals)
+    .where(missionProjectScope(schema.project.missionGoals.projectId))
     .groupBy(schema.project.missionGoals.missionId);
   return new Map(rows.map((row) => [row.missionId, row.count]));
 }
@@ -1226,7 +1256,7 @@ export async function goalExists(handle: QueryHandle, goalId: string): Promise<b
   const rows = await handle
     .select({ id: schema.project.goals.id })
     .from(schema.project.goals)
-    .where(eq(schema.project.goals.id, goalId));
+    .where(and(missionProjectScope(schema.project.goals.projectId), eq(schema.project.goals.id, goalId)));
   return rows.length > 0;
 }
 
@@ -1242,7 +1272,7 @@ export async function getGoal(handle: QueryHandle, goalId: string): Promise<Goal
       updatedAt: schema.project.goals.updatedAt,
     })
     .from(schema.project.goals)
-    .where(eq(schema.project.goals.id, goalId));
+    .where(and(missionProjectScope(schema.project.goals.projectId), eq(schema.project.goals.id, goalId)));
   return rows[0] ? rowToGoal(rows[0] as GoalRow) : undefined;
 }
 
@@ -1259,7 +1289,7 @@ export async function listGoalsByIds(handle: QueryHandle, goalIds: string[]): Pr
       updatedAt: schema.project.goals.updatedAt,
     })
     .from(schema.project.goals)
-    .where(inArray(schema.project.goals.id, goalIds));
+    .where(and(missionProjectScope(schema.project.goals.projectId), inArray(schema.project.goals.id, goalIds)));
   return rows.map((row) => rowToGoal(row as GoalRow));
 }
 
@@ -1276,6 +1306,7 @@ export async function createContractAssertion(
   assertion: MissionContractAssertion,
 ): Promise<MissionContractAssertion> {
   await handle.insert(schema.project.missionContractAssertions).values({
+    projectId: missionProjectId(),
     id: assertion.id,
     milestoneId: assertion.milestoneId,
     title: assertion.title,
@@ -1295,7 +1326,7 @@ export async function getContractAssertion(handle: QueryHandle, id: string): Pro
   const rows = await handle
     .select(assertionColumns)
     .from(schema.project.missionContractAssertions)
-    .where(eq(schema.project.missionContractAssertions.id, id));
+    .where(and(missionProjectScope(schema.project.missionContractAssertions.projectId), eq(schema.project.missionContractAssertions.id, id)));
   return rows[0] ? rowToAssertion(rows[0] as AssertionRow) : undefined;
 }
 
@@ -1304,7 +1335,7 @@ export async function listContractAssertions(handle: QueryHandle, milestoneId: s
   const rows = await handle
     .select(assertionColumns)
     .from(schema.project.missionContractAssertions)
-    .where(eq(schema.project.missionContractAssertions.milestoneId, milestoneId))
+    .where(and(missionProjectScope(schema.project.missionContractAssertions.projectId), eq(schema.project.missionContractAssertions.milestoneId, milestoneId)))
     .orderBy(
       asc(schema.project.missionContractAssertions.orderIndex),
       asc(schema.project.missionContractAssertions.createdAt),
@@ -1324,9 +1355,12 @@ export async function listLinkedAssertionsForFeatures(
     .from(schema.project.missionFeatureAssertions)
     .innerJoin(
       schema.project.missionContractAssertions,
-      eq(schema.project.missionContractAssertions.id, schema.project.missionFeatureAssertions.assertionId),
+      and(
+        eq(schema.project.missionContractAssertions.projectId, schema.project.missionFeatureAssertions.projectId),
+        eq(schema.project.missionContractAssertions.id, schema.project.missionFeatureAssertions.assertionId),
+      ),
     )
-    .where(inArray(schema.project.missionFeatureAssertions.featureId, [...new Set(featureIds)]));
+    .where(and(missionProjectScope(schema.project.missionFeatureAssertions.projectId), inArray(schema.project.missionFeatureAssertions.featureId, [...new Set(featureIds)])));
   return rows.map((row) => ({
     featureId: row.featureId,
     assertion: rowToAssertion(row as unknown as AssertionRow),
@@ -1339,7 +1373,7 @@ export async function listLinkedAssertionIds(handle: QueryHandle, assertionIds: 
   const rows = await handle
     .select({ assertionId: schema.project.missionFeatureAssertions.assertionId })
     .from(schema.project.missionFeatureAssertions)
-    .where(inArray(schema.project.missionFeatureAssertions.assertionId, [...new Set(assertionIds)]));
+    .where(and(missionProjectScope(schema.project.missionFeatureAssertions.projectId), inArray(schema.project.missionFeatureAssertions.assertionId, [...new Set(assertionIds)])));
   return new Set(rows.map((row) => row.assertionId));
 }
 
@@ -1356,14 +1390,14 @@ export async function updateContractAssertion(handle: QueryHandle, assertion: Mi
       sourceFeatureId: assertion.sourceFeatureId ?? null,
       updatedAt: assertion.updatedAt,
     })
-    .where(eq(schema.project.missionContractAssertions.id, assertion.id));
+    .where(and(missionProjectScope(schema.project.missionContractAssertions.projectId), eq(schema.project.missionContractAssertions.id, assertion.id)));
 }
 
 /** Delete a contract assertion by id. Returns true if deleted. */
 export async function deleteContractAssertion(handle: QueryHandle, id: string): Promise<boolean> {
   const result = await handle
     .delete(schema.project.missionContractAssertions)
-    .where(eq(schema.project.missionContractAssertions.id, id))
+    .where(and(missionProjectScope(schema.project.missionContractAssertions.projectId), eq(schema.project.missionContractAssertions.id, id)))
     .returning({ id: schema.project.missionContractAssertions.id });
   return result.length > 0;
 }
@@ -1379,7 +1413,7 @@ export async function reorderContractAssertions(
       await tx
         .update(schema.project.missionContractAssertions)
         .set({ orderIndex: i, updatedAt: now })
-        .where(eq(schema.project.missionContractAssertions.id, orderedIds[i]!));
+        .where(and(missionProjectScope(schema.project.missionContractAssertions.projectId), eq(schema.project.missionContractAssertions.id, orderedIds[i]!)));
     }
   });
 }
@@ -1399,6 +1433,7 @@ export async function featureAssertionLinkExists(
     .from(schema.project.missionFeatureAssertions)
     .where(
       and(
+        missionProjectScope(schema.project.missionFeatureAssertions.projectId),
         eq(schema.project.missionFeatureAssertions.featureId, featureId),
         eq(schema.project.missionFeatureAssertions.assertionId, assertionId),
       ),
@@ -1415,7 +1450,7 @@ export async function linkFeatureToAssertion(
 ): Promise<void> {
   await handle
     .insert(schema.project.missionFeatureAssertions)
-    .values({ featureId, assertionId, createdAt })
+    .values({ projectId: missionProjectId(), featureId, assertionId, createdAt })
     .onConflictDoNothing();
 }
 
@@ -1429,6 +1464,7 @@ export async function unlinkFeatureFromAssertion(
     .delete(schema.project.missionFeatureAssertions)
     .where(
       and(
+        missionProjectScope(schema.project.missionFeatureAssertions.projectId),
         eq(schema.project.missionFeatureAssertions.featureId, featureId),
         eq(schema.project.missionFeatureAssertions.assertionId, assertionId),
       ),
@@ -1446,6 +1482,7 @@ export async function listAllFeatureAssertionLinks(handle: QueryHandle): Promise
       createdAt: schema.project.missionFeatureAssertions.createdAt,
     })
     .from(schema.project.missionFeatureAssertions)
+    .where(missionProjectScope(schema.project.missionFeatureAssertions.projectId))
     .orderBy(asc(schema.project.missionFeatureAssertions.createdAt));
   return rows.map((row) => rowToFeatureAssertionLink(row as FeatureAssertionLinkRow));
 }
@@ -1460,6 +1497,7 @@ export async function listAllFeatureAssertionLinks(handle: QueryHandle): Promise
  */
 export async function createValidatorRun(handle: QueryHandle, run: MissionValidatorRun): Promise<MissionValidatorRun> {
   await handle.insert(schema.project.missionValidatorRuns).values({
+    projectId: missionProjectId(),
     id: run.id,
     featureId: run.featureId,
     milestoneId: run.milestoneId,
@@ -1484,7 +1522,7 @@ export async function getValidatorRun(handle: QueryHandle, id: string): Promise<
   const rows = await handle
     .select(validatorRunColumns)
     .from(schema.project.missionValidatorRuns)
-    .where(eq(schema.project.missionValidatorRuns.id, id));
+    .where(and(missionProjectScope(schema.project.missionValidatorRuns.projectId), eq(schema.project.missionValidatorRuns.id, id)));
   return rows[0] ? rowToValidatorRun(rows[0] as ValidatorRunRow) : undefined;
 }
 
@@ -1493,7 +1531,7 @@ export async function listValidatorRunsByFeature(handle: QueryHandle, featureId:
   const rows = await handle
     .select(validatorRunColumns)
     .from(schema.project.missionValidatorRuns)
-    .where(eq(schema.project.missionValidatorRuns.featureId, featureId))
+    .where(and(missionProjectScope(schema.project.missionValidatorRuns.projectId), eq(schema.project.missionValidatorRuns.featureId, featureId)))
     .orderBy(desc(schema.project.missionValidatorRuns.startedAt));
   return rows.map((row) => rowToValidatorRun(row as ValidatorRunRow));
 }
@@ -1505,6 +1543,7 @@ export async function listStaleRunningValidatorRuns(handle: QueryHandle, cutoffI
     .from(schema.project.missionValidatorRuns)
     .where(
       and(
+        missionProjectScope(schema.project.missionValidatorRuns.projectId),
         eq(schema.project.missionValidatorRuns.status, "running"),
         sql`${schema.project.missionValidatorRuns.startedAt} < ${cutoffIso}`,
       ),
@@ -1524,7 +1563,7 @@ export async function updateValidatorRun(handle: QueryHandle, run: MissionValida
       completedAt: run.completedAt ?? null,
       updatedAt: run.updatedAt,
     })
-    .where(eq(schema.project.missionValidatorRuns.id, run.id));
+    .where(and(missionProjectScope(schema.project.missionValidatorRuns.projectId), eq(schema.project.missionValidatorRuns.id, run.id)));
 }
 
 /**
@@ -1545,6 +1584,7 @@ export async function transitionRunningValidatorRun(
       updatedAt: run.updatedAt,
     })
     .where(and(
+      missionProjectScope(schema.project.missionValidatorRuns.projectId),
       eq(schema.project.missionValidatorRuns.id, run.id),
       eq(schema.project.missionValidatorRuns.status, "running"),
     ))
@@ -1559,6 +1599,7 @@ export async function transitionRunningValidatorRun(
 /** Insert a validator failure record (non-destructive INSERT). */
 export async function insertValidatorFailure(handle: QueryHandle, failure: MissionAssertionFailureRecord): Promise<void> {
   await handle.insert(schema.project.missionValidatorFailures).values({
+    projectId: missionProjectId(),
     id: failure.id,
     runId: failure.runId,
     featureId: failure.featureId,
@@ -1574,6 +1615,7 @@ export async function insertValidatorFailure(handle: QueryHandle, failure: Missi
 export async function insertValidatorFailures(handle: QueryHandle, failures: MissionAssertionFailureRecord[]): Promise<void> {
   if (failures.length === 0) return;
   await handle.insert(schema.project.missionValidatorFailures).values(failures.map((failure) => ({
+    projectId: missionProjectId(),
     id: failure.id,
     runId: failure.runId,
     featureId: failure.featureId,
@@ -1590,7 +1632,7 @@ export async function listFailuresForRun(handle: QueryHandle, runId: string): Pr
   const rows = await handle
     .select(failureColumns)
     .from(schema.project.missionValidatorFailures)
-    .where(eq(schema.project.missionValidatorFailures.runId, runId))
+    .where(and(missionProjectScope(schema.project.missionValidatorFailures.projectId), eq(schema.project.missionValidatorFailures.runId, runId)))
     .orderBy(asc(schema.project.missionValidatorFailures.createdAt));
   return rows.map((row) => rowToFailure(row as FailureRow));
 }
@@ -1602,7 +1644,7 @@ export async function listFailuresForRuns(handle: QueryHandle, runIds: string[])
   const rows = await handle
     .select(failureColumns)
     .from(schema.project.missionValidatorFailures)
-    .where(inArray(schema.project.missionValidatorFailures.runId, [...new Set(runIds)]))
+    .where(and(missionProjectScope(schema.project.missionValidatorFailures.projectId), inArray(schema.project.missionValidatorFailures.runId, [...new Set(runIds)])))
     .orderBy(asc(schema.project.missionValidatorFailures.createdAt));
   return rows.map((row) => rowToFailure(row as FailureRow));
 }
@@ -1613,7 +1655,7 @@ export async function listFeatureIdsWithAssertions(handle: QueryHandle, featureI
   const rows = await handle
     .selectDistinct({ featureId: schema.project.missionFeatureAssertions.featureId })
     .from(schema.project.missionFeatureAssertions)
-    .where(inArray(schema.project.missionFeatureAssertions.featureId, [...new Set(featureIds)]));
+    .where(and(missionProjectScope(schema.project.missionFeatureAssertions.projectId), inArray(schema.project.missionFeatureAssertions.featureId, [...new Set(featureIds)])));
   return new Set(rows.map((row) => row.featureId));
 }
 
@@ -1627,6 +1669,7 @@ export async function listFeatureIdsWithAssertions(handle: QueryHandle, featureI
  */
 export async function insertFixFeatureLineage(handle: QueryHandle, lineage: MissionFixFeatureLineage): Promise<void> {
   await handle.insert(schema.project.missionFixFeatureLineage).values({
+    projectId: missionProjectId(),
     id: lineage.id,
     sourceFeatureId: lineage.sourceFeatureId,
     fixFeatureId: lineage.fixFeatureId,
@@ -1643,6 +1686,7 @@ export async function findFixFeatureId(handle: QueryHandle, sourceFeatureId: str
     .from(schema.project.missionFixFeatureLineage)
     .where(
       and(
+        missionProjectScope(schema.project.missionFixFeatureLineage.projectId),
         eq(schema.project.missionFixFeatureLineage.sourceFeatureId, sourceFeatureId),
         eq(schema.project.missionFixFeatureLineage.runId, runId),
       ),
@@ -1657,7 +1701,7 @@ export async function findFixFeatureIdsForSource(handle: QueryHandle, sourceFeat
   const rows = await handle
     .select({ fixFeatureId: schema.project.missionFixFeatureLineage.fixFeatureId })
     .from(schema.project.missionFixFeatureLineage)
-    .where(eq(schema.project.missionFixFeatureLineage.sourceFeatureId, sourceFeatureId))
+    .where(and(missionProjectScope(schema.project.missionFixFeatureLineage.projectId), eq(schema.project.missionFixFeatureLineage.sourceFeatureId, sourceFeatureId)))
     .orderBy(asc(schema.project.missionFixFeatureLineage.createdAt));
   return rows.map((row) => row.fixFeatureId);
 }
@@ -1667,7 +1711,7 @@ export async function listLineageForSourceFeature(handle: QueryHandle, sourceFea
   const rows = await handle
     .select(lineageColumns)
     .from(schema.project.missionFixFeatureLineage)
-    .where(eq(schema.project.missionFixFeatureLineage.sourceFeatureId, sourceFeatureId));
+    .where(and(missionProjectScope(schema.project.missionFixFeatureLineage.projectId), eq(schema.project.missionFixFeatureLineage.sourceFeatureId, sourceFeatureId)));
   return rows.map((row) => rowToLineage(row as LineageRow));
 }
 
@@ -1676,7 +1720,7 @@ export async function listLineageForFixFeature(handle: QueryHandle, fixFeatureId
   const rows = await handle
     .select(lineageColumns)
     .from(schema.project.missionFixFeatureLineage)
-    .where(eq(schema.project.missionFixFeatureLineage.fixFeatureId, fixFeatureId));
+    .where(and(missionProjectScope(schema.project.missionFixFeatureLineage.projectId), eq(schema.project.missionFixFeatureLineage.fixFeatureId, fixFeatureId)));
   return rows.map((row) => rowToLineage(row as LineageRow));
 }
 
@@ -1694,6 +1738,7 @@ export async function upsertMission(handle: QueryHandle, mission: Mission): Prom
   await handle
     .insert(schema.project.missions)
     .values({
+      projectId: missionProjectId(),
       id: mission.id,
       title: mission.title,
       description: mission.description ?? null,
@@ -1733,6 +1778,7 @@ export async function upsertMilestone(handle: QueryHandle, milestone: Milestone)
   await handle
     .insert(schema.project.milestones)
     .values({
+      projectId: missionProjectId(),
       id: milestone.id,
       missionId: milestone.missionId,
       title: milestone.title,
@@ -1771,6 +1817,7 @@ export async function upsertSlice(handle: QueryHandle, slice: Slice): Promise<vo
   await handle
     .insert(schema.project.slices)
     .values({
+      projectId: missionProjectId(),
       id: slice.id,
       milestoneId: slice.milestoneId,
       title: slice.title,
@@ -1805,6 +1852,7 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
   await handle
     .insert(schema.project.missionFeatures)
     .values({
+      projectId: missionProjectId(),
       id: feature.id,
       sliceId: feature.sliceId,
       taskId: feature.taskId ?? null,
@@ -1847,6 +1895,7 @@ export async function upsertContractAssertion(handle: QueryHandle, assertion: Mi
   await handle
     .insert(schema.project.missionContractAssertions)
     .values({
+      projectId: missionProjectId(),
       id: assertion.id,
       milestoneId: assertion.milestoneId,
       title: assertion.title,
@@ -1892,7 +1941,10 @@ export async function getMissionEventsPage(
 ): Promise<{ events: MissionEvent[]; total: number }> {
   const limit = Math.max(0, options?.limit ?? 50);
   const offset = Math.max(0, options?.offset ?? 0);
-  const conditions = [eq(schema.project.missionEvents.missionId, missionId)];
+  const conditions = [
+    missionProjectScope(schema.project.missionEvents.projectId),
+    eq(schema.project.missionEvents.missionId, missionId),
+  ];
   if (options?.eventType) conditions.push(eq(schema.project.missionEvents.eventType, options.eventType));
   const totalRows = await handle
     .select({ count: sql<number>`count(*)::int` })
@@ -1924,9 +1976,12 @@ export async function listAssertionsForFeature(handle: QueryHandle, featureId: s
     .from(schema.project.missionContractAssertions)
     .innerJoin(
       schema.project.missionFeatureAssertions,
-      eq(schema.project.missionContractAssertions.id, schema.project.missionFeatureAssertions.assertionId),
+      and(
+        eq(schema.project.missionContractAssertions.projectId, schema.project.missionFeatureAssertions.projectId),
+        eq(schema.project.missionContractAssertions.id, schema.project.missionFeatureAssertions.assertionId),
+      ),
     )
-    .where(eq(schema.project.missionFeatureAssertions.featureId, featureId))
+    .where(and(missionProjectScope(schema.project.missionFeatureAssertions.projectId), eq(schema.project.missionFeatureAssertions.featureId, featureId)))
     .orderBy(
       asc(schema.project.missionContractAssertions.orderIndex),
       asc(schema.project.missionContractAssertions.createdAt),
@@ -1945,9 +2000,12 @@ export async function listFeaturesForAssertion(handle: QueryHandle, assertionId:
     .from(schema.project.missionFeatures)
     .innerJoin(
       schema.project.missionFeatureAssertions,
-      eq(schema.project.missionFeatures.id, schema.project.missionFeatureAssertions.featureId),
+      and(
+        eq(schema.project.missionFeatures.projectId, schema.project.missionFeatureAssertions.projectId),
+        eq(schema.project.missionFeatures.id, schema.project.missionFeatureAssertions.featureId),
+      ),
     )
-    .where(eq(schema.project.missionFeatureAssertions.assertionId, assertionId))
+    .where(and(missionProjectScope(schema.project.missionFeatureAssertions.projectId), eq(schema.project.missionFeatureAssertions.assertionId, assertionId)))
     .orderBy(asc(schema.project.missionFeatures.createdAt));
   return rows.map((row) => rowToFeature(row as FeatureRow));
 }
@@ -1960,6 +2018,7 @@ export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string
     .from(schema.project.tasks)
     .where(
       and(
+        missionProjectScope(schema.project.tasks.projectId),
         inArray(schema.project.tasks.id, taskIds),
         sql`${schema.project.tasks.deletedAt} is null`,
         sql`${schema.project.tasks.column} <> 'archived'`,
@@ -1973,7 +2032,7 @@ export async function getLiveTaskById(handle: QueryHandle, taskId: string): Prom
   const rows = await handle
     .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
     .from(schema.project.tasks)
-    .where(and(eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`));
+    .where(and(missionProjectScope(schema.project.tasks.projectId), eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`));
   const row = rows[0];
   return row ? { id: row.id, column: row.column as string } : undefined;
 }
@@ -1983,7 +2042,7 @@ export async function setTaskMissionLinkage(handle: QueryHandle, taskId: string,
   await handle
     .update(schema.project.tasks)
     .set({ missionId, sliceId })
-    .where(and(eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`));
+    .where(and(missionProjectScope(schema.project.tasks.projectId), eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`));
 }
 
 /** Clear a live task's mission/slice linkage. */
@@ -1991,7 +2050,7 @@ export async function clearTaskMissionLinkage(handle: QueryHandle, taskId: strin
   await handle
     .update(schema.project.tasks)
     .set({ missionId: null, sliceId: null })
-    .where(and(eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`));
+    .where(and(missionProjectScope(schema.project.tasks.projectId), eq(schema.project.tasks.id, taskId), sql`${schema.project.tasks.deletedAt} is null`));
 }
 
 /** Set of all failed (non-deleted) task ids — for health rollup. */
@@ -1999,6 +2058,10 @@ export async function listFailedTaskIds(handle: QueryHandle): Promise<Set<string
   const rows = await handle
     .select({ id: schema.project.tasks.id })
     .from(schema.project.tasks)
-    .where(and(eq(schema.project.tasks.status, "failed"), sql`${schema.project.tasks.deletedAt} is null`));
+    .where(and(
+      missionProjectScope(schema.project.tasks.projectId),
+      eq(schema.project.tasks.status, "failed"),
+      sql`${schema.project.tasks.deletedAt} is null`,
+    ));
   return new Set(rows.map((row) => row.id));
 }

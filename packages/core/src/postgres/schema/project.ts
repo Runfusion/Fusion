@@ -1228,22 +1228,27 @@ export const pullRequestThreadState = projectSchema.table("pull_request_thread_s
 ]);
 
 export const goals = projectSchema.table("goals", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   title: text("title").notNull(),
   description: text("description"),
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
-}, (t) => [index("idxGoalsStatus").on(t.status)]);
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxGoalsStatus").on(t.status),
+]);
 
 export const missionGoals = projectSchema.table("mission_goals", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   missionId: text("mission_id").notNull(),
   goalId: text("goal_id").notNull(),
   createdAt: text("created_at").notNull(),
 }, (t) => [
-  primaryKey({ columns: [t.missionId, t.goalId] }),
-  foreignKey({ columns: [t.missionId], foreignColumns: [missions.id] }).onDelete("cascade"),
-  foreignKey({ columns: [t.goalId], foreignColumns: [goals.id] }).onDelete("cascade"),
+  primaryKey({ columns: [t.projectId, t.missionId, t.goalId] }),
+  foreignKey({ columns: [t.projectId, t.missionId], foreignColumns: [missions.projectId, missions.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.goalId], foreignColumns: [goals.projectId, goals.id] }).onDelete("cascade"),
   index("idxMissionGoalsGoalId").on(t.goalId),
 ]);
 
@@ -1351,7 +1356,8 @@ export const missionFeatures = projectSchema.table("mission_features", {
 ]);
 
 export const missionEvents = projectSchema.table("mission_events", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   missionId: text("mission_id").notNull(),
   eventType: text("event_type").notNull(),
   description: text("description").notNull(),
@@ -1359,7 +1365,8 @@ export const missionEvents = projectSchema.table("mission_events", {
   timestamp: text("timestamp").notNull(),
   seq: integer("seq").notNull().default(0),
 }, (t) => [
-  foreignKey({ columns: [t.missionId], foreignColumns: [missions.id] }).onDelete("cascade"),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.missionId], foreignColumns: [missions.projectId, missions.id] }).onDelete("cascade"),
   index("idxMissionEventsMissionId").on(t.missionId),
   index("idxMissionEventsTimestamp").on(t.timestamp),
   index("idxMissionEventsType").on(t.eventType),
@@ -1790,17 +1797,19 @@ export const missionContractAssertions = projectSchema.table("mission_contract_a
 ]);
 
 export const missionFeatureAssertions = projectSchema.table("mission_feature_assertions", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   featureId: text("feature_id").notNull(),
   assertionId: text("assertion_id").notNull(),
   createdAt: text("created_at").notNull(),
 }, (t) => [
-  primaryKey({ columns: [t.featureId, t.assertionId] }),
+  primaryKey({ columns: [t.projectId, t.featureId, t.assertionId] }),
   index("idxFeatureAssertionsFeatureId").on(t.featureId),
   index("idxFeatureAssertionsAssertionId").on(t.assertionId),
 ]);
 
 export const missionValidatorRuns = projectSchema.table("mission_validator_runs", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   featureId: text("feature_id").notNull(),
   milestoneId: text("milestone_id").notNull(),
   sliceId: text("slice_id").notNull(),
@@ -1816,6 +1825,7 @@ export const missionValidatorRuns = projectSchema.table("mission_validator_runs"
   updatedAt: text("updated_at").notNull(),
   taskId: text("task_id"),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxValidatorRunsFeatureId").on(t.featureId),
   index("idxValidatorRunsMilestoneId").on(t.milestoneId),
   index("idxValidatorRunsSliceId").on(t.sliceId),
@@ -1823,7 +1833,8 @@ export const missionValidatorRuns = projectSchema.table("mission_validator_runs"
 ]);
 
 export const missionValidatorFailures = projectSchema.table("mission_validator_failures", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   runId: text("run_id").notNull(),
   featureId: text("feature_id").notNull(),
   assertionId: text("assertion_id").notNull(),
@@ -1832,19 +1843,22 @@ export const missionValidatorFailures = projectSchema.table("mission_validator_f
   actual: text("actual"),
   createdAt: text("created_at").notNull(),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxValidatorFailuresRunId").on(t.runId),
   index("idxValidatorFailuresFeatureId").on(t.featureId),
   index("idxValidatorFailuresAssertionId").on(t.assertionId),
 ]);
 
 export const missionFixFeatureLineage = projectSchema.table("mission_fix_feature_lineage", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
   sourceFeatureId: text("source_feature_id").notNull(),
   fixFeatureId: text("fix_feature_id").notNull(),
   runId: text("run_id").notNull(),
   failedAssertionIds: jsonb("failed_assertion_ids").notNull().default([]),
   createdAt: text("created_at").notNull(),
 }, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
   index("idxFixLineageSourceFeatureId").on(t.sourceFeatureId),
   index("idxFixLineageFixFeatureId").on(t.fixFeatureId),
   index("idxFixLineageRunId").on(t.runId),

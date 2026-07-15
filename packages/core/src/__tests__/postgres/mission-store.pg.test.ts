@@ -22,7 +22,17 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
-import { AsyncMissionStore } from "../../async-mission-store.js";
+import {
+  AsyncMissionStore,
+  createMission as createMissionRow,
+  createMilestone as createMilestoneRow,
+  deleteMission as deleteMissionRow,
+  getMission as getMissionRow,
+  insertMissionEvent,
+  listMilestones as listMilestoneRows,
+  listMissionEvents,
+  listMissions as listMissionRows,
+} from "../../async-mission-store.js";
 
 const pgTest = pgDescribe;
 
@@ -42,6 +52,69 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
   it("does not throw when resolving the store in backend mode", () => {
     expect(h.store().backendMode).toBe(true);
     expect(() => missions()).not.toThrow();
+  });
+
+  /*
+  FNXC:MissionProjectIsolation 2026-07-14-21:35:
+  Two projects sharing one PostgreSQL schema may reuse every mission-local identifier. Mission helpers must bind inserts, direct CRUD, hierarchy lists, and event queries to the session project partition even on an administrative connection that bypasses row-level security; an unbound session may see only quarantined legacy rows.
+  */
+  it("isolates duplicate mission hierarchies across two project scopes", async () => {
+    const db = h.adminDb();
+    const now = new Date().toISOString();
+    const missionInput = (title: string) => ({
+      id: "M-SHARED",
+      title,
+      status: "planning",
+      interviewState: "not_started",
+      autoAdvance: false,
+      autopilotEnabled: false,
+      autopilotState: "inactive",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const seedProject = async (projectId: string, title: string): Promise<void> => {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('fusion.project_id', ${projectId}, true)`);
+        await createMissionRow(tx, missionInput(`${title} mission`));
+        await createMilestoneRow(tx, {
+          id: "MS-SHARED", missionId: "M-SHARED", title: `${title} milestone`,
+          status: "planning", orderIndex: 0, interviewState: "not_started",
+          dependencies: [], createdAt: now, updatedAt: now,
+        });
+        await insertMissionEvent(tx, {
+          id: "ME-SHARED", missionId: "M-SHARED", eventType: "created",
+          description: `${title} event`, timestamp: now, seq: 1,
+        });
+      });
+    };
+    const readProject = async (projectId: string) => db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('fusion.project_id', ${projectId}, true)`);
+      return {
+        missions: await listMissionRows(tx),
+        milestones: await listMilestoneRows(tx, "M-SHARED"),
+        events: await listMissionEvents(tx, "M-SHARED"),
+      };
+    });
+
+    await seedProject("project-a", "Project A");
+    await seedProject("project-b", "Project B");
+
+    const projectA = await readProject("project-a");
+    const projectB = await readProject("project-b");
+    expect(projectA.missions.map(({ title }) => title)).toEqual(["Project A mission"]);
+    expect(projectB.missions.map(({ title }) => title)).toEqual(["Project B mission"]);
+    expect(projectA.milestones.map(({ title }) => title)).toEqual(["Project A milestone"]);
+    expect(projectB.milestones.map(({ title }) => title)).toEqual(["Project B milestone"]);
+    expect(projectA.events.map(({ description }) => description)).toEqual(["Project A event"]);
+    expect(projectB.events.map(({ description }) => description)).toEqual(["Project B event"]);
+    expect(await listMissionRows(db)).toEqual([]);
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('fusion.project_id', 'project-a', true)`);
+      expect(await deleteMissionRow(tx, "M-SHARED")).toBe(true);
+      expect(await getMissionRow(tx, "M-SHARED")).toBeUndefined();
+    });
+    expect((await readProject("project-b")).missions.map(({ title }) => title)).toEqual(["Project B mission"]);
   });
 
   it("createMission → addMilestone → addSlice → addFeature assembles getMissionWithHierarchy tree", async () => {
