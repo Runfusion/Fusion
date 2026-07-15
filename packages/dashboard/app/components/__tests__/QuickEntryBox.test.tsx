@@ -232,6 +232,8 @@ vi.mock("lucide-react", () => {
     Flag: MockIcon("lucide-flag"),
     TriangleAlert: MockIcon("lucide-triangle-alert"),
     Zap: MockIcon("lucide-zap"),
+    Eye: MockIcon("lucide-eye"),
+    EyeOff: MockIcon("lucide-eye-off"),
     Github: MockIcon("lucide-github"),
     Maximize2: MockIcon("lucide-maximize-2"),
     Minimize2: MockIcon("lucide-minimize-2"),
@@ -2550,6 +2552,86 @@ describe("QuickEntryBox", () => {
 
       expandQuickEntry();
       expect(screen.getByTestId("quick-entry-github-toggle").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    /*
+    FNXC:PlannerOversight 2026-07-14-19:34:
+    Session advisor eye must clear override to null when the flipped effective
+    value matches the project default (TaskDetailModal parity) — double-click
+    from default-off must not leave a hard-coded false that is still sent on create.
+    */
+    it("clears session advisor override to inherit after double-click on default-off", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        sessionAdvisorEnabledByDefault: false,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const advisorToggle = await screen.findByTestId("quick-entry-session-advisor-toggle");
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.change(textarea, { target: { value: "Inherit session advisor after double-click" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+      // null override → field omitted (undefined), not hard-coded false
+      expect(props.onCreate.mock.calls[0]?.[0].sessionAdvisorEnabled).toBeUndefined();
+    });
+
+    it("clears session advisor override to inherit after double-click on default-on", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        sessionAdvisorEnabledByDefault: true,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const advisorToggle = await screen.findByTestId("quick-entry-session-advisor-toggle");
+      await waitFor(() => {
+        expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+      });
+
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.change(textarea, { target: { value: "Inherit session advisor default-on" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+      expect(props.onCreate.mock.calls[0]?.[0].sessionAdvisorEnabled).toBeUndefined();
+    });
+
+    it("sends explicit session advisor override when effective differs from project default", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        sessionAdvisorEnabledByDefault: false,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const advisorToggle = await screen.findByTestId("quick-entry-session-advisor-toggle");
+      fireEvent.click(advisorToggle);
+      expect(advisorToggle).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.change(textarea, { target: { value: "Explicit session advisor on" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+      expect(props.onCreate.mock.calls[0]?.[0].sessionAdvisorEnabled).toBe(true);
     });
 
     it("resets Fast toggle to standard after successful task creation", async () => {

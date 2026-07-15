@@ -293,6 +293,11 @@ export class OverseerAdvisorService {
    * Inject-time policy: re-resolve oversight level + human-control from the
    * live task/settings so mid-session flips (level→observe/off, autoMerge:false)
    * cannot be bypassed by a level captured at ensureTask time.
+   *
+   * FNXC:PlannerOversight 2026-07-14-19:34:
+   * Also re-check resolveEnabled at inject time. Operator can disable the session
+   * advisor (task/project/Quick Add) while a runtime is still live; without this
+   * re-check, ensure-time enablement would still inject [session-advisor] comments.
    */
   private async deliverAdvice(
     taskId: string,
@@ -312,6 +317,20 @@ export class OverseerAdvisorService {
       if (!task) {
         // Cannot verify level/human-control without a task — refuse inject.
         return;
+      }
+
+      /*
+      FNXC:PlannerOversight 2026-07-14-19:34:
+      Greptile P1: re-resolve advisor enablement on the live task before inject.
+      If the operator turned session advisor off mid-session, tear down the
+      runtime and withhold — same shape as level→off.
+      */
+      if (this.resolveEnabled) {
+        const enabled = await this.resolveEnabled(task);
+        if (!enabled) {
+          this.clear(taskId);
+          return;
+        }
       }
 
       /*

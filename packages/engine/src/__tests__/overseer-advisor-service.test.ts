@@ -199,6 +199,58 @@ describe("OverseerAdvisorService", () => {
     expect(addSteeringComment).not.toHaveBeenCalled();
   });
 
+  it("re-resolves resolveEnabled at inject time so mid-session disable does not inject", async () => {
+    /*
+    FNXC:PlannerOversight 2026-07-14-19:34:
+    Greptile P1: if session advisor is toggled off after ensureTask, deliverAdvice
+    must clear the runtime and withhold inject (enablement is not frozen at ensure).
+    */
+    const addSteeringComment = vi.fn(async () => ({}));
+    const task = baseTask({ sessionAdvisorEnabled: true });
+    let enabled = true;
+    const store = {
+      addSteeringComment,
+      getTask: async () => task,
+      getSettings: async () => ({ autoMerge: true }),
+      recordRunAuditEvent: vi.fn((input) => ({
+        id: "e1",
+        timestamp: new Date().toISOString(),
+        domain: "database",
+        mutationType: "overseer:intervention",
+        target: "FN-9001",
+        ...input,
+      })),
+      getRunAuditEvents: () => [],
+    };
+
+    const service = new OverseerAdvisorService({
+      store,
+      settings: { autoMerge: true },
+      resolveEnabled: () => enabled,
+      resolveLevel: () => "autonomous",
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory: async ({ systemPrompt, onAdvice }) =>
+        createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async () =>
+            JSON.stringify({ note: "Must not inject after enablement flip.", severity: "blocker" }),
+        }),
+    });
+
+    expect(await service.ensureTask(task)).toBe(true);
+    expect(service.getTaskAdvisorSnapshot(task.id).active).toBe(true);
+    // Operator disables advisor mid-session (task override / project default / eye).
+    enabled = false;
+    Object.assign(task, { sessionAdvisorEnabled: false });
+
+    await service.onExecutorLogDelta(task.id, [
+      { type: "text", text: "still working after advisor disabled", agent: "executor" },
+    ]);
+    await vi.waitFor(() => expect(service.getTaskAdvisorSnapshot(task.id).active).toBe(false));
+    expect(addSteeringComment).not.toHaveBeenCalled();
+  });
+
   it("withholds inject when settings autoMerge is false", async () => {
     const addSteeringComment = vi.fn(async () => ({}));
     // autoMerge:false on task is enough for allowsAutoMergeProcessing to withhold.

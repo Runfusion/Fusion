@@ -2217,12 +2217,21 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               FNXC:PlannerOversight 2026-07-14-18:11:
               Compact eye toggle next to GitHub for session advisor (overseer agent).
               Default follows project setting; press stores an explicit per-create override.
+
+              FNXC:PlannerOversight 2026-07-14-19:34:
+              CodeRabbit: when the flipped effective value matches the project default,
+              clear override to null (inherit) — same as TaskDetailModal — instead of
+              permanently hardcoding true/false after a double-click.
               */}
               <button
                 type="button"
                 className={`btn btn-sm ${effectiveSessionAdvisor ? "btn-primary" : ""}`}
                 onClick={() => {
-                  setSessionAdvisorOverride((prev) => !(prev ?? projectSessionAdvisorDefault));
+                  setSessionAdvisorOverride((prev) => {
+                    const currentEffective = prev ?? projectSessionAdvisorDefault;
+                    const nextEnabled = !currentEffective;
+                    return nextEnabled === projectSessionAdvisorDefault ? null : nextEnabled;
+                  });
                 }}
                 onMouseDown={(e) => e.preventDefault()}
                 aria-pressed={effectiveSessionAdvisor}
