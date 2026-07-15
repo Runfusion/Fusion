@@ -2135,10 +2135,16 @@ async function resolveImportedIssueTranslation(
     const { getCachedImportTranslation, resolveTargetLocale } = await import(
       "../import-translate-service.js"
     );
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-14:10:
+    The DEFAULT config leaves `importTranslateTargetLocale` unset ("follow the dashboard language"), so resolving from the project setting plus a client-sent locale alone made a default-configured import silently create the task from the ORIGINAL prose even though the panel showed a translation (PR #2141 review, P1).
+    Resolution therefore falls through to the global `language` setting server-side, which also fixes direct API callers and stale clients; the request locale stays as the last tier because `language` is itself unset when a surface browser-detects its locale.
+    */
     const targetLocale = resolveTargetLocale(
       settings.importTranslateTargetLocale,
       // The panel forwards its active locale; a direct API caller may not.
       (req.body as { targetLocale?: unknown } | undefined)?.targetLocale,
+      settings.language,
     );
     if (!targetLocale) return null;
 
@@ -4168,12 +4174,13 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const {
         translateImportItems,
         resolveTargetLocale,
+        selectEligibleItems,
+        partitionImportItemsByCache,
         isTranslatable,
       } = await import("../import-translate-service.js");
       const {
         checkTranslateRateLimit,
         getTranslateRateLimitResetTime,
-        IMPORT_TRANSLATE_MAX_ISSUES,
       } = await import("../ai-translate.js");
 
       /*
@@ -4188,6 +4195,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const targetLocale = resolveTargetLocale(
         settings.importTranslateTargetLocale,
         requestedLocale,
+        settings.language,
       );
       if (!targetLocale) {
         res.json({ translations: {}, enabled: true, targetLocale: null, capped: false });
@@ -4204,10 +4212,25 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         }))
         .filter((item) => Number.isInteger(item.number) && item.number > 0);
 
-      // Only issues that will actually reach the model count against the budget.
-      const billable = normalized.filter((item) => isTranslatable(item, targetLocale));
-      const capped = billable.length > IMPORT_TRANSLATE_MAX_ISSUES;
-      const cost = Math.min(billable.length, IMPORT_TRANSLATE_MAX_ISSUES);
+      const ctx = {
+        store: scopedStore,
+        rootDir: scopedStore.getRootDir(),
+        provider: "github" as const,
+        repoKey: `${owner}/${repo}`,
+        targetLocale,
+      };
+
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-14:10:
+      Charge the budget for MODEL CALLS ONLY — partition against the durable cache BEFORE reserving.
+      Reserving per foreign issue meant reopening a panel of 50 cached issues burned 50 slots while calling the model zero times, rate-limiting the panel for the rest of the hour despite costing nothing (PR #2141 review, P1).
+      The `capped` flag likewise reflects eligible issues (what the operator sees capped), while `cost` reflects only the uncached ones.
+      */
+      const allEligible = normalized.filter((item) => isTranslatable(item, targetLocale));
+      const eligible = selectEligibleItems(normalized, targetLocale);
+      const capped = allEligible.length > eligible.length;
+      const partition = await partitionImportItemsByCache(ctx, eligible);
+      const cost = partition.uncached.length;
 
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       if (cost > 0 && !checkTranslateRateLimit(ip, cost)) {
@@ -4217,16 +4240,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         );
       }
 
-      const translated = await translateImportItems(
-        {
-          store: scopedStore,
-          rootDir: scopedStore.getRootDir(),
-          provider: "github",
-          repoKey: `${owner}/${repo}`,
-          targetLocale,
-        },
-        normalized,
-      );
+      const translated = await translateImportItems(ctx, normalized, partition);
 
       const translations: Record<number, { title: string; body: string }> = {};
       for (const [number, value] of translated) {

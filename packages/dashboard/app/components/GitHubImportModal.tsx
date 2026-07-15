@@ -1103,7 +1103,17 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       setError(null);
 
       try {
-        const task = await apiImportGitHubIssue(owner.trim(), repo.trim(), selectedIssueNumber, projectId);
+        /*
+        FNXC:GitHubImportTranslate 2026-07-15-14:10:
+        Forward the panel's ACTIVE target locale so the imported task carries the translation shown in the preview. The server also falls back to the global `language` setting; this covers the case it cannot know — a browser-detected locale while global `language` is unset (PR #2141 review, P1).
+        */
+        const task = await apiImportGitHubIssue(
+          owner.trim(),
+          repo.trim(),
+          selectedIssueNumber,
+          projectId,
+          translateTargetLocale,
+        );
         onImport(task);
         returnToIssueListAfterSuccess();
       } catch (err) {

@@ -2765,10 +2765,15 @@ export function apiFetchGitHubIssues(
 }
 
 /** Import a specific GitHub issue as a fn task */
-export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number, projectId?: string): Promise<Task> {
+/*
+FNXC:GitHubImportTranslate 2026-07-15-14:10:
+`targetLocale` forwards the panel's ACTIVE locale so an imported task carries the same translation the operator previewed.
+The server also falls back to the global `language` setting, so this argument is not load-bearing for the common case — it exists for the one case the server cannot know: a surface whose locale was browser-detected while global `language` is unset (PR #2141 review, P1).
+*/
+export function apiImportGitHubIssue(owner: string, repo: string, issueNumber: number, projectId?: string, targetLocale?: string): Promise<Task> {
   return api<Task>(withProjectId("/github/issues/import", projectId), {
     method: "POST",
-    body: JSON.stringify({ owner, repo, issueNumber }),
+    body: JSON.stringify({ owner, repo, issueNumber, ...(targetLocale ? { targetLocale } : {}) }),
   });
 }
 
@@ -2788,11 +2793,13 @@ export function apiBatchImportGitHubIssues(
   repo: string,
   issueNumbers: number[],
   delayMs?: number,
-  projectId?: string
+  projectId?: string,
+  /** See apiImportGitHubIssue: batch import must carry translations identically. */
+  targetLocale?: string,
 ): Promise<{ results: BatchImportResult[] }> {
   return api<{ results: BatchImportResult[] }>(withProjectId("/github/issues/batch-import", projectId), {
     method: "POST",
-    body: JSON.stringify({ owner, repo, issueNumbers, delayMs }),
+    body: JSON.stringify({ owner, repo, issueNumbers, delayMs, ...(targetLocale ? { targetLocale } : {}) }),
   });
 }
 

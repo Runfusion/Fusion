@@ -22,6 +22,8 @@ const {
   resolveTargetLocale,
   isTranslatable,
   hashSourceContent,
+  partitionImportItemsByCache,
+  selectEligibleItems,
 } = await import("../import-translate-service.js");
 
 /** Minimal in-memory stand-in for the durable cache. */
@@ -74,8 +76,30 @@ describe("resolveTargetLocale", () => {
     expect(resolveTargetLocale(undefined, "ko")).toBe("ko");
   });
 
-  it("returns null when neither is a supported locale", () => {
-    expect(resolveTargetLocale("klingon", undefined)).toBeNull();
+  it("returns null when none is a supported locale", () => {
+    expect(resolveTargetLocale("klingon", undefined, undefined)).toBeNull();
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-14:10:
+  Regression: PR #2141 review (P1). The DEFAULT config leaves the project setting unset, and the
+  import route re-fetches server-side, so without the global `language` tier a default-configured
+  import resolved NO locale and silently imported the ORIGINAL prose.
+  */
+  it("falls back to the global dashboard language when the project setting is unset", () => {
+    expect(resolveTargetLocale(undefined, undefined, "fr")).toBe("fr");
+  });
+
+  it("prefers the global language over a caller-supplied locale", () => {
+    expect(resolveTargetLocale(undefined, "en", "ko")).toBe("ko");
+  });
+
+  it("still honours a caller-supplied locale when global language is unset (browser-detected)", () => {
+    expect(resolveTargetLocale(undefined, "es", undefined)).toBe("es");
+  });
+
+  it("lets an explicit project setting win over both", () => {
+    expect(resolveTargetLocale("fr", "en", "ko")).toBe("fr");
   });
 });
 
@@ -187,6 +211,65 @@ describe("translateImportItems", () => {
     const out = await translateImportItems({ ...ctx(store), targetLocale: "en" }, items);
     // The failed item is simply absent (caller renders the original prose).
     expect(out.size).toBe(1);
+  });
+});
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-14:10:
+Regression: PR #2141 review (P1). The route reserved rate-limit capacity per FOREIGN issue before the
+cache was consulted, so reopening a panel of cached issues burned budget while calling the model zero
+times. The budget is charged from `partition.uncached`, so these assert the partition — the thing the
+route actually charges from — not an incidental count.
+*/
+describe("partitionImportItemsByCache (what the rate-limit budget is charged from)", () => {
+  const item = { number: 7, title: "Error del servidor", body: SPANISH_BODY, state: "open" as const };
+
+  it("reports an uncached item as billable exactly once", async () => {
+    const store = makeStore();
+    const c = { ...ctx(store), targetLocale: "en" as const };
+    const { cached, uncached } = await partitionImportItemsByCache(c, [item]);
+    expect(uncached).toHaveLength(1);
+    expect(cached.size).toBe(0);
+  });
+
+  it("charges NOTHING once the item is cached, however many times the panel reloads", async () => {
+    const store = makeStore();
+    const c = { ...ctx(store), targetLocale: "en" as const };
+    await translateImportItems(c, [item]);
+
+    for (let reload = 0; reload < 3; reload++) {
+      const { cached, uncached } = await partitionImportItemsByCache(c, [item]);
+      expect(uncached).toHaveLength(0); // zero cost charged
+      expect(cached.get(7)?.title).toBe("TRANSLATED");
+    }
+  });
+
+  it("bills only the uncached remainder of a mixed page", async () => {
+    const store = makeStore();
+    const c = { ...ctx(store), targetLocale: "en" as const };
+    const first = { number: 1, title: "Error del servidor uno", body: SPANISH_BODY, state: "open" as const };
+    const second = { number: 2, title: "Error del servidor dos", body: SPANISH_BODY, state: "open" as const };
+    await translateImportItems(c, [first]);
+
+    const { cached, uncached } = await partitionImportItemsByCache(c, [first, second]);
+    expect(uncached.map((i) => i.number)).toEqual([2]);
+    expect([...cached.keys()]).toEqual([1]);
+  });
+
+  it("reusing a partition does not re-bill the cached half", async () => {
+    const store = makeStore();
+    const c = { ...ctx(store), targetLocale: "en" as const };
+    const first = { number: 1, title: "Error del servidor uno", body: SPANISH_BODY, state: "open" as const };
+    const second = { number: 2, title: "Error del servidor dos", body: SPANISH_BODY, state: "open" as const };
+    await translateImportItems(c, [first]);
+    translateTextMock.mockClear();
+
+    const partition = await partitionImportItemsByCache(c, selectEligibleItems([first, second], "en"));
+    const out = await translateImportItems(c, [first, second], partition);
+
+    expect(translateTextMock).toHaveBeenCalledTimes(1); // only the uncached one
+    expect(out.get(1)?.cached).toBe(true);
+    expect(out.get(2)?.cached).toBe(false);
   });
 });
 
