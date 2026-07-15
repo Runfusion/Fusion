@@ -1738,7 +1738,7 @@ export async function fetchArtifacts(
 }
 
 export function artifactMediaUrl(id: string, projectId?: string): string {
-  return buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId));
+  return appendTokenQuery(buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId)));
 }
 
 /*
