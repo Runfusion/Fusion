@@ -45,8 +45,12 @@ const initializedProjects = new Set<string>();
  * adds the embedded-cluster teardown that the layer does not own.
  */
 const backendShutdowns = new Map<string, () => Promise<void>>();
-const evictionRequested = new Set<string>();
-let evictAllInProgress = false;
+/*
+FNXC:PostgresResourceLifecycle 2026-07-14-21:35:
+Eviction barriers carry cleanup ownership instead of only recording boolean state. Concurrent project or global eviction callers must share and await the same promise so no caller can reopen store creation while an earlier backend shutdown is still pending.
+*/
+const pendingEvictions = new Map<string, Promise<void>>();
+let pendingGlobalEviction: Promise<void> | undefined;
 const projectRegisteredListeners = new Set<(projectId: string, store: TaskStore) => void>();
 
 /**
@@ -81,7 +85,7 @@ export function setOnProjectFirstCreated(cb: ((projectId: string) => void) | und
  * @returns A shared TaskStore instance for this project
  */
 export async function getOrCreateProjectStore(projectId: string): Promise<TaskStore> {
-  if (evictAllInProgress || evictionRequested.has(projectId)) {
+  if (pendingGlobalEviction || pendingEvictions.has(projectId)) {
     throw new Error(`Project store ${projectId} is shutting down`);
   }
   const cached = storeCache.get(projectId);
@@ -119,7 +123,7 @@ export async function getOrCreateProjectStore(projectId: string): Promise<TaskSt
         await store.watch();
         initializedProjects.add(projectId);
       }
-      if (evictAllInProgress || evictionRequested.has(projectId)) {
+      if (pendingGlobalEviction || pendingEvictions.has(projectId)) {
         throw new Error(`Project store ${projectId} was evicted during creation`);
       }
       storeCache.set(projectId, store);
@@ -160,56 +164,92 @@ export async function getOrCreateProjectStore(projectId: string): Promise<TaskSt
  * Remove a cached store and stop its watcher.
  * Useful for cleanup on project removal or server shutdown.
  */
-export async function evictProjectStore(projectId: string): Promise<void> {
+export function evictProjectStore(projectId: string): Promise<void> {
   /*
   FNXC:PostgresResourceLifecycle 2026-07-14-18:42:
   Eviction is an awaited barrier. Mark the project before waiting for an in-flight factory boot so that boot cannot insert a late cache entry, then capture/delete the shutdown handle before invocation to guarantee exactly-once backend ownership across concurrent cleanup paths.
   */
-  evictionRequested.add(projectId);
-  try {
-    const pending = pendingCreations.get(projectId);
-    if (pending) await pending.catch(() => undefined);
+  const existingEviction = pendingEvictions.get(projectId);
+  if (existingEviction) return existingEviction;
 
-    const store = storeCache.get(projectId);
-    storeCache.delete(projectId);
-    initializedProjects.delete(projectId);
-    if (store) {
-      try {
-        store.stopWatching();
-        await Promise.resolve(store.close());
-      } catch {
-        // Backend shutdown still runs even when watcher/store cleanup fails.
+  let resolveBarrier!: () => void;
+  let rejectBarrier!: (error: unknown) => void;
+  const evictionBarrier = new Promise<void>((resolve, reject) => {
+    resolveBarrier = resolve;
+    rejectBarrier = reject;
+  });
+  pendingEvictions.set(projectId, evictionBarrier);
+
+  void (async () => {
+    try {
+      const pending = pendingCreations.get(projectId);
+      if (pending) await pending.catch(() => undefined);
+
+      const store = storeCache.get(projectId);
+      storeCache.delete(projectId);
+      initializedProjects.delete(projectId);
+      if (store) {
+        try {
+          store.stopWatching();
+          await Promise.resolve(store.close());
+        } catch {
+          // Backend shutdown still runs even when watcher/store cleanup fails.
+        }
       }
-    }
 
-    const backendShutdown = backendShutdowns.get(projectId);
-    backendShutdowns.delete(projectId);
-    if (backendShutdown) await backendShutdown().catch(() => undefined);
-  } finally {
-    evictionRequested.delete(projectId);
-  }
+      const backendShutdown = backendShutdowns.get(projectId);
+      backendShutdowns.delete(projectId);
+      if (backendShutdown) await backendShutdown().catch(() => undefined);
+      if (pendingEvictions.get(projectId) === evictionBarrier) {
+        pendingEvictions.delete(projectId);
+      }
+      resolveBarrier();
+    } catch (error) {
+      if (pendingEvictions.get(projectId) === evictionBarrier) {
+        pendingEvictions.delete(projectId);
+      }
+      rejectBarrier(error);
+    }
+  })();
+
+  return evictionBarrier;
 }
 
 /**
  * Evict all cached stores. Used during server shutdown.
  */
-export async function evictAllProjectStores(): Promise<void> {
-  evictAllInProgress = true;
-  try {
-    const pendingIds = [...pendingCreations.keys()];
-    for (const projectId of pendingIds) evictionRequested.add(projectId);
-    await Promise.allSettled([...pendingCreations.values()]);
-    const projectIds = new Set([
-      ...pendingIds,
-      ...storeCache.keys(),
-      ...backendShutdowns.keys(),
-    ]);
-    await Promise.all([...projectIds].map((projectId) => evictProjectStore(projectId)));
-  } finally {
-    pendingCreations.clear();
-    evictionRequested.clear();
-    evictAllInProgress = false;
-  }
+export function evictAllProjectStores(): Promise<void> {
+  if (pendingGlobalEviction) return pendingGlobalEviction;
+
+  let resolveBarrier!: () => void;
+  let rejectBarrier!: (error: unknown) => void;
+  const globalBarrier = new Promise<void>((resolve, reject) => {
+    resolveBarrier = resolve;
+    rejectBarrier = reject;
+  });
+  pendingGlobalEviction = globalBarrier;
+
+  void (async () => {
+    try {
+      const pendingIds = [...pendingCreations.keys()];
+      await Promise.allSettled([...pendingCreations.values()]);
+      const projectIds = new Set([
+        ...pendingIds,
+        ...storeCache.keys(),
+        ...backendShutdowns.keys(),
+        ...pendingEvictions.keys(),
+      ]);
+      await Promise.all([...projectIds].map((projectId) => evictProjectStore(projectId)));
+      pendingCreations.clear();
+      if (pendingGlobalEviction === globalBarrier) pendingGlobalEviction = undefined;
+      resolveBarrier();
+    } catch (error) {
+      if (pendingGlobalEviction === globalBarrier) pendingGlobalEviction = undefined;
+      rejectBarrier(error);
+    }
+  })();
+
+  return globalBarrier;
 }
 
 /**

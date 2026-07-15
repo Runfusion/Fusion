@@ -34,6 +34,8 @@ const backendShutdowns = new Map<string, ReturnType<typeof vi.fn>>();
 let watchFailureProjectId: string | undefined;
 let delayedWatchProjectId: string | undefined;
 let releaseDelayedWatch: (() => void) | undefined;
+const delayedShutdownProjectIds = new Set<string>();
+const releaseDelayedShutdowns = new Map<string, () => void>();
 
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -74,7 +76,13 @@ vi.mock("@fusion/core", async () => {
     seam so cache/dedup/eviction/SSE invariants do not boot a real cluster.
     */
     createTaskStoreForBackend: vi.fn(async ({ projectId }: { projectId: string }) => {
-      const shutdown = vi.fn(async () => {});
+      const shutdown = vi.fn(async () => {
+        if (delayedShutdownProjectIds.has(projectId)) {
+          await new Promise<void>((resolve) => {
+            releaseDelayedShutdowns.set(projectId, resolve);
+          });
+        }
+      });
       backendShutdowns.set(projectId, shutdown);
       return { taskStore: makeStore(projectId), shutdown };
     }),
@@ -83,21 +91,29 @@ vi.mock("@fusion/core", async () => {
 
 describe("project-store-resolver", () => {
   beforeEach(async () => {
+    delayedShutdownProjectIds.clear();
+    for (const release of releaseDelayedShutdowns.values()) release();
     await evictAllProjectStores();
     createdStores.length = 0;
     backendShutdowns.clear();
     watchFailureProjectId = undefined;
     delayedWatchProjectId = undefined;
     releaseDelayedWatch = undefined;
+    delayedShutdownProjectIds.clear();
+    releaseDelayedShutdowns.clear();
   });
 
   afterEach(async () => {
+    delayedShutdownProjectIds.clear();
+    for (const release of releaseDelayedShutdowns.values()) release();
     await evictAllProjectStores();
     createdStores.length = 0;
     backendShutdowns.clear();
     watchFailureProjectId = undefined;
     delayedWatchProjectId = undefined;
     releaseDelayedWatch = undefined;
+    delayedShutdownProjectIds.clear();
+    releaseDelayedShutdowns.clear();
   });
 
   it("creates a new store on first call for a project", async () => {
@@ -210,6 +226,56 @@ describe("project-store-resolver", () => {
     createdStores.length = 0;
     await getOrCreateProjectStore("proj_evict");
     expect(createdStores).toHaveLength(1);
+  });
+
+  it("deduplicates overlapping project evictions until the owned shutdown finishes", async () => {
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-21:35:
+    Every caller that evicts one project must await the owner of its backend shutdown, and project recreation must remain blocked until that shared barrier settles.
+    */
+    await getOrCreateProjectStore("proj_overlapping_evict");
+    delayedShutdownProjectIds.add("proj_overlapping_evict");
+
+    const firstEviction = evictProjectStore("proj_overlapping_evict");
+    await vi.waitFor(() => expect(releaseDelayedShutdowns.has("proj_overlapping_evict")).toBe(true));
+    const secondEviction = evictProjectStore("proj_overlapping_evict");
+    let secondSettled = false;
+    void secondEviction.then(() => { secondSettled = true; });
+    await Promise.resolve();
+
+    expect(secondSettled).toBe(false);
+    await expect(getOrCreateProjectStore("proj_overlapping_evict")).rejects.toThrow("shutting down");
+    expect(backendShutdowns.get("proj_overlapping_evict")).toHaveBeenCalledTimes(1);
+
+    releaseDelayedShutdowns.get("proj_overlapping_evict")?.();
+    await Promise.all([firstEviction, secondEviction]);
+    delayedShutdownProjectIds.delete("proj_overlapping_evict");
+    await expect(getOrCreateProjectStore("proj_overlapping_evict")).resolves.toBeDefined();
+  });
+
+  it("keeps global eviction blocked behind an overlapping project shutdown", async () => {
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-21:35:
+    Evict-all must join an already-owned project cleanup rather than completing after an empty duplicate cleanup and reopening creation while the original shutdown remains pending.
+    */
+    await getOrCreateProjectStore("proj_project_then_all");
+    delayedShutdownProjectIds.add("proj_project_then_all");
+
+    const projectEviction = evictProjectStore("proj_project_then_all");
+    await vi.waitFor(() => expect(releaseDelayedShutdowns.has("proj_project_then_all")).toBe(true));
+    const globalEviction = evictAllProjectStores();
+    let globalSettled = false;
+    void globalEviction.then(() => { globalSettled = true; });
+    await Promise.resolve();
+
+    expect(globalSettled).toBe(false);
+    await expect(getOrCreateProjectStore("proj_project_then_all")).rejects.toThrow("shutting down");
+    expect(backendShutdowns.get("proj_project_then_all")).toHaveBeenCalledTimes(1);
+
+    releaseDelayedShutdowns.get("proj_project_then_all")?.();
+    await Promise.all([projectEviction, globalEviction]);
+    delayedShutdownProjectIds.delete("proj_project_then_all");
+    await expect(getOrCreateProjectStore("proj_project_then_all")).resolves.toBeDefined();
   });
 
   it("evictAllProjectStores cleans up all cached stores", async () => {
