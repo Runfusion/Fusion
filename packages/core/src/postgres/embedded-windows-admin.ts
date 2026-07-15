@@ -351,23 +351,38 @@ export async function startServerAsNonAdminUser(
   const deadline = Date.now() + Math.max(opts.startTimeoutMs, 1000);
   let ready = false;
   while (Date.now() < deadline) {
-    if (await probePort(opts.port, "127.0.0.1", 600)) {
+    // FNXC:WindowsDesktopPackaging 2026-07-14-22:40:
+    // Tail the redirected postgres log each poll. This surfaces a startup FATAL
+    // within ~1s (well inside Vitest's 15s test timeout) instead of hanging on
+    // a TCP probe that never connects, so the real reason postgres did not open
+    // the port is visible. "ready to accept connections" is the same marker
+    // embedded-postgres watches stderr for.
+    const tail = readTail(logFile, 3000);
+    if (/database system is ready to accept connections/.test(tail)) {
       ready = true;
       break;
     }
-    // If the wrapper already exited and the port still is not up, postgres died
-    // — surface the captured log instead of waiting out the full timeout.
+    if (/\bFATAL\b|\bPANIC\b|could not (bind|start|create|access|connect|load)|not permitted|Permission denied|is not the owner/i.test(tail)) {
+      throw new Error(
+        `embedded postgres: non-admin postgres reported a startup error before opening the port.\n${tail}`,
+      );
+    }
+    if (await probePort(opts.port, "127.0.0.1", 400)) {
+      ready = true;
+      break;
+    }
+    // If the wrapper already exited and nothing is listening, postgres died.
     const tasklist = spawnSync("tasklist", ["/FI", `PID eq ${wrapperPid}`], {
       encoding: "utf8",
     });
     const wrapperAlive = (tasklist.stdout || "").includes(String(wrapperPid));
-    if (!wrapperAlive && !(await probePort(opts.port, "127.0.0.1", 600))) {
+    if (!wrapperAlive && !(await probePort(opts.port, "127.0.0.1", 400))) {
       throw new Error(
-        `embedded postgres: non-admin postgres exited before becoming ready.\n${readTail(logFile, 1200)}`,
+        `embedded postgres: non-admin postgres exited before becoming ready.\n${readTail(logFile, 3000)}`,
       );
     }
     const { promise: sleep, resolve: wake } = Promise.withResolvers<void>();
-    setTimeout(wake, 400);
+    setTimeout(wake, 300);
     await sleep;
   }
 
