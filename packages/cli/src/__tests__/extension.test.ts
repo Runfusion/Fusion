@@ -22,7 +22,7 @@ vi.mock("../commands/task.js", () => ({
 }));
 
 import { __setCachedStoreForTesting, closeCachedStores, resolveTaskListFormatter } from "../extension.js";
-import { TaskStore, AgentStore, MANUAL_RETRY_RESET_COUNTER_KEYS, RESEARCH_RUN_STATUSES, MAX_TASK_LIST_TEXT_CHARS, formatTaskListText, COLUMN_LABELS, drizzleSql } from "@fusion/core";
+import { TaskStore, AgentStore, MANUAL_RETRY_RESET_COUNTER_KEYS, MAX_TASK_LIST_TEXT_CHARS, formatTaskListText, COLUMN_LABELS, drizzleSql } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
 import { isGhAvailable, isGhAuthenticated, runGhJsonAsync } from "@fusion/core/gh-cli";
 import { runTaskPlan } from "../commands/task.js";
@@ -165,23 +165,6 @@ async function readTaskWorkflowState(_cwd: string, taskId: string) {
   return { task, selection };
 }
 
-async function enableResearch(_cwd: string): Promise<TaskStore> {
-  const store = h.store();
-  await store.updateGlobalSettings({
-    researchGlobalEnabled: true,
-    researchGlobalDefaults: { searchProvider: "searxng" },
-    researchGlobalSearxngUrl: "http://localhost:8888",
-    experimentalFeatures: { researchView: true } as Record<string, boolean>,
-  });
-  await store.updateSettings({
-    researchEnabled: true,
-    researchSettings: { enabled: true, searchProvider: "searxng" },
-    researchGlobalWebSearchProvider: "searxng",
-    researchGlobalSearxngUrl: "http://localhost:8888",
-  });
-  return store;
-}
-
 // ── Tests ──────────────────────────────────────────────────────────
 
 pgTest("fn pi extension tool copy guardrails", () => {
@@ -288,10 +271,6 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_task_unarchive",
         "fn_task_delete",
         "fn_task_plan",
-        "fn_research_run",
-        "fn_research_list",
-        "fn_research_get",
-        "fn_research_cancel",
         "fn_insight_list",
         "fn_insight_show",
         "fn_insight_run_list",
@@ -4125,120 +4104,10 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
   });
 
-  describe("research tools", () => {
-    it.each([
-      "fn_research_run",
-      "fn_research_list",
-      "fn_research_get",
-      "fn_research_cancel",
-      "fn_research_retry",
-    ])("%s uses disambiguated cited-research wording", (toolName) => {
-      const tool = api.tools.get(toolName)!;
-      expect(tool.description).toMatch(/cited-research pipeline/i);
-      if (/experiment loop/i.test(tool.description)) {
-        expect(tool.description).toMatch(/not\s+.*experiment loop/i);
-      }
-    });
-
-    it("fn_research_run treats builtin as configured when no provider is explicitly set", async () => {
-      const store = createStore();
-      await store.updateGlobalSettings({
-        researchGlobalEnabled: true,
-        experimentalFeatures: { researchView: true } as Record<string, boolean>,
-      });
-      await store.updateSettings({
-        researchEnabled: true,
-        researchSettings: { enabled: true },
-      });
-
-      const tool = api.tools.get("fn_research_run")!;
-      const result = await tool.execute(
-        "research-run-builtin",
-        { query: "builtin default" },
-        undefined,
-        undefined,
-        makeCtx(tmpDir),
-      );
-
-      expect(result.details.setup).toBeNull();
-      expect(result.details.status).toBe("queued");
-    });
-
-    it("fn_research_list status parameter matches RESEARCH_RUN_STATUSES", () => {
-      const tool = requireTool(api, "fn_research_list") as unknown as ToolWithParameters;
-      const statusSchema = tool.parameters?.properties?.status;
-      const enumValues = statusSchema?.enum ?? statusSchema?.anyOf?.[0]?.enum;
-      expect(enumValues).toEqual([...RESEARCH_RUN_STATUSES]);
-    });
-
-    it("fn_research_run preserves fire-and-forget behavior when wait_for_completion is false", async () => {
-      const store = await enableResearch(tmpDir);
-      try {
-        const tool = api.tools.get("fn_research_run")!;
-
-        const result = await tool.execute(
-          "research-run-ff",
-          { query: "test query", wait_for_completion: false },
-          undefined,
-          undefined,
-          makeCtx(tmpDir),
-        );
-
-        expect(result.content[0].text).toContain("Start the project engine to process pending runs");
-        expect(result.details.status).toBe("queued");
-      } finally {
-      }
-    });
-
-    it("fn_research_run waits and returns terminal run details when wait_for_completion is true", async () => {
-      const store = await enableResearch(tmpDir);
-      try {
-        const tool = api.tools.get("fn_research_run")!;
-        const researchStore = store.getResearchStore();
-
-        const settleRunToCompleted = async () => {
-          const queuedRun = (await researchStore.listRuns({ limit: 1 }))[0];
-          if (!queuedRun) {
-            return false;
-          }
-          if (queuedRun.status === "completed") {
-            return true;
-          }
-          if (queuedRun.status === "queued") {
-            await researchStore.updateRun(queuedRun.id, { status: "running" });
-          }
-          await researchStore.updateRun(queuedRun.id, {
-            status: "completed",
-            results: { summary: "done", findings: [{ heading: "h1", content: "f1", sources: [] }], citations: [] },
-          });
-          return true;
-        };
-
-        /*
-        FNXC:CliTests 2026-06-19-11:06:
-        The wait-for-completion regression must settle its synthetic run after the tool creates it; starting the completer before creation can miss the run and consume the whole 5s Vitest budget.
-        */
-        const resultPromise = tool.execute(
-          "research-run-wait",
-          { query: "terminal query", wait_for_completion: true, max_wait_ms: 3000 },
-          undefined,
-          undefined,
-          makeCtx(tmpDir),
-        );
-
-        for (let attempt = 0; attempt < 50 && !(await settleRunToCompleted()); attempt += 1) {
-          await delay(10);
-        }
-
-        const result = await resultPromise;
-
-        expect(result.details.status).toBe("completed");
-        expect(result.details.summary).toBe("done");
-        expect(result.content[0].text).toContain("is completed");
-      } finally {
-      }
-    });
-  });
+  /*
+  FNXC:MergeQueue 2026-07-15-11:28:
+  Host extension no longer registers fn_research_*. See research-extension-tools.test.ts for the off-surface lock.
+  */
 
   describe("fn_delegate_task", () => {
     it("delegates task to agent", async () => {

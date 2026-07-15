@@ -23,13 +23,8 @@ import {
   type InsightStatus,
   type InsightRunStatus,
   type InsightRunTrigger,
-  type ResearchRun,
-  type ResearchRunStatus,
   type AgentCapability,
   type AgentUpdateInput,
-  RESEARCH_RUN_STATUSES,
-  isResearchExperimentalEnabled,
-  resolveResearchSettings,
   getTaskDuplicateLineage,
   resolveAgentProvisioningPolicy,
   TASK_PRIORITIES,
@@ -259,9 +254,6 @@ FNXC:MergeQueue 2026-07-15-11:15:
 Default wall-clock budget for store/CRUD host-extension tools. Long-running tools use resolveExtensionToolTimeoutMs instead of this flat default (research wait, skills install, imports).
 */
 const EXTENSION_TOOL_TIMEOUT_MS = 60_000;
-/** Slack added above fn_research_run max_wait_ms so the outer wrap cannot clip an intentional wait. */
-const RESEARCH_WAIT_SLACK_MS = 15_000;
-const RESEARCH_DEFAULT_MAX_WAIT_MS = 90_000;
 const SKILLS_INSTALL_TIMEOUT_MS = 300_000;
 const IMPORT_BROWSE_TIMEOUT_MS = 180_000;
 const WEB_FETCH_TIMEOUT_MS = 90_000;
@@ -275,23 +267,14 @@ function isAbortError(error: unknown): boolean {
 
 /**
  * FNXC:MergeQueue 2026-07-15-11:20:
- * Per-tool outer budgets. A flat 60s wrap false-failed fn_research_run(wait_for_completion) whose default max_wait_ms is 90s.
- * Store tools stay at 60s; intentional multi-minute tools get higher ceilings.
+ * Per-tool outer budgets. Store tools stay at 60s; intentional multi-minute tools get higher ceilings.
+ * FNXC:MergeQueue 2026-07-15-11:28:
+ * Host extension no longer registers fn_research_* (engine injects createResearchTools when experimental research is on), so research wait budgets are not needed here.
  *
  * @internal Exported for unit tests.
  */
-export function resolveExtensionToolTimeoutMs(toolName: string, params?: unknown): number {
+export function resolveExtensionToolTimeoutMs(toolName: string, _params?: unknown): number {
   const name = toolName.trim();
-  if (name === "fn_research_run") {
-    const record = params && typeof params === "object" ? (params as Record<string, unknown>) : {};
-    if (record.wait_for_completion === true) {
-      const rawMax = record.max_wait_ms;
-      const maxWait =
-        typeof rawMax === "number" && Number.isFinite(rawMax) ? Math.max(0, rawMax) : RESEARCH_DEFAULT_MAX_WAIT_MS;
-      return maxWait + RESEARCH_WAIT_SLACK_MS;
-    }
-    return EXTENSION_TOOL_TIMEOUT_MS;
-  }
   if (name === "fn_skills_install") return SKILLS_INSTALL_TIMEOUT_MS;
   if (name.startsWith("fn_task_import_") || name.startsWith("fn_task_browse_")) return IMPORT_BROWSE_TIMEOUT_MS;
   if (name === "fn_web_fetch") return WEB_FETCH_TIMEOUT_MS;
@@ -751,88 +734,6 @@ export function formatTaskLine(t: Task): string {
   const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
-}
-
-async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean; code?: string; message?: string }> {
-  const settings = await store.getSettings();
-  if (!isResearchExperimentalEnabled(settings)) {
-    return { ok: false, code: "feature-disabled", message: "Research tools are disabled. Enable experimentalFeatures.researchView first." };
-  }
-
-  const resolved = resolveResearchSettings(settings);
-  if (!resolved.enabled) {
-    return { ok: false, code: "feature-disabled", message: "Research is disabled in settings." };
-  }
-
-  const backend = (resolved.searchProvider as string | undefined) ?? settings.researchGlobalWebSearchProvider ?? "builtin";
-  const configured = backend === "builtin"
-    ? true
-    : backend === "searxng"
-        ? Boolean(settings.researchGlobalSearxngUrl)
-        : backend === "brave"
-          ? Boolean(settings.researchGlobalBraveApiKey)
-          : backend === "google"
-            ? Boolean(settings.researchGlobalGoogleSearchApiKey && settings.researchGlobalGoogleSearchCx)
-            : backend === "tavily"
-              ? Boolean(settings.researchGlobalTavilyApiKey)
-              : false;
-
-  if (!configured) {
-    return { ok: false, code: "missing-credentials", message: `Missing credentials for ${backend}. Add provider keys in Authentication and verify Research defaults.` };
-  }
-
-  return { ok: true };
-}
-
-const RESEARCH_RUN_TERMINAL_STATUSES = new Set<ResearchRunStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-  "retry_exhausted",
-]);
-
-function toResearchRunDetails(run: ResearchRun) {
-  return {
-    runId: run.id,
-    status: run.status,
-    query: run.query,
-    summary: run.results?.summary ?? null,
-    findings: run.results?.findings ?? [],
-    citations: run.results?.citations ?? [],
-    sourceCount: Array.isArray(run.sources) ? run.sources.length : 0,
-    error: run.error ?? null,
-    setup: null,
-  };
-}
-
-function isResearchRunTerminal(status: ResearchRunStatus): boolean {
-  return RESEARCH_RUN_TERMINAL_STATUSES.has(status);
-}
-
-async function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
-  if (ms <= 0) {
-    return;
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new Error("Operation aborted"));
-    };
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 interface GitHubIssueApiResult {
@@ -2701,265 +2602,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
-  // ── Research Tools ──────────────────────────────────────────────
-
-  pi.registerTool({
-    name: "fn_research_run",
-    label: "fn: Run Research",
-    description: "Cited-research pipeline: create a bounded search/fetch/synthesis run (not an autonomous experiment loop) and optionally wait for completion.",
-    parameters: Type.Object({
-      query: Type.String({ description: "Research query or question" }),
-      wait_for_completion: Type.Optional(Type.Boolean({ description: "Wait for the run to complete before returning (default: false)" })),
-      max_wait_ms: Type.Optional(Type.Number({ description: "Max wait time when wait_for_completion=true (default: 90000, capped by settings)" })),
-    }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          details: { runId: null, status: "unavailable", summary: null, findings: [], citations: [], error: availability.message, setup: { code: availability.code, message: availability.message } },
-        };
-      }
-
-      // FNXC:ResearchStore 2026-06-27-12:40:
-      // getResearchStore() returns ResearchStore (SQLite) or AsyncResearchStore (PG backend);
-      // await every call so research-run CRUD works in both backends (await is harmless on
-      // the sync store). AI research EXECUTION still requires starting the engine.
-      const researchStore = store.getResearchStore();
-      const run = await researchStore.createRun({
-        query: params.query,
-        topic: params.query,
-        providerConfig: {},
-      });
-
-      if (!params.wait_for_completion) {
-        return {
-          content: [{ type: "text", text: `Created research run ${run.id}. Start the project engine to process pending runs, then use fn_research_get.` }],
-          details: toResearchRunDetails(run),
-        };
-      }
-
-      const maxWaitMs = Number.isFinite(params.max_wait_ms)
-        ? Math.max(0, params.max_wait_ms ?? 90_000)
-        : 90_000;
-      const pollIntervalMs = 2_000;
-      const deadline = Date.now() + maxWaitMs;
-      let latestRun = run;
-
-      while (Date.now() <= deadline) {
-        const current = await researchStore.getRun(run.id);
-        if (!current) {
-          break;
-        }
-
-        latestRun = current;
-        if (isResearchRunTerminal(current.status)) {
-          return {
-            content: [{ type: "text", text: `Research run ${current.id} is ${current.status}.` }],
-            details: toResearchRunDetails(current),
-          };
-        }
-
-        await sleepWithSignal(pollIntervalMs, signal);
-      }
-
-      return {
-        content: [{ type: "text", text: `Research run ${latestRun.id} is ${latestRun.status}.` }],
-        details: toResearchRunDetails(latestRun),
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_list",
-    label: "fn: List Research Runs",
-    description: "Cited-research pipeline: list recent search/fetch/synthesis runs (not experiment-loop sessions).",
-    parameters: Type.Object({
-      status: Type.Optional(StringEnum([...RESEARCH_RUN_STATUSES], { description: "Filter by run status" }) as unknown as TSchema),
-      limit: Type.Optional(Type.Number({ description: "Max runs to return (default: 10)" })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          details: { runs: [], setup: { code: availability.code, message: availability.message } },
-        };
-      }
-
-      const runs = await store.getResearchStore().listRuns({ status: params.status as ResearchRunStatus | undefined, limit: params.limit ?? 10 });
-      const text = runs.length ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n") : "No research runs found.";
-      return { content: [{ type: "text", text }], details: { runs: runs.map(toResearchRunDetails) } };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_get",
-    label: "fn: Get Research Run",
-    description: "Cited-research pipeline: get one run with structured findings and citations (not experiment-loop state).",
-    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          details: {
-            runId: params.id,
-            status: "unavailable",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: availability.message,
-            setup: { code: availability.code, message: availability.message },
-          },
-        };
-      }
-
-      const run = await store.getResearchStore().getRun(params.id);
-      if (!run) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          details: {
-            runId: params.id,
-            status: "missing",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: "not found",
-            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
-          },
-        };
-      }
-      return { content: [{ type: "text", text: `Research run ${run.id} is ${run.status}.` }], details: toResearchRunDetails(run) };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_cancel",
-    label: "fn: Cancel Research Run",
-    description: "Cited-research pipeline: cancel an in-flight run; terminal runs return INVALID_TRANSITION (does not control experiment loops).",
-    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "unavailable",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: availability.message,
-            setup: { code: availability.code, message: availability.message },
-          },
-        };
-      }
-
-      const researchStore = store.getResearchStore();
-      const run = await researchStore.getRun(params.id);
-      if (!run) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "missing",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: "not found",
-            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
-          },
-        };
-      }
-
-      if (!["queued", "running", "cancelling", "retry_waiting"].includes(run.status)) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} cannot be cancelled from status ${run.status}.` }],
-          isError: true,
-          details: {
-            ...toResearchRunDetails(run),
-            error: "invalid transition",
-            setup: { code: "INVALID_TRANSITION", message: "Cancel is only available for queued/running/cancelling/retry_waiting runs." },
-          },
-        };
-      }
-
-      const updated = await researchStore.requestCancellation(params.id);
-      return {
-        content: [{ type: "text", text: `Requested cancellation for research run ${params.id} (status: ${updated.status}).` }],
-        details: toResearchRunDetails(updated),
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: "fn_research_retry",
-    label: "fn: Retry Research Run",
-    description: "Cited-research pipeline: retry a failed run when lifecycle marks it retryable (not an autonomous experiment loop retry).",
-    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const store = await getStore(ctx.cwd);
-      const availability = await getResearchAvailability(store);
-      if (!availability.ok) {
-        return {
-          content: [{ type: "text", text: availability.message! }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "unavailable",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: availability.message,
-            setup: { code: availability.code, message: availability.message },
-          },
-        };
-      }
-
-      const researchStore = store.getResearchStore();
-      const run = await researchStore.getRun(params.id);
-      if (!run) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          isError: true,
-          details: {
-            runId: params.id,
-            status: "missing",
-            summary: null,
-            findings: [],
-            citations: [],
-            error: "not found",
-            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
-          },
-        };
-      }
-      const isRetryExhausted = run.status === "retry_exhausted" || run.lifecycle?.errorCode === "RETRY_EXHAUSTED";
-      if ((run.status !== "failed" && run.status !== "timed_out") || run.lifecycle?.retryable === false || isRetryExhausted) {
-        return {
-          content: [{ type: "text", text: `Research run ${params.id} is not retryable from status ${run.status}.` }],
-          isError: true,
-          details: {
-            ...toResearchRunDetails(run),
-            error: "not retryable",
-            setup: { code: isRetryExhausted ? "RETRY_EXHAUSTED" : "INVALID_TRANSITION", message: "Retry is only available for failed/timed_out retryable runs." },
-          },
-        };
-      }
-
-      const retryRun = await researchStore.createRetryRun(params.id);
-      return {
-        content: [{ type: "text", text: `Created retry run ${retryRun.id} from ${params.id}.` }],
-        details: toResearchRunDetails(retryRun),
-      };
-    },
-  });
+  /*
+  FNXC:MergeQueue 2026-07-15-11:28:
+  Do not register fn_research_* on the host pi extension. These tools dual-boot a second TaskStore via getStore and can wedge agent turns with wait_for_completion polling (same hang class as FN-7956 fn_task_show). Bounded research remains available only when the engine injects createResearchTools into triage/executor/heartbeat sessions with experimentalFeatures.researchView enabled. Operators use `fn research` CLI / dashboard Research view.
+  */
 
   pi.registerTool({
     name: "fn_experiment_finalize",

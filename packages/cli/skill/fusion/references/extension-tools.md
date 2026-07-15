@@ -739,49 +739,6 @@ Read a secret by key using per-secret access policy.
 | `key` | string | ✓ | Secret key |
 | `scope` | union | — | Optional scope |
 
-### fn_research_run
-
-Cited-research pipeline: create a bounded search/fetch/synthesis run (not an autonomous experiment loop) and optionally wait for completion.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | ✓ | Research query or question |
-| `wait_for_completion` | boolean | — | Wait for the run to complete before returning (default: false) |
-| `max_wait_ms` | number | — | Max wait time when wait_for_completion=true (default: 90000, capped by settings) |
-
-### fn_research_list
-
-Cited-research pipeline: list recent search/fetch/synthesis runs (not experiment-loop sessions).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `status` | string(enum) | — | Filter by run status |
-| `limit` | number | — | Max runs to return (default: 10) |
-
-### fn_research_get
-
-Cited-research pipeline: get one run with structured findings and citations (not experiment-loop state).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | ✓ | Research run ID |
-
-### fn_research_cancel
-
-Cited-research pipeline: cancel an in-flight run; terminal runs return INVALID_TRANSITION (does not control experiment loops).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | ✓ | Research run ID |
-
-### fn_research_retry
-
-Cited-research pipeline: retry a failed run when lifecycle marks it retryable (not an autonomous experiment loop retry).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string | ✓ | Research run ID |
-
 ### fn_experiment_finalize
 
 Group kept experiment runs into reviewable branches and finalize the session. Use dryRun=true to preview the plan without touching git.

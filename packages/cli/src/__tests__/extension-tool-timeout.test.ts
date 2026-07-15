@@ -10,8 +10,8 @@ import {
 FNXC:MergeQueue 2026-07-15-11:15:
 FN-7956 hung AI merge review on unbounded extension fn_task_show. These unit tests lock the fail-closed timeout/abort budgets that unblock agent turns when store work wedges.
 
-FNXC:MergeQueue 2026-07-15-11:20:
-Code review follow-up: per-tool budgets must not clip fn_research_run(wait_for_completion) (default max_wait_ms 90s) under a flat 60s outer wrap.
+FNXC:MergeQueue 2026-07-15-11:28:
+Host extension research tools are off; budgets cover remaining long host tools only.
 */
 
 afterEach(() => {
@@ -23,27 +23,6 @@ describe("resolveExtensionToolTimeoutMs", () => {
   it("keeps the default 60s budget for ordinary store tools", () => {
     expect(resolveExtensionToolTimeoutMs("fn_task_show")).toBe(60_000);
     expect(resolveExtensionToolTimeoutMs("fn_task_list")).toBe(60_000);
-  });
-
-  it("raises the budget for fn_research_run wait_for_completion above default max_wait_ms", () => {
-    // Default max_wait_ms is 90s; outer wrap must be strictly larger.
-    expect(
-      resolveExtensionToolTimeoutMs("fn_research_run", { wait_for_completion: true }),
-    ).toBe(90_000 + 15_000);
-  });
-
-  it("honors explicit max_wait_ms for research wait", () => {
-    expect(
-      resolveExtensionToolTimeoutMs("fn_research_run", {
-        wait_for_completion: true,
-        max_wait_ms: 120_000,
-      }),
-    ).toBe(120_000 + 15_000);
-  });
-
-  it("keeps 60s for research when not waiting for completion", () => {
-    expect(resolveExtensionToolTimeoutMs("fn_research_run", { wait_for_completion: false })).toBe(60_000);
-    expect(resolveExtensionToolTimeoutMs("fn_research_run", {})).toBe(60_000);
   });
 
   it("gives multi-minute budgets to skills install and import/browse tools", () => {
@@ -142,30 +121,5 @@ describe("wrapExtensionToolExecute", () => {
       details: { error: "aborted" },
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("fn_abort aborted"));
-  });
-
-  it("uses per-tool research wait budget when timeoutMs is omitted", async () => {
-    const execute = vi.fn(async () => ({ content: [{ type: "text" as const, text: "done" }] }));
-    const wrapped = wrapExtensionToolExecute("fn_research_run", execute);
-    // Should not use the flat 60s path for wait_for_completion — budget is 105s; this call is instant.
-    await expect(
-      wrapped("id", { wait_for_completion: true, max_wait_ms: 90_000 }, undefined),
-    ).resolves.toEqual({ content: [{ type: "text", text: "done" }] });
-    expect(execute).toHaveBeenCalledOnce();
-  });
-
-  it("does not clip a research wait that finishes under max_wait_ms but over 60s", async () => {
-    // Simulate a 70ms wait with a 100ms research budget (not the flat 60ms default for ordinary tools).
-    const execute = vi.fn(
-      async () => {
-        await new Promise((r) => setTimeout(r, 70));
-        return { content: [{ type: "text" as const, text: "research-ok" }] };
-      },
-    );
-    // Explicit small budget that still exceeds the simulated wait (params would resolve to 90s+ in prod).
-    const wrapped = wrapExtensionToolExecute("fn_research_run", execute, 150);
-    await expect(
-      wrapped("id", { wait_for_completion: true, max_wait_ms: 90_000 }, undefined),
-    ).resolves.toEqual({ content: [{ type: "text", text: "research-ok" }] });
   });
 });

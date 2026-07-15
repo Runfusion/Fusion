@@ -147,7 +147,6 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
       "fn_list_agents",
       "fn_delegate_task",
       "fn_agent_show",
-      "fn_research_run",
       "fn_skills_install",
     ]) {
       expect(api.tools.has(toolName), `${toolName} should be registered`).toBe(true);
