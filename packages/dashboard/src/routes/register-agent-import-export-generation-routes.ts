@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline as streamPipeline } from "node:stream/promises";
+import { resolvePlanningSettingsModel } from "@fusion/core";
 import { listEligibleExecutorAgents } from "@fusion/engine";
 import { ApiError, badRequest, notFound, rateLimited } from "../api-error.js";
 import { createSessionDiagnostics } from "../ai-session-diagnostics.js";
@@ -907,6 +908,14 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
+      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
+      const hasExplicitPlanningModel = Boolean(planningModelProvider && planningModelId);
+      const resolvedPlanningProvider = hasExplicitPlanningModel
+        ? planningModelProvider
+        : resolvedPlanningSettings.provider;
+      const resolvedPlanningModelId = hasExplicitPlanningModel
+        ? planningModelId
+        : resolvedPlanningSettings.modelId;
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const { startAgentOnboardingSession } = await import("../agent-onboarding.js");
       const sessionId = await startAgentOnboardingSession(
@@ -919,8 +928,8 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
           existingAgentConfig: resolvedExistingAgentConfig,
         },
         scopedStore.getRootDir(),
-        planningModelProvider,
-        planningModelId,
+        resolvedPlanningProvider,
+        resolvedPlanningModelId,
         settings.promptOverrides,
         options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3],
         scopedStore,

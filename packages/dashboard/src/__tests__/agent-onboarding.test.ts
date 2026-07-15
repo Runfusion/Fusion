@@ -271,6 +271,28 @@ describe("agent-onboarding", () => {
     expect(prompt).toContain("messageResponseMode: immediate");
   });
 
+  it("asks the onboarding model for runtime hints that can select Hermes", async () => {
+    mockCreateFnAgent.mockResolvedValueOnce(
+      createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: { id: "goal", type: "text", question: "What is the primary goal?" },
+        }),
+      ]),
+    );
+
+    await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "Use the Hermes runtime for computer-use testing", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    const options = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
+    expect(options.systemPrompt).toContain('"runtimeHint"');
+    expect(options.systemPrompt).toContain("optional draft suggestions");
+    expect(options.systemPrompt).not.toContain("Do not include runtimeMode/model/runtimeHint");
+  });
+
   it("requests role-fallback and enabled plugin skills for model-only onboarding agents", async () => {
     mockCreateFnAgent.mockResolvedValueOnce(
       createMockAgent([
