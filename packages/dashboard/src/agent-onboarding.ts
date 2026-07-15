@@ -390,8 +390,15 @@ type OnboardingMessage = {
   >;
 };
 
-function extractLastAssistantResponse(messages: unknown[], streamedOutput: string): string {
-  const assistant = (messages as OnboardingMessage[]).filter((message) => message.role === "assistant").pop();
+function extractLastAssistantResponse(messages: unknown, streamedOutput: string): string {
+  const assistant = (Array.isArray(messages) ? messages : [])
+    .filter((message): message is OnboardingMessage => (
+      typeof message === "object"
+      && message !== null
+      && "role" in message
+      && (message as { role?: unknown }).role === "assistant"
+    ))
+    .pop();
   if (typeof assistant?.content === "string") return assistant.content;
   if (!Array.isArray(assistant?.content)) return streamedOutput;
 
@@ -411,30 +418,32 @@ async function continueConversation(session: Session, message: string): Promise<
   const agent = session.agent;
   session.thinkingOutput = "";
   try {
-    await runGenerationWithTimeout(session, async () => {
-      await agent.session.prompt(message);
-      let responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
-      let parsed: ReturnType<typeof parseAgentOnboardingResponse>;
-      try {
-        parsed = parseAgentOnboardingResponse(responseText);
-      } catch {
-        session.thinkingOutput = "";
-        await agent.session.prompt(REFORMAT_PROMPT);
-        responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
-        parsed = parseAgentOnboardingResponse(responseText);
-      }
-      session.error = undefined;
-      session.updatedAt = new Date();
-      if (parsed.type === "question") {
-        session.currentQuestion = parsed.data;
-        agentOnboardingStreamManager.broadcast(session.id, { type: "question", data: parsed.data });
-      } else {
-        session.summary = parsed.data;
-        session.currentQuestion = undefined;
-        agentOnboardingStreamManager.broadcast(session.id, { type: "summary", data: parsed.data });
-        agentOnboardingStreamManager.broadcast(session.id, { type: "complete" });
-      }
-    });
+    await runGenerationWithTimeout(session, () => agent.session.prompt(message));
+    let responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
+    let parsed: ReturnType<typeof parseAgentOnboardingResponse>;
+    try {
+      parsed = parseAgentOnboardingResponse(responseText);
+    } catch {
+      /*
+      FNXC:AgentOnboarding 2026-07-15-14:32:
+      A malformed first interview response must not consume the recovery turn's generation budget. Run the reformat prompt as a distinct timed generation so it receives the full timeout and remains independently stoppable.
+      */
+      session.thinkingOutput = "";
+      await runGenerationWithTimeout(session, () => agent.session.prompt(REFORMAT_PROMPT));
+      responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
+      parsed = parseAgentOnboardingResponse(responseText);
+    }
+    session.error = undefined;
+    session.updatedAt = new Date();
+    if (parsed.type === "question") {
+      session.currentQuestion = parsed.data;
+      agentOnboardingStreamManager.broadcast(session.id, { type: "question", data: parsed.data });
+    } else {
+      session.summary = parsed.data;
+      session.currentQuestion = undefined;
+      agentOnboardingStreamManager.broadcast(session.id, { type: "summary", data: parsed.data });
+      agentOnboardingStreamManager.broadcast(session.id, { type: "complete" });
+    }
   } catch (err) {
     session.error = err instanceof Error ? err.message : String(err);
     agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
