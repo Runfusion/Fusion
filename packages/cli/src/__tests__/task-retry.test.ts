@@ -20,6 +20,9 @@ import { createPgExtensionHarness } from "./pg-extension-harness.js";
 const resolveProjectMock = vi.hoisted(() => vi.fn());
 vi.mock("../project-context.js", () => ({
   resolveProject: resolveProjectMock,
+  closeProjectStore: vi.fn(async () => undefined),
+  asLocalProjectContext: vi.fn((store: unknown) => ({ projectId: "test", projectPath: "test", projectName: "test", isRegistered: false, store })),
+  createLocalStore: vi.fn(async () => null),
 }));
 
 import { runTaskRetry } from "../commands/task.js";
@@ -49,7 +52,7 @@ pgTest("runTaskRetry", () => {
   afterAll(h.afterAll);
 
   it("retries merge-active missing-worktree session failures by clearing phantom metadata", async () => {
-    const store = await createStore();
+    const store = h.store();
     const task = await store.createTask({
       title: "missing worktree merge-active task",
       description: "test",
@@ -70,8 +73,7 @@ pgTest("runTaskRetry", () => {
 
     await runTaskRetry(task.id);
 
-    const verificationStore = await createStore();
-    const updated = await verificationStore.getTask(task.id);
+    const updated = await h.store().getTask(task.id);
     expect(updated.column).toBe("todo");
     expect(updated.status).toBeUndefined();
     expect(updated.error).toBeUndefined();
@@ -84,7 +86,7 @@ pgTest("runTaskRetry", () => {
   });
 
   it("rejects unrelated merge-active tasks without the missing-worktree signature", async () => {
-    const store = await createStore();
+    const store = h.store();
     const task = await store.createTask({ title: "ordinary merge", description: "test", column: "todo" });
     await store.moveTask(task.id, "in-progress");
     await store.moveTask(task.id, "in-review");

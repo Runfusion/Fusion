@@ -79,6 +79,7 @@ describe("projectStorage", () => {
         "kb-dashboard-task-view",
         "kb-dashboard-list-columns",
         "kb-dashboard-hide-done",
+        "kb-dashboard-todo-hide-done",
         "kb-dashboard-list-collapsed",
         "kb-dashboard-selected-tasks",
         "kb-dashboard-list-selected-task",
@@ -86,6 +87,7 @@ describe("projectStorage", () => {
         "kb-dashboard-mailbox-sidebar-width",
         "kb-dashboard-agents-sidebar-width",
         "kb-dashboard-github-import-list-width",
+        "kb-dashboard-github-import-state",
         "kb-quick-entry-text",
         "kb-inline-create-text",
         "fn-agent-view",
@@ -101,13 +103,18 @@ describe("projectStorage", () => {
         "kb-dashboard-working-branch-filter",
         "kb-dashboard-base-branch-filter",
         "kb-capacity-risk-banner-dismissed",
+        "kb-github-setup-warning-missing-since",
         "kb-files-line-numbers",
         "kb-dashboard-dock-files-current",
         "kb-dashboard-board-workflow-selection",
         "fusion-plugin-dependency-graph:positions",
       ]),
     );
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(29);
+    /*
+    FNXC:ProjectStorage 2026-07-14-19:20:
+    Keep PROJECT_STORAGE_KEYS length lockstep with the source array (todo hide-done, github import state, github setup warning dismissals).
+    */
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(32);
   });
 
   it("stores branch filter values as scoped strings per project", () => {

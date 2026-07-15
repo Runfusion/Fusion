@@ -1,23 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { beforeAll, beforeEach, afterEach, afterAll, describe, it, expect, vi } from "vitest";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentStore } from "@fusion/core";
-import kbExtension, { closeCachedStores } from "../extension.js";
+import {
+  createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
+  registerExtension,
+} from "./pg-extension-harness.js";
 
-function createMockAPI() {
-  const tools = new Map<string, any>();
-  return {
-    registerTool(def: any) {
-      tools.set(def.name, def);
-    },
-    registerCommand() {},
-    registerShortcut() {},
-    registerFlag() {},
-    on() {},
-    tools,
-  } as any;
-}
+const pgTest = pgDescribe;
+const h = createPgExtensionHarness("fn-ext-agent-update");
 
 async function withOrg(
   run: (ctx: {
@@ -35,66 +27,68 @@ async function withOrg(
     };
   }) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "fn-ext-agent-update-"));
-  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion") });
-  try {
-    await agentStore.init();
-    const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
-    const middle = await agentStore.createAgent({
-      name: "middle-manager",
-      role: "engineer",
-      reportsTo: manager.id,
-      runtimeConfig: { preservedFlag: true },
-      metadata: {},
-    });
-    const leaf = await agentStore.createAgent({
-      name: "leaf-agent",
-      role: "executor",
-      reportsTo: middle.id,
-      metadata: {},
-    });
-    const sibling = await agentStore.createAgent({
-      name: "sibling-manager",
-      role: "engineer",
-      reportsTo: manager.id,
-      metadata: {},
-    });
-    const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
-    const ephemeral = await agentStore.createAgent({
-      name: "executor-runtime",
-      role: "executor",
-      metadata: { agentKind: "task-worker" },
-    });
+  const cwd = h.rootDir();
+  const agentStore = new AgentStore({
+    rootDir: join(cwd, ".fusion"),
+    asyncLayer: h.store().getAsyncLayer() ?? undefined,
+  });
+  await agentStore.init();
+  const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
+  const middle = await agentStore.createAgent({
+    name: "middle-manager",
+    role: "engineer",
+    reportsTo: manager.id,
+    runtimeConfig: { preservedFlag: true },
+    metadata: {},
+  });
+  const leaf = await agentStore.createAgent({
+    name: "leaf-agent",
+    role: "executor",
+    reportsTo: middle.id,
+    metadata: {},
+  });
+  const sibling = await agentStore.createAgent({
+    name: "sibling-manager",
+    role: "engineer",
+    reportsTo: manager.id,
+    metadata: {},
+  });
+  const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
+  const ephemeral = await agentStore.createAgent({
+    name: "executor-runtime",
+    role: "executor",
+    metadata: { agentKind: "task-worker" },
+  });
 
-    const api = createMockAPI();
-    kbExtension(api);
-    const tool = api.tools.get("fn_agent_update");
-    const setInstructionsTool = api.tools.get("fn_agent_set_instructions");
-    expect(tool).toBeTruthy();
-    expect(setInstructionsTool).toBeTruthy();
+  const api = createMockApi();
+  registerExtension(api);
+  const tool = api.tools.get("fn_agent_update");
+  const setInstructionsTool = api.tools.get("fn_agent_set_instructions");
+  expect(tool).toBeTruthy();
+  expect(setInstructionsTool).toBeTruthy();
 
-    await run({
-      cwd,
-      tool,
-      setInstructionsTool,
-      agentStore,
-      ids: {
-        manager: manager.id,
-        middle: middle.id,
-        leaf: leaf.id,
-        sibling: sibling.id,
-        peer: peer.id,
-        ephemeral: ephemeral.id,
-      },
-    });
-  } finally {
-    await closeCachedStores();
-    agentStore.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
+  await run({
+    cwd,
+    tool,
+    setInstructionsTool,
+    agentStore,
+    ids: {
+      manager: manager.id,
+      middle: middle.id,
+      leaf: leaf.id,
+      sibling: sibling.id,
+      peer: peer.id,
+      ephemeral: ephemeral.id,
+    },
+  });
 }
 
-describe("fn_agent_update", () => {
+pgTest("fn_agent_update", () => {
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
   it("allows privileged operator calls to update config fields and preserve runtime keys", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const updateSpy = vi.spyOn(AgentStore.prototype, "updateAgent");

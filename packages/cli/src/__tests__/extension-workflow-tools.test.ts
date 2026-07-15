@@ -249,6 +249,9 @@ pgTest("pi extension workflow authoring tools", () => {
   ACTUAL landing column instead of a fixed "Column: triage" string.
   */
   it("lands a task in a custom workflow's intake column and echoes it in the response text", async () => {
+    const api = createMockApi();
+    registerExtension(api);
+    const tmpDir = h.rootDir();
     const inboxIr: WorkflowIr = {
       version: "v2",
       name: "Inbox-intake workflow",
@@ -298,6 +301,9 @@ pgTest("pi extension workflow authoring tools", () => {
   });
 
   it("still reports Column: triage for the default builtin:coding workflow (byte-identical regression guard)", async () => {
+    const api = createMockApi();
+    registerExtension(api);
+    const tmpDir = h.rootDir();
     const createTask = api.tools.get("fn_task_create")!;
     const result = await createTask.execute(
       "create-default-task",

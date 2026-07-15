@@ -1,23 +1,15 @@
-import { describe, it, expect } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { beforeAll, beforeEach, afterEach, afterAll, describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentStore } from "@fusion/core";
-import kbExtension, { closeCachedStores } from "../extension.js";
+import {
+  createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
+  registerExtension,
+} from "./pg-extension-harness.js";
 
-function createMockAPI() {
-  const tools = new Map<string, any>();
-  return {
-    registerTool(def: any) {
-      tools.set(def.name, def);
-    },
-    registerCommand() {},
-    registerShortcut() {},
-    registerFlag() {},
-    on() {},
-    tools,
-  } as any;
-}
+const pgTest = pgDescribe;
+const h = createPgExtensionHarness("fn-ext-agent-instructions");
 
 async function withOrg(
   run: (ctx: {
@@ -27,44 +19,46 @@ async function withOrg(
     ids: { manager: string; middle: string; leaf: string; peer: string };
   }) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "fn-ext-agent-instructions-"));
-  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion") });
-  try {
-    await agentStore.init();
-    const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
-    const middle = await agentStore.createAgent({
-      name: "middle-manager",
-      role: "engineer",
-      reportsTo: manager.id,
-      metadata: {},
-    });
-    const leaf = await agentStore.createAgent({
-      name: "leaf-agent",
-      role: "executor",
-      reportsTo: middle.id,
-      metadata: {},
-    });
-    const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
+  const cwd = h.rootDir();
+  const agentStore = new AgentStore({
+    rootDir: join(cwd, ".fusion"),
+    asyncLayer: h.store().getAsyncLayer() ?? undefined,
+  });
+  await agentStore.init();
+  const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
+  const middle = await agentStore.createAgent({
+    name: "middle-manager",
+    role: "engineer",
+    reportsTo: manager.id,
+    metadata: {},
+  });
+  const leaf = await agentStore.createAgent({
+    name: "leaf-agent",
+    role: "executor",
+    reportsTo: middle.id,
+    metadata: {},
+  });
+  const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
 
-    const api = createMockAPI();
-    kbExtension(api);
-    const tool = api.tools.get("fn_agent_set_instructions");
-    expect(tool).toBeTruthy();
+  const api = createMockApi();
+  registerExtension(api);
+  const tool = api.tools.get("fn_agent_set_instructions");
+  expect(tool).toBeTruthy();
 
-    await run({
-      cwd,
-      tool,
-      agentStore,
-      ids: { manager: manager.id, middle: middle.id, leaf: leaf.id, peer: peer.id },
-    });
-  } finally {
-    await closeCachedStores();
-    agentStore.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
+  await run({
+    cwd,
+    tool,
+    agentStore,
+    ids: { manager: manager.id, middle: middle.id, leaf: leaf.id, peer: peer.id },
+  });
 }
 
-describe("fn_agent_set_instructions", () => {
+pgTest("fn_agent_set_instructions", () => {
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
+
   it("allows a manager to set inline instructions for a direct report", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(

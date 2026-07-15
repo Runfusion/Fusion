@@ -637,6 +637,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createCliCoreMock } = await import("../../test/mockCoreEngine");
   return createCliCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
+  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: mocks.taskStoreCtor,
   createTaskStoreForBackend: mocks.createTaskStoreForBackendMock,
   AutomationStore: mocks.automationStoreCtor,

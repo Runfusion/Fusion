@@ -4038,7 +4038,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     it("surfaces error and pause diagnostics only for error/paused agents", async () => {
-      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion") });
+      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
       await agentStore.init();
       const errorAgent = await agentStore.createAgent({ name: "error-agent", role: "executor", metadata: {} });
       const pausedAgent = await agentStore.createAgent({ name: "paused-agent", role: "executor", metadata: {} });
@@ -4296,7 +4296,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     it("surfaces lastError, pauseReason, and recovery counters", async () => {
-      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion") });
+      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
       await agentStore.init();
       const agent = await agentStore.createAgent({
         name: "diagnostic-agent",
