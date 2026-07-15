@@ -422,7 +422,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "task popup", "task popups", "board list popups", "popup view attachment", "open tasks as popups", "quick chat"] },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global", searchableText: ["ntfy", "webhook", "events", "failure notifications", "sticky", "toast"] },
   { id: "node-sync", label: "Node Sync", labelKey: "settings.nav.nodeSync", scope: "global", searchableText: ["sync", "node", "distributed", "heartbeat", "coordination"] },
-  { id: "global-models", label: "Models", labelKey: "settings.nav.globalModels", scope: "global", searchableText: ["global models", "model presets", "favorite providers", "model pricing overrides", "LiteLLM pricing", "token pricing"] },
+  { id: "global-models", label: "Models", labelKey: "settings.nav.globalModels", scope: "global", searchableText: ["global models", "model presets", "favorite providers", "model pricing overrides", "LiteLLM pricing", "token pricing", "translate", "translation model", "import translation model", "import auto-translation model"] },
   { id: "global-mcp", label: "MCP Servers", labelKey: "settings.nav.globalMcp", scope: "global", searchableText: ["global MCP servers", "shared MCP", "user MCP", "tool servers"] },
   {
     id: "cli-agents",
@@ -473,7 +473,24 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 
   // Project group (specific to this project)
   { id: "__project_header", label: "Project", labelKey: "settings.nav.projectHeader", scope: undefined, isGroupHeader: true },
-  { id: "general", label: "Project General", labelKey: "settings.nav.projectGeneral", scope: "project", searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "GitHub tracking", "GitLab integration", "chat rooms", "auto-cleanup old chats"] },
+  {
+    id: "general",
+    label: "Project General",
+    labelKey: "settings.nav.projectGeneral",
+    scope: "project",
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-16:20:
+    Import auto-translation lives in Project General beside the other import-scoped GitHub settings, but operators look for it by what it DOES ("translate", "language", "auto translate issues"), not by the section it happens to live in. Settings search only matches curated terms plus advertised i18n keys, so without these the controls are effectively unfindable — the section name says nothing about translation.
+    */
+    searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "GitHub tracking", "GitLab integration", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization"],
+    searchableKeys: [
+      "settings.general.autoTranslateImportedIssues",
+      "settings.general.autoTranslateImportedIssuesHelp",
+      "settings.general.translationTargetLanguage",
+      "settings.general.translationTargetLanguageHelp",
+      "settings.general.followDashboardLanguage",
+    ],
+  },
   { id: "commands", label: "Commands & Scripts", labelKey: "settings.nav.commands", scope: "project", searchableText: ["test command", "build command", "verification command", "workflow scripts", "commands"] },
   { id: "worktrees", label: "Worktrees", labelKey: "settings.nav.worktrees", scope: "project", searchableText: ["worktree directory", "copy files", "recycle worktrees", "branch naming", "sibling branch rename"] },
   { id: "scheduling", label: "Scheduling & Capacity", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
@@ -526,6 +543,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       "chat agent",
       "prompt for model",
       "always use default",
+      // FNXC:GitHubImportTranslate 2026-07-15-16:20: the import-translate lane is picked here.
+      "translate",
+      "translation",
+      "translation model",
+      "import translation model",
+      "import auto-translation model",
+      "auto-translate model",
     ],
     searchableKeys: [
       "settings.projectModels.chatHeading",

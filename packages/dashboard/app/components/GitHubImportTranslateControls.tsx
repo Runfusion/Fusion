@@ -10,7 +10,7 @@ Operators can translate title+body into the active UI locale, toggle original vs
 Translation is opt-in (never automatic) so import provenance stays faithful until the operator asks. [Superseded 2026-07-15 for the auto-translate path; still the behavior when the setting is off.]
 */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Languages, Loader2 } from "lucide-react";
 import type { Locale } from "@fusion/core";
@@ -37,6 +37,12 @@ Sorting/capping happens here rather than server-side so the cap applies to what 
 Closed issues are excluded outright: their translations are neither created nor kept.
 */
 export const AUTO_TRANSLATE_MAX_ISSUES = 50;
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-17:05:
+Issues per background request. Small enough that the first translated titles appear quickly instead of after the whole page, large enough not to make 50 issues into 50 round-trips. Each chunk is an independent failure/retry unit.
+*/
+export const AUTO_TRANSLATE_CHUNK_SIZE = 8;
 
 export interface AutoTranslateListItem {
   number: number;
@@ -83,6 +89,11 @@ export function useGitHubImportAutoTranslate({
   const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-17:05:
+  `items` is a fresh ARRAY IDENTITY on most renders, so neither it nor anything derived from it may sit in the effect's dependency list: the effect calls setState, setState re-renders, the re-render mints a new array, and the effect fires again — an infinite render loop (caught as an OOM under renderHook).
+  Everything the effect depends on is therefore reduced to STRING keys (stable by value), and the live issue data is read from a ref at run time instead of being a dependency.
+  */
   // Only the 50 most recent OPEN issues are eligible. GitHub returns issues
   // newest-first, so list order is already "most recent".
   const eligible = useMemo(
@@ -90,8 +101,17 @@ export function useGitHubImportAutoTranslate({
     [items],
   );
 
-  /* Re-run only when the actual issue set changes — not on every list re-render,
-     which would re-request on unrelated state churn. */
+  /** True when more open issues exist than a single load will translate. */
+  const openCount = useMemo(
+    () => items.filter((item) => item.state !== "closed").length,
+    [items],
+  );
+
+  const eligibleRef = useRef(eligible);
+  eligibleRef.current = eligible;
+
+  /* Stable-by-value key: re-runs only when the actual issue set / repo / locale
+     changes, not on unrelated list re-renders. */
   const requestKey = useMemo(
     () =>
       enabled && owner && repo && eligible.length > 0
@@ -100,59 +120,84 @@ export function useGitHubImportAutoTranslate({
     [enabled, owner, repo, targetLocale, eligible],
   );
 
+  const capExceeded = openCount > AUTO_TRANSLATE_MAX_ISSUES;
+
   useEffect(() => {
     if (!requestKey) {
-      setTranslations(new Map());
-      setCapped(false);
-      setError(null);
+      // Identity-preserving resets: returning the previous value when there is
+      // nothing to clear avoids a state change (and therefore a re-render loop).
+      setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
+      setCapped((prev) => (prev ? false : prev));
+      setError((prev) => (prev ? null : prev));
+      setLoading((prev) => (prev ? false : prev));
       return;
     }
 
+    const pending = eligibleRef.current;
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setError((prev) => (prev ? null : prev));
+    setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
+    setCapped(capExceeded);
 
-    autoTranslateImportIssues(
-      owner,
-      repo,
-      eligible.map((item) => ({
-        number: item.number,
-        title: item.title ?? "",
-        body: item.body ?? null,
-        state: item.state === "closed" ? "closed" : "open",
-      })),
-      targetLocale,
-      projectId,
-    )
-      .then((response) => {
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-17:05:
+    Translation runs in the BACKGROUND and streams in: the list renders immediately in the original language and each chunk's titles swap in as they land. Nothing here is awaited by the issue-list fetch, the preview, or Import.
+    Chunked rather than one 50-issue request because a single request only resolves once EVERY issue is translated — on a big page that is minutes of nothing happening, and one timeout would discard the whole page's work. Chunks make progress visible and make a failure cost one chunk instead of all 50.
+    Chunks are issued sequentially so a panel open cannot fan 50 model calls at the provider at once (the server already runs 4-way concurrency within a chunk); a cancelled/closed panel stops at the next chunk boundary.
+    */
+    void (async () => {
+      for (let i = 0; i < pending.length; i += AUTO_TRANSLATE_CHUNK_SIZE) {
         if (cancelled) return;
-        const next = new Map<number, ImportTranslateFields>();
-        for (const [key, value] of Object.entries(response.translations ?? {})) {
-          const number = Number(key);
-          if (Number.isInteger(number)) {
-            next.set(number, { title: value.title, body: value.body });
+        const chunk = pending.slice(i, i + AUTO_TRANSLATE_CHUNK_SIZE);
+        try {
+          const response = await autoTranslateImportIssues(
+            owner,
+            repo,
+            chunk.map((item) => ({
+              number: item.number,
+              title: item.title ?? "",
+              body: item.body ?? null,
+              state: item.state === "closed" ? "closed" : "open",
+            })),
+            targetLocale,
+            projectId,
+          );
+          if (cancelled) return;
+
+          // The server is the authority on the setting: an "off" answer stops the run.
+          if (response.enabled === false) return;
+
+          const received = Object.entries(response.translations ?? {});
+          if (received.length > 0) {
+            setTranslations((prev) => {
+              const next = new Map(prev);
+              for (const [key, value] of received) {
+                const number = Number(key);
+                if (Number.isInteger(number)) {
+                  next.set(number, { title: value.title, body: value.body });
+                }
+              }
+              return next;
+            });
           }
+        } catch (err) {
+          if (cancelled) return;
+          // Fail soft: keep whatever already landed and surface the error;
+          // remaining chunks still get their chance.
+          setError(getTranslateErrorMessage(err));
         }
-        setTranslations(next);
-        setCapped(Boolean(response.capped));
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        // Fail soft: the list still renders in the original language.
-        setError(getTranslateErrorMessage(err));
-        setTranslations(new Map());
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      }
+      if (!cancelled) setLoading(false);
+    })();
 
     return () => {
       cancelled = true;
     };
-    // `requestKey` encodes every input that should retrigger the fetch (repo,
-    // locale, issue set); depending on `eligible` directly would refetch on any
-    // list re-render.
-  }, [requestKey, owner, repo, eligible, targetLocale, projectId]);
+    // Deps are STRING/scalar only. `requestKey` already encodes repo+locale+issue
+    // set; adding `items`/`eligible` (array identities) would re-fire the effect on
+    // every render and loop. Live data comes from `eligibleRef`.
+  }, [requestKey, owner, repo, targetLocale, projectId, capExceeded]);
 
   return { translations, loading, capped, error };
 }
