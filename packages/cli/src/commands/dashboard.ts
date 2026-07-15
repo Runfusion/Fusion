@@ -1436,20 +1436,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     try {
       const { loaded, errors } = await pluginLoader.loadAllPlugins();
       logSink.log(`Loaded ${loaded} plugins (${errors} errors)`, "plugins");
-
-      const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
-      if (schemaHooks.length > 0) {
-        try {
-          /* FNXC:PluginPostgresSchema 2026-07-14-17:30: Dashboard startup materializes runtime-loaded plugin schemas through the backend-aware TaskStore contract instead of skipping PostgreSQL hooks. */
-          await store.runPluginSchemaInits(schemaHooks);
-        } catch (err) {
-          logSink.log(
-            `Schema initialization failed: ${err instanceof Error ? err.message : err}`,
-            "plugins",
-          );
-          throw err;
-        }
-      }
+      /* FNXC:PluginPostgresSchema 2026-07-14-23:31: PluginLoader executes each schema contract before onLoad; dashboard startup must not replay those PostgreSQL transactions after loadAllPlugins. */
     } catch (err) {
       logSink.log(
         `Failed to load plugins: ${err instanceof Error ? err.message : err}`,

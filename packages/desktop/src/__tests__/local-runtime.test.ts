@@ -498,10 +498,6 @@ describe("LocalRuntimeManager", () => {
         return server as unknown as Server;
       }),
     });
-    engineMocks.pluginLoaderInstance.getPluginSchemaInitHooks.mockReturnValueOnce([
-      { pluginId: "fusion-plugin-even-realities-glasses", hook: vi.fn() },
-    ]);
-
     const manager = new LocalRuntimeManager({
       rootDir: "/repo",
       createStore: async () => store,
@@ -515,10 +511,8 @@ describe("LocalRuntimeManager", () => {
       expect.objectContaining({ pluginStore: engineMocks.pluginStoreInstance, taskStore: expect.anything() }),
     );
     expect(engineMocks.pluginLoaderInstance.loadAllPlugins).toHaveBeenCalledTimes(1);
-    /* FNXC:DesktopPluginSchema 2026-07-14-17:50: Desktop schema initialization goes through TaskStore and therefore cannot reach backend getDatabase(). */
-    expect(engineMocks.runPluginSchemaInits).toHaveBeenCalledWith([
-      expect.objectContaining({ pluginId: "fusion-plugin-even-realities-glasses" }),
-    ]);
+    /* FNXC:DesktopPluginSchema 2026-07-14-23:31: The host verifies single schema ownership by leaving execution to PluginLoader instead of replaying collected contracts. */
+    expect(engineMocks.runPluginSchemaInits).not.toHaveBeenCalled();
     expect(engineMocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

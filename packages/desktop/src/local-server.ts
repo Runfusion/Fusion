@@ -155,11 +155,7 @@ export class DesktopLocalServerManager {
         }
 
         await pluginLoader.loadAllPlugins();
-        const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
-        if (schemaHooks.length > 0) {
-          /* FNXC:DesktopPluginSchema 2026-07-14-17:30: Legacy desktop server delegates plugin schema work to TaskStore so PostgreSQL never calls getDatabase(). */
-          await store.runPluginSchemaInits(schemaHooks);
-        }
+        /* FNXC:DesktopPluginSchema 2026-07-14-23:31: PluginLoader runs backend-aware schema contracts before onLoad; the legacy desktop host must not replay them after loadAllPlugins. */
 
         ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
           if (!isBundledPluginId(pluginId)) {

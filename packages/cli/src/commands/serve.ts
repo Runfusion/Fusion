@@ -614,30 +614,19 @@ export async function runServe(
   FNXC:PluginPostgresSchema 2026-07-14-21:48:
   Optional plugin module-load failures remain nonfatal for serve compatibility. A schema initialization failure from a loaded plugin is instead a fatal storage-integrity error and must escape startup rather than being swallowed by the module-load catch.
   */
-  let pluginsLoaded = false;
   try {
     const { loaded, errors } = await pluginLoader.loadAllPlugins();
     console.log(`[plugins] Loaded ${loaded} plugins (${errors} errors)`);
-    pluginsLoaded = true;
   } catch (err) {
     console.error(
       `[plugins] Failed to load plugins: ${err instanceof Error ? err.message : err}`
     );
   }
 
-  if (pluginsLoaded) {
-    const schemaHooks = pluginLoader.getPluginSchemaInitHooks?.() ?? [];
-    if (schemaHooks.length > 0) {
-      try {
-        await store.runPluginSchemaInits(schemaHooks);
-      } catch (err) {
-        console.error(
-          `[plugins] Schema initialization failed: ${err instanceof Error ? err.message : err}`,
-        );
-        throw err;
-      }
-    }
-  }
+  /*
+  FNXC:PluginPostgresSchema 2026-07-14-23:31:
+  PluginLoader owns schema execution before each plugin's onLoad hook. Hosts must not replay the collected contracts after loadAllPlugins because duplicate PostgreSQL transactions and advisory-lock acquisition add startup contention without strengthening the fail-closed contract.
+  */
 
   // Get subsystems from the primary engine for the HTTP layer
   const heartbeatMonitor = primaryEngine.getRuntime().getHeartbeatMonitor();

@@ -277,11 +277,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       strace("createDashboardServer: pluginLoader.loadAllPlugins");
       const { loaded, errors } = await pluginLoader.loadAllPlugins();
       strace(`createDashboardServer: plugins loaded=${loaded} errors=${errors}`);
-      const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
-      if (schemaHooks.length > 0) {
-        /* FNXC:DesktopPluginSchema 2026-07-14-17:30: Embedded desktop must not open the removed sync database in PostgreSQL mode; TaskStore selects the registered PG schema hook. */
-        await store.runPluginSchemaInits(schemaHooks);
-      }
+      /* FNXC:DesktopPluginSchema 2026-07-14-23:31: PluginLoader runs backend-aware schema contracts before onLoad; embedded desktop must not replay them after loadAllPlugins. */
 
       ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
         if (!isBundledPluginId(pluginId)) {

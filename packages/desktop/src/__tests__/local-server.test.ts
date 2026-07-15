@@ -303,10 +303,6 @@ describe("DesktopLocalServerManager", () => {
   it("wires PluginStore + PluginLoader into createServer (FN-7623)", async () => {
     const { DesktopLocalServerManager } = await import("../local-server.ts");
     const manager = new DesktopLocalServerManager("/repo");
-    mocks.pluginLoaderInstance.getPluginSchemaInitHooks.mockReturnValueOnce([
-      { pluginId: "fusion-plugin-even-realities-glasses", hook: vi.fn() },
-    ]);
-
     await manager.start();
 
     expect(mocks.store.getPluginStore).toHaveBeenCalledTimes(1);
@@ -315,9 +311,8 @@ describe("DesktopLocalServerManager", () => {
       expect.objectContaining({ pluginStore: mocks.pluginStoreInstance, taskStore: expect.anything() }),
     );
     expect(mocks.pluginLoaderInstance.loadAllPlugins).toHaveBeenCalledTimes(1);
-    expect(mocks.runPluginSchemaInits).toHaveBeenCalledWith([
-      expect.objectContaining({ pluginId: "fusion-plugin-even-realities-glasses" }),
-    ]);
+    /* FNXC:DesktopPluginSchema 2026-07-14-23:31: The host verifies single schema ownership by leaving execution to PluginLoader instead of replaying collected contracts. */
+    expect(mocks.runPluginSchemaInits).not.toHaveBeenCalled();
     expect(mocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
