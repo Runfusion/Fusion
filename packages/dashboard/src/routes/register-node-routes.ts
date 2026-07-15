@@ -1,3 +1,4 @@
+import { sanitizeDockerNodeConfigForResponse, validateDockerNodeConfig } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
@@ -44,7 +45,28 @@ function isDiscoveredRemoteProject(value: unknown): value is DiscoveredRemotePro
 }
 
 export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
-  const { router, rethrowAsApiError } = ctx;
+  const { router, options, rethrowAsApiError } = ctx;
+
+  const openCentralCore = async (): Promise<import("@fusion/core").CentralCore> => {
+    const sharedCentral = options?.centralCore;
+    if (sharedCentral) {
+      if (typeof sharedCentral.isInitialized === "function" && !sharedCentral.isInitialized()) {
+        await sharedCentral.init();
+      }
+      return sharedCentral;
+    }
+
+    const { CentralCore } = await import("@fusion/core");
+    const central = new CentralCore();
+    await central.init();
+    return central;
+  };
+
+  const closeCentralCoreIfOwned = async (central: import("@fusion/core").CentralCore): Promise<void> => {
+    if (central !== options?.centralCore) {
+      await central.close();
+    }
+  };
 
   // ── Node Management Routes (Multi-Node Support) ───────────────────────────
 
@@ -55,12 +77,10 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/nodes", async (_req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const nodes = await central.listNodes();
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       nodes.sort((a, b) => a.name.localeCompare(b.name));
       res.json(nodes);
@@ -106,9 +126,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest("capabilities must be an array of strings");
       }
 
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const node = await central.registerNode({
         name: name.trim(),
@@ -120,7 +138,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
         dockerConfig,
       });
 
-      await central.close();
+      await closeCentralCoreIfOwned(central);
       res.status(201).json(node);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -204,11 +222,9 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    * List all project path mappings for a node.
    */
   router.get("/nodes/:id/path-mappings", async (req, res) => {
-    const { CentralCore } = await import("@fusion/core");
-    const central = new CentralCore();
+    const central = await openCentralCore();
 
     try {
-      await central.init();
       const mappings = await central.listProjectNodePathMappingsForNode(req.params.id);
       res.json(mappings);
     } catch (err: unknown) {
@@ -219,7 +235,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
       const status = message.includes("Node not found") ? 404 : 500;
       throw new ApiError(status, message);
     } finally {
-      await central.close();
+      await closeCentralCoreIfOwned(central);
     }
   });
 
@@ -229,12 +245,10 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/nodes/:id", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const node = await central.getNode(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       if (!node) {
         throw notFound("Node not found");
@@ -266,12 +280,10 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
       if (capabilities !== undefined) updates.capabilities = capabilities;
       if (dockerConfig !== undefined) updates.dockerConfig = dockerConfig;
 
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const node = await central.updateNode(req.params.id, updates);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       res.json(node);
     } catch (err: unknown) {
@@ -293,11 +305,9 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/nodes/:id/docker-config", async (req, res) => {
     try {
-      const { CentralCore, sanitizeDockerNodeConfigForResponse } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
       const node = await central.getNode(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
       if (!node) throw notFound("Node not found");
       res.json(node.dockerConfig ? sanitizeDockerNodeConfigForResponse(node.dockerConfig) : null);
     } catch (err: unknown) {
@@ -312,20 +322,18 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.put("/nodes/:id/docker-config", async (req, res) => {
     try {
-      const { CentralCore, validateDockerNodeConfig, sanitizeDockerNodeConfigForResponse } = await import("@fusion/core");
       const validation = validateDockerNodeConfig(req.body);
       if (!validation.valid || !validation.config) {
         throw new ApiError(400, "Invalid Docker config", { errors: validation.errors ?? [] });
       }
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
       const node = await central.getNode(req.params.id);
       if (!node) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw notFound("Node not found");
       }
       const updated = await central.updateNode(req.params.id, { dockerConfig: validation.config });
-      await central.close();
+      await closeCentralCoreIfOwned(central);
       res.json(sanitizeDockerNodeConfigForResponse(updated.dockerConfig!));
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -335,17 +343,15 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.patch("/nodes/:id/docker-config", async (req, res) => {
     try {
-      const { CentralCore, validateDockerNodeConfig, sanitizeDockerNodeConfigForResponse } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
       const node = await central.getNode(req.params.id);
       if (!node) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw notFound("Node not found");
       }
       const existing = node.dockerConfig;
       if (!existing) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw badRequest("Node has no existing Docker config; use PUT first");
       }
 
@@ -370,12 +376,12 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
 
       const validation = validateDockerNodeConfig(merged);
       if (!validation.valid || !validation.config) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw new ApiError(400, "Invalid Docker config", { errors: validation.errors ?? [] });
       }
 
       const updated = await central.updateNode(req.params.id, { dockerConfig: validation.config });
-      await central.close();
+      await closeCentralCoreIfOwned(central);
       res.json(sanitizeDockerNodeConfigForResponse(updated.dockerConfig!));
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -385,11 +391,9 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
 
   router.get("/nodes/:id/docker-config/diff", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
       const node = await central.getNode(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
       if (!node) throw notFound("Node not found");
       if (!node.dockerConfig) {
         res.json({ config: null });
@@ -412,18 +416,16 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.delete("/nodes/:id", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const existing = await central.getNode(req.params.id);
       if (!existing) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw notFound("Node not found");
       }
 
       await central.unregisterNode(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       res.status(204).end();
     } catch (err: unknown) {
@@ -440,12 +442,10 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/nodes/:id/health-check", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const healthStatus = await central.checkNodeHealth(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       res.json({ status: healthStatus });
     } catch (err: unknown) {
@@ -463,12 +463,10 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/nodes/:id/metrics", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const node = await central.getNode(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       if (!node) {
         throw notFound("Node not found");
@@ -491,12 +489,10 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/nodes/:id/version", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       const node = await central.getNode(req.params.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       if (!node) {
         throw notFound("Node not found");
@@ -519,20 +515,18 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/nodes/:id/sync-plugins", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       // Validate target node exists
       const targetNode = await central.getNode(req.params.id);
       if (!targetNode) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw notFound("Node not found");
       }
 
       // Reject local target nodes - sync-plugins is for remote nodes only
       if (targetNode.type === "local") {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw badRequest("Cannot sync plugins to a local node - sync-plugins is for remote nodes only");
       }
 
@@ -540,13 +534,13 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
       const nodes = await central.listNodes();
       const localNode = nodes.find((n) => n.type === "local");
       if (!localNode) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw badRequest("Local node not registered - cannot perform sync");
       }
 
       // Perform plugin sync comparison
       const result = await central.syncPlugins(localNode.id, targetNode.id);
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       res.json(result);
     } catch (err: unknown) {
@@ -564,14 +558,12 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/nodes/:id/compatibility", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const central = await openCentralCore();
 
       // Validate target node exists
       const targetNode = await central.getNode(req.params.id);
       if (!targetNode) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw notFound("Node not found");
       }
 
@@ -579,7 +571,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
       const nodes = await central.listNodes();
       const localNode = nodes.find((n) => n.type === "local");
       if (!localNode) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw badRequest("Local node not registered - cannot check compatibility");
       }
 
@@ -589,11 +581,11 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
 
       // Validate both have version info
       if (!localVersionInfo) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw badRequest("Local node has no version info yet");
       }
       if (!targetVersionInfo) {
-        await central.close();
+        await closeCentralCoreIfOwned(central);
         throw badRequest("Target node has no version info yet");
       }
 
@@ -602,7 +594,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
         localVersionInfo.appVersion,
         targetVersionInfo.appVersion,
       );
-      await central.close();
+      await closeCentralCoreIfOwned(central);
 
       res.json(result);
     } catch (err: unknown) {
