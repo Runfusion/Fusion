@@ -175,6 +175,13 @@ function repairJson(text: string): string {
   return text.replace(/,\s*([}\]])/g, "$1");
 }
 
+function normalizeOptionalSummaryString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new Error(`Invalid summary.${field}`);
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
 export function parseAgentOnboardingResponse(text: string): { type: "question"; data: PlanningQuestion } | { type: "complete"; data: AgentOnboardingSummary } {
   const candidate = extractJsonCandidate(text);
   if (!candidate) throw new Error("AI returned no valid JSON");
@@ -211,12 +218,10 @@ export function parseAgentOnboardingResponse(text: string): { type: "question"; 
       throw new Error("Invalid summary.maxTurns");
     }
 
-    if (data.heartbeatProcedurePath !== undefined) {
-      if (typeof data.heartbeatProcedurePath !== "string" || !data.heartbeatProcedurePath.trim()) {
-        throw new Error("Invalid summary.heartbeatProcedurePath");
-      }
-      data.heartbeatProcedurePath = data.heartbeatProcedurePath.trim();
-    }
+    data.heartbeatProcedurePath = normalizeOptionalSummaryString(
+      data.heartbeatProcedurePath,
+      "heartbeatProcedurePath",
+    );
 
     if (data.heartbeatIntervalMs !== undefined) {
       if (typeof data.heartbeatIntervalMs !== "number" || !Number.isInteger(data.heartbeatIntervalMs) || data.heartbeatIntervalMs <= 0) {
@@ -228,13 +233,8 @@ export function parseAgentOnboardingResponse(text: string): { type: "question"; 
       throw new Error("Invalid summary.heartbeatEnabled");
     }
 
-    if (data.modelHint !== undefined && typeof data.modelHint !== "string") {
-      throw new Error("Invalid summary.modelHint");
-    }
-
-    if (data.runtimeHint !== undefined && typeof data.runtimeHint !== "string") {
-      throw new Error("Invalid summary.runtimeHint");
-    }
+    data.modelHint = normalizeOptionalSummaryString(data.modelHint, "modelHint");
+    data.runtimeHint = normalizeOptionalSummaryString(data.runtimeHint, "runtimeHint");
 
     return { type: "complete", data: data as AgentOnboardingSummary };
   }

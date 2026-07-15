@@ -173,6 +173,31 @@ describe("agent-onboarding", () => {
     ).toThrow(/Invalid summary/);
   });
 
+  it("normalizes absent-like optional string hints", () => {
+    const parsed = parseAgentOnboardingResponse(
+      JSON.stringify({
+        type: "complete",
+        data: {
+          name: "Hermes Desktop Tester",
+          role: "executor",
+          instructionsText: "Exercise desktop workflows with Hermes computer-use tools.",
+          thinkingLevel: "medium",
+          maxTurns: 25,
+          heartbeatProcedurePath: "  ",
+          modelHint: "",
+          runtimeHint: null,
+        },
+      }),
+    );
+
+    expect(parsed.type).toBe("complete");
+    if (parsed.type === "complete") {
+      expect(parsed.data.heartbeatProcedurePath).toBeUndefined();
+      expect(parsed.data.modelHint).toBeUndefined();
+      expect(parsed.data.runtimeHint).toBeUndefined();
+    }
+  });
+
   it("rejects malformed rich draft fields", () => {
     expect(() =>
       parseAgentOnboardingResponse(
@@ -184,7 +209,7 @@ describe("agent-onboarding", () => {
             instructionsText: "Valid instructions",
             thinkingLevel: "medium",
             maxTurns: 20,
-            heartbeatProcedurePath: "",
+            heartbeatProcedurePath: 42,
           },
         }),
       ),
