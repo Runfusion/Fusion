@@ -630,6 +630,50 @@ describe("TaskPlannerChatTab", () => {
     await waitFor(() => expect(screen.getByText("Hello")).toBeInTheDocument());
   });
 
+  it("clears a completed turn's streaming carriers before a delayed consecutive reply", async () => {
+    const user = userEvent.setup();
+    const streamHandlers: any[] = [];
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      streamHandlers.push(handlers);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+
+    const input = screen.getByLabelText("Message planner chat");
+    await user.type(input, "First reply");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    act(() => {
+      streamHandlers[0].onText("Previous transient reply");
+      streamHandlers[0].onThinking("Previous transient thinking");
+      streamHandlers[0].onDone({
+        messageId: "assistant-first",
+        message: {
+          id: "assistant-first",
+          sessionId: "chat-planner",
+          role: "assistant",
+          content: "Previous completed reply",
+          thinkingOutput: "Previous completed thinking",
+          metadata: null,
+          createdAt: "2026-06-30T00:03:00.000Z",
+        },
+      });
+    });
+    expect(await screen.findByText("Previous completed reply")).toBeInTheDocument();
+
+    await user.type(input, "Second delayed reply");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // The prior persisted turn remains in the transcript, but the new live bubble must be empty
+    // until this generation supplies its own first event.
+    const streamingBubble = screen.getByTestId("chat-message-__streaming__");
+    expect(streamingBubble).toHaveTextContent("Working…");
+    expect(streamingBubble).not.toHaveTextContent("Previous transient reply");
+    expect(streamingBubble).not.toHaveTextContent("Previous transient thinking");
+    expect(streamingBubble).not.toHaveTextContent("Previous completed reply");
+    expect(streamingBubble).not.toHaveTextContent("Previous completed thinking");
+  });
+
   it("sends planner Chat exactly once on the first mobile tap while the textarea is focused", async () => {
     mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
     renderPlannerChat({ projectId: "project-1" });

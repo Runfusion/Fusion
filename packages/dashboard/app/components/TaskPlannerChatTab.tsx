@@ -398,9 +398,22 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   }) => {
     const { resolvedSessionId, content = "", inFlightGeneration, requestId, attach } = options;
     const isCurrentStreamRequest = () => streamRequestRef.current === requestId;
-    let accumulated = inFlightGeneration?.streamingText ?? "";
-    let accumulatedThinking = inFlightGeneration?.streamingThinking ?? "";
-    const streamingToolCalls = cloneToolCalls(inFlightGeneration?.toolCalls);
+    const inFlightSnapshot = attach ? inFlightGeneration : null;
+    let accumulated = inFlightSnapshot?.streamingText ?? "";
+    let accumulatedThinking = inFlightSnapshot?.streamingThinking ?? "";
+    const streamingToolCalls = cloneToolCalls(inFlightSnapshot?.toolCalls);
+
+    /*
+     * FNXC:TaskDetailPlannerChat 2026-07-15-00:00:
+     * A fresh reply, and an attach without a persisted in-flight snapshot, must start with empty
+     * streaming carriers so no previous turn appears before its first event. Only an attach with a
+     * valid snapshot restores text, thinking, and tools because that data belongs to the still-live
+     * generation the user is returning to.
+     */
+    if (!inFlightSnapshot) {
+      setStreamingThinking("");
+      setMessages((current) => current.filter((message) => message.id !== "streaming-assistant"));
+    }
 
     streamRef.current?.close();
     if (!isCurrentStreamRequest()) return;
