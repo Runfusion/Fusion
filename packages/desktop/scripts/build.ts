@@ -58,6 +58,17 @@ async function ensureDashboardBuild(): Promise<void> {
 async function buildElectronEntrypoints(): Promise<void> {
   console.log("[desktop:build] Bundling Electron main/preload with esbuild...");
 
+  /*
+   * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:50:
+   * Ship the CJS bootstrap that patches child_process.spawn before the ESM main
+   * loads. package.json main + electron-builder extraMetadata point here so
+   * packaged local mode can execute embedded Postgres outside app.asar.
+   */
+  await cp(
+    join(packageRoot, "src", "main-bootstrap.cjs"),
+    join(desktopDistDir, "main-bootstrap.cjs"),
+  );
+
   await Promise.all([
     build({
       entryPoints: [join(packageRoot, "src", "main.ts")],
@@ -127,7 +138,8 @@ async function ensureEmbeddedRuntimeBuild(): Promise<void> {
 // the Fusion backend". Assert the required files in BOTH the source `dist/`
 // (esbuild output) and the staged `deploy/dist/` (what electron-builder packs
 // into app.asar), since only the latter reflects what ships.
-const REQUIRED_PACKAGED_ASSETS = ["main.js", "preload.js", join("client", "index.html")];
+// FNXC:DesktopEmbeddedPostgres 2026-07-14-18:50: main-bootstrap.cjs is the package entry; main.js is loaded from it.
+const REQUIRED_PACKAGED_ASSETS = ["main-bootstrap.cjs", "main.js", "preload.js", join("client", "index.html")];
 
 async function verifyPackagedArtifacts(): Promise<void> {
   console.log("[desktop:build] Verifying required packaged assets are present...");

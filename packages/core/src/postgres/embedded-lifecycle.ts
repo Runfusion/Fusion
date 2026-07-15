@@ -45,21 +45,383 @@
 // the flip-embedded-pg-default change; the runtime startup factory is the
 // sole caller and it dynamically imports this module only in that case).
 import {
+  cpSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
+  rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
+  chmodSync,
+  writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { createServer, type Server } from "node:net";
-import { dirname, join, basename } from "node:path";
-import { createRequire } from "node:module";
+import { dirname, join, basename, sep } from "node:path";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { createLogger } from "../logger.js";
 import { redactConnectionString } from "./credential-redact.js";
 import type { ResolvedBackend } from "./backend-resolver.js";
 
 const require = createRequire(import.meta.url);
+
+const EMBEDDED_PG_BIN_NAMES = new Set([
+  "postgres",
+  "initdb",
+  "pg_ctl",
+  "postgres.exe",
+  "initdb.exe",
+  "pg_ctl.exe",
+]);
+
+/*
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Bump when the marker payload shape or fingerprint algorithm changes so older
+ * host-local caches always rematerialize after a desktop update that ships a
+ * new fingerprinting strategy (e.g. content-hashing lib/share, not path+size).
+ */
+const MATERIALIZATION_MARKER_VERSION = 2;
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
+ * Electron packages app code into app.asar. Platform package entrypoints resolve
+ * native binary paths via import.meta.url, so paths look like
+ * `.../app.asar/node_modules/@embedded-postgres/.../native/bin/postgres` even when
+ * asarUnpack places the real files under `app.asar.unpacked/...`.
+ * Node's spawn/chmod against the asar virtual path fail with ENOTDIR; rewrite to
+ * the unpacked real path when that file exists. No-op outside Electron asar trees.
+ */
+export function resolveElectronAsarUnpackedPath(filePath: string): string {
+  if (!filePath) return filePath;
+  // Prefer a materialized runtime-bin path when we already copied binaries out of asar.
+  const materialized = resolveMaterializedEmbeddedPostgresBinary(filePath);
+  if (materialized) return materialized;
+  if (filePath.includes(`${sep}app.asar.unpacked${sep}`)) {
+    return filePath;
+  }
+  const marker = `${sep}app.asar${sep}`;
+  const index = filePath.indexOf(marker);
+  if (index === -1) return filePath;
+  const unpacked =
+    filePath.slice(0, index) +
+    `${sep}app.asar.unpacked${sep}` +
+    filePath.slice(index + marker.length);
+  return existsSync(unpacked) ? unpacked : filePath;
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:45:
+ * Host-local copy of packaged embedded Postgres binaries. Electron can still treat
+ * paths that contain the `app.asar` substring oddly at spawn time on some hosts;
+ * materializing into ~/.fusion avoids asar virtual-path issues entirely.
+ */
+export function embeddedPostgresRuntimeBinRoot(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  home: string = homedir(),
+): string {
+  return join(home, ".fusion", "embedded-postgres", "runtime-bin", `${platform}-${arch}`);
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+ * Content-aware fingerprint of a packaged native root. Packaged in-place updates
+ * keep `nativeRoot` path stable (same app.asar.unpacked layout) while replacing
+ * postgres binaries and libraries; path-only markers would reuse stale payload.
+ * Fingerprint mixes binary content hashes + sizes so both binary and library-only
+ * payload changes invalidate the host-local materialization cache.
+ *
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Greptile P1: path+size for lib files missed same-size content patches, and
+ * share/ was copied into runtime-bin but omitted from the fingerprint. Hash full
+ * file contents under bin/ + lib/ + share/ so any payload byte change forces
+ * rematerialization after an in-place app update.
+ */
+export function fingerprintEmbeddedPostgresNativeRoot(nativeRoot: string): string {
+  const hash = createHash("sha256");
+  const binNames =
+    process.platform === "win32"
+      ? (["postgres.exe", "initdb.exe", "pg_ctl.exe"] as const)
+      : (["postgres", "initdb", "pg_ctl"] as const);
+  for (const name of binNames) {
+    const path = join(nativeRoot, "bin", name);
+    hash.update(name);
+    hash.update("\0");
+    try {
+      const st = statSync(path);
+      hash.update(String(st.size));
+      hash.update("\0");
+      // Full content hash of each critical binary (sizes are small enough for startup).
+      hash.update(readFileSync(path));
+    } catch {
+      hash.update("missing");
+    }
+    hash.update("\0");
+  }
+  // Full content walk of every tree that materialize() copies (lib + share).
+  // Budget bounds pathological trees; real embedded-postgres installs are well under it.
+  const budget = { remaining: 4096 };
+  for (const tree of ["lib", "share"] as const) {
+    const treeDir = join(nativeRoot, tree);
+    hash.update(`tree:${tree}\0`);
+    if (existsSync(treeDir)) {
+      try {
+        hashPayloadTreeContents(treeDir, tree, hash, budget);
+      } catch {
+        hash.update(`${tree}-unreadable`);
+      }
+    } else {
+      hash.update(`${tree}-missing`);
+    }
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Recursive content fingerprint for a payload subtree (lib/ or share/). Records
+ * relative path + full file bytes so same-size security patches invalidate the
+ * materialization marker. Directory entries are structural markers only.
+ */
+function hashPayloadTreeContents(
+  absDir: string,
+  relPrefix: string,
+  hash: ReturnType<typeof createHash>,
+  budget: { remaining: number },
+): void {
+  if (budget.remaining <= 0) return;
+  let entries: string[];
+  try {
+    entries = readdirSync(absDir).sort();
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (budget.remaining <= 0) return;
+    const abs = join(absDir, entry);
+    const rel = relPrefix ? `${relPrefix}/${entry}` : entry;
+    try {
+      // lstat so macOS dylib compatibility symlinks are fingerprinted by target
+      // name (not followed) and same-size file content patches still hash bytes.
+      const st = lstatSync(abs);
+      if (st.isSymbolicLink()) {
+        budget.remaining -= 1;
+        hash.update(`l:${rel}:`);
+        try {
+          hash.update(readlinkSync(abs));
+        } catch {
+          hash.update("?");
+        }
+        hash.update("\0");
+      } else if (st.isDirectory()) {
+        hash.update(`d:${rel}\0`);
+        hashPayloadTreeContents(abs, rel, hash, budget);
+      } else if (st.isFile()) {
+        budget.remaining -= 1;
+        hash.update(`f:${rel}\0`);
+        try {
+          hash.update(readFileSync(abs));
+        } catch {
+          hash.update("unreadable");
+        }
+        hash.update("\0");
+      }
+    } catch {
+      hash.update(`?:${rel}\0`);
+    }
+  }
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+ * Materialization cache marker. Must change whenever either the source path OR
+ * the native payload changes so in-place app updates re-copy fresh Postgres
+ * binaries instead of reusing the previous release's host-local cache.
+ * Legacy path-only markers fail equality and force rematerialization.
+ */
+export function buildEmbeddedPostgresMaterializationMarker(nativeRoot: string): string {
+  const fingerprint = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+  return `v${MATERIALIZATION_MARKER_VERSION}\n${nativeRoot}\n${fingerprint}\n`;
+}
+
+function resolveMaterializedEmbeddedPostgresBinary(filePath: string): string | null {
+  const name = basename(filePath);
+  if (!EMBEDDED_PG_BIN_NAMES.has(name)) return null;
+  if (!filePath.includes(`${sep}app.asar`)) return null;
+  const candidate = join(embeddedPostgresRuntimeBinRoot(), "bin", name);
+  return existsSync(candidate) ? candidate : null;
+}
+
+export interface MaterializeEmbeddedPostgresOptions {
+  /**
+   * Override the host-local dest root (tests). Defaults to
+   * `~/.fusion/embedded-postgres/runtime-bin/<platform>-<arch>`.
+   */
+  readonly destRoot?: string;
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:45:
+ * Copy initdb/pg_ctl/postgres (+ lib tree for dyld/@loader_path) from the packaged
+ * native root into ~/.fusion so spawn never has to execute out of app.asar*.
+ * Idempotent: skips when marker + binaries already exist.
+ *
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+ * Marker identity includes a content fingerprint of the source native root, not
+ * only the path. Packaged app updates leave nativeRoot paths unchanged; without
+ * the fingerprint this guard would keep serving the previous release's binaries
+ * and libraries and bundled PostgreSQL fixes would never take effect.
+ */
+export function materializeEmbeddedPostgresRuntimeBinaries(
+  nativeRoot: string,
+  options?: MaterializeEmbeddedPostgresOptions,
+): string {
+  /*
+   * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:55:
+   * Postgres expects a full install layout next to the binaries: bin/, lib/
+   * (including lib/postgresql extension modules), and share/postgresql.
+   * A shallow bin-only copy fails at start with "could not open directory
+   * .../lib/postgresql". Copy the entire native root recursively.
+   */
+  const destRoot = options?.destRoot ?? embeddedPostgresRuntimeBinRoot();
+  const destBin = join(destRoot, "bin");
+  const marker = join(destRoot, ".materialized-from");
+  const sourceMarker = buildEmbeddedPostgresMaterializationMarker(nativeRoot);
+  if (
+    existsSync(marker) &&
+    readFileSync(marker, "utf8") === sourceMarker &&
+    existsSync(join(destBin, process.platform === "win32" ? "postgres.exe" : "postgres")) &&
+    existsSync(join(destRoot, "lib", "postgresql"))
+  ) {
+    return destRoot;
+  }
+
+  /*
+   * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+   * Clear the previous materialization before re-copy so files removed in a newer
+   * payload cannot linger beside the updated binaries (force-copy alone does not
+   * delete orphans).
+   */
+  if (existsSync(destRoot)) {
+    rmSync(destRoot, { recursive: true, force: true });
+  }
+  mkdirSync(destRoot, { recursive: true });
+  // Recursive copy of bin/lib/share (and any other native install dirs).
+  for (const entry of readdirSync(nativeRoot)) {
+    const from = join(nativeRoot, entry);
+    const to = join(destRoot, entry);
+    cpSync(from, to, { recursive: true, force: true });
+  }
+  // Ensure executables keep +x after asar materialization.
+  if (existsSync(destBin)) {
+    for (const name of readdirSync(destBin)) {
+      try {
+        chmodSync(join(destBin, name), 0o755);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+  // Re-apply macOS ABI compatibility links against the materialized lib dir.
+  normalizeMacosEmbeddedPostgresDylibSymlinks(destRoot);
+  writeFileSync(marker, sourceMarker, "utf8");
+  return destRoot;
+}
+
+let electronAsarNativePathPatchInstalled = false;
+/** Restores the pre-patch CJS/ESM builtins; used by unit tests only. */
+let electronAsarNativePathPatchRestore: (() => void) | null = null;
+
+type MutableSpawnModule = {
+  spawn: (...args: unknown[]) => unknown;
+};
+type MutableFsPromisesModule = {
+  stat: (...args: unknown[]) => unknown;
+  chmod: (...args: unknown[]) => unknown;
+};
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
+ * Install once before constructing embedded-postgres. That library calls
+ * fs.promises.stat/chmod and child_process.spawn on binary paths derived from
+ * asar module URLs; without this patch, packaged desktop local mode cannot boot
+ * Postgres (ENOTDIR).
+ *
+ * Mutate the CJS exports objects (`require("child_process")` / `require("fs/promises")`)
+ * rather than the frozen ESM namespace (`import * as ...`).
+ *
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Replacing CJS export properties does NOT automatically update already-resolved
+ * ESM named imports of the same builtins — they keep the pre-patch function until
+ * `syncBuiltinESMExports()` runs. Call it after every CJS mutation so ESM importers
+ * of child_process/fs.promises (including embedded-postgres) observe the rewrite.
+ * Safe outside Electron — rewrite is a no-op without asar.
+ */
+export function installElectronAsarNativePathPatch(): void {
+  if (electronAsarNativePathPatchInstalled) return;
+  electronAsarNativePathPatchInstalled = true;
+
+  // Materialize only when the platform package lives under Electron's asar tree.
+  // Dev/CLI installs already use real filesystem paths and must not copy binaries.
+  try {
+    const nativeRoot = resolveGenericEmbeddedPostgresNativeRoot();
+    if (nativeRoot && nativeRoot.includes(`${sep}app.asar`)) {
+      const sourceRoot = resolveElectronAsarUnpackedPath(nativeRoot);
+      if (existsSync(join(sourceRoot, "bin"))) {
+        materializeEmbeddedPostgresRuntimeBinaries(sourceRoot);
+      }
+    }
+  } catch {
+    // Materialization is best-effort; path rewrite still helps when possible.
+  }
+
+  const childProcessMod = require("child_process") as MutableSpawnModule;
+  const originalSpawn = childProcessMod.spawn.bind(childProcessMod);
+  childProcessMod.spawn = (command: unknown, ...rest: unknown[]) => {
+    const fixedCommand =
+      typeof command === "string" ? resolveElectronAsarUnpackedPath(command) : command;
+    return originalSpawn(fixedCommand, ...rest);
+  };
+
+  const fsPromisesMod = require("fs/promises") as MutableFsPromisesModule;
+  const originalStat = fsPromisesMod.stat.bind(fsPromisesMod);
+  fsPromisesMod.stat = (path: unknown, ...rest: unknown[]) => {
+    const fixedPath = typeof path === "string" ? resolveElectronAsarUnpackedPath(path) : path;
+    return originalStat(fixedPath, ...rest);
+  };
+  const originalChmod = fsPromisesMod.chmod.bind(fsPromisesMod);
+  fsPromisesMod.chmod = (path: unknown, ...rest: unknown[]) => {
+    const fixedPath = typeof path === "string" ? resolveElectronAsarUnpackedPath(path) : path;
+    return originalChmod(fixedPath, ...rest);
+  };
+
+  // Propagate CJS mutations to ESM named exports (spawn/stat/chmod).
+  syncBuiltinESMExports();
+
+  electronAsarNativePathPatchRestore = () => {
+    childProcessMod.spawn = originalSpawn;
+    fsPromisesMod.stat = originalStat;
+    fsPromisesMod.chmod = originalChmod;
+    syncBuiltinESMExports();
+    electronAsarNativePathPatchInstalled = false;
+    electronAsarNativePathPatchRestore = null;
+  };
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+ * Test-only undo for {@link installElectronAsarNativePathPatch} so unit tests can
+ * install a recording bottom-layer spawn/stat/chmod stub, then reinstall the
+ * production patch on top and assert rewritten paths without real processes.
+ */
+export function uninstallElectronAsarNativePathPatchForTests(): void {
+  electronAsarNativePathPatchRestore?.();
+}
 
 /**
  * Lazily resolve the `embedded-postgres` default export. Cached after the
@@ -82,6 +444,10 @@ type EmbeddedPostgresInstance = InstanceType<EmbeddedPostgresCtor>;
 let embeddedPostgresCtorCache: EmbeddedPostgresCtor | null = null;
 function getEmbeddedPostgresCtor(): EmbeddedPostgresCtor {
   if (embeddedPostgresCtorCache) return embeddedPostgresCtorCache;
+  // FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
+  // Patch asar binary paths before loading embedded-postgres so its module-level
+  // binary promise and later spawn/chmod use real unpacked executables.
+  installElectronAsarNativePathPatch();
   // Use require() so the bundler leaves this as a runtime resolution (esbuild
   // keeps createRequire'd specifiers out of the static import graph).
   const mod = require("embedded-postgres") as { default: EmbeddedPostgresCtor };
@@ -265,21 +631,41 @@ function resolvePnpmPlatformPackageNativeRoot(packageName: string): string | nul
   }
 }
 
-function resolveMacosEmbeddedPostgresNativeRoot(): string | null {
-  if (process.platform !== "darwin") return null;
-  const packageName = process.arch === "arm64"
-    ? "@embedded-postgres/darwin-arm64"
-    : process.arch === "x64"
-      ? "@embedded-postgres/darwin-x64"
-      : null;
-  if (!packageName) return null;
+function embeddedPostgresPlatformPackageName(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string | null {
+  if (platform === "darwin") {
+    if (arch === "arm64") return "@embedded-postgres/darwin-arm64";
+    if (arch === "x64") return "@embedded-postgres/darwin-x64";
+    return null;
+  }
+  if (platform === "linux") {
+    if (arch === "arm64") return "@embedded-postgres/linux-arm64";
+    if (arch === "x64") return "@embedded-postgres/linux-x64";
+    if (arch === "arm") return "@embedded-postgres/linux-arm";
+    if (arch === "ia32") return "@embedded-postgres/linux-ia32";
+    if (arch === "ppc64") return "@embedded-postgres/linux-ppc64";
+    return null;
+  }
+  if (platform === "win32" && arch === "x64") return "@embedded-postgres/windows-x64";
+  return null;
+}
 
+function resolveGenericEmbeddedPostgresNativeRoot(): string | null {
+  const packageName = embeddedPostgresPlatformPackageName();
+  if (!packageName) return null;
   try {
     const entrypoint = require.resolve(packageName);
-    return join(dirname(entrypoint), "..", "native");
+    return resolveElectronAsarUnpackedPath(join(dirname(entrypoint), "..", "native"));
   } catch {
     return resolvePnpmPlatformPackageNativeRoot(packageName);
   }
+}
+
+function resolveMacosEmbeddedPostgresNativeRoot(): string | null {
+  if (process.platform !== "darwin") return null;
+  return resolveGenericEmbeddedPostgresNativeRoot();
 }
 
 function normalizeBundledMacosDylibs(onLog: (message: string) => void): void {

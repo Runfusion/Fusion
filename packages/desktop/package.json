@@ -19,7 +19,7 @@
   },
   "private": true,
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/main-bootstrap.cjs",
   "engines": {
     "node": ">=22.5.0"
   },

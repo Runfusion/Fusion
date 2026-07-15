@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  DASHBOARD_RUNTIME_PLUGIN_PACKAGES,
   requiredEmbeddedPostgresPackages,
   verifyEmbeddedPostgresPayloads,
 } from "../../scripts/workspace-tools";
@@ -24,6 +25,23 @@ describe("desktop Electron main bundling", () => {
     expect(buildScript).toContain("dashboardRegistryManifestSource");
     expect(buildScript).toContain("dashboardRegistryManifestDist");
     expect(buildScript).toContain("await cp(dashboardRegistryManifestSource, dashboardRegistryManifestDist)");
+  });
+
+  it("builds every dashboard-static runtime plugin including omp before packaging", async () => {
+    /*
+     * FNXC:DesktopOmpPlugin 2026-07-14-18:55:
+     * runtime-provider-probes imports omp-runtime; missing dist crashes Local mode
+     * after Postgres boots. Keep the build list aligned with that import surface.
+     */
+    expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-omp-runtime");
+    expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-hermes-runtime");
+    expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-grok-runtime");
+    expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-cursor-runtime");
+
+    const workspaceTools = await readDesktopFile("scripts/workspace-tools.ts");
+    expect(workspaceTools).toContain("buildDashboardRuntimePlugins");
+    expect(workspaceTools).toContain("DASHBOARD_RUNTIME_PLUGIN_PACKAGES");
+    expect(workspaceTools).toContain("fusion-plugin-omp-runtime");
   });
 
   it("externalizes production main-process packages so updater CJS deps are not bundled into ESM", async () => {

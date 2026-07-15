@@ -70,20 +70,29 @@ async function buildPackage(relativePath: string): Promise<void> {
 // condition kept for the bun-compiled CLI), so a missing dist => the packaged
 // app crashes on Local mode when @fusion/dashboard imports the plugin.
 // routes.ts / runtime-provider-probes.ts / droid-cli-probe.ts / roadmap-routes.ts
-// pull hermes, openclaw, paperclip, cursor, grok, droid and roadmap; dependency-graph
+// pull hermes, openclaw, paperclip, cursor, grok, droid, omp and roadmap; dependency-graph
 // backs a dashboard view. Keep this list in sync with dashboard's static plugin imports.
+//
+// FNXC:DesktopOmpPlugin 2026-07-14-18:55:
+// Oh My Pi (omp) ACP runtime is imported by runtime-provider-probes.ts. Without
+// building its dist, packaged Local mode boots Postgres then fails with
+// ERR_MODULE_NOT_FOUND for @fusion-plugin-examples/omp-runtime/dist/index.js and
+// falls back to the mode chooser.
+export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
+  "plugins/fusion-plugin-dependency-graph",
+  "plugins/fusion-plugin-hermes-runtime",
+  "plugins/fusion-plugin-openclaw-runtime",
+  "plugins/fusion-plugin-paperclip-runtime",
+  "plugins/fusion-plugin-cursor-runtime",
+  "plugins/fusion-plugin-grok-runtime",
+  "plugins/fusion-plugin-omp-runtime",
+  "plugins/fusion-plugin-droid-runtime",
+  "plugins/fusion-plugin-roadmap",
+] as const;
+
 export async function buildDashboardRuntimePlugins(): Promise<void> {
   await buildPackage("packages/plugin-sdk");
-  await Promise.all([
-    buildPackage("plugins/fusion-plugin-dependency-graph"),
-    buildPackage("plugins/fusion-plugin-hermes-runtime"),
-    buildPackage("plugins/fusion-plugin-openclaw-runtime"),
-    buildPackage("plugins/fusion-plugin-paperclip-runtime"),
-    buildPackage("plugins/fusion-plugin-cursor-runtime"),
-    buildPackage("plugins/fusion-plugin-grok-runtime"),
-    buildPackage("plugins/fusion-plugin-droid-runtime"),
-    buildPackage("plugins/fusion-plugin-roadmap"),
-  ]);
+  await Promise.all(DASHBOARD_RUNTIME_PLUGIN_PACKAGES.map((relativePath) => buildPackage(relativePath)));
 }
 
 export async function buildDashboard(): Promise<void> {

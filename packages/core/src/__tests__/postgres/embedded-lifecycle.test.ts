@@ -20,12 +20,14 @@ import {
   existsSync,
   rmSync,
   writeFileSync,
+  readFileSync,
   readlinkSync,
   mkdirSync,
   symlinkSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import postgres from "postgres";
 import {
   EmbeddedPostgresLifecycle,
@@ -34,8 +36,16 @@ import {
   isDataDirInitialized,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
   readPortFromPostmasterPid,
+  resolveElectronAsarUnpackedPath,
+  fingerprintEmbeddedPostgresNativeRoot,
+  buildEmbeddedPostgresMaterializationMarker,
+  materializeEmbeddedPostgresRuntimeBinaries,
+  installElectronAsarNativePathPatch,
+  uninstallElectronAsarNativePathPatchForTests,
   type EmbeddedLifecycleOptions,
 } from "../../postgres/embedded-lifecycle.js";
+
+const testRequire = createRequire(import.meta.url);
 
 const SKIP = process.env.FUSION_EMBEDDED_TEST_SKIP === "1";
 const embeddedDescribe = SKIP ? describe.skip : describe;
@@ -144,6 +154,305 @@ describe("embedded-lifecycle: constructor + URL helpers (no process)", () => {
       password: "password",
     });
     expect(lifecycle.getPort()).toBe(55433);
+  });
+});
+
+describe("embedded-lifecycle: Electron asar unpacked path rewrite", () => {
+  /*
+   * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
+   * Packaged desktop resolves platform binaries under app.asar even when
+   * asarUnpack places them on disk under app.asar.unpacked. Prove the rewrite
+   * prefers the real unpacked file and leaves ordinary paths alone.
+   *
+   * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+   * Use a non-materialized binary name (`pg_dump`) so these assertions never
+   * short-circuit through the user's real ~/.fusion runtime-bin cache (which
+   * only applies to postgres/initdb/pg_ctl basenames).
+   */
+  it("rewrites app.asar binary paths to app.asar.unpacked when present", () => {
+    const root = mkdtempSync(join(tmpdir(), "fusion-asar-rewrite-"));
+    try {
+      // pg_dump is intentionally NOT in the materialization BIN_NAMES set.
+      const asarBin = join(root, "app.asar", "node_modules", "pkg", "bin", "pg_dump");
+      const unpackedBin = join(root, "app.asar.unpacked", "node_modules", "pkg", "bin", "pg_dump");
+      mkdirSync(dirname(unpackedBin), { recursive: true });
+      writeFileSync(unpackedBin, "");
+      expect(resolveElectronAsarUnpackedPath(asarBin)).toBe(unpackedBin);
+      expect(resolveElectronAsarUnpackedPath(unpackedBin)).toBe(unpackedBin);
+      expect(resolveElectronAsarUnpackedPath(join(root, "plain", "pg_dump"))).toBe(
+        join(root, "plain", "pg_dump"),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the asar path when no unpacked twin exists", () => {
+    const asarOnly = join(tmpdir(), "app.asar", "missing", "pg_dump");
+    expect(resolveElectronAsarUnpackedPath(asarOnly)).toBe(asarOnly);
+  });
+
+  it("patched spawn/stat/chmod receive rewritten asar paths without real processes", async () => {
+    /*
+     * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+     * Surface enumeration: exercise the production patch entry points (CJS
+     * child_process.spawn + fs.promises.stat/chmod), not only the pure path
+     * resolver. Install a recording bottom layer, then the production patch on
+     * top, and assert rewritten paths without launching Postgres.
+     */
+    const root = mkdtempSync(join(tmpdir(), "fusion-asar-patch-"));
+    const childProcessMod = testRequire("child_process") as {
+      spawn: (...args: unknown[]) => unknown;
+    };
+    const fsPromisesMod = testRequire("fs/promises") as {
+      stat: (...args: unknown[]) => unknown;
+      chmod: (...args: unknown[]) => unknown;
+    };
+    // Undo any prior production patch so we can install fakes as the bottom layer.
+    uninstallElectronAsarNativePathPatchForTests();
+    const prevSpawn = childProcessMod.spawn;
+    const prevStat = fsPromisesMod.stat;
+    const prevChmod = fsPromisesMod.chmod;
+    const spawnSeen: unknown[] = [];
+    const statSeen: unknown[] = [];
+    const chmodSeen: unknown[] = [];
+    try {
+      const asarBin = join(root, "app.asar", "node_modules", "pkg", "bin", "pg_dump");
+      const unpackedBin = join(
+        root,
+        "app.asar.unpacked",
+        "node_modules",
+        "pkg",
+        "bin",
+        "pg_dump",
+      );
+      mkdirSync(dirname(unpackedBin), { recursive: true });
+      writeFileSync(unpackedBin, "fake-bin");
+      const plainPath = join(root, "plain", "pg_dump");
+
+      // Bottom-layer fakes record the command/path the production patch forwards.
+      childProcessMod.spawn = (command: unknown, ..._rest: unknown[]) => {
+        spawnSeen.push(command);
+        return {
+          pid: 0,
+          on: () => undefined,
+          kill: () => true,
+          stdout: null,
+          stderr: null,
+        };
+      };
+      fsPromisesMod.stat = async (p: unknown, ..._rest: unknown[]) => {
+        statSeen.push(p);
+        return { mode: 0o755, isFile: () => true };
+      };
+      fsPromisesMod.chmod = async (p: unknown, ..._rest: unknown[]) => {
+        chmodSeen.push(p);
+      };
+
+      installElectronAsarNativePathPatch();
+
+      childProcessMod.spawn(asarBin);
+      childProcessMod.spawn(plainPath);
+      await fsPromisesMod.stat(asarBin);
+      await fsPromisesMod.stat(plainPath);
+      await fsPromisesMod.chmod(asarBin, 0o755);
+      await fsPromisesMod.chmod(plainPath, 0o755);
+
+      expect(spawnSeen).toEqual([unpackedBin, plainPath]);
+      expect(statSeen).toEqual([unpackedBin, plainPath]);
+      expect(chmodSeen).toEqual([unpackedBin, plainPath]);
+    } finally {
+      // Restore production patch wrapper first (back to fakes), then real builtins.
+      uninstallElectronAsarNativePathPatchForTests();
+      childProcessMod.spawn = prevSpawn;
+      fsPromisesMod.stat = prevStat;
+      fsPromisesMod.chmod = prevChmod;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)", () => {
+  /*
+   * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+   * Greptile P1 security: path-only `.materialized-from` markers reuse stale
+   * Postgres binaries after an in-place packaged app update (nativeRoot path is
+   * stable). Marker must include a content fingerprint so payload changes force
+   * a re-copy of the host-local runtime-bin cache.
+   *
+   * FNXC:DesktopEmbeddedPostgres 2026-07-15-03:11:
+   * Fingerprint now content-hashes lib/ + share/ (not path+size only) so
+   * same-size library/support-file patches invalidate the cache.
+   */
+  const postgresBin = process.platform === "win32" ? "postgres.exe" : "postgres";
+  const initdbBin = process.platform === "win32" ? "initdb.exe" : "initdb";
+  const pgCtlBin = process.platform === "win32" ? "pg_ctl.exe" : "pg_ctl";
+
+  function seedNativeRoot(root: string, postgresBody: string): void {
+    mkdirSync(join(root, "bin"), { recursive: true });
+    mkdirSync(join(root, "lib", "postgresql"), { recursive: true });
+    mkdirSync(join(root, "share", "postgresql"), { recursive: true });
+    writeFileSync(join(root, "bin", postgresBin), postgresBody);
+    writeFileSync(join(root, "bin", initdbBin), "initdb-stub");
+    writeFileSync(join(root, "bin", pgCtlBin), "pg_ctl-stub");
+    writeFileSync(join(root, "lib", "postgresql", "plpgsql.so"), "ext-v1");
+    writeFileSync(join(root, "share", "postgresql", "postgres.bki"), "share-v1");
+  }
+
+  it("fingerprint changes when binary contents change at the same path", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-fp-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-v1");
+      const first = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      writeFileSync(join(nativeRoot, "bin", postgresBin), "postgres-v2-updated-payload");
+      const second = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      expect(first).not.toBe(second);
+      expect(first).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fingerprint changes when a library payload changes without bin renames", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-fp-lib-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      const first = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      // Same name and size, different contents — must invalidate (content hash).
+      writeFileSync(join(nativeRoot, "lib", "postgresql", "plpgsql.so"), "ext-v2");
+      const second = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      expect(first).not.toBe(second);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fingerprint changes when share support files change without bin renames", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-fp-share-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      const first = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      // share/ is copied into runtime-bin and must participate in the fingerprint.
+      writeFileSync(join(nativeRoot, "share", "postgresql", "postgres.bki"), "share-v2");
+      const second = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      expect(first).not.toBe(second);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("same-size library content change forces rematerialization", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-samesize-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-samesize-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(readFileSync(join(destRoot, "lib", "postgresql", "plpgsql.so"), "utf8")).toBe(
+        "ext-v1",
+      );
+
+      // Equal-length security patch at the same path (in-place app update).
+      writeFileSync(join(nativeRoot, "lib", "postgresql", "plpgsql.so"), "ext-v2");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(readFileSync(join(destRoot, "lib", "postgresql", "plpgsql.so"), "utf8")).toBe(
+        "ext-v2",
+      );
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("buildEmbeddedPostgresMaterializationMarker includes path + fingerprint", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-marker-build-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-body");
+      const marker = buildEmbeddedPostgresMaterializationMarker(nativeRoot);
+      const fingerprint = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+      expect(marker.startsWith("v2\n")).toBe(true);
+      expect(marker).toContain(nativeRoot);
+      expect(marker).toContain(fingerprint);
+      // Path alone must not equal the full marker (legacy path-only markers rematerialize).
+      expect(marker.trim()).not.toBe(nativeRoot);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("skips re-copy when marker + fingerprint still match (idempotent)", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-src-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-stable");
+      // First materialization.
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      const markerPath = join(destRoot, ".materialized-from");
+      const markerAfterFirst = readFileSync(markerPath, "utf8");
+      const destPostgres = join(destRoot, "bin", postgresBin);
+      expect(readFileSync(destPostgres, "utf8")).toBe("postgres-stable");
+      // Destination-only sentinel: an always-recopy implementation would wipe it.
+      const reuseSentinel = join(destRoot, ".reuse-sentinel");
+      writeFileSync(reuseSentinel, "preserve");
+
+      // Second call must reuse (same path + same fingerprint) without error.
+      const returned = materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(returned).toBe(destRoot);
+      expect(readFileSync(reuseSentinel, "utf8")).toBe("preserve");
+      expect(readFileSync(markerPath, "utf8")).toBe(markerAfterFirst);
+      expect(readFileSync(destPostgres, "utf8")).toBe("postgres-stable");
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("re-copies when payload changes even though nativeRoot path is unchanged", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-update-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-update-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-release-1");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(readFileSync(join(destRoot, "bin", postgresBin), "utf8")).toBe("postgres-release-1");
+      // Leave a stale orphan that force-copy alone would not remove.
+      writeFileSync(join(destRoot, "bin", "orphan-from-old-release"), "stale");
+
+      // Simulate in-place app update: same nativeRoot path, new binary payload.
+      writeFileSync(join(nativeRoot, "bin", postgresBin), "postgres-release-2");
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+
+      expect(readFileSync(join(destRoot, "bin", postgresBin), "utf8")).toBe("postgres-release-2");
+      // Rematerialization clears dest first so orphans from prior releases do not linger.
+      expect(existsSync(join(destRoot, "bin", "orphan-from-old-release"))).toBe(false);
+      expect(readFileSync(join(destRoot, ".materialized-from"), "utf8")).toBe(
+        buildEmbeddedPostgresMaterializationMarker(nativeRoot),
+      );
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("treats legacy path-only markers as stale and rematerializes", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-legacy-"));
+    const destRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-mat-legacy-dst-"));
+    try {
+      seedNativeRoot(nativeRoot, "postgres-current");
+      // Seed dest as if an older build wrote path-only markers.
+      mkdirSync(join(destRoot, "bin"), { recursive: true });
+      mkdirSync(join(destRoot, "lib", "postgresql"), { recursive: true });
+      writeFileSync(join(destRoot, "bin", postgresBin), "postgres-stale-legacy");
+      writeFileSync(join(destRoot, "lib", "postgresql", "plpgsql.so"), "old");
+      writeFileSync(join(destRoot, ".materialized-from"), nativeRoot);
+
+      materializeEmbeddedPostgresRuntimeBinaries(nativeRoot, { destRoot });
+      expect(readFileSync(join(destRoot, "bin", postgresBin), "utf8")).toBe("postgres-current");
+      expect(readFileSync(join(destRoot, ".materialized-from"), "utf8")).toBe(
+        buildEmbeddedPostgresMaterializationMarker(nativeRoot),
+      );
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(destRoot, { recursive: true, force: true });
+    }
   });
 });
 
