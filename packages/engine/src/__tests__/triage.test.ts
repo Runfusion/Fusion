@@ -195,6 +195,22 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain(".fusion/tasks/KB-001/PROMPT.md");
   });
 
+  /*
+  FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+  Planner instructions must require ## Original Description with the operator text
+  verbatim so AI-planned PROMPT.md preserves the source request.
+  */
+  it("instructs the planner to include ## Original Description verbatim", () => {
+    const prompt = buildSpecificationPrompt(
+      baseTask,
+      ".fusion/tasks/KB-001/PROMPT.md",
+    );
+
+    expect(prompt).toContain("## Original Description");
+    expect(prompt).toContain("verbatim");
+    expect(prompt).toContain("Test task description");
+  });
+
   it("includes project commands when provided", () => {
     const settings: Settings = {
       maxConcurrent: 2,
@@ -1391,6 +1407,66 @@ describe("TriageProcessor", () => {
 
   it("creates processor with default options", () => {
     expect(processor).toBeInstanceOf(TriageProcessor);
+  });
+
+  /*
+  FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+  finalizeApprovedTask must inject ## Original Description with the task description
+  verbatim near the top of the planner-written PROMPT.md (deterministic hygiene).
+  */
+  it("injects ## Original Description into PROMPT.md on finalize", async () => {
+    const originalDesc = "Operator raw request: blank board on mobile when autoMerge is off.";
+    const task = createTriageTask({
+      id: "FN-ORIG-DESC",
+      title: "Preserve original description",
+      description: originalDesc,
+      status: "planning",
+    });
+    const tempRoot = await mkdtemp(join(tmpdir(), "fusion-orig-desc-"));
+    try {
+      const taskDir = join(tempRoot, ".fusion", "tasks", task.id);
+      await mkdir(taskDir, { recursive: true });
+      const plannerWritten = `# Task: ${task.id} - Preserve original description
+
+**Created:** 2026-07-14
+**Size:** M
+
+## Mission
+
+Planner rewrote mission without the raw request.
+
+## Steps
+
+### Step 1: Implement
+
+- [ ] Do the work
+`;
+      await writeFile(join(taskDir, "PROMPT.md"), plannerWritten, "utf-8");
+
+      const localStore = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      });
+      const localProcessor = new TriageProcessor(localStore, tempRoot);
+
+      await (localProcessor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        plannerWritten,
+        { requirePlanApproval: false } as Settings,
+      );
+
+      const onDisk = readFileSync(join(taskDir, "PROMPT.md"), "utf-8");
+      expect(onDisk).toContain("## Original Description");
+      expect(onDisk).toContain(originalDesc);
+      expect(onDisk).not.toMatch(/## Original Description\s*\n\s*Planner rewrote/);
+      const originalIdx = onDisk.indexOf("## Original Description");
+      const missionIdx = onDisk.indexOf("## Mission");
+      expect(originalIdx).toBeGreaterThan(-1);
+      expect(missionIdx).toBeGreaterThan(originalIdx);
+    } finally {
+      await cleanupTriageFixtureRoot(tempRoot);
+    }
   });
 
   it("runs enabled Plan Review in triage before moving to todo", async () => {

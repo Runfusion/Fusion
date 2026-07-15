@@ -38,6 +38,7 @@ import {nextWorkflowDefinitionIdAsyncImpl} from "../task-store/remaining-ops-8.j
 import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async-audit.js";
+import {applyOriginalDescription} from "../original-description-policy.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
 import {listGoalCitations as listGoalCitationsAsync} from "../task-store/async-events.js";
 import type {GoalCitationRow, RunAuditEventRow} from "../task-store/row-types.js";
@@ -1064,6 +1065,12 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
   }
 
 export function generateSpecifiedPromptImpl(store: TaskStore, task: Task): string {
+    /*
+    FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+    Non-AI specified PROMPT.md (direct create into non-intake columns) must include the
+    operator's original description near the top, same contract as AI-planned specs.
+    Bootstrap stubs use buildBootstrapPrompt and intentionally skip this path.
+    */
     const deps =
       task.dependencies.length > 0
         ? task.dependencies.map((d) => `- **Task:** ${d}`).join("\n")
@@ -1077,7 +1084,7 @@ export function generateSpecifiedPromptImpl(store: TaskStore, task: Task): strin
         : "";
 
     const heading = task.title ? `${task.id}: ${task.title}` : task.id;
-    return `# ${heading}
+    const base = `# ${heading}
 
 **Created:** ${task.createdAt.split("T")[0]}
 **Size:** M
@@ -1113,6 +1120,7 @@ ${deps}
 - [ ] All steps complete
 - [ ] All tests passing
 ${notificationsSection}`;
+    return applyOriginalDescription(base, task.description ?? "");
   }
 
 export async function recordActivityImpl(store: TaskStore, entry: Omit<ActivityLogEntry, "id" | "timestamp">): Promise<ActivityLogEntry> {

@@ -292,7 +292,9 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
-    expect(fastPrompt.length).toBeLessThan(6000);
+    // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35: Original Description contract
+    // adds a few lines to fast planning; keep lean but allow the new mandatory section.
+    expect(fastPrompt.length).toBeLessThan(6500);
     expect(fastPrompt.split("\n").length).toBeLessThan(120);
   });
 
@@ -331,6 +333,32 @@ describe("resolveAgentPrompt", () => {
     expect(fastTransformationIdx).toBeGreaterThan(-1);
     expect(fastMissionIdx).toBeGreaterThan(-1);
     expect(fastTransformationIdx).toBeLessThan(fastMissionIdx);
+  });
+
+  /*
+  FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+  Planning prompts must require ## Original Description (verbatim) near the top so
+  generated PROMPT.md preserves the operator source request after Mission rewrites.
+  */
+  it("requires ## Original Description near the top of generated PROMPT.md across planning prompts", () => {
+    const standardPrompt = resolveAgentPrompt("triage");
+    const fastPrompt = builtinSeamPrompt("planning-fast");
+    const concise = resolveAgentPrompt("triage", {
+      roleAssignments: { triage: "concise-triage" },
+    });
+
+    for (const prompt of [standardPrompt, fastPrompt, concise]) {
+      expect(prompt).toContain("## Original Description");
+      expect(prompt.toLowerCase()).toMatch(/verbatim/);
+    }
+
+    // Template order: Original Description before Before → After and Mission
+    const originalIdx = standardPrompt.indexOf("## Original Description");
+    const transformIdx = standardPrompt.indexOf("## Before → After Transformation");
+    const missionIdx = standardPrompt.indexOf("## Mission");
+    expect(originalIdx).toBeGreaterThan(-1);
+    expect(originalIdx).toBeLessThan(transformIdx);
+    expect(originalIdx).toBeLessThan(missionIdx);
   });
 
   it("triage planning prompt is sourced from workflow IR without an engine duplicate", () => {

@@ -34,6 +34,7 @@ import {
   isNearDuplicateCanonicalInactive,
   detectImageMimeFromBytes,
   applyFrontendUxCriteria,
+  applyOriginalDescription,
   extractEffectiveWriteScopeFromPrompt,
   MAX_TASK_LIST_TEXT_CHARS,
   upsertWorkflowStepResult,
@@ -2459,15 +2460,23 @@ export class TriageProcessor {
     }
 
     if (!options.preservePromptContent) {
-      const promptWithFrontendUxCriteria = applyFrontendUxCriteria(written, parsedFileScope);
-      if (promptWithFrontendUxCriteria !== written) {
+      /*
+      FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+      After the planner writes PROMPT.md, inject the operator's original description near
+      the top (verbatim) so Mission/Steps rewrites never hide the source request. Runs
+      before Frontend UX injection. Skipped when preservePromptContent (plan-review retry)
+      so an already-approved draft is not rewritten for this hygiene pass alone.
+      */
+      let nextPrompt = applyOriginalDescription(written, task.description ?? "");
+      nextPrompt = applyFrontendUxCriteria(nextPrompt, parsedFileScope);
+      if (nextPrompt !== written) {
         const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
         try {
-          await writeFile(promptPath, promptWithFrontendUxCriteria, "utf-8");
-          written = promptWithFrontendUxCriteria;
+          await writeFile(promptPath, nextPrompt, "utf-8");
+          written = nextPrompt;
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
-          planLog.warn(`${task.id}: failed to write Frontend UX Criteria to PROMPT.md (${message})`);
+          planLog.warn(`${task.id}: failed to write prompt hygiene sections to PROMPT.md (${message})`);
         }
       }
     }
@@ -3102,6 +3111,12 @@ The user did not explicitly request subtask breakdown. Default to keeping the ta
 - If size is uncertain at first, make a quick assessment from the available context before deciding.`;
   }
 
+  /*
+  FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+  Planning instructions require a top-of-PROMPT `## Original Description` with the
+  operator description verbatim. Deterministic finalize injection enforces the same
+  contract if the planner omits or rewrites it.
+  */
   return `${isRevision ? "Revise" : isFreshRespecification ? "Re-specify" : "Specify"} this task and write the result to \`${promptPath}\`.
 
 ## Task
@@ -3112,7 +3127,7 @@ ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : "
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Ensure the specification is detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Address the user feedback without carrying forward stale assumptions from the old spec\n5. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n4. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Keep \`## Original Description\` at the top (after title/metadata) with the operator description **verbatim**\n4. Ensure the specification is detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include \`## Original Description\` near the top with the exact Description text above (verbatim)\n5. Address the user feedback without carrying forward stale assumptions from the old spec\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include \`## Original Description\` immediately after title/\`Created\`/\`Size\` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${attachmentsSection}${userCommentsSection}`;
 }

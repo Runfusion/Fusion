@@ -20,6 +20,7 @@ import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-dri
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine, rewriteMissionSection} from "../task-store/comments.js";
+import {applyOriginalDescription} from "../original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
@@ -756,7 +757,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
                 next = rewriteHeadingLine(next, heading);
               }
               if (updates.description !== undefined) {
+                // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+                // Keep ## Mission and ## Original Description in sync with task.description
+                // on real specs so operator edits stay visible at the top of PROMPT.md.
                 next = rewriteMissionSection(next, task.description);
+                next = applyOriginalDescription(next, task.description ?? "");
               }
               if (next !== existingPrompt) {
                 await writeFile(promptPath, next);

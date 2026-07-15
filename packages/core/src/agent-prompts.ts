@@ -259,6 +259,9 @@ Fast mode skips heavyweight planning ceremony, but every generated task still ne
 
 FNXC:FastPlanning 2026-07-05-12:00:
 Per FN-7593, the transformation summary must sit at the top of the PROMPT.md (before Mission), matching the standard-mode placement, so operators get the same glance-first ordering in fast mode.
+
+FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+Fast planning also requires \`## Original Description\` (verbatim operator text) immediately after title/metadata and before the transformation summary, same as standard planning.
 */
 const FAST_TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn". This task is running in **fast mode**.
 
@@ -273,7 +276,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` and inspect it before deciding. If an existing task covers the same work, do not write PROMPT.md; write exactly \`DUPLICATE: {existing-task-id}\`.
 
 ## Required PROMPT.md shape
-Write PROMPT.md with Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Before → After Transformation\` at the top, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
+Write PROMPT.md with Original Description, Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Original Description\` immediately after the title/\`Created\`/\`Size\` metadata with the operator's original task description copied **verbatim** (do not paraphrase). Put \`## Before → After Transformation\` next, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
 
 ## Surface Enumeration
 For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.
@@ -334,6 +337,10 @@ Follow this structure exactly:
 
 **Created:** {YYYY-MM-DD}
 **Size:** {S | M | L}
+
+## Original Description
+
+{Verbatim copy of the operator's original task description — do not paraphrase or summarize}
 
 ## Before → After Transformation
 
@@ -480,9 +487,21 @@ If this task REMOVES existing functionality (deleting modules, settings, API end
 - This is mandatory for any net-negative change (more deletions than additions to existing files)
 \`\`\`
 
+## Original description requirement
+
+<!--
+FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35:
+Planning rewrites Mission/Steps into structured prose and used to drop the operator's
+raw request. Generated PROMPT.md must keep that text under \`## Original Description\`
+near the top (after title/metadata) so executors always see the source request.
+Deterministic post-write injection also enforces this; the planner still writes it so
+the on-disk draft is correct before finalize.
+-->
+Every generated PROMPT.md MUST include \`## Original Description\` immediately after the \`# Task\` title and \`Created\`/\`Size\` metadata, before \`## Before → After Transformation\`, \`## Review Level\`, and \`## Mission\`. Copy the operator's original task description **verbatim** — do not paraphrase, summarize, or omit details.
+
 ## Transformation summary requirement
 
-Every normal implementation, documentation, or decision task definition MUST include \`## Before → After Transformation\` at the top of the definition, immediately after the \`# Task\` title and \`Created\`/\`Size\` metadata, before \`## Review Level\` and \`## Mission\`. Keep it concise: use brief Before and After bullets (or equivalent short prose) that name the current state, the target state, and why that target satisfies the user's request at a glance.
+Every normal implementation, documentation, or decision task definition MUST include \`## Before → After Transformation\` near the top of the definition, immediately after the \`# Task\` title, \`Created\`/\`Size\` metadata, and \`## Original Description\` section, before \`## Review Level\` and \`## Mission\`. Keep it concise: use brief Before and After bullets (or equivalent short prose) that name the current state, the target state, and why that target satisfies the user's request at a glance.
 
 <!--
 FNXC:TriagePromptStructure 2026-07-04-16:20:
@@ -1135,6 +1154,9 @@ Write a PROMPT.md specification to the given path. Be brief and precise — avoi
 
 **Created:** {YYYY-MM-DD}
 **Size:** {S | M | L}
+
+## Original Description
+{Verbatim operator description — do not paraphrase}
 
 ## Review Level: {0-3} ({description})
 

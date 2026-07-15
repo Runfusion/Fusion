@@ -90,6 +90,7 @@ export type { PlanApprovalMode } from "./plan-approval.js";
 export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
 export type { NearDuplicateCanonicalState } from "./near-duplicate-canonical.js";
 export * from "./frontend-ux-policy.js";
+export * from "./original-description-policy.js";
 export * from "./file-scope-classification.js";
 export {
   WAKE_DELTA_ASSIGNED_TASKS_CAP,
