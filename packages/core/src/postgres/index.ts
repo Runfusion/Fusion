@@ -75,6 +75,7 @@ export {
   readBaselineMigrationSql,
   SCHEMA_BASELINE_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
+  SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
 } from "./schema-applier.js";
 export {

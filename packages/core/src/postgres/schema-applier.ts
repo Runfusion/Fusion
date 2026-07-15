@@ -27,7 +27,7 @@ import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 
 /** The latest PostgreSQL schema version known to this applier. */
-export const SCHEMA_BASELINE_VERSION = "0007";
+export const SCHEMA_BASELINE_VERSION = "0008";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -40,6 +40,12 @@ export const LEGACY_CUTOVER_PRESERVATION_SCHEMA_VERSION = "0004";
 export const MULTI_PROJECT_CUTOVER_SCHEMA_VERSION = "0005";
 export const PROJECT_OWNERSHIP_SCHEMA_VERSION = "0006";
 export const SQLITE_SCHEMA_PARITY_VERSION = "0007";
+/**
+ * FNXC:PlannerOversight 2026-07-14-18:49:
+ * Version 0008 adds project.tasks.session_advisor_enabled for per-task session
+ * advisor overrides. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
+ */
+export const SESSION_ADVISOR_ENABLED_SCHEMA_VERSION = "0008";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -80,6 +86,11 @@ const SQLITE_SCHEMA_PARITY_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0007_sqlite_schema_parity.sql",
+);
+const SESSION_ADVISOR_ENABLED_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0008_session_advisor_enabled.sql",
 );
 
 /**
@@ -145,6 +156,7 @@ export async function applySchemaBaseline(
     const multiProjectCutoverAlreadyApplied = applied.includes(MULTI_PROJECT_CUTOVER_SCHEMA_VERSION);
     const projectOwnershipAlreadyApplied = applied.includes(PROJECT_OWNERSHIP_SCHEMA_VERSION);
     const sqliteSchemaParityAlreadyApplied = applied.includes(SQLITE_SCHEMA_PARITY_VERSION);
+    const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -333,6 +345,21 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(sqliteSchemaParitySql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SQLITE_SCHEMA_PARITY_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:PlannerOversight 2026-07-14-18:49:
+    Apply session_advisor_enabled independently of 0007 so databases that already
+    recorded SQLite schema parity still gain the per-task session-advisor column
+    before TaskStore/Drizzle SELECT paths run on boot.
+    */
+    if (!sessionAdvisorEnabledAlreadyApplied) {
+      const sessionAdvisorEnabledSql = await readFile(SESSION_ADVISOR_ENABLED_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(sessionAdvisorEnabledSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${SESSION_ADVISOR_ENABLED_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

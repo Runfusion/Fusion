@@ -139,6 +139,10 @@ export const tasks = projectSchema.table("tasks", {
   FNXC:PlannerOversight 2026-07-14-18:11:
   Per-task session advisor override (null = inherit project default, 0 = off, 1 = on).
   Listed in EXPECTED_PROJECT_COLUMNS so existing embedded-PG DBs self-heal via ALTER TABLE.
+
+  FNXC:PlannerOversight 2026-07-14-18:49:
+  Fresh installs also need migration 0008_session_advisor_enabled — self-heal alone
+  is not enough for Gate boot-smoke before health reconciliation runs.
   */
   sessionAdvisorEnabled: integer("session_advisor_enabled"),
   tokenUsageInputTokens: integer("token_usage_input_tokens"),
