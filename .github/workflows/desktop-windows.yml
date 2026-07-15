@@ -58,35 +58,28 @@ jobs:
           $user = "fusion-pg"
           $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
           net user $user $pass /y 2>&1 | Out-Null
-          # FNXC:WindowsDesktopPackaging 2026-07-15-11:15:
-          # Grant BUILTIN\Users access only on paths the smoke needs. Do NOT
-          # recursive-icacls the whole monorepo/node_modules tree — that alone
-          # took ~30–40 minutes on windows-latest and dominated the job.
-          # Non-recursive grants on ancestors + recursive only on packages/core
-          # and the pnpm virtual-store roots the filter needs to load.
-          $repo = "D:\a\Fusion\Fusion"
-          $users = "*S-1-5-32-545"
-          foreach ($p in @($repo, "$repo\packages", "$repo\node_modules", "D:\.pnpm-store")) {
-            if (Test-Path $p) { icacls $p /grant "${users}:(OI)(CI)RX" /C 2>&1 | Out-Null }
+          # FNXC:WindowsDesktopPackaging 2026-07-15-11:25:
+          # Full recursive grants on the workspace + pnpm store (proven green on
+          # win-pg-diag). Narrow grants miss pnpm resolution targets and exit 1
+          # with no useful signal. Capture the bat log so failures surface.
+          Write-Host "granting ACL (workspace + tooling) for $user..."
+          icacls D:\a\Fusion\Fusion /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
+          if (Test-Path D:\.pnpm-store) {
+            icacls D:\.pnpm-store /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
           }
-          icacls "$repo\packages\core" /grant "${users}:(OI)(CI)M" /T /C 2>&1 | Out-Null
-          # pnpm store + .pnpm virtual store: RX so require() can load packages.
-          if (Test-Path "D:\.pnpm-store") { icacls "D:\.pnpm-store" /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null }
-          if (Test-Path "$repo\node_modules\.pnpm") {
-            icacls "$repo\node_modules\.pnpm" /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null
-          }
-          icacls C:\Users\runneradmin /grant "${users}:RX" /C 2>&1 | Out-Null
-          if (Test-Path "C:\Users\runneradmin\setup-pnpm") {
-            icacls C:\Users\runneradmin\setup-pnpm /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          icacls C:\Users\runneradmin /grant "*S-1-5-32-545:RX" /C 2>&1 | Out-Null
+          if (Test-Path C:\Users\runneradmin\setup-pnpm) {
+            icacls C:\Users\runneradmin\setup-pnpm /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
           }
           $nodeDir = Split-Path (Get-Command node).Source -Parent
-          icacls $nodeDir /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          icacls $nodeDir /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
           # Traversable HOME/TEMP for the helper user (its tmpdir() lands here).
           $h = "C:\fusionpg-home"
           New-Item -ItemType Directory -Force -Path "$h\tmp" | Out-Null
-          icacls $h /grant "${users}:(OI)(CI)F" /T /C 2>&1 | Out-Null
+          icacls $h /grant "*S-1-5-32-545:(OI)(CI)F" /T /C 2>&1 | Out-Null
           $pnpmDir = Split-Path (Get-Command pnpm).Source -Parent
           $bat = Join-Path $h "smoke.bat"
+          $log = Join-Path $h "smoke.log"
           Set-Content -Path $bat -Encoding ASCII -Value @(
             "@echo off",
             "set `"USERPROFILE=$h`"",
@@ -96,12 +89,19 @@ jobs:
             "set `"TMP=$h\tmp`"",
             "set `"PATH=$nodeDir;$pnpmDir;%PATH%`"",
             "cd /d D:\a\Fusion\Fusion",
-            "call pnpm --filter @fusion/core test:embedded-postgres",
+            "call pnpm --filter @fusion/core test:embedded-postgres > `"$log`" 2>&1",
             "exit /b %ERRORLEVEL%"
           )
+          Write-Host "running embedded-PG smoke as $user..."
           $sec = ConvertTo-SecureString $pass -AsPlainText -Force
           $cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$user", $sec)
           $p = Start-Process -FilePath "cmd.exe" -ArgumentList '/c',$bat -Credential $cred -Wait -PassThru -WindowStyle Hidden
+          if (Test-Path $log) {
+            Write-Host "----- smoke.log (tail) -----"
+            Get-Content $log -Tail 200
+          } else {
+            Write-Host "smoke.log missing (bat may not have started)"
+          }
           if ($p.ExitCode -ne 0) { Write-Error "embedded-PG smoke failed (exit $($p.ExitCode))"; exit 1 }
 
       # FNXC:WindowsDesktopPackaging 2026-07-01-19:45:
