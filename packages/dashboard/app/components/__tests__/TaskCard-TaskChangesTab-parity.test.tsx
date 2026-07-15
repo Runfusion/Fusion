@@ -16,6 +16,8 @@ vi.mock("../../hooks/useTaskDiffStats", async (importOriginal) => {
 });
 
 vi.mock("../../api", async (importOriginal) => {
+  
+  fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
   const actual = await importOriginal<typeof import("../../api")>();
   return {
     ...actual,

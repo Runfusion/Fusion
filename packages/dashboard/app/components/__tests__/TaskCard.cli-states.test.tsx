@@ -58,6 +58,8 @@ vi.mock("../../hooks/useBatchBadgeFetch", () => ({
 }));
 
 vi.mock("../../api", () => ({
+  fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
+  
   fetchTaskDetail: vi.fn(),
   uploadAttachment: vi.fn(),
   fetchMission: vi.fn(),
