@@ -167,6 +167,17 @@ export async function getProjectContext(
   const engineManager = options?.engineManager;
 
   if (!projectId) {
+    /*
+    FNXC:DashboardApi 2026-07-14-22:05:
+    Single-project / unregistered launch still has a live options.engine (the daemon's launch ProjectEngine). Prefer that for remote tunnel and self-healing so lifecycle routes are not silently engine-less when no project id is on the request; only fall back to raw store when no engine was injected.
+    */
+    if (options?.engine) {
+      try {
+        return { store: options.engine.getTaskStore?.() ?? store, engine: options.engine, projectId: undefined };
+      } catch {
+        // Fall through to raw-store last resort.
+      }
+    }
     // No request id and no registered launch engine: unregistered/legacy launch
     // directory. Preserve the raw-store last resort with a one-time warn.
     warnLaunchDirFallbackOnce(options);
