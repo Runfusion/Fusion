@@ -4,7 +4,7 @@
  */
 import type { TaskDetail, Task } from "@fusion/core";
 import { TaskDeletedError } from "@fusion/core";
-import { resolve as resolvePath } from "node:path";
+import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 
 /** Maximum no-progress execute-node self-requeues before terminalizing the loop. */
 export const MAX_EXECUTE_REQUEUE_LOOP_CYCLES = 6;
@@ -66,7 +66,20 @@ export function isInvalidAssistantContinuationErrorMessage(errorMessage: string)
   return INVALID_ASSISTANT_CONTINUATION_PATTERN.test(errorMessage);
 }
 
-export const TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN = /ENOENT:\s+no such file or directory,\s+open\s+'([^']+\/\.fusion\/tasks\/([^/]+)\/task\.json)'/;
+export const TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN = /ENOENT:\s+no such file or directory,\s+open\s+'([^']+[\\/]\.fusion[\\/]tasks[\\/]([^\\/]+)[\\/]task\.json)'/;
+
+function normalizeErrorPath(path: string): string {
+  return resolvePath(path.replace(/\\/g, "/"));
+}
+
+function isContainedByWorktree(filePath: string, worktree: string): boolean {
+  /*
+  FNXC:ExecutorRecovery 2026-07-15-13:20:
+  Transient task.json recovery must recognize Node ENOENT paths on both Windows and POSIX, but only when the missing file belongs to the task's exact worktree. Normalize separator-only error-message differences before path resolution, then use relative-path containment so sibling prefixes such as `fn-1-copy` cannot be mistaken for `fn-1`.
+  */
+  const relativePath = relative(normalizeErrorPath(worktree), normalizeErrorPath(filePath));
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
 
 export function isTransientMissingTaskJsonError(error: unknown, task: Pick<Task, "id" | "worktree">): boolean {
   if (error instanceof TaskDeletedError) {
@@ -88,7 +101,5 @@ export function isTransientMissingTaskJsonError(error: unknown, task: Pick<Task,
   if (typeof task.worktree !== "string" || task.worktree.length === 0) {
     return false;
   }
-  const normalizedWorktree = resolvePath(task.worktree);
-  const normalizedTaskJsonPath = resolvePath(filePath);
-  return normalizedTaskJsonPath.startsWith(`${normalizedWorktree}/`);
+  return isContainedByWorktree(filePath, task.worktree);
 }
