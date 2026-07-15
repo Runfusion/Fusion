@@ -269,13 +269,41 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
       CREATE INDEX IF NOT EXISTS "idxCePipelineSyncQueuePipeline"
         ON project.ce_pipeline_sync_queue(ce_pipeline_id, enqueued_at, id);
 
-      /* FNXC:CePipelineProjectIsolation 2026-07-14-21:28: Idempotently upgrade pre-partition plugin tables before runtime stores begin applying project predicates. */
+      /*
+       * FNXC:CePipelineProjectIsolation 2026-07-14-21:41:
+       * Idempotently upgrade pre-partition plugin tables before runtime stores begin applying project predicates. Legacy rows may be assigned only when central.projects proves a single owner; a sentinel would make preserved pipeline state invisible to every project-scoped reader.
+       */
       ALTER TABLE project.ce_pipeline_links ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.ce_pipeline_state ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.ce_pipeline_sync_queue ADD COLUMN IF NOT EXISTS project_id text;
-      UPDATE project.ce_pipeline_links SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
-      UPDATE project.ce_pipeline_state SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
-      UPDATE project.ce_pipeline_sync_queue SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      DO $ce_pipeline_upgrade$
+      DECLARE
+        unowned_count bigint;
+        registered_project_count bigint;
+        singleton_project_id text;
+      BEGIN
+        SELECT
+          (SELECT count(*) FROM project.ce_pipeline_links WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.ce_pipeline_state WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.ce_pipeline_sync_queue WHERE project_id IS NULL OR project_id = '')
+        INTO unowned_count;
+
+        IF unowned_count > 0 THEN
+          SELECT count(*), min(id) INTO registered_project_count, singleton_project_id
+          FROM central.projects;
+          IF registered_project_count <> 1 THEN
+            RAISE EXCEPTION 'Compound Engineering PostgreSQL upgrade cannot assign % pre-project pipeline row(s) across % registered projects',
+              unowned_count, registered_project_count;
+          END IF;
+          UPDATE project.ce_pipeline_links SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.ce_pipeline_state SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.ce_pipeline_sync_queue SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+        END IF;
+      END
+      $ce_pipeline_upgrade$;
       ALTER TABLE project.ce_pipeline_links ALTER COLUMN project_id SET NOT NULL;
       ALTER TABLE project.ce_pipeline_state ALTER COLUMN project_id SET NOT NULL;
       ALTER TABLE project.ce_pipeline_sync_queue ALTER COLUMN project_id SET NOT NULL;
@@ -425,9 +453,33 @@ export const reportsPluginSchemaInit: PluginSchemaInitHook = {
       CREATE INDEX IF NOT EXISTS "idxReportsPeriod"
         ON project.reports(period_start, period_end, id);
 
-      /* FNXC:ReportsProjectIsolation 2026-07-14-21:28: Upgrade existing report rows to project ownership without losing data, then enforce the composite identity on every subsequent boot. */
+      /*
+       * FNXC:ReportsProjectIsolation 2026-07-14-21:41:
+       * Upgrade existing report rows without hiding preserved reports behind an unqueryable sentinel. Only a single central.projects registration establishes unambiguous ownership; otherwise schema startup fails before the composite identity is enforced.
+       */
       ALTER TABLE project.reports ADD COLUMN IF NOT EXISTS project_id text;
-      UPDATE project.reports SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      DO $reports_upgrade$
+      DECLARE
+        unowned_count bigint;
+        registered_project_count bigint;
+        singleton_project_id text;
+      BEGIN
+        SELECT count(*) INTO unowned_count
+        FROM project.reports
+        WHERE project_id IS NULL OR project_id = '';
+
+        IF unowned_count > 0 THEN
+          SELECT count(*), min(id) INTO registered_project_count, singleton_project_id
+          FROM central.projects;
+          IF registered_project_count <> 1 THEN
+            RAISE EXCEPTION 'Reports PostgreSQL upgrade cannot assign % pre-project report row(s) across % registered projects',
+              unowned_count, registered_project_count;
+          END IF;
+          UPDATE project.reports SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+        END IF;
+      END
+      $reports_upgrade$;
       ALTER TABLE project.reports ALTER COLUMN project_id SET NOT NULL;
       ALTER TABLE project.reports DROP CONSTRAINT IF EXISTS reports_pkey;
       ALTER TABLE project.reports ADD CONSTRAINT reports_pkey PRIMARY KEY (project_id, id);
@@ -538,17 +590,49 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
       CREATE INDEX IF NOT EXISTS "idx_cli_press_settings_service"
         ON project.cli_press_service_settings(service_id, created_at, id);
 
-      /* FNXC:CliPressProjectIsolation 2026-07-14-21:28: Upgrade every legacy table together so composite ownership keys and child foreign keys remain valid across repeated schema application. */
+      /*
+       * FNXC:CliPressProjectIsolation 2026-07-14-21:41:
+       * Upgrade every legacy table together so composite ownership keys and child foreign keys remain valid across repeated schema application. Pre-project definitions may be claimed only by the sole registered project; ambiguous ownership fails closed instead of assigning rows to an invisible sentinel.
+       */
       ALTER TABLE project.cli_press_services ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.cli_press_cli_specs ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.cli_press_artifacts ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.cli_press_credentials ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.cli_press_service_settings ADD COLUMN IF NOT EXISTS project_id text;
-      UPDATE project.cli_press_services SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
-      UPDATE project.cli_press_cli_specs SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
-      UPDATE project.cli_press_artifacts SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
-      UPDATE project.cli_press_credentials SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
-      UPDATE project.cli_press_service_settings SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      DO $cli_press_upgrade$
+      DECLARE
+        unowned_count bigint;
+        registered_project_count bigint;
+        singleton_project_id text;
+      BEGIN
+        SELECT
+          (SELECT count(*) FROM project.cli_press_services WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.cli_press_cli_specs WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.cli_press_artifacts WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.cli_press_credentials WHERE project_id IS NULL OR project_id = '')
+          + (SELECT count(*) FROM project.cli_press_service_settings WHERE project_id IS NULL OR project_id = '')
+        INTO unowned_count;
+
+        IF unowned_count > 0 THEN
+          SELECT count(*), min(id) INTO registered_project_count, singleton_project_id
+          FROM central.projects;
+          IF registered_project_count <> 1 THEN
+            RAISE EXCEPTION 'CLI Printing Press PostgreSQL upgrade cannot assign % pre-project row(s) across % registered projects',
+              unowned_count, registered_project_count;
+          END IF;
+          UPDATE project.cli_press_services SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.cli_press_cli_specs SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.cli_press_artifacts SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.cli_press_credentials SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+          UPDATE project.cli_press_service_settings SET project_id = singleton_project_id
+            WHERE project_id IS NULL OR project_id = '';
+        END IF;
+      END
+      $cli_press_upgrade$;
       ALTER TABLE project.cli_press_services ALTER COLUMN project_id SET NOT NULL;
       ALTER TABLE project.cli_press_cli_specs ALTER COLUMN project_id SET NOT NULL;
       ALTER TABLE project.cli_press_artifacts ALTER COLUMN project_id SET NOT NULL;
