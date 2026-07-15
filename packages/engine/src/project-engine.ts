@@ -870,7 +870,10 @@ export class ProjectEngine {
       // AutomationStore does not construct a SQLite file under PostgreSQL. The
       // `?? undefined` coerces the `AsyncDataLayer | null` to the optional
       // option shape (null would be a type error; undefined = "not provided").
-      this.automationStore = new AutomationStore(cwd, { asyncLayer: store.getAsyncLayer() ?? undefined });
+      const automationLayer = store.getAsyncLayer();
+      if (!automationLayer) throw new Error("ProjectEngine AutomationStore requires the project PostgreSQL AsyncDataLayer");
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Engine automation schedules share the authoritative project PostgreSQL layer. */
+      this.automationStore = new AutomationStore(cwd, { asyncLayer: automationLayer });
       await this.automationStore.init();
 
       const aiPromptExecutor = await createAiPromptExecutor(cwd, store);

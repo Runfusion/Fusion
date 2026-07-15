@@ -446,6 +446,7 @@ const activeGenerations = new Map<string, ActivePlanningGeneration>();
 /** Optional store for persisting session state across reloads/browsers. */
 let _aiSessionStore: AiSessionStore | undefined;
 let _aiSessionDeletedListener: ((sessionId: string) => void) | undefined;
+const sessionPersistenceQueues = new Map<string, Promise<void>>();
 
 function isTaskPriority(value: unknown): value is TaskPriority {
   return typeof value === "string" && (TASK_PRIORITIES as readonly string[]).includes(value);
@@ -763,9 +764,10 @@ function cleanupInMemorySession(sessionId: string): boolean {
   return true;
 }
 
-/** Persist the current session state to SQLite (no-op if store not wired). */
-function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error" | "draft", error?: string): void {
-  if (!_aiSessionStore) return;
+/** Persist the current session state to PostgreSQL (no-op if store not wired). */
+function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error" | "draft", error?: string): Promise<void> {
+  const store = _aiSessionStore;
+  if (!store) return Promise.resolve();
   const row: AiSessionRow = {
     id: session.id,
     type: "planning",
@@ -789,7 +791,23 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
+  /*
+  FNXC:PostgresPlanningPersistence 2026-07-14-19:56:
+  PostgreSQL writes are asynchronous, so rapid generating→awaiting_input transitions must be serialized per session. The request that creates the first question awaits the final queued write; otherwise an earlier generating upsert can land last and return stale state to another tab.
+  */
+  const previous = sessionPersistenceQueues.get(session.id) ?? Promise.resolve();
+  const queued = previous.then(
+    () => store.upsert(row),
+    () => store.upsert(row),
+  );
+  const bestEffort = queued.catch(() => undefined);
+  sessionPersistenceQueues.set(session.id, bestEffort);
+  void bestEffort.then(() => {
+    if (sessionPersistenceQueues.get(session.id) === bestEffort) {
+      sessionPersistenceQueues.delete(session.id);
+    }
+  });
+  return bestEffort;
 }
 
 /** Persist only thinking output (debounced). */
@@ -1234,7 +1252,7 @@ export async function createSession(
 
   session.currentQuestion = firstQuestion;
   session.updatedAt = new Date();
-  persistSession(session, "awaiting_input");
+  await persistSession(session, "awaiting_input");
 
   return { sessionId, firstQuestion };
 }
@@ -3245,6 +3263,7 @@ export function __resetPlanningState(): void {
     cleanupInMemorySession(id);
   }
   sessions.clear();
+  sessionPersistenceQueues.clear();
   rateLimits.clear();
   planningStreamManager.reset();
   activeGenerations.clear();

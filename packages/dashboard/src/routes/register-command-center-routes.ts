@@ -17,6 +17,7 @@ import {
 } from "@fusion/core";
 import type { Request, Response } from "express";
 import { ApiError } from "../api-error.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 import {
   serializeCsv,
   tokenAnalyticsToTable,
@@ -187,7 +188,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
       // Token analytics now runs on the AsyncDataLayer in backend mode; pass the
       // async layer when present, otherwise the sync SQLite handle, and await.
-      const result = await aggregateTokenAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateTokenAnalytics(requireAsyncLayer(store, "Command Center token analytics"), {
         from: range.from,
         to: range.to,
         groupBy,
@@ -251,7 +252,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
       // Tool analytics now runs on the AsyncDataLayer in backend mode.
-      const result = await aggregateToolAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateToolAnalytics(requireAsyncLayer(store, "Command Center tool analytics"), {
         from: range.from,
         to: range.to,
       });
@@ -274,7 +275,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      const result = await aggregateActivityAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateActivityAnalytics(requireAsyncLayer(store, "Command Center activity analytics"), {
         from: range.from,
         to: range.to,
       });
@@ -299,7 +300,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
       // Productivity analytics now runs on the AsyncDataLayer in backend mode.
-      const result = await aggregateProductivityAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateProductivityAnalytics(requireAsyncLayer(store, "Command Center productivity analytics"), {
         from: range.from,
         to: range.to,
       });
@@ -352,7 +353,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const settings = await store.getGlobalSettingsStore().getSettings();
       // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
       // Team analytics now runs on the AsyncDataLayer in backend mode.
-      const result = await aggregateTeamAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateTeamAnalytics(requireAsyncLayer(store, "Command Center team analytics"), {
         from: range.from,
         to: range.to,
         now: Date.now(),
@@ -378,7 +379,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
       // Workflow analytics now runs on the AsyncDataLayer in backend mode; pass
       // the async layer when present, otherwise the sync SQLite handle, and await.
-      const result = await aggregateWorkflowAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateWorkflowAnalytics(requireAsyncLayer(store, "Command Center workflow analytics"), {
         from: range.from,
         to: range.to,
         now: Date.now(),
@@ -406,7 +407,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
       // GitHub issue analytics now runs on the AsyncDataLayer in backend mode.
-      const result = await aggregateGithubIssueAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateGithubIssueAnalytics(requireAsyncLayer(store, "Command Center GitHub analytics"), {
         from: range.from,
         to: range.to,
       });
@@ -431,7 +432,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       // FNXC:PostgresCutover 2026-07-04-00:00:
       // GitLab issue analytics now runs on the AsyncDataLayer in backend mode.
-      const result = await aggregateGitlabIssueAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateGitlabIssueAnalytics(requireAsyncLayer(store, "Command Center GitLab analytics"), {
         from: range.from,
         to: range.to,
       });
@@ -476,7 +477,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
       // Signal analytics now runs on the AsyncDataLayer in backend mode.
-      const result = await aggregateSignalsAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
+      const result = await aggregateSignalsAnalytics(requireAsyncLayer(store, "Command Center signal analytics"), {
         from: range.from,
         to: range.to,
       });
@@ -504,7 +505,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       // FNXC:RuntimeSatelliteAsync 2026-06-24-13:15:
       // Pass the async layer when in backend mode; otherwise pass the sync DB.
-      const dbOrLayer = store.getAsyncLayer() ?? store.getDatabase();
+      const dbOrLayer = requireAsyncLayer(store, "Command Center plugin analytics");
       const result = await aggregatePluginActivations(dbOrLayer, {
         from: range.from,
         to: range.to,
@@ -527,7 +528,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const store = await getScopedStore(req);
       // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
       // Live snapshot now runs on the AsyncDataLayer in backend mode.
-      const result = await composeLiveSnapshot(store.getAsyncLayer() ?? store.getDatabase());
+      const result = await composeLiveSnapshot(requireAsyncLayer(store, "Command Center live snapshot"));
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

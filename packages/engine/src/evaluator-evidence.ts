@@ -247,6 +247,6 @@ export async function collectTaskEvaluationEvidence(params: {
     documents: collectDocumentEvidence(task.id, runId, documents),
     taskActivity: collectTaskActivityEvidence(task.id, runId, task.log ?? []),
     agentLogs: collectAgentLogEvidence(task.id, runId, agentLogs),
-    runAudit: collectRunAuditEvidence(task.id, runId, store.getRunAuditEvents({ taskId: task.id, limit: EVIDENCE_LIMITS.runAudit })),
+    runAudit: collectRunAuditEvidence(task.id, runId, await store.getRunAuditEventsAsync({ taskId: task.id, limit: EVIDENCE_LIMITS.runAudit })),
   };
 }

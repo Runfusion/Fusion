@@ -4,9 +4,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } 
 import express from "express";
 import http from "node:http";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
@@ -50,6 +48,10 @@ import { resetRuntimeLogSink, setRuntimeLogSink } from "../runtime-logger.js";
 import { resetDiagnosticsSink, setDiagnosticsSink, type LogEntry } from "../ai-session-diagnostics.js";
 import * as updateCheckModule from "../update-check.js";
 import { __setAgentReflectionServiceForTests } from "../routes/register-agent-reflection-rating-routes.js";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 // Mock @fusion/core for gh CLI auth checks
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
@@ -165,7 +167,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
+import { AgentStore, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -2625,7 +2627,8 @@ describe("Planning Mode Routes", () => {
         const planningSessionId = await createCompletedPlanningSession();
 
         // Precondition: the completed planning session is persisted as history.
-        const persistedBefore = mockStore.get(planningSessionId);
+        // FNXC:PostgresPlanningPersistence 2026-07-14-19:56: Session-store reads are asynchronous after the PostgreSQL cutover; await the history precondition instead of asserting against the Promise wrapper.
+        const persistedBefore = await mockStore.get(planningSessionId);
         expect(persistedBefore).not.toBeNull();
         expect(persistedBefore?.type).toBe("planning");
         expect(persistedBefore?.status).toBe("complete");
@@ -2658,7 +2661,7 @@ describe("Planning Mode Routes", () => {
 
         // Regression assertion: the completed planning session row must survive
         // task creation so it remains listable/restorable in history.
-        const persistedAfter = mockStore.get(planningSessionId);
+        const persistedAfter = await mockStore.get(planningSessionId);
         expect(persistedAfter).not.toBeNull();
         expect(persistedAfter?.type).toBe("planning");
         expect(persistedAfter?.status).toBe("complete");
@@ -4092,16 +4095,18 @@ describe("DELETE /api/ai-sessions/cleanup", () => {
 // ── FN-7949: delete-mid-generation resurrection race ──────────────────────
 // Reproduces the exact reported bug: deleting a Planning Mode session while
 // its background generation is still in flight must not let a straggling
-// write resurrect it. Uses a REAL AiSessionStore (backed by a temp SQLite
-// db) wired the same way server.ts wires it — via setAiSessionStore() for
+// write resurrect it. Uses a REAL PostgreSQL-backed AiSessionStore wired the
+// same way server.ts wires it — via setAiSessionStore() for
 // planning.ts's internal persistSession() calls AND via the routes.ts
 // aiSessionStore option for the DELETE endpoint — so the tombstone guard
 // added to AiSessionStore.upsert() is exercised end-to-end, not mocked out.
-describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
+pgDescribe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
   let store: TaskStore;
-  let db: InstanceType<typeof Database>;
   let realAiSessionStore: AiSessionStore;
-  let tmpRoot: string;
+  const pg = createSharedPgTaskStoreTestHarness({ prefix: "fusion_ai_session_delete" });
+
+  beforeAll(pg.beforeAll);
+  afterAll(pg.afterAll);
 
   function buildApp() {
     const app = express();
@@ -4165,13 +4170,12 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     };
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await pg.beforeEach();
     store = createMockStore();
     __resetPlanningState();
-    tmpRoot = mkdtempSync(join(tmpdir(), "kb-fn7949-ai-session-"));
-    db = new Database(join(tmpRoot, ".fusion"));
-    db.init();
-    realAiSessionStore = new AiSessionStore(db as any);
+    /* FNXC:PostgresAiSessionStore 2026-07-14-19:20: The resurrection regression exercises the authoritative PostgreSQL session store rather than a removed SQLite fallback. */
+    realAiSessionStore = new AiSessionStore(pg.layer());
     setAiSessionStore(realAiSessionStore);
   });
 
@@ -4179,12 +4183,7 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     __setCreateFnAgent(undefined as any);
     __resetPlanningState();
     realAiSessionStore.stopScheduledCleanup();
-    try {
-      db.close();
-    } catch {
-      // no-op
-    }
-    await rm(tmpRoot, { recursive: true, force: true });
+    await pg.afterEach();
   });
 
   it("does not resurrect a session deleted while a generation is still in flight", async () => {
@@ -4199,8 +4198,8 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     );
     expect(startRes.status).toBe(201);
     const sessionId = startRes.body.sessionId as string;
-    expect(realAiSessionStore.get(sessionId)).not.toBeNull();
-    expect(realAiSessionStore.get(sessionId)?.status).toBe("awaiting_input");
+    expect(await realAiSessionStore.get(sessionId)).not.toBeNull();
+    expect((await realAiSessionStore.get(sessionId))?.status).toBe("awaiting_input");
 
     // Fire the respond call WITHOUT awaiting it — its underlying prompt()
     // call is deferred and will not resolve until we explicitly release it
@@ -4223,7 +4222,7 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
     const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.body).toEqual({ ok: true });
-    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
 
     const updatedEventIds: string[] = [];
     realAiSessionStore.on("ai_session:updated", (summary) => updatedEventIds.push(summary.id));
@@ -4239,12 +4238,15 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
 
     // The deleted session must not have been resurrected, and no
     // ai_session:updated event should have fired for it.
-    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
     expect(updatedEventIds).not.toContain(sessionId);
   });
 
   it("a normal delete with no in-flight generation continues to work exactly as before", async () => {
     setupPlanningMockAgentForFn7949();
+    const persisted = new Promise<void>((resolve) => {
+      realAiSessionStore.once("ai_session:updated", () => resolve());
+    });
 
     const startRes = await REQUEST(
       buildApp(),
@@ -4254,14 +4256,15 @@ describe("DELETE /api/ai-sessions/:id mid-generation (FN-7949)", () => {
       { "Content-Type": "application/json" },
     );
     expect(startRes.status).toBe(201);
+    await persisted;
     const sessionId = startRes.body.sessionId as string;
-    expect(realAiSessionStore.get(sessionId)).not.toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).not.toBeNull();
 
     const deleteRes = await REQUEST(buildApp(), "DELETE", `/api/ai-sessions/${sessionId}`);
 
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.body).toEqual({ ok: true });
-    expect(realAiSessionStore.get(sessionId)).toBeNull();
+    expect(await realAiSessionStore.get(sessionId)).toBeNull();
   });
 
   function setupPlanningMockAgentForFn7949() {
@@ -5019,4 +5022,3 @@ describe("POST /api/ai/summarize-title with projectId scoping", () => {
     expect([400, 503]).toContain(res.status);
   });
 });
-

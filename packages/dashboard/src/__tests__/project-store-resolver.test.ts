@@ -22,7 +22,7 @@ import {
 } from "../project-store-resolver.js";
 import type { TaskStore } from "@fusion/core";
 
-// Mock @fusion/core to control TaskStore.getOrCreateForProject
+// Mock @fusion/core to control the PostgreSQL TaskStore startup factory.
 const createdStores: Array<{
   projectId: string;
   store: TaskStore;
@@ -30,6 +30,10 @@ const createdStores: Array<{
   closeMock: ReturnType<typeof vi.fn>;
   stopWatchingMock: ReturnType<typeof vi.fn>;
 }> = [];
+const backendShutdowns = new Map<string, ReturnType<typeof vi.fn>>();
+let watchFailureProjectId: string | undefined;
+let delayedWatchProjectId: string | undefined;
+let releaseDelayedWatch: (() => void) | undefined;
 
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -38,7 +42,12 @@ vi.mock("@fusion/core", async () => {
     EventEmitter.call(store as any);
     (store as any).setMaxListeners(100);
 
-    const watchMock = vi.fn(async () => {});
+    const watchMock = vi.fn(async () => {
+      if (projectId === watchFailureProjectId) throw new Error("watch failed");
+      if (projectId === delayedWatchProjectId) {
+        await new Promise<void>((resolve) => { releaseDelayedWatch = resolve; });
+      }
+    });
     const closeMock = vi.fn(() => {});
     const stopWatchingMock = vi.fn(() => {});
 
@@ -61,31 +70,34 @@ vi.mock("@fusion/core", async () => {
     ...actual,
     /*
     FNXC:PostgresCutover 2026-07-05-17:00:
-    The resolver consults createTaskStoreForBackend FIRST (embedded PG default);
-    mock it at that seam so these backend-agnostic cache/dedup/eviction/SSE
-    invariants run without booting a real PostgreSQL cluster. The legacy
-    getOrCreateForProject mock remains for the FUSION_NO_EMBEDDED_PG branch.
+    The resolver uses createTaskStoreForBackend exclusively; mock it at that
+    seam so cache/dedup/eviction/SSE invariants do not boot a real cluster.
     */
-    createTaskStoreForBackend: vi.fn(async ({ projectId }: { projectId: string }) => ({
-      taskStore: makeStore(projectId),
-      shutdown: vi.fn(async () => {}),
-    })),
-    TaskStore: {
-      ...actual.TaskStore,
-      getOrCreateForProject: vi.fn(async (projectId: string): Promise<TaskStore> => makeStore(projectId)),
-    },
+    createTaskStoreForBackend: vi.fn(async ({ projectId }: { projectId: string }) => {
+      const shutdown = vi.fn(async () => {});
+      backendShutdowns.set(projectId, shutdown);
+      return { taskStore: makeStore(projectId), shutdown };
+    }),
   };
 });
 
 describe("project-store-resolver", () => {
-  beforeEach(() => {
-    evictAllProjectStores();
+  beforeEach(async () => {
+    await evictAllProjectStores();
     createdStores.length = 0;
+    backendShutdowns.clear();
+    watchFailureProjectId = undefined;
+    delayedWatchProjectId = undefined;
+    releaseDelayedWatch = undefined;
   });
 
-  afterEach(() => {
-    evictAllProjectStores();
+  afterEach(async () => {
+    await evictAllProjectStores();
     createdStores.length = 0;
+    backendShutdowns.clear();
+    watchFailureProjectId = undefined;
+    delayedWatchProjectId = undefined;
+    releaseDelayedWatch = undefined;
   });
 
   it("creates a new store on first call for a project", async () => {
@@ -169,6 +181,13 @@ describe("project-store-resolver", () => {
     expect(createdStores[0].watchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("shuts down a factory backend when watcher startup fails", async () => {
+    watchFailureProjectId = "proj_watch_failure";
+    await expect(getOrCreateProjectStore("proj_watch_failure")).rejects.toThrow("watch failed");
+    expect(backendShutdowns.get("proj_watch_failure")).toHaveBeenCalledTimes(1);
+    expect(listRegisteredProjectStores()).not.toContainEqual(expect.objectContaining({ projectId: "proj_watch_failure" }));
+  });
+
   it("does not stack duplicate watch() calls on repeated lookups", async () => {
     for (let i = 0; i < 10; i++) {
       await getOrCreateProjectStore("proj_repeat");
@@ -182,7 +201,7 @@ describe("project-store-resolver", () => {
     await getOrCreateProjectStore("proj_evict");
     expect(createdStores).toHaveLength(1);
 
-    evictProjectStore("proj_evict");
+    await evictProjectStore("proj_evict");
 
     expect(createdStores[0].stopWatchingMock).toHaveBeenCalledTimes(1);
     expect(createdStores[0].closeMock).toHaveBeenCalledTimes(1);
@@ -200,7 +219,7 @@ describe("project-store-resolver", () => {
 
     expect(createdStores).toHaveLength(3);
 
-    evictAllProjectStores();
+    await evictAllProjectStores();
 
     for (const entry of createdStores) {
       expect(entry.stopWatchingMock).toHaveBeenCalledTimes(1);
@@ -208,8 +227,23 @@ describe("project-store-resolver", () => {
     }
   });
 
-  it("evictProjectStore is a no-op for unknown projectIds", () => {
-    expect(() => evictProjectStore("nonexistent")).not.toThrow();
+  it("awaits an in-flight creation and closes it without a late cache insertion", async () => {
+    delayedWatchProjectId = "proj_late";
+    const creation = getOrCreateProjectStore("proj_late");
+    await vi.waitFor(() => expect(releaseDelayedWatch).toBeTypeOf("function"));
+
+    const eviction = evictAllProjectStores();
+    releaseDelayedWatch?.();
+
+    await expect(creation).rejects.toThrow("evicted during creation");
+    await eviction;
+    expect(listRegisteredProjectStores()).not.toContainEqual(expect.objectContaining({ projectId: "proj_late" }));
+    expect(backendShutdowns.get("proj_late")).toHaveBeenCalledTimes(1);
+    expect(createdStores[0].closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("evictProjectStore is a no-op for unknown projectIds", async () => {
+    await expect(evictProjectStore("nonexistent")).resolves.toBeUndefined();
   });
 
   it("shared store receives events from both SSE and API route context", async () => {
@@ -313,7 +347,7 @@ describe("project-store-resolver", () => {
       await getOrCreateProjectStore("proj_cb_evict");
       expect(cb).toHaveBeenCalledTimes(1);
 
-      evictProjectStore("proj_cb_evict");
+      await evictProjectStore("proj_cb_evict");
       createdStores.length = 0;
 
       await getOrCreateProjectStore("proj_cb_evict");
@@ -369,13 +403,13 @@ describe("project-store-resolver", () => {
 });
 
 describe("countRunningAgentsInRegisteredProjectStores", () => {
-  beforeEach(() => {
-    evictAllProjectStores();
+  beforeEach(async () => {
+    await evictAllProjectStores();
     createdStores.length = 0;
   });
 
-  afterEach(() => {
-    evictAllProjectStores();
+  afterEach(async () => {
+    await evictAllProjectStores();
     createdStores.length = 0;
   });
 
