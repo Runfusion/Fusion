@@ -487,6 +487,9 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   /**
    * FNXC:SettingsNavigation 2026-07-13-00:00:
    * Project Models owns the FN-7907 Direct-chat default settings. Its shared Settings search index must advertise chat-default terms and i18n labels so desktop nav, the mobile section picker, and filtered search all surface this section when operators search for Chat defaults.
+
+   * FNXC:SettingsNavigation 2026-07-14-20:15:
+   * Title auto-summarization lives under Project Models but operators search for "summarize", "auto summarize", "title summarization", and related phrases that did not match the prior chat-only/summarization-model index. Advertise those terms and the control's i18n keys so Settings search finds this section.
    */
   {
     id: "project-models",
@@ -501,6 +504,18 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       "Executor",
       "Reviewer",
       "summarization model",
+      "summarize",
+      "summarize titles",
+      "auto summarize",
+      "auto-summarize",
+      "auto summarize titles",
+      "auto-summarize titles",
+      "autoSummarizeTitles",
+      "title summarization",
+      "title summarizer",
+      "AI title",
+      "AI merge commit summaries",
+      "merge commit summary",
       "chat",
       "new chat",
       "new chat behavior",
@@ -521,6 +536,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       "settings.projectModels.chatDefaultKind",
       "settings.projectModels.chatDefaultModel",
       "settings.projectModels.chatDefaultAgent",
+      "settings.projectModels.aITitleAndGitCommitMessageSummarization",
+      "settings.projectModels.autoSummarizeLongDescriptionsAsTitles",
+      "settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut",
+      "settings.projectModels.aIMergeCommitSummaries",
+      "settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI",
     ],
   },
   { id: "secrets", label: "Secrets", labelKey: "settings.nav.secrets", scope: "project", searchableText: ["secrets", "secret storage", "environment", "credentials"] },
