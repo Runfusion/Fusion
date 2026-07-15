@@ -12,7 +12,7 @@ import {
   ExperimentFinalizeStateError,
   type FinalizePlanOverride,
 } from "@fusion/engine";
-import { resolveProject } from "../project-context.js";
+import { closeProjectStore, resolveProject, type ProjectContext } from "../project-context.js";
 
 interface ExperimentFinalizeOptions {
   sessionId: string;
@@ -75,8 +75,15 @@ export async function runExperimentFinalize(options: ExperimentFinalizeOptions):
     await shutdown?.();
   };
   try {
-    const project = options.projectName ? await resolveProject(options.projectName) : undefined;
-    const projectRoot = project?.projectPath ?? process.cwd();
+    let project: ProjectContext | undefined;
+    let projectRoot = process.cwd();
+    try {
+      project = options.projectName ? await resolveProject(options.projectName) : undefined;
+      projectRoot = project?.projectPath ?? projectRoot;
+    } finally {
+      /* FNXC:PostgresCliLifecycle 2026-07-14-21:20: Experiment finalization boots its own backend after path resolution, so always close and evict the resolver-owned project context before parsing or Git work can succeed or fail. */
+      if (project) await closeProjectStore(project);
+    }
     // FNXC:PostgresFinalCutover 2026-07-14-17:20: Experiment finalization has one
     // authoritative PostgreSQL store path; the startup factory is non-nullable.
     const boot = await createTaskStoreForBackend({ rootDir: projectRoot });

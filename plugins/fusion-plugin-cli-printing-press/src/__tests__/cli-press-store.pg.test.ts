@@ -7,12 +7,17 @@
  */
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
+import type { AsyncDataLayer } from "@fusion/core";
 import {
   createTaskStoreForTest,
   pgDescribe,
 } from "../../../../packages/core/src/__test-utils__/pg-test-harness.ts";
 import { createCliPressStore } from "../store/cli-press-store.ts";
 import { encodeCredentialValue } from "../store/credentials.ts";
+
+function projectLayer(layer: AsyncDataLayer, projectId = "cli-press-project-a"): AsyncDataLayer {
+  return { ...layer, projectId };
+}
 
 pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("materializes all five cli_press_* tables via the schema-init hook", async () => {
@@ -46,7 +51,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("createService + getService + listServices round-trip", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_svc" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const created = await store.createService({
         slug: "acme",
         displayName: "Acme Service",
@@ -71,10 +76,40 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
     }
   });
 
+  it("isolates service definitions and credentials between two bound projects", async () => {
+    const h = await createTaskStoreForTest({ prefix: "fusion_clipress_isolation" });
+    try {
+      const projectA = createCliPressStore(null, projectLayer(h.layer, "cli-press-project-a"));
+      const projectB = createCliPressStore(null, projectLayer(h.layer, "cli-press-project-b"));
+      const serviceA = await projectA.createService({ slug: "shared", displayName: "A", baseUrl: "https://a.example", sourceKind: "manual" });
+      const serviceB = await projectB.createService({ slug: "shared", displayName: "B", baseUrl: "https://b.example", sourceKind: "manual" });
+      await projectA.createCredential({
+        serviceId: serviceA.id,
+        name: "token",
+        kind: "env_var",
+        placement: { kind: "env_var", envVar: "TOKEN" },
+        value: encodeCredentialValue("project-a-secret"),
+      });
+
+      expect((await projectA.listServices()).map((service) => service.id)).toEqual([serviceA.id]);
+      expect((await projectB.listServices()).map((service) => service.id)).toEqual([serviceB.id]);
+      expect(await projectB.listCredentials(serviceA.id)).toEqual([]);
+      await expect(projectB.createCredential({
+        serviceId: serviceA.id,
+        name: "stolen",
+        kind: "env_var",
+        placement: { kind: "env_var", envVar: "STOLEN" },
+        value: encodeCredentialValue("nope"),
+      })).rejects.toThrow();
+    } finally {
+      await h.teardown();
+    }
+  });
+
   it("updateService mutates only the allowed fields", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_svc_upd" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const created = await store.createService({
         slug: "beta",
         displayName: "Beta",
@@ -101,7 +136,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("spec, artifact, and setting CRUD round-trip with boolean executable", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_spec" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "gamma",
         displayName: "Gamma",
@@ -163,7 +198,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("credential value/placement JSON round-trips and rejects oauth", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_cred" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "delta",
         displayName: "Delta",
@@ -212,7 +247,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("deleteService cascades to child specs, artifacts, credentials, and settings", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_cascade" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "epsilon",
         displayName: "Epsilon",
@@ -268,7 +303,7 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
   it("updateSpec and deleteSpec operate on the spec row", async () => {
     const h = await createTaskStoreForTest({ prefix: "fusion_clipress_spec_mut" });
     try {
-      const store = createCliPressStore(null, h.layer);
+      const store = createCliPressStore(null, projectLayer(h.layer));
       const service = await store.createService({
         slug: "zeta",
         displayName: "Zeta",

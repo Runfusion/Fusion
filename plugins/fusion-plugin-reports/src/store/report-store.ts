@@ -114,6 +114,13 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     return this.db;
   }
 
+  /** FNXC:ReportsProjectIsolation 2026-07-14-21:28: Shared PostgreSQL plugin tables require an explicit project owner on every row and predicate; a project-agnostic layer is invalid for report runtime access. */
+  private projectId(): string {
+    const projectId = this.asyncLayer?.projectId?.trim();
+    if (!projectId) throw new Error("ReportStore: PostgreSQL backend requires asyncLayer.projectId");
+    return projectId;
+  }
+
   createReport(input: ReportCreateInput): Report {
     const now = new Date().toISOString();
     const report: Report = {
@@ -490,7 +497,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     const rows = await this.asyncLayer!.db
       .select()
       .from(schema.plugin.reports)
-      .where(eq(schema.plugin.reports.id, id));
+      .where(and(eq(schema.plugin.reports.projectId, this.projectId()), eq(schema.plugin.reports.id, id)));
     return rows[0] ? this.drizzleRowToReport(rows[0] as DrizzleReportRow) : null;
   }
 
@@ -498,7 +505,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
   async listReportsAsync(filter: ReportListFilter = {}): Promise<Report[]> {
     if (!this.backendMode) return this.listReports(filter);
     const table = schema.plugin.reports;
-    const conditions: SQL[] = [];
+    const conditions: SQL[] = [eq(table.projectId, this.projectId())];
     if (filter.cadence) conditions.push(eq(table.cadence, filter.cadence));
     if (filter.statusIn && filter.statusIn.length > 0) {
       conditions.push(inArray(table.status, filter.statusIn));
@@ -517,7 +524,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       .orderBy(orderFn(orderCol), orderFn(table.id))
       .limit(limit)
       .offset(offset);
-    const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+    const rows = await query.where(and(...conditions));
     return rows.map((row) => this.drizzleRowToReport(row as DrizzleReportRow));
   }
 
@@ -624,7 +631,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     await this.requireReportAsync(id);
     await this.asyncLayer!.db
       .delete(schema.plugin.reports)
-      .where(eq(schema.plugin.reports.id, id));
+      .where(and(eq(schema.plugin.reports.projectId, this.projectId()), eq(schema.plugin.reports.id, id)));
     this.emit("report:deleted", id);
   }
 
@@ -640,7 +647,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     const result = await this.asyncLayer!.db
       .update(schema.plugin.reports)
       .set(this.reportToUpdateSet(report))
-      .where(eq(schema.plugin.reports.id, report.id))
+      .where(and(eq(schema.plugin.reports.projectId, this.projectId()), eq(schema.plugin.reports.id, report.id)))
       .returning();
     if (result.length === 0) {
       throw new ReportStoreError(`Report ${report.id} not found`);
@@ -650,6 +657,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
   /** Map a Report to a Drizzle insert-values object. */
   private reportToInsertValues(report: Report): typeof schema.plugin.reports.$inferInsert {
     return {
+      projectId: this.projectId(),
       id: report.id,
       cadence: report.cadence,
       periodStart: report.periodStart,

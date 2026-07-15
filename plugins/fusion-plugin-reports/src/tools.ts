@@ -11,7 +11,10 @@ import { createReportListRoutes } from "./routes/report-list-routes.js";
 
 /*
 FNXC:ReportsAgentTools 2026-07-14-18:47:
-Agents need project-scoped report list, inspection, approval, publication, and export capabilities with exactly the same authorization and transition rules as the dashboard API. Route delegation keeps one policy implementation: agent decisions identify the agent explicitly and cannot bypass configured approver gates.
+Agents need project-scoped report list, inspection, and export capabilities with exactly the same authorization rules as the dashboard API.
+
+FNXC:ReportsAgentTools 2026-07-14-21:28:
+Plugin tool parameters are untrusted model output, and PluginContext does not expose an authenticated execution principal. Do not register approval or publication tools until the host can bind a non-forgeable agent identity; caller-supplied actor ids must never cross the privileged decision boundary.
 */
 
 function textResult(text: string, details?: Record<string, unknown>, isError = false): PluginToolResult {
@@ -105,34 +108,6 @@ export function createReportTools(
         if (!reportId) return textResult("reportId is required.", { code: "validation_error" }, true);
         const response = await invokeRoute(routes, "GET", "/reports/:id", { params: { id: reportId } }, ctx);
         return responseResult(response, `Loaded report ${reportId}.`);
-      },
-    },
-    {
-      name: "reports_decide",
-      description: "Approve, reject, or publish a project report as a configured agent approver.",
-      parameters: {
-        type: "object",
-        properties: {
-          reportId: { type: "string" },
-          action: { type: "string", enum: ["approve", "reject", "publish"] },
-          actorId: { type: "string", description: "Agent id used for the configured approver authorization check." },
-          note: { type: "string" },
-        },
-        required: ["reportId", "action", "actorId"],
-      },
-      execute: async (params, ctx) => {
-        const reportId = stringParam(params, "reportId");
-        const action = stringParam(params, "action");
-        const actorId = stringParam(params, "actorId");
-        if (!reportId || !actorId || !action || !["approve", "reject", "publish"].includes(action)) {
-          return textResult("reportId, actorId, and a valid action are required.", { code: "validation_error" }, true);
-        }
-        const response = await invokeRoute(routes, "POST", `/reports/:id/${action}`, {
-          params: { id: reportId },
-          headers: { "x-fusion-actor-type": "agent", "x-fusion-user": actorId },
-          body: { note: stringParam(params, "note") },
-        }, ctx);
-        return responseResult(response, `${action} decision applied to report ${reportId}.`);
       },
     },
     {
