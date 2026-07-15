@@ -71,7 +71,7 @@ FNXC:AgentOnboarding 2026-07-15-14:32:
 Recovery regressions must await the onboarding event seam rather than poll wall-clock session state. Buffered-event replay covers generations that complete before the test subscribes.
 */
 function waitForOnboardingEvent(sessionId: string, eventTypes: string[]): Promise<void> {
-  if (agentOnboardingStreamManager.getBufferedEvents(sessionId, 0).some((event) => eventTypes.includes(event.event))) {
+  if (agentOnboardingStreamManager.getBufferedEvents(sessionId, 0).some((event) => eventTypes.includes(event.type))) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
