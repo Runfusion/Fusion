@@ -6654,6 +6654,8 @@
       "browseWorkspacePath": "Browse workspace path",
       "overlapPickerNote": "Choose a file to ignore directly, or navigate into a folder and select the current directory.",
       "maxConcurrentTasksHint": "Default: 2.",
+      "maxConcurrentVerifications": "Max Concurrent Verifications",
+      "maxConcurrentVerificationsHint": "Caps stacked typecheck/build verification across tasks. Default: 1.",
       "pollIntervalMsHint": "Default: 15000 (15 seconds)."
     },
     "scope": {

@@ -47,6 +47,7 @@
     "prepack": "node ./scripts/prepare-publish-manifest.mjs prepack",
     "postpack": "node ./scripts/prepare-publish-manifest.mjs postpack",
     "build": "tsup",
+    "build:package": "cross-env FUSION_CLI_FULL_PACKAGE=1 tsup",
     "build:exe": "bun run build.ts",
     "build:exe:all": "bun run build.ts --all",
     "typecheck": "tsc --noEmit",

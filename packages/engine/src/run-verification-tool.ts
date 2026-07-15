@@ -24,6 +24,10 @@ import { isAbsolute, join, relative } from "node:path";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { executorLog } from "./logger.js";
+import {
+  setMaxConcurrentVerifications,
+  withVerificationSlot,
+} from "./verification-concurrency.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -465,6 +469,13 @@ export interface RunVerificationOptions {
   expectFailure?: boolean;
   onHeartbeat: () => void;
   onLine?: (line: string) => void;
+  /**
+   * Optional live limit for process-wide verification concurrency
+   * (`maxConcurrentVerifications`). Applied before acquiring a slot.
+   */
+  maxConcurrentVerifications?: number;
+  /** When true, skip the process-wide verification slot (tests only). */
+  bypassVerificationSlot?: boolean;
 }
 
 /**
@@ -472,8 +483,24 @@ export interface RunVerificationOptions {
  * heartbeats, and hard timeout enforcement.
  *
  * Exported so tests can exercise the core logic without a full agent session.
+ *
+ * FNXC:VerificationConcurrency 2026-07-15-03:35:
+ * Acquires a process-wide verification slot so concurrent tasks cannot stack
+ * multiple monorepo typecheck/build commands and peg the host CPU.
  */
 export async function runVerificationCommand(
+  opts: RunVerificationOptions,
+): Promise<VerificationResult> {
+  if (typeof opts.maxConcurrentVerifications === "number") {
+    setMaxConcurrentVerifications(opts.maxConcurrentVerifications);
+  }
+  if (opts.bypassVerificationSlot) {
+    return runVerificationCommandUnlocked(opts);
+  }
+  return withVerificationSlot(() => runVerificationCommandUnlocked(opts));
+}
+
+async function runVerificationCommandUnlocked(
   opts: RunVerificationOptions,
 ): Promise<VerificationResult> {
   const { command, cwd, timeoutMs, expectFailure = false, onHeartbeat, onLine } = opts;
@@ -655,6 +682,11 @@ export interface CreateRunVerificationToolOpts {
    * The end signal must fire from a finally block on success, failure, timeout, and spawn errors so detector suppression cannot leak after a verification command exits.
    */
   onVerificationEnd?: () => void;
+  /**
+   * FNXC:VerificationConcurrency 2026-07-15-03:35:
+   * Project setting maxConcurrentVerifications (default 1) caps stacked monorepo builds.
+   */
+  maxConcurrentVerifications?: number;
   log: {
     info: (s: string) => void;
     warn: (s: string) => void;
@@ -671,7 +703,17 @@ export interface CreateRunVerificationToolOpts {
 export function createRunVerificationTool(
   opts: CreateRunVerificationToolOpts,
 ): ToolDefinition {
-  const { worktreePath, rootDir, taskId, recordActivity, verificationCommandTimeoutMs, onVerificationStart, onVerificationEnd, log } = opts;
+  const {
+    worktreePath,
+    rootDir,
+    taskId,
+    recordActivity,
+    verificationCommandTimeoutMs,
+    onVerificationStart,
+    onVerificationEnd,
+    maxConcurrentVerifications,
+    log,
+  } = opts;
 
   return {
     name: "fn_run_verification",
@@ -783,6 +825,7 @@ export function createRunVerificationTool(
             timeoutMs,
             expectFailure,
             onHeartbeat: recordActivity,
+            maxConcurrentVerifications,
           });
         } finally {
           onVerificationEnd?.();

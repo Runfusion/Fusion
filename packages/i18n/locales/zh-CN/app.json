@@ -6634,6 +6634,8 @@
       "ignoreHiddenDotPathsHelp": "",
       "ignoreHiddenDotPathsInOverlapChecks": "",
       "maxConcurrentTasksHint": "",
+      "maxConcurrentVerifications": "",
+      "maxConcurrentVerificationsHint": "",
       "pollIntervalMsHint": ""
     },
     "scope": {

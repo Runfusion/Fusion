@@ -192,6 +192,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // SchedulingSection
   globalMaxConcurrent: "scheduling.maximumConcurrentAgentsAcrossAllProjects",
   maxConcurrent: "scheduling.maxConcurrentTasksHint",
+  maxConcurrentVerifications: "scheduling.maxConcurrentVerificationsHint",
   maxTriageConcurrent: "scheduling.maximumConcurrentPlanningAgents",
   pollIntervalMs: "scheduling.pollIntervalMsHint",
   heartbeatScopeDiscipline: "scheduling.strictDefault",

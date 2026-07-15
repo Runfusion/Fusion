@@ -103,6 +103,7 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "heartbeatScopeDiscipline",
     "ignoreHiddenOverlapPaths",
     "maxConcurrent",
+    "maxConcurrentVerifications",
     "maxStuckKills",
     "maxTriageConcurrent",
     "overlapIgnorePaths",

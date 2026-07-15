@@ -1006,6 +1006,7 @@ export function SettingsModal({
   const sessionBannersHidden = useSessionBannersHidden();
   const [form, setForm] = useState<SettingsFormState>({
     maxConcurrent: 2,
+    maxConcurrentVerifications: 1,
     maxTriageConcurrent: 2,
     maxWorktrees: 4,
     pollIntervalMs: 15000,

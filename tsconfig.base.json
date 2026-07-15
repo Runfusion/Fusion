@@ -6,6 +6,12 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    /*
+    FNXC:WorkspaceBuild 2026-07-15-03:30:
+    Full program tsc of core/engine (~700-1000 files) dominated root builds. Incremental emits dist/.tsbuildinfo so warm rebuilds only recheck changed files. Relative path resolves per-package config location.
+    */
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

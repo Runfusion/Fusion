@@ -8,6 +8,21 @@ import { ALL_STAGED_BUNDLED_IDS, RUNTIME_PLUGIN_IDS } from "./src/plugins/staged
 
 export { ALL_STAGED_BUNDLED_IDS };
 
+/*
+FNXC:CliPackaging 2026-07-15-03:25:
+Local `pnpm build` was spending ~17s on plugin-sdk DTS plus multi-plugin esbuild and optional desktop rebuild on every CLI build. Full packaging (desktop runtime, all staged plugins, self-contained DTS) is only required for publish/CI/release. Default local builds emit bin.js/extension.js + PG migrations; set FUSION_CLI_FULL_PACKAGE=1 (or run under CI=true) for the complete package surface.
+*/
+export function wantsFullCliPackage(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicit = env.FUSION_CLI_FULL_PACKAGE;
+  if (explicit === "0" || explicit === "false") return false;
+  if (explicit === "1" || explicit === "true") return true;
+  if (env.CI === "true" || env.CI === "1") return true;
+  if (env.npm_lifecycle_event === "prepack") return true;
+  return false;
+}
+
+const fullCliPackage = wantsFullCliPackage();
+
 const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-droid-runtime",
@@ -360,6 +375,31 @@ const cliBuildConfig = {
         `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply schema migrations.`,
       );
     }
+
+    /*
+    FNXC:CliPackaging 2026-07-15-03:25:
+    Fast local packaging: migrations + optional dashboard client copy only. Skip desktop ensure-build, multi-plugin esbuild staging, and assertAllStagedBundledPluginsLoadable — those dominate CPU/wall time and are only needed for published artifacts. Prior staged dist/plugins/desktop is left in place if present so a previous full build remains usable.
+    */
+    if (!fullCliPackage) {
+      if (existsSync(dashboardClientSrc)) {
+        if (existsSync(dashboardClientDest)) {
+          rmSync(dashboardClientDest, { recursive: true, force: true });
+        }
+        cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });
+        console.log("Copied dashboard client assets to dist/client/ (fast package mode)");
+      } else if (!existsSync(join(dashboardClientDest, "index.html"))) {
+        mkdirSync(dashboardClientDest, { recursive: true });
+        writeFileSync(join(dashboardClientDest, "index.html"), dashboardClientStub, "utf-8");
+        console.warn(
+          `WARNING: Dashboard client assets not found at ${dashboardClientSrc}. Generated minimal stub (fast package mode).`,
+        );
+      }
+      console.log(
+        "CLI fast package mode: skipped desktop ensure-build, bundled-plugin staging, and full plugin-sdk DTS. Set FUSION_CLI_FULL_PACKAGE=1 or use `pnpm build:full` for release packaging.",
+      );
+      return;
+    }
+
     if (existsSync(desktopRuntimeDest)) {
       rmSync(desktopRuntimeDest, { recursive: true, force: true });
     }
@@ -539,21 +579,27 @@ const pluginSdkBuildConfig = {
   platform: "node",
   target: "node22",
   tsconfig: join(__dirname, "..", "plugin-sdk", "tsconfig.json"),
-  dts: {
-    /*
-     * FNXC:PluginSDK 2026-06-13-12:00:
-     * FN-6409 requires the published @runfusion/fusion/plugin-sdk declaration entry to be self-contained. External plugin authors cannot resolve private @fusion/core types from scaffolded projects, so leaving @fusion/* imports in dist/plugin-sdk/index.d.ts makes tsc fail with TS2307 before ctx parameters can typecheck.
-     */
-    resolve: [/^@fusion\//],
-    compilerOptions: {
-      rootDir: join(__dirname, ".."),
-      baseUrl: ".",
-      paths: {
-        "@fusion/core": ["../core/src/index.ts"],
-      },
-      removeComments: true,
-    },
-  },
+  /*
+   * FNXC:CliPackaging 2026-07-15-03:25:
+   * Self-contained plugin-sdk DTS (~17s) is release/publish surface. Local fast builds skip DTS; full package mode (CI / FUSION_CLI_FULL_PACKAGE) keeps FN-6409 resolve behavior.
+   */
+  dts: fullCliPackage
+    ? {
+        /*
+         * FNXC:PluginSDK 2026-06-13-12:00:
+         * FN-6409 requires the published @runfusion/fusion/plugin-sdk declaration entry to be self-contained. External plugin authors cannot resolve private @fusion/core types from scaffolded projects, so leaving @fusion/* imports in dist/plugin-sdk/index.d.ts makes tsc fail with TS2307 before ctx parameters can typecheck.
+         */
+        resolve: [/^@fusion\//],
+        compilerOptions: {
+          rootDir: join(__dirname, ".."),
+          baseUrl: ".",
+          paths: {
+            "@fusion/core": ["../core/src/index.ts"],
+          },
+          removeComments: true,
+        },
+      }
+    : false,
   noExternal: [/^@fusion\//],
   esbuildOptions(options: { alias?: Record<string, string> }) {
     options.alias = {

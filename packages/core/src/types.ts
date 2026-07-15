@@ -3863,6 +3863,11 @@ export interface ProjectSettings {
   /** Maximum number of concurrent AI agents across all activity types
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
+  /**
+   * FNXC:VerificationConcurrency 2026-07-15-03:35:
+   * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.
+   */
+  maxConcurrentVerifications?: number;
   /** Maximum number of concurrent triage/specification agents. When undefined,
    *  falls back to maxConcurrent. */
   maxTriageConcurrent?: number;

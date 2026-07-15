@@ -2,6 +2,9 @@
 /*
 FNXC:WorkspaceBuild 2026-06-30-00:00:
 Root builds may skip unchanged plugin workspaces to keep local and CI feedback fast, but only after required dist outputs exist and a content hash proves plugin package inputs match the last successful plugin build. Non-plugin packages still build every run so the root command preserves the pre-existing recursive build contract outside plugins.
+
+FNXC:WorkspaceBuild 2026-07-15-03:20:
+Root `pnpm build` was pegging CPU for ~2 minutes even when nothing changed: non-plugin packages always rebuilt, CLI packaging always staged desktop + 15 plugins + DTS, and tsc had no incremental cache. Extend the content-hash skip cache to ALL workspace packages (not just plugins), support `--force` / `--full`, and default CLI packaging to a fast local mode (full package on CI or FUSION_CLI_FULL_PACKAGE=1).
 */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -17,10 +20,14 @@ import {
   readJsonCache,
 } from "./lib/content-hash.mjs";
 
-export const BUILD_CACHE_VERSION = 1;
+/*
+FNXC:WorkspaceBuild 2026-07-15-03:20:
+Bump cache version when the skip contract expands from plugins-only to all packages so stale plugin-only entries cannot incorrectly interact with the broader skip set. File name stays plugin-build-cache.json for path stability under .fusion/cache.
+*/
+export const BUILD_CACHE_VERSION = 2;
 export const BUILD_CACHE_FILE = "plugin-build-cache.json";
 export const ROOT_BUILD_EXCLUDED_PACKAGES = new Set(["@fusion/desktop", "@fusion/mobile"]);
-export const PLUGIN_BUILD_GLOBAL_INPUT_PATHS = [
+export const PACKAGE_BUILD_GLOBAL_INPUT_PATHS = [
   "package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
@@ -30,6 +37,8 @@ export const PLUGIN_BUILD_GLOBAL_INPUT_PATHS = [
   "scripts/build-workspace.mjs",
   "scripts/lib/content-hash.mjs",
 ];
+/** @deprecated Use PACKAGE_BUILD_GLOBAL_INPUT_PATHS — kept for existing tests. */
+export const PLUGIN_BUILD_GLOBAL_INPUT_PATHS = PACKAGE_BUILD_GLOBAL_INPUT_PATHS;
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
@@ -127,8 +136,8 @@ export function discoverWorkspacePackages(rootDir, patterns = readWorkspacePacka
 
   const packagesByName = new Map(packages.map((pkg) => [pkg.name, pkg]));
   for (const pkg of packages) {
-    if (!pkg.isPlugin) continue;
-    pkg.inputPaths = collectPluginHashInputPaths(pkg, packagesByName);
+    // FNXC:WorkspaceBuild 2026-07-15-03:20: Hash inputs for every package (plugins and non-plugins) so core/engine/dashboard/cli can skip when unchanged.
+    pkg.inputPaths = collectPackageHashInputPaths(pkg, packagesByName);
   }
 
   return packages;
@@ -141,10 +150,10 @@ function declaredDependencyNames(manifest) {
 }
 
 /**
- * Resolve a plugin's content-hash input directories. Include local workspace
+ * Resolve a package's content-hash input directories. Include local workspace
  * dependency directories and root build config/tooling files as invalidators so
- * skipping a plugin cannot hide a compile break against changed shared package
- * types, TypeScript settings, pnpm resolution, or build wrapper behavior.
+ * skipping cannot hide a compile break against changed shared package types,
+ * TypeScript settings, pnpm resolution, or build wrapper behavior.
  *
  * FNXC:WorkspaceBuild 2026-06-30-00:00:
  * Plugin skip decisions must include declared local workspace dependencies and
@@ -152,12 +161,16 @@ function declaredDependencyNames(manifest) {
  * directory, because root pnpm builds previously recompiled plugins after shared
  * package API/type changes and root TypeScript/build-tooling changes.
  *
+ * FNXC:WorkspaceBuild 2026-07-15-03:20:
+ * Same contract now applies to non-plugin packages so unchanged core/engine/
+ * dashboard/cli skip the multi-minute full rebuild.
+ *
  * @param {object} pkg
  * @param {Map<string, object>} packagesByName
  * @returns {string[]}
  */
-export function collectPluginHashInputPaths(pkg, packagesByName) {
-  const inputPaths = new Set([...PLUGIN_BUILD_GLOBAL_INPUT_PATHS, pkg.dir]);
+export function collectPackageHashInputPaths(pkg, packagesByName) {
+  const inputPaths = new Set([...PACKAGE_BUILD_GLOBAL_INPUT_PATHS, pkg.dir]);
   const seen = new Set();
   const visit = (current) => {
     if (seen.has(current.name)) return;
@@ -171,6 +184,11 @@ export function collectPluginHashInputPaths(pkg, packagesByName) {
   };
   visit(pkg);
   return [...inputPaths].sort((a, b) => a.localeCompare(b));
+}
+
+/** @deprecated Use collectPackageHashInputPaths */
+export function collectPluginHashInputPaths(pkg, packagesByName) {
+  return collectPackageHashInputPaths(pkg, packagesByName);
 }
 
 /**
@@ -243,16 +261,35 @@ function collectDistEntrypoints(manifest, outputPaths = new Set()) {
  */
 export function requiredPluginOutputs(rootDir, dir, manifest) {
   const outputs = collectDistEntrypoints(manifest, collectDistExports(manifest.exports));
-  const sourceFiles = fg.sync(["src/**/*.{ts,tsx,mts,cts}"], {
-    cwd: path.join(rootDir, dir),
-    onlyFiles: true,
-    unique: true,
-    ignore: ["**/*.d.ts", "**/*.test.*", "**/__tests__/**", "**/node_modules/**", "**/dist/**"],
-  });
-  for (const sourceFile of sourceFiles) {
-    outputs.add(sourceFile.replace(/^src\//, "dist/").replace(/\.[cm]?[tj]sx?$/, ".js"));
+  const buildScript = typeof manifest.scripts?.build === "string" ? manifest.scripts.build : "";
+  /*
+  FNXC:WorkspaceBuild 2026-07-15-03:50:
+  Bundlers (tsup/esbuild without tsc) emit entry bundles only — never per-source dist mirrors.
+  Mapping src/** → dist/** for @runfusion/fusion made every warm build report missing-output and
+  force a full CLI rebuild. Only tsc-style packages require per-file dist outputs.
+  */
+  const isBundledPackage =
+    /\b(tsup|esbuild)\b/.test(buildScript) && !/\btsc\b/.test(buildScript);
+
+  if (!isBundledPackage) {
+    const sourceFiles = fg.sync(["src/**/*.{ts,tsx,mts,cts}"], {
+      cwd: path.join(rootDir, dir),
+      onlyFiles: true,
+      unique: true,
+      ignore: [
+        "**/*.d.ts",
+        "**/*.test.*",
+        "**/__tests__/**",
+        "**/__test-utils__/**",
+        "**/node_modules/**",
+        "**/dist/**",
+      ],
+    });
+    for (const sourceFile of sourceFiles) {
+      outputs.add(sourceFile.replace(/^src\//, "dist/").replace(/\.[cm]?[tj]sx?$/, ".js"));
+    }
   }
-  if (typeof manifest.scripts?.build === "string" && manifest.scripts.build.includes("copy-css")) {
+  if (buildScript.includes("copy-css")) {
     const cssFiles = fg.sync(["src/**/*.css"], {
       cwd: path.join(rootDir, dir),
       onlyFiles: true,
@@ -263,12 +300,27 @@ export function requiredPluginOutputs(rootDir, dir, manifest) {
       outputs.add(cssFile.replace(/^src\//, "dist/"));
     }
   }
+  /*
+  FNXC:WorkspaceBuild 2026-07-15-03:20:
+  Dashboard client is produced by Vite into dist/client (from app/), not by mapping package src to dist.
+  Require the client index so a warm tsc-only dist cannot skip a missing UI build.
+  */
+  if (/\bvite\b/.test(buildScript)) {
+    outputs.add("dist/client/index.html");
+  }
+  if (manifest.name === "@runfusion/fusion") {
+    outputs.add("dist/bin.js");
+    outputs.add("dist/extension.js");
+  }
   if (outputs.size === 0) outputs.add("dist/index.js");
   return [...outputs].sort((a, b) => a.localeCompare(b)).map((output) => path.posix.join(dir, output));
 }
 
+/** Alias — required outputs apply to every workspace package, not only plugins. */
+export const requiredPackageOutputs = requiredPluginOutputs;
+
 /**
- * Compute a plugin package input hash using the shared git-backed content hash.
+ * Compute a package input hash using the shared git-backed content hash.
  * Returns null when git is unavailable; callers must build rather than skip in
  * that case.
  *
@@ -279,20 +331,25 @@ export function requiredPluginOutputs(rootDir, dir, manifest) {
  * @param {ReturnType<typeof createRepoContentSnapshot>} [options.snapshot]
  * @returns {string|null}
  */
-export function computePluginSourceHash(pkg, rootDir, { gitFn = defaultGitRunner, snapshot } = {}) {
+export function computePackageSourceHash(pkg, rootDir, { gitFn = defaultGitRunner, snapshot } = {}) {
   const probe = gitFn(["rev-parse", "--is-inside-work-tree"], rootDir);
   if (probe !== "true") return null;
   return computeContentHash({
     rootDir,
     inputPaths: pkg.inputPaths?.length ? pkg.inputPaths : [pkg.dir],
-    versionPrefix: `plugin-build-v${BUILD_CACHE_VERSION}`,
+    versionPrefix: `package-build-v${BUILD_CACHE_VERSION}`,
     gitFn,
     snapshot,
   });
 }
 
+/** @deprecated Use computePackageSourceHash */
+export function computePluginSourceHash(pkg, rootDir, options) {
+  return computePackageSourceHash(pkg, rootDir, options);
+}
+
 /**
- * Explain whether a plugin package must be built. A skip requires every required
+ * Explain whether a package must be built. A skip requires every required
  * output to exist plus a matching successful-build source hash.
  *
  * @param {object} pkg
@@ -302,11 +359,13 @@ export function computePluginSourceHash(pkg, rootDir, { gitFn = defaultGitRunner
  * @param {(p: string) => boolean} [options.existsFn]
  * @param {(args: string[], cwd: string) => string|null} [options.gitFn]
  * @param {ReturnType<typeof createRepoContentSnapshot>} [options.snapshot]
+ * @param {boolean} [options.force]
  * @returns {{ shouldBuild: boolean, reason: string, sourceHash: string|null, missingOutputs: string[] }}
  */
-export function evaluatePluginBuild(pkg, { rootDir, cache, existsFn = existsSync, gitFn = defaultGitRunner, snapshot } = {}) {
+export function evaluatePackageBuild(pkg, { rootDir, cache, existsFn = existsSync, gitFn = defaultGitRunner, snapshot, force = false } = {}) {
   const missingOutputs = pkg.requiredOutputs.filter((output) => !existsFn(path.join(rootDir, output)));
-  const sourceHash = computePluginSourceHash(pkg, rootDir, { gitFn, snapshot });
+  const sourceHash = computePackageSourceHash(pkg, rootDir, { gitFn, snapshot });
+  if (force) return { shouldBuild: true, reason: "force", sourceHash, missingOutputs };
   if (missingOutputs.length > 0) return { shouldBuild: true, reason: "missing-output", sourceHash, missingOutputs };
   if (sourceHash === null) return { shouldBuild: true, reason: "no-git-hash", sourceHash, missingOutputs };
   const entry = cache?.entries?.[pkg.name];
@@ -315,10 +374,15 @@ export function evaluatePluginBuild(pkg, { rootDir, cache, existsFn = existsSync
   return { shouldBuild: false, reason: "unchanged", sourceHash, missingOutputs };
 }
 
+/** @deprecated Use evaluatePackageBuild */
+export function evaluatePluginBuild(pkg, options) {
+  return evaluatePackageBuild(pkg, options);
+}
+
 /**
- * Plan the root build. Non-plugin build packages are always planned; plugin
- * packages are planned only when the safe content-hash cache says they changed
- * or their required outputs/cache entry are missing.
+ * Plan the root build. Every buildable workspace package (plugins and non-plugins)
+ * is planned only when the content-hash cache says inputs changed or required
+ * outputs/cache entries are missing. Desktop/mobile stay excluded.
  *
  * @param {object} options
  * @param {string} [options.rootDir]
@@ -327,13 +391,14 @@ export function evaluatePluginBuild(pkg, { rootDir, cache, existsFn = existsSync
  * @param {(p: string) => boolean} [options.existsFn]
  * @param {(args: string[], cwd: string) => string|null} [options.gitFn]
  * @param {ReturnType<typeof createRepoContentSnapshot>} [options.snapshot]
- * @returns {{ plannedPackages: object[], skippedPlugins: object[], excludedPackages: object[], pluginEvaluations: Map<string, object> }}
+ * @param {boolean} [options.force]
+ * @returns {{ plannedPackages: object[], skippedPackages: object[], skippedPlugins: object[], excludedPackages: object[], packageEvaluations: Map<string, object>, pluginEvaluations: Map<string, object> }}
  */
-export function planWorkspaceBuild({ rootDir = repoRoot, packages = discoverWorkspacePackages(rootDir), cache = readPluginBuildCache(rootDir), existsFn = existsSync, gitFn = defaultGitRunner, snapshot } = {}) {
+export function planWorkspaceBuild({ rootDir = repoRoot, packages = discoverWorkspacePackages(rootDir), cache = readPluginBuildCache(rootDir), existsFn = existsSync, gitFn = defaultGitRunner, snapshot, force = false } = {}) {
   const plannedPackages = [];
-  const skippedPlugins = [];
+  const skippedPackages = [];
   const excludedPackages = [];
-  const pluginEvaluations = new Map();
+  const packageEvaluations = new Map();
 
   for (const pkg of packages) {
     if (!pkg.hasBuild) continue;
@@ -341,20 +406,25 @@ export function planWorkspaceBuild({ rootDir = repoRoot, packages = discoverWork
       excludedPackages.push(pkg);
       continue;
     }
-    if (!pkg.isPlugin) {
-      plannedPackages.push({ ...pkg, buildReason: "non-plugin" });
-      continue;
-    }
-    const evaluation = evaluatePluginBuild(pkg, { rootDir, cache, existsFn, gitFn, snapshot });
-    pluginEvaluations.set(pkg.name, evaluation);
+    const evaluation = evaluatePackageBuild(pkg, { rootDir, cache, existsFn, gitFn, snapshot, force });
+    packageEvaluations.set(pkg.name, evaluation);
     if (evaluation.shouldBuild) {
       plannedPackages.push({ ...pkg, buildReason: evaluation.reason, sourceHash: evaluation.sourceHash });
     } else {
-      skippedPlugins.push({ ...pkg, buildReason: evaluation.reason, sourceHash: evaluation.sourceHash });
+      skippedPackages.push({ ...pkg, buildReason: evaluation.reason, sourceHash: evaluation.sourceHash });
     }
   }
 
-  return { plannedPackages, skippedPlugins, excludedPackages, pluginEvaluations };
+  // Back-compat: callers/tests that only inspect skippedPlugins keep working.
+  const skippedPlugins = skippedPackages.filter((pkg) => pkg.isPlugin);
+  return {
+    plannedPackages,
+    skippedPackages,
+    skippedPlugins,
+    excludedPackages,
+    packageEvaluations,
+    pluginEvaluations: packageEvaluations,
+  };
 }
 
 /**
@@ -366,7 +436,7 @@ export function planWorkspaceBuild({ rootDir = repoRoot, packages = discoverWork
  * @param {(command: string, args: string[], options: object) => { status: number|null }} [spawnFn]
  * @returns {{ status: number, packageNames: string[] }}
  */
-export function runPlannedBuilds(plannedPackages, rootDir, spawnFn = spawnSync) {
+export function runPlannedBuilds(plannedPackages, rootDir, spawnFn = spawnSync, { fullPackage = false, env = process.env } = {}) {
   if (plannedPackages.length === 0) return { status: 0, packageNames: [] };
   const packageNames = plannedPackages.map((pkg) => pkg.name);
   const args = [...packageNames.flatMap((name) => ["--filter", name]), "build"];
@@ -376,13 +446,27 @@ export function runPlannedBuilds(plannedPackages, rootDir, spawnFn = spawnSync) 
    * shell (ENOENT / EINVAL since CVE-2024-27980). Without shell:true the root build failed
    * with `spawn pnpm ENOENT` on Windows. The args are workspace filters + package names
    * (no spaces or shell metacharacters), so shell quoting is safe.
+   *
+   * FNXC:WorkspaceBuild 2026-07-15-03:20:
+   * Propagate FUSION_CLI_FULL_PACKAGE so @runfusion/fusion tsup stages desktop + bundled
+   * plugins + DTS only when root build was invoked with --full (or CI already set the env).
+   * Day-to-day local builds skip that multi-minute packaging tail.
    */
-  const result = spawnFn("pnpm", args, { cwd: rootDir, stdio: "inherit", shell: process.platform === "win32" });
+  const childEnv = {
+    ...env,
+    ...(fullPackage ? { FUSION_CLI_FULL_PACKAGE: "1" } : {}),
+  };
+  const result = spawnFn("pnpm", args, {
+    cwd: rootDir,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+    env: childEnv,
+  });
   return { status: result.status ?? 1, packageNames };
 }
 
 /**
- * Record hashes for plugins that built successfully.
+ * Record hashes for packages that built successfully (plugins and non-plugins).
  *
  * @param {object[]} builtPackages
  * @param {object} options
@@ -390,17 +474,22 @@ export function runPlannedBuilds(plannedPackages, rootDir, spawnFn = spawnSync) 
  * @param {ReturnType<typeof readPluginBuildCache>} options.cache
  * @param {(args: string[], cwd: string) => string|null} [options.gitFn]
  */
-export function recordSuccessfulPluginBuilds(builtPackages, { rootDir, cache, gitFn = defaultGitRunner } = {}) {
+export function recordSuccessfulPackageBuilds(builtPackages, { rootDir, cache, gitFn = defaultGitRunner } = {}) {
   const nextCache = { version: BUILD_CACHE_VERSION, entries: { ...(cache?.entries ?? {}) } };
   let changed = false;
   const snapshot = createRepoContentSnapshot({ rootDir, gitFn });
-  for (const pkg of builtPackages.filter((entry) => entry.isPlugin)) {
-    const sourceHash = computePluginSourceHash(pkg, rootDir, { gitFn, snapshot });
+  for (const pkg of builtPackages) {
+    const sourceHash = computePackageSourceHash(pkg, rootDir, { gitFn, snapshot });
     if (sourceHash === null) continue;
     nextCache.entries[pkg.name] = { sourceHash, builtAt: new Date().toISOString() };
     changed = true;
   }
   if (changed) writePluginBuildCache(rootDir, nextCache);
+}
+
+/** @deprecated Use recordSuccessfulPackageBuilds */
+export function recordSuccessfulPluginBuilds(builtPackages, options) {
+  return recordSuccessfulPackageBuilds(builtPackages, options);
 }
 
 function formatPlanLine(pkg) {
@@ -415,28 +504,44 @@ function formatPlanLine(pkg) {
  * rebuilding every non-plugin workspace package. Plugins load their built
  * dist/ at runtime, so a never-rebuilt plugin dist silently runs phantom-old
  * code — exactly the Grok "messages aren't sending" wrong-CLI-flags failure.
+ *
+ * FNXC:WorkspaceBuild 2026-07-15-03:20:
+ * `--force` rebuilds every package ignoring the skip cache. `--full` sets
+ * FUSION_CLI_FULL_PACKAGE for the CLI packaging path (desktop + plugins + DTS).
  */
-export function main({ rootDir = repoRoot, spawnFn = spawnSync, gitFn = defaultGitRunner, pluginsOnly = false } = {}) {
-  const cache = readPluginBuildCache(rootDir);
+export function main({
+  rootDir = repoRoot,
+  spawnFn = spawnSync,
+  gitFn = defaultGitRunner,
+  pluginsOnly = false,
+  force = false,
+  fullPackage = false,
+} = {}) {
+  const cache = force ? { version: BUILD_CACHE_VERSION, entries: {} } : readPluginBuildCache(rootDir);
   const snapshot = createRepoContentSnapshot({ rootDir, gitFn });
-  const plan = planWorkspaceBuild({ rootDir, cache, gitFn, snapshot });
+  const plan = planWorkspaceBuild({ rootDir, cache, gitFn, snapshot, force });
   const plannedPackages = pluginsOnly ? plan.plannedPackages.filter((pkg) => pkg.isPlugin) : plan.plannedPackages;
   const plannedNames = plannedPackages.map(formatPlanLine);
-  const skippedNames = plan.skippedPlugins.map((pkg) => pkg.name);
+  const skippedNames = (plan.skippedPackages ?? plan.skippedPlugins).map((pkg) => pkg.name);
 
   const scope = pluginsOnly ? "changed plugins" : "planned builds";
   console.log(`[build-workspace] ${scope}: ${plannedNames.join(", ") || "(none)"}`);
   if (skippedNames.length > 0) {
-    console.log(`[build-workspace] skipped unchanged plugins: ${skippedNames.join(", ")}`);
+    console.log(`[build-workspace] skipped unchanged packages: ${skippedNames.join(", ")}`);
+  }
+  if (fullPackage) {
+    console.log("[build-workspace] full CLI packaging enabled (FUSION_CLI_FULL_PACKAGE=1)");
   }
 
-  const result = runPlannedBuilds(plannedPackages, rootDir, spawnFn);
+  const result = runPlannedBuilds(plannedPackages, rootDir, spawnFn, { fullPackage });
   if (result.status !== 0) {
     process.stderr.write(`[build-workspace] FAILED packages: ${result.packageNames.join(", ") || "(none)"}\n`);
     return result.status;
   }
 
-  recordSuccessfulPluginBuilds(plannedPackages, { rootDir, cache, gitFn });
+  // When force used empty cache for planning, still merge into on-disk cache.
+  const persistCache = force ? readPluginBuildCache(rootDir) : cache;
+  recordSuccessfulPackageBuilds(plannedPackages, { rootDir, cache: persistCache, gitFn });
   return 0;
 }
 
@@ -450,6 +555,9 @@ export function main({ rootDir = repoRoot, spawnFn = spawnSync, gitFn = defaultG
  * file URL of argv[1] so the guard is correct on Windows, macOS, and Linux.
  */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const pluginsOnly = process.argv.slice(2).includes("--plugins-only");
-  process.exit(main({ pluginsOnly }));
+  const args = process.argv.slice(2);
+  const pluginsOnly = args.includes("--plugins-only");
+  const force = args.includes("--force");
+  const fullPackage = args.includes("--full");
+  process.exit(main({ pluginsOnly, force, fullPackage }));
 }

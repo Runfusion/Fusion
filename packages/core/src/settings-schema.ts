@@ -343,6 +343,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   enginePaused: false,
   engineLastActiveAt: undefined,
   maxConcurrent: 2,
+  /*
+  FNXC:VerificationConcurrency 2026-07-15-03:35:
+  Default one verification at a time process-wide so concurrent tasks cannot each run verify:fast / full builds simultaneously and peg the host. Operators with spare cores may raise this in Scheduling settings.
+  */
+  maxConcurrentVerifications: 1,
   maxTriageConcurrent: 2,
   globalMaxConcurrent: 4,
   maxWorktrees: 4,
