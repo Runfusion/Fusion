@@ -252,9 +252,15 @@ async function getStore(cwd: string): Promise<TaskStore> {
  * one isolated PostgreSQL database with the agent tools without re-booting the
  * backend per tool call. The entry carries no shutdown hook; tests own the
  * injected store's lifecycle (the shared PG harness tears it down in afterAll).
+ * An optional shutdown owner supports lifecycle tests that must prove the host
+ * awaits an internally-owned factory result.
  */
-export function __setCachedStoreForTesting(projectRoot: string, store: TaskStore): void {
-  storeCache.set(projectRoot, { store, external: true });
+export function __setCachedStoreForTesting(
+  projectRoot: string,
+  store: TaskStore,
+  shutdown?: () => Promise<void>,
+): void {
+  storeCache.set(projectRoot, shutdown ? { store, shutdown } : { store, external: true });
 }
 
 /** @internal Exposed so tests and the extension shutdown hook can close cached stores deterministically; not a public CLI API contract. */
@@ -5560,6 +5566,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       dashboardProcess = null;
       dashboardPort = null;
     }
-    void closeCachedStores();
+    /*
+    FNXC:PostgresCliLifecycle 2026-07-14-22:38:
+    The session shutdown handler's returned promise is the host's teardown barrier. Await cache cleanup so every factory-owned PostgreSQL pool or embedded process is stopped before the host considers the extension session closed.
+    */
+    await closeCachedStores();
   });
 }

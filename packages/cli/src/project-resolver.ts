@@ -1124,6 +1124,42 @@ export async function getStore(options?: { project?: string; cwd?: string }): Pr
   return resolved.store;
 }
 
+/** A factory-owned project store whose backend lifecycle has one awaited release path. */
+export interface ResolvedProjectStoreOwner {
+  readonly store: TaskStore;
+  close(): Promise<void>;
+}
+
+/**
+ * Resolve a project store together with the startup-factory ownership handle.
+ * Short-lived commands must prefer this over getStore() so success, errors, and
+ * requested CLI exits can await backend shutdown before returning control.
+ */
+export async function resolveProjectStore(
+  options?: { project?: string; cwd?: string },
+): Promise<ResolvedProjectStoreOwner> {
+  /*
+  FNXC:PostgresProjectResolverLifecycle 2026-07-14-22:20:
+  One-shot CLI commands need an owner-aware handle for factory-created TaskStores. Releasing the handle removes it from module cleanup and awaits the exact startup-factory shutdown once, so commands do not depend on asynchronous process-exit hooks to flush PostgreSQL resources.
+  */
+  const resolved = await resolveProject({
+    project: options?.project,
+    cwd: options?.cwd,
+    interactive: true,
+  });
+  let closed = false;
+  return {
+    store: resolved.store,
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      const shutdown = resolvedProjectStores.get(resolved.store);
+      resolvedProjectStores.delete(resolved.store);
+      await shutdown?.().catch(() => undefined);
+    },
+  };
+}
+
 // Export getStore as default for backward compatibility
 export { getStore as default };
 

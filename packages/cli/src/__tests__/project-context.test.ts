@@ -13,6 +13,7 @@ import {
   detectProjectFromCwd,
   formatProjectLine,
   getStoreForProject,
+  closeProjectStore,
   clearStoreCache,
 } from "../project-context.js";
 import { CentralCore, GlobalSettingsStore, type RegisteredProject } from "@fusion/core";
@@ -298,7 +299,11 @@ pgDescribe("project-context (PostgreSQL-backed CentralCore)", () => {
       expect(context.projectPath).toBe(resolve(projectPath));
       expect(context.projectName).toBe("legacy-project");
       expect(context.isRegistered).toBe(false);
-      await context.store.close();
+      /*
+      FNXC:PostgresCliLifecycle 2026-07-14-22:25:
+      A resolved ProjectContext owns both its factory-backed TaskStore and the CentralCore retained during resolution. Tests and commands must close that aggregate through closeProjectStore so the central PostgreSQL pool cannot outlive the context and block database teardown.
+      */
+      await closeProjectStore(context);
     } finally {
       if (prevDatabaseUrl === undefined) {
         delete process.env.DATABASE_URL;

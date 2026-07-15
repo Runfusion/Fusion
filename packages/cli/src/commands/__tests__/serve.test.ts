@@ -158,6 +158,23 @@ const mocks = vi.hoisted(() => {
     return store;
   });
 
+  /*
+   * FNXC:PostgresServeLifecycle 2026-07-14-22:20:
+   * Serve's authoritative TaskStore is initialized by createTaskStoreForBackend and then injected into ProjectEngineManager. The test factory must model that single owner instead of leaving the engine mock to construct and initialize a second store.
+   */
+  const createTaskStoreForBackendMock = vi.fn(async ({ rootDir }: { rootDir: string }) => {
+    const taskStore = taskStoreCtor(rootDir);
+    await taskStore.init();
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    backendShutdowns.push(shutdown);
+    return {
+      taskStore,
+      asyncLayer: {},
+      backend: { mode: "embedded" },
+      shutdown,
+    };
+  });
+
   const automationStoreCtor = vi.fn().mockImplementation(function () {
     const automationStore = {
       init: vi.fn().mockResolvedValue(undefined),
@@ -424,8 +441,13 @@ const mocks = vi.hoisted(() => {
     pruning: { applied: false },
   });
 
-  const projectEngineCtor = vi.fn().mockImplementation(function (runtimeConfig: { workingDirectory: string }, _centralCore: unknown, options: { onInsightRunProcessed?: unknown }) {
-    const store = taskStoreCtor(runtimeConfig.workingDirectory);
+  const projectEngineCtor = vi.fn().mockImplementation(function (
+    runtimeConfig: { workingDirectory: string },
+    _centralCore: unknown,
+    options: { onInsightRunProcessed?: unknown; externalTaskStore?: ReturnType<typeof createTaskStoreMock> },
+  ) {
+    const store = options.externalTaskStore ?? taskStoreCtor(runtimeConfig.workingDirectory);
+    const ownsStoreInitialization = options.externalTaskStore === undefined;
     const automationStore = automationStoreCtor(runtimeConfig.workingDirectory);
     const agentStore = agentStoreCtor();
     const semaphore = agentSemaphoreCtor();
@@ -455,7 +477,7 @@ const mocks = vi.hoisted(() => {
 
     const engine = {
       start: vi.fn(async () => {
-        await store.init();
+        if (ownsStoreInitialization) await store.init();
         await automationStore.init();
         await agentStore.init();
         const settings = await store.getSettings();
@@ -541,6 +563,7 @@ const mocks = vi.hoisted(() => {
     listenCalls,
     backendShutdowns,
     taskStoreCtor,
+    createTaskStoreForBackendMock,
     automationStoreCtor,
     agentStoreCtor,
     centralCoreCtor,
@@ -606,16 +629,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   const { createCliCoreMock } = await import("../../test/mockCoreEngine");
   return createCliCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
   TaskStore: mocks.taskStoreCtor,
-  createTaskStoreForBackend: vi.fn(async ({ rootDir }: { rootDir: string }) => {
-    const shutdown = vi.fn().mockResolvedValue(undefined);
-    mocks.backendShutdowns.push(shutdown);
-    return {
-      taskStore: new mocks.taskStoreCtor(rootDir),
-      asyncLayer: {},
-      backend: { mode: "embedded" },
-      shutdown,
-    };
-  }),
+  createTaskStoreForBackend: mocks.createTaskStoreForBackendMock,
   AutomationStore: mocks.automationStoreCtor,
   AgentStore: mocks.agentStoreCtor,
   CentralCore: mocks.centralCoreCtor,
@@ -916,7 +930,8 @@ describe("runServe", () => {
   it("initializes stores, starts engine services, and creates a headless server", async () => {
     await runServe(4040, {});
 
-    expect(mocks.taskStoreCtor).toHaveBeenCalledWith("/repo");
+    expect(mocks.createTaskStoreForBackendMock).toHaveBeenCalledWith({ rootDir: "/repo" });
+    expect(mocks.taskStoreCtor).toHaveBeenCalledTimes(1);
     expect(mocks.taskStores[0].init).toHaveBeenCalledTimes(1);
     expect(mocks.taskStores[0].watch).toHaveBeenCalledTimes(1);
     expect(mocks.automationStoreCtor).toHaveBeenCalledWith("/repo");

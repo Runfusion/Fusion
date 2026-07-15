@@ -21,7 +21,7 @@ vi.mock("../commands/task.js", () => ({
   runTaskPlan: vi.fn(),
 }));
 
-import { resolveTaskListFormatter } from "../extension.js";
+import { __setCachedStoreForTesting, closeCachedStores, resolveTaskListFormatter } from "../extension.js";
 import { TaskStore, AgentStore, MANUAL_RETRY_RESET_COUNTER_KEYS, RESEARCH_RUN_STATUSES, MAX_TASK_LIST_TEXT_CHARS, formatTaskListText, COLUMN_LABELS, drizzleSql } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
 import { isGhAvailable, isGhAuthenticated, runGhJsonAsync } from "@fusion/core/gh-cli";
@@ -51,6 +51,42 @@ const h = createPgExtensionHarness("fn-extension");
 function makeCtx(cwd: string): ToolExecuteContext {
   return { cwd };
 }
+
+describe("fn pi extension session lifecycle", () => {
+  afterEach(async () => {
+    await closeCachedStores();
+  });
+
+  it("keeps session_shutdown pending until factory-owned cache teardown finishes", async () => {
+    /*
+    FNXC:PostgresCliLifecycle 2026-07-14-22:38:
+    Pi awaits the promise returned by session_shutdown. Keep that promise pending until the cached startup-factory owner finishes so PostgreSQL resources cannot outlive the extension session.
+    */
+    let releaseShutdown!: () => void;
+    const backendShutdown = vi.fn(() => new Promise<void>((resolve) => {
+      releaseShutdown = resolve;
+    }));
+    __setCachedStoreForTesting("/owned-extension-store", {} as TaskStore, backendShutdown);
+
+    const events = new Map<string, () => Promise<void>>();
+    const api = createMockApi();
+    api.on = ((event: string, handler: () => Promise<void>) => {
+      events.set(event, handler);
+    }) as MockApi["on"];
+    registerExtension(api);
+
+    const shutdownPromise = events.get("session_shutdown")?.();
+    expect(shutdownPromise).toBeDefined();
+    let settled = false;
+    void shutdownPromise?.then(() => { settled = true; });
+    await vi.waitFor(() => expect(backendShutdown).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseShutdown();
+    await expect(shutdownPromise).resolves.toBeUndefined();
+  });
+});
 interface ToolMeta {
   description?: string;
   promptGuidelines?: string[];

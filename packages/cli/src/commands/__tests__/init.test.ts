@@ -165,6 +165,29 @@ describe("init command", () => {
     expect(existsSync(dbPath)).toBe(false);
   });
 
+  it("should repair a missing project identity for an existing central registration", async () => {
+    const markerPath = join(tempProjectDir, ".fusion", "project.json");
+    mkdirSync(join(tempProjectDir, ".fusion"), { recursive: true });
+    mockGetProjectByPath.mockResolvedValueOnce({
+      id: "proj_1234567890abcdef",
+      name: "registered-project",
+      path: tempProjectDir,
+      isolationMode: "in-process",
+      status: "active",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    });
+    mockEnsureProjectForPath.mockClear();
+
+    await runInit({ path: tempProjectDir });
+
+    expect(JSON.parse(readFileSync(markerPath, "utf8"))).toMatchObject({
+      id: "proj_1234567890abcdef",
+      createdAt: "2026-07-14T00:00:00.000Z",
+    });
+    expect(mockEnsureProjectForPath).not.toHaveBeenCalled();
+  });
+
   it("should reject existing invalid fusion.db files", async () => {
     const fusionDir = join(tempProjectDir, ".fusion");
     const dbPath = join(fusionDir, "fusion.db");

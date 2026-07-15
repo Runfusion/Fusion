@@ -132,6 +132,18 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     // Check if already registered
     const existing = await central.getProjectByPath(cwd);
     if (existing) {
+      /*
+      FNXC:ProjectIdentityMarker 2026-07-14-22:25:
+      A project already registered in PostgreSQL can still reach this branch when its local `.fusion/project.json` marker is missing. Repair the marker before returning so subsequent startup and init checks use the same durable identity as a newly registered project.
+      */
+      try {
+        writeProjectIdentity(fusionDir, {
+          id: existing.id,
+          createdAt: existing.createdAt,
+        });
+      } catch (identityError) {
+        console.warn(`  ⚠ Could not persist project identity: ${identityError instanceof Error ? identityError.message : String(identityError)}`);
+      }
       console.log(`  ✓ Already registered in central database`);
       maybeInstallClaudeSkillForNewProject(cwd);
       console.log(`\n✓ Project "${projectName}" is ready!`);

@@ -109,6 +109,7 @@ const {
   formatLastActivity,
   getProjectsWithStatus,
   getProjectTaskCounts,
+  resolveProjectStore,
   resetProjectResolution,
 } = projectResolver;
 
@@ -203,6 +204,73 @@ describe("Project Resolver", () => {
       await expect(getProjectTaskCounts(project.id)).resolves.toEqual({ todo: 2, done: 1 });
       expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: project.path, projectId: project.id });
       expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("releases an owner-resolved command store exactly once", async () => {
+      /*
+       * FNXC:PostgresProjectResolverLifecycle 2026-07-14-22:20:
+       * Short-lived commands release their factory store explicitly; later module cleanup and repeated close calls must not invoke the same backend shutdown again.
+       */
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const taskStore = { getMissionStore: vi.fn() };
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue([project] as never);
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore,
+        shutdown,
+      } as never);
+
+      const owner = await resolveProjectStore({ project: project.name });
+      expect(owner.store).toBe(taskStore);
+
+      await owner.close();
+      await owner.close();
+      await cleanupProjectResolution();
+
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("mission command store ownership", () => {
+    it("awaits owner cleanup before a successful command exit", async () => {
+      const order: string[] = [];
+      const close = vi.fn(async () => {
+        order.push("close");
+      });
+      const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        order.push(`exit:${code}`);
+        throw new Error(`exit:${code}`);
+      }) as never);
+      vi.spyOn(projectResolver, "resolveProjectStore").mockResolvedValue({
+        store: {
+          getMissionStore: () => ({ listMissions: vi.fn().mockResolvedValue([]) }),
+        } as never,
+        close,
+      });
+      const { runMissionList } = await import("../commands/mission.js");
+
+      await expect(runMissionList("alpha", { includeDrafts: false })).rejects.toThrow("exit:0");
+
+      expect(close).toHaveBeenCalledOnce();
+      expect(exit).toHaveBeenCalledWith(0);
+      expect(order).toEqual(["close", "exit:0"]);
+    });
+
+    it("awaits owner cleanup when mission work rejects", async () => {
+      const close = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(projectResolver, "resolveProjectStore").mockResolvedValue({
+        store: {
+          getMissionStore: () => ({
+            listMissions: vi.fn().mockRejectedValue(new Error("mission read failed")),
+          }),
+        } as never,
+        close,
+      });
+      const { runMissionList } = await import("../commands/mission.js");
+
+      await expect(runMissionList("alpha", { includeDrafts: false })).rejects.toThrow("mission read failed");
+      expect(close).toHaveBeenCalledOnce();
     });
   });
 
