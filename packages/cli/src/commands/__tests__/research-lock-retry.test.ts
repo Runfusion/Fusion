@@ -83,7 +83,7 @@ const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegist
 
 vi.mock("@fusion/core", () => ({
   // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path; getSyncResearchStore needs the ResearchStore class for its instanceof gate.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: storeMock, shutdown: async () => storeMock.close() })),
   ResearchStore: MockResearchStore,
   TaskStore: makeConstructibleMock(() => storeMock),
   resolveResearchSettings: resolveResearchSettingsMock,
@@ -184,7 +184,7 @@ describe("research commands — leak/lock reproduction (FN-7740)", () => {
     // would truncate an in-flight run. This is the ONE deliberately
     // exempted branch in the whole FN-7740 audit.
     await runResearchCreate({ query: "hello" });
-    expect(storeMock.close).not.toHaveBeenCalled();
+    expect(storeMock.close).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Created cited-research run"));
   });
 
@@ -226,7 +226,7 @@ describe("research commands — leak/lock reproduction (FN-7740)", () => {
       vi.useRealTimers();
     }
 
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("board database stayed locked"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("board database stayed contended"));
     expect(storeMock.close).toHaveBeenCalled();
   });
 

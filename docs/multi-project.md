@@ -4,6 +4,8 @@
 
 Fusion can coordinate multiple repositories from one installation, with shared visibility and global concurrency control.
 
+The [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-review-2026-07-14.md) is the current authority for legacy-reader and deployment boundaries.
+
 ## Why Use Multi-Project Mode?
 
 Use multi-project mode when you need to:
@@ -12,11 +14,9 @@ Use multi-project mode when you need to:
 - Standardize settings and workflows across projects
 - Monitor global activity and system-wide execution capacity
 
-## Central Database Architecture
+## Central Registry Architecture
 
-Multi-project metadata is stored in:
-
-`~/.fusion/fusion-central.db`
+Multi-project metadata is stored in the PostgreSQL `central` schema. Embedded mode uses Fusion's managed PostgreSQL data directory; external mode uses `DATABASE_URL`.
 
 Core tables:
 
@@ -30,11 +30,11 @@ Core tables:
 - `taskClaims` (authoritative cross-node task checkout claims keyed by `(projectId, taskId)`)
 - `__meta`
 
-Per-project task data remains in each repo’s `.fusion/fusion.db`.
+Per-project task data is keyed by `projectId` in PostgreSQL's `project` schema. Each repo keeps `.fusion/project.json` as its filesystem identity marker; `.fusion/fusion.db` is read only by the one-time legacy migrator.
 
-Backups now include this central DB alongside project backups: each `fn backup --create` run writes a paired `fusion-central-<timestamp>(-N).db` next to `fusion-<timestamp>(-N).db` under `.fusion/backups/` in the active project. Restore operations create a central pre-restore snapshot `fusion-central-pre-restore-<timestamp>.db` before replacing `~/.fusion/fusion-central.db`.
+Use PostgreSQL-native backup/restore tooling for authoritative runtime data. Legacy `fn backup` SQLite artifacts remain migration/recovery inputs; restoring one does not replace the live PostgreSQL registry.
 
-`taskClaims` is the central cross-node lease mutex introduced by FN-4819 §2: claim acquisition/renewal/release happen in `~/.fusion/fusion-central.db`, while per-project lease fields mirror the central winner for local scheduler/runtime consumption.
+`taskClaims` is the central cross-node lease mutex introduced by FN-4819 §2: claim acquisition/renewal/release happen in PostgreSQL, while per-project lease fields mirror the central winner for local scheduler/runtime consumption.
 
 Peer/mesh coordination spans core + engine, with startup ownership in CLI process entrypoints:
 
@@ -61,17 +61,17 @@ If one side succeeds and the other fails, the next scheduler/self-healing tick r
 
 This fencing prevents double-claims: a restarted or delayed stale owner cannot reclaim work once central ownership has been released and lease generation has advanced.
 
-## Recovering after a central DB wipe
+## Recovering a missing central project row
 
-If a project's row is deleted from `~/.fusion/fusion-central.db`, Fusion now automatically recovers on next startup:
+If a project's PostgreSQL central-registry row is deleted, Fusion recovers it on next startup:
 
 1. Startup checks central for a row at the project path.
-2. If missing, it reads `__meta.projectIdentity` from `<project>/.fusion/fusion.db`.
+2. If missing, it reads `<project>/.fusion/project.json` (or imports a legacy SQLite identity once).
 3. If present, central reattaches that exact `projectId` instead of creating a new one.
 
 This prevents “empty workspace” regressions where project data still exists locally but is keyed to an older `projectId`.
 
-Backups remain the first-line protection strategy (see FN-5407), but this identity reattach path lets operators recover even when no central backup is available.
+PostgreSQL backups remain the first-line protection strategy, but this identity reattach path restores the path-to-project mapping without minting a new ID.
 
 ## Registering and Managing Projects
 
@@ -119,7 +119,7 @@ A singleton central record enforces system-wide limits so one project cannot mon
 
 Plugin persistence is split across global and project scopes:
 
-- Global installation metadata is shared across projects in `~/.fusion/fusion-central.db` (`plugin_installs`)
+- Global installation metadata is shared across projects in PostgreSQL `plugin.plugin_installs`
 - Per-project activation/runtime state is tracked separately per normalized project path (`project_plugin_states`)
 - Project-local `.fusion/fusion.db` `plugins` rows are legacy migration-only input and are no longer a write target for installs
 
@@ -139,9 +139,9 @@ Projects can run with:
 
 Multi-project deployments use three related node/path records at different layers:
 
-1. **Project runtime placement** (`projects.nodeId` in `~/.fusion/fusion-central.db`)
+1. **Project runtime placement** (`central.projects.nodeId` in PostgreSQL)
    - Decides where a project runtime is hosted in multi-project orchestration.
-2. **Project working-directory mapping** (`projectNodePathMappings` in `~/.fusion/fusion-central.db`)
+2. **Project working-directory mapping** (`central.projectNodePathMappings` in PostgreSQL)
    - Stores the absolute path for a project on each node (`projectId` + `nodeId` key).
    - Local mappings are auto-created from `projects.path` at registration and kept in sync when local canonical path changes.
 3. **Task dispatch default** (`defaultNodeId` in project settings)
@@ -289,14 +289,9 @@ On first run after upgrade:
 
 Migration is idempotent and designed to avoid repeated re-registration.
 
-## Rollback Procedure
+## Backend rollback
 
-If central registry behavior needs to be reverted:
-
-1. Delete `~/.fusion/fusion-central.db`
-2. Keep using per-project `.fusion/fusion.db` data
-3. Fusion falls back to legacy/single-project behavior
-4. Re-register projects later with `fn init` / `fn project add`
+There is no SQLite runtime rollback. Do not delete PostgreSQL data or set `FUSION_NO_EMBEDDED_PG`; the flag now fails startup. Restore PostgreSQL from backup or point `DATABASE_URL` at a recovered database, then run `fn init` / `fn project add` only to repair project registration metadata.
 
 ## Runtime Architecture
 
@@ -350,8 +345,8 @@ See also: [Architecture](./architecture.md), [CLI Reference](./cli-reference.md)
 
 ## Identity persistence and recovery
 
-Each project persists its canonical central identity inside `.fusion/fusion.db` `__meta` as `projectId` and `projectCreatedAt`. Registration paths should use `CentralCore.ensureProjectForPath({ path, identity, ... })` after reading local identity with `readProjectIdentity()`; this reattaches central rows when central was wiped and refuses silent remint if the persisted id is owned by another path.
+Each project persists its canonical central identity in `.fusion/project.json` as `projectId` and `projectCreatedAt`. Registration paths use `CentralCore.ensureProjectForPath({ path, identity, ... })` after `readProjectIdentity()`; that reader accepts a legacy SQLite identity only as migration input. Reattachment refuses silent remint when the persisted ID belongs to another path.
 
 Dashboard `POST /api/projects` now surfaces this mismatch as `409` with `error: "orphan-identity"` and recovery metadata, and callers can opt into recovery flows with `acceptRecovery: true` behavior at the route layer.
 
-Central DB backup coverage is already enabled by default (`BackupManager` uses `includeCentralDb: true`), so identity recovery data remains in the normal daily backup set.
+Back up PostgreSQL with the deployment's PostgreSQL backup tooling; `.fusion/project.json` is identity metadata, not a substitute for a database backup.

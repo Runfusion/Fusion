@@ -11,7 +11,7 @@ const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS
 import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
@@ -1687,7 +1687,7 @@ export interface TaskExecutorOptions {
   pluginRunner?: PluginRunner;
   /** MessageStore for sending messages to other agents. When provided, executor agents gain fn_send_message capability. */
   messageStore?: import("@fusion/core").MessageStore;
-  missionStore?: MissionStore;
+  missionStore?: MissionStore | AsyncMissionStore;
   secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
   onSliceComplete?: (slice: Slice) => void;
   onStart?: (task: Task, worktreePath: string) => void;
@@ -2329,7 +2329,9 @@ export class TaskExecutor {
   private get approvalRequestStore(): ApprovalRequestStore {
     if (!this._approvalRequestStore) {
       const layer = this.store.getAsyncLayer();
-      this._approvalRequestStore = new ApprovalRequestStore(layer ? null : this.store.getDatabase(), { asyncLayer: layer });
+      if (!layer) throw new Error("Executor TaskStore is missing its PostgreSQL AsyncDataLayer");
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Runtime approval persistence is PostgreSQL-only; never reopen the removed project SQLite database when backend wiring is incomplete. */
+      this._approvalRequestStore = new ApprovalRequestStore(null, { asyncLayer: layer });
     }
     return this._approvalRequestStore;
   }
@@ -5969,9 +5971,7 @@ export class TaskExecutor {
         },
         { columnSequence: this.inferLegacyColumnSequence(live.column) },
       );
-      const legacyAudit = typeof this.store.getRunAuditEvents === "function"
-        ? this.store.getRunAuditEvents({ taskId })
-        : [];
+      const legacyAudit = await this.store.getRunAuditEventsAsync({ taskId });
 
       await observeWorkflowParity({
         settings,
@@ -13399,7 +13399,7 @@ export class TaskExecutor {
     // FN-009: If worktree directory doesn't exist, skip git validation for task completion.
     // This is safe because:
     // 1. Task completion doesn't modify the worktree
-    // 2. Deliverables (task documents, follow-up tasks) are stored in fusion.db
+    // FNXC:PostgresRuntimeStorage 2026-07-14-18:47: Deliverables (task documents and follow-up tasks) are stored in the project-scoped PostgreSQL store.
     // 3. If code changes were made, the worktree would exist
     // 4. This prevents ENOENT errors when agents complete documentation/coordination tasks
     if (!existsSync(worktreePath)) {
@@ -14379,7 +14379,7 @@ export class TaskExecutor {
     }
     if (branchDeleted) {
       // FN-2165 regression guard: null baseBranch on any task that stored this branch
-      try { this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
+      try { await this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
     }
 
     // Clear worktree tracking
@@ -17533,7 +17533,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         });
         await this.store.logEntry(taskId, `Deleted branch`, branch);
         // FN-2165 regression guard: null baseBranch on any task that stored this branch
-        this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
+        await this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         executorLog.warn(`${taskId}: failed to delete conflicting branch ${branch}: ${msg}`);
@@ -17621,7 +17621,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         }
         try {
           await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
-          this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
+          await this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
         } catch {
           // best-effort — branch may not exist, which is fine for a stale-path cleanup
         }
@@ -17670,7 +17670,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       });
       await this.store.logEntry(taskId, `Removed stale branch`, branch);
       // FN-2165 regression guard: null baseBranch on any task that stored this branch
-      try { this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
+      try { await this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
       return true;
     } catch (branchDeleteError: unknown) {
       const branchDeleteErrorMessage = branchDeleteError instanceof Error ? branchDeleteError.message : String(branchDeleteError);
@@ -17689,7 +17689,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       });
       await this.store.logEntry(taskId, `Force-removed stale branch reference via update-ref`, refPath);
       // FN-2165 regression guard: null baseBranch on any task that stored this branch
-      try { this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
+      try { await this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
       return true;
     } catch (updateRefError: unknown) {
       const updateRefErrorMessage = updateRefError instanceof Error ? updateRefError.message : String(updateRefError);

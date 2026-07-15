@@ -40,6 +40,8 @@ async function writePluginModule(
     routes?: Array<{ method: string; path: string }>;
     onLoad?: string;
     onUnload?: string;
+    onSchemaInit?: string;
+    onPostgresSchemaInit?: string;
   } = {},
 ): Promise<string> {
   const filepath = join(dir, filename);
@@ -57,6 +59,8 @@ const plugin = {
   hooks: {
     ${options.onLoad ? `onLoad: ${options.onLoad},` : ""}
     ${options.onUnload ? `onUnload: ${options.onUnload},` : ""}
+    ${options.onSchemaInit ? `onSchemaInit: ${options.onSchemaInit},` : ""}
+    ${options.onPostgresSchemaInit ? `onPostgresSchemaInit: ${options.onPostgresSchemaInit},` : ""}
   },
   tools: ${toolsStr},
   routes: ${routesStr},
@@ -75,6 +79,8 @@ function createMockTaskStore() {
   return {
     on: vi.fn(),
     off: vi.fn(),
+    preflightPluginSchema: vi.fn().mockReturnValue(null),
+    runPluginSchemaInits: vi.fn().mockResolvedValue(undefined),
   } as any;
 }
 
@@ -178,6 +184,50 @@ describe("PluginLoader Hot-Reload", () => {
   });
 
   describe("loadPlugin() - runtime loading", () => {
+    it("preflights and installs an external PostgreSQL schema before onLoad", async () => {
+      const order: string[] = [];
+      (globalThis as typeof globalThis & { __pluginSchemaOrder?: string[] }).__pluginSchemaOrder = order;
+      await writePluginModule(tmpDir, "plugin.js", baseManifest, {
+        onPostgresSchemaInit: `() => ({ version: 1, tablePrefix: "external_fixture_", statements: [\`CREATE TABLE IF NOT EXISTS project.external_fixture_rows (project_id text NOT NULL, id text NOT NULL, PRIMARY KEY (project_id, id))\`] })`,
+        onLoad: `() => globalThis.__pluginSchemaOrder.push("onLoad")`,
+      });
+      mockTaskStore.preflightPluginSchema.mockImplementation((pluginId: string, hooks: FusionPlugin["hooks"]) => {
+        order.push("preflight");
+        return { pluginId, postgresSchema: hooks.onPostgresSchemaInit?.() };
+      });
+      mockTaskStore.runPluginSchemaInits.mockImplementation(async () => {
+        order.push("schema");
+      });
+
+      await pluginLoader.loadPlugin("hot-reload-test");
+
+      expect(order).toEqual(["preflight", "schema", "onLoad"]);
+      expect(pluginLoader.getPluginSchemaInitHooks()).toEqual([
+        expect.objectContaining({
+          pluginId: "hot-reload-test",
+          postgresSchema: expect.objectContaining({ version: 1 }),
+        }),
+      ]);
+      delete (globalThis as typeof globalThis & { __pluginSchemaOrder?: string[] }).__pluginSchemaOrder;
+    });
+
+    it("does not run onLoad when PostgreSQL schema preflight rejects a legacy-only plugin", async () => {
+      const onLoad = vi.fn();
+      (globalThis as typeof globalThis & { __legacyPluginOnLoad?: () => void }).__legacyPluginOnLoad = onLoad;
+      await writePluginModule(tmpDir, "plugin.js", baseManifest, {
+        onSchemaInit: `() => undefined`,
+        onLoad: `() => globalThis.__legacyPluginOnLoad()`,
+      });
+      mockTaskStore.preflightPluginSchema.mockImplementation(() => {
+        throw new Error("legacy SQLite onSchemaInit has no registered PostgreSQL schema hook");
+      });
+
+      await expect(pluginLoader.loadPlugin("hot-reload-test")).rejects.toThrow("legacy SQLite");
+      expect(onLoad).not.toHaveBeenCalled();
+      expect(pluginLoader.isPluginLoaded("hot-reload-test")).toBe(false);
+      delete (globalThis as typeof globalThis & { __legacyPluginOnLoad?: () => void }).__legacyPluginOnLoad;
+    });
+
     it("should load a plugin after initial startup", async () => {
       // Initially no plugins loaded
       expect(pluginLoader.getPluginTools()).toEqual([]);

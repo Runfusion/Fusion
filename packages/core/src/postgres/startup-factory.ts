@@ -4,17 +4,14 @@
  * FNXC:RuntimeStartupWiring 2026-06-26-14:00:
  * This is the single startup entry point that production construction sites
  * (engine InProcessRuntime, dashboard project-store-resolver, CLI serve/
- * dashboard commands, desktop local-server/local-runtime) consult to decide
- * whether to boot against PostgreSQL or fall back to the legacy SQLite path.
+ * dashboard commands, desktop local-server/local-runtime) use to boot
+ * PostgreSQL.
  *
  * The factory encapsulates the five-step backend boot sequence so individual
  * call sites do not each re-implement backend resolution, connection opening,
  * schema application, AsyncDataLayer construction, and dual-read harness
- * integration. A call site asks: "given the current environment, do I get a
- * PostgreSQL-backed TaskStore, or do I keep the SQLite default?" The factory
- * answers with either a ready {@link BackendBootResult} or `null` (meaning:
- * use the legacy SQLite construction — byte-identical to the pre-migration
- * path).
+ * integration. The factory always returns a ready {@link BackendBootResult}
+ * or throws an actionable startup error.
  *
  * Resolution rules (matching the mission architecture):
  *   - DATABASE_URL set (external mode): connect to the external PostgreSQL
@@ -24,23 +21,19 @@
  *     PostgreSQL, then proceed like external mode against the embedded URL.
  *     This is the DEFAULT production path — embedded PG is the zero-config
  *     backend, mirroring the zero-config SQLite experience it replaces.
- *   - DATABASE_URL unset AND FUSION_NO_EMBEDDED_PG=1: return `null`. The caller
- *     constructs the legacy SQLite-backed TaskStore. This is the explicit
- *     opt-out for the legacy SQLite path, available for backward compatibility
- *     during the cutover window.
+ *   - DATABASE_URL unset AND FUSION_NO_EMBEDDED_PG=1: reject the obsolete
+ *     configuration. SQLite files are accepted only as migration inputs.
  *
  * FNXC:BackendFlip 2026-06-26-14:05:
  * The default backend was flipped from SQLite to embedded PostgreSQL in this
  * change (feature flip-embedded-pg-default, cutover milestone). Previously
  * embedded PG required an explicit opt-in via FUSION_EMBEDDED_PG=1; now it is
- * the default and FUSION_NO_EMBEDDED_PG=1 is the opt-out back to legacy
- * SQLite. FUSION_EMBEDDED_PG=1 is still honored as a no-op alias for backward
+ * the default. FUSION_EMBEDDED_PG=1 is still honored as a no-op alias for backward
  * compatibility (it cannot force embedded when DATABASE_URL is set, since
  * external mode always wins). The flip is safe because the embedded-postgres
  * platform binaries are now bundled for macOS/Linux/Windows (arm64/x64) and
  * the boot smoke has been updated to exercise the embedded path by default
- * with an initdb-aware health-check timeout. Tests that need the fast SQLite
- * default (no initdb, no binary) set FUSION_NO_EMBEDDED_PG=1 explicitly.
+ * with an initdb-aware health-check timeout.
  */
 
 import { join, resolve } from "node:path";
@@ -58,10 +51,11 @@ import {
 import {
   createConnectionSet,
   createConnectionSetFromUrl,
-  DatabaseConnectionError,
+  type PostgresConnections,
 } from "./connection.js";
 import { applySchemaBaseline } from "./schema-applier.js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
+import { runLoadedPluginSchemaInitHooks, type LoadedPluginSchemaContract } from "./plugin-schema-hook.js";
 import {
   lookupRegisteredProjectIdByPath,
   rekeyFallbackProjectPartition,
@@ -106,12 +100,8 @@ export const EMBEDDED_PG_ENV = "FUSION_EMBEDDED_PG";
 
 /**
  * FNXC:BackendFlip 2026-06-26-14:10:
- * Opt-out environment variable that forces the legacy SQLite backend when
- * DATABASE_URL is unset. This is the escape hatch for the cutover window:
- * operators or tests that need the fast, no-binary SQLite default set
- * FUSION_NO_EMBEDDED_PG=1. Truthy values: 1, true, yes, on (case-insensitive).
- * Everything else (unset, 0, no, false, off) means "use the embedded PG
- * default".
+ * Retired SQLite opt-out variable. It remains parseable so startup can return
+ * a clear migration error instead of silently ignoring stale operator config.
  */
 export const NO_EMBEDDED_PG_ENV = "FUSION_NO_EMBEDDED_PG";
 
@@ -121,14 +111,11 @@ export const NO_EMBEDDED_PG_ENV = "FUSION_NO_EMBEDDED_PG";
  *
  * FNXC:BackendFlip 2026-06-26-14:15:
  * Post default-flip, embedded PG is the DEFAULT in embedded mode. The legacy
- * FUSION_EMBEDDED_PG opt-in is now a no-op (setting it does nothing because
- * embedded is already on). The only way to opt OUT of embedded PG back to
- * legacy SQLite is FUSION_NO_EMBEDDED_PG=1. This function returns true unless
- * the opt-out is set.
+ * FUSION_EMBEDDED_PG opt-in is a no-op. A false result identifies obsolete
+ * opt-out configuration that the startup factory rejects.
  *
- * The opt-out is honored when set to a truthy value: 1, true, yes, on
- * (case-insensitive). Everything else (unset, 0, no, false, off) means
- * "use the embedded PG default" (return true).
+ * A retired opt-out value is detected so startup can reject it with a clear
+ * migration message. Everything else uses embedded PostgreSQL by default.
  *
  * @returns true when embedded PG should be used (the default); false when the
  *          operator explicitly opted out via FUSION_NO_EMBEDDED_PG=1.
@@ -139,9 +126,7 @@ export function isEmbeddedPgRequested(env: NodeJS.ProcessEnv = process.env): boo
 
 /**
  * FNXC:BackendFlip 2026-06-26-14:15:
- * Return true when the operator has explicitly opted out of embedded PG via
- * FUSION_NO_EMBEDDED_PG=1 (the legacy SQLite escape hatch). Exposed for test
- * assertion and call-site cheap checks.
+ * Detect obsolete FUSION_NO_EMBEDDED_PG configuration for diagnostics.
  */
 export function isEmbeddedPgOptedOut(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = (env[NO_EMBEDDED_PG_ENV] ?? "").trim().toLowerCase();
@@ -169,6 +154,158 @@ export interface BackendBootResult {
   shutdown(): Promise<void>;
 }
 
+/** PostgreSQL resources used by CentralCore before a project TaskStore exists. */
+export interface CentralBackendLayerResult {
+  readonly backend: ResolvedBackend;
+  readonly asyncLayer: AsyncDataLayer;
+  releaseConnections(): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
+interface SchemaBackendBootResult {
+  readonly backend: ResolvedBackend;
+  readonly connections: PostgresConnections;
+  readonly embeddedLifecycle: EmbeddedLifecycleLike | null;
+}
+
+/**
+ * FNXC:PostgresStartupLifecycle 2026-07-14-19:18:
+ * Central-registry and project-store startup must share one backend-resolution,
+ * embedded-lifecycle, administrative-connection, and schema-baseline path.
+ * Callers retain ownership of the returned resources and may replace the
+ * administrative pool with an RLS-bound runtime pool after migration.
+ */
+async function bootSchemaBackend(
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax">,
+  bypassProjectIsolation = false,
+): Promise<SchemaBackendBootResult> {
+  const env = options.env ?? process.env;
+  const backend = options.backend ?? resolveBackend(env);
+  const embeddedRequested = options.embeddedPgRequested ?? isEmbeddedPgRequested(env);
+  if (backend.mode === "embedded" && !embeddedRequested) {
+    throw new Error(
+      "The SQLite opt-out has been removed. Unset FUSION_NO_EMBEDDED_PG and use embedded PostgreSQL, or configure DATABASE_URL.",
+    );
+  }
+
+  let embeddedLifecycle: EmbeddedLifecycleLike | null = null;
+  let resolvedBackend = backend;
+  if (backend.mode === "embedded") {
+    const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE } =
+      await import("./embedded-lifecycle.js");
+    const dataDir = resolve(options.embeddedDataDir ?? defaultEmbeddedDataDir());
+    log.log(`startup-factory: starting embedded PostgreSQL (data dir ${dataDir})`);
+    embeddedLifecycle = new EmbeddedPostgresLifecycle({
+      dataDir,
+      database: DEFAULT_EMBEDDED_DATABASE,
+      onLog: (message) => log.log(message),
+      onError: (error) => log.error(String(error)),
+    });
+    try {
+      resolvedBackend = await embeddedLifecycle.start();
+    } catch (error) {
+      await embeddedLifecycle.stop().catch(() => undefined);
+      throw new Error(
+        `startup-factory: failed to start embedded PostgreSQL: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  log.log(describeBackendForLog(resolvedBackend));
+  let connections: PostgresConnections | undefined;
+  try {
+    connections = resolvedBackend.mode === "external"
+      ? await createConnectionSet(env, {
+          backend: resolvedBackend,
+          poolMax: options.poolMax,
+          bypassProjectIsolation,
+        })
+      : await createConnectionSetFromUrl(resolvedBackend, {
+          poolMax: options.poolMax,
+          bypassProjectIsolation,
+        });
+    await applySchemaBaseline(connections.migration);
+    return { backend: resolvedBackend, connections, embeddedLifecycle };
+  } catch (error) {
+    await connections?.close().catch(() => undefined);
+    await embeddedLifecycle?.stop().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Open an unscoped PostgreSQL layer for the central project/node registry.
+ *
+ * FNXC:CentralPostgresCutover 2026-07-14-17:12:
+ * CentralCore is used by project discovery and node commands before any
+ * project-scoped TaskStore exists. It therefore needs a first-class backend
+ * bootstrap that applies the shared schema without inventing a project root or
+ * constructing a dead SQLite CentralDatabase. Embedded instances are reused by
+ * the lifecycle registry, while each caller owns only its connection pool.
+ */
+export async function createCentralBackendLayer(
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir"> = {},
+): Promise<CentralBackendLayerResult> {
+  const boot = await bootSchemaBackend(options, true);
+  const { backend: resolvedBackend, connections, embeddedLifecycle } = boot;
+  try {
+    /*
+    FNXC:CentralPostgresCutover 2026-07-14-19:06:
+    Central-only startup must import and verify fusion-central.db before exposing the registry layer. Project startup is not guaranteed to run first, so deferring this source made legacy projects and nodes appear missing from PostgreSQL-only commands.
+    */
+    let globalDir = options.globalSettingsDir;
+    if (!globalDir) {
+      const { resolveGlobalDir } = await import("../global-settings.js");
+      globalDir = resolveGlobalDir();
+    }
+    const legacyCentralPath = join(globalDir, "fusion-central.db");
+    const {
+      CENTRAL_SQLITE_MIGRATION_KEY,
+      formatMigrationProgress,
+      isSqliteMigrationComplete,
+      migrateSqliteToPostgres,
+    } = await import("./sqlite-migrator.js");
+    const centralMigrationComplete = await isSqliteMigrationComplete(
+      connections.migration,
+      CENTRAL_SQLITE_MIGRATION_KEY,
+    );
+    if (!centralMigrationComplete && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
+      const report = await migrateSqliteToPostgres(connections.migration, [{
+        sqlitePath: legacyCentralPath,
+        pgSchema: "central",
+      }], {
+        skipBaseline: true,
+        migrationKey: CENTRAL_SQLITE_MIGRATION_KEY,
+        onProgress: (event) => log.log(`central startup: SQLite migration — ${formatMigrationProgress(event)}`),
+      });
+      const failures = report.tables.filter((table) => !table.skipped && !table.verified);
+      if (failures.length > 0) {
+        throw new Error(`${failures.length} central table(s) failed verification: ${failures.map((table) => table.table).join(", ")}`);
+      }
+    }
+    const asyncLayer = createAsyncDataLayer(connections);
+    let connectionsReleased = false;
+    const releaseConnections = async (): Promise<void> => {
+      if (connectionsReleased) return;
+      connectionsReleased = true;
+      await asyncLayer.close().catch(() => undefined);
+    };
+    return {
+      backend: resolvedBackend,
+      asyncLayer,
+      releaseConnections,
+      async shutdown(): Promise<void> {
+        await releaseConnections();
+        await embeddedLifecycle?.stop().catch(() => undefined);
+      },
+    };
+  } catch (error) {
+    await connections.close().catch(() => undefined);
+    await embeddedLifecycle?.stop().catch(() => undefined);
+    throw error;
+  }
+}
+
 /**
  * Options for {@link createTaskStoreForBackend}.
  */
@@ -191,9 +328,8 @@ export interface CreateTaskStoreForBackendOptions {
   readonly backend?: ResolvedBackend;
   /**
    * Override the embedded-PG decision (tests). When omitted, the decision is
-   * read from the environment: embedded PG is on by default unless
-   * FUSION_NO_EMBEDDED_PG=1 is set. Pass `true` to force embedded, `false` to
-   * force the legacy SQLite path.
+   * read from the environment. Pass `true` to force embedded in tests;
+   * `false` exercises the retired-opt-out error path.
    */
   readonly embeddedPgRequested?: boolean;
   /**
@@ -215,32 +351,32 @@ export interface CreateTaskStoreForBackendOptions {
 
 /**
  * Decide whether the factory should attempt a PostgreSQL boot for the given
- * environment. Returns true when DATABASE_URL is set (external) or embedded PG
- * is the default (DATABASE_URL unset, no opt-out). Returns false only when the
- * operator explicitly opted out via FUSION_NO_EMBEDDED_PG=1.
+ * environment. PostgreSQL is the only runtime backend, so this compatibility
+ * probe always returns true.
  *
  * Exposed so call sites can cheaply check "should I even try PostgreSQL?"
  * before awaiting the full factory (which opens connections).
  */
 export function shouldUsePostgresBackend(
-  env: NodeJS.ProcessEnv = process.env,
-  opts: { embeddedPgRequested?: boolean } = {},
+  _env: NodeJS.ProcessEnv = process.env,
+  _opts: { embeddedPgRequested?: boolean } = {},
 ): boolean {
-  const backend = resolveBackend(env);
-  if (backend.mode === "external") return true;
-  const embeddedRequested = opts.embeddedPgRequested ?? isEmbeddedPgRequested(env);
-  return embeddedRequested;
+  /*
+   * FNXC:PostgresFinalCutover 2026-07-14-17:08:
+   * PostgreSQL is the only runtime backend after the final migration. Keep this
+   * compatibility probe deterministic so old callers cannot interpret an
+   * obsolete environment flag as permission to construct a SQLite TaskStore.
+   */
+  return true;
 }
 
 /**
- * Construct a PostgreSQL-backed TaskStore for the current environment, or
- * return `null` when the legacy SQLite path should be used.
+ * Construct a PostgreSQL-backed TaskStore for the current environment.
  *
  * FNXC:BackendFlip 2026-06-26-14:20:
  * Post default-flip, the sequence is:
  *   1. Resolve the backend (external via DATABASE_URL, or embedded when unset).
- *   2. If embedded mode AND the operator opted out (FUSION_NO_EMBEDDED_PG=1),
- *      return null — caller uses legacy SQLite.
+ *   2. Reject the retired SQLite opt-out in embedded mode.
  *   3. For external mode: open connections via createConnectionSet.
  *   4. For embedded mode: start the EmbeddedPostgresLifecycle, then open
  *      connections via createConnectionSetFromUrl with the resolved URL.
@@ -255,23 +391,27 @@ export function shouldUsePostgresBackend(
  * which redacts the password (VAL-CONN-004, VAL-CONN-005). The resolved
  * backend is logged via describeBackendForLog (password redacted).
  *
- * @returns the backend boot result, or `null` to use the legacy SQLite path.
+ * @returns the mandatory PostgreSQL backend boot result.
  */
 export async function createTaskStoreForBackend(
   options: CreateTaskStoreForBackendOptions,
-): Promise<BackendBootResult | null> {
+): Promise<BackendBootResult> {
   const env = options.env ?? process.env;
   const backend = options.backend ?? resolveBackend(env);
   const embeddedRequested = options.embeddedPgRequested ?? isEmbeddedPgRequested(env);
 
-  // FNXC:BackendFlip 2026-06-26-14:25:
-  // Step 2: the ONLY way to reach the legacy SQLite path post default-flip is
-  // the explicit opt-out (FUSION_NO_EMBEDDED_PG=1). When the operator opts out,
-  // `embeddedRequested` is false and we return null so the caller constructs the
-  // legacy SQLite-backed TaskStore. In every other embedded-mode case, embedded
-  // PG is the default and we proceed to boot it.
+  /*
+   * FNXC:PostgresFinalCutover 2026-07-14-17:08:
+   * The SQLite runtime and its Database implementation have been removed, so
+   * the historical opt-out must fail explicitly. Returning null here caused
+   * dozens of callers to construct a non-functional TaskStore and split the
+   * central registry away from PostgreSQL. External DATABASE_URL always wins;
+   * the obsolete flag is only rejected when it would have selected SQLite.
+   */
   if (backend.mode === "embedded" && !embeddedRequested) {
-    return null;
+    throw new Error(
+      "The SQLite opt-out has been removed. Unset FUSION_NO_EMBEDDED_PG and use embedded PostgreSQL, or configure DATABASE_URL.",
+    );
   }
 
   // When constructing via the constructor (no projectId), rootDir is required.
@@ -282,89 +422,16 @@ export async function createTaskStoreForBackend(
   }
   const rootDir = options.rootDir ?? "";
 
-  let embeddedLifecycle: EmbeddedLifecycleLike | null = null;
-  let resolvedBackend: ResolvedBackend = backend;
-
-  // Step 4: embedded mode — start the bundled PostgreSQL first so we have a
-  // connection URL. createConnectionSet throws in embedded mode without a URL.
-  //
-  // FNXC:BackendFlip 2026-06-26-14:25:
-  // This branch now runs by default in embedded mode (DATABASE_URL unset)
-  // unless the operator opted out. The embedded-lifecycle module is imported
-  // LAZILY here (see the note at the top of the file) so the `embedded-postgres`
-  // package and its platform-specific dynamic imports stay out of the CLI
-  // bundle unless embedded PG is actually used at runtime.
-  if (backend.mode === "embedded" && embeddedRequested) {
-    const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE } =
-      await import("./embedded-lifecycle.js");
-    const dataDir = resolve(options.embeddedDataDir ?? defaultEmbeddedDataDir());
-    log.log(`startup-factory: starting embedded PostgreSQL (data dir ${dataDir})`);
-    embeddedLifecycle = new EmbeddedPostgresLifecycle({
-      dataDir,
-      database: DEFAULT_EMBEDDED_DATABASE,
-      onLog: (msg) => log.log(msg),
-      onError: (err) => log.error(String(err)),
-    });
-    try {
-      resolvedBackend = await embeddedLifecycle.start();
-    } catch (err) {
-      // FNXC:BackendFlip 2026-06-26-14:25:
-      // Embedded startup failure is fatal — embedded PG is the default and the
-      // operator did not opt out. Surface a clear error rather than silently
-      // falling back to SQLite (which would mask a real binary/environment
-      // problem and could split-write two backends).
-      await embeddedLifecycle.stop().catch(() => undefined);
-      throw new Error(
-        `startup-factory: failed to start embedded PostgreSQL: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-
-  log.log(describeBackendForLog(resolvedBackend));
-
-  // Steps 3 & 4 (connection opening). External mode uses createConnectionSet
-  // (resolves from env); embedded mode uses createConnectionSetFromUrl with
-  // the lifecycle-provided URL.
-  let connections;
+  let boot: SchemaBackendBootResult;
   try {
-    if (resolvedBackend.mode === "external") {
-      connections = await createConnectionSet(env, {
-        backend: resolvedBackend,
-        poolMax: options.poolMax,
-      });
-    } else {
-      connections = await createConnectionSetFromUrl(resolvedBackend, {
-        poolMax: options.poolMax,
-      });
-    }
+    boot = await bootSchemaBackend(options);
   } catch (err) {
-    // VAL-CONN-004: unreachable DATABASE_URL fails loudly. If we started an
-    // embedded cluster, stop it before propagating.
-    if (embeddedLifecycle) {
-      await embeddedLifecycle.stop().catch(() => undefined);
-    }
-    if (err instanceof DatabaseConnectionError) {
-      throw err;
-    }
-    throw err;
-  }
-
-  // Step 5: apply the schema baseline (idempotent) to the migration connection.
-  try {
-    await applySchemaBaseline(connections.migration);
-  } catch (err) {
-    await connections.close().catch(() => undefined);
-    if (embeddedLifecycle) {
-      await embeddedLifecycle.stop().catch(() => undefined);
-    }
     throw new Error(
-      `startup-factory: failed to apply PostgreSQL schema baseline: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `startup-factory: failed to initialize PostgreSQL schema backend: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  let { connections } = boot;
+  const { backend: resolvedBackend, embeddedLifecycle } = boot;
 
   /*
   FNXC:PostgresMigration 2026-07-10:
@@ -416,7 +483,8 @@ export async function createTaskStoreForBackend(
         const legacyCentralPath = globalDir ? join(globalDir, "fusion-central.db") : undefined;
         if (!migrationProjectId && legacyCentralPath && existsSync(legacyCentralPath) && isValidSqliteDatabaseFile(legacyCentralPath)) {
           const { DatabaseSync } = await import("../sqlite-adapter.js");
-          const legacyCentral = new DatabaseSync(legacyCentralPath);
+          // FNXC:LegacySqliteBoundary 2026-07-14-18:42: central identity lookup is migration-only and read-only.
+          const legacyCentral = new DatabaseSync(legacyCentralPath, { readOnly: true });
           try {
             const row = legacyCentral.prepare(`SELECT id FROM projects WHERE path = ? LIMIT 1`).get(rootDir) as
               | { id: string }
@@ -452,15 +520,11 @@ export async function createTaskStoreForBackend(
         instead surface through scoped post-copy verification and fail closed.
         Without a registered identity the legacy whole-table check applies.
 
-        FNXC:PostgresCutover 2026-07-13-20:50:
+        FNXC:PostgresCutover 2026-07-14-18:42:
         Order matters: the PostgreSQL emptiness count runs BEFORE the SQLite
-        validity probe. isValidSqliteDatabaseFile opens the file with a
-        read-write DatabaseSync, and that open/close performs WAL recovery and
-        a checkpoint — i.e. it WRITES to the legacy fusion.db on every boot.
-        Post-cutover the legacy files must stay byte-quiet: steady-state boots
-        (PG already populated) must not open SQLite at all. The probe now runs
-        only on the rare empty-PG path where auto-migration is actually being
-        considered.
+        validity probe. The probe is read-only, and steady-state boots (PG
+        already populated) still avoid opening SQLite entirely. It runs only
+        on the empty-PG path where one-time auto-migration is considered.
         */
         const migrationKey = `project:${migrationProjectId ?? rootDir}`;
         const { migrateSqliteToPostgres, defaultMigrationSources, formatMigrationProgress, isSqliteMigrationComplete, completeSqliteMigration, recordSqliteMigrationComplete, CENTRAL_SQLITE_MIGRATION_KEY } = await import("./sqlite-migrator.js");
@@ -576,7 +640,7 @@ export async function createTaskStoreForBackend(
         await embeddedLifecycle.stop().catch(() => undefined);
       }
       throw new Error(
-        `startup-factory: SQLite → PostgreSQL first-boot auto-migration failed (refusing to boot an empty database over existing SQLite data; run 'fn db migrate' manually or set FUSION_NO_EMBEDDED_PG=1 to stay on SQLite): ${
+        `startup-factory: SQLite → PostgreSQL first-boot auto-migration failed (refusing to boot an empty database over existing SQLite data; restore the retained backup and run 'fn db migrate' manually): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -669,6 +733,30 @@ export async function createTaskStoreForBackend(
       }`,
     );
   }
+
+  /*
+  FNXC:PluginPostgresContract 2026-07-14-18:32:
+  Plugin DDL uses a one-shot administrative pool created only after a validated
+  declarative plan arrives. The TaskStore holds the executor capability, not
+  the connection, and PluginContext exposes neither one to runtime hooks.
+  */
+  taskStore.setPluginPostgresSchemaExecutor(async (contracts: readonly LoadedPluginSchemaContract[]) => {
+    const schemaConnections = resolvedBackend.mode === "external"
+      ? await createConnectionSet(env, {
+          backend: resolvedBackend,
+          poolMax: 1,
+          bypassProjectIsolation: true,
+        })
+      : await createConnectionSetFromUrl(resolvedBackend, {
+          poolMax: 1,
+          bypassProjectIsolation: true,
+        });
+    try {
+      await runLoadedPluginSchemaInitHooks(schemaConnections.migration, contracts);
+    } finally {
+      await schemaConnections.close();
+    }
+  });
 
   /*
   FNXC:PostgresMigrationBanner 2026-07-12:

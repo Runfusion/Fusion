@@ -95,6 +95,7 @@ const mocks = vi.hoisted(() => {
   const pluginLoaderInstances: any[] = [];
   const projectEngineInstances: any[] = [];
   const listenCalls: ListenCall[] = [];
+  const backendShutdowns: Array<ReturnType<typeof vi.fn>> = [];
   const globalSettingsGetSettings = vi.fn().mockResolvedValue({});
 
   function createTaskStoreMock(projectId = "") {
@@ -534,6 +535,7 @@ const mocks = vi.hoisted(() => {
     notifierInstances,
     projectEngineInstances,
     listenCalls,
+    backendShutdowns,
     taskStoreCtor,
     automationStoreCtor,
     agentStoreCtor,
@@ -579,6 +581,7 @@ const mocks = vi.hoisted(() => {
       pluginLoaderInstances.length = 0;
       projectEngineInstances.length = 0;
       listenCalls.length = 0;
+      backendShutdowns.length = 0;
       syncInsightExtractionAutomationMock.mockReset();
       syncInsightExtractionAutomationMock.mockResolvedValue(undefined);
       processAndAuditInsightExtractionMock.mockClear();
@@ -598,6 +601,16 @@ vi.mock("@fusion/core", async (importOriginal) => {
   const { createCliCoreMock } = await import("../../test/mockCoreEngine");
   return createCliCoreMock(() => importOriginal<typeof import("@fusion/core")>(), {
   TaskStore: mocks.taskStoreCtor,
+  createTaskStoreForBackend: vi.fn(async ({ rootDir }: { rootDir: string }) => {
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    mocks.backendShutdowns.push(shutdown);
+    return {
+      taskStore: new mocks.taskStoreCtor(rootDir),
+      asyncLayer: {},
+      backend: { mode: "embedded" },
+      shutdown,
+    };
+  }),
   AutomationStore: mocks.automationStoreCtor,
   AgentStore: mocks.agentStoreCtor,
   CentralCore: mocks.centralCoreCtor,
@@ -989,7 +1002,8 @@ describe("runServe", () => {
     expect(mocks.cronRunnerInstances[0].stop).toHaveBeenCalledTimes(1);
     expect(mocks.notifierInstances[0].stop).toHaveBeenCalledTimes(1);
     expect(listenCall.server.close).toHaveBeenCalledTimes(1);
-    expect(mocks.taskStores[0].close).toHaveBeenCalledTimes(1);
+    expect(mocks.taskStores[0].close).not.toHaveBeenCalled();
+    expect(mocks.backendShutdowns[0]).toHaveBeenCalledTimes(1);
   });
 
   it("enables HybridExecutor when env override is set and shuts it down before engine stop", async () => {
@@ -1121,6 +1135,15 @@ describe("runServe — Plugin wiring", () => {
     expect(PluginStore).toHaveBeenCalled();
 
     await triggerSignal("SIGINT");
+  });
+
+  it("shuts down the single shared PostgreSQL boot on graceful serve shutdown", async () => {
+    await runServe(4040, {});
+    expect(mocks.backendShutdowns).toHaveLength(1);
+
+    await triggerSignal("SIGINT");
+
+    expect(mocks.backendShutdowns[0]).toHaveBeenCalledTimes(1);
   });
 
   it("passes pluginStore, pluginLoader, and pluginRunner to createServer", async () => {

@@ -164,7 +164,6 @@ export async function runMissionList(projectName?: string, options: RunMissionLi
   // drafts from PostgreSQL via Drizzle (the SQLite getDatabase() runtime was
   // removed under VAL-REMOVAL-005). PG ai_sessions columns are snake_case, so
   // alias updated_at -> updatedAt to preserve the existing draft row shape.
-  // The legacy SQLite path is retained for the FUSION_NO_EMBEDDED_PG opt-out.
   type MissionInterviewDraftStatus = "generating" | "awaiting_input" | "error" | "complete";
   type MissionInterviewDraft = {
     id: string;
@@ -174,22 +173,14 @@ export async function runMissionList(projectName?: string, options: RunMissionLi
   };
   let drafts: MissionInterviewDraft[] = [];
   if (includeDrafts) {
-    if (store.isBackendMode()) {
-      drafts = await store.getAsyncLayer()!.db.execute<MissionInterviewDraft>(
-        drizzleSql`SELECT id, title, status, updated_at AS "updatedAt" FROM project.ai_sessions WHERE type = 'mission_interview' AND status IN ('generating', 'awaiting_input', 'error', 'complete') AND COALESCE(archived, 0) = 0 ORDER BY updated_at DESC`,
-      );
-    } else {
-      drafts = store.getDatabase()
-        .prepare(
-          `SELECT id, title, status, updatedAt
-           FROM ai_sessions
-           WHERE type = 'mission_interview'
-             AND status IN ('generating', 'awaiting_input', 'error', 'complete')
-             AND COALESCE(archived, 0) = 0
-           ORDER BY updatedAt DESC`,
-        )
-        .all() as MissionInterviewDraft[];
+    const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("PostgreSQL AsyncDataLayer unavailable for mission drafts");
     }
+    /* FNXC:PostgresMissionDrafts 2026-07-14-18:24: Mission interview drafts have one authoritative PostgreSQL read path after the runtime cutover. */
+    drafts = await layer.db.execute<MissionInterviewDraft>(
+      drizzleSql`SELECT id, title, status, updated_at AS "updatedAt" FROM project.ai_sessions WHERE type = 'mission_interview' AND status IN ('generating', 'awaiting_input', 'error', 'complete') AND COALESCE(archived, 0) = 0 ORDER BY updated_at DESC`,
+    );
   }
 
   if (missions.length === 0 && drafts.length === 0) {
@@ -615,4 +606,3 @@ export async function runFeatureLinkTask(featureId: string, taskId: string, proj
   console.log(`    Status: ${FEATURE_STATUS_LABELS[updated.status]}`);
   console.log();
 }
-

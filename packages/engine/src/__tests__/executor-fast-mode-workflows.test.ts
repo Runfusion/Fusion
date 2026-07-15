@@ -56,6 +56,39 @@ describe("fast mode workflow/runtime invariants", () => {
     mockedExistsSync.mockReturnValue(true);
   });
 
+  /*
+  FNXC:WorkflowSelection 2026-07-14-17:06:
+  The executor must pass its asynchronously resolved PostgreSQL workflow selection into the graph runner. Re-reading through the synchronous compatibility method would replace a custom graph with builtin:coding.
+  */
+  it("reuses the asynchronous PostgreSQL workflow selection inside the graph runner", async () => {
+    const selected = { workflowId: "WF-async-custom", stepIds: ["review"] };
+    const { store, executor } = makeExecutorForTask(task());
+    store.getTaskWorkflowSelection = vi.fn(() => undefined);
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selected);
+    store.getWorkflowDefinition = vi.fn(async () => ({
+      id: selected.workflowId,
+      name: "Async custom",
+      ir: {
+        version: "v1",
+        name: "Async custom",
+        nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    }));
+    const run = vi.spyOn(WorkflowGraphTaskRunner.prototype, "run").mockImplementation(async function () {
+      expect((this as any).deps.store.getTaskWorkflowSelection()).toEqual(selected);
+      await expect((this as any).deps.store.getTaskWorkflowSelectionAsync()).resolves.toEqual(selected);
+      return { disposition: "completed", outcome: "success", visitedNodeIds: ["start"] };
+    });
+
+    await expect((executor as any).maybeExecuteWorkflowGraph(task())).resolves.toBe(true);
+
+    expect(store.getTaskWorkflowSelectionAsync).toHaveBeenCalledWith("FN-6226");
+    expect(store.getTaskWorkflowSelection).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(1);
+    run.mockRestore();
+  });
+
   it("graph executor with a custom workflow skips custom pre-merge prompt/gate nodes in fast mode", async () => {
     const { store, executor } = makeExecutorForTask(task({ executionMode: "fast", worktree: "/tmp/wt" }));
     const executeStep = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true });

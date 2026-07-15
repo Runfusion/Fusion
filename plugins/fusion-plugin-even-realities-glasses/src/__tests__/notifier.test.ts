@@ -1,43 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNotifier } from "../notifier.js";
+import type { AsyncDataLayer } from "@fusion/core";
+import { createNotifier, type NotifierDeps } from "../notifier.js";
+import type { SnapshotRow } from "../notifications/types.js";
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
-function createDb() {
-  const table = new Map<string, { taskId: string; lastColumn: string; updatedAt: string }>();
-  return {
-    exec: (_sql: string) => undefined,
-    prepare: (sql: string) => ({
-      get: () => undefined,
-      all: () => (sql.startsWith("SELECT") ? [...table.values()] : []),
-      run: (...args: unknown[]) => {
-        if (sql.startsWith("INSERT OR REPLACE")) {
-          const [taskId, lastColumn, updatedAt] = args as [string, string, string];
-          table.set(taskId, { taskId, lastColumn, updatedAt });
-          return { changes: 1 };
-        }
-        if (sql === "DELETE FROM even_realities_seen_tasks") {
-          const changes = table.size;
-          table.clear();
-          return { changes };
-        }
-        if (sql.startsWith("DELETE FROM even_realities_seen_tasks WHERE taskId NOT IN")) {
-          const ids = new Set(args as string[]);
-          let changes = 0;
-          for (const key of [...table.keys()]) {
-            if (!ids.has(key)) {
-              table.delete(key);
-              changes += 1;
-            }
-          }
-          return { changes };
-        }
-        return { changes: 0 };
-      },
+function createPersistence() {
+  const table = new Map<string, SnapshotRow>();
+  const snapshotStore: NonNullable<NotifierDeps["snapshotStore"]> = {
+    read: vi.fn(async () => new Map(table)),
+    write: vi.fn(async (_layer, rows) => {
+      for (const row of rows) table.set(row.taskId, { ...row });
     }),
-  } as any;
+    prune: vi.fn(async (_layer, presentTaskIds) => {
+      let deleted = 0;
+      for (const taskId of [...table.keys()]) {
+        if (!presentTaskIds.has(taskId)) {
+          table.delete(taskId);
+          deleted += 1;
+        }
+      }
+      return deleted;
+    }),
+  };
+  return {
+    layer: { projectId: "notifier-test" } as AsyncDataLayer,
+    snapshotStore,
+  };
 }
 
 function task(id: string, column: string, updatedAt: string) {
@@ -46,11 +37,11 @@ function task(id: string, column: string, updatedAt: string) {
 
 describe("createNotifier", () => {
   it("seeds snapshot and emits only watched new tasks", async () => {
-    const db = createDb();
+    const persistence = createPersistence();
     const transport = { pushCard: vi.fn(async () => undefined) } as any;
     const notifier = createNotifier({
       taskStore: { listTasks: vi.fn(async () => [task("FN-1", "todo", "2026-01-01T00:00:00.000Z"), task("FN-2", "in-review", "2026-01-01T00:00:01.000Z")]) } as any,
-      db,
+      ...persistence,
       transport,
       settings: { notifyOnColumns: ["in-review"] },
       pluginId: "p1",
@@ -64,13 +55,13 @@ describe("createNotifier", () => {
   });
 
   it("emits entered-column transition once", async () => {
-    const db = createDb();
+    const persistence = createPersistence();
     const listTasks = vi
       .fn()
       .mockResolvedValueOnce([task("FN-1", "todo", "2026-01-01T00:00:00.000Z")])
       .mockResolvedValueOnce([task("FN-1", "in-review", "2026-01-01T00:00:05.000Z")]);
     const transport = { pushCard: vi.fn(async () => undefined) } as any;
-    const notifier = createNotifier({ taskStore: { listTasks } as any, db, transport, settings: { notifyOnColumns: ["in-review"] }, pluginId: "p1", logger: console as any });
+    const notifier = createNotifier({ taskStore: { listTasks } as any, ...persistence, transport, settings: { notifyOnColumns: ["in-review"] }, pluginId: "p1", logger: console as any });
 
     await notifier.pollOnce();
     const events = await notifier.pollOnce();
@@ -78,12 +69,31 @@ describe("createNotifier", () => {
     expect(events[0]?.reason).toBe("entered-column");
   });
 
+  it("does not rewrite an unchanged snapshot on the next poll", async () => {
+    const persistence = createPersistence();
+    const tasks = [task("FN-1", "todo", "2026-01-01T00:00:00.000Z")];
+    const notifier = createNotifier({
+      taskStore: { listTasks: vi.fn(async () => tasks) } as any,
+      ...persistence,
+      transport: { pushCard: vi.fn(async () => undefined) } as any,
+      settings: {},
+      pluginId: "p1",
+    });
+
+    await notifier.pollOnce();
+    await notifier.pollOnce();
+    expect(persistence.snapshotStore.write).toHaveBeenCalledTimes(1);
+    expect(persistence.snapshotStore.write).toHaveBeenCalledWith(persistence.layer, [
+      expect.objectContaining({ taskId: "FN-1" }),
+    ]);
+  });
+
   it("continues when push fails", async () => {
-    const db = createDb();
+    const persistence = createPersistence();
     const transport = { pushCard: vi.fn().mockRejectedValueOnce(new Error("nope")).mockResolvedValueOnce(undefined) } as any;
     const notifier = createNotifier({
       taskStore: { listTasks: vi.fn(async () => [task("FN-1", "in-review", "2026-01-01T00:00:00.000Z"), task("FN-2", "in-review", "2026-01-01T00:00:01.000Z")]) } as any,
-      db,
+      ...persistence,
       transport,
       settings: { notifyOnColumns: ["in-review"] },
       pluginId: "p1",
@@ -98,7 +108,7 @@ describe("createNotifier", () => {
   it("stop clears timer", async () => {
     vi.useFakeTimers();
     const listTasks = vi.fn(async () => [task("FN-1", "todo", "2026-01-01T00:00:00.000Z")]);
-    const notifier = createNotifier({ taskStore: { listTasks } as any, db: createDb(), transport: { pushCard: vi.fn(async () => undefined) } as any, settings: { pollingIntervalSeconds: 5 }, pluginId: "p1", logger: console as any });
+    const notifier = createNotifier({ taskStore: { listTasks } as any, ...createPersistence(), transport: { pushCard: vi.fn(async () => undefined) } as any, settings: { pollingIntervalSeconds: 5 }, pluginId: "p1", logger: console as any });
     notifier.start();
     await vi.advanceTimersByTimeAsync(5000);
     const before = listTasks.mock.calls.length;
@@ -108,9 +118,9 @@ describe("createNotifier", () => {
   });
 
   it("peek/drain and ring buffer", async () => {
-    const db = createDb();
+    const persistence = createPersistence();
     const tasks = Array.from({ length: 220 }, (_, i) => task(`FN-${i}`, "in-review", `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}.000Z`));
-    const notifier = createNotifier({ taskStore: { listTasks: vi.fn(async () => tasks) } as any, db, transport: { pushCard: vi.fn(async () => undefined) } as any, settings: { notifyOnColumns: ["in-review"] }, pluginId: "p1", logger: console as any });
+    const notifier = createNotifier({ taskStore: { listTasks: vi.fn(async () => tasks) } as any, ...persistence, transport: { pushCard: vi.fn(async () => undefined) } as any, settings: { notifyOnColumns: ["in-review"] }, pluginId: "p1", logger: console as any });
 
     await notifier.pollOnce();
     expect(notifier.peekPending(200)).toHaveLength(200);

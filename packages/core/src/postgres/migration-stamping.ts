@@ -62,13 +62,37 @@ export async function rekeyFallbackProjectPartition(
   if (!fallbackProjectId || fallbackProjectId === registeredProjectId) return false;
 
   return db.transaction(async (tx) => {
-    const ownedRows = (await tx.execute(sql`
-      SELECT EXISTS (
-        SELECT 1 FROM project.tasks WHERE project_id = ${fallbackProjectId}
-        UNION ALL
-        SELECT 1 FROM archive.archived_tasks WHERE project_id = ${fallbackProjectId}
-      ) AS found
-    `)) as unknown as Array<{ found: boolean }>;
+    const tables = (await tx.execute(sql`
+      SELECT table_name
+      FROM information_schema.columns
+      WHERE table_schema = 'project' AND column_name = 'project_id'
+      ORDER BY table_name
+    `)) as unknown as Array<{ table_name: string }>;
+    /*
+    FNXC:ProjectIdentityPromotion 2026-07-14-18:58:
+    Fallback ownership can exist only in satellite tables such as agents, reports, or mission state. Inspect every project-owned table before deciding promotion is a no-op; task/archive-only detection stranded those partitions after central registration.
+    */
+    let ownsProjectRows = false;
+    for (const { table_name: tableName } of tables) {
+      const rows = (await tx.execute(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM ${sql.identifier("project")}.${sql.identifier(tableName)}
+          WHERE project_id = ${fallbackProjectId}
+        ) AS found
+      `)) as unknown as Array<{ found: boolean }>;
+      if (rows[0]?.found) {
+        ownsProjectRows = true;
+        break;
+      }
+    }
+    if (!ownsProjectRows) {
+      const rows = (await tx.execute(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM archive.archived_tasks WHERE project_id = ${fallbackProjectId}
+        ) AS found
+      `)) as unknown as Array<{ found: boolean }>;
+      ownsProjectRows = rows[0]?.found === true;
+    }
     const migrationState = (await tx.execute(sql`
       SELECT to_regclass('public.fusion_sqlite_migrations') IS NOT NULL AS exists
     `)) as unknown as Array<{ exists: boolean }>;
@@ -82,15 +106,9 @@ export async function rekeyFallbackProjectPartition(
       `)) as unknown as Array<{ found: boolean }>;
       ownsMigrationState = markerRows[0]?.found === true;
     }
-    if (!ownedRows[0]?.found && !ownsMigrationState) return false;
+    if (!ownsProjectRows && !ownsMigrationState) return false;
 
     await tx.execute(sql`SET CONSTRAINTS ALL DEFERRED`);
-    const tables = (await tx.execute(sql`
-      SELECT table_name
-      FROM information_schema.columns
-      WHERE table_schema = 'project' AND column_name = 'project_id'
-      ORDER BY table_name
-    `)) as unknown as Array<{ table_name: string }>;
     for (const { table_name: tableName } of tables) {
       await tx.execute(sql`
         UPDATE ${sql.identifier("project")}.${sql.identifier(tableName)}
@@ -171,19 +189,40 @@ export async function stampMigratedProjectRows(
   exactly the boot that performs most real-world migrations. The resolution now
   falls back to a central-registry path lookup (done by the caller).
 
-  FNXC:ProjectDataIsolation 2026-07-14-12:55:
-  Schema migration 0006 quarantines ambiguous ownerless rows as __legacy_unscoped__. Never bulk-stamp that quarantine here: the SQLite migrator reconciles rows against a specific source and project, while this legacy helper may only claim its historical NULL rows.
+  FNXC:ProjectDataIsolation 2026-07-14-16:50:
+  Schema migration 0006 quarantines ownerless rows when no unique migration owner existed at schema-upgrade time. A later verified startup cutover may claim that quarantine only when the migration ledger now identifies exactly one non-empty project and it is this project; multi-project or otherwise ambiguous quarantines remain untouched for operator reconciliation.
   */
+  const stateTable = (await db.execute(sql`
+    SELECT to_regclass('public.fusion_sqlite_migrations') IS NOT NULL AS exists
+  `)) as unknown as Array<{ exists: boolean }>;
+  let canClaimLegacyQuarantine = false;
+  if (stateTable[0]?.exists) {
+    const ownershipRows = (await db.execute(sql`
+      SELECT count(DISTINCT project_id)::int AS project_count,
+             min(project_id) AS only_project_id
+      FROM public.fusion_sqlite_migrations
+      WHERE project_id IS NOT NULL AND project_id <> ''
+    `)) as unknown as Array<{ project_count: number; only_project_id: string | null }>;
+    canClaimLegacyQuarantine =
+      ownershipRows[0]?.project_count === 1 && ownershipRows[0]?.only_project_id === projectId;
+  }
+
   await db.execute(
-    sql`UPDATE project.tasks SET project_id = ${projectId} WHERE project_id IS NULL`,
+    sql`UPDATE project.tasks SET project_id = ${projectId}
+        WHERE project_id IS NULL
+           OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__')`,
   );
   await db.execute(
-    sql`UPDATE project.archived_tasks SET project_id = ${projectId} WHERE project_id IS NULL`,
+    sql`UPDATE project.archived_tasks SET project_id = ${projectId}
+        WHERE project_id IS NULL
+           OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__')`,
   );
   // The cold-storage archive is also partitioned (PR #2007 review P1); migrated
   // snapshots must be owned by this project too.
   await db.execute(
-    sql`UPDATE archive.archived_tasks SET project_id = ${projectId} WHERE project_id IS NULL`,
+    sql`UPDATE archive.archived_tasks SET project_id = ${projectId}
+        WHERE project_id IS NULL
+           OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__')`,
   );
 
   /*
@@ -199,7 +238,7 @@ export async function stampMigratedProjectRows(
   */
   await db.execute(
     sql`UPDATE project.config SET project_id = ${projectId}
-      WHERE project_id = ''
+      WHERE (project_id = '' OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__'))
         AND NOT EXISTS (SELECT 1 FROM project.config WHERE project_id = ${projectId})`,
   );
 

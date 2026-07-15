@@ -43,6 +43,9 @@ import {listGoalCitations as listGoalCitationsAsync} from "../task-store/async-e
 import type {GoalCitationRow, RunAuditEventRow} from "../task-store/row-types.js";
 
 export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer,): Promise<TaskStore> {
+    if (!asyncLayer) {
+      throw new Error("TaskStore.getOrCreateForProject requires a project-bound PostgreSQL AsyncDataLayer");
+    }
     /*
     FNXC:PostgresCutover 2026-07-13-20:05:
     The fallback CentralCore must be bound to the caller's AsyncDataLayer.
@@ -55,7 +58,7 @@ export async function getOrCreateForProjectImpl(store: typeof TaskStore, project
     dashboard project-store-resolver): dashboard UI came up but the engine
     never connected.
     */
-    const central = centralCore ?? new CentralCore(undefined, asyncLayer ? { asyncLayer } : {});
+    const central = centralCore ?? new CentralCore(undefined, { asyncLayer });
     let initializedHere = false;
 
     if (!centralCore) {
@@ -73,7 +76,7 @@ export async function getOrCreateForProjectImpl(store: typeof TaskStore, project
       const store = new TaskStore(
         context.workingDirectory,
         resolvedGlobalSettingsDir,
-        asyncLayer ? { asyncLayer } : undefined,
+        { asyncLayer },
       );
       await store.init();
       return store;
@@ -157,7 +160,7 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
     if (store.backendMode) {
       const layer = store.asyncLayer!;
       const existingRow = await layer.transactionImmediate(async (tx) => {
-        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
+        const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
         if (row && row.deletedAt != null) {
           return { deletedAt: row.deletedAt as string };
         }
@@ -626,15 +629,15 @@ export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFi
     return rows.map((row) => store.rowToRunAuditEvent(row));
   }
 
-export function getWorkflowParitySummaryImpl(store: TaskStore, options: { since?: string; limit?: number } = {}): WorkflowParitySummary {
+export async function getWorkflowParitySummaryImpl(store: TaskStore, options: { since?: string; limit?: number } = {}): Promise<WorkflowParitySummary> {
     const limit = options.limit ?? 1000;
-    const observed = store.getRunAuditEvents({
+    const observed = await store.getRunAuditEventsAsync({
       domain: "database",
       mutationType: WORKFLOW_PARITY_OBSERVED_MUTATION as unknown as RunAuditEvent["mutationType"],
       startTime: options.since,
       limit,
     });
-    const driftEvents = store.getRunAuditEvents({
+    const driftEvents = await store.getRunAuditEventsAsync({
       domain: "database",
       mutationType: WORKFLOW_PARITY_DRIFT_MUTATION as unknown as RunAuditEvent["mutationType"],
       startTime: options.since,

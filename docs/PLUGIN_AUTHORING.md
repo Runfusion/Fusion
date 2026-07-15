@@ -347,7 +347,8 @@ const plugin: FusionPlugin = {
 | `onTaskMoved` | `(task: Task, fromColumn: string, toColumn: string, ctx: PluginContext) => Promise<void> \| void` | Task moved between columns |
 | `onTaskCompleted` | `(task: Task, ctx: PluginContext) => Promise<void> \| void` | Task reached "done" |
 | `onError` | `(error: Error, ctx: PluginContext) => Promise<void> \| void` | Error occurred in plugin execution |
-| `onSchemaInit` | `(db: Database) => Promise<void> \| void` | After enabled plugins are loaded at startup (engine/daemon/dashboard/serve) |
+| `onPostgresSchemaInit` | `() => PluginPostgresSchemaDefinition` | Before `onLoad`; Fusion validates and applies the declarative plan with a short-lived migration connection |
+| `onSchemaInit` (legacy) | `(db: Database) => Promise<void> \| void` | SQLite-only compatibility declaration; unsupported for third-party plugins in the PostgreSQL runtime |
 | `executorRuntimeEnv` | `(taskCtx: ExecutorRuntimeTaskContext, ctx: PluginContext) => Promise<ExecutorRuntimeEnvContribution> \| ExecutorRuntimeEnvContribution` | Before executor-spawned task commands run, to contribute task-scoped env and PATH prepends |
 
 ### Hook Behavior
@@ -356,26 +357,32 @@ const plugin: FusionPlugin = {
 - **Timeout**: 5 seconds per invocation (logged and skipped if exceeded)
 - **Error Isolation**: Hook failures never block other hooks or abort startup
 - **Optional**: Only define the hooks you need
-- **Schema hook execution**: `onSchemaInit` hooks run sequentially in plugin dependency order (from `resolveLoadOrder`) after `loadAllPlugins()`.
-- **Schema hook database API**: The hook receives the runtime `Database` instance, including `db.exec()` and `db.prepare()` for SQL DDL.
-- **Schema hook constraints**: `onSchemaInit` is intended for idempotent DDL only (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`). Avoid data backfills or long-running logic.
-- **Bundled plugin pattern**: Keep DDL in a plugin-local schema module (for example `src/<plugin>-schema.ts`) and call it from `hooks.onSchemaInit` so schema ownership stays with the plugin package instead of `@fusion/core` bootstrap SQL.
+- **Schema preflight**: `onPostgresSchemaInit` is evaluated and validated before the plugin is marked started or `onLoad` runs. An invalid or SQLite-only third-party schema fails without leaving `onLoad` subscriptions or timers behind.
+- **No privileged handle**: The hook returns data and receives no database object. Fusion alone opens the short-lived migration connection; ordinary plugin hooks and routes continue to use the project-bound forced-RLS runtime role.
+- **Allowed DDL**: Return one idempotent `CREATE TABLE IF NOT EXISTS`, `CREATE [UNIQUE] INDEX IF NOT EXISTS`, or `ALTER TABLE` statement per array item. Every object must live in the `project` schema and every referenced table must begin with the declared `tablePrefix`. Semicolon-separated batches and data-changing/admin statements are rejected.
+- **Required ownership**: Every created table declares `project_id text NOT NULL` and a `project_id`-leading composite primary key. Fusion installs the column default, ownership trigger, forced RLS policy, and runtime grants after creation. Composite foreign keys should include `project_id` on both sides.
+- **Schema evolution**: Increment `version` when the declarative plan changes. Statements remain idempotent and must safely rerun during restart or hot reload. Avoid data backfills or long-running logic.
+- **Legacy cutover**: Third-party `onSchemaInit(Database)` hooks are no longer executable in the PostgreSQL runtime. Bundled plugins retain host-owned PostgreSQL equivalents during migration, but external plugins must provide `onPostgresSchemaInit`.
 
 ### Example: Schema initialization hook
 
 ```typescript
 hooks: {
-  onSchemaInit: async (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS plugin_roadmaps (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_plugin_roadmaps_created_at
-      ON plugin_roadmaps(created_at);
-    `);
-  },
+  onPostgresSchemaInit: () => ({
+    version: 1,
+    tablePrefix: "acme_",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS project.acme_roadmaps (
+        project_id text NOT NULL,
+        id text NOT NULL,
+        title text NOT NULL,
+        created_at text NOT NULL,
+        PRIMARY KEY (project_id, id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_acme_roadmaps_created_at
+       ON project.acme_roadmaps(project_id, created_at)`,
+    ],
+  }),
 },
 ```
 
@@ -1336,7 +1343,7 @@ Polls CI status for branches and provides custom API endpoints.
 
 Standalone roadmap planning plugin extracted from dashboard host code.
 
-- Demonstrates: `hooks.onSchemaInit` for plugin-owned schema DDL (`ensureRoadmapSchema`)
+- Demonstrates: the bundled legacy `hooks.onSchemaInit` plus its host-owned PostgreSQL schema during the cutover; new external plugins use `hooks.onPostgresSchemaInit`
 - Demonstrates: plugin-scoped route namespace under `/api/plugins/fusion-plugin-roadmap/*`
 - Demonstrates: top-level navigation registration through `dashboardViews` (`viewId: "roadmaps"`) and host static view registration
 - Demonstrates: AI suggestion flows that consume `ctx.createAiSession` through plugin route handlers

@@ -4,6 +4,7 @@ import { ApprovalRequestStore, DASHBOARD_USER_ID, MessageStore, type MessageType
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { getTerminalService } from "../terminal-service.js";
 import type { ApiRoutesContext } from "./types.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
   const { router, options, getProjectContext, rethrowAsApiError, runtimeLogger } = ctx;
@@ -188,15 +189,9 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
 
     let msgStore = messageStoreCache.get(rootDir);
     if (!msgStore) {
-      // FNXC:RuntimeSatelliteAsync 2026-06-24-12:50:
-      // In backend mode, pass the AsyncDataLayer so MessageStore delegates to
-      // the async helpers; otherwise pass the sync SQLite Database (legacy path).
-      const layer = scopedStore.getAsyncLayer();
-      if (layer) {
-        msgStore = new MessageStore(null, { asyncLayer: layer });
-      } else {
-        msgStore = new MessageStore(scopedStore.getDatabase());
-      }
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Dashboard messages require the scoped PostgreSQL layer; the removed SQLite runtime is not a fallback. */
+      const layer = requireAsyncLayer(scopedStore, "Dashboard MessageStore");
+      msgStore = new MessageStore(null, { asyncLayer: layer });
       messageStoreCache.set(rootDir, msgStore);
     }
     return msgStore;
@@ -279,8 +274,8 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       let pendingApprovalCount = 0;
       try {
-        const layer = scopedStore.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+        const layer = requireAsyncLayer(scopedStore, "Messaging approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
         pendingApprovalCount = (await approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 })).length;
       } catch {
         pendingApprovalCount = 0;

@@ -298,7 +298,7 @@ For bug-class/bug-fix tasks only; feature/docs/non-bug tasks do not need this se
 Keep the project default workflow (usually \`builtin:coding\`) unless the user explicitly requested a specific workflow for this task, or you created that task yourself. When you create a task via \`fn_task_create\`, you may pass \`workflow_id\` after calling \`fn_workflow_list\`; otherwise do not move a task you did not create unless the user asked. Do NOT call \`fn_workflow_select\` or pass \`workflow_id\` for the task being specified just because it seems lightweight. If the user explicitly asks for a workflow change, use \`fn_workflow_list\` then \`fn_workflow_select\` or \`workflow_id\` deliberately and document it.
 
 ## Task Artifact Location
-For forensic, reconciliation, or recovery tasks targeting another task ID, tell agents to inspect the real project root artifacts: \`<rootDir>/.fusion/tasks/{TARGET_ID}/\` for PROMPT.md/task.json/logs/attachments and \`<rootDir>/.fusion/fusion.db\` for the task store. Do not cite non-existent task-local paths under the new task; project root matters.
+For forensic, reconciliation, or recovery tasks targeting another task ID, tell agents to inspect the real project root artifacts: \`<rootDir>/.fusion/tasks/{TARGET_ID}/\` for PROMPT.md/task.json/logs/attachments and use \`TaskStore\` APIs for the authoritative PostgreSQL task store. A legacy \`<rootDir>/.fusion/fusion.db\` is migration evidence only. Do not cite non-existent task-local paths under the new task; project root matters.
 
 ## Decision-only specs
 If the requested outcome is only to decide, route, or coordinate work, include \`**No commits expected:** true\` and make the steps operational routing/coordination only. Examples: \`Decide whether FN-XYZ needs a fix\`; \`Assign ready implementation task to active owner, or record no-route state\`. Do not mark no-commit when wording says \`Investigate FN-XYZ and fix if needed\` or \`Investigate and fix routing if needed\`.
@@ -631,8 +631,8 @@ Write the PROMPT.md directly using the write tool and stop. The workflow graph o
 
 If the task targets a different task ID (audit, forensic walk, historical reconciliation, task-ID-collision investigation, live task metadata repair, or any work where evidence is another task's \`task.json\` / \`PROMPT.md\` / DB row), include this guidance in the generated PROMPT.md \`## Context to Read First\` and \`## File Scope\`:
 - Authoritative target-task artifacts live at the **project root**: \`<rootDir>/.fusion/tasks/{TARGET_ID}/\` (\`task.json\`, \`PROMPT.md\`, \`attachments/\`, agent logs).
-- Authoritative task DB rows live at the **project root** SQLite file: \`<rootDir>/.fusion/fusion.db\` (WAL mode). Read via \`TaskStore\` APIs; do not instruct direct SQL surgery.
-- \`.fusion/\` is gitignored, so a fresh worktree from \`main\` does **not** include \`.fusion/tasks/{TARGET_ID}/\` or \`.fusion/fusion.db\`. The running worktree's own \`.fusion/\` (if present) is scratch/session state for the running task only, not source of truth.
+- Authoritative task rows live in the project-scoped PostgreSQL store. Read and mutate them through \`TaskStore\` APIs; do not instruct direct SQL surgery. A local \`.fusion/fusion.db\`, when present, is a retained pre-cutover migration input or backup.
+- \`.fusion/\` is gitignored, so a fresh worktree from \`main\` does **not** include \`.fusion/tasks/{TARGET_ID}/\` compatibility artifacts. The running worktree's own \`.fusion/\` (if present) is scratch/session state for the running task only, not the authoritative database.
 - Prefer \`fn_task_show\` / \`fn_task_list\` when the target task ID is known; fall back to project-root filesystem reads only when tools cannot provide needed evidence.
 
 <!-- Frontend UX criteria are applied deterministically by packages/core/src/frontend-ux-policy.ts and mirror the "frontend-ux-design" reviewer persona in packages/core/src/types.ts. -->`;;

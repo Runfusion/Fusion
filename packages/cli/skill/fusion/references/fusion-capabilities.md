@@ -132,13 +132,15 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 
 ```
 .fusion/
-├── fusion.db                # SQLite database (WAL mode)
+├── project.json             # Canonical local project identity
 └── tasks/
     └── FN-001/
         ├── PROMPT.md        # Task specification
-        ├── agent.log        # Execution logs
+        ├── agent-log.jsonl  # File-backed execution logs
         └── attachments/     # File attachments
 ```
+
+Structured runtime metadata is authoritative in PostgreSQL. A retained `fusion.db` is migration input only.
 
 ## Dashboard Features
 

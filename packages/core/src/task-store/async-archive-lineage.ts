@@ -39,6 +39,14 @@ import {
 } from "./async-persistence.js";
 import type { ArchivedTaskEntry } from "../types.js";
 
+/*
+FNXC:ArchiveProjectIsolation 2026-07-14-16:20:
+Archive snapshots and their live task rows share one PostgreSQL database across projects, while task IDs are only unique inside a project. Every archive, restore, soft-delete, and lineage transaction must therefore use the bound project partition; unbound compatibility callers are confined to the explicit legacy quarantine rather than becoming cross-project readers or writers.
+*/
+function projectPartition(projectId?: string): string {
+  return projectId?.trim() || "__legacy_unscoped__";
+}
+
 /**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-07:05:
  * The "live parent" predicate for the document/artifact visibility gate
@@ -91,7 +99,7 @@ export async function upsertArchivedTaskEntry(
       // FNXC:MultiProjectIsolation 2026-07-12: stamp the owning project so the
       // shared cold-storage archive can be scoped per project on reads. Stable
       // for the row's lifetime — the conflict-update below never rewrites it.
-      projectId: projectId ?? "__legacy_unscoped__",
+      projectId: projectPartition(projectId),
       taskJson: JSON.stringify(entry),
       prompt: entry.prompt ?? null,
       archivedAt: entry.archivedAt,
@@ -126,11 +134,15 @@ export async function upsertArchivedTaskEntry(
 export async function findArchivedTaskEntry(
   db: AsyncDataLayer["db"] | DbTransaction,
   id: string,
+  projectId?: string,
 ): Promise<ArchivedTaskEntry | undefined> {
   const rows = await db
     .select({ taskJson: schema.archive.archivedTasks.taskJson })
     .from(schema.archive.archivedTasks)
-    .where(eq(schema.archive.archivedTasks.id, id))
+    .where(and(
+      eq(schema.archive.archivedTasks.projectId, projectPartition(projectId)),
+      eq(schema.archive.archivedTasks.id, id),
+    ))
     .limit(1);
   const row = rows[0];
   if (!row?.taskJson) return undefined;
@@ -147,10 +159,12 @@ export async function findArchivedTaskEntry(
  */
 export async function listArchivedTaskEntries(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId?: string,
 ): Promise<ArchivedTaskEntry[]> {
   const rows = await db
     .select({ taskJson: schema.archive.archivedTasks.taskJson })
     .from(schema.archive.archivedTasks)
+    .where(eq(schema.archive.archivedTasks.projectId, projectPartition(projectId)))
     .orderBy(desc(schema.archive.archivedTasks.archivedAt));
   const entries: ArchivedTaskEntry[] = [];
   for (const row of rows) {
@@ -173,10 +187,14 @@ export async function listArchivedTaskEntries(
 export async function deleteArchivedTaskEntry(
   db: AsyncDataLayer["db"] | DbTransaction,
   id: string,
+  projectId?: string,
 ): Promise<void> {
   await db
     .delete(schema.archive.archivedTasks)
-    .where(eq(schema.archive.archivedTasks.id, id));
+    .where(and(
+      eq(schema.archive.archivedTasks.projectId, projectPartition(projectId)),
+      eq(schema.archive.archivedTasks.id, id),
+    ));
 }
 
 /**
@@ -194,6 +212,7 @@ export async function deleteArchivedTaskEntry(
 export async function filterArchivedTaskEntries(
   db: AsyncDataLayer["db"] | DbTransaction,
   ids: readonly string[],
+  projectId?: string,
 ): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const result = new Set<string>();
@@ -203,7 +222,10 @@ export async function filterArchivedTaskEntries(
     const rows = await db
       .select({ id: schema.archive.archivedTasks.id })
       .from(schema.archive.archivedTasks)
-      .where(inArray(schema.archive.archivedTasks.id, chunk));
+      .where(and(
+        eq(schema.archive.archivedTasks.projectId, projectPartition(projectId)),
+        inArray(schema.archive.archivedTasks.id, chunk),
+      ));
     for (const row of rows) result.add(row.id);
   }
   return result;
@@ -248,14 +270,14 @@ export async function archiveParentTaskWithLineageGate(
 
   return layer.transactionImmediate(async (tx) => {
     // 1. Lineage gate — check for live children inside the transaction.
-    const liveChildIds = await findLiveLineageChildren(tx, taskId);
+    const liveChildIds = await findLiveLineageChildren(tx, taskId, layer.projectId);
     if (liveChildIds.length > 0 && !options.removeLineageReferences) {
       return { archived: false as const, liveChildIds };
     }
 
     // 2. Lineage clear (if requested and there are live children).
     if (liveChildIds.length > 0 && options.removeLineageReferences) {
-      await removeLineageReferences(tx, taskId, liveChildIds, now);
+      await removeLineageReferences(tx, taskId, liveChildIds, now, layer.projectId);
     }
 
     // 3. Archive snapshot to cold storage (VAL-CROSS-015 — preserves for restore).
@@ -271,7 +293,7 @@ export async function archiveParentTaskWithLineageGate(
     //    so the UPDATE participates in this transaction. The previous call used
     //    softDeleteTaskRow(layer) which bound layer.db and ran OUTSIDE the txn,
     //    breaking atomicity (a later rollback left the soft-delete persisted).
-    await softDeleteTaskRowInTransaction(tx, taskId, now);
+    await softDeleteTaskRowInTransaction(tx, taskId, now, false, layer.projectId);
 
     return { archived: true as const };
   });
@@ -309,7 +331,7 @@ export async function restoreTaskFromArchive(
     // the read participates in this transaction (consistent snapshot). The
     // previous call used readTaskRow(layer) which bound layer.db and read
     // OUTSIDE the txn.
-    const existing = await readTaskRowInTransaction(tx, entry.id, { includeDeleted: true });
+    const existing = await readTaskRowInTransaction(tx, entry.id, { includeDeleted: true }, layer.projectId);
     if (existing) {
       // Row exists (was soft-deleted). Restore it: clear deleted_at, keep
       // column as "archived" so the caller (unarchiveTaskImpl) can verify the
@@ -323,7 +345,10 @@ export async function restoreTaskFromArchive(
           column: "archived",
           updatedAt: now,
         })
-        .where(eq(schema.project.tasks.id, entry.id));
+        .where(and(
+          eq(schema.project.tasks.projectId, projectPartition(layer.projectId)),
+          eq(schema.project.tasks.id, entry.id),
+        ));
     } else {
       // Row was hard-deleted. We cannot fully reconstruct it from the archive
       // snapshot alone here (the entry carries the public Task shape, not the
@@ -333,7 +358,7 @@ export async function restoreTaskFromArchive(
     }
 
     // Remove the cold-storage snapshot (project row is the source of truth again).
-    await deleteArchivedTaskEntry(tx, entry.id);
+    await deleteArchivedTaskEntry(tx, entry.id, layer.projectId);
   });
 }
 

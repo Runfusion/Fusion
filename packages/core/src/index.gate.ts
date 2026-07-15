@@ -869,6 +869,8 @@ export {
   ProjectIdentityMismatchError,
   readProjectIdentity,
   writeProjectIdentity,
+  hasProjectIdentity,
+  PROJECT_IDENTITY_FILENAME,
 } from "./project-identity.js";
 export { ProcessSupervisor, superviseSpawn } from "./process-supervisor.js";
 export type {

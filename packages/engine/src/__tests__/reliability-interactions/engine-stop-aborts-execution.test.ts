@@ -92,4 +92,19 @@ describe("FN-5403 reliability interactions: engine stop aborts execution", () =>
     expect(runtime.executor.abortAllInFlight).toHaveBeenCalledWith("engine stop");
     expect(timeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 500);
   });
+
+  it("releases the PostgreSQL backend exactly once when an earlier cleanup step fails", async () => {
+    const runtime = new InProcessRuntime({ projectId: "p", workingDirectory: "/tmp", isolationMode: "in-process" } as any, {} as any) as any;
+    const backendShutdown = vi.fn().mockResolvedValue(undefined);
+    runtime.status = "active";
+    runtime.backendShutdown = backendShutdown;
+    runtime.taskStore = { getSettings: vi.fn().mockRejectedValue(new Error("settings unavailable")) };
+    runtime.executor = makeExecutor();
+
+    await expect(runtime.stop()).rejects.toThrow("settings unavailable");
+    expect(backendShutdown).toHaveBeenCalledTimes(1);
+
+    await runtime.stop().catch(() => undefined);
+    expect(backendShutdown).toHaveBeenCalledTimes(1);
+  });
 });

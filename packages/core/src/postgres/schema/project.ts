@@ -1525,9 +1525,12 @@ export const pluginActivations = projectSchema.table("plugin_activations", {
 
 export const knowledgePages = projectSchema.table("knowledge_pages", {
   id: integer("id").generatedAlwaysAsIdentity().primaryKey(),
+  // FNXC:KnowledgeIndex 2026-07-14-16:35:
+  // Knowledge pages contain task and PR history, so their Drizzle model must expose the project ownership added by migration 0006. Async dashboard reads and upserts use this key explicitly in addition to the database RLS policy.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   sourceKind: text("source_kind").notNull(),
   sourceId: text("source_id").notNull(),
-  sourceKey: text("source_key").notNull().unique(),
+  sourceKey: text("source_key").notNull(),
   title: text("title").notNull(),
   summary: text("summary"),
   content: text("content").notNull(),
@@ -1536,6 +1539,7 @@ export const knowledgePages = projectSchema.table("knowledge_pages", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
+  uniqueIndex("knowledge_pages_source_key_unique").on(t.projectId, t.sourceKey),
   index("idxKnowledgePagesSourceKind").on(t.sourceKind),
   index("idxKnowledgePagesUpdatedAt").on(t.updatedAt),
 ]);

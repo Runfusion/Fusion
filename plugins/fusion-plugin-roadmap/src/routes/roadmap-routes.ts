@@ -48,10 +48,10 @@ async function getRoadmapStore(req: RouteRequest, ctx: PluginContext): Promise<R
   const key = scopedTaskStore as object;
   const cached = roadmapStoreCache.get(key);
   if (cached) return cached;
-  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:30:
-  // In backend mode, getDatabase() throws. Guard with isBackendMode() check.
   const layer = scopedTaskStore.getAsyncLayer();
-  const store = layer ? new AsyncRoadmapStore(layer) : new RoadmapStore(scopedTaskStore.getDatabase());
+  if (!layer) throw new Error("Roadmap plugin routes require the project PostgreSQL AsyncDataLayer");
+  /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Bundled roadmap routes use only their project-scoped PostgreSQL store. */
+  const store = new AsyncRoadmapStore(layer);
   roadmapStoreCache.set(key, store);
   return store;
 }

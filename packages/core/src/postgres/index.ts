@@ -80,11 +80,16 @@ export {
 export {
   roadmapPluginSchemaInit,
   cePluginSchemaInit,
+  whatsappPluginSchemaInit,
+  evenRealitiesPluginSchemaInit,
   reportsPluginSchemaInit,
   cliPressPluginSchemaInit,
   DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS,
   runPluginSchemaInitHooks,
+  runLoadedPluginSchemaInitHooks,
+  assertLoadedPluginSchemaInitHooksSupported,
   type PluginSchemaInitHook,
+  type LoadedPluginSchemaContract,
 } from "./plugin-schema-hook.js";
 
 /**
@@ -188,23 +193,20 @@ export {
  * FNXC:BackendFlip 2026-06-26-14:30:
  * Runtime startup factory (cutover milestone). `createTaskStoreForBackend()`
  * is the single entry point production construction sites consult to decide
- * whether to boot against PostgreSQL or fall back to the legacy SQLite path.
- * Post default-flip (flip-embedded-pg-default): when DATABASE_URL is unset,
- * the factory boots embedded PostgreSQL by default; FUSION_NO_EMBEDDED_PG=1
- * is the opt-out back to legacy SQLite. When DATABASE_URL is set, external
- * PostgreSQL is used. When it returns a `BackendBootResult`, the call site
- * uses the ready TaskStore and registers the result's `shutdown()` for
- * process teardown. When it returns `null`, the call site constructs the
- * SQLite-backed TaskStore exactly as before (byte-identical legacy path).
+ * how to boot PostgreSQL. Embedded PostgreSQL is the zero-config default and
+ * DATABASE_URL selects an external service; the removed SQLite opt-out is
+ * rejected so callers always receive a live backend result.
  */
 export {
   createTaskStoreForBackend,
+  createCentralBackendLayer,
   shouldUsePostgresBackend,
   isEmbeddedPgRequested,
   isEmbeddedPgOptedOut,
   EMBEDDED_PG_ENV,
   NO_EMBEDDED_PG_ENV,
   type BackendBootResult,
+  type CentralBackendLayerResult,
   type CreateTaskStoreForBackendOptions,
 } from "./startup-factory.js";
 

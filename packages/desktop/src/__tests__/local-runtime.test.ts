@@ -132,7 +132,8 @@ describe("LocalRuntimeManager", () => {
     watch: vi.fn(async () => undefined),
     close: vi.fn(),
     getPluginStore: vi.fn(() => engineMocks.pluginStoreInstance),
-    getDatabase: vi.fn(() => ({ runPluginSchemaInits: engineMocks.runPluginSchemaInits })),
+    runPluginSchemaInits: engineMocks.runPluginSchemaInits,
+    getAsyncLayer: vi.fn(() => ({ projectId: "project-1" } as never)),
   };
 
   beforeEach(() => {
@@ -467,6 +468,8 @@ describe("LocalRuntimeManager", () => {
 
     await manager.startLocal();
 
+    expect(engineMocks.CentralCore).toHaveBeenCalledWith(undefined, { asyncLayer: store.getAsyncLayer() });
+
     expect(engineMocks.seedDashboardProviders).toHaveBeenCalledWith(
       expect.objectContaining({ authStorage: expect.anything(), modelRegistry: expect.anything() }),
     );
@@ -495,6 +498,9 @@ describe("LocalRuntimeManager", () => {
         return server as unknown as Server;
       }),
     });
+    engineMocks.pluginLoaderInstance.getPluginSchemaInitHooks.mockReturnValueOnce([
+      { pluginId: "fusion-plugin-even-realities-glasses", hook: vi.fn() },
+    ]);
 
     const manager = new LocalRuntimeManager({
       rootDir: "/repo",
@@ -509,6 +515,10 @@ describe("LocalRuntimeManager", () => {
       expect.objectContaining({ pluginStore: engineMocks.pluginStoreInstance, taskStore: expect.anything() }),
     );
     expect(engineMocks.pluginLoaderInstance.loadAllPlugins).toHaveBeenCalledTimes(1);
+    /* FNXC:DesktopPluginSchema 2026-07-14-17:50: Desktop schema initialization goes through TaskStore and therefore cannot reach backend getDatabase(). */
+    expect(engineMocks.runPluginSchemaInits).toHaveBeenCalledWith([
+      expect.objectContaining({ pluginId: "fusion-plugin-even-realities-glasses" }),
+    ]);
     expect(engineMocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

@@ -2,14 +2,14 @@
 
 ## Database Architecture
 
-Fusion uses a hybrid storage architecture: structured metadata in SQLite, large blobs on the filesystem.
+Fusion uses a hybrid storage architecture: structured metadata in PostgreSQL, with large blobs and compatibility artifacts on the filesystem.
 
-**Project database:** `.fusion/fusion.db` (SQLite with WAL mode)
+**Project identity:** `.fusion/project.json` (the data rows keyed by this identity live in PostgreSQL)
 
 **Filesystem blobs:**
 ```
 .fusion/
-├── fusion.db                # SQLite database (WAL mode)
+├── project.json             # Canonical local project identity
 ├── config.json              # Board config + workflow steps
 └── tasks/
     └── FN-001/
@@ -20,7 +20,7 @@ Fusion uses a hybrid storage architecture: structured metadata in SQLite, large 
             └── data.json
 ```
 
-## Task Metadata (in SQLite)
+## Task Metadata (in PostgreSQL)
 
 Key fields stored in the `tasks` table:
 
@@ -152,7 +152,7 @@ User-level settings at `~/.fusion/settings.json`:
 
 ## Central Database (Multi-Project)
 
-For multi-project setups: `~/.fusion/fusion-central.db`
+For multi-project setups, the PostgreSQL `central` schema stores:
 - Project registry
 - Unified activity feed
 - Global concurrency management

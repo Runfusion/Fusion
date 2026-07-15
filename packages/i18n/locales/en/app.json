@@ -1427,13 +1427,6 @@
     "versionMismatchPrefix": "Your installed",
     "versionMismatchSuffix": "Update to stay in sync."
   },
-  "storageMigrationNotice": {
-    "body": "The next Fusion version will replace the current SQLite data store with an embedded Postgres backend for data storage, and project databases will be served from the central Fusion database instead of each project's local .fusion/fusion.db SQLite file. No migration runs from this notice; it is an advance heads-up for operators who rely on the current storage layout.",
-    "dismissLabel": "Dismiss storage update notice",
-    "getHelp": "Get help",
-    "getHelpLabel": "Get help on Discord",
-    "title": "Storage update coming in the next Fusion version"
-  },
   "cliBinary": {
     "binaryLabel": "Binary:",
     "checking": "Checking…",

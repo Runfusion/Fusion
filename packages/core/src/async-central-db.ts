@@ -46,7 +46,7 @@
 import { and, eq } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
-import type { TaskClaimRow } from "./types.js";
+import type { CentralClaimStore, TaskClaimRow } from "./types.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
@@ -351,4 +351,25 @@ export async function releaseClaimsForNode(
     .where(eq(schema.central.taskClaims.ownerNodeId, ownerNodeId))
     .returning({ projectId: schema.central.taskClaims.projectId });
   return deleted.length;
+}
+
+/** Awaitable CentralClaimStore adapter used by the PostgreSQL engine runtime. */
+export class AsyncCentralClaimStore implements CentralClaimStore {
+  constructor(private readonly layer: AsyncDataLayer) {}
+
+  tryClaimTask(input: TryClaimInput): Promise<TryClaimResult> {
+    return tryClaimTask(this.layer, input);
+  }
+
+  renewTaskClaim(input: RenewClaimInput): Promise<RenewClaimResult> {
+    return renewTaskClaim(this.layer, input);
+  }
+
+  releaseTaskClaim(input: ReleaseClaimInput): Promise<ReleaseClaimResult> {
+    return releaseTaskClaim(this.layer, input);
+  }
+
+  getTaskClaim(projectId: string, taskId: string): Promise<TaskClaimRow | null> {
+    return getTaskClaim(this.layer.db, projectId, taskId);
+  }
 }

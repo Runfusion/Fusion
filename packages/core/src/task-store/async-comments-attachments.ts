@@ -109,18 +109,22 @@ function rowToArtifact(row: ArtifactRow): Artifact {
  * or soft-deleted tasks. Returns the task's column if live, or `null` if the
  * task is absent, archived, or soft-deleted.
  */
-async function getLiveTaskColumn(
+export async function getLiveTaskColumn(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
 ): Promise<string | null> {
+  /*
+  FNXC:PostgresArchiveSafety 2026-07-14-17:38:
+  PostgreSQL async log, comment, document, and artifact paths must distinguish an archived or soft-deleted parent from a missing task so every mutation rejects the retained record as read-only while live read surfaces hide its children.
+  */
   const rows = await db
-    .select({ column: schema.project.tasks.column })
+    .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
     .from(schema.project.tasks)
-    .where(and(eq(schema.project.tasks.id, taskId), ACTIVE_TASK_FILTER))
+    .where(eq(schema.project.tasks.id, taskId))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  if (row.column === "archived") return null;
+  if (row.column === "archived" || row.deletedAt != null) return "archived";
   return row.column;
 }
 
@@ -140,7 +144,7 @@ export async function getTaskDocument(
 ): Promise<TaskDocument | null> {
   // Gate on the parent task being live.
   const column = await getLiveTaskColumn(db, taskId);
-  if (column === null) return null;
+  if (column === null || column === "archived") return null;
 
   const rows = await db
     .select()
@@ -273,7 +277,7 @@ export async function listTaskDocuments(
   taskId: string,
 ): Promise<TaskDocument[]> {
   const column = await getLiveTaskColumn(db, taskId);
-  if (column === null) return [];
+  if (column === null || column === "archived") return [];
 
   const rows = await db
     .select()
@@ -292,7 +296,7 @@ export async function getTaskDocumentRevisions(
   key: string,
 ): Promise<TaskDocumentRevisionRow[]> {
   const column = await getLiveTaskColumn(db, taskId);
-  if (column === null) return [];
+  if (column === null || column === "archived") return [];
 
   const rows = await db
     .select()
@@ -313,9 +317,9 @@ export async function getTaskDocumentRevisions(
  * equivalent of the sync `deleteTaskDocument`: it verifies the document exists
  * (throwing the same "not found" error otherwise), then removes the revisions
  * and the document row inside a single transaction so a partial delete can
- * never leave orphaned revisions. Unlike the read/upsert paths it intentionally
- * does NOT gate on the parent task's live state — the sync path deletes by
- * (taskId, key) existence alone, and this preserves that behavior.
+ * never leave orphaned revisions. Archived-task documents are retained for
+ * restore and remain read-only, so deletion uses the same parent-state gate as
+ * upsert.
  *
  * @param layer The async data layer (the delete runs in its own transaction).
  * @param taskId The parent task id.
@@ -327,6 +331,9 @@ export async function deleteTaskDocument(
   key: string,
 ): Promise<void> {
   return layer.transactionImmediate(async (tx) => {
+    const state = await getLiveTaskColumn(tx, taskId);
+    if (state === "archived") throw new Error(`Task ${taskId} is archived — documents are read-only`);
+    if (state === null) throw new Error(`Task ${taskId} not found`);
     const existing = await tx
       .select({ id: schema.project.taskDocuments.id })
       .from(schema.project.taskDocuments)
@@ -445,6 +452,7 @@ export async function updateArtifactRow(
       if (column === "archived") {
         throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
       }
+      if (column === null) throw new Error(`Task ${existing.taskId} not found`);
     }
     if (updates.content !== undefined && existing.uri) {
       throw new Error(`Artifact ${id} stores a binary payload; its content is not editable`);
@@ -498,7 +506,7 @@ export async function getArtifacts(
   taskId: string,
 ): Promise<Artifact[]> {
   const column = await getLiveTaskColumn(db, taskId);
-  if (column === null) return [];
+  if (column === null || column === "archived") return [];
 
   const rows = await db
     .select()

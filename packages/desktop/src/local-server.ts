@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import type { Server } from "node:http";
+import type { AsyncDataLayer, LoadedPluginSchemaContract } from "@fusion/core";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
 import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
@@ -15,14 +16,13 @@ import { resolveDesktopSystemControl } from "./local-runtime.js";
  * paths consistent (see local-runtime.ts's matching comment).
  */
 type PluginStoreLike = { init(): Promise<void> };
-type PluginDatabaseLike = { runPluginSchemaInits(hooks: Array<{ pluginId: string; hook: unknown }>): Promise<void> };
-
 type TaskStoreLike = {
   init(): Promise<void>;
   watch(): Promise<void>;
   close(): void;
   getPluginStore(): PluginStoreLike;
-  getDatabase(): PluginDatabaseLike;
+  runPluginSchemaInits(hooks: LoadedPluginSchemaContract[]): Promise<void>;
+  getAsyncLayer(): AsyncDataLayer;
 };
 
 type RuntimeCleanup = () => Promise<void> | void;
@@ -67,31 +67,27 @@ export class DesktopLocalServerManager {
     let cleanup: RuntimeCleanup | undefined;
 
     try {
-      const { TaskStore, createTaskStoreForBackend } = await import("@fusion/core");
+      const { createTaskStoreForBackend } = await import("@fusion/core");
       const { CentralCore, PluginLoader, ensureBundledPluginInstalled, isBundledPluginId } = await import("@fusion/core");
       const { createServer } = await import("@fusion/dashboard");
       const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry, seedDashboardProviders } = await import("@fusion/engine");
       // FNXC:BackendFlip 2026-06-26-14:40:
       // Consult the startup factory to boot a PostgreSQL-backed TaskStore.
       // Post default-flip: the factory boots embedded PG by default when
-      // DATABASE_URL is unset, external PG when DATABASE_URL is set, and
-      // returns null only when the operator opted out via
-      // FUSION_NO_EMBEDDED_PG=1 (legacy SQLite path).
+      // DATABASE_URL is unset and external PG when DATABASE_URL is set.
       const backendBoot = await createTaskStoreForBackend({ rootDir: this.rootDir });
-      if (backendBoot) {
-        store = backendBoot.taskStore as unknown as TaskStoreLike;
-        (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
-          backendBoot.shutdown;
-      } else {
-        store = new TaskStore(this.rootDir) as TaskStoreLike;
-      }
+      /* FNXC:PostgresDesktopRuntime 2026-07-14-18:34: The legacy local-server entrypoint shares the same mandatory PostgreSQL startup contract as the primary desktop runtime. */
+      store = backendBoot.taskStore as unknown as TaskStoreLike;
+      (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
+        backendBoot.shutdown;
       await store.init();
       await store.watch();
       /*
        * FNXC:DesktopRuntime 2026-06-20-23:39:
        * This legacy desktop local server path still needs to launch project engines so every embedded desktop server follows the same executable-by-default contract.
        */
-      const centralCore = new CentralCore();
+      /* FNXC:PostgresDesktopLifecycle 2026-07-14-19:10: The legacy desktop entrypoint must reuse TaskStore's PostgreSQL layer so CentralCore does not allocate a duplicate pool or rerun schema bootstrap. */
+      const centralCore = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() });
       const engineManager = new ProjectEngineManager(centralCore);
       const providerSeeding: { dispose?: () => void } = {};
       cleanup = async () => {
@@ -161,7 +157,8 @@ export class DesktopLocalServerManager {
         await pluginLoader.loadAllPlugins();
         const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
         if (schemaHooks.length > 0) {
-          await store.getDatabase().runPluginSchemaInits(schemaHooks);
+          /* FNXC:DesktopPluginSchema 2026-07-14-17:30: Legacy desktop server delegates plugin schema work to TaskStore so PostgreSQL never calls getDatabase(). */
+          await store.runPluginSchemaInits(schemaHooks);
         }
 
         ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
@@ -171,7 +168,9 @@ export class DesktopLocalServerManager {
           const status = await ensureBundledPluginInstalled(boundPluginStore as never, boundPluginLoader, pluginId, resolveDesktopBundlePluginDirs);
           return status !== "missing-bundle";
         };
-      } catch {
+      } catch (error) {
+        /* FNXC:DesktopPluginSchema 2026-07-14-17:55: Desktop remains fail-soft for availability, but unsupported PostgreSQL plugin schemas must be visible to operators rather than disappearing inside the broad plugin catch. */
+        console.error(`[plugins] Desktop plugin initialization failed: ${error instanceof Error ? error.message : String(error)}`);
         // Plugin subsystem failures must not block embedded dashboard startup (FN-7623).
         pluginStore = undefined;
         pluginLoader = undefined;
@@ -212,8 +211,10 @@ export class DesktopLocalServerManager {
       if (server) {
         await new Promise<void>((resolve) => server!.close(() => resolve()));
       }
-      await cleanup?.();
-      store?.close();
+      await Promise.resolve(cleanup?.()).catch(() => undefined);
+      const backendShutdown = (store as (TaskStoreLike & { __backendShutdown?: () => Promise<void> }) | null)?.__backendShutdown;
+      if (backendShutdown) await backendShutdown().catch(() => undefined);
+      else store?.close();
       this.state = {
         status: "error",
         error: error instanceof Error ? error.message : String(error),
@@ -232,8 +233,12 @@ export class DesktopLocalServerManager {
     this.runtime = null;
 
     await new Promise<void>((resolve) => runtime.server.close(() => resolve()));
-    await runtime.cleanup?.();
-    runtime.store.close();
+    let cleanupError: unknown;
+    try {
+      await runtime.cleanup?.();
+    } catch (error) {
+      cleanupError = error;
+    }
     // FNXC:RuntimeStartupWiring 2026-06-24-10:35:
     // Release the backend connection pool / embedded PG cluster if the store
     // was booted via the startup factory. store.close() already closes the
@@ -241,7 +246,10 @@ export class DesktopLocalServerManager {
     const backendShutdown = (runtime.store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
     if (backendShutdown) {
       await backendShutdown().catch(() => undefined);
+    } else {
+      runtime.store.close();
     }
+    if (cleanupError) throw cleanupError;
     this.state = { status: "idle", error: null };
   }
 }

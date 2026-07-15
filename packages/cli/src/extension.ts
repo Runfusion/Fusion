@@ -3,7 +3,7 @@ import { Type, type TSchema } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import * as fusionCore from "@fusion/core";
 import {
-  TaskStore,
+  type TaskStore,
   createTaskStoreForBackend,
   drizzleSql,
   AgentStore,
@@ -241,16 +241,10 @@ async function getStore(cwd: string): Promise<TaskStore> {
   if (existing) return existing.store;
 
   const boot = await createTaskStoreForBackend({ rootDir: projectRoot });
-  if (boot) {
-    storeCache.set(projectRoot, { store: boot.taskStore, shutdown: boot.shutdown });
-    return boot.taskStore;
-  }
-  // Legacy SQLite opt-out (FUSION_NO_EMBEDDED_PG=1). createTaskStoreForBackend
-  // returns null only in that case; the store still needs an explicit init().
-  const store = new TaskStore(projectRoot);
-  await store.init();
-  storeCache.set(projectRoot, { store });
-  return store;
+  // FNXC:PostgresFinalCutover 2026-07-14-17:20: Agent tools cache only the
+  // PostgreSQL factory result; the removed SQLite opt-out is an explicit error.
+  storeCache.set(projectRoot, { store: boot.taskStore, shutdown: boot.shutdown });
+  return boot.taskStore;
 }
 
 /**
@@ -290,13 +284,18 @@ export async function closeCachedStores(): Promise<void> {
 function getFusionDir(cwd: string): string {
   return join(resolveProjectRoot(cwd), ".fusion");
 }
+function requireProjectLayer(store: TaskStore, consumer: string) {
+  const layer = store.getAsyncLayer();
+  if (!layer) throw new Error(`${consumer} requires the project PostgreSQL AsyncDataLayer`);
+  return layer;
+}
 /*
 FNXC:PostgresCutover 2026-07-04-00:00:
 Agent tools must construct AgentStore in backend mode so agent data lives in PostgreSQL, not the removed SQLite runtime (VAL-REMOVAL-005). The asyncLayer is borrowed from the project's cached TaskStore (same connection pool), mirroring the TaskStore backend injection. The returned store is NOT pre-initialized — callers keep their existing `await agentStore.init()` (idempotent mkdir in backend mode).
 */
 async function getAgentStore(cwd: string): Promise<AgentStore> {
   const projectStore = await getStore(cwd);
-  return new AgentStore({ rootDir: getFusionDir(cwd), asyncLayer: projectStore.getAsyncLayer() ?? undefined });
+  return new AgentStore({ rootDir: getFusionDir(cwd), asyncLayer: requireProjectLayer(projectStore, "CLI AgentStore") });
 }
 
 function emitSecretAudit(
@@ -2397,8 +2396,8 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       if (decision.policy === "prompt") {
         
-        const cliLayer = store.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(cliLayer ? null : store.getDatabase(), { asyncLayer: cliLayer });
+        const cliLayer = requireProjectLayer(store, "CLI secret approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer });
         const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
         const existing = await approvalStore.findLatestByDedupeKey({ requesterActorId: fnCtx.agentId ?? "user", taskId: fnCtx.taskId, dedupeKey });
         const request = existing && existing.status === "pending"
@@ -3085,22 +3084,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       };
       let drafts: MissionInterviewDraft[] = [];
       if (includeDrafts) {
-        if (store.isBackendMode()) {
-          drafts = await store.getAsyncLayer()!.db.execute<MissionInterviewDraft>(
-            drizzleSql`SELECT id, title, status, updated_at AS "updatedAt" FROM project.ai_sessions WHERE type = 'mission_interview' AND status IN ('generating', 'awaiting_input', 'error', 'complete') AND COALESCE(archived, 0) = 0 ORDER BY updated_at DESC`,
-          );
-        } else {
-          drafts = store.getDatabase()
-            .prepare(
-              `SELECT id, title, status, updatedAt
-               FROM ai_sessions
-               WHERE type = 'mission_interview'
-                 AND status IN ('generating', 'awaiting_input', 'error', 'complete')
-                 AND COALESCE(archived, 0) = 0
-               ORDER BY updatedAt DESC`,
-            )
-            .all() as MissionInterviewDraft[];
-        }
+        drafts = await requireProjectLayer(store, "CLI mission drafts").db.execute<MissionInterviewDraft>(
+          drizzleSql`SELECT id, title, status, updated_at AS "updatedAt" FROM project.ai_sessions WHERE type = 'mission_interview' AND status IN ('generating', 'awaiting_input', 'error', 'complete') AND COALESCE(archived, 0) = 0 ORDER BY updated_at DESC`,
+        );
       }
 
       if (missions.length === 0 && drafts.length === 0) {
@@ -4492,8 +4478,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       if (policy.decision === "require-approval") {
-        const cliLayer2 = store.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(cliLayer2 ? null : store.getDatabase(), { asyncLayer: cliLayer2 });
+        const cliLayer2 = requireProjectLayer(store, "CLI agent-create approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer2 });
         const request = await approvalStore.create({
           requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
           targetAction: { category: "agent_provisioning", action: "create", summary: `Create agent ${params.name} (${params.role})`, resourceType: "agent", resourceId: "", context: { tool: "fn_agent_create", params } },
@@ -4872,8 +4858,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
 
       if (policy.decision === "require-approval") {
-        const cliLayer3 = store.getAsyncLayer();
-        const approvalStore = new ApprovalRequestStore(cliLayer3 ? null : store.getDatabase(), { asyncLayer: cliLayer3 });
+        const cliLayer3 = requireProjectLayer(store, "CLI agent-delete approval store");
+        const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer3 });
         const request = await approvalStore.create({
           requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
           targetAction: { category: "agent_provisioning", action: "delete", summary: `Delete agent ${params.agent_id}`, resourceType: "agent", resourceId: params.agent_id, context: { tool: "fn_agent_delete", params } },

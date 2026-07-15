@@ -67,11 +67,11 @@ export async function runAgentExport(
   // FNXC:PostgresCutover 2026-07-04: construct AgentStore in backend mode by
   // borrowing the asyncLayer from the resolved project store (SQLite runtime
   // removed under VAL-REMOVAL-005), mirroring extension.ts getAgentStore.
-  const { rootDir, asyncLayer } = await resolveAgentStoreBase(options?.project);
-  const agentStore = new AgentStore({ rootDir: rootDir + "/.fusion", asyncLayer: asyncLayer ?? undefined });
-  await agentStore.init();
+  const base = await resolveAgentStoreBase(options?.project);
+  const agentStore = new AgentStore({ rootDir: base.rootDir + "/.fusion", asyncLayer: base.asyncLayer });
 
   try {
+    await agentStore.init();
     const allAgents = await agentStore.listAgents();
     const filterIds = options?.agentIds?.filter((id) => id.trim().length > 0);
     const agents = filterIds && filterIds.length > 0
@@ -81,6 +81,7 @@ export async function runAgentExport(
     if (agents.length === 0) {
       console.error("No agents found to export");
       closeAgentStoreSafely(agentStore);
+      await base.cleanup();
       process.exit(1);
     }
 
@@ -92,5 +93,6 @@ export async function runAgentExport(
     printSummary(result);
   } finally {
     closeAgentStoreSafely(agentStore);
+    await base.cleanup();
   }
 }

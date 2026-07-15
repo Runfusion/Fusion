@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
-import { CentralCore, PluginLoader, TaskStore, createTaskStoreForBackend } from "@fusion/core";
+import { CentralCore, PluginLoader, createTaskStoreForBackend, type TaskStore } from "@fusion/core";
 import { createServer } from "@fusion/dashboard";
 import { ProjectEngineManager } from "@fusion/engine";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
@@ -28,20 +28,17 @@ interface DashboardRuntime {
   engineManager?: ProjectEngineManager;
   centralCore?: CentralCore;
   /** Releases the PostgreSQL backend pool / embedded cluster (backend mode only). */
-  backendShutdown?: () => Promise<void>;
+  backendShutdown: () => Promise<void>;
 }
 
 async function startDashboardRuntime(rootDir: string, paused: boolean, noAuth: boolean): Promise<DashboardRuntime> {
   // FNXC:PostgresCutover 2026-07-04: boot the PostgreSQL backend via the startup
   // factory (embedded by default, external via DATABASE_URL), mirroring dashboard.ts.
-  // The factory returns null only on the FUSION_NO_EMBEDDED_PG=1 opt-out, in which
-  // case the legacy SQLite TaskStore is constructed (init() is still required).
+  // FNXC:PostgresFinalCutover 2026-07-14-17:20: Desktop startup has no SQLite
+  // fallback; an obsolete backend opt-out fails explicitly in the factory.
   const boot = await createTaskStoreForBackend({ rootDir });
-  let backendShutdown: (() => Promise<void>) | undefined;
-  const store: TaskStore = boot ? boot.taskStore : new TaskStore(rootDir);
-  if (boot) {
-    backendShutdown = boot.shutdown;
-  }
+  const backendShutdown = boot.shutdown;
+  const store: TaskStore = boot.taskStore;
   let server: import("node:http").Server | null = null;
   let engineManager: ProjectEngineManager | undefined;
   let centralCore: CentralCore | undefined;
@@ -123,25 +120,28 @@ async function startDashboardRuntime(rootDir: string, paused: boolean, noAuth: b
       backendShutdown,
     };
   } catch (error) {
-    if (server) {
-      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    try {
+      if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
+    } finally {
+      await engineManager?.stopAll().catch(() => undefined);
+      await centralCore?.close?.().catch(() => undefined);
+      /* FNXC:PostgresDesktopLifecycle 2026-07-14-19:10: The startup-factory shutdown is the sole TaskStore/pool/postmaster owner and must run even when earlier server, engine, or CentralCore cleanup fails. */
+      await backendShutdown().catch(() => undefined);
     }
-    await engineManager?.stopAll().catch(() => undefined);
-    await centralCore?.close?.().catch(() => undefined);
-    store.close();
-    await backendShutdown?.().catch(() => undefined);
     throw error;
   }
 }
 
 async function closeDashboardRuntime(runtime: DashboardRuntime): Promise<void> {
-  await new Promise<void>((resolve) => {
-    runtime.server.close(() => resolve());
-  });
-  await runtime.engineManager?.stopAll().catch(() => undefined);
-  await runtime.centralCore?.close?.().catch(() => undefined);
-  runtime.store.close();
-  await runtime.backendShutdown?.().catch(() => undefined);
+  try {
+    await new Promise<void>((resolve) => {
+      runtime.server.close(() => resolve());
+    });
+  } finally {
+    await runtime.engineManager?.stopAll().catch(() => undefined);
+    await runtime.centralCore?.close?.().catch(() => undefined);
+    await runtime.backendShutdown().catch(() => undefined);
+  }
 }
 
 function resolveElectronBinary(): string {

@@ -155,7 +155,7 @@ export async function readTaskForMoveImpl(store: TaskStore, id: string): Promise
         return store.rowToTask(store.pgRowToTaskRow(pgRow));
       }
       // Fall back to archive lookup (soft-deleted/archived tasks).
-      const entry = await findArchivedTaskEntry(layer.db, id);
+      const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
       if (entry) {
         return store.archiveEntryToTask(entry, false);
       }
@@ -237,4 +237,3 @@ export function rowToRunAuditEventImpl(store: TaskStore, row: RunAuditEventRow):
       metadata: fromJson<Record<string, unknown>>(row.metadata),
     };
   }
-

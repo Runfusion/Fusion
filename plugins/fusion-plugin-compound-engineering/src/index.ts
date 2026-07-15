@@ -71,8 +71,7 @@ const plugin = definePlugin({
   state: "installed",
   skills: COMPOUND_ENGINEERING_SKILLS,
   hooks: {
-    // Idempotent DDL for the plugin-local CE tables (ce_sessions). Runs against
-    // the same DB route handlers reach via ctx.taskStore.getDatabase() (U5).
+    // Idempotent DDL for plugin-local CE tables; runtime handlers use the host PostgreSQL layer.
     onSchemaInit: ensureCeSchema,
     // INBOUND board→pipeline sync (U8 / FN-5719). The 5s hook budget
     // (plugin-runner invokeHookSafe) means these MUST be fast: resolve the link,

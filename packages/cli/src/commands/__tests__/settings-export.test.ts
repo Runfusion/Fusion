@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { TaskStore, exportSettings, generateExportFilename } from "@fusion/core";
+import { createTaskStoreForBackend, exportSettings, generateExportFilename } from "@fusion/core";
 import { resolveProject } from "../../project-context.js";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
@@ -20,12 +20,14 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
 }
 
 const mockStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockBackendShutdown = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("node:fs/promises", () => ({
   writeFile: vi.fn(),
 }));
 
 vi.mock("@fusion/core", () => ({
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: { init: mockStoreInit }, shutdown: mockBackendShutdown })),
   TaskStore: makeConstructibleMock(() => ({
     init: mockStoreInit,
   })),
@@ -83,6 +85,7 @@ describe("runSettingsExport", () => {
     expect(logSpy).toHaveBeenCalledWith(`  ✓ Settings exported to ${expectedPath}`);
     expect(logSpy).toHaveBeenCalledWith("    Exported: 2 global setting(s), 2 project setting(s)");
     expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(mockBackendShutdown).toHaveBeenCalledTimes(1);
   });
 
   it("exports successfully with a custom --output path", async () => {
@@ -155,7 +158,6 @@ describe("runSettingsExport", () => {
     await runSettingsExport({ projectName: "alpha" });
 
     expect(resolveProject).toHaveBeenCalledWith("alpha");
-    expect(TaskStore).toHaveBeenCalledWith("/tmp/demo");
-    expect(mockStoreInit).toHaveBeenCalledOnce();
+    expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: "/tmp/demo" });
   });
 });

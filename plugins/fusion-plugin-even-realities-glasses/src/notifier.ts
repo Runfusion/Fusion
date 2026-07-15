@@ -1,16 +1,15 @@
-import type { Task } from "@fusion/core";
+import type { AsyncDataLayer, Task } from "@fusion/core";
 import type { PluginContext } from "@fusion/plugin-sdk";
 import { notificationCard } from "./cards.js";
 import { diffSnapshots } from "./notifications/diff.js";
-import { pruneMissing, readSnapshot, writeSnapshot } from "./notifications/store.js";
-import type { NotificationEvent } from "./notifications/types.js";
-import type { PluginDb } from "./index.js";
+import { changedSnapshotRows, pruneMissing, readSnapshot, writeSnapshot } from "./notifications/store.js";
+import type { NotificationEvent, SnapshotRow } from "./notifications/types.js";
 import { getNotifyColumns, getPollingIntervalMs } from "./settings.js";
 import type { GlassesTransport } from "./transport.js";
 
 export interface NotifierDeps {
   taskStore: PluginContext["taskStore"];
-  db: PluginDb;
+  layer: AsyncDataLayer;
   transport: GlassesTransport;
   settings: PluginContext["settings"];
   logger?: PluginContext["logger"];
@@ -18,6 +17,15 @@ export interface NotifierDeps {
   now?: () => Date;
   setIntervalImpl?: typeof setInterval;
   clearIntervalImpl?: typeof clearInterval;
+  snapshotStore?: {
+    read(layer: AsyncDataLayer): Promise<Map<string, SnapshotRow>>;
+    write(layer: AsyncDataLayer, rows: ReadonlyArray<SnapshotRow>): Promise<void>;
+    prune(
+      layer: AsyncDataLayer,
+      presentTaskIds: ReadonlySet<string>,
+      snapshot: ReadonlyMap<string, SnapshotRow>,
+    ): Promise<number>;
+  };
 }
 
 export interface Notifier {
@@ -36,6 +44,11 @@ const PENDING_CAP = 200;
 export function createNotifier(deps: NotifierDeps): Notifier {
   const setIntervalImpl = deps.setIntervalImpl ?? setInterval;
   const clearIntervalImpl = deps.clearIntervalImpl ?? clearInterval;
+  const snapshotStore = deps.snapshotStore ?? {
+    read: readSnapshot,
+    write: writeSnapshot,
+    prune: pruneMissing,
+  };
 
   let timer: ReturnType<typeof setInterval> | undefined;
   let inFlight = false;
@@ -62,7 +75,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     inFlight = true;
     try {
       const tasks = (await deps.taskStore.listTasks({ includeArchived: false })) as Task[];
-      const snapshot = readSnapshot(deps.db);
+      const snapshot = await snapshotStore.read(deps.layer);
       const notifyOnColumns = new Set(getNotifyColumns(deps.settings));
       const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone: false });
       const taskMap = new Map(tasks.map((task) => [task.id, task] as const));
@@ -78,11 +91,17 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       }
 
       pending = bounded([...pending, ...events]);
-      writeSnapshot(
-        deps.db,
-        tasks.map((task) => ({ taskId: task.id, lastColumn: task.column, updatedAt: task.updatedAt })),
-      );
-      pruneMissing(deps.db, new Set(tasks.map((task) => task.id)));
+      const currentRows = tasks.map((task) => ({
+        taskId: task.id,
+        lastColumn: task.column,
+        updatedAt: task.updatedAt,
+      }));
+      const presentTaskIds = new Set(tasks.map((task) => task.id));
+      const changedRows = changedSnapshotRows(snapshot, currentRows);
+      if (changedRows.length > 0) {
+        await snapshotStore.write(deps.layer, changedRows);
+      }
+      await snapshotStore.prune(deps.layer, presentTaskIds, snapshot);
       lastPollIso = nowIso();
       return events;
     } catch (err) {

@@ -25,6 +25,20 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { retryOnLock, LockRetryExhaustedError, DEFAULT_CLI_LOCK_RETRY_MS } from "../../lock-retry.js";
 
 describe("retryOnLock", () => {
+  it("retries PostgreSQL serialization failures", async () => {
+    vi.useFakeTimers();
+    try {
+      const op = vi.fn()
+        .mockRejectedValueOnce(Object.assign(new Error("could not serialize access"), { code: "40001" }))
+        .mockResolvedValue("ok");
+      const pending = retryOnLock(op, { id: "FN-PG", action: "move task" }, 1_000);
+      await vi.runAllTimersAsync();
+      await expect(pending).resolves.toBe("ok");
+      expect(op).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("returns immediately on first-try success (no added latency)", async () => {
     const op = vi.fn().mockResolvedValue("ok");
     const result = await retryOnLock(op, { id: "FN-1", action: "read task" });

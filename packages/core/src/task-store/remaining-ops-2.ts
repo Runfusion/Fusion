@@ -31,6 +31,7 @@ import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async-merge-coordination.js";
 import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async-branch-groups.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async-workflow-workitems.js";
+import { taskProjectScope } from "../postgres/data-layer.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async-comments-attachments.js";
 import type { ArtifactRow } from "./row-types.js";
@@ -497,7 +498,7 @@ export async function renewCheckoutLeaseImpl(store: TaskStore, taskId: string, u
       const layer = store.asyncLayer!;
       const dir = store.taskDir(taskId);
       const outcome = await layer.transactionImmediate(async (tx) => {
-        const row = await readTaskRowInTransaction(tx, taskId, { includeDeleted: true });
+        const row = await readTaskRowInTransaction(tx, taskId, { includeDeleted: true }, layer.projectId);
         if (row?.deletedAt) {
           return { deletedAt: row.deletedAt as string, current: undefined };
         }
@@ -512,7 +513,7 @@ export async function renewCheckoutLeaseImpl(store: TaskStore, taskId: string, u
         if (result.length === 0) {
           return { deletedAt: undefined, current: undefined };
         }
-        const fresh = await readTaskRowInTransaction(tx, taskId);
+        const fresh = await readTaskRowInTransaction(tx, taskId, undefined, layer.projectId);
         return { deletedAt: undefined, current: fresh };
       });
 
@@ -943,7 +944,7 @@ export async function cleanupBranchForTaskImpl(store: TaskStore, task: Task): Pr
       }
     }
     if (deleted.length > 0) {
-      store.clearStaleExecutionStartBranchReferences(deleted, task.id);
+      await store.clearStaleExecutionStartBranchReferences(deleted, task.id);
     }
     return deleted;
   }
@@ -1315,7 +1316,49 @@ ${deps}
 ${stepsSection}`;
   }
 
-export function listWorkflowOccupantTaskIdsImpl(store: TaskStore, workflowId: string, includeNullSelection: boolean): string[] {
+export async function listWorkflowOccupantTaskIdsImpl(store: TaskStore, workflowId: string, includeNullSelection: boolean): Promise<string[]> {
+    /*
+    FNXC:PostgresWorkflowOccupancy 2026-07-14-17:44:
+    Workflow edits and deletes must discover occupants from PostgreSQL before changing an IR or clearing selection rows. Archived and soft-deleted tasks are never occupants; optionally include live tasks whose selection resolves implicitly to the default workflow.
+    */
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const selected = await layer.db
+        .select({ taskId: schema.project.taskWorkflowSelection.taskId })
+        .from(schema.project.taskWorkflowSelection)
+        .innerJoin(schema.project.tasks, and(
+          eq(schema.project.tasks.id, schema.project.taskWorkflowSelection.taskId),
+          eq(schema.project.tasks.projectId, schema.project.taskWorkflowSelection.projectId),
+        ))
+        .where(and(
+          eq(schema.project.taskWorkflowSelection.workflowId, workflowId),
+          isNull(schema.project.tasks.deletedAt),
+          taskProjectScope(layer),
+          layer.projectId
+            ? eq(schema.project.taskWorkflowSelection.projectId, layer.projectId)
+            : undefined,
+        ));
+      const ids = selected.map((row) => row.taskId);
+      if (includeNullSelection) {
+        const unselected = await layer.db
+          .select({ id: schema.project.tasks.id })
+          .from(schema.project.tasks)
+          .leftJoin(
+            schema.project.taskWorkflowSelection,
+            and(
+              eq(schema.project.taskWorkflowSelection.taskId, schema.project.tasks.id),
+              eq(schema.project.taskWorkflowSelection.projectId, schema.project.tasks.projectId),
+            ),
+          )
+          .where(and(
+            isNull(schema.project.tasks.deletedAt),
+            isNull(schema.project.taskWorkflowSelection.taskId),
+            taskProjectScope(layer),
+          ));
+        ids.push(...unselected.map((row) => row.id));
+      }
+      return ids;
+    }
     const ids: string[] = [];
     const selected = store.db
       .prepare(
@@ -1347,9 +1390,14 @@ export async function evacuateCustomColumnsToLegacyImpl(store: TaskStore, trigge
     // (triage). Falls back to "triage" defensively if the IR can't be resolved.
     const targetColumn = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR) ?? "triage";
 
-    const rows = store.db
-      .prepare(`SELECT id, "column" AS col FROM tasks WHERE deletedAt IS NULL`)
-      .all() as Array<{ id: string; col: string }>;
+    const rows: Array<{ id: string; col: string }> = store.backendMode
+      ? (await store.asyncLayer!.db
+          .select({ id: schema.project.tasks.id, col: schema.project.tasks.column })
+          .from(schema.project.tasks)
+          .where(and(isNull(schema.project.tasks.deletedAt), taskProjectScope(store.asyncLayer!))))
+      : store.db
+          .prepare(`SELECT id, "column" AS col FROM tasks WHERE deletedAt IS NULL`)
+          .all() as Array<{ id: string; col: string }>;
 
     for (const { id, col } of rows) {
       scanned += 1;

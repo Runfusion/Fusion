@@ -7,8 +7,19 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { PROJECT_IDENTITY_FILENAME } from "./project-identity.js";
 
 const FUSION_DIR_SUFFIX = /(?:^|[\\/])\.fusion(?:[\\/])?$/;
+
+/**
+ * FNXC:PostgresProjectDiscovery 2026-07-14-17:30:
+ * The PostgreSQL-era project marker protects linked worktrees from accidental
+ * nested initialization. `fusion.db` remains a legacy signal only.
+ */
+function hasFusionProjectSignal(rootDir: string): boolean {
+  return existsSync(join(rootDir, ".fusion", PROJECT_IDENTITY_FILENAME))
+    || existsSync(join(rootDir, ".fusion", "fusion.db"));
+}
 
 export class LinkedWorktreeBootstrapRefusedError extends Error {
   constructor(cwd: string, parentRoot: string) {
@@ -30,7 +41,7 @@ export function assertProjectRootDir(rootDir: string, caller: string): void {
 
 export function assertNotLinkedWorktreeOfExistingProject(rootDir: string, _caller: string): void {
   const resolvedRootDir = resolve(rootDir);
-  if (existsSync(join(resolvedRootDir, ".fusion", "fusion.db"))) {
+  if (hasFusionProjectSignal(resolvedRootDir)) {
     return;
   }
   if (
@@ -66,7 +77,7 @@ export function assertNotLinkedWorktreeOfExistingProject(rootDir: string, _calle
     ? dirname(resolvedCommonDir)
     : resolvedCommonDir;
 
-  if (!existsSync(join(parentRoot, ".fusion", "fusion.db"))) {
+  if (!hasFusionProjectSignal(parentRoot)) {
     return;
   }
 

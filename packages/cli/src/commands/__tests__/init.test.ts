@@ -94,23 +94,23 @@ describe("init command", () => {
     mockCentralClose.mockResolvedValue(undefined);
     mockGetProjectByPath.mockResolvedValue(undefined);
     mockRegisterProject.mockResolvedValue({
-      id: "proj_test",
+      id: "proj_1234567890abcdef",
       name: "test-project",
       path: tempProjectDir,
       isolationMode: "in-process",
       status: "initializing",
-      createdAt: "",
+      createdAt: "2026-07-14T00:00:00.000Z",
       updatedAt: "",
     });
     mockEnsureProjectForPath.mockResolvedValue({
       outcome: "registered",
       project: {
-        id: "proj_test",
+        id: "proj_1234567890abcdef",
         name: "test-project",
         path: tempProjectDir,
         isolationMode: "in-process",
         status: "initializing",
-        createdAt: "",
+        createdAt: "2026-07-14T00:00:00.000Z",
         updatedAt: "",
       },
     });
@@ -153,14 +153,16 @@ describe("init command", () => {
     expect(existsSync(fusionDir)).toBe(true);
   });
 
-  it("should create fusion.db when initializing", async () => {
+  it("should create project.json without creating fusion.db when initializing", async () => {
+    const markerPath = join(tempProjectDir, ".fusion", "project.json");
     const dbPath = join(tempProjectDir, ".fusion", "fusion.db");
-    expect(existsSync(dbPath)).toBe(false);
+    expect(existsSync(markerPath)).toBe(false);
 
     await runInit({ path: tempProjectDir });
 
-    expect(existsSync(dbPath)).toBe(true);
-    expect(statSync(dbPath).size).toBeGreaterThan(0);
+    expect(existsSync(markerPath)).toBe(true);
+    expect(statSync(markerPath).size).toBeGreaterThan(0);
+    expect(existsSync(dbPath)).toBe(false);
   });
 
   it("should reject existing invalid fusion.db files", async () => {
@@ -186,7 +188,7 @@ describe("init command", () => {
     // First init
     await runInit({ path: tempProjectDir });
     mockGetProjectByPath.mockResolvedValue({
-      id: "proj_test",
+      id: "proj_1234567890abcdef",
       name: "registered-project",
       path: tempProjectDir,
       isolationMode: "in-process",
@@ -234,7 +236,8 @@ describe("init command", () => {
     await runInit({ path: tempProjectDir });
 
     expect(existsSync(fusionDir)).toBe(true);
-    expect(existsSync(join(fusionDir, "fusion.db"))).toBe(true);
+    expect(existsSync(join(fusionDir, "project.json"))).toBe(true);
+    expect(existsSync(join(fusionDir, "fusion.db"))).toBe(false);
   });
 
   it("should add local storage directories to .gitignore when it doesn't exist", async () => {
@@ -322,7 +325,8 @@ describe("init command", () => {
       console.warn = originalWarn;
     }
 
-    expect(existsSync(join(tempProjectDir, ".fusion", "fusion.db"))).toBe(true);
+    expect(existsSync(join(tempProjectDir, ".fusion", "project.json"))).toBe(true);
+    expect(existsSync(join(tempProjectDir, ".fusion", "fusion.db"))).toBe(false);
     expect(warnings.some((warning) => warning.includes("Could not install bundled Fusion skill for Claude"))).toBe(true);
     expect(existsSync(join(tempHomeDir, ".codex", "skills", "fusion", "SKILL.md"))).toBe(true);
     expect(existsSync(join(tempHomeDir, ".gemini", "skills", "fusion", "SKILL.md"))).toBe(true);
@@ -409,12 +413,12 @@ describe("init command", () => {
       outcome: "registered",
       gitRepository: "initialized",
       project: {
-        id: "proj_test",
+        id: "proj_1234567890abcdef",
         name: "test-project",
         path: tempProjectDir,
         isolationMode: "in-process",
         status: "initializing",
-        createdAt: "",
+        createdAt: "2026-07-14T00:00:00.000Z",
         updatedAt: "",
       },
     });

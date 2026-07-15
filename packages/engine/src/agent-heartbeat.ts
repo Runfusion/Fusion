@@ -1279,7 +1279,9 @@ export class HeartbeatMonitor {
         throw new Error("HeartbeatMonitor missing taskStore for approval request persistence");
       }
       const layer = this.taskStore.getAsyncLayer();
-      this.approvalRequestStore = new ApprovalRequestStore(layer ? null : this.taskStore.getDatabase(), { asyncLayer: layer });
+      if (!layer) throw new Error("HeartbeatMonitor TaskStore is missing its PostgreSQL AsyncDataLayer");
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Heartbeat approval requests share the authoritative project PostgreSQL layer; missing wiring fails clearly instead of falling back to SQLite. */
+      this.approvalRequestStore = new ApprovalRequestStore(null, { asyncLayer: layer });
     }
     return this.approvalRequestStore;
   }

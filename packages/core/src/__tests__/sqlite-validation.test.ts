@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
@@ -24,13 +24,14 @@ describe("isValidSqliteDatabaseFile", () => {
     expect(isValidSqliteDatabaseFile(join(dir, "missing.db"))).toBe(false);
   });
 
-  it("returns true for a zero-byte bootstrap database", () => {
+  it("accepts a zero-byte legacy bootstrap file without upgrading it", () => {
     const dir = makeTempDir();
     dirs.push(dir);
     const dbPath = join(dir, "fusion.db");
     writeFileSync(dbPath, "");
 
     expect(isValidSqliteDatabaseFile(dbPath)).toBe(true);
+    expect(statSync(dbPath).size).toBe(0);
   });
 
   it("returns false for plain text files", () => {

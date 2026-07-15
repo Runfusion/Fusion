@@ -1877,7 +1877,7 @@ export interface CentralClaimStore {
     runId: string | null;
     renewedAt: string;
     expectedEpoch?: number | null;
-  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict"; current: TaskClaimRow };
+  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict"; current: TaskClaimRow } | Promise<{ ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict"; current: TaskClaimRow }>;
   renewTaskClaim(input: {
     projectId: string;
     taskId: string;
@@ -1886,14 +1886,14 @@ export interface CentralClaimStore {
     runId: string | null;
     renewedAt: string;
     expectedEpoch: number;
-  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict" | "not_found"; current: TaskClaimRow | null };
+  }): { ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict" | "not_found"; current: TaskClaimRow | null } | Promise<{ ok: true; claim: TaskClaimRow } | { ok: false; reason: "conflict" | "not_found"; current: TaskClaimRow | null }>;
   releaseTaskClaim(input: {
     projectId: string;
     taskId: string;
     nodeId: string;
     agentId: string;
-  }): { ok: true } | { ok: false; reason: "not_owner" | "not_found"; current: TaskClaimRow | null };
-  getTaskClaim(projectId: string, taskId: string): TaskClaimRow | null;
+  }): { ok: true } | { ok: false; reason: "not_owner" | "not_found"; current: TaskClaimRow | null } | Promise<{ ok: true } | { ok: false; reason: "not_owner" | "not_found"; current: TaskClaimRow | null }>;
+  getTaskClaim(projectId: string, taskId: string): TaskClaimRow | null | Promise<TaskClaimRow | null>;
 }
 
 /**

@@ -45,6 +45,8 @@ const initializedProjects = new Set<string>();
  * adds the embedded-cluster teardown that the layer does not own.
  */
 const backendShutdowns = new Map<string, () => Promise<void>>();
+const evictionRequested = new Set<string>();
+let evictAllInProgress = false;
 const projectRegisteredListeners = new Set<(projectId: string, store: TaskStore) => void>();
 
 /**
@@ -79,6 +81,9 @@ export function setOnProjectFirstCreated(cb: ((projectId: string) => void) | und
  * @returns A shared TaskStore instance for this project
  */
 export async function getOrCreateProjectStore(projectId: string): Promise<TaskStore> {
+  if (evictAllInProgress || evictionRequested.has(projectId)) {
+    throw new Error(`Project store ${projectId} is shutting down`);
+  }
   const cached = storeCache.get(projectId);
   if (cached) {
     return cached;
@@ -93,36 +98,47 @@ export async function getOrCreateProjectStore(projectId: string): Promise<TaskSt
   }
 
   const creation = (async () => {
-    const { TaskStore: TaskStoreClass, createTaskStoreForBackend } = await import("@fusion/core");
+    const { createTaskStoreForBackend } = await import("@fusion/core");
 
     // FNXC:BackendFlip 2026-06-26-14:40:
     // Consult the startup factory to boot a PostgreSQL-backed TaskStore for
     // this project. Post default-flip: the factory boots embedded PG by
     // default when DATABASE_URL is unset, external PG when DATABASE_URL is
-    // set, and returns null only when the operator opted out via
-    // FUSION_NO_EMBEDDED_PG=1 (legacy SQLite path). When it returns null, the
-    // dashboard uses the SQLite-backed getOrCreateForProject exactly as
-    // before. The factory applies the schema baseline and integrates the
+    // set. The factory applies the schema baseline and integrates the
     // dual-read harness when FUSION_DUAL_READ=1.
-    let store: TaskStore;
     const backendBoot = await createTaskStoreForBackend({ projectId });
-    if (backendBoot) {
-      store = backendBoot.taskStore;
-      backendShutdowns.set(projectId, backendBoot.shutdown);
-    } else {
-      store = await TaskStoreClass.getOrCreateForProject(projectId);
+    // FNXC:PostgresFinalCutover 2026-07-14-17:20: Project-scoped dashboard
+    // stores are always factory-backed PostgreSQL stores.
+    const store = backendBoot.taskStore;
+    backendShutdowns.set(projectId, backendBoot.shutdown);
+    try {
+      // Start watching for external changes (CLI, engine agents, etc.)
+      // so SSE listeners receive live events even when mutations happen
+      // outside this process.
+      if (!initializedProjects.has(projectId)) {
+        await store.watch();
+        initializedProjects.add(projectId);
+      }
+      if (evictAllInProgress || evictionRequested.has(projectId)) {
+        throw new Error(`Project store ${projectId} was evicted during creation`);
+      }
+      storeCache.set(projectId, store);
+    } catch (error) {
+      /* FNXC:PostgresResourceLifecycle 2026-07-14-18:04: A project store whose watcher fails never enters the cache, so resolver-owned backend resources must be shut down on the rejected creation path. */
+      initializedProjects.delete(projectId);
+      backendShutdowns.delete(projectId);
+      storeCache.delete(projectId);
+      try {
+        store.stopWatching();
+        await Promise.resolve(store.close());
+      } catch {
+        // The startup-factory shutdown below remains the authoritative cleanup.
+      }
+      await backendBoot.shutdown().catch(() => undefined);
+      throw error;
+    } finally {
+      pendingCreations.delete(projectId);
     }
-
-    // Start watching for external changes (CLI, engine agents, etc.)
-    // so SSE listeners receive live events even when mutations happen
-    // outside this process.
-    if (!initializedProjects.has(projectId)) {
-      initializedProjects.add(projectId);
-      await store.watch();
-    }
-
-    storeCache.set(projectId, store);
-    pendingCreations.delete(projectId);
 
     // Notify once that a new project was first accessed
     if (_onProjectFirstCreated) {
@@ -144,33 +160,55 @@ export async function getOrCreateProjectStore(projectId: string): Promise<TaskSt
  * Remove a cached store and stop its watcher.
  * Useful for cleanup on project removal or server shutdown.
  */
-export function evictProjectStore(projectId: string): void {
-  pendingCreations.delete(projectId);
-  const store = storeCache.get(projectId);
-  if (store) {
-    store.stopWatching();
-    store.close();
+export async function evictProjectStore(projectId: string): Promise<void> {
+  /*
+  FNXC:PostgresResourceLifecycle 2026-07-14-18:42:
+  Eviction is an awaited barrier. Mark the project before waiting for an in-flight factory boot so that boot cannot insert a late cache entry, then capture/delete the shutdown handle before invocation to guarantee exactly-once backend ownership across concurrent cleanup paths.
+  */
+  evictionRequested.add(projectId);
+  try {
+    const pending = pendingCreations.get(projectId);
+    if (pending) await pending.catch(() => undefined);
+
+    const store = storeCache.get(projectId);
     storeCache.delete(projectId);
     initializedProjects.delete(projectId);
-  }
-  // FNXC:RuntimeStartupWiring 2026-06-24-10:10:
-  // Release the backend connection pool / embedded PG cluster if this store
-  // was booted via the startup factory. Best-effort: an error is swallowed so
-  // eviction of one project never blocks eviction of the rest.
-  const backendShutdown = backendShutdowns.get(projectId);
-  if (backendShutdown) {
+    if (store) {
+      try {
+        store.stopWatching();
+        await Promise.resolve(store.close());
+      } catch {
+        // Backend shutdown still runs even when watcher/store cleanup fails.
+      }
+    }
+
+    const backendShutdown = backendShutdowns.get(projectId);
     backendShutdowns.delete(projectId);
-    void backendShutdown().catch(() => undefined);
+    if (backendShutdown) await backendShutdown().catch(() => undefined);
+  } finally {
+    evictionRequested.delete(projectId);
   }
 }
 
 /**
  * Evict all cached stores. Used during server shutdown.
  */
-export function evictAllProjectStores(): void {
-  pendingCreations.clear();
-  for (const projectId of storeCache.keys()) {
-    evictProjectStore(projectId);
+export async function evictAllProjectStores(): Promise<void> {
+  evictAllInProgress = true;
+  try {
+    const pendingIds = [...pendingCreations.keys()];
+    for (const projectId of pendingIds) evictionRequested.add(projectId);
+    await Promise.allSettled([...pendingCreations.values()]);
+    const projectIds = new Set([
+      ...pendingIds,
+      ...storeCache.keys(),
+      ...backendShutdowns.keys(),
+    ]);
+    await Promise.all([...projectIds].map((projectId) => evictProjectStore(projectId)));
+  } finally {
+    pendingCreations.clear();
+    evictionRequested.clear();
+    evictAllInProgress = false;
   }
 }
 

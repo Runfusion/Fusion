@@ -1339,6 +1339,45 @@ pgDescribe("schema-applier: VAL-SCHEMA-007 plugin-owned tables materialize via s
     ]);
   });
 
+  /* FNXC:EvenRealitiesPostgres 2026-07-14-17:45: Fresh PostgreSQL databases must include the glasses notification snapshot with project-local task identity. */
+  it("default plugin hooks materialize project-isolated Even Realities snapshots", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    const tables = (await ctx.db.execute(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'project' AND table_name = 'even_realities_seen_tasks'
+    `)) as unknown as Array<{ table_name: string }>;
+    expect(tables).toEqual([{ table_name: "even_realities_seen_tasks" }]);
+    await ctx.db.execute(sql`
+      INSERT INTO project.even_realities_seen_tasks(project_id, task_id, last_column, updated_at)
+      VALUES ('project-a', 'FN-1', 'todo', '2026-07-14'),
+             ('project-b', 'FN-1', 'done', '2026-07-14')
+    `);
+    const rows = (await ctx.db.execute(sql`
+      SELECT project_id, task_id FROM project.even_realities_seen_tasks ORDER BY project_id
+    `)) as unknown as Array<{ project_id: string; task_id: string }>;
+    expect(rows).toEqual([
+      { project_id: "project-a", task_id: "FN-1" },
+      { project_id: "project-b", task_id: "FN-1" },
+    ]);
+  });
+
+  it("repairs an already-versioned database that predates the Even Realities PostgreSQL hook", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db);
+    await ctx.db.execute(sql`DROP TABLE project.even_realities_seen_tasks`);
+
+    const result = await applySchemaBaseline(ctx.db);
+    expect(result.pluginHooksRun).toBeGreaterThan(0);
+    const rows = (await ctx.db.execute(sql`
+      SELECT c.relrowsecurity AS rls, c.relforcerowsecurity AS forced
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'project' AND c.relname = 'even_realities_seen_tasks'
+    `)) as unknown as Array<{ rls: boolean; forced: boolean }>;
+    expect(rows).toEqual([{ rls: true, forced: true }]);
+  });
+
   it("roadmap FK cascade: deleting a roadmap removes its milestones and features", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [roadmapPluginInitHook] });

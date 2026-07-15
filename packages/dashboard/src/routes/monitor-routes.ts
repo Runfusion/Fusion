@@ -7,6 +7,7 @@ import { isSafeExternalUrl } from "../signal-source.js";
 import { recordDeployment, resolveIncident } from "../monitor-store.js";
 import { runMonitorOnRegression } from "../monitor-trait.js";
 import type { ApiRouteRegistrar } from "./types.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 /**
  * U13 — Monitor stage routes.
@@ -88,7 +89,7 @@ export const registerMonitorRoutes: ApiRouteRegistrar = (ctx) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const store: TaskStore = await getScopedStore(req);
     try {
-      const deployment = await recordDeployment(store.getAsyncLayer() ?? store.getDatabase(), {
+      const deployment = await recordDeployment(requireAsyncLayer(store, "Monitor deployment storage"), {
         deploymentId: typeof body.deploymentId === "string" ? body.deploymentId : undefined,
         service: typeof body.service === "string" ? body.service : undefined,
         environment: typeof body.environment === "string" ? body.environment : undefined,
@@ -122,7 +123,7 @@ export const registerMonitorRoutes: ApiRouteRegistrar = (ctx) => {
 
     try {
       if (action === "resolve") {
-        const incident = await resolveIncident(store.getAsyncLayer() ?? store.getDatabase(), groupingKey,
+        const incident = await resolveIncident(requireAsyncLayer(store, "Monitor incident storage"), groupingKey,
           typeof body.at === "string" ? body.at : undefined);
         res.status(200).json({
           ok: true,
@@ -161,7 +162,7 @@ export const registerMonitorRoutes: ApiRouteRegistrar = (ctx) => {
     const from = typeof req.query.from === "string" ? req.query.from : undefined;
     const to = typeof req.query.to === "string" ? req.query.to : undefined;
     try {
-      const metrics = await aggregateMonitorMetrics(store.getAsyncLayer() ?? store.getDatabase(), { from, to });
+      const metrics = await aggregateMonitorMetrics(requireAsyncLayer(store, "Monitor metrics"), { from, to });
       res.json(metrics);
     } catch (err) {
       rethrowAsApiError(err, "Failed to read monitor metrics");

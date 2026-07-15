@@ -1,12 +1,10 @@
 import { BufferJSON, initAuthCreds, type AuthenticationState, type AuthenticationCreds, type SignalDataSet, type SignalDataTypeMap } from "@whiskeysockets/baileys";
-import { createSqliteWhatsAppPersistence, type PluginDb, type WhatsAppPersistence } from "./persistence.js";
+import type { WhatsAppPersistence } from "./persistence.js";
 
 type AuthStateResult = {
   state: AuthenticationState;
   saveCreds: () => Promise<void>;
 };
-
-type AuthRow = { value: string };
 
 function parseStoredValue<T>(value: string): T | null {
   try {
@@ -20,17 +18,9 @@ function serialize(value: unknown): string {
   return JSON.stringify(value, BufferJSON.replacer);
 }
 
-export async function clearAuthState(db: PluginDb): Promise<void> {
-  await createSqliteWhatsAppPersistence(db).clearAuthState();
-}
-
-export async function createPluginDbAuthState(db: PluginDb): Promise<AuthStateResult> {
-  return createPersistenceAuthState(createSqliteWhatsAppPersistence(db));
-}
-
 /**
- * FNXC:WhatsAppPostgresPersistence 2026-07-13-22:37:
- * Baileys auth callbacks are already asynchronous, so the runtime auth state uses the backend-neutral persistence contract. The legacy PluginDb helper remains for SQLite compatibility tests and older plugin hosts.
+ * FNXC:WhatsAppPostgresPersistence 2026-07-14-18:05:
+ * Baileys auth callbacks use the asynchronous persistence contract supplied by the project-bound PostgreSQL layer. No auth helper accepts a synchronous plugin database, so credentials and Signal keys cannot re-enter removed SQLite state through tests or older host shims.
  */
 export async function createPersistenceAuthState(persistence: WhatsAppPersistence): Promise<AuthStateResult> {
   const storedCredentials = await persistence.loadCredentials();

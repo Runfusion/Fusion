@@ -16,7 +16,7 @@ import {
   type PluginInstallation,
 } from "@fusion/core";
 import type { FusionPlugin, PluginToolDefinition } from "@fusion/core";
-import { createLogger } from "../logger.js";
+import { createLogger, executorLog } from "../logger.js";
 
 // Mock the logger to suppress output during tests
 vi.mock("../logger.js", () => ({
@@ -84,6 +84,7 @@ describe("PluginRunner", () => {
     off: ReturnType<typeof vi.fn>;
     getTask: ReturnType<typeof vi.fn>;
     getDatabase: ReturnType<typeof vi.fn>;
+    runPluginSchemaInits: ReturnType<typeof vi.fn>;
     recordRunAuditEvent: ReturnType<typeof vi.fn>;
   };
   let pluginRunner: PluginRunner;
@@ -150,6 +151,7 @@ describe("PluginRunner", () => {
       off: mockOff,
       getTask: vi.fn(),
       getDatabase: vi.fn().mockReturnValue({ runPluginSchemaInits: mockRunPluginSchemaInits }),
+      runPluginSchemaInits: mockRunPluginSchemaInits,
       isBackendMode: vi.fn().mockReturnValue(false),
       recordRunAuditEvent: vi.fn(),
     };
@@ -194,11 +196,8 @@ describe("PluginRunner", () => {
       await pluginRunner.init();
 
       expect(mockPluginLoader.getPluginSchemaInitHooks).toHaveBeenCalledTimes(1);
-      expect(mockTaskStore.getDatabase).toHaveBeenCalledTimes(1);
-      const db = mockTaskStore.getDatabase.mock.results[0]?.value as {
-        runPluginSchemaInits: ReturnType<typeof vi.fn>;
-      };
-      expect(db.runPluginSchemaInits).toHaveBeenCalledWith([
+      expect(mockTaskStore.getDatabase).not.toHaveBeenCalled();
+      expect(mockTaskStore.runPluginSchemaInits).toHaveBeenCalledWith([
         { pluginId: "plugin-a", hook: schemaHook },
       ]);
     });
@@ -209,6 +208,23 @@ describe("PluginRunner", () => {
       await pluginRunner.init();
 
       expect(mockTaskStore.getDatabase).not.toHaveBeenCalled();
+      expect(mockTaskStore.runPluginSchemaInits).not.toHaveBeenCalled();
+    });
+
+    /* FNXC:PluginPostgresSchema 2026-07-14-18:00: A plugin without a PostgreSQL schema contract must stop runner initialization after emitting the actionable error; continuing would start hooks against missing tables. */
+    it("fails runner initialization when backend schema validation rejects a plugin", async () => {
+      mockPluginLoader.getPluginSchemaInitHooks.mockReturnValue([
+        { pluginId: "sqlite-only-plugin", hook: vi.fn() },
+      ]);
+      mockTaskStore.runPluginSchemaInits.mockRejectedValueOnce(
+        new Error("sqlite-only-plugin has no registered PostgreSQL schema hook"),
+      );
+
+      await expect(pluginRunner.init()).rejects.toThrow("no registered PostgreSQL schema hook");
+      expect(executorLog.log).toHaveBeenCalledWith(
+        expect.stringContaining("onSchemaInit execution failed"),
+      );
+      expect(mockPluginStore.on).not.toHaveBeenCalled();
     });
 
     it("should subscribe to plugin store events", async () => {

@@ -745,19 +745,24 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
     }
 }
 
-export function listWorkflowSettingValuesForProjectImpl(store: TaskStore): Record<string, Record<string, unknown>> {
+export async function listWorkflowSettingValuesForProjectImpl(store: TaskStore): Promise<Record<string, Record<string, unknown>>> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * P1 fix: no backendMode branch existed, so this threw in PG mode. In
-     * backend mode, sync reads of workflow_settings are not possible (the
-     * async layer is the authoritative reader). Return empty (the default)
-     * so sync callers (e.g. settings export snapshots composing a sync view)
-     * do not throw; async callers use the async listWorkflowSettingValues
-     * path. The async `getSettingsByScope`-composed dashboard routes read
-     * workflow settings through the async helpers, not this sync method.
+     * FNXC:PostgresWorkflowSettings 2026-07-14-17:46:
+     * Settings exports, dashboard scope responses, memory settings, and cross-node comparisons must include the project-bound PostgreSQL workflow_settings rows. The project id is resolved through the same store binding used for writes so one project's values cannot leak into another export.
      */
     if (store.backendMode) {
-      return {};
+      const projectId = store.getWorkflowSettingsProjectId();
+      const rows = await store.asyncLayer!.db
+        .select({ workflowId: schema.project.workflowSettings.workflowId, values: schema.project.workflowSettings.values })
+        .from(schema.project.workflowSettings)
+        .where(eq(schema.project.workflowSettings.projectId, projectId));
+      const out: Record<string, Record<string, unknown>> = {};
+      for (const row of rows) {
+        if (row.values && typeof row.values === "object" && !Array.isArray(row.values)) {
+          out[row.workflowId] = row.values as Record<string, unknown>;
+        }
+      }
+      return out;
     }
     const projectId = store.getWorkflowSettingsProjectId();
     const rows = store.db

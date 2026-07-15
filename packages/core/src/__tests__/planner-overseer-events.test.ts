@@ -39,7 +39,7 @@ class FakeRunAuditStore implements PlannerInterventionStore {
     return event;
   }
 
-  getRunAuditEvents(options: RunAuditEventFilter = {}): RunAuditEvent[] {
+  async getRunAuditEventsAsync(options: RunAuditEventFilter = {}): Promise<RunAuditEvent[]> {
     return this.events
       .filter((event) => (options.taskId ? event.taskId === options.taskId : true))
       .filter((event) => (options.mutationType ? event.mutationType === options.mutationType : true))
@@ -50,7 +50,7 @@ class FakeRunAuditStore implements PlannerInterventionStore {
 }
 
 describe("emitOverseer* façade", () => {
-  it("emitOverseerObservation records action=observe, default outcome=succeeded, no attempt fields", () => {
+  it("emitOverseerObservation records action=observe, default outcome=succeeded, no attempt fields", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerObservation({
       store,
@@ -60,7 +60,7 @@ describe("emitOverseer* façade", () => {
       reason: "Executor is progressing normally",
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-1");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-1");
     expect(timeline).toHaveLength(1);
     expect(timeline[0].action).toBe("observe");
     expect(timeline[0].outcome).toBe("succeeded");
@@ -70,7 +70,7 @@ describe("emitOverseer* façade", () => {
     expect(timeline[0].attemptLimit).toBeUndefined();
   });
 
-  it("emitOverseerSteering records action=inject-guidance, default outcome=pending", () => {
+  it("emitOverseerSteering records action=inject-guidance, default outcome=pending", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerSteering({
       store,
@@ -79,12 +79,12 @@ describe("emitOverseer* façade", () => {
       reason: "Injecting guidance to unblock stalled step",
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-2");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-2");
     expect(timeline[0].action).toBe("inject-guidance");
     expect(timeline[0].outcome).toBe("pending");
   });
 
-  it("emitOverseerRecoveryAttempt records action=request-fix, default outcome=pending, persists attempt fields", () => {
+  it("emitOverseerRecoveryAttempt records action=request-fix, default outcome=pending, persists attempt fields", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerRecoveryAttempt({
       store,
@@ -95,14 +95,14 @@ describe("emitOverseer* façade", () => {
       attemptLimit: 3,
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-3");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-3");
     expect(timeline[0].action).toBe("request-fix");
     expect(timeline[0].outcome).toBe("pending");
     expect(timeline[0].attemptCount).toBe(1);
     expect(timeline[0].attemptLimit).toBe(3);
   });
 
-  it("emitOverseerRetry records action=retry, default outcome=pending, persists attempt fields", () => {
+  it("emitOverseerRetry records action=retry, default outcome=pending, persists attempt fields", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerRetry({
       store,
@@ -113,14 +113,14 @@ describe("emitOverseer* façade", () => {
       attemptLimit: 4,
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-4");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-4");
     expect(timeline[0].action).toBe("retry");
     expect(timeline[0].outcome).toBe("pending");
     expect(timeline[0].attemptCount).toBe(2);
     expect(timeline[0].attemptLimit).toBe(4);
   });
 
-  it("emitOverseerConfirmation records action=request-confirmation, default outcome=awaiting-confirmation", () => {
+  it("emitOverseerConfirmation records action=request-confirmation, default outcome=awaiting-confirmation", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerConfirmation({
       store,
@@ -129,12 +129,12 @@ describe("emitOverseer* façade", () => {
       reason: "Requesting human confirmation before merge",
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-5");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-5");
     expect(timeline[0].action).toBe("request-confirmation");
     expect(timeline[0].outcome).toBe("awaiting-confirmation");
   });
 
-  it("emitOverseerEscalation records action=escalate, default outcome=failed", () => {
+  it("emitOverseerEscalation records action=escalate, default outcome=failed", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerEscalation({
       store,
@@ -143,12 +143,12 @@ describe("emitOverseer* façade", () => {
       reason: "Bounded recovery exhausted; escalating to human",
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-6");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-6");
     expect(timeline[0].action).toBe("escalate");
     expect(timeline[0].outcome).toBe("failed");
   });
 
-  it("an explicit outcome overrides each emitter's default", () => {
+  it("an explicit outcome overrides each emitter's default", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerObservation({
       store,
@@ -165,7 +165,7 @@ describe("emitOverseer* façade", () => {
       outcome: "skipped",
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-7");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-7");
     // Newest-first ordering.
     expect(timeline[0].action).toBe("escalate");
     expect(timeline[0].outcome).toBe("skipped");
@@ -173,7 +173,7 @@ describe("emitOverseer* façade", () => {
     expect(timeline[1].outcome).toBe("failed");
   });
 
-  it("sourceLinks round-trip through metadata for every kind used by producers", () => {
+  it("sourceLinks round-trip through metadata for every kind used by producers", async () => {
     const store = new FakeRunAuditStore();
     emitOverseerRecoveryAttempt({
       store,
@@ -190,7 +190,7 @@ describe("emitOverseer* façade", () => {
       ],
     });
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-8");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-8");
     expect(timeline[0].sourceLinks).toEqual([
       { kind: "agent-log", label: "Agent log excerpt", target: undefined, url: undefined },
       { kind: "failed-check", label: "Failing lint check", target: undefined, url: undefined },
@@ -199,7 +199,7 @@ describe("emitOverseer* façade", () => {
     ]);
   });
 
-  it("is non-throwing when only the minimal required fields are supplied", () => {
+  it("is non-throwing when only the minimal required fields are supplied", async () => {
     const store = new FakeRunAuditStore();
     expect(() =>
       emitOverseerObservation({
@@ -211,7 +211,7 @@ describe("emitOverseer* façade", () => {
       }),
     ).not.toThrow();
 
-    const timeline = getPlannerInterventionTimeline(store, "FN-9");
+    const timeline = await getPlannerInterventionTimeline(store, "FN-9");
     expect(timeline).toHaveLength(1);
   });
 

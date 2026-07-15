@@ -24,11 +24,17 @@ Borrow the PostgreSQL AsyncDataLayer from the resolved project store so the
 chat AgentStore runs in backend mode (the SQLite runtime was removed under
 VAL-REMOVAL-005), mirroring agent.ts/extension.ts createAgentStore.
 */
-async function createAgentStore(projectName?: string): Promise<AgentStore> {
-  const { rootDir, asyncLayer } = await resolveAgentStoreBase(projectName);
-  const store = new AgentStore({ rootDir: `${rootDir}/.fusion`, asyncLayer: asyncLayer ?? undefined });
-  await store.init();
-  return store;
+async function createAgentStore(projectName?: string): Promise<{ store: AgentStore; cleanup: () => Promise<void> }> {
+  const base = await resolveAgentStoreBase(projectName);
+  const store = new AgentStore({ rootDir: `${base.rootDir}/.fusion`, asyncLayer: base.asyncLayer });
+  try {
+    await store.init();
+    return { store, cleanup: base.cleanup };
+  } catch (error) {
+    store.close();
+    await base.cleanup();
+    throw error;
+  }
 }
 
 function parsePollMs(options: ChatInteractiveOptions): number {
@@ -101,29 +107,32 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
   const input = options.input ?? process.stdin;
   const pollIntervalMs = parsePollMs(options);
 
-  const agentStore = await createAgentStore(options.project);
-  const agent = await agentStore.getAgent(agentId);
-  if (!agent) {
-    console.error(`Agent ${agentId} not found`);
-    return 1;
-  }
+  const ownedAgentStore = await createAgentStore(options.project);
+  const agentStore = ownedAgentStore.store;
+  let messageOwner: Awaited<ReturnType<typeof createMessageStore>> | undefined;
+  try {
+    const agent = await agentStore.getAgent(agentId);
+    if (!agent) {
+      console.error(`Agent ${agentId} not found`);
+      return 1;
+    }
 
-  const { store: messageStore, db } = await createMessageStore(options.project);
-  const printedIds = new Set<string>();
+    messageOwner = await createMessageStore(options.project);
+    const messageStore = messageOwner.store;
+    const printedIds = new Set<string>();
 
-  const conversation = await messageStore.getConversation(
+    const conversation = await messageStore.getConversation(
     { id: CLI_USER_ID, type: "user" },
     { id: agentId, type: "agent" },
   );
-  const tail = conversation.slice(-HISTORY_LIMIT);
-  for (const message of tail) printedIds.add(message.id);
+    const tail = conversation.slice(-HISTORY_LIMIT);
+    for (const message of tail) printedIds.add(message.id);
 
-  output.write(`Chat with Agent ${agentId} — type /exit or Ctrl-C to quit, /help for commands\n`);
-  output.write("Replies appear when this project's engine is running (fn dashboard or fn serve).\n");
-  printConversationTail(output, tail);
+    output.write(`Chat with Agent ${agentId} — type /exit or Ctrl-C to quit, /help for commands\n`);
+    output.write("Replies appear when this project's engine is running (fn dashboard or fn serve).\n");
+    printConversationTail(output, tail);
 
-  const runOnce = options.once === true;
-  try {
+    const runOnce = options.once === true;
     if (runOnce) {
       const content = await readSingleMessage(input, output, options.nonInteractive);
       if (!content.trim()) return 0;
@@ -218,7 +227,9 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
     await poller;
     return 0;
   } finally {
-    db.close();
+    agentStore.close();
+    await messageOwner?.db.close();
+    await ownedAgentStore.cleanup();
   }
 }
 

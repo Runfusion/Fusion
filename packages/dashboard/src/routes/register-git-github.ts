@@ -683,19 +683,18 @@ async function getPatchFingerprint(cwd: string, sha: string): Promise<string | n
 
 export async function collectRecentMergeAdvances(
   scopedStore: TaskStore & {
-    getRunAuditEvents?: (filters: {
+    getRunAuditEventsAsync: (filters: {
       taskId?: string;
       domain?: "database" | "git" | "filesystem" | "sandbox";
       mutationType?: string;
       limit?: number;
-    }) => RunAuditEvent[];
+    }) => Promise<RunAuditEvent[]>;
   },
   worktreePath: string,
   headSha: string | undefined,
   localIntegrationTipSha: string | undefined,
 ): Promise<ExtendedGitStatus["recentMergeAdvances"]> {
-  if (typeof scopedStore.getRunAuditEvents !== "function") return [];
-  const advances = scopedStore.getRunAuditEvents({
+  const advances = await scopedStore.getRunAuditEventsAsync({
     domain: "git",
     mutationType: "merge:integration-ref-advance",
     limit: 10,
@@ -704,7 +703,7 @@ export async function collectRecentMergeAdvances(
   const autoSyncByAdvance = new Map<string, string>();
   const autoSyncByTaskFallback = new Map<string, string>();
   const pairKey = (tid: string, toSha: string) => `${tid}:${toSha}`;
-  for (const ev of scopedStore.getRunAuditEvents({
+  for (const ev of await scopedStore.getRunAuditEventsAsync({
     domain: "git",
     mutationType: "merge:auto-sync",
     limit: 200,

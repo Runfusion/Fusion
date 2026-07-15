@@ -2,7 +2,7 @@
  * Init command for fn CLI.
  *
  * Initializes a new fn project in the current directory by:
- * 1. Creating the .fusion/ directory with fusion.db
+ * 1. Creating the .fusion/ directory and PostgreSQL-neutral project identity
  * 2. Registering the project in the central database
  *
  * Idempotent: if already initialized, reports success without recreating.
@@ -18,6 +18,7 @@ import {
   GitRepositoryInitializationError,
   QMD_INSTALL_COMMAND,
   isQmdAvailable,
+  hasProjectIdentity,
   isValidSqliteDatabaseFile,
   readProjectIdentity,
   writeProjectIdentity,
@@ -51,9 +52,14 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   const dbPath = join(fusionDir, "fusion.db");
   const hasDbPath = existsSync(dbPath);
   const hasValidDb = hasDbPath && isValidSqliteDatabaseFile(dbPath);
+  /*
+  FNXC:ProjectIdentityMarker 2026-07-14-17:20:
+  `fn init` treats `.fusion/project.json` as the durable local project marker. A valid fusion.db remains detectable only to migrate projects created before the PostgreSQL cutover; new initialization never creates a SQLite file.
+  */
+  const hasIdentity = hasProjectIdentity(fusionDir);
 
   // Check if already initialized
-  if (existsSync(fusionDir) && hasDbPath && hasValidDb) {
+  if (existsSync(fusionDir) && (hasIdentity || hasValidDb)) {
     // Check if registered in central DB
     const central = new CentralCore();
     await central.init();
@@ -87,7 +93,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     return;
   }
 
-  if (existsSync(fusionDir) && hasDbPath && !hasValidDb) {
+  if (existsSync(fusionDir) && !hasIdentity && hasDbPath && !hasValidDb) {
     throw new Error(
       `Existing database at ${dbPath} is not a valid SQLite database. ` +
       "Restore it from .fusion/backups or move it aside before re-running fn init.",
@@ -115,13 +121,6 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   await addLocalStorageToGitignore(cwd);
   await warnIfQmdMissing();
 
-  // Create fusion.db (empty SQLite file)
-  if (!existsSync(dbPath)) {
-    // A zero-byte bootstrap file is a valid SQLite starting point.
-    writeFileSync(dbPath, "");
-    console.log(`  ✓ Created fusion.db`);
-  }
-
   const bundledSkillInstall = installBundledFusionSkill();
   logBundledSkillInstallResults(bundledSkillInstall.results);
 
@@ -144,7 +143,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
       return;
     }
 
-    const identity = existsSync(dbPath) ? readProjectIdentity(fusionDir) : null;
+    const identity = readProjectIdentity(fusionDir);
     const ensured = await central.ensureProjectForPath({
       path: cwd,
       identity: identity ?? undefined,

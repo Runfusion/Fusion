@@ -105,9 +105,9 @@ Cross-package automated tests now lock:
                            │
           ┌────────────────▼────────────────┐
           │ Persistence                      │
-          │ - .fusion/fusion.db (SQLite/WAL)
-          │ - .fusion/tasks/* (PROMPT/logs)
-          │ - ~/.fusion/fusion-central.db │
+          │ - PostgreSQL schemas             │
+          │ - .fusion/tasks/* (artifacts)    │
+          │ - .fusion/project.json (identity)│
           └──────────────────────────────────┘
 ```
 
@@ -117,7 +117,7 @@ Cross-package automated tests now lock:
 
 | Package | Published | Role | Key files |
 |---|---|---|---|
-| `@fusion/core` | Private | Domain model, stores, SQLite adapters, settings, shared types | `packages/core/src/types.ts`, `store.ts`, `db.ts`, `central-core.ts`, `agent-store.ts` |
+| `@fusion/core` | Private | Domain model, PostgreSQL stores/adapters, settings, shared types, and legacy import tooling | `packages/core/src/types.ts`, `store.ts`, `postgres/`, `central-core.ts`, `agent-store.ts` |
 | `@fusion/engine` | Private | AI orchestration runtime (planning, scheduler, executor, merger, recovery) | planning processor, `scheduler.ts`, `executor.ts`, `merger.ts`, `project-runtime.ts` |
 | `@fusion/dashboard` | Private | Express API server + React app | `packages/dashboard/src/server.ts`, `routes.ts`, `sse.ts`, `websocket.ts`, `packages/dashboard/app/App.tsx` |
 | `@runfusion/fusion` | **Published** | CLI binary (`fn`) + Pi extension | `packages/cli/src/bin.ts`, `commands/*`, `project-resolver.ts`, `extension.ts` |
@@ -170,23 +170,22 @@ Concrete references:
 - **TaskStore**: `packages/core/src/store.ts`
   - Main task CRUD + lifecycle store
   - Emits board events (`task:created`, `task:moved`, `task:updated`, ...)
-  - Hybrid model: SQLite metadata + filesystem blobs under `.fusion/tasks/{id}`
-- **Database adapter**: `packages/core/src/db.ts`
-  - SQLite (`node:sqlite`) with WAL mode + foreign keys
-  - JSON helpers: `toJson`, `toJsonNullable`, `fromJson`
-  - Core schema tables include: `tasks`, `config`, `workflow_steps`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, approval tables (`approval_requests`, `approval_request_audit_events`), `task_documents`, `task_document_revisions`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), goals table (`goals`), plugin/routine tables (`plugins`, `routines`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), insight tables (`project_insights`, `project_insight_runs`), research tables (`research_runs`, `research_exports`, `research_run_events`), eval tables (`eval_runs`, `eval_task_results`, `eval_run_events`), todo tables (`todo_lists`, `todo_items`), `__meta`
-  - Migration-created tables include: `ai_sessions`, `messages`, `agentRatings`, `chat_sessions`, `chat_messages`, `runAuditEvents`, `mission_contract_assertions`, `mission_feature_assertions`, `mission_validator_runs`, `mission_validator_failures`, `mission_fix_feature_lineage`
+  - Hybrid model: PostgreSQL metadata + filesystem artifacts under `.fusion/tasks/{id}`
+- **Database adapter**: `packages/core/src/postgres/`
+  - Drizzle-backed PostgreSQL connection and async data layers
+  - Project-scoped rows carry `projectId`; central/plugin schemas hold shared control-plane state
+  - `packages/core/src/sqlite-migrator.ts` and SQLite adapters are legacy import tooling, not runtime authority
   - `ai_sessions.status` lifecycle includes `draft` (pre-start planning session), then `generating`, `awaiting_input`, terminal `complete` / `error`; deletion is final within a bounded tombstone window that blocks a straggling post-delete write from resurrecting the row (FN-7949) — see `docs/storage.md` "AI session delete tombstones"
 - **Roadmap feature ownership**: roadmap contracts, ordering/handoff helpers, persistence, routes, and dashboard UI live in `plugins/fusion-plugin-roadmap` (package `@fusion-plugin-examples/roadmap`, plugin id `fusion-plugin-roadmap`) rather than dashboard/core ownership.
 - **CentralCore**: `packages/core/src/central-core.ts`
   - Global project registry, health, central activity feed, global concurrency
-  - Backed by `packages/core/src/central-db.ts` (`~/.fusion/fusion-central.db`)
+  - Backed by the PostgreSQL `central` schema through `AsyncCentralDatabase`
 - **Specialized stores**:
   - `AgentStore` (`agent-store.ts`) — filesystem-based agent metadata + heartbeat run history
   - `MissionStore` (`mission-store.ts`) — mission/milestone/slice/feature hierarchy
   - `GoalStore` (`goal-store.ts`) — strategic goal CRUD with server-enforced 5-active-goal cap
   - `AutomationStore` (`automation-store.ts`) — scheduled jobs with global/project scope isolation
-  - `MessageStore` (`message-store.ts`) — SQLite-backed mailbox/inbox/outbox messaging
+  - `MessageStore` (`message-store.ts`) — PostgreSQL-backed mailbox/inbox/outbox messaging
   - `ApprovalRequestStore` (`approval-request-store.ts`) — durable approval request lifecycle + append-only audit events
   - `ChatStore` (`chat-store.ts`) — session/message persistence for agent chat
   - `InsightStore` (`insight-store.ts`) — project insight persistence + dedupe/run tracking
@@ -241,8 +240,8 @@ Lifecycle contract (`types.ts` `isValidApprovalRequestTransition`):
 `SecretsStore` (`packages/core/src/secrets-store.ts`) provides encrypted key-value secret persistence for tasks/agents (FN-4791). It is designed so plaintext values are only available at explicit reveal time and are never persisted or logged in plaintext.
 
 Scope model:
-- `project` scope stores rows in `secrets` inside `.fusion/fusion.db` (project database, FN-4788).
-- `global` scope stores rows in `secrets_global` inside `~/.fusion/fusion-central.db` (central database, FN-4788).
+- `project` scope stores rows in PostgreSQL project-scoped `secrets` storage (FN-4788).
+- `global` scope stores rows in PostgreSQL central `secrets_global` storage (FN-4788).
 
 Encryption model:
 - Uses `createSecretCipher` from `packages/core/src/secrets-crypto.ts` (FN-4790).
@@ -409,9 +408,9 @@ Hybrid evaluator pipeline (FN-3389/FN-3391):
 ### Plugin System
 
 - `PluginStore` (`plugin-store.ts`) is a facade over two persistence scopes:
-  - **Global install metadata** in central DB table `plugin_installs` (`~/.fusion/fusion-central.db`) including manifest/path/settings/schema/dependencies
+  - **Global install metadata** in PostgreSQL table `plugin.plugin_installs`, including manifest/path/settings/schema/dependencies
   - **Per-project runtime state** in central DB table `project_plugin_states` keyed by normalized project path (`enabled`, `state`, `error`)
-- Legacy project-local `plugins` rows in `.fusion/fusion.db` are migrated lazily on plugin-store init/read; migration is idempotent and keeps newest `updatedAt` install metadata as global canonical data while preserving per-project enablement rows
+- Legacy project-local `plugins` rows in `.fusion/fusion.db` are one-time migration input; migration is idempotent and keeps newest `updatedAt` install metadata as global canonical data while preserving per-project enablement rows
 - Post-FN-3722, the project-local `plugins` table is legacy read-only migration input; any new install writer targeting it is a bug
 - `TaskStore.getPluginStore()` now propagates the configured `globalSettingsDir`/central directory so all CLI and dashboard install paths resolve the same central DB
 - `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules using the effective per-project plugin state
@@ -678,11 +677,11 @@ Runtime action-gate flow (v1):
 - `TransientErrorDetector` (`transient-error-detector.ts`) — retriable error classification
 - Durable agent error recovery (FN-7835/FN-7844/FN-7859/FN-7878/FN-7884): a heartbeat-managed, runtime-enabled non-ephemeral agent that lands in `state:"error"` remains timer-eligible and clears `lastError` by transitioning `error → active` at the next heartbeat run entry when `lastError` is recoverable. Generic/unknown errors are recoverable by default; immediate `error-unrecoverable` parking is reserved for operator-actionable auth/model/billing/quota failures, while stale worktree/module-resolution errors stay on their dedicated self-healing suppression/rebuild path. Recovery is bounded by one shared `heartbeatErrorRecovery` attempt budget (`MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS`, settings-overridable through the engine's optional cast-based knob) across both the timer path and `SelfHealingManager.recoverOrphanedAgents()`. Self-healing is the stale-agent backstop and still stores `durableErrorRecovery` cooldown/stale-module metadata, but it writes/reads the shared heartbeat counter and emits the same `agent:auto-recover-error-state` / `agent:error-retry-exhausted` audit surface with `source:"self-healing"`. The sweep flips `error → active` before `restartDurableAgentHeartbeat()` calls `executeHeartbeat()`, preventing run-entry recovery from re-counting or double-emitting for the same recovery. Success resets the shared counter and clears legacy sweep retry state; budget exhaustion parks the agent `paused` with `pauseReason:"error-retry-exhausted"`. On engine startup, `SelfHealingManager.resetDurableAgentErrorStateOnStartup()` runs before the steady-state sweep and treats restart as an explicit operator retry: eligible `error` and `error-retry-exhausted` durable agents have shared/legacy retry metadata reset, `lastError` and the exhaustion pause cleared, state set to `active`, heartbeat re-armed, and `agent:reset-error-state-on-startup` emitted without applying the sweep's staleness/cooldown/exhaustion gates. Non-recoverable durable heartbeat errors are not restarted; timer, startup, and sweep paths preserve exclusions for disabled runtime agents, ephemeral agents, active executions, user pauses, `error-unrecoverable` parks, operator-actionable errors, and stale worktree/module-resolution suppression.
 - `SelfHealingManager` (`self-healing.ts`) — auto-unpause/maintenance recovery actions
-  - Batch 1 maintenance now includes `reconcile-orphaned-task-dirs` (FN-6783), a paused-safe housekeeping step that calls `TaskStore.reconcileOrphanedTaskDirs()` so valid live `.fusion/tasks/{ID}/task.json` records missing from the SQLite index become visible without waiting for process restart. The store-level guard skips any ID already present in active, soft-deleted, archived, or tombstoned storage and emits `task:reconcile-orphaned-task-dir` only for recovered rows.
+  - Batch 1 maintenance includes `reconcile-orphaned-task-dirs` (FN-6783), a paused-safe housekeeping step that calls `TaskStore.reconcileOrphanedTaskDirs()` so valid live `.fusion/tasks/{ID}/task.json` records missing from PostgreSQL become visible without waiting for process restart. The guard skips any ID already present in active, soft-deleted, archived, or tombstoned storage and emits `task:reconcile-orphaned-task-dir` only for recovered rows.
   - Batch 1 maintenance also includes `reconcile-phantom-committed-reservations` (FN-7069), which calls `TaskStore.reconcilePhantomCommittedReservations()` for committed task-ID reservations that have no live/soft-deleted/archived task row and no `.fusion/tasks/{ID}/task.json`. The sweep prunes orphaned `activityLog` rows and `agents`/cascaded `agentRuns`, preserves `runAuditEvents`, and keeps the reservation `committed` per FN-5105 so the ID is permanently reserved rather than resurrected or handed out again.
   - Batch 1 maintenance now includes one `fts-maintenance` step for both search indexes. The live `tasks_fts` branch still runs `merge` every tick, `optimize` every 4th tick, and `rebuild` above `32 MiB` or `1 MiB × live task count`. The archive `archived_tasks_fts` branch is lighter because archive writes are mostly append-only: `merge` every 8th tick, `optimize` every 24th tick, and `rebuild` above `64 MiB` or `512 KiB × archived row count`. Each branch is independently guarded by `fts5Available` and emits `task:fts-maintenance` run-audit telemetry with distinct `target` values (`tasks_fts` vs `archived_tasks_fts`).
   - AI merge clean-room worktrees are created under the configured worktrees directory's hidden container, `<worktreesDir>/.ai-merge/`, as `fusion-ai-merge-fn-<id>-<random>` detached worktrees. When that container is repo-local, its relative path is added to the repo's local git exclude when possible (alongside the legacy `.fusion/ai-merge/` entry) so an in-flight clean room does not dirty the integration checkout. After `git worktree add` and before the merge/review loop, `runAiMerge` bootstraps the clean room with the shared merge dependency-sync helper: a configured `worktreeInitCommand` is authoritative and always runs, while unset settings infer `pnpm`/`npm`/`yarn`/`bun` installs from lockfiles and can skip only when the `node_modules/.fusion-install-marker` hash still matches. Failures and aborts hard-stop the AI merge before merge agents or verification run, and `merge:ai-deps-sync` records the command, skip state, and duration. Inline cleanup runs from `runAiMerge`'s clean-room `finally` for successful lands, empty/no-op finalization, concurrent-advance retries, and thrown/aborted merges. Cleanup canonicalizes the path, attempts `git worktree remove --force`, always falls back to filesystem removal, then runs `git worktree prune` so stale or partial registrations (including `git worktree add` failures) do not dangle. Cleanup emits `merge:ai-worktree-cleanup` audit events for git-remove, fs-rm, and prune phases; benign already-absent/de-registered paths are treated as idempotent success, while genuine filesystem-removal failures are logged/audited with `success: false` rather than silently swallowed.
-  - Worktrees-dir sweeps that list direct children of `<worktreesDir>` (pool idle scan, orphan cleanup/reap, self-healing unregistered-orphan reap, and cap enforcement) must exclude the `.ai-merge` container by name; those one-level sweeps never inspect or recycle clean rooms beneath it. Batch 1 sweeps stale AI merge clean-room worktrees under the new `<worktreesDir>/.ai-merge/` root and still scans legacy `.fusion/ai-merge/` plus legacy `tmpdir()` locations for pre-relocation leftovers; candidates are bounded to names starting with `fusion-ai-merge-`. `runAiMerge` registers each live clean-room worktree in `activeSessionRegistry` with kind `ai-merge` as soon as the directory exists and keeps both raw and canonical paths registered for the duration of the merge, so the dedicated periodic sweep and pre-merge prune defer when either path is active (including concurrent same-task merge attempts). The default age gate is 2 hours; task-aware cleanup uses a 10-minute grace period for `done`/`archived` tasks and for genuinely missing/deleted task rows, and every removal path is clamped by the same 10-minute minimum-age floor so a freshly created worktree is never reaped. Transient `getTask` lookup failures (for example SQLite busy/parse errors) are not treated as deletion evidence; they log a warning, emit `lookup-error` only if eventually removed, and retain the conservative 2-hour gate. The sweep canonicalizes paths before checking `activeSessionRegistry`, attempts `git worktree remove --force <path>` before filesystem removal, runs `git worktree prune` after cleanup attempts, and emits `worktree:tempdir-sweep` run-audit telemetry for removal attempts and failures. Fresh directories, active-session paths, and individual removal failures are skipped/logged without aborting the maintenance cycle.
+  - Worktrees-dir sweeps that list direct children of `<worktreesDir>` (pool idle scan, orphan cleanup/reap, self-healing unregistered-orphan reap, and cap enforcement) must exclude the `.ai-merge` container by name; those one-level sweeps never inspect or recycle clean rooms beneath it. Batch 1 sweeps stale AI merge clean-room worktrees under the new `<worktreesDir>/.ai-merge/` root and still scans legacy `.fusion/ai-merge/` plus legacy `tmpdir()` locations for pre-relocation leftovers; candidates are bounded to names starting with `fusion-ai-merge-`. `runAiMerge` registers each live clean-room worktree in `activeSessionRegistry` with kind `ai-merge` as soon as the directory exists and keeps both raw and canonical paths registered for the duration of the merge, so the dedicated periodic sweep and pre-merge prune defer when either path is active (including concurrent same-task merge attempts). The default age gate is 2 hours; task-aware cleanup uses a 10-minute grace period for `done`/`archived` tasks and for genuinely missing/deleted task rows, and every removal path is clamped by the same 10-minute minimum-age floor so a freshly created worktree is never reaped. Transient `getTask` lookup failures (for example PostgreSQL availability/transaction errors) are not treated as deletion evidence; they log a warning, emit `lookup-error` only if eventually removed, and retain the conservative 2-hour gate. The sweep canonicalizes paths before checking `activeSessionRegistry`, attempts `git worktree remove --force <path>` before filesystem removal, runs `git worktree prune` after cleanup attempts, and emits `worktree:tempdir-sweep` run-audit telemetry for removal attempts and failures. Fresh directories, active-session paths, and individual removal failures are skipped/logged without aborting the maintenance cycle.
 
   - `recoverGhostReviewTasks()` is a fallback only for idle, non-terminal `in-review` states. Terminal/actionable states (notably `status: "failed"`) are preserved and **not** auto-kicked back to `todo`.
   - `recoverPausedAbortFailures()` clears executor pause/resume abort parks only when the durable row is safe to recover. `todo`/`in-progress` rows are requeued for normal scheduling, while clean `in-review` rows (completed steps, not paused/user-paused/executing, auto-merge eligible, no confirmed or terminal merge evidence) have `status`/`error` cleared in place so review progression can continue. FN-7749 adds the manual-hold exception to the prior `autoMerge:false` guard: a benign hard-cancel pause/resume abort at a merge-region/manual-hold node is the healthy Merge & Close resting state, so already-parked rows of that exact shape are cleared in place without moving backward (FN-5147-compliant). User hard-cancel, global/user pause, terminal merge, live-execution, and other `autoMerge:false` guards remain operator-actionable. Successful recovery emits `task:auto-recover-paused-abort-park` with `preservedInReview` metadata.
@@ -813,8 +812,8 @@ A lease is recoverable only when there is **no active local executor session for
   - Defines protocol versioning, write classes, quorum/ack semantics, lease epochs/fencing, offline queue/replay, reconciliation outcomes, restart recovery hooks, and degraded-read staleness metadata.
   - Existing `/api/mesh/sync` and settings-sync payloads remain the active exchange primitives while follow-on runtime tasks implement full v1 coordinator/quorum behavior.
 - Distributed task-ID allocation (`packages/core/src/distributed-task-id.ts`) is the first mesh-aware coordinated write primitive.
-  - Durable state lives in SQLite tables `distributed_task_id_state` (prefix sequence + authoritative committed count) and `distributed_task_id_reservations` (reservation lifecycle rows).
-  - Reserve/commit/abort execute under a process-local lock and a single SQLite transaction. Lazy reservation expiry cleanup runs inside those same transactions. `TaskStore` also uses a non-locking commit core inside its own `BEGIN IMMEDIATE` create transaction so the reservation `committed` flip and authoritative `tasks` row insert share one SQLite durability point.
+  - Durable state lives in PostgreSQL tables `distributed_task_id_state` (prefix sequence + authoritative committed count) and `distributed_task_id_reservations` (reservation lifecycle rows).
+  - Reserve/commit/abort execute through the async allocator inside PostgreSQL transactions. Lazy reservation expiry cleanup runs in the same transaction model, and task creation commits the reservation flip with the authoritative `project.tasks` insert so both share one durability point.
   - Default reservation TTL is `15 * 60 * 1000` ms (15 minutes). Expired/aborted reservations are **burned IDs** and are never reissued. If a post-insert create step fails after the reservation was committed (for example `task.json`/`PROMPT.md` disk materialization, file-scope validation, or duplicate-intake tombstone checks), the failed-create rollback deletes the just-created task row/partial directory, moves the reservation to `aborted`, recomputes committed reservation counters, and emits `task:reservation-commit-rolled-back`; the sequence stays burned for FN-5105 ID permanence.
   - `committedClusterTaskCount` from allocator state is the only authoritative cluster-wide committed-task count. Local task-row counts and ID suffix math are not authoritative.
   - Store open reconciles every known prefix in `distributed_task_id_state` to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)`. This self-heals stale counters before ordinary task creation resumes.
@@ -823,7 +822,7 @@ A lease is recoverable only when there is **no active local executor session for
   - Ordinary local task creation (`TaskStore.createTask()`, duplicate, and refine flows) now allocates IDs through the same distributed reserve/commit/abort lifecycle owned by `TaskStore`; the invariant is `distributed_task_id_reservations.status = 'committed'` iff a live durable `tasks` row and task directory landed for that ID. `applyReplicatedTaskCreate(...)` remains a direct reserved-ID apply path and does not require a local reservation row.
   - `POST /api/tasks` uses the store-owned allocator path for local creates rather than maintaining a separate route-local allocator implementation.
   - `POST /api/tasks` reserves a distributed ID, creates the authoritative local task with that reserved ID, then POSTs authenticated replication payloads to peer nodes.
-  - All create-class writes now use conflict-raising inserts, not SQLite `ON CONFLICT ... DO UPDATE`. Existing task rows and `.fusion/tasks/{id}` contents always win over stale counters or colliding reservations.
+  - All create-class writes use conflict-raising inserts, not upserts. Existing PostgreSQL task rows and `.fusion/tasks/{id}` contents always win over stale counters or colliding reservations.
   - Local create paths perform a final active+archived existence check immediately before insert. If a reserved `FN-*` still collides, the reservation is aborted/burned and the create fails loudly instead of rewriting the existing task.
   - Creation self-heals stale overlap state at the route layer: if a reserved `FN-*` collides with an existing task (`Task ID already exists...` or replicated-create collision), the route aborts that reservation, cleans up partial local state, reserves the next ID, and retries up to a bounded limit.
   - Replica apply uses `TaskStore.applyReplicatedTaskCreate(...)`, which is idempotent by task ID: replaying the same payload returns the existing task without creating duplicates.
@@ -1023,9 +1022,9 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 - **Health check**: `GET /api/health`
   - Returns liveness status for load balancers and monitoring
   - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly", checkedAt: string | null, anomalies: [...], recommendedAction: string | null } }`
-  - Startup does not block on full `PRAGMA integrity_check(100)`; Fusion schedules it in the background shortly after boot.
-  - Background integrity checks are deduplicated process-wide per on-disk SQLite path: multiple `Database` instances sharing the same `fusion.db` join one shared run, and each instance still updates the underlying integrity state (`integrityCheckPending`, `integrityCheckLastRunAt`, `corruptionDetected`, `integrityCheckErrors`) that maps to `database.isRunning`, `database.lastCheckedAt`, `database.healthy`, `database.corruptionDetected`, and `database.corruptionErrors`.
-  - Self-healing watches `store.getDatabaseHealth()` during maintenance. Each fresh corruption detection emits a `task:auto-db-corruption-detected` run-audit database event and attempts a `db-corruption-detected` notification through the active notification service (or the ntfy fallback) with a one-hour cooldown between repeats until the health state clears.
+  - PostgreSQL health is derived from the active data layer's connectivity probe; startup and explicit refreshes never open or inspect a SQLite file.
+  - The `corruptionDetected` and `corruptionErrors` response fields remain for API compatibility. PostgreSQL reports connectivity failures through them until the dashboard health contract is versioned independently.
+  - The former background `PRAGMA integrity_check` scheduling, per-`fusion.db` deduplication, and SQLite corruption notification behavior are pre-cutover history only; they are not a runtime fallback.
   - `POST /api/health/refresh` recomputes the task-ID integrity section on demand and returns the same top-level shape, including the current database corruption fields.
   - No authentication required
 
@@ -1118,7 +1117,7 @@ The run-audit system records every mutation performed by the engine across four 
 - **Database / `session:runtime-resolved`** — emitted once per `createResolvedAgentSession` call with metadata `{ sessionPurpose, runtimeId, wasConfigured, provider, modelId, mockProviderActive, testModeActive, runtimeHint? }` for per-lane runtime/provider attribution.
 - **Database / `task:reconcile-dependency-blocking-lease`** — emitted by `reconcileDependencyBlockingLeases()` (FN-6292) when self-healing rebounds an `in-progress` holder to `todo` because an unmet dependency is blocked by the holder's stale file-scope lease. Metadata includes the dependency ID, blocked-by marker, and unmet dependency list.
 - **Database / `task:reconcile-in-review-unmet-dependencies`** — emitted by `reconcileInReviewUnmetDependencies()` (FN-6793/FN-6797) when self-healing rebounds an `in-review` task to blocked `todo` because one or more declared dependencies are still unmet. Metadata includes `unmetDeps`, `blockedBy`, and prior review status; the `-no-action` companion is emitted when task pause/user-pause, `autoMerge:false`, live execution/checkout proof, or a failed rebound mutation prevents the backward move.
-- **Database / `task:reconcile-orphaned-task-dir`** — emitted by `TaskStore.reconcileOrphanedTaskDirs()` (FN-6783) when store open or self-healing Batch 1 re-imports a valid live `.fusion/tasks/{ID}/task.json` directory with no SQLite task row anywhere. Metadata includes the recovered ID, column, status, and task JSON path.
+- **Database / `task:reconcile-orphaned-task-dir`** — emitted by `TaskStore.reconcileOrphanedTaskDirs()` (FN-6783) when store open or self-healing Batch 1 re-imports a valid live `.fusion/tasks/{ID}/task.json` directory with no PostgreSQL task row anywhere. Metadata includes the recovered ID, column, status, and task JSON path.
 - **Database / `task:*-no-action` backward-move family (FN-5335)** — backward self-healing sweeps now emit annotation-only events when triple proof fails instead of mutating lifecycle state. New mutation types: `task:reclaim-pr-conflict-no-action`, `task:reclaim-self-owned-branch-conflict-no-action`, `task:auto-rebound-scope-decay-no-action`, `task:finalize-no-op-review-no-action`, `task:stale-incomplete-review-no-action`, `task:ghost-review-no-action`, `task:stuck-merge-deadlock-no-action`, `task:no-progress-no-task-done-no-action`, `task:missing-worktree-review-no-action`, `task:partial-progress-no-task-done-no-action`, `task:reconcile-dependency-blocking-lease-no-action`. See `docs/self-healing-backward-move-audit.md` for per-stage disposition.
 - **Filesystem** — file:write, prompt:write, attachment:create, etc.
 - **Sandbox** — backend lifecycle events from `SandboxBackend` wiring in executor/merger/routine-runner (`sandbox:prepare`, `sandbox:run`, `sandbox:failure`, `sandbox:fallback`) introduced after FN-4636.
@@ -1174,20 +1173,18 @@ For scheduler concurrency diagnostics, the queued reason now names the active li
 Fusion uses a hybrid storage model.
 
 ### Per-project storage
-- **SQLite DB**: `.fusion/fusion.db`
+- **PostgreSQL**: project-scoped rows in the `project` schema
+- **Identity marker**: `.fusion/project.json`
 - **Filesystem blobs** (task-local artifacts):
   - `.fusion/tasks/{TASK_ID}/PROMPT.md`
   - `.fusion/tasks/{TASK_ID}/agent.log`
   - `.fusion/tasks/{TASK_ID}/attachments/*`
 
-SQLite schema is initialized in `packages/core/src/db.ts` and uses:
-- WAL mode (`PRAGMA journal_mode = WAL`)
-- Foreign keys (`PRAGMA foreign_keys = ON`)
-- `__meta.lastModified` for change detection/polling
+PostgreSQL schema is initialized by `packages/core/src/postgres/schema-applier.ts`; project isolation is enforced by `projectId` keys and async data-layer binding.
 
 ### Central storage (multi-project)
-- **Central DB**: `~/.fusion/fusion-central.db`
-- Schema in `packages/core/src/central-db.ts`
+- **PostgreSQL central schema**
+- Schema in `packages/core/src/postgres/schema/central.ts`
   - `projects`, `projectHealth`, `centralActivityLog`, `globalConcurrency`, `nodes`, `peerNodes`, `projectNodePathMappings`, `settingsSyncState`, `__meta`
 - `projectHealth.inFlightAgentCount` and `globalConcurrency.currentlyActive` are persisted slot/health bookkeeping fields. They are not live read-layer running-agent counts; dashboard and CLI read surfaces derive current running agents from tasks in `column === "in-progress"` while leaving slot acquire/free semantics and DB column names unchanged.
 
@@ -1202,15 +1199,15 @@ SQLite schema is initialized in `packages/core/src/db.ts` and uses:
 Some data remains intentionally filesystem-based:
 - Agent instruction bundles and heartbeat markdown: `.fusion/agents/*` (`AgentStore`)
 
-Agent/message/approval metadata and history now persist in SQLite tables.
+Agent/message/approval metadata and history persist in PostgreSQL.
 
-### Migration from legacy file storage
-- Detection + migration: `packages/core/src/db-migrate.ts`
-- Migrates legacy task/config/log/archive/automation/agent data into SQLite
-- Creates `.bak` backups (for example `task.json.bak`, `config.json.bak`, `archive.jsonl.bak`)
+### Migration from legacy SQLite/file storage
+- Detection + migration: `packages/core/src/sqlite-migrator.ts` and startup-factory migration helpers
+- Imports legacy `fusion.db`, `archive.db`, and file records into PostgreSQL once
+- Legacy databases/backups remain recovery input and are never runtime write targets
 
 ### Archive system
-- Archived task snapshots are stored in SQLite `archivedTasks`
+- Archived task snapshots are stored in PostgreSQL cold-storage tables
 - `TaskStore` archive helpers:
   - `archiveTaskAndCleanup()`
   - `cleanupArchivedTasks()`
@@ -1295,7 +1292,7 @@ Tune sensitivity by adjusting the exported constants in `stalled-review-detector
 
 **Engine as substrate, workflows as policy.** The flag inverts the architecture: the engine becomes a **capability substrate** (worktree/git/session mechanics, persistence, crash recovery, audit, machine resource ceilings — non-configurable) and **workflows carry the operating logic** as composable column traits. The mechanism/policy line (KTD-4):
 
-- **Substrate (engine-owned, never workflow-configurable):** `AgentSemaphore`, checkout leases, worktree/git/session ops, SQLite + WAL, the crash-recovery machinery, the audit trail, the global max-sessions cap, and the three non-configurable lost-work merge guards (no sibling `fusion/fn-*` target, line-anchored attribution, no `modifiedFiles` clear on a no-op finalize).
+- **Substrate (engine-owned, never workflow-configurable):** `AgentSemaphore`, checkout leases, worktree/git/session ops, PostgreSQL transactions, the crash-recovery machinery, the audit trail, the global max-sessions cap, and the three non-configurable lost-work merge guards (no sibling `fusion/fn-*` target, line-anchored attribution, no `modifiedFiles` clear on a no-op finalize).
 - **Policy (workflow/trait-owned):** transition validity, WIP/capacity, hold/release, drag meaning, retries, merge strategy, squash posture, file-scope enforcement mode.
 
 **Transition authority.** `moveTaskInternal` remains the single transition authority. Flag-on, it swaps the `VALID_TRANSITIONS` lookup for workflow-resolved column-graph validation (`resolveAllowedColumns`/`workflowHasColumn` in `workflow-transitions.ts`) plus sync trait guards run in-lock; rejections are typed `TransitionRejection`s. `VALID_TRANSITIONS` and the closed `Column`/`COLUMNS` helpers in `types.ts` are `@deprecated` while the flag exists — retained as the flag-off authority and the parity oracle, not yet removed.
@@ -1868,7 +1865,7 @@ Task create/update now preserves both branch fields end-to-end:
 - **Durable persistence (core store layer):** `packages/core/src/store.ts`
   - `TaskStore.createTask()` persists both `branch` and `baseBranch` on task creation.
   - `TaskStore.updateTask()` preserves existing PATCH semantics where explicit `null` clears either field.
-  - Fields round-trip through JSON and SQLite persistence via the shared task contract in `packages/core/src/types.ts`.
+  - Fields round-trip through JSON and PostgreSQL persistence via the shared task contract in `packages/core/src/types.ts`.
 
 ### Routing activity visibility
 
@@ -2089,12 +2086,12 @@ The GitHub tracking state listener now attaches to every registered project stor
 
 ## 14) Key Design Decisions
 
-1. **SQLite + WAL for local-first reliability**
-   - Chosen for simple deployment and strong transactional behavior
-   - WAL mode enables concurrent readers/writers with low ops overhead
+1. **PostgreSQL for transactional authority**
+   - Embedded PostgreSQL preserves zero-config operation; `DATABASE_URL` supports external deployments
+   - Shared project/central schemas provide one async transactional model across runtimes
 
 2. **Hybrid persistence (DB + filesystem blobs)**
-   - Structured metadata in SQLite, large text/artifacts in task directories
+   - Structured metadata in PostgreSQL, large text/artifacts in task directories
    - Keeps DB efficient while preserving inspectable task artifacts
 
 3. **Git worktree isolation as core execution primitive**

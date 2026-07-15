@@ -1000,13 +1000,11 @@ export class SelfHealingManager {
     return handedOff;
   }
 
-  private hasRecentWorktreeIncompleteDetected(taskId: string, graceMs: number): boolean {
+  private async hasRecentWorktreeIncompleteDetected(taskId: string, graceMs: number): Promise<boolean> {
     if (!Number.isFinite(graceMs) || graceMs <= 0) return false;
-    const storeWithRunAudit = this.store as { getRunAuditEvents?: (filter: { taskId: string; mutationType: string; limit: number }) => Array<{ timestamp?: string | null }> };
-    if (typeof storeWithRunAudit.getRunAuditEvents !== "function") return false;
     let events: Array<{ timestamp?: string | null }> = [];
     try {
-      events = storeWithRunAudit.getRunAuditEvents({ taskId, mutationType: "worktree:incomplete-detected", limit: 20 }) ?? [];
+      events = await this.store.getRunAuditEventsAsync({ taskId, mutationType: "worktree:incomplete-detected", limit: 20 });
     } catch {
       return false;
     }
@@ -1095,7 +1093,7 @@ export class SelfHealingManager {
 
     const anchorMs = input.stalenessAnchor ? Date.parse(input.stalenessAnchor) : Number.NaN;
     const stalenessMs = Number.isFinite(anchorMs) ? Math.max(0, Date.now() - anchorMs) : Number.POSITIVE_INFINITY;
-    const noRecentActivity = stalenessMs >= input.graceMs && !this.hasRecentWorktreeIncompleteDetected(task.id, input.graceMs);
+    const noRecentActivity = stalenessMs >= input.graceMs && !(await this.hasRecentWorktreeIncompleteDetected(task.id, input.graceMs));
 
     const ok = sessionDead && worktreeUnusable && noRecentActivity;
     return {
@@ -2511,18 +2509,9 @@ export class SelfHealingManager {
               log.log("Maintenance batch 1 step \"prune-operational-logs\" skipped — operationalLogRetentionDays is not enabled");
               return;
             }
-            /*
-             * FNXC:SqliteFinalRemoval 2026-06-25-16:15:
-             * pruneOperationalLogs uses SQLite-specific DELETE on operational
-             * log tables. In backend mode, PostgreSQL autovacuum handles
-             * bloat; the operational-log pruning path is skipped until a PG
-             * equivalent is wired.
-             */
-            if (this.store.isBackendMode()) {
-              log.log("Maintenance batch 1 step \"prune-operational-logs\" skipped — backend mode (PostgreSQL autovacuum)");
-              return;
-            }
-            const { deletedTotal, deletedByTable } = this.store.pruneOperationalLogs(days * 86_400_000);
+            // FNXC:PostgresRetention 2026-07-14-17:16: Autovacuum cannot replace
+            // retention; await project-scoped deletes on the PostgreSQL layer.
+            const { deletedTotal, deletedByTable } = await this.store.pruneOperationalLogsAsync(days * 86_400_000);
             const detail = Object.entries(deletedByTable)
               .filter(([, n]) => n > 0)
               .map(([t, n]) => `${t}=${n}`)
@@ -5161,14 +5150,28 @@ export class SelfHealingManager {
 
   async reconcileSoftDeletedColumnDrift(): Promise<{ reconciled: number }> {
     try {
-      // FNXC:RuntimeSatelliteAsync 2026-06-24-22:00:
-      // In backend mode, the sync SQLite database is not available. The
-      // column-drift reconciliation uses direct SQL against the sync DB.
-      // Backend mode does not need this reconciliation (PostgreSQL enforces
-      // constraints at the DB level), so skip it.
-      if (this.store.isBackendMode()) return { reconciled: 0 };
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return { reconciled: 0 };
+
+      if (this.store.isBackendMode()) {
+        /*
+        FNXC:PostgresSoftDeleteRepair 2026-07-14-17:32:
+        PostgreSQL constraints do not prevent a soft-deleted task from drifting out of the archived column. Run the same per-row repair and durable audit contract as the legacy store instead of silently skipping the invariant.
+        */
+        const auditor = createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("fn5566-soft-delete-column", "global"),
+          agentId: "self-healing",
+          phase: "reconcile-soft-delete-column-drift",
+        });
+        return this.store.reconcileSoftDeletedColumnDriftBackend(async (candidate) => {
+          await auditor.database({
+            type: "task:soft-delete-column-reconciled",
+            target: candidate.id,
+            metadata: { previousColumn: candidate.previousColumn },
+          });
+          log.log(`[self-heal] reconcile-soft-delete-column-drift: ${candidate.id} previous=${candidate.previousColumn} → archived`);
+        });
+      }
 
       const db = this.store.getDatabase();
       // FN-5147 invariant: only rows with deletedAt are eligible, so live
@@ -12025,7 +12028,7 @@ export class SelfHealingManager {
       }
 
       if (prunedBranches.length > 0) {
-        const cleared = this.store.clearStaleExecutionStartBranchReferences(prunedBranches);
+        const cleared = await this.store.clearStaleExecutionStartBranchReferences(prunedBranches);
         if (cleared.length > 0) {
           log.log(`Cleared stale baseBranch on ${cleared.length} task(s): ${cleared.join(", ")}`);
         }

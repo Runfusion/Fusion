@@ -1,11 +1,11 @@
 import { watch, type FSWatcher } from "node:fs";
 
 /**
- * FNXC:CoreStores 2026-07-09-14:20:
- * `TaskStore` and `AgentStore` both need cross-process change detection over
- * the shared `.fusion/fusion.db` — an in-process instance must notice writes
- * made by ANOTHER process (or another store instance) sharing the same DB
- * file, without a message bus. Both stores independently hand-rolled the
+ * FNXC:CoreStores 2026-07-14-18:49:
+ * `TaskStore` and `AgentStore` historically needed filesystem polling for
+ * SQLite. The controller remains a compatibility lifecycle primitive while
+ * PostgreSQL-backed stores use the shared database as their change source.
+ * Both stores independently hand-rolled the
  * identical mechanism: a fail-soft `fs.watch()` fast-path nudge (some
  * platforms/filesystems don't support it) plus an always-on `setInterval`
  * poll fallback, with identical teardown. `FsWatchPollController` owns ONLY

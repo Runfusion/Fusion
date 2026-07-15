@@ -1,5 +1,6 @@
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 type NormalizedAuditEvent = import("../routes.js").NormalizedRunAuditEvent;
 type TimelineEntry = import("../routes.js").TimelineEntry;
@@ -640,13 +641,10 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
       }
       const limit = Math.min(rawLimit, 30);
 
-      // FNXC:RuntimeSatelliteAsync 2026-06-24-13:05:
-      // In backend mode, read prompt sizes via the async layer's raw query
-      // against PostgreSQL jsonb. The SQLite path uses json_extract.
-      const asyncLayer = scopedStore.getAsyncLayer();
-      if (asyncLayer) {
-        const { drizzleSql: sql } = await import("@fusion/core");
-        const pgRows = await asyncLayer.db.execute(sql`
+      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Agent prompt-size telemetry is PostgreSQL-only and must not fall back to SQLite JSON extraction. */
+      const asyncLayer = requireAsyncLayer(scopedStore, "Agent prompt-size telemetry");
+      const { drizzleSql: sql } = await import("@fusion/core");
+      const pgRows = await asyncLayer.db.execute(sql`
           SELECT
             id AS "runId",
             started_at AS "createdAt",
@@ -662,37 +660,13 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
           ORDER BY started_at DESC
           LIMIT ${limit}
         `);
-        res.json(pgRows as unknown as Array<{
-          runId: string;
-          createdAt: string;
-          systemChars: number;
-          execChars: number;
-          totalChars: number;
-        }>);
-        return;
-      }
-
-      const rows = scopedStore.getDatabase().prepare(`
-        SELECT
-          id AS runId,
-          startedAt AS createdAt,
-          COALESCE(length(json_extract(data, '$.systemPrompt')), 0) AS systemChars,
-          COALESCE(length(json_extract(data, '$.executionPrompt')), 0) AS execChars,
-          COALESCE(length(json_extract(data, '$.systemPrompt')), 0)
-            + COALESCE(length(json_extract(data, '$.executionPrompt')), 0) AS totalChars
-        FROM agentRuns
-        WHERE json_extract(data, '$.agentId') = ?
-        ORDER BY startedAt DESC
-        LIMIT ?
-      `).all(req.params.id, limit) as Array<{
+      res.json(pgRows as unknown as Array<{
         runId: string;
         createdAt: string;
         systemChars: number;
         execChars: number;
         totalChars: number;
-      }>;
-
-      res.json(rows);
+      }>);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -1490,7 +1464,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
       const filters = parseRunAuditFilters(req.query as Record<string, unknown>);
 
       // Query run-audit events with runId as the primary filter
-      const auditEvents = scopedStore.getRunAuditEvents({
+      const auditEvents = await scopedStore.getRunAuditEventsAsync({
         runId: req.params.runId,
         taskId: filters.taskId,
         domain: filters.domain,
@@ -1503,7 +1477,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
       const normalizedEvents = auditEvents.map(normalizeRunAuditEvent);
 
       // Get total count (without limit) for pagination metadata
-      const totalEvents = scopedStore.getRunAuditEvents({
+      const totalEvents = await scopedStore.getRunAuditEventsAsync({
         runId: req.params.runId,
         taskId: filters.taskId,
         domain: filters.domain,
@@ -1558,7 +1532,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
         throw notFound("Run not found");
       }
 
-      const goalEvents = scopedStore.getRunAuditEvents({
+      const goalEvents = await scopedStore.getRunAuditEventsAsync({
         runId: req.params.runId,
         domain: "database",
       });
@@ -1639,7 +1613,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
       const auditTaskId = (filters.taskId ?? run.contextSnapshot?.taskId ?? undefined) as string | undefined;
 
       // Query run-audit events
-      const auditEvents = scopedStore.getRunAuditEvents({
+      const auditEvents = await scopedStore.getRunAuditEventsAsync({
         runId: req.params.runId,
         taskId: auditTaskId,
         domain: filters.domain,

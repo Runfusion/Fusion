@@ -24,7 +24,7 @@ import { OVERSEER_INTERVENTION_MUTATION } from "./types.js";
 /** Minimal store seam this module depends on (satisfied by `TaskStore`). */
 export interface PlannerInterventionStore {
   recordRunAuditEvent(input: RunAuditEventInput): RunAuditEvent | Promise<RunAuditEvent>;
-  getRunAuditEvents(options?: RunAuditEventFilter): RunAuditEvent[];
+  getRunAuditEventsAsync(options?: RunAuditEventFilter): Promise<RunAuditEvent[]>;
 }
 
 /** Input for recording a planner-intervention timeline entry. */
@@ -166,12 +166,12 @@ export function parseInterventionEntry(event: RunAuditEvent): PlannerInterventio
 }
 
 /** Reads the planner-intervention timeline for a task, newest-first. Returns `[]` when there are none. */
-export function getPlannerInterventionTimeline(
+export async function getPlannerInterventionTimeline(
   store: PlannerInterventionStore,
   taskId: string,
   opts?: { limit?: number },
-): PlannerInterventionEntry[] {
-  const events = store.getRunAuditEvents({
+): Promise<PlannerInterventionEntry[]> {
+  const events = await store.getRunAuditEventsAsync({
     taskId,
     mutationType: OVERSEER_INTERVENTION_MUTATION,
     limit: opts?.limit,

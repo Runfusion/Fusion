@@ -141,15 +141,18 @@ export interface CliPressStore {
   updateService(id: string, updates: ServiceUpdateInput): Promise<Service>;
   deleteService(id: string): Promise<void>;
   listSpecs(serviceId: string): Promise<CliSpec[]>;
+  listAllSpecs(): Promise<CliSpec[]>;
   getSpec(id: string): Promise<CliSpec | undefined>;
   createSpec(input: CliSpecCreateInput): Promise<CliSpec>;
   updateSpec(id: string, updates: CliSpecUpdateInput): Promise<CliSpec>;
   deleteSpec(id: string): Promise<void>;
   listArtifacts(specId: string): Promise<CliArtifact[]>;
+  listAllArtifacts(): Promise<CliArtifact[]>;
   createArtifact(input: CliArtifactCreateInput): Promise<CliArtifact>;
   updateArtifact(id: string, updates: CliArtifactUpdateInput): Promise<CliArtifact>;
   deleteArtifact(id: string): Promise<void>;
   listCredentials(serviceId: string): Promise<Credential[]>;
+  listAllCredentials(): Promise<Credential[]>;
   createCredential(input: CredentialCreateInput): Promise<Credential>;
   updateCredential(id: string, updates: CredentialUpdateInput): Promise<Credential>;
   deleteCredential(id: string): Promise<void>;
@@ -418,6 +421,19 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       return rows.map(mapSpec);
     },
 
+    /*
+    FNXC:CliPrintingPressRuntime 2026-07-14-18:45:
+    Executor environment construction runs for every dispatched task. Fetch each plugin table once so PostgreSQL round trips remain constant as services and historical specs grow.
+    */
+    async listAllSpecs(): Promise<CliSpec[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressSpecs).orderBy(desc(cliPressSpecs.createdAt));
+        return (rows as CliSpecRow[]).map(mapSpec);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_cli_specs ORDER BY createdAt DESC").all() as unknown as CliSpecRow[];
+      return rows.map(mapSpec);
+    },
+
     async getSpec(id: string): Promise<CliSpec | undefined> {
       if (asyncLayer) {
         const rows = await asyncLayer.db
@@ -501,6 +517,15 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       return rows.map(mapArtifact);
     },
 
+    async listAllArtifacts(): Promise<CliArtifact[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressArtifacts).orderBy(desc(cliPressArtifacts.createdAt));
+        return (rows as CliArtifactRow[]).map(mapArtifact);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_artifacts ORDER BY createdAt DESC").all() as unknown as CliArtifactRow[];
+      return rows.map(mapArtifact);
+    },
+
     async createArtifact(input: CliArtifactCreateInput): Promise<CliArtifact> {
       const artifact: CliArtifact = { id: createId("art"), ...input, createdAt: nowIso(), updatedAt: nowIso() };
       if (asyncLayer) {
@@ -578,6 +603,15 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         return (rows as CredentialRow[]).map(mapCredential);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_credentials WHERE serviceId = ? ORDER BY createdAt DESC").all(serviceId) as unknown as CredentialRow[];
+      return rows.map(mapCredential);
+    },
+
+    async listAllCredentials(): Promise<Credential[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressCredentials).orderBy(desc(cliPressCredentials.createdAt));
+        return (rows as CredentialRow[]).map(mapCredential);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_credentials ORDER BY createdAt DESC").all() as unknown as CredentialRow[];
       return rows.map(mapCredential);
     },
 

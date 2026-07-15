@@ -1986,7 +1986,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const scopes = await scopedStore.getSettingsByScopeFast();
       res.json({
         ...scopes,
-        workflowSettings: scopedStore.listWorkflowSettingValuesForProject(),
+        workflowSettings: await scopedStore.listWorkflowSettingValuesForProject(),
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

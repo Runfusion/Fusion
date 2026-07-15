@@ -200,18 +200,18 @@ If all resolution methods fail, terminal creation gracefully returns `null`, whi
 
 **Cross-compilation:** Native assets are staged per-platform during build. When cross-compiling, only the target platform's assets are included. PTY functionality requires running on a platform with matching native assets.
 
-### Known Bun `node:sqlite` Limitation
+### Legacy migration `node:sqlite` compatibility
 
-Bun-compiled standalone binaries may encounter a `No such built-in module: node:sqlite` error at startup. This happens because Bun's compiler does not include the full `node:sqlite` built-in module in all compilation targets.
+Bun-compiled standalone binaries may encounter a `No such built-in module: node:sqlite` error when a command explicitly inspects or imports a retained legacy SQLite database. This happens because Bun's compiler does not include the full `node:sqlite` built-in module in all compilation targets.
 
-**Impact:** When this error occurs, the binary exits immediately. This affects any command that initializes the SQLite-backed task store, including `dashboard`, `task list`, and `task create`. Commands that don't need the store (like `--help`) continue to work.
+**Impact:** PostgreSQL is the mandatory runtime store, so ordinary dashboard/task operation does not use SQLite as a fallback. The error blocks only the legacy migration/identity-validation seam that requested SQLite access; commands that do not inspect a legacy source continue normally.
 
 **Detection:** The startup validation test suite treats this specific error as an expected limitation — it is not misinterpreted as a generic dashboard startup failure. The test probe distinguishes between:
 
 | Outcome | Behavior |
 |---------|----------|
 | Startup banner detected | Full test proceeds (PTY endpoint verification) |
-| `node:sqlite` error in output | Test skips cleanly (known Bun limitation) |
+| `node:sqlite` error in an explicit legacy-migration probe | Test skips cleanly (known Bun limitation) |
 | Other early exit | Test fails with diagnostic output |
 
-Only the exact `node:sqlite` built-in module error is handled specially. Any other exit or crash during startup is treated as a real regression and fails the test with full process output for debugging.
+Only the exact `node:sqlite` built-in module error from a legacy-migration probe is handled specially. Any other exit or crash during startup is treated as a real regression and fails the test with full process output for debugging.

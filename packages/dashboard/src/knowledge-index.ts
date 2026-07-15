@@ -4,8 +4,8 @@
  * A persistent, incrementally-refreshed knowledge layer that downstream agents
  * can query. Each "page" captures the durable, queryable summary of one source
  * (currently one page per completed task; PR-history pages share the same row
- * shape). Pages are stored in the `knowledge_pages` SQLite table (schema +
- * migration 119 in `packages/core/src/db.ts`).
+ * shape). Pages are stored in the project-owned `knowledge_pages` table; the
+ * runtime uses the project-scoped PostgreSQL persistence API.
  *
  * ## Delta over `insights` / `memoryView`
  *
@@ -28,11 +28,9 @@
  *
  * ## Search
  *
- * Matching is plain keyword `LIKE` over a denormalized lowercased `searchText`
- * column (AND-of-terms), deliberately avoiding SQLite FTS5 — FTS5 is not
- * available on every SQLite build the engine runs on (see `probeFts5` in
- * `db.ts`), and the plan scopes this unit to "SQLite full-text/keyword search,
- * NOT an external embedding API".
+ * Matching is portable keyword `LIKE` over a denormalized lowercased
+ * `searchText` column (AND-of-terms), deliberately avoiding backend-specific
+ * full-text extensions and external embedding APIs.
  *
  * ## Security
  *
@@ -43,7 +41,13 @@
  * content, so it is an information-disclosure surface, never an open endpoint.
  */
 
-import type { Database, TaskStore } from "@fusion/core";
+import {
+  countKnowledgePagesInPostgres,
+  queryKnowledgePagesInPostgres,
+  upsertKnowledgePageInPostgres,
+  type AsyncDataLayer,
+  type TaskStore,
+} from "@fusion/core";
 
 /** The kind of source a knowledge page was indexed from. */
 export type KnowledgeSourceKind = "task" | "pr";
@@ -63,7 +67,7 @@ export interface KnowledgePage {
   updatedAt: string;
 }
 
-/** Input for {@link upsertKnowledgePage}. */
+/** Input for {@link upsertKnowledgePageAsync}. */
 export interface KnowledgePageInput {
   sourceKind: KnowledgeSourceKind;
   sourceId: string;
@@ -75,51 +79,9 @@ export interface KnowledgePageInput {
   now?: string;
 }
 
-interface KnowledgePageRow {
-  id: number;
-  sourceKind: string;
-  sourceId: string;
-  sourceKey: string;
-  title: string;
-  summary: string | null;
-  content: string;
-  tags: string | null;
-  searchText: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 /** Maximum number of pages a single keyword query returns. */
 export const KNOWLEDGE_QUERY_DEFAULT_LIMIT = 20;
 export const KNOWLEDGE_QUERY_MAX_LIMIT = 100;
-
-function sourceKeyFor(kind: KnowledgeSourceKind, id: string): string {
-  return `${kind}:${id}`;
-}
-
-function rowToPage(row: KnowledgePageRow): KnowledgePage {
-  let tags: string[] = [];
-  if (row.tags) {
-    try {
-      const parsed = JSON.parse(row.tags) as unknown;
-      if (Array.isArray(parsed)) tags = parsed.filter((t): t is string => typeof t === "string");
-    } catch {
-      tags = [];
-    }
-  }
-  return {
-    id: row.id,
-    sourceKind: row.sourceKind as KnowledgeSourceKind,
-    sourceId: row.sourceId,
-    sourceKey: row.sourceKey,
-    title: row.title,
-    summary: row.summary,
-    content: row.content,
-    tags,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
 
 /**
  * Build the denormalized, lowercased search blob a page is matched against.
@@ -154,81 +116,15 @@ export function tokenizeQuery(query: string): string[] {
     .filter((t) => t.length > 0);
 }
 
-/**
- * Insert or update a knowledge page, keyed by `(sourceKind, sourceId)`.
- *
- * **Incremental by construction:** only the row for this source is touched, so a
- * refresh of one task never rewrites (or re-timestamps) any other page. On an
- * update, `createdAt` is preserved and only `updatedAt` advances.
- *
- * @returns the upserted page and whether it was newly created.
- */
-export function upsertKnowledgePage(
-  db: Database,
+/** PostgreSQL implementation of the incremental knowledge-page upsert. */
+export async function upsertKnowledgePageAsync(
+  layer: AsyncDataLayer,
   input: KnowledgePageInput,
-): { page: KnowledgePage; created: boolean } {
-  const now = input.now ?? new Date().toISOString();
-  const sourceKey = sourceKeyFor(input.sourceKind, input.sourceId);
-  const tags = input.tags ?? [];
-  const searchText = buildSearchText({
-    title: input.title,
-    summary: input.summary,
-    content: input.content,
-    tags,
-  });
-  const tagsJson = JSON.stringify(tags);
-
-  const existing = db
-    .prepare("SELECT * FROM knowledge_pages WHERE sourceKey = ?")
-    .get(sourceKey) as KnowledgePageRow | undefined;
-
-  if (existing) {
-    db.prepare(
-      `UPDATE knowledge_pages
-         SET title = ?, summary = ?, content = ?, tags = ?, searchText = ?, updatedAt = ?
-       WHERE sourceKey = ?`,
-    ).run(input.title, input.summary ?? null, input.content, tagsJson, searchText, now, sourceKey);
-    const updated = db
-      .prepare("SELECT * FROM knowledge_pages WHERE sourceKey = ?")
-      .get(sourceKey) as KnowledgePageRow;
-    return { page: rowToPage(updated), created: false };
-  }
-
-  db.prepare(
-    `INSERT INTO knowledge_pages
-       (sourceKind, sourceId, sourceKey, title, summary, content, tags, searchText, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    input.sourceKind,
-    input.sourceId,
-    sourceKey,
-    input.title,
-    input.summary ?? null,
-    input.content,
-    tagsJson,
-    searchText,
-    now,
-    now,
-  );
-  const inserted = db
-    .prepare("SELECT * FROM knowledge_pages WHERE sourceKey = ?")
-    .get(sourceKey) as KnowledgePageRow;
-  return { page: rowToPage(inserted), created: true };
+): Promise<{ page: KnowledgePage; created: boolean }> {
+  return upsertKnowledgePageInPostgres(layer, input, buildSearchText(input));
 }
 
-/** Fetch a single page by its source identity, or `undefined`. */
-export function getKnowledgePage(
-  db: Database,
-  sourceKind: KnowledgeSourceKind,
-  sourceId: string,
-): KnowledgePage | undefined {
-  const row = db
-    .prepare("SELECT * FROM knowledge_pages WHERE sourceKey = ?")
-    .get(sourceKeyFor(sourceKind, sourceId)) as KnowledgePageRow | undefined;
-  return row ? rowToPage(row) : undefined;
-}
-
-/** Options for {@link queryKnowledgePages}. */
+/** Options for {@link queryKnowledgePagesAsync}. */
 export interface KnowledgeQueryOptions {
   query: string;
   sourceKind?: KnowledgeSourceKind;
@@ -240,42 +136,32 @@ export interface KnowledgeQueryOptions {
  * query terms (AND), most-recently-updated first. A blank/termless query returns
  * an empty list rather than the whole index.
  */
-export function queryKnowledgePages(db: Database, options: KnowledgeQueryOptions): KnowledgePage[] {
+/** Project-scoped PostgreSQL keyword search with the same AND-of-terms semantics. */
+export async function queryKnowledgePagesAsync(
+  layer: AsyncDataLayer,
+  options: KnowledgeQueryOptions,
+): Promise<KnowledgePage[]> {
   const terms = tokenizeQuery(options.query);
   if (terms.length === 0) return [];
-
   const limit = Math.min(
     Math.max(1, options.limit ?? KNOWLEDGE_QUERY_DEFAULT_LIMIT),
     KNOWLEDGE_QUERY_MAX_LIMIT,
   );
-
-  const clauses: string[] = [];
-  const params: string[] = [];
-  for (const term of terms) {
-    clauses.push("searchText LIKE ? ESCAPE '\\'");
-    params.push(`%${escapeLike(term)}%`);
-  }
-  if (options.sourceKind) {
-    clauses.push("sourceKind = ?");
-    params.push(options.sourceKind);
-  }
-
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-  const rows = db
-    .prepare(`SELECT * FROM knowledge_pages ${where} ORDER BY updatedAt DESC, id DESC LIMIT ?`)
-    .all(...params, limit) as KnowledgePageRow[];
-  return rows.map(rowToPage);
+  return queryKnowledgePagesInPostgres(layer, {
+    terms: terms.map(escapeLike),
+    sourceKind: options.sourceKind,
+    limit,
+  });
 }
 
-/** Escape SQLite `LIKE` wildcards in a term so user input can't inject them. */
+/** Escape SQL `LIKE` wildcards in a term so user input cannot inject them. */
 function escapeLike(term: string): string {
   return term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-/** Total number of pages in the index. */
-export function countKnowledgePages(db: Database): number {
-  const row = db.prepare("SELECT COUNT(*) AS count FROM knowledge_pages").get() as { count: number };
-  return row.count;
+/** Total number of knowledge pages in the bound PostgreSQL project. */
+export async function countKnowledgePagesAsync(layer: AsyncDataLayer): Promise<number> {
+  return countKnowledgePagesInPostgres(layer);
 }
 
 /**
@@ -337,24 +223,16 @@ export async function refreshKnowledgeForTask(
   options?: { now?: string },
 ): Promise<KnowledgePage | null> {
   try {
-    // FNXC:RuntimeSatelliteAsync 2026-06-24-22:10:
-    // In backend mode, the sync SQLite database is not available. Knowledge
-    // indexing uses direct SQL against the sync DB; skip in backend mode
-    // until the async knowledge index path is implemented.
-    if (store.isBackendMode()) return null;
     const detail = await store.getTask(taskId);
     if (!detail) return null;
 
     let commitSubjects: string[] = [];
     try {
       const lineageId = (detail as { lineageId?: string }).lineageId ?? detail.id;
-      const rows = store
-        .getDatabase()
-        .prepare(
-          "SELECT commitSubject FROM task_commit_associations WHERE taskLineageId = ? ORDER BY authoredAt ASC",
-        )
-        .all(lineageId) as Array<{ commitSubject: string }>;
-      commitSubjects = rows.map((r) => r.commitSubject);
+      const rows = await store.getTaskCommitAssociationsByLineageId(lineageId);
+      commitSubjects = [...rows]
+        .sort((a, b) => a.authoredAt.localeCompare(b.authoredAt))
+        .map((row) => row.commitSubject);
     } catch {
       commitSubjects = [];
     }
@@ -371,13 +249,10 @@ export async function refreshKnowledgeForTask(
     });
     if (options?.now) input.now = options.now;
 
-    // FNXC:PostgresCutover 2026-06-27-09:50:
-    // Knowledge index uses sync SQLite; skip in backend mode.
-    if (store.isBackendMode?.() ?? store.backendMode) {
-      return null;
-    }
-    const { page } = upsertKnowledgePage(store.getDatabase(), input);
-    return page;
+    /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Completed-task knowledge is PostgreSQL-only; missing layer wiring fails this best-effort refresh instead of writing a hidden SQLite index. */
+    const layer = store.getAsyncLayer();
+    if (!layer) throw new Error("Knowledge refresh requires the project PostgreSQL AsyncDataLayer");
+    return (await upsertKnowledgePageAsync(layer, input)).page;
   } catch (err) {
     console.warn(`[knowledge-index] refresh skipped for task ${taskId}:`, err);
     return null;

@@ -287,26 +287,28 @@ export async function runServe(
    * the TaskStore) as the externalTaskStore for the cwd project's engine so
    * the connection pool is shared — no second embedded PG instance is started.
    */
-  let centralBootResult: { taskStore: import("@fusion/core").TaskStore; asyncLayer: import("@fusion/core").AsyncDataLayer; shutdown: () => Promise<void> } | null = null;
+  const { createTaskStoreForBackend } = await import("@fusion/core");
+  /*
+   * FNXC:PostgresFinalCutover 2026-07-14-17:20:
+   * Serve must share one successfully booted PostgreSQL layer between CentralCore and the cwd engine. A backend boot error is fatal; constructing a layerless CentralCore would make project discovery appear empty and split control-plane state.
+   */
+  const centralBootResult = await createTaskStoreForBackend({ rootDir: cwd });
+  let centralBackendShutdownPromise: Promise<void> | undefined;
+  const shutdownCentralBackendOnce = (): Promise<void> => {
+    centralBackendShutdownPromise ??= centralBootResult.shutdown();
+    return centralBackendShutdownPromise;
+  };
+  sharedCentralCore = new CentralCore(undefined, { asyncLayer: centralBootResult.asyncLayer });
   try {
-    const { createTaskStoreForBackend } = await import("@fusion/core");
-    centralBootResult = await createTaskStoreForBackend({ rootDir: cwd });
-    if (centralBootResult) {
-      sharedCentralCore = new CentralCore(undefined, { asyncLayer: centralBootResult.asyncLayer });
-    } else {
-      sharedCentralCore = new CentralCore();
-    }
     await sharedCentralCore.init();
-  } catch {
-    if (!sharedCentralCore) {
-      sharedCentralCore = new CentralCore();
-      try {
-        await sharedCentralCore.init();
-      } catch {
-        // Non-fatal — engine uses fallback defaults
-      }
-    }
+  } catch (error) {
+    /* FNXC:PostgresServeLifecycle 2026-07-14-18:03: A failed shared CentralCore boot occurs before serve installs signal teardown, so release the sole shared TaskStore pool and embedded lifecycle here. */
+    await shutdownCentralBackendOnce().catch(() => undefined);
+    throw error;
   }
+
+  let startupEngineManager: ProjectEngineManager | undefined;
+  try {
 
   // ── ProjectEngineManager: uniform engine lifecycle for all projects ──
   //
@@ -363,24 +365,13 @@ export async function runServe(
     }
   };
 
-  if (!sharedCentralCore) {
-    sharedCentralCore = new CentralCore();
-    try {
-      await sharedCentralCore.init();
-    } catch {
-      // Non-fatal — engine uses fallback defaults
-    }
-  }
-
-  if (sharedCentralCore) {
-    const registered = await ensureCwdProjectRegistered({
-      cwd,
-      central: sharedCentralCore,
-      logPrefix: "serve",
-      autoRegister: !opts.noAutoRegister,
-    });
-    ntfyProjectId = registered?.id;
-  }
+  const registered = await ensureCwdProjectRegistered({
+    cwd,
+    central: sharedCentralCore,
+    logPrefix: "serve",
+    autoRegister: !opts.noAutoRegister,
+  });
+  ntfyProjectId = registered?.id;
 
   try {
     registerGithubTrackingHook?.();
@@ -391,7 +382,7 @@ export async function runServe(
   const resolvedCliPackageVersion = getCliPackageVersion(import.meta.url);
   const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
 
-  const engineManager = new ProjectEngineManager(sharedCentralCore, {
+  const engineManager = startupEngineManager = new ProjectEngineManager(sharedCentralCore, {
     cliPackageVersion,
     getMergeStrategy,
     processPullRequestMerge: (s, wd, taskId, pool) =>
@@ -404,9 +395,8 @@ export async function runServe(
     onInsightRunProcessed: (s: unknown, r: unknown) => onMemoryInsightRunProcessed(s as ScheduledTask, r as AutomationRunResult),
     // FNXC:SqliteFinalRemoval 2026-06-26-11:15: share the central boot's TaskStore
     // as the externalTaskStore so the cwd engine reuses the same connection pool
-    // (no second embedded PG). When centralBootResult is null (legacy mode), the
-    // engine creates its own TaskStore via createTaskStoreForBackend as before.
-    ...(centralBootResult ? { externalTaskStore: centralBootResult.taskStore } : {}),
+    // (no second embedded PG).
+    externalTaskStore: centralBootResult.taskStore,
   });
 
   // Start engines for all registered projects eagerly
@@ -627,21 +617,13 @@ export async function runServe(
     const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
     if (schemaHooks.length > 0) {
       try {
-        /*
-         * FNXC:SqliteFinalRemoval 2026-06-25-16:25:
-         * In backend mode (PostgreSQL), plugin schema inits are handled by the
-         * Drizzle schema applier at startup, not the SQLite Database class.
-         * Skip the SQLite-specific runPluginSchemaInits path in backend mode.
-         */
-        if (store.isBackendMode()) {
-          console.log("[plugins] Schema initialization skipped — backend mode (PostgreSQL Drizzle migrations)");
-        } else {
-          await store.getDatabase().runPluginSchemaInits(schemaHooks);
-        }
+        /* FNXC:PluginPostgresSchema 2026-07-14-17:30: Runtime-loaded plugins execute their backend-specific schema contract; PostgreSQL never evaluates legacy SQLite SQL. */
+        await store.runPluginSchemaInits(schemaHooks);
       } catch (err) {
         console.error(
           `[plugins] Schema initialization failed: ${err instanceof Error ? err.message : err}`,
         );
+        throw err;
       }
     }
   } catch (err) {
@@ -1058,15 +1040,6 @@ export async function runServe(
   // If it wasn't initialized successfully, create a new one for node registration.
   //
   let centralCore: CentralCore | null = sharedCentralCore;
-  // sharedCentralCore was already init'd; if null, try again for node registration
-  if (!centralCore) {
-    try {
-      centralCore = new CentralCore();
-      await centralCore.init();
-    } catch {
-      centralCore = null;
-    }
-  }
   let localNodeId: string | undefined;
 
   try {
@@ -1113,7 +1086,7 @@ export async function runServe(
   }
   console.log();
 
-  let shuttingDown = false;
+  let shutdownPromise: Promise<void> | undefined;
 
   /*
   FNXC:DaemonSignalExit 2026-07-10-14:00:
@@ -1126,9 +1099,6 @@ export async function runServe(
   const SIGNAL_EXIT_CODES: Record<string, number> = { SIGINT: 130, SIGTERM: 143 };
 
   const shutdown = async (signal?: NodeJS.Signals) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-
     // Log active handles at shutdown for diagnostics
     const handleTypes: Record<string, number> = {};
     try {
@@ -1147,12 +1117,14 @@ export async function runServe(
       // Ignore errors getting handle types
     }
 
-    if (hybridExecutor) {
-      await hybridExecutor.shutdown();
-    }
+    if (hybridExecutor) await hybridExecutor.shutdown().catch((error) => {
+      console.warn(`[serve] Hybrid executor shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
 
     // Stop all project engines uniformly
-    await engineManager.stopAll();
+    await engineManager.stopAll().catch((error) => {
+      console.warn(`[serve] Engine shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
 
     // Stop peer exchange service
     if (peerExchangeService) {
@@ -1194,16 +1166,36 @@ export async function runServe(
       // best-effort
     }
 
-    stopDiagnosticInterval();
-    store.close();
+    try {
+      stopDiagnosticInterval();
+    } catch (error) {
+      console.warn(`[serve] Diagnostic teardown failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    /*
+     * FNXC:PostgresServeLifecycle 2026-07-14-18:08:
+     * The serve bootstrap owns the TaskStore pool and any embedded PostgreSQL
+     * process because its runtime receives that store externally. Release the
+     * complete boot result after every engine and CentralCore user has stopped.
+     */
+    await shutdownCentralBackendOnce().catch((error) => {
+      console.warn(`[serve] PostgreSQL shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
     process.exit(signal ? (SIGNAL_EXIT_CODES[signal] ?? 128) : 0);
   };
 
+  /* FNXC:PostgresServeLifecycle 2026-07-14-19:10: Every shutdown request observes the same promise so repeated signals cannot duplicate pool/postmaster teardown and asynchronous failures are never left as unhandled rejections. */
+  const requestShutdown = (signal?: NodeJS.Signals): void => {
+    shutdownPromise ??= shutdown(signal);
+    void shutdownPromise.catch((error) => {
+      console.error(`[serve] Shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+
   process.on("SIGINT", () => {
-    void shutdown("SIGINT");
+    requestShutdown("SIGINT");
   });
   process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
+    requestShutdown("SIGTERM");
   });
 
   // Ignore SIGHUP so the server survives SSH session disconnects.
@@ -1213,4 +1205,11 @@ export async function runServe(
   process.on("SIGHUP", () => {
     console.log("[serve] Received SIGHUP (terminal disconnected) — ignoring");
   });
+  } catch (error) {
+    /* FNXC:PostgresServeLifecycle 2026-07-14-19:10: Any startup failure after the shared PostgreSQL boot must unwind partially-started engines and CentralCore before releasing the sole backend owner exactly once. */
+    await startupEngineManager?.stopAll().catch(() => undefined);
+    await sharedCentralCore?.close().catch(() => undefined);
+    await shutdownCentralBackendOnce().catch(() => undefined);
+    throw error;
+  }
 }

@@ -1,4 +1,5 @@
 import { definePlugin } from "@fusion/plugin-sdk";
+import type { AsyncDataLayer } from "@fusion/core";
 import type { FusionPlugin, PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/plugin-sdk";
 import { createNotifier } from "./notifier.js";
 import { requestReview, startWork } from "./agent-actions.js";
@@ -17,25 +18,21 @@ import {
 import { WebhookGlassesTransport } from "./transport.js";
 import { createTransportRoutes } from "./routes/transport-routes.js";
 
-export type PluginDb = {
-  exec(sql: string): void;
-  prepare(sql: string): {
-    get(...args: unknown[]): unknown;
-    all(...args: unknown[]): unknown;
-    run(...args: unknown[]): unknown;
-  };
-};
-
 type PluginInstance = {
   transport: WebhookGlassesTransport;
   notifier: ReturnType<typeof createNotifier>;
 };const instances = new Map<string, PluginInstance>();
 
-function getDbFromTaskStore(ctx: PluginContext): PluginDb {
-  const pluginStore = ctx.taskStore.getPluginStore();
-  const db = (pluginStore as unknown as { db?: PluginDb }).db;
-  if (!db) throw new Error("Plugin database unavailable");
-  return db;
+function getPersistenceFromTaskStore(ctx: PluginContext): AsyncDataLayer {
+  /*
+  FNXC:EvenRealitiesPostgres 2026-07-14-17:55:
+  The glasses notifier is a PostgreSQL-only runtime. It must receive the project TaskStore's bound AsyncDataLayer and fail loudly when unavailable; private PluginStore database casts and synchronous SQLite prepare/exec fallbacks are forbidden after cutover.
+  */
+  const layer = ctx.taskStore.getAsyncLayer();
+  if (!layer?.projectId?.trim()) {
+    throw new Error("Even Realities plugin requires a project-bound PostgreSQL AsyncDataLayer");
+  }
+  return layer;
 }
 
 function getInstanceOrResponse(ctx: PluginContext): { instance?: PluginInstance; error?: PluginRouteResponse } {
@@ -91,22 +88,13 @@ const plugin: FusionPlugin = definePlugin({
   state: "installed",
   routes: [...coreRoutes, ...boardRoutes, ...quickCaptureRoutes, ...agentActionRoutes, ...notificationRoutes, ...transportRoutes],
   hooks: {
-    onSchemaInit: (db) => {
-      (db as PluginDb).exec(`
-        CREATE TABLE IF NOT EXISTS even_realities_seen_tasks (
-          taskId TEXT PRIMARY KEY,
-          lastColumn TEXT NOT NULL,
-          updatedAt TEXT NOT NULL
-        )
-      `);
-    },
     onLoad: async (ctx) => {
       const token = getFusionToken(ctx.settings);
       if (!token) {
         ctx.logger.warn("fusionApiToken is missing; even-realities plugin not initialized");
         return;
       }
-      const db = getDbFromTaskStore(ctx);
+      const layer = getPersistenceFromTaskStore(ctx);
       const transport = new WebhookGlassesTransport({
         companionWebhookUrl: getCompanionWebhookUrl(ctx.settings),
       });
@@ -138,7 +126,7 @@ const plugin: FusionPlugin = definePlugin({
 
       const notifier = createNotifier({
         taskStore: ctx.taskStore,
-        db,
+        layer,
         transport,
         settings: ctx.settings,
         logger: ctx.logger,
