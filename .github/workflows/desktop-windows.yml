@@ -58,18 +58,33 @@ jobs:
           $user = "fusion-pg"
           $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
           net user $user $pass /y 2>&1 | Out-Null
-          # Grant the helper user (via BUILTIN\Users) access to the workspace,
-          # the pnpm store, and the pnpm/node tooling so it can run the test.
-          icacls D:\a\Fusion\Fusion /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
-          icacls D:\.pnpm-store /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
-          icacls C:\Users\runneradmin /grant "*S-1-5-32-545:RX" /C 2>&1 | Out-Null
-          icacls C:\Users\runneradmin\setup-pnpm /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          # FNXC:WindowsDesktopPackaging 2026-07-15-11:15:
+          # Grant BUILTIN\Users access only on paths the smoke needs. Do NOT
+          # recursive-icacls the whole monorepo/node_modules tree — that alone
+          # took ~30–40 minutes on windows-latest and dominated the job.
+          # Non-recursive grants on ancestors + recursive only on packages/core
+          # and the pnpm virtual-store roots the filter needs to load.
+          $repo = "D:\a\Fusion\Fusion"
+          $users = "*S-1-5-32-545"
+          foreach ($p in @($repo, "$repo\packages", "$repo\node_modules", "D:\.pnpm-store")) {
+            if (Test-Path $p) { icacls $p /grant "${users}:(OI)(CI)RX" /C 2>&1 | Out-Null }
+          }
+          icacls "$repo\packages\core" /grant "${users}:(OI)(CI)M" /T /C 2>&1 | Out-Null
+          # pnpm store + .pnpm virtual store: RX so require() can load packages.
+          if (Test-Path "D:\.pnpm-store") { icacls "D:\.pnpm-store" /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null }
+          if (Test-Path "$repo\node_modules\.pnpm") {
+            icacls "$repo\node_modules\.pnpm" /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          }
+          icacls C:\Users\runneradmin /grant "${users}:RX" /C 2>&1 | Out-Null
+          if (Test-Path "C:\Users\runneradmin\setup-pnpm") {
+            icacls C:\Users\runneradmin\setup-pnpm /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          }
           $nodeDir = Split-Path (Get-Command node).Source -Parent
-          icacls $nodeDir /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
+          icacls $nodeDir /grant "${users}:(OI)(CI)RX" /T /C 2>&1 | Out-Null
           # Traversable HOME/TEMP for the helper user (its tmpdir() lands here).
           $h = "C:\fusionpg-home"
           New-Item -ItemType Directory -Force -Path "$h\tmp" | Out-Null
-          icacls $h /grant "*S-1-5-32-545:(OI)(CI)F" /T /C 2>&1 | Out-Null
+          icacls $h /grant "${users}:(OI)(CI)F" /T /C 2>&1 | Out-Null
           $pnpmDir = Split-Path (Get-Command pnpm).Source -Parent
           $bat = Join-Path $h "smoke.bat"
           Set-Content -Path $bat -Encoding ASCII -Value @(
