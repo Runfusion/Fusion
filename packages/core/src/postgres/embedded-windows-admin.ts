@@ -33,10 +33,12 @@ import { join, dirname } from "node:path";
 /** Handle returned by {@link startServerAsNonAdminUser}; call stop() to kill it. */
 export interface NonAdminServerHandle {
   /**
-   * Best-effort OS pid of the running postgres server (from postmaster.pid when
-   * available). May be the cmd wrapper pid until postmaster.pid appears.
+   * FNXC:WindowsDesktopPackaging 2026-07-15-00:15:
+   * OS pid of the postgres server from postmaster.pid only. Null when the file
+   * is not yet readable — never a silent substitute for the cmd.exe wrapper pid
+   * (review: callers must not taskkill the wrong process).
    */
-  readonly postgresPid: number;
+  readonly postgresPid: number | null;
   /** Stop the non-admin postgres process (taskkill). Safe to call once. */
   stop(): Promise<void>;
 }
@@ -130,6 +132,113 @@ function generatePassword(): string {
 }
 
 /**
+ * FNXC:WindowsDesktopPackaging 2026-07-15-00:15:
+ * Create or reset the local account password without putting the secret on
+ * process argv (review: Sysmon/Event 4688 command-line auditing). Uses ADSI
+ * SetPassword with the password supplied only on stdin to a short -File script.
+ */
+function ensureLocalUserPassword(user: string, password: string): void {
+  const powerShell = resolvePowerShell();
+  const runDir = join(
+    process.env.TEMP || process.env.TMP || process.env.LOCALAPPDATA || ".",
+    "fusion-pg-bootstrap",
+  );
+  mkdirSync(runDir, { recursive: true });
+  const scriptPath = join(runDir, "ensure-user.ps1");
+  writeFileSync(
+    scriptPath,
+    [
+      "param([string]$UserName)",
+      "$ErrorActionPreference='Stop'",
+      // Password only from stdin — never as a -Password parameter / argv token.
+      "$Password = [Console]::In.ReadLine()",
+      "if ([string]::IsNullOrEmpty($Password)) { throw 'empty password from stdin' }",
+      "$path = \"WinNT://./$UserName,user\"",
+      "$existing = $null",
+      "try { $existing = [ADSI]$path } catch { $existing = $null }",
+      "if ($existing -ne $null -and $existing.Path) {",
+      "  $existing.SetPassword($Password)",
+      "  $existing.SetInfo()",
+      "  Write-Output 'RESET'",
+      "} else {",
+      "  $computer = [ADSI]'WinNT://.'",
+      "  $u = $computer.Create('User', $UserName)",
+      "  $u.SetPassword($Password)",
+      "  $u.SetInfo()",
+      "  Write-Output 'CREATED'",
+      "}",
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
+  const result = spawnSync(
+    powerShell,
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-UserName", user],
+    { encoding: "utf8", input: `${password}\n` },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `embedded postgres: could not create/reset non-admin user '${user}' ` +
+        `(${powerShell} status=${result.status}: ` +
+        `${(result.stderr || result.stdout || "").trim().slice(0, 500)}).`,
+    );
+  }
+}
+
+/**
+ * FNXC:WindowsDesktopPackaging 2026-07-15-00:15:
+ * Remove the user from Administrators and verify via ADSI membership
+ * enumeration (locale-independent). Parsing `net localgroup` text fails on
+ * non-English Windows when the account is already not a member (review).
+ */
+function ensureUserNotInAdministrators(user: string): void {
+  const powerShell = resolvePowerShell();
+  const runDir = join(
+    process.env.TEMP || process.env.TMP || process.env.LOCALAPPDATA || ".",
+    "fusion-pg-bootstrap",
+  );
+  mkdirSync(runDir, { recursive: true });
+  const scriptPath = join(runDir, "demote-user.ps1");
+  writeFileSync(
+    scriptPath,
+    [
+      "param([string]$UserName)",
+      "$ErrorActionPreference='Continue'",
+      "$group = [ADSI]'WinNT://./Administrators,group'",
+      "try { $group.Remove(\"WinNT://./$UserName\") } catch { }",
+      "$names = New-Object System.Collections.Generic.List[string]",
+      "foreach ($m in @($group.psbase.Invoke('Members'))) {",
+      "  try {",
+      "    $n = $m.GetType().InvokeMember('Name','GetProperty',$null,$m,$null)",
+      "    if ($n) { [void]$names.Add([string]$n) }",
+      "  } catch {}",
+      "}",
+      "if ($names -contains $UserName) {",
+      "  Write-Output 'STILL_ADMIN'",
+      "  exit 2",
+      "}",
+      "Write-Output 'OK'",
+      "exit 0",
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
+  const result = spawnSync(
+    powerShell,
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-UserName", user],
+    { encoding: "utf8" },
+  );
+  if (result.status !== 0 || /STILL_ADMIN/.test(result.stdout || "")) {
+    throw new Error(
+      `embedded postgres: failed to ensure '${user}' is not in Administrators ` +
+        `(status=${result.status}): ${(result.stderr || result.stdout || "").trim().slice(0, 400)}. ` +
+        "PostgreSQL refuses to start under an administrative token; demote the " +
+        "account or run Fusion non-elevated.",
+    );
+  }
+}
+
+/**
  * Ensure the dedicated non-admin local user exists and we know its password.
  * Idempotent: creates the user if absent, or resets its password if present
  * (so a leftover account from a prior run still works). Always strips
@@ -138,51 +247,8 @@ function generatePassword(): string {
 function ensureNonAdminUser(): { user: string; password: string } {
   if (dedicatedPassword) return { user: DEDICATED_USER, password: dedicatedPassword };
   const password = generatePassword();
-  const add = spawnSync("net", ["user", DEDICATED_USER, password, "/add", "/y"], {
-    encoding: "utf8",
-  });
-  if (add.status !== 0) {
-    // Likely already exists from a prior run: reset its password so we can log on.
-    const reset = spawnSync("net", ["user", DEDICATED_USER, password, "/y"], {
-      encoding: "utf8",
-    });
-    if (reset.status !== 0) {
-      throw new Error(
-        `embedded postgres: could not create/reset non-admin user '${DEDICATED_USER}' ` +
-          `(net user add status=${add.status}: ${(add.stderr || "").trim()}; ` +
-          `reset status=${reset.status}: ${(reset.stderr || "").trim()}).`,
-      );
-    }
-  }
-  // FNXC:WindowsDesktopPackaging 2026-07-15-05:25:
-  // A leftover fusion-pg that was manually promoted to Administrators would
-  // still be refused by postgres. Demote and fail closed unless the account is
-  // already not a member (review: ignore silent demote failures).
-  // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
-  // net localgroup /delete status 0 = removed; non-zero is OK only when the
-  // account was already not in Administrators ("not a member" / "could not find").
-  const demote = spawnSync(
-    "net",
-    ["localgroup", "Administrators", DEDICATED_USER, "/delete"],
-    { encoding: "utf8" },
-  );
-  if (demote.status !== 0) {
-    const demoteOut = `${demote.stdout || ""}\n${demote.stderr || ""}`.toLowerCase();
-    const alreadyNotMember =
-      demoteOut.includes("not a member") ||
-      demoteOut.includes("could not find") ||
-      demoteOut.includes("no such") ||
-      demoteOut.includes("does not exist");
-    if (!alreadyNotMember) {
-      throw new Error(
-        `embedded postgres: failed to remove '${DEDICATED_USER}' from Administrators ` +
-          `(net localgroup status=${demote.status}): ` +
-          `${(demote.stderr || demote.stdout || "").trim().slice(0, 400)}. ` +
-          "PostgreSQL refuses to start under an administrative token; demote the " +
-          "account or run Fusion non-elevated.",
-      );
-    }
-  }
+  ensureLocalUserPassword(DEDICATED_USER, password);
+  ensureUserNotInAdministrators(DEDICATED_USER);
   dedicatedPassword = password;
   return { user: DEDICATED_USER, password };
 }
@@ -389,15 +455,18 @@ export async function startServerAsNonAdminUser(
   // FNXC:WindowsDesktopPackaging 2026-07-14-21:50:
   // Use a parametrized launcher .ps1 invoked with -File + params, NOT an inline
   // -Command string. The bat path contains backslashes (literal in a PS
-  // single-quoted string — doubling them would corrupt it to C:\\...) and the
-  // password contains ! and #; passing each as a discrete argv token via -File
-  // params is robust across Node's Windows arg escaping and PowerShell parsing.
+  // single-quoted string — doubling them would corrupt it to C:\\...).
+  // FNXC:WindowsDesktopPackaging 2026-07-15-00:15:
+  // Password is read from stdin (not -Password argv) so process-creation audit
+  // logs and `wmic process` listings never capture the secret (review).
   const launcherPs1 = join(runDir, "launch.ps1");
   writeFileSync(
     launcherPs1,
     [
-      "param([string]$User,[string]$Password,[string]$DomainUser,[string]$Bat)",
+      "param([string]$User,[string]$DomainUser,[string]$Bat)",
       "$ErrorActionPreference='Stop'",
+      "$Password = [Console]::In.ReadLine()",
+      "if ([string]::IsNullOrEmpty($Password)) { throw 'empty password from stdin' }",
       // FNXC:WindowsDesktopPackaging 2026-07-14-22:15:
       // Build the SecureString char-by-char instead of ConvertTo-SecureString,
       // which lives in Microsoft.PowerShell.Security — a module that fails to
@@ -425,14 +494,12 @@ export async function startServerAsNonAdminUser(
       launcherPs1,
       "-User",
       user,
-      "-Password",
-      password,
       "-DomainUser",
       domainUser,
       "-Bat",
       bat,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", input: `${password}\n` },
   );
   const wrapperPid = parseInt((launch.stdout || "").trim(), 10);
   if (!Number.isFinite(wrapperPid)) {
@@ -456,9 +523,12 @@ export async function startServerAsNonAdminUser(
   // FNXC:WindowsDesktopPackaging 2026-07-15-05:20:
   // Publish a stop handle immediately so lifecycle timeout cleanup can kill the
   // wrapper even while readiness is still polling (review: orphan on timeout).
+  // FNXC:WindowsDesktopPackaging 2026-07-15-00:15:
+  // postgresPid is postmaster.pid only (nullable); stop() still kills both the
+  // postmaster and the cmd wrapper via killAll.
   const handle: NonAdminServerHandle = {
     get postgresPid() {
-      return readPostgresPid(opts.dataDir) ?? wrapperPid;
+      return readPostgresPid(opts.dataDir);
     },
     async stop() {
       killAll();
@@ -553,13 +623,20 @@ export async function startServerAsNonAdminUser(
 
   const postgresPid = readPostgresPid(opts.dataDir);
   if (!postgresPid) {
-    opts.onError("embedded postgres: started but could not read postmaster.pid");
+    // TCP is ready but postmaster.pid is missing — surface explicitly; do not
+    // report the wrapper pid as postgresPid (review contract).
+    opts.onError(
+      "embedded postgres: started and accepting connections but could not read postmaster.pid",
+    );
+    opts.onLog(
+      `embedded postgres: non-admin server ready on 127.0.0.1:${opts.port} ` +
+        `(postmaster.pid unavailable; wrapper pid ${wrapperPid})`,
+    );
+  } else {
+    opts.onLog(
+      `embedded postgres: non-admin server ready on 127.0.0.1:${opts.port} (pid ${postgresPid})`,
+    );
   }
-
-  const resolvedPid = postgresPid ?? wrapperPid;
-  opts.onLog(
-    `embedded postgres: non-admin server ready on 127.0.0.1:${opts.port} (pid ${resolvedPid})`,
-  );
   return handle;
 }
 
