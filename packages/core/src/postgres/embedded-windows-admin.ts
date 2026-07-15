@@ -394,10 +394,6 @@ export async function startServerAsNonAdminUser(
         `embedded postgres: non-admin postgres reported a startup error before opening the port.\n${tail}`,
       );
     }
-    if (await probePort(opts.port, "127.0.0.1", 400)) {
-      ready = true;
-      break;
-    }
     // If the wrapper already exited and nothing is listening, postgres died.
     const tasklist = spawnSync("tasklist", ["/FI", `PID eq ${wrapperPid}`], {
       encoding: "utf8",
