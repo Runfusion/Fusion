@@ -126,32 +126,37 @@ export const ceSessions = projectSchema.table("ce_sessions", {
 
 /** ce_pipeline_links (U7) — board-task ↔ CE-pipeline/stage/artifact back-ref. */
 export const cePipelineLinks = projectSchema.table("ce_pipeline_links", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   taskId: text("task_id").notNull(),
   cePipelineId: text("ce_pipeline_id").notNull(),
   ceStageId: text("ce_stage_id").notNull(),
   ceArtifactPath: text("ce_artifact_path"),
   createdAt: text("created_at").notNull(),
 }, (t) => [
-  index("idxCePipelineLinksPipeline").on(t.cePipelineId, t.createdAt, t.id),
-  uniqueIndex("idxCePipelineLinksTask").on(t.taskId),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxCePipelineLinksPipeline").on(t.projectId, t.cePipelineId, t.createdAt, t.id),
+  uniqueIndex("idxCePipelineLinksTask").on(t.projectId, t.taskId),
 ]);
 
 /** ce_pipeline_state (U8) — CE pipeline's OWN state machine (vs board columns). */
 export const cePipelineState = projectSchema.table("ce_pipeline_state", {
-  cePipelineId: text("ce_pipeline_id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  cePipelineId: text("ce_pipeline_id").notNull(),
   currentStage: text("current_stage").notNull(),
   status: text("status").notNull(),
   lastArtifactPath: text("last_artifact_path"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  index("idxCePipelineStateStatus").on(t.status, t.updatedAt, t.cePipelineId),
+  primaryKey({ columns: [t.projectId, t.cePipelineId] }),
+  index("idxCePipelineStateStatus").on(t.projectId, t.status, t.updatedAt, t.cePipelineId),
 ]);
 
 /** ce_pipeline_sync_queue (U8 / FN-5719) — board→pipeline sync signal queue. */
 export const cePipelineSyncQueue = projectSchema.table("ce_pipeline_sync_queue", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   cePipelineId: text("ce_pipeline_id").notNull(),
   taskId: text("task_id").notNull(),
   reason: text("reason").notNull(),
@@ -160,8 +165,9 @@ export const cePipelineSyncQueue = projectSchema.table("ce_pipeline_sync_queue",
   enqueuedAt: text("enqueued_at").notNull(),
   processedAt: text("processed_at"),
 }, (t) => [
-  index("idxCePipelineSyncQueuePending").on(t.processedAt, t.enqueuedAt, t.id),
-  index("idxCePipelineSyncQueuePipeline").on(t.cePipelineId, t.enqueuedAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxCePipelineSyncQueuePending").on(t.projectId, t.processedAt, t.enqueuedAt, t.id),
+  index("idxCePipelineSyncQueuePipeline").on(t.projectId, t.cePipelineId, t.enqueuedAt, t.id),
 ]);
 
 /**
@@ -190,7 +196,8 @@ export const cePluginTableNames = [
 
 /** reports — generated activity reports with multi-agent review + approval. */
 export const reports = projectSchema.table("reports", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   cadence: text("cadence").notNull(),
   periodStart: text("period_start").notNull(),
   periodEnd: text("period_end").notNull(),
@@ -216,9 +223,10 @@ export const reports = projectSchema.table("reports", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  index("idxReportsCadenceCreated").on(t.cadence, t.createdAt, t.id),
-  index("idxReportsStatusUpdated").on(t.status, t.updatedAt, t.id),
-  index("idxReportsPeriod").on(t.periodStart, t.periodEnd, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  index("idxReportsCadenceCreated").on(t.projectId, t.cadence, t.createdAt, t.id),
+  index("idxReportsStatusUpdated").on(t.projectId, t.status, t.updatedAt, t.id),
+  index("idxReportsPeriod").on(t.projectId, t.periodStart, t.periodEnd, t.id),
 ]);
 
 /**
@@ -244,8 +252,9 @@ export const reportsPluginTableNames = [
 
 /** cli_press_services — registered external-service CLI definitions. */
 export const cliPressServices = projectSchema.table("cli_press_services", {
-  id: text("id").primaryKey(),
-  slug: text("slug").notNull().unique(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
+  slug: text("slug").notNull(),
   displayName: text("display_name").notNull(),
   description: text("description"),
   baseUrl: text("base_url").notNull(),
@@ -253,11 +262,15 @@ export const cliPressServices = projectSchema.table("cli_press_services", {
   sourceRef: text("source_ref"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
-});
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  uniqueIndex("uq_cli_press_services_project_slug").on(t.projectId, t.slug),
+]);
 
 /** cli_press_cli_specs — generated CLI specs scoped to a service. */
 export const cliPressSpecs = projectSchema.table("cli_press_cli_specs", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   serviceId: text("service_id").notNull(),
   name: text("name").notNull(),
   version: text("version").notNull(),
@@ -269,14 +282,16 @@ export const cliPressSpecs = projectSchema.table("cli_press_cli_specs", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  foreignKey({ columns: [t.serviceId], foreignColumns: [cliPressServices.id] }).onDelete("cascade"),
-  uniqueIndex("uq_cli_press_specs_service_name").on(t.serviceId, t.name),
-  index("idx_cli_press_specs_service").on(t.serviceId, t.createdAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.serviceId], foreignColumns: [cliPressServices.projectId, cliPressServices.id] }).onDelete("cascade"),
+  uniqueIndex("uq_cli_press_specs_service_name").on(t.projectId, t.serviceId, t.name),
+  index("idx_cli_press_specs_service").on(t.projectId, t.serviceId, t.createdAt, t.id),
 ]);
 
 /** cli_press_artifacts — built CLI artifacts (binaries/scripts/packages). */
 export const cliPressArtifacts = projectSchema.table("cli_press_artifacts", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   cliSpecId: text("cli_spec_id").notNull(),
   kind: text("kind").notNull(),
   path: text("path").notNull(),
@@ -286,13 +301,15 @@ export const cliPressArtifacts = projectSchema.table("cli_press_artifacts", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  foreignKey({ columns: [t.cliSpecId], foreignColumns: [cliPressSpecs.id] }).onDelete("cascade"),
-  index("idx_cli_press_artifacts_spec").on(t.cliSpecId, t.createdAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.cliSpecId], foreignColumns: [cliPressSpecs.projectId, cliPressSpecs.id] }).onDelete("cascade"),
+  index("idx_cli_press_artifacts_spec").on(t.projectId, t.cliSpecId, t.createdAt, t.id),
 ]);
 
 /** cli_press_credentials — auth credentials scoped to a service. */
 export const cliPressCredentials = projectSchema.table("cli_press_credentials", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   serviceId: text("service_id").notNull(),
   name: text("name").notNull(),
   kind: text("kind").notNull(),
@@ -301,14 +318,16 @@ export const cliPressCredentials = projectSchema.table("cli_press_credentials", 
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  foreignKey({ columns: [t.serviceId], foreignColumns: [cliPressServices.id] }).onDelete("cascade"),
-  uniqueIndex("uq_cli_press_credentials_service_name").on(t.serviceId, t.name),
-  index("idx_cli_press_credentials_service").on(t.serviceId, t.createdAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.serviceId], foreignColumns: [cliPressServices.projectId, cliPressServices.id] }).onDelete("cascade"),
+  uniqueIndex("uq_cli_press_credentials_service_name").on(t.projectId, t.serviceId, t.name),
+  index("idx_cli_press_credentials_service").on(t.projectId, t.serviceId, t.createdAt, t.id),
 ]);
 
 /** cli_press_service_settings — key/value settings scoped to a service. */
 export const cliPressSettings = projectSchema.table("cli_press_service_settings", {
-  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull(),
+  id: text("id").notNull(),
   serviceId: text("service_id").notNull(),
   key: text("key").notNull(),
   value: text("value").notNull(),
@@ -316,9 +335,10 @@ export const cliPressSettings = projectSchema.table("cli_press_service_settings"
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  foreignKey({ columns: [t.serviceId], foreignColumns: [cliPressServices.id] }).onDelete("cascade"),
-  uniqueIndex("uq_cli_press_settings_service_key_scope").on(t.serviceId, t.key, t.scope),
-  index("idx_cli_press_settings_service").on(t.serviceId, t.createdAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.serviceId], foreignColumns: [cliPressServices.projectId, cliPressServices.id] }).onDelete("cascade"),
+  uniqueIndex("uq_cli_press_settings_service_key_scope").on(t.projectId, t.serviceId, t.key, t.scope),
+  index("idx_cli_press_settings_service").on(t.projectId, t.serviceId, t.createdAt, t.id),
 ]);
 
 /**
