@@ -830,6 +830,10 @@ function unpersistSession(sessionId: string): Promise<void> {
     () => store.delete(sessionId),
     () => store.delete(sessionId),
   );
+  /*
+  FNXC:PostgresPlanningPersistence 2026-07-14-21:46:
+  Session deletion is an authoritative operation, so callers must observe a PostgreSQL delete failure instead of reporting successful cleanup while the persisted row remains. The queue retains a handled promise so later operations can proceed, but this deletion call returns the original rejection.
+  */
   const bestEffort = queued.catch(() => undefined);
   sessionPersistenceQueues.set(sessionId, bestEffort);
   void bestEffort.then(() => {
@@ -837,7 +841,7 @@ function unpersistSession(sessionId: string): Promise<void> {
       sessionPersistenceQueues.delete(sessionId);
     }
   });
-  return bestEffort;
+  return queued;
 }
 
 /** Release in-memory planning runtime state while keeping persisted history. */

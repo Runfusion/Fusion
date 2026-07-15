@@ -2011,6 +2011,37 @@ describe("Planning Mode Routes", () => {
         expect(await deferredStore.get(sessionId)).toBeNull();
       });
 
+      it("reports persistence deletion failures instead of claiming session deletion succeeded", async () => {
+        class FailingDeleteStore extends MockAiSessionStore {
+          override async delete(): Promise<void> {
+            throw new Error("planning persistence delete failed");
+          }
+        }
+
+        /*
+        FNXC:PostgresPlanningPersistence 2026-07-14-21:46:
+        A failed authoritative session delete must fail the awaited cancellation request; otherwise the UI is told cleanup completed while the PostgreSQL row remains available for later writes.
+        */
+        const failingStore = new FailingDeleteStore();
+        setAiSessionStore(failingStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        const app = express();
+        app.use(express.json());
+        app.use("/api", createApiRoutes(store, { aiSessionStore: failingStore as any }));
+        const startRes = await REQUEST(
+          app,
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Exercise failed planning persistence deletion" }),
+          { "Content-Type": "application/json" },
+        );
+
+        const deleteRes = await REQUEST(app, "DELETE", `/api/ai-sessions/${startRes.body.sessionId}`);
+
+        expect(startRes.status).toBe(201);
+        expect(deleteRes.status).toBe(500);
+        expect(deleteRes.body.error).toContain("planning persistence delete failed");
+      });
+
       it("returns 404 for non-existent session", async () => {
         const res = await REQUEST(
           buildApp(),
