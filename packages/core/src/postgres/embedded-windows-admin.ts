@@ -242,8 +242,11 @@ function resolvePowerShell(): string {
 export async function startServerAsNonAdminUser(
   opts: NonAdminStartOptions,
 ): Promise<NonAdminServerHandle> {
+  const startMs = Date.now();
   const { user, password } = ensureNonAdminUser();
+  const tGrant = Date.now();
   grantNonAdminAccess(user, opts.nativeRoot, opts.dataDir);
+  opts.onLog(`non-admin timing: user=${tGrant - startMs}ms grant=${Date.now() - tGrant}ms`);
 
   const pgExe = join(opts.nativeRoot, "bin", "postgres.exe");
   const runDir = join(opts.dataDir, ".pgrunner");
@@ -314,6 +317,7 @@ export async function startServerAsNonAdminUser(
     ].join("\r\n"),
     "ascii",
   );
+  const tLaunch = Date.now();
   const powerShell = resolvePowerShell();
   const launch = spawnSync(
     powerShell,
@@ -347,6 +351,7 @@ export async function startServerAsNonAdminUser(
     `embedded postgres: launched postgres as non-admin user '${user}' (wrapper pid ${wrapperPid}); ` +
       `waiting for port ${opts.port}`,
   );
+  opts.onLog(`non-admin timing: launch=${Date.now() - tLaunch}ms setup-before-probe=${Date.now() - startMs}ms`);
 
   // FNXC:WindowsDesktopPackaging 2026-07-14-23:20:
   // Poll readiness with a real short-timeout SQL probe. Do NOT read the
@@ -367,6 +372,7 @@ export async function startServerAsNonAdminUser(
     setTimeout(wake, 300);
     await sleep;
   }
+  opts.onLog(`non-admin timing: probe-loop done ready=${ready} total=${Date.now() - startMs}ms`);
 
   if (!ready) {
     // Kill the wrapper tree first (cmd.exe + its postgres child); only then
