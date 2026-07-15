@@ -557,7 +557,7 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
     type: "boolean",
     default: false,
     description:
-      "Enable the planner overseer session advisor (live LLM transcript review of the executor). Off by default. When on, also set Session advisor model provider and model id. Does not change lifecycle stage watching, stall recovery, or merge confirmation.",
+      "Workflow-level enable for the planner overseer session advisor (live LLM transcript review). Prefer project Settings → General → Session advisor (and per-task / Quick Add eye toggle) for day-to-day control; this workflow flag still enables when the project default is off (backward compatible). When enabled, also set Session advisor model provider and model id. Does not change lifecycle stage watching, stall recovery, or merge confirmation.",
   },
   {
     id: "plannerOverseerAdvisorProvider",

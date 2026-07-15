@@ -64,6 +64,7 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "githubTrackingDedupEnabled",
     "githubTrackingDefaultRepo",
     "githubTrackingEnabledByDefault",
+    "sessionAdvisorEnabledByDefault",
     // gitlabEnabled/gitlabInstanceUrl/gitlabApiBaseUrl's enable+URL fields are
     // owned here; gitlabAuthToken/gitlabAuthTokenType are owned by "merge".
     "gitlabApiBaseUrl",

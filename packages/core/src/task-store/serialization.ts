@@ -125,6 +125,10 @@ export function rowToTask(row: TaskRow): Task {
     validatorThinkingLevel: (row.validatorThinkingLevel || undefined) as Task["validatorThinkingLevel"],
     planningThinkingLevel: (row.planningThinkingLevel || undefined) as Task["planningThinkingLevel"],
     executionMode: (row.executionMode || undefined) as Task["executionMode"],
+    // FNXC:PlannerOversight 2026-07-14-18:11: null → undefined (inherit); 0/1 → boolean.
+    sessionAdvisorEnabled: row.sessionAdvisorEnabled === null || row.sessionAdvisorEnabled === undefined
+      ? undefined
+      : row.sessionAdvisorEnabled === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     columnMovedAt: row.columnMovedAt || undefined,

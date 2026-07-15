@@ -57,7 +57,7 @@ export interface OverseerAdvisorServiceOptions {
   store: OverseerAdvisorServiceStore;
   /*
   FNXC:PlannerOversight 2026-07-14-12:00:
-  Explicit enable gate (workflow setting plannerOverseerAdvisorEnabled, default
+  Explicit enable gate (task/project/workflow inheritance via resolveEnabled, default
   false). When provided and false, no session advisor runtime is created even
   if a model is configured. Tests may omit this and rely on model/agentFactory.
   */

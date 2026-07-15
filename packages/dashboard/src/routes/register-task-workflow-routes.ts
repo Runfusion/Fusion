@@ -1094,6 +1094,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         branchSelection,
         nodeId,
         githubTracking,
+        sessionAdvisorEnabled,
         acknowledgedDuplicates,
         bypassDuplicateCheck,
       } = req.body;
@@ -1490,6 +1491,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         baseBranch: normalizedBaseBranch,
         ...(typeof nodeId === "string" && nodeId.trim().length > 0 ? { nodeId: nodeId.trim() } : {}),
         ...(validatedGithubTracking ? { githubTracking: validatedGithubTracking } : {}),
+        // FNXC:PlannerOversight 2026-07-14-18:11: only persist when client sent an explicit boolean override.
+        ...(typeof sessionAdvisorEnabled === "boolean" ? { sessionAdvisorEnabled } : {}),
       };
 
       const task = await scopedStore.createTask(
@@ -4287,7 +4290,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.patch("/tasks/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId, branch, baseBranch, githubTracking, gitlabTracking, noCommitsExpected, autoMerge, overlapBlockedBy, status, dismissNearDuplicate } = req.body;
+      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId, branch, baseBranch, githubTracking, gitlabTracking, noCommitsExpected, autoMerge, overlapBlockedBy, status, dismissNearDuplicate, sessionAdvisorEnabled } = req.body;
       const hasBodyField = (field: string) => Object.prototype.hasOwnProperty.call(req.body, field);
 
       // Validate model fields are strings or undefined/null
@@ -4605,6 +4608,19 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (hasBodyField("assigneeUserId")) updates.assigneeUserId = validatedAssigneeUserId;
       if (hasBodyField("reviewLevel")) updates.reviewLevel = reviewLevel;
       if (hasBodyField("executionMode")) updates.executionMode = executionMode === null ? null : executionMode;
+      /*
+      FNXC:PlannerOversight 2026-07-14-18:11:
+      sessionAdvisorEnabled: boolean override, or null to clear back to project default.
+      */
+      if (hasBodyField("sessionAdvisorEnabled")) {
+        if (sessionAdvisorEnabled === null) {
+          updates.sessionAdvisorEnabled = null;
+        } else if (typeof sessionAdvisorEnabled === "boolean") {
+          updates.sessionAdvisorEnabled = sessionAdvisorEnabled;
+        } else {
+          throw new Error("sessionAdvisorEnabled must be a boolean or null");
+        }
+      }
       if (hasBodyField("sourceIssue")) updates.sourceIssue = validatedSourceIssue === undefined ? undefined : validatedSourceIssue;
       if (hasBodyField("nodeId")) updates.nodeId = validatedNodeId;
       if (hasBodyField("branch")) updates.branch = normalizedBranch;

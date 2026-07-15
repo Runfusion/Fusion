@@ -2603,6 +2603,14 @@ export interface Task {
    *  workflow-settings-resolver.ts for precedence. */
   plannerOversightLevel?: PlannerOversightLevel;
   /**
+   * FNXC:PlannerOversight 2026-07-14-18:11:
+   * Per-task override for the session advisor (LLM overseer agent). `true`/`false` force
+   * on/off for this task; unset inherits `sessionAdvisorEnabledByDefault` from project
+   * settings (then workflow `plannerOverseerAdvisorEnabled` for backward compat).
+   * See `resolveTaskSessionAdvisorEnabled` in session-advisor.ts.
+   */
+  sessionAdvisorEnabled?: boolean;
+  /**
    * FNXC:PlannerOversight 2026-07-04-00:00:
    * FN-7531 transient, engine-populated snapshot of the planner overseer's
    * current runtime state (idle/watching/steering/recovering/awaiting-
@@ -2900,6 +2908,11 @@ export interface TaskCreateInput {
    *  When set, wins over the workflow's effective `plannerOversightLevel`. Unset means
    *  "inherit workflow default". */
   plannerOversightLevel?: PlannerOversightLevel;
+  /**
+   * FNXC:PlannerOversight 2026-07-14-18:11:
+   * Per-task session advisor override at create time. Unset inherits project default.
+   */
+  sessionAdvisorEnabled?: boolean;
 }
 
 // ── Todo List Types ──────────────────────────────────────────────────────
@@ -4630,6 +4643,14 @@ export interface ProjectSettings {
    *  Default: false. */
   githubTrackingEnabledByDefault?: boolean;
   /**
+   * FNXC:PlannerOversight 2026-07-14-18:11:
+   * When true, new tasks default the session advisor (LLM overseer agent) to enabled.
+   * Individual tasks can override via `sessionAdvisorEnabled`. Default: false (opt-in).
+   * Provider/model still come from workflow settings (`plannerOverseerAdvisorProvider` /
+   * `plannerOverseerAdvisorModelId`).
+   */
+  sessionAdvisorEnabledByDefault?: boolean;
+  /**
    * FNXC:GithubImportTracking 2026-07-01-00:00:
    * This project-scoped switch is intentionally narrower than githubTrackingEnabledByDefault: it only forces imported GitHub issues to become GitHub-tracked tasks so the source issue is adopted, while ordinary new tasks keep their existing default behavior.
    * Default: false.
@@ -5205,6 +5226,8 @@ export interface ArchivedTaskEntry {
   executionMode?: ExecutionMode;
   /** Per-task override of the workflow-native planner oversight level at time of archival. */
   plannerOversightLevel?: PlannerOversightLevel;
+  /** Per-task session advisor override at time of archival. */
+  sessionAdvisorEnabled?: boolean;
   prInfo?: PrInfo;
   prInfos?: PrInfo[];
   issueInfo?: IssueInfo;

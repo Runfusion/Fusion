@@ -476,6 +476,7 @@ export async function createTask(
     baseBranch,
     branchSelection,
     githubTracking,
+    sessionAdvisorEnabled,
     acknowledgedDuplicates,
     bypassDuplicateCheck,
   } = input;
@@ -514,6 +515,7 @@ export async function createTask(
       baseBranch,
       branchSelection,
       githubTracking,
+      sessionAdvisorEnabled,
       acknowledgedDuplicates,
       bypassDuplicateCheck,
     }),
@@ -572,6 +574,8 @@ export function updateTask(
     validatorThinkingLevel?: string | null;
     planningThinkingLevel?: string | null;
     plannerOversightLevel?: "off" | "observe" | "steer" | "autonomous" | null;
+    /** FNXC:PlannerOversight 2026-07-14-18:11: boolean override or null to inherit project default. */
+    sessionAdvisorEnabled?: boolean | null;
     reviewLevel?: number | null;
     executionMode?: "standard" | "fast" | null;
     noCommitsExpected?: boolean;

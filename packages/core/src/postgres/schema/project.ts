@@ -135,6 +135,12 @@ export const tasks = projectSchema.table("tasks", {
   validatorThinkingLevel: text("validator_thinking_level"),
   planningThinkingLevel: text("planning_thinking_level"),
   executionMode: text("execution_mode").default("standard"),
+  /*
+  FNXC:PlannerOversight 2026-07-14-18:11:
+  Per-task session advisor override (null = inherit project default, 0 = off, 1 = on).
+  Listed in EXPECTED_PROJECT_COLUMNS so existing embedded-PG DBs self-heal via ALTER TABLE.
+  */
+  sessionAdvisorEnabled: integer("session_advisor_enabled"),
   tokenUsageInputTokens: integer("token_usage_input_tokens"),
   tokenUsageOutputTokens: integer("token_usage_output_tokens"),
   tokenUsageCachedTokens: integer("token_usage_cached_tokens"),

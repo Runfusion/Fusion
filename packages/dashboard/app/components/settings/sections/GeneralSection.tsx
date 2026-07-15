@@ -297,6 +297,34 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         }))}/>
         <small>{t("settings.general.bannerFiresWhenTodoCountIsStrictlyGreater", "Banner fires when todo count is strictly greater than this value (default 20). Applies when the banner is enabled.")}</small>
       </div>
+      {/*
+        FNXC:PlannerOversight 2026-07-14-18:11:
+        Project default for the session advisor (LLM overseer agent). Per-task overrides
+        come from Quick Add (eye icon) and task detail. Provider/model stay under workflow settings.
+      */}
+      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.sessionAdvisor", "Session advisor (overseer agent)")}</h4>
+      <div className="form-group">
+        <label htmlFor="sessionAdvisorMode">{t("settings.general.defaultSessionAdvisorForNewTasks", "Default for new tasks")}</label>
+        <select
+          id="sessionAdvisorMode"
+          className="select"
+          value={form.sessionAdvisorEnabledByDefault ? "new-tasks" : "off"}
+          onChange={(e) => setForm((f) => ({
+            ...f,
+            sessionAdvisorEnabledByDefault: e.target.value === "new-tasks",
+          }))}
+          data-testid="settings-session-advisor-default"
+        >
+          <option value="off">{t("settings.general.offDefault", "Off (default)")}</option>
+          <option value="new-tasks">{t("settings.general.onForNewTasks", "On for new tasks")}</option>
+        </select>
+        <small>
+          {t(
+            "settings.general.sessionAdvisorHelp",
+            "Controls whether newly created tasks enable the session advisor (live LLM overseer of the executor). Individual tasks can override this from Quick Add or task detail. Also set Session advisor model provider and model id under workflow settings before the advisor can run.",
+          )}
+        </small>
+      </div>
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.gitHubTracking", "GitHub Tracking")}</h4>
       <div className="form-group">
         <label htmlFor="githubTrackingMode">{t("settings.general.defaultTrackingModeForNewTasks", "Default tracking mode for new tasks")}</label>

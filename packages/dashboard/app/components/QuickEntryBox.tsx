@@ -8,7 +8,7 @@ import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, Thinki
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
-import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap, Eye, EyeOff } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -228,6 +228,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     isFastModeRef.current = isFastMode;
   }, [isFastMode]);
   const [githubTrackingOverride, setGithubTrackingOverride] = useState<boolean | null>(null);
+  // FNXC:PlannerOversight 2026-07-14-18:11: null = follow project sessionAdvisorEnabledByDefault.
+  const [sessionAdvisorOverride, setSessionAdvisorOverride] = useState<boolean | null>(null);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
@@ -615,6 +617,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setEnabledOptionalStepIds(optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId));
     setIsFastMode(false);
     setGithubTrackingOverride(null);
+    setSessionAdvisorOverride(null);
     setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setShowDeps(false);
@@ -743,6 +746,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         enabledWorkflowSteps: isFastMode || optionalSteps.length > 0 ? enabledOptionalStepIds : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
         githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
+        // FNXC:PlannerOversight 2026-07-14-18:11: only send when user toggled away from project default.
+        sessionAdvisorEnabled: sessionAdvisorOverride !== null ? sessionAdvisorOverride : undefined,
         priority,
         nodeId: effectiveNodeId,
         acknowledgedDuplicates: overrides?.acknowledgedDuplicates,
@@ -790,6 +795,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     isFastMode,
     settings,
     githubTrackingOverride,
+    sessionAdvisorOverride,
     priority,
     effectiveNodeId,
     pendingImages,
@@ -1637,6 +1643,16 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const githubToggleLabel = effectiveGithubTracking
     ? t("tasks.githubTrackingOn", "GitHub tracking ON for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") })
     : t("tasks.githubTrackingOff", "GitHub tracking OFF for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") });
+  /*
+  FNXC:PlannerOversight 2026-07-14-18:11:
+  Quick Add eye toggle for session advisor. null override follows project default;
+  toggle flips effective on/off and stores an explicit override for the next create.
+  */
+  const projectSessionAdvisorDefault = settings?.sessionAdvisorEnabledByDefault === true;
+  const effectiveSessionAdvisor = sessionAdvisorOverride ?? projectSessionAdvisorDefault;
+  const sessionAdvisorToggleLabel = effectiveSessionAdvisor
+    ? t("tasks.sessionAdvisorOn", "Session advisor ON for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") })
+    : t("tasks.sessionAdvisorOff", "Session advisor OFF for next task (project default: {{default}})", { default: projectSessionAdvisorDefault ? t("tasks.sessionAdvisorDefaultOn", "on") : t("tasks.sessionAdvisorDefaultOff", "off") });
   const PriorityIcon = getPriorityIcon(priority);
   const priorityLabel = getPriorityLabel(priority);
   const priorityButtonLabel = t("tasks.quickEntryPriorityLabel", "Priority: {{priority}}", { priority: priorityLabel });
@@ -2195,6 +2211,26 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 aria-label={githubToggleLabel}
               >
                 <ProviderIcon provider="github" size="sm" />
+              </button>
+
+              {/*
+              FNXC:PlannerOversight 2026-07-14-18:11:
+              Compact eye toggle next to GitHub for session advisor (overseer agent).
+              Default follows project setting; press stores an explicit per-create override.
+              */}
+              <button
+                type="button"
+                className={`btn btn-sm ${effectiveSessionAdvisor ? "btn-primary" : ""}`}
+                onClick={() => {
+                  setSessionAdvisorOverride((prev) => !(prev ?? projectSessionAdvisorDefault));
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-pressed={effectiveSessionAdvisor}
+                data-testid="quick-entry-session-advisor-toggle"
+                title={sessionAdvisorToggleLabel}
+                aria-label={sessionAdvisorToggleLabel}
+              >
+                {effectiveSessionAdvisor ? <Eye size={12} aria-hidden="true" /> : <EyeOff size={12} aria-hidden="true" />}
               </button>
 
               <div className="priority-trigger-wrap" ref={priorityPickerRef}>

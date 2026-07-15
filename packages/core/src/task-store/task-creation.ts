@@ -320,6 +320,8 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       planningThinkingLevel: input.planningThinkingLevel,
       reviewLevel: input.reviewLevel,
       executionMode: input.executionMode,
+      // FNXC:PlannerOversight 2026-07-14-18:11: only set when create input is explicit boolean.
+      sessionAdvisorEnabled: typeof input.sessionAdvisorEnabled === "boolean" ? input.sessionAdvisorEnabled : undefined,
       baseBranch: input.baseBranch,
       branch: input.branch,
       missionId: input.missionId,
@@ -861,6 +863,8 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       planningThinkingLevel: input.planningThinkingLevel,
       reviewLevel: input.reviewLevel,
       executionMode: input.executionMode,
+      // FNXC:PlannerOversight 2026-07-14-18:11: only set when create input is explicit boolean.
+      sessionAdvisorEnabled: typeof input.sessionAdvisorEnabled === "boolean" ? input.sessionAdvisorEnabled : undefined,
       baseBranch: input.baseBranch,
       branch: input.branch,
       missionId: input.missionId,

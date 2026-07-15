@@ -519,6 +519,15 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.executionMode !== undefined) {
         task.executionMode = updates.executionMode as import("../types.js").ExecutionMode;
       }
+      /*
+      FNXC:PlannerOversight 2026-07-14-18:11:
+      sessionAdvisorEnabled: null clears to inherit project default; boolean sets override.
+      */
+      if (updates.sessionAdvisorEnabled === null) {
+        task.sessionAdvisorEnabled = undefined;
+      } else if (updates.sessionAdvisorEnabled !== undefined) {
+        task.sessionAdvisorEnabled = updates.sessionAdvisorEnabled;
+      }
       if (updates.error === null) {
         task.error = undefined;
       } else if (updates.error !== undefined) {

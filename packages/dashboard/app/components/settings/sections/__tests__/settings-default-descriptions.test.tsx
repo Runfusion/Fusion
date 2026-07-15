@@ -236,6 +236,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   githubLinkImportedIssuesToTracking: "general.whenEnabledImportedGitHubIssuesUseTheirSource",
   githubTrackingDedupEnabled: "general.whenEnabledFusionChecksOpenAndClosedIssues",
   githubTrackingEnabledByDefault: "general.offDefault",
+  sessionAdvisorEnabledByDefault: "general.offDefault",
   mailAutoCleanupDays: "general.deleteInboxOutboxMessagesOlderThanThisMany",
   operationalLogRetentionDays: "general.loweringThisWindowMeansReliabilityMetricsChartsAnd",
   quickChatButtonMode: "general.quickChatLauncherHint",

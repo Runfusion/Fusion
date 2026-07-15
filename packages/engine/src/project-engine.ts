@@ -33,6 +33,7 @@ import {
   resolveEffectivePlannerOversightLevel,
   resolveEffectiveSettings,
   resolveMaxAutoMergeRetries,
+  resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
@@ -2551,11 +2552,17 @@ export class ProjectEngine {
             }
           }
 
-          // FNXC:PlannerOversight 2026-07-13-23:05 / 2026-07-14-12:00:
-          // Session-advisor log feed only when LLM advisor is enabled for the task
-          // (plannerOverseerAdvisorEnabled=true + model). Off by default.
+          /*
+          FNXC:PlannerOversight 2026-07-14-18:11:
+          Session-advisor log feed when effective enable resolves true for the task
+          (task override → project default → workflow flag → off). Still needs model.
+          */
           if (task.column === "in-progress" && this.sessionAdvisor) {
-            const advisorEnabled = workflowEffective.plannerOverseerAdvisorEnabled === true;
+            const advisorEnabled = resolveTaskSessionAdvisorEnabled(
+              task,
+              engineSettings,
+              workflowEffective.plannerOverseerAdvisorEnabled === true,
+            ).enabled;
             if (advisorEnabled) {
               await this.feedSessionAdvisorFromAgentLogs(store, task);
             } else if (this.sessionAdvisor.getTaskAdvisorSnapshot(task.id).active) {
@@ -2624,13 +2631,19 @@ export class ProjectEngine {
     const service = new OverseerAdvisorService({
       store: store as ConstructorParameters<typeof OverseerAdvisorService>[0]["store"],
       /*
-      FNXC:PlannerOversight 2026-07-14-12:00:
-      Session LLM advisor is OFF by default (plannerOverseerAdvisorEnabled=false).
-      Only strict true enables; missing/malformed settings stay disabled.
+      FNXC:PlannerOversight 2026-07-14-18:11:
+      Session LLM advisor enable: task.sessionAdvisorEnabled → project
+      sessionAdvisorEnabledByDefault → workflow plannerOverseerAdvisorEnabled → false.
+      Model still requires provider + model id from workflow settings.
       */
       resolveEnabled: async (task) => {
         const workflowEffective = await loadWorkflowForTask(task);
-        return workflowEffective.plannerOverseerAdvisorEnabled === true;
+        const projectSettings = await store.getSettings().catch(() => undefined);
+        return resolveTaskSessionAdvisorEnabled(
+          task,
+          projectSettings,
+          workflowEffective.plannerOverseerAdvisorEnabled === true,
+        ).enabled;
       },
       resolveLevel: async (task) => {
         const workflowEffective = await loadWorkflowForTask(task);
@@ -2641,7 +2654,13 @@ export class ProjectEngine {
       },
       resolveModel: async (task) => {
         const workflowEffective = await loadWorkflowForTask(task);
-        if (workflowEffective.plannerOverseerAdvisorEnabled !== true) return null;
+        const projectSettings = await store.getSettings().catch(() => undefined);
+        const enabled = resolveTaskSessionAdvisorEnabled(
+          task,
+          projectSettings,
+          workflowEffective.plannerOverseerAdvisorEnabled === true,
+        ).enabled;
+        if (!enabled) return null;
         const provider = String(workflowEffective.plannerOverseerAdvisorProvider ?? "").trim();
         const modelId = String(workflowEffective.plannerOverseerAdvisorModelId ?? "").trim();
         if (!provider || !modelId) return null;
