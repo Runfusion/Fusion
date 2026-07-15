@@ -2,13 +2,14 @@
 
 ## Essential rules
 
-### Standing Rule: Never Work On `main` — Always Use A Worktree
+### Standing Rule: Prefer `main` For Direct Work; Use Worktrees For Branches
 
-Agents must not check out, switch to, or commit on the primary `main` (or default-branch) working tree. All implementation, review-fix, and commit work happens in an isolated git worktree so the operator's main checkout stays clean and concurrent agent sessions never step on each other.
+Agents may implement and commit **directly on `main`** when the change belongs on main (docs/rules, small fixes the operator wants on main, operator explicitly said so, etc.).
 
-- **Never** run `git checkout main`, `git switch main`, or otherwise move the primary repo checkout off/on `main` for agent work.
-- **Never** commit, amend, rebase, or leave uncommitted changes on the primary checkout when it is on `main` (or the repo default branch).
-- **Always** create an isolated worktree + feature branch before coding, fixing, or committing. Prefer Worktrunk when available:
+When the work **needs a branch** (feature work, multi-commit efforts, PR-bound changes, parallel experiments, anything that must not land on main yet):
+
+- **Do not** `git checkout` / `git switch` the primary checkout away from `main` to create or use that branch.
+- **Do** create an isolated worktree for the branch and work entirely there, so the primary checkout stays on `main`. Prefer Worktrunk when available:
 
 ```bash
 # Preferred (Worktrunk)
@@ -19,10 +20,9 @@ git worktree add -b <branch-name> ../kb-worktrees/<branch-name> main
 cd ../kb-worktrees/<branch-name>
 ```
 
-- Do all file edits, tests, and commits **inside that worktree**. Report the worktree path in handoffs.
-- Merge/land only via PR, `wt merge`, or an explicit operator request — do not `git checkout main && git merge …` as a substitute for a worktree workflow.
-- If you discover the session is already on `main` with a dirty or feature-bearing tree, stop, create a worktree from a clean `main`, move the work there (cherry-pick / re-apply), and leave the primary `main` checkout clean.
-- Read-only inspection of `main` (e.g. `git show main:path`, `git log main`) is fine; mutating the main checkout is not.
+- Do all branch-scoped file edits, tests, and commits **inside that worktree**. Report the worktree path in handoffs.
+- Land branch work via PR, `wt merge`, or an explicit operator request — do not move the primary checkout onto the feature branch as the default workflow.
+- If you need a branch and discover you are about to switch the primary tree off `main`, stop and open a worktree instead.
 
 ### Spec Generation Hygiene
 
@@ -207,7 +207,7 @@ Use `superviseSpawn(...)` from `@fusion/core` for managed child processes; do no
 - One commit per step boundary
 - Include task ID prefix
 - Fusion task-worktree commits should carry `Fusion-Task-Id: FN-NNNN` trailers
-- **Worktree-only agent workflow (mandatory):** never switch the primary checkout to/from `main` for agent work. Create a worktree + feature branch (`wt switch --create <branch>` or `git worktree add -b …`) and work entirely there. See **Standing Rule: Never Work On `main` — Always Use A Worktree**.
+- **Branch work uses worktrees:** when a change needs a feature branch, create a worktree (`wt switch --create <branch>` or `git worktree add -b …`) and work there — do not switch the primary checkout off `main`. Direct commits on `main` are fine when the change belongs on main. See **Standing Rule: Prefer `main` For Direct Work; Use Worktrees For Branches**.
 
 ### Merging Branches Into Main
 
