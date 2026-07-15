@@ -10,7 +10,7 @@ Any direct push to `origin` (`https://github.com/Runfusion/Fusion.git`) from the
 `ischindl` git/GitHub identity fails, including for a plain branch push (not just
 `main`):
 
-```
+```text
 $ git push origin main --dry-run
 remote: Permission to Runfusion/Fusion.git denied to ischindl.
 fatal: unable to access 'https://github.com/Runfusion/Fusion.git/': The requested URL returned error: 403

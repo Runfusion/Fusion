@@ -280,10 +280,31 @@ describe("settings commands", () => {
     expect(errorSpy).toHaveBeenCalledWith('Error: Setting "ntfyEnabled" is global-only. Omit --project to update it.');
   });
 
-  it("rejects project-only settings without explicit project scope", async () => {
+  it("rejects project-only settings when no project can be resolved from flag/default/cwd", async () => {
+    vi.mocked(resolveProject).mockRejectedValue(
+      new Error("No fusion project found in current directory. Use --project or run from a project directory."),
+    );
+
     await expect(runSettingsSet("maxConcurrent", "4")).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith('Error: Setting "maxConcurrent" is project-only. Use --project or run from a project directory.');
-    expect(resolveProject).not.toHaveBeenCalled();
+    expect(resolveProject).toHaveBeenCalledWith();
+  });
+
+  it("runSettingsSet project-only settings without --project use cwd/default project resolution", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ maxConcurrent: 4 }));
+    const getSettings = vi.fn().mockResolvedValue(makeSettings({ maxConcurrent: 4 }));
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettings } as any,
+    });
+
+    await runSettingsSet("maxConcurrent", "4");
+
+    expect(resolveProject).toHaveBeenCalledWith();
+    expect(updateSettings).toHaveBeenCalledWith({ maxConcurrent: 4 });
   });
 
   it("rejects setting a moved key (runStepsInNewSessions) and prints the workflow-settings redirect hint", async () => {
@@ -370,10 +391,31 @@ describe("settings commands", () => {
     expect(updateSettings).toHaveBeenCalledWith({ integrationBranch: "master" });
   });
 
-  it("rejects setting integrationBranch without explicit project scope", async () => {
+  it("rejects setting integrationBranch when no project can be resolved from flag/default/cwd", async () => {
+    vi.mocked(resolveProject).mockRejectedValue(
+      new Error("No fusion project found in current directory. Use --project or run from a project directory."),
+    );
+
     await expect(runSettingsSet("integrationBranch", "master")).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith('Error: Setting "integrationBranch" is project-only. Use --project or run from a project directory.');
-    expect(resolveProject).not.toHaveBeenCalled();
+    expect(resolveProject).toHaveBeenCalledWith();
+  });
+
+  it("runSettingsSet integrationBranch without --project resolves project from cwd/default", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ integrationBranch: "master" }));
+    const getSettings = vi.fn().mockResolvedValue(makeSettings({ integrationBranch: "master" }));
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettings } as any,
+    });
+
+    await runSettingsSet("integrationBranch", "master");
+
+    expect(resolveProject).toHaveBeenCalledWith();
+    expect(updateSettings).toHaveBeenCalledWith({ integrationBranch: "master" });
   });
 
   it.each([
@@ -414,14 +456,17 @@ describe("settings commands", () => {
     "pushRemote",
     "autoResolveReviewComments",
   ] as const)(
-    "rejects setting %s without explicit project scope",
+    "rejects setting %s when no project can be resolved from flag/default/cwd",
     async (key) => {
+      vi.mocked(resolveProject).mockRejectedValue(
+        new Error("No fusion project found in current directory. Use --project or run from a project directory."),
+      );
       const value = key === "pushAfterMerge" ? "true" : key === "pushRemote" ? "upstream" : "block";
       await expect(runSettingsSet(key, value)).rejects.toThrow("process.exit:1");
       expect(errorSpy).toHaveBeenCalledWith(
         `Error: Setting "${key}" is project-only. Use --project or run from a project directory.`
       );
-      expect(resolveProject).not.toHaveBeenCalled();
+      expect(resolveProject).toHaveBeenCalledWith();
     }
   );
 

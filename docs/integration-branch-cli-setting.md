@@ -5,7 +5,7 @@
 `fn settings set integrationBranch <branch>` (and `fn settings set integrationBranch <branch> --project <name>`)
 previously failed with:
 
-```
+```text
 Error: Unknown setting "integrationBranch"
 ```
 
@@ -14,7 +14,7 @@ even though `integrationBranch` is a real, documented `ProjectSettings` field
 (`DEFAULT_PROJECT_SETTINGS` in `packages/core/src/settings-schema.ts`), and
 consumed as the *first* entry in the engine's merge-target resolution chain:
 
-```
+```text
 resolveIntegrationBranch(): settings.integrationBranch → settings.baseBranch → origin/HEAD → "main"
 ```
 

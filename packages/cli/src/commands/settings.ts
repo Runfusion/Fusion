@@ -351,7 +351,13 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
  *
  * Scope rules:
  * - Global-only settings (`ntfy*`, `defaultModel`) update global settings
- * - Project-only settings require an explicit `--project` target
+ * - Project-only settings resolve via `--project`, then default project / CWD detection
+ *
+ * FNXC:CliSettings 2026-07-14-18:17:
+ * PROJECT_ONLY_SETTINGS (including integrationBranch and merge keys from AIWO-039/040)
+ * must work from a registered project directory without requiring --project.
+ * Fail only after resolveProject() cannot detect a project from flag/default/CWD —
+ * do not hard-fail on a missing projectName before detection runs.
  */
 export async function runSettingsSet(key: string, value: string, projectName?: string): Promise<void> {
   if (!VALID_SETTINGS.includes(key as ValidSettingKey)) {
@@ -370,14 +376,32 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
     return;
   }
 
-  if (!projectName && isProjectOnlySetting(validKey)) {
+  /*
+   * FNXC:CliSettings 2026-07-14-18:17:
+   * Bare `fn settings set <project-only-key> <value>` must call resolveProject() so
+   * default-project and CWD-registered project detection can satisfy project-only keys.
+   * Only surface the project-only error when that resolution fails.
+   */
+  let projectContext: Awaited<ReturnType<typeof resolveProject>> | undefined;
+  if (projectName) {
+    projectContext = await resolveProject(projectName);
+  } else if (isProjectOnlySetting(validKey)) {
+    try {
+      projectContext = await resolveProject();
+    } catch {
+      console.error(`Error: Setting "${key}" is project-only. Use --project or run from a project directory.`);
+      process.exit(1);
+      return;
+    }
+  }
+
+  const store = projectContext?.store;
+  // Project-only keys must land on a project store even when resolution returned an empty context.
+  if (isProjectOnlySetting(validKey) && !store) {
     console.error(`Error: Setting "${key}" is project-only. Use --project or run from a project directory.`);
     process.exit(1);
     return;
   }
-
-  const projectContext = projectName ? await resolveProject(projectName) : undefined;
-  const store = projectContext?.store;
   const globalStore = store ? undefined : await getGlobalSettingsStore();
 
   try {
