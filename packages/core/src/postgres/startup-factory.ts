@@ -548,6 +548,7 @@ export async function createTaskStoreForBackend(
             const report = await migrateSqliteToPostgres(connections.migration, sources, {
               skipBaseline: true,
               projectId: migrationProjectId,
+              projectPath: rootDir,
               migrationKey,
               deferCompletion: true,
               /*

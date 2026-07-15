@@ -200,6 +200,16 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
    */
   async init(): Promise<void> {
     if (this.backendMode) {
+      /*
+      FNXC:PluginLegacyMigration 2026-07-14-22:50:
+      PostgreSQL plugin reads use central.plugin_installs plus path-scoped project_plugin_states. Re-run the timestamp-aware retained-SQLite bridge during backend initialization so projects cut over before this bridge existed recover their enabled/disabled state without overwriting newer central changes.
+      */
+      const { migrateLegacyProjectPluginRows } = await import("./postgres/sqlite-migrator.js");
+      await migrateLegacyProjectPluginRows(
+        this.asyncLayer!.db,
+        join(this.rootDir, ".fusion", "fusion.db"),
+        this.normalizedProjectPath,
+      );
       return;
     }
     const _ = this.localDb;

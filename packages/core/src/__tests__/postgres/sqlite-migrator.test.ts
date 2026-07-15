@@ -31,10 +31,11 @@ import { sql } from "drizzle-orm";
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "../../sqlite-adapter.js";
 import {
   formatMigrationProgress,
+  migrateLegacyProjectPluginRows,
   migrateSqliteToPostgres,
   toSnakeCase,
   type MigrationProgressEvent,
@@ -144,6 +145,62 @@ CREATE TABLE IF NOT EXISTS config (
   updatedAt TEXT
 );
 `;
+
+const LEGACY_PLUGINS_SQLITE_DDL = `
+CREATE TABLE plugins (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  description TEXT,
+  author TEXT,
+  homepage TEXT,
+  path TEXT NOT NULL,
+  enabled INTEGER DEFAULT 1,
+  state TEXT NOT NULL DEFAULT 'installed',
+  settings TEXT DEFAULT '{}',
+  settingsSchema TEXT,
+  error TEXT,
+  dependencies TEXT DEFAULT '[]',
+  aiScanOnLoad INTEGER NOT NULL DEFAULT 0,
+  lastSecurityScan TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+`;
+
+function insertLegacyPlugin(
+  db: DatabaseSync,
+  input: {
+    id: string;
+    name: string;
+    version: string;
+    enabled: number;
+    state: string;
+    error?: string | null;
+    updatedAt: string;
+  },
+): void {
+  db.prepare(`
+    INSERT INTO plugins
+      (id, name, version, description, author, homepage, path, enabled, state,
+       settings, settingsSchema, error, dependencies, aiScanOnLoad,
+       lastSecurityScan, createdAt, updatedAt)
+    VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+  `).run(
+    input.id,
+    input.name,
+    input.version,
+    `/plugins/${input.id}`,
+    input.enabled,
+    input.state,
+    JSON.stringify({ source: input.name }),
+    JSON.stringify({ source: { type: "string" } }),
+    input.error ?? null,
+    JSON.stringify([`${input.id}-dependency`]),
+    "2026-01-01T00:00:00.000Z",
+    input.updatedAt,
+  );
+}
 
 /*
 FNXC:PostgresMigration 2026-07-13-20:30:
@@ -1007,6 +1064,144 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       SELECT global_max_concurrent, updated_at FROM central.global_concurrency WHERE id = 1
     `) as unknown as Array<{ global_max_concurrent: number; updated_at: string }>;
     expect(concurrency).toEqual([{ global_max_concurrent: 10, updated_at: "2026-06-02" }]);
+  });
+
+  /*
+  FNXC:PluginLegacyMigration 2026-07-14-22:50:
+  PostgreSQL cutover must split each retained project plugin row into one newer-wins global installation and an independent project-path state. The same plugin ID may be enabled in one project and disabled in another; repeated migration and older SQLite backups must never overwrite newer central operator changes.
+  */
+  it("redirects legacy plugins into idempotent global installs and per-project states", async () => {
+    const projectA = resolve(join(ctx!.fusionDir, "project-a"));
+    const projectB = resolve(join(ctx!.fusionDir, "project-b"));
+    const sqliteA = join(ctx!.fusionDir, "plugins-a.db");
+    const sqliteB = join(ctx!.fusionDir, "plugins-b.db");
+    for (const sqlitePath of [sqliteA, sqliteB]) {
+      const legacy = new DatabaseSync(sqlitePath);
+      legacy.exec(LEGACY_PLUGINS_SQLITE_DDL);
+      if (sqlitePath === sqliteA) {
+        insertLegacyPlugin(legacy, {
+          id: "shared-plugin",
+          name: "Shared from A",
+          version: "1.0.0",
+          enabled: 1,
+          state: "started",
+          updatedAt: "2026-02-01T00:00:00.000Z",
+        });
+        insertLegacyPlugin(legacy, {
+          id: "central-wins",
+          name: "Old local metadata",
+          version: "1.0.0",
+          enabled: 0,
+          state: "stopped",
+          error: "old local error",
+          updatedAt: "2026-02-01T00:00:00.000Z",
+        });
+      } else {
+        insertLegacyPlugin(legacy, {
+          id: "shared-plugin",
+          name: "Shared from B",
+          version: "2.0.0",
+          enabled: 0,
+          state: "stopped",
+          error: "disabled in B",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+        });
+      }
+      legacy.close();
+    }
+
+    await applySchemaBaseline(ctx!.db);
+    await ctx!.db.execute(sql`
+      INSERT INTO central.plugin_installs
+        (id, name, version, path, settings, dependencies, ai_scan_on_load, created_at, updated_at)
+      VALUES
+        ('central-wins', 'New central metadata', '9.0.0', '/central/plugin', '{}'::jsonb, '[]'::jsonb, 0,
+         '2026-01-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')
+    `);
+    await ctx!.db.execute(sql`
+      INSERT INTO central.project_plugin_states
+        (project_path, plugin_id, enabled, state, error, created_at, updated_at)
+      VALUES
+        (${projectA}, 'central-wins', 1, 'started', NULL,
+         '2026-01-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')
+    `);
+
+    const reportA = await migrateTest(
+      ctx!.db,
+      [{ sqlitePath: sqliteA, pgSchema: "project", projectPath: projectA }],
+      { projectId: "plugin-project-a", migrationKey: "plugin-project-a", projectPath: projectA },
+    );
+    const reportB = await migrateTest(
+      ctx!.db,
+      [{ sqlitePath: sqliteB, pgSchema: "project", projectPath: projectB }],
+      { projectId: "plugin-project-b", migrationKey: "plugin-project-b", projectPath: projectB },
+    );
+    await migrateTest(
+      ctx!.db,
+      [{ sqlitePath: sqliteA, pgSchema: "project", projectPath: projectA }],
+      { projectId: "plugin-project-a", migrationKey: "plugin-project-a", projectPath: projectA },
+    );
+
+    for (const report of [reportA, reportB]) {
+      expect(report.tables).toContainEqual(expect.objectContaining({
+        table: "plugins",
+        verified: true,
+        skipped: true,
+        skipReason: "redirected to central plugin registry and project state",
+      }));
+    }
+    const compatibilityRows = await ctx!.db.execute(sql`SELECT id FROM project.plugins`);
+    expect(compatibilityRows).toHaveLength(0);
+
+    const installs = await ctx!.db.execute(sql`
+      SELECT id, name, version, updated_at FROM central.plugin_installs ORDER BY id
+    `) as unknown as Array<{ id: string; name: string; version: string; updated_at: string }>;
+    expect(installs).toEqual([
+      { id: "central-wins", name: "New central metadata", version: "9.0.0", updated_at: "2026-09-01T00:00:00.000Z" },
+      { id: "shared-plugin", name: "Shared from B", version: "2.0.0", updated_at: "2026-03-01T00:00:00.000Z" },
+    ]);
+
+    const states = await ctx!.db.execute(sql`
+      SELECT project_path, plugin_id, enabled, state, error, updated_at
+      FROM central.project_plugin_states
+      ORDER BY project_path, plugin_id
+    `) as unknown as Array<{
+      project_path: string;
+      plugin_id: string;
+      enabled: number;
+      state: string;
+      error: string | null;
+      updated_at: string;
+    }>;
+    expect(states).toEqual([
+      { project_path: projectA, plugin_id: "central-wins", enabled: 1, state: "started", error: null, updated_at: "2026-09-01T00:00:00.000Z" },
+      { project_path: projectA, plugin_id: "shared-plugin", enabled: 1, state: "started", error: null, updated_at: "2026-02-01T00:00:00.000Z" },
+      { project_path: projectB, plugin_id: "shared-plugin", enabled: 0, state: "stopped", error: "disabled in B", updated_at: "2026-03-01T00:00:00.000Z" },
+    ]);
+  });
+
+  it("treats missing SQLite files and databases without plugins as a no-op", async () => {
+    await applySchemaBaseline(ctx!.db);
+    await expect(migrateLegacyProjectPluginRows(
+      ctx!.db,
+      join(ctx!.fusionDir, "missing.db"),
+      join(ctx!.fusionDir, "project-missing"),
+    )).resolves.toBeUndefined();
+
+    const sqlitePath = join(ctx!.fusionDir, "without-plugins.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    legacy.exec(`CREATE TABLE config (id INTEGER PRIMARY KEY, settings TEXT)`);
+    legacy.close();
+    await expect(migrateLegacyProjectPluginRows(
+      ctx!.db,
+      sqlitePath,
+      join(ctx!.fusionDir, "project-empty"),
+    )).resolves.toBeUndefined();
+
+    const installs = await ctx!.db.execute(sql`SELECT id FROM central.plugin_installs`);
+    const states = await ctx!.db.execute(sql`SELECT plugin_id FROM central.project_plugin_states`);
+    expect(installs).toHaveLength(0);
+    expect(states).toHaveLength(0);
   });
 
   /*

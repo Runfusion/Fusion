@@ -278,6 +278,7 @@ export async function runDbMigrate(
     report = await migrateSqliteToPostgres(connections.migration, presentSources, {
       dryRun,
       projectId: registeredProjectId,
+      projectPath: projectRoot,
       migrationKey: `project:${registeredProjectId}`,
       deferCompletion: true,
       onProgress: (event) => {
