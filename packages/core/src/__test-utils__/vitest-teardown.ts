@@ -105,44 +105,11 @@ export default function setup(): () => Promise<void> {
       // Ignore — cleanup below is best-effort and uses an absolute path.
     }
     /*
-    FNXC:TestIsolation 2026-07-14-21:10:
-    Synchronous recursive rm of fusion-test-workers-* can block the Vitest main process indefinitely when a worker still holds macOS/SQLite handles (observed as dashboard-app-quality-backfill shard 2 finishing tests then hanging until the 900s watchdog). Detach cleanup so process exit is never gated on rmSync; the next setup/prefix sweep reaps leftovers.
+    FNXC:TestIsolation 2026-07-14-21:40:
+    Prefer injectable in-process removeWorkerRootWithRetry so unit tests can assert EBUSY/ENOTEMPTY retry semantics via __setWorkerRootRmSyncForTests.
+    Dashboard hang root causes were open SSE/undici handles (fixed via __resetSseBus + quarantines), not rmSync itself — restore sync cleanup for deterministic isolation and test hooks.
     */
-    try {
-      const { spawn } = await import("node:child_process");
-      const child = spawn(
-        process.execPath,
-        [
-          "-e",
-          `const {rmSync,readdirSync}=require("node:fs");const {join}=require("node:path");const root=${JSON.stringify(workerRoot)};try{rmSync(root,{recursive:true,force:true});}catch{}`,
-        ],
-        { detached: true, stdio: "ignore" },
-      );
-      child.unref();
-    } catch (error) {
-      // Fall back to a short in-process attempt only if spawn is unavailable.
-      try {
-        removeWorkerRootWithRetry(workerRoot, 1, 0);
-      } catch {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[vitest-teardown] deferred cleanup failed for ${workerRoot}: ${message}`);
-      }
-    }
-    // Best-effort, non-blocking prefix sweep of legacy homes (single-level).
-    try {
-      removeLegacyTopLevelHomeRoots();
-    } catch {
-      // ignore
-    }
-    /*
-    FNXC:TestIsolation 2026-07-14-21:15:
-    After tests finish, open handles (SSE keepalive intervals, undici sockets, etc.) can keep the Vitest main process and thread-pool workers alive indefinitely — dashboard backfill shard 2 was the canary (all tests green, no summary, 900s watchdog). Schedule a deferred hard exit so the quality runner always observes process completion without changing product code; Vitest has already recorded the run result by teardown time.
-    */
-    if (process.env.VITEST === "true" || process.env.VITEST_WORKER_ID !== undefined || process.env.VITEST_POOL_ID !== undefined) {
-      setTimeout(() => {
-        // Preserve a prior non-zero exitCode if Vitest already set one for failures.
-        process.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
-      }, 250).unref?.();
-    }
+    removeWorkerRootWithRetry(workerRoot);
+    removeLegacyTopLevelHomeRoots();
   };
 }
