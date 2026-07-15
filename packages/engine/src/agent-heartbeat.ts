@@ -83,11 +83,6 @@ FN-7672 requires durable agent error recovery to stay classification-gated: only
 FNXC:HeartbeatRecovery 2026-07-15-08:50:
 heartbeat-model-unavailable parks from assignment/on-demand runs were terminal until a human Retry, even when the next attempt succeeds with unchanged credentials (false "model unavailable" / registry / credential-probe blips). Admit those parks to the same bounded heartbeatErrorRecovery budget as error-state recovery so the engine auto-retries like operator Retry, while genuine missing credentials re-park after the budget exhausts.
 */
-export const MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS = 5;
-export const HEARTBEAT_ERROR_RECOVERY_METADATA_KEY = "heartbeatErrorRecovery";
-export const HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON = "error-retry-exhausted";
-export const HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON = "error-unrecoverable";
-export const HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON = "heartbeat-model-unavailable";
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./run-audit.js";
 import { promptWithFallback } from "./pi.js";
@@ -496,6 +491,38 @@ import {
   renderHeartbeatNoTaskProcedure,
   renderHeartbeatNoTaskSystemPrompt,
 } from "./agent-heartbeat-prompts.js";
+
+export {
+  MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS,
+  HEARTBEAT_ERROR_RECOVERY_METADATA_KEY,
+  HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON,
+  HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
+  HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
+  resolveErrorRecoveryLimit,
+  readHeartbeatErrorRetryCount,
+  buildHeartbeatErrorRecoveryMetadata,
+  incrementHeartbeatErrorRecoveryMetadata,
+  resetHeartbeatErrorRecoveryMetadata,
+  isHeartbeatErrorRecoverable,
+  isModelUnavailablePark,
+  isModelUnavailableParkRecoveryEligible,
+  isErrorRecoveryEligible,
+} from "./agent-heartbeat-error-recovery.js";
+import {
+  MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS,
+  HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON,
+  HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON,
+  HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON,
+  resolveErrorRecoveryLimit,
+  readHeartbeatErrorRetryCount,
+  incrementHeartbeatErrorRecoveryMetadata,
+  resetHeartbeatErrorRecoveryMetadata,
+  isHeartbeatErrorRecoverable,
+  isModelUnavailablePark,
+  isErrorRecoveryEligible,
+  isHeartbeatManaged,
+} from "./agent-heartbeat-error-recovery.js";
+
 
 /** Parameter schema for the fn_heartbeat_done tool */
 const heartbeatDoneParams = Type.Object({
@@ -4027,111 +4054,6 @@ const OVERDUE_FIRE_JITTER_MS = 5_000;
  */
 function isTickableState(state: Agent["state"]): boolean {
   return state === "active" || state === "running" || state === "idle";
-}
-
-/**
- * True when the scheduler should manage this agent at all. Ephemeral
- * (task-worker) agents are driven directly by TaskExecutor and must never
- * acquire a scheduler timer.
- */
-function isHeartbeatManaged(agent: Agent): boolean {
-  return !isEphemeralAgent(agent);
-}
-
-type HeartbeatErrorRecoveryMetadata = {
-  consecutiveAttempts: number;
-  updatedAt?: string;
-};
-
-export function resolveErrorRecoveryLimit(settings: Settings | null | undefined): number {
-  const raw = (settings as { heartbeatErrorRecoveryAttempts?: unknown } | null | undefined)?.heartbeatErrorRecoveryAttempts;
-  if (typeof raw !== "number" || !Number.isFinite(raw)) {
-    return MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS;
-  }
-  return Math.max(1, Math.floor(raw));
-}
-
-export function readHeartbeatErrorRetryCount(agent: { metadata?: Record<string, unknown> | null }): number {
-  /*
-  FNXC:AgentHeartbeat 2026-07-11-22:42:
-  FN-7844 requires the heartbeat timer and self-healing sweep to honor one durable-agent error-recovery budget. Read the legacy durableErrorRecovery attempt count as part of the shared budget so agents recovered by either entry path cannot receive separate retry pools.
-  */
-  const metadata = (agent.metadata ?? {}) as Record<string, unknown>;
-  const raw = metadata[HEARTBEAT_ERROR_RECOVERY_METADATA_KEY];
-  const heartbeatCount = raw && typeof raw === "object"
-    ? (raw as Record<string, unknown>).consecutiveAttempts
-    : 0;
-  const legacyRaw = metadata.durableErrorRecovery;
-  const legacyCount = legacyRaw && typeof legacyRaw === "object"
-    ? (legacyRaw as Record<string, unknown>).attempts
-    : 0;
-  const normalizedHeartbeatCount = typeof heartbeatCount === "number" && Number.isFinite(heartbeatCount) && heartbeatCount > 0
-    ? Math.floor(heartbeatCount)
-    : 0;
-  const normalizedLegacyCount = typeof legacyCount === "number" && Number.isFinite(legacyCount) && legacyCount > 0
-    ? Math.floor(legacyCount)
-    : 0;
-  return Math.max(normalizedHeartbeatCount, normalizedLegacyCount);
-}
-
-export function buildHeartbeatErrorRecoveryMetadata(agent: { metadata?: Record<string, unknown> | null }, consecutiveAttempts: number): Record<string, unknown> {
-  return {
-    ...(agent.metadata ?? {}),
-    [HEARTBEAT_ERROR_RECOVERY_METADATA_KEY]: {
-      consecutiveAttempts: Math.max(0, Math.floor(consecutiveAttempts)),
-      updatedAt: new Date().toISOString(),
-    } satisfies HeartbeatErrorRecoveryMetadata,
-  };
-}
-
-export function incrementHeartbeatErrorRecoveryMetadata(agent: { metadata?: Record<string, unknown> | null }): Record<string, unknown> {
-  return buildHeartbeatErrorRecoveryMetadata(agent, readHeartbeatErrorRetryCount(agent) + 1);
-}
-
-export function resetHeartbeatErrorRecoveryMetadata(agent: { metadata?: Record<string, unknown> | null }): Record<string, unknown> {
-  const { durableErrorRecovery: _legacyDurableErrorRecovery, ...metadata } = (agent.metadata ?? {}) as Record<string, unknown>;
-  return buildHeartbeatErrorRecoveryMetadata({ metadata }, 0);
-}
-
-export function isHeartbeatErrorRecoverable(agent: Pick<Agent, "lastError">): boolean {
-  const lastError = agent.lastError ?? "";
-  /*
-  FNXC:Reliability-ErrorClassification 2026-07-12-16:09:
-  FN-7878: a generic durable-agent heartbeat failure that manual Retry immediately fixes is recoverable by policy, even when it does not match curated transient patterns. Give unknown/session/spawn/stream blips the bounded heartbeat retry budget and re-park persistent failures as `error-retry-exhausted`; only operator-actionable auth/model/billing errors park immediately as `error-unrecoverable`. Stale worktree module-resolution errors stay out of naive retry recovery because self-healing has a dedicated stale-host/worktree suppression path.
-  */
-  return !isStaleWorktreeModuleResolutionError(lastError) && !isOperatorActionableAgentError(lastError);
-}
-
-export function isModelUnavailablePark(agent: Pick<Agent, "state" | "pauseReason">): boolean {
-  // Key on pauseReason, not only state=paused: startRun flips the agent to
-  // "running" before the run-entry recovery gate reads it, and a failed preload
-  // can load the post-startRun store row. Matching only state=paused would miss
-  // budgeted auto-retry for those paths.
-  return agent.pauseReason === HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON
-    && agent.state !== "active"
-    && agent.state !== "idle";
-}
-
-/*
-FNXC:HeartbeatRecovery 2026-07-15-08:50:
-False-positive heartbeat-model-unavailable parks must stay on the timer path with a bounded budget. Operator-actionable lastError text (no API key / registry miss) would otherwise exclude them from isHeartbeatErrorRecoverable forever, so this park reason is an explicit second recovery admission path independent of lastError classification.
-*/
-export function isModelUnavailableParkRecoveryEligible(agent: Agent, limit: number): boolean {
-  return isModelUnavailablePark(agent)
-    && isHeartbeatManaged(agent)
-    && agent.runtimeConfig?.enabled !== false
-    && readHeartbeatErrorRetryCount(agent) < Math.max(1, Math.floor(limit));
-}
-
-export function isErrorRecoveryEligible(agent: Agent, limit: number): boolean {
-  if (isModelUnavailableParkRecoveryEligible(agent, limit)) {
-    return true;
-  }
-  return agent.state === "error"
-    && isHeartbeatManaged(agent)
-    && agent.runtimeConfig?.enabled !== false
-    && isHeartbeatErrorRecoverable(agent)
-    && readHeartbeatErrorRetryCount(agent) < Math.max(1, Math.floor(limit));
 }
 
 /**
