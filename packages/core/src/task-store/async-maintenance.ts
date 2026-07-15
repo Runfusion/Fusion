@@ -23,7 +23,15 @@ export async function pruneOperationalLogsAsync(
   if (!Number.isFinite(retentionMs) || retentionMs <= 0) {
     return { deletedByTable, deletedTotal: 0 };
   }
-  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const boundProjectId = layer.projectId?.trim();
+  /*
+  FNXC:PostgresRetention 2026-07-14-21:55:
+  Operational retention should normally be project-bound. Preserve the legacy sentinel fallback for compatibility, but make every unbound maintenance pass visible before it can target legacy-unscoped rows.
+  */
+  if (!boundProjectId) {
+    console.warn("[fusion] PostgreSQL operational maintenance is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
+  }
+  const projectId = boundProjectId || "__legacy_unscoped__";
   const cutoff = new Date(Date.now() - retentionMs).toISOString();
   const count = async (name: string, statement: ReturnType<typeof sql>): Promise<void> => {
     const rows = await layer.db.execute(sql`WITH deleted AS (${statement}) SELECT count(*)::int AS count FROM deleted`) as unknown as Array<{ count: number | string }>;
@@ -71,7 +79,7 @@ export async function pruneOperationalLogsAsync(
       )
     RETURNING 1
   `);
-  await count("usage_events", sql`DELETE FROM project.usage_events WHERE project_id = ${projectId} AND ts < ${cutoff} RETURNING 1`);
+  await count("usageEvents", sql`DELETE FROM project.usage_events WHERE project_id = ${projectId} AND ts < ${cutoff} RETURNING 1`);
 
   return {
     deletedByTable,

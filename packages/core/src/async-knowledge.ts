@@ -4,7 +4,7 @@
  * FNXC:KnowledgeIndex 2026-07-14-16:42:
  * Task and PR history must remain incrementally searchable after PostgreSQL cutover. Keep Drizzle and project-partition enforcement in core so dashboard does not acquire a database-driver dependency, and reject unbound layers because this index contains sensitive repository history.
  */
-import { and, desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as schema from "./postgres/schema/index.js";
 
@@ -121,7 +121,12 @@ export async function queryKnowledgePagesInPostgres(
   const projectId = projectIdFor(layer);
   const predicates = [eq(schema.project.knowledgePages.projectId, projectId)];
   for (const term of options.terms) {
-    predicates.push(like(schema.project.knowledgePages.searchText, `%${term}%`));
+    /*
+    FNXC:KnowledgeIndex 2026-07-14-21:55:
+    Knowledge search preserves the case-insensitive substring behavior of the legacy index while treating user-provided percent, underscore, and backslash characters literally instead of as PostgreSQL wildcard syntax.
+    */
+    const escaped = term.replace(/[\\%_]/g, "\\$&");
+    predicates.push(ilike(schema.project.knowledgePages.searchText, `%${escaped}%`));
   }
   if (options.sourceKind) predicates.push(eq(schema.project.knowledgePages.sourceKind, options.sourceKind));
   const rows = await layer.db

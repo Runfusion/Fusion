@@ -79,8 +79,9 @@ export async function reconcilePhantomCommittedReservationsAsync(
 
   if (filesystemApproved.length === 0) return result;
 
+  let prunedByTask: Map<string, { prunedActivityLog: number; prunedAgents: number }>;
   try {
-    const prunedByTask = await layer.transactionImmediate(async (tx) => {
+    prunedByTask = await layer.transactionImmediate(async (tx) => {
       // Re-prove database absence inside the delete transaction so a task that
       // materialized after the classification query cannot lose child rows.
       const safeRows = await tx
@@ -126,14 +127,24 @@ export async function reconcilePhantomCommittedReservationsAsync(
       }
       return counts;
     });
-
+  } catch (error) {
     for (const taskId of filesystemApproved) {
-      const pruned = prunedByTask.get(taskId);
-      if (!pruned) {
-        result.skipped.push({ id: taskId, reason: "representation-present-after-proof" });
-        continue;
-      }
-      if (pruned.prunedActivityLog > 0 || pruned.prunedAgents > 0) {
+      result.skipped.push({
+        id: taskId,
+        reason: `reconcile-failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+    return result;
+  }
+
+  for (const taskId of filesystemApproved) {
+    const pruned = prunedByTask.get(taskId);
+    if (!pruned) {
+      result.skipped.push({ id: taskId, reason: "representation-present-after-proof" });
+      continue;
+    }
+    if (pruned.prunedActivityLog > 0 || pruned.prunedAgents > 0) {
+      try {
         await store.recordRunAuditEvent({
           agentId: "self-healing",
           runId: `phantom-reservation:${taskId}`,
@@ -143,16 +154,19 @@ export async function reconcilePhantomCommittedReservationsAsync(
           target: taskId,
           metadata: { reservationStatus: "committed", ...pruned },
         });
+      } catch (error) {
+        /*
+        FNXC:PostgresReservationRecovery 2026-07-14-21:55:
+        Audit emission is isolated per reconciled reservation. One failed audit must not relabel earlier successful reconciliations as skipped or prevent later IDs from completing their own bookkeeping.
+        */
+        result.skipped.push({
+          id: taskId,
+          reason: `audit-failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        continue;
       }
-      result.reconciled.push(taskId);
     }
-  } catch (error) {
-    for (const taskId of filesystemApproved) {
-      result.skipped.push({
-        id: taskId,
-        reason: `reconcile-failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
-    }
+    result.reconciled.push(taskId);
   }
   return result;
 }

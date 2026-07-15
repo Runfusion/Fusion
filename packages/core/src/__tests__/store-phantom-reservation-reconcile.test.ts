@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeAll, beforeEach, afterAll, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, afterAll, expect, it, vi } from "vitest";
 import { and, eq, inArray } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import {
@@ -125,6 +125,51 @@ pgTest("TaskStore phantom committed-reservation reconciliation", () => {
     expect(await layer.db.select().from(schema.project.activityLog).where(
       inArray(schema.project.activityLog.taskId, phantomTasks.map((task) => task.id)),
     )).toHaveLength(0);
+  });
+
+  it("isolates audit failures to the affected reconciled reservation", async () => {
+    /*
+    FNXC:PostgresReservationRecovery 2026-07-14-21:55:
+    Batch cleanup may reconcile several IDs before audit emission. A later ID's audit failure must not mark an earlier successfully audited ID as skipped, and bookkeeping must continue for the remaining IDs.
+    */
+    const store = h.store();
+    const layer = h.layer();
+    const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+    const phantomTasks = await Promise.all([
+      store.createTask({ description: "Audit succeeds" }),
+      store.createTask({ description: "Audit fails" }),
+      store.createTask({ description: "Audit continues" }),
+    ]);
+    for (const task of phantomTasks) {
+      await rm(join(h.rootDir(), ".fusion", "tasks", task.id), { recursive: true, force: true });
+    }
+    await layer.db.delete(schema.project.tasks).where(and(
+      eq(schema.project.tasks.projectId, projectId),
+      inArray(schema.project.tasks.id, phantomTasks.map((task) => task.id)),
+    ));
+    await layer.db.insert(schema.project.activityLog).values(phantomTasks.map((task) => ({
+      projectId,
+      id: `audit-isolation-${task.id}`,
+      timestamp: new Date().toISOString(),
+      type: "task:created",
+      taskId: task.id,
+      details: "orphan activity",
+    })));
+
+    const originalRecordRunAuditEvent = store.recordRunAuditEvent.bind(store);
+    const recordRunAuditEvent = vi.spyOn(store, "recordRunAuditEvent").mockImplementation(async (input) => {
+      if (input.taskId === phantomTasks[1].id) throw new Error("forced audit failure");
+      return originalRecordRunAuditEvent(input);
+    });
+    try {
+      const result = await store.reconcilePhantomCommittedReservations();
+      expect(result.reconciled).toEqual(expect.arrayContaining([phantomTasks[0].id, phantomTasks[2].id]));
+      expect(result.skipped).not.toContainEqual(expect.objectContaining({ id: phantomTasks[0].id }));
+      expect(result.skipped).toContainEqual({ id: phantomTasks[1].id, reason: "audit-failed: forced audit failure" });
+      expect(recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ taskId: phantomTasks[2].id }));
+    } finally {
+      recordRunAuditEvent.mockRestore();
+    }
   });
 
   it("does not prune a reservation represented by an archive row", async () => {

@@ -2,7 +2,7 @@
  * FNXC:PostgresRetention 2026-07-14-18:15:
  * Operational retention must delete only rows older than the cutoff in the bound project. Newer rows and equally old rows owned by another project must survive the same maintenance pass.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import { pruneOperationalLogsAsync } from "../../task-store/async-maintenance.js";
@@ -102,11 +102,27 @@ pgDescribe("PostgreSQL operational maintenance", () => {
       agentHeartbeats: 1,
       agentRuns: 1,
       agentConfigRevisions: 1,
-      usage_events: 1,
+      usageEvents: 1,
     });
     expect((await h.adminDb().select().from(schema.project.runAuditEvents).where(inArray(schema.project.runAuditEvents.id, ["audit-old", "audit-new"]))).map((row) => row.id)).toEqual(["audit-new"]);
     expect((await h.adminDb().select().from(schema.project.agentRuns).where(inArray(schema.project.agentRuns.id, ["agent-run-old", "agent-run-new", "agent-run-active"]))).map((row) => row.id).sort()).toEqual(["agent-run-active", "agent-run-new"]);
     expect((await h.adminDb().select().from(schema.project.agentConfigRevisions).where(inArray(schema.project.agentConfigRevisions.id, ["revision-old", "revision-newest"]))).map((row) => row.id)).toEqual(["revision-newest"]);
+  });
+
+  it("warns before using the legacy project sentinel and reports camelCase metric keys", async () => {
+    /*
+    FNXC:PostgresRetention 2026-07-14-21:55:
+    An unbound retention pass remains compatible with legacy-unscoped data, but operators must see the scope fallback and receive the same camelCase metric naming used by every other maintenance table.
+    */
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = await pruneOperationalLogsAsync({ ...h.layer(), projectId: undefined }, 86_400_000);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacy unscoped project sentinel"));
+      expect(result.deletedByTable).toHaveProperty("usageEvents");
+      expect(result.deletedByTable).not.toHaveProperty("usage_events");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("treats invalid retention %s as a no-op", async (retentionMs) => {

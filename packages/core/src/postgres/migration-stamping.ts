@@ -23,6 +23,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 /** The Drizzle instance type startup-factory uses for its `connections.migration`. */
 type MigrationDb = PostgresJsDatabase<Record<string, never>>;
+type MigrationTransaction = Parameters<Parameters<MigrationDb["transaction"]>[0]>[0];
 
 /** Inputs for stamping migrated rows with a project partition key. */
 export interface StampMigratedProjectRowsInput {
@@ -192,12 +193,24 @@ export async function stampMigratedProjectRows(
   FNXC:ProjectDataIsolation 2026-07-14-16:50:
   Schema migration 0006 quarantines ownerless rows when no unique migration owner existed at schema-upgrade time. A later verified startup cutover may claim that quarantine only when the migration ledger now identifies exactly one non-empty project and it is this project; multi-project or otherwise ambiguous quarantines remain untouched for operator reconciliation.
   */
-  const stateTable = (await db.execute(sql`
+  /*
+  FNXC:ProjectMigrationStamping 2026-07-14-21:55:
+  Partition stamping is one atomic promotion. If any table cannot be re-keyed, roll back every earlier update so startup never exposes a partially migrated project identity.
+  */
+  return db.transaction((tx) => stampMigratedProjectRowsWithinTransaction(tx, projectId, rootDir));
+}
+
+async function stampMigratedProjectRowsWithinTransaction(
+  tx: MigrationTransaction,
+  projectId: string,
+  rootDir: string,
+): Promise<StampMigratedProjectRowsResult> {
+  const stateTable = (await tx.execute(sql`
     SELECT to_regclass('public.fusion_sqlite_migrations') IS NOT NULL AS exists
   `)) as unknown as Array<{ exists: boolean }>;
   let canClaimLegacyQuarantine = false;
   if (stateTable[0]?.exists) {
-    const ownershipRows = (await db.execute(sql`
+    const ownershipRows = (await tx.execute(sql`
       SELECT count(DISTINCT project_id)::int AS project_count,
              min(project_id) AS only_project_id
       FROM public.fusion_sqlite_migrations
@@ -207,19 +220,19 @@ export async function stampMigratedProjectRows(
       ownershipRows[0]?.project_count === 1 && ownershipRows[0]?.only_project_id === projectId;
   }
 
-  await db.execute(
+  await tx.execute(
     sql`UPDATE project.tasks SET project_id = ${projectId}
         WHERE project_id IS NULL
            OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__')`,
   );
-  await db.execute(
+  await tx.execute(
     sql`UPDATE project.archived_tasks SET project_id = ${projectId}
         WHERE project_id IS NULL
            OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__')`,
   );
   // The cold-storage archive is also partitioned (PR #2007 review P1); migrated
   // snapshots must be owned by this project too.
-  await db.execute(
+  await tx.execute(
     sql`UPDATE archive.archived_tasks SET project_id = ${projectId}
         WHERE project_id IS NULL
            OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__')`,
@@ -236,7 +249,7 @@ export async function stampMigratedProjectRows(
   clobbered (then the '' row is left for manual reconciliation rather than
   destroying either copy).
   */
-  await db.execute(
+  await tx.execute(
     sql`UPDATE project.config SET project_id = ${projectId}
       WHERE (project_id = '' OR (${canClaimLegacyQuarantine} AND project_id = '__legacy_unscoped__'))
         AND NOT EXISTS (SELECT 1 FROM project.config WHERE project_id = ${projectId})`,
@@ -256,7 +269,7 @@ export async function stampMigratedProjectRows(
   unique violation never clobbers a pre-existing per-project row (the outer
   table alias in the correlated subquery references the row being updated).
   */
-  await db.execute(
+  await tx.execute(
     sql`UPDATE project.workflow_settings SET project_id = ${projectId}
       WHERE project_id = ${rootDir}
         AND NOT EXISTS (
@@ -265,7 +278,7 @@ export async function stampMigratedProjectRows(
             AND w2.project_id = ${projectId}
         )`,
   );
-  await db.execute(
+  await tx.execute(
     sql`UPDATE project.workflow_prompt_overrides SET project_id = ${projectId}
       WHERE project_id = ${rootDir}
         AND NOT EXISTS (

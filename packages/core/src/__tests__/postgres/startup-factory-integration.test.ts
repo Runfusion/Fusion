@@ -455,6 +455,32 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
          VALUES ('wf_a', '${fakeRootDir}', '{"executor":"x"}'::jsonb, '2026-06-01T00:00:00Z')`,
       );
 
+      /*
+      FNXC:ProjectMigrationStamping 2026-07-14-21:55:
+      Force the last table promotion to fail and prove earlier task/config/workflow updates roll back with it; a retry after removing the fault must then stamp the complete project.
+      */
+      await db.execute(`
+        CREATE FUNCTION public.fail_migration_stamp_for_test() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced migration stamp failure'; END $$;
+        CREATE TRIGGER fail_migration_stamp_for_test
+        BEFORE UPDATE ON project.workflow_prompt_overrides
+        FOR EACH ROW EXECUTE FUNCTION public.fail_migration_stamp_for_test();
+      `);
+      await expect(stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir }))
+        .rejects.toThrow("Failed query: UPDATE project.workflow_prompt_overrides");
+      const rolledBackTask = (await db.execute(
+        `SELECT project_id FROM project.tasks WHERE id = 'FN-HELP-1'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(rolledBackTask[0]?.project_id).toBe("__legacy_unscoped__");
+      const rolledBackWorkflow = (await db.execute(
+        `SELECT project_id FROM project.workflow_settings WHERE workflow_id = 'wf_a'`,
+      )) as unknown as Array<{ project_id: string }>;
+      expect(rolledBackWorkflow[0]?.project_id).toBe(fakeRootDir);
+      await db.execute(`
+        DROP TRIGGER fail_migration_stamp_for_test ON project.workflow_prompt_overrides;
+        DROP FUNCTION public.fail_migration_stamp_for_test();
+      `);
+
       const result = await stampMigratedProjectRows(db, { projectId: "proj_help", rootDir: fakeRootDir });
       expect(result.stamped).toBe(true);
 
