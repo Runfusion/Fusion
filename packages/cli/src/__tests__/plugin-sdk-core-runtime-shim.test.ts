@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   spawn: mocks.spawn,
 }));
 
-import { superviseSpawn } from "../plugin-sdk-core-runtime-shim.js";
+import { superviseSpawn } from "../plugin-sdk-core-runtime-shim.mjs";
 
 class FakeChild extends EventEmitter {
   pid = 1234;
