@@ -3,7 +3,21 @@ import { resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidat
 
 export type ModelSelection = ResolvedModelSelection;
 
-export const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+Treat AI-merge reviewing/landing as active so model/resolution surfaces and cards stay in the live-agent visual state while the merger owns the pump.
+*/
+export const ACTIVE_STATUSES = new Set([
+  "planning",
+  "researching",
+  "executing",
+  "finalizing",
+  "merging",
+  "merging-pr",
+  "merging-fix",
+  "reviewing",
+  "landing",
+]);
 
 const STRING_OBJECT_TAG = "[object String]";
 

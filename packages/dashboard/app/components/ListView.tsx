@@ -46,7 +46,21 @@ function columnColor(column: ColumnId): string {
   return (COLUMN_COLOR_MAP as Record<string, string>)[column] ?? "var(--accent)";
 }
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+List view agent-active styling must cover AI-merge reviewing/landing so rows stay live while the merger owns the pump.
+*/
+const ACTIVE_STATUSES = new Set([
+  "planning",
+  "researching",
+  "executing",
+  "finalizing",
+  "merging",
+  "merging-pr",
+  "merging-fix",
+  "reviewing",
+  "landing",
+]);
 const LIST_TOUCH_CONTEXT_MENU_DELAY_MS = 550;
 const LIST_TOUCH_MOVE_THRESHOLD = 10;
 const LIST_CONTEXT_MENU_VIEWPORT_MARGIN = 8;

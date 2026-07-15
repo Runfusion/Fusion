@@ -261,8 +261,22 @@ function isAgentCreatedTask(task: Task): boolean {
 // (which are not members and correctly resolve to false).
 const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
-const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+AI merge is live for most of its window under status reviewing (clean-room review) and landing (advance main / cleanup), not only merging*. Keep card pulse, merge timer, and status badge on for the full pipeline so operators always see a Merging badge on the single-flight owner.
+*/
+const ACTIVE_STATUSES = new Set([
+  "planning",
+  "researching",
+  "executing",
+  "finalizing",
+  "merging",
+  "merging-pr",
+  "merging-fix",
+  "reviewing",
+  "landing",
+]);
+const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix", "reviewing", "landing"]);
 
 const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -282,6 +296,13 @@ const LIVE_TIME_INDICATOR_POLL_MS = 30_000;
 
 function getTaskStatusLabel(status: string, t: TFunction<"app">): string {
   if (status === "merging-fix") return t("tasks.statusMergingFix", "Merging fixes…");
+  /*
+  FNXC:MergeQueue 2026-07-15-10:40:
+  Operators expect a "merging" badge while AI merge owns the pump. Map reviewing/landing to the same Merging… label so the board does not look idle during the long review and land phases.
+  */
+  if (status === "reviewing" || status === "landing" || status === "merging" || status === "merging-pr") {
+    return t("tasks.statusMerging", "Merging…");
+  }
   return status;
 }
 

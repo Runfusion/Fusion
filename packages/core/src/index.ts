@@ -545,6 +545,10 @@ export {
   type RunningAgentCounts,
 } from "./live-agent-count.js";
 export {
+  ACTIVE_MERGE_PIPELINE_STATUSES,
+  isActiveMergeStatus,
+} from "./active-merge-status.js";
+export {
   setTaskCreatedHook,
   getTaskCreatedHook,
   type TaskCreatedHook,

@@ -16,7 +16,7 @@ describe("live agent count predicates", () => {
     expect(isRunningAgentTask(task({ column: "triage", status: "planning", paused: false }))).toBe(true);
     expect(isRunningAgentTask(task({ column: "triage", status: "planning", paused: true }))).toBe(false);
 
-    for (const status of ["merging", "merging-pr", "merging-fix", "reviewing", "fixing"]) {
+    for (const status of ["merging", "merging-pr", "merging-fix", "reviewing", "landing", "fixing"]) {
       expect(isRunningAgentTask(task({ column: "in-review", status, paused: false }))).toBe(true);
     }
 
@@ -37,12 +37,13 @@ describe("live agent count predicates", () => {
       task({ column: "in-review", status: "merging-pr", paused: false }),
       task({ column: "in-review", status: "merging-fix", paused: false }),
       task({ column: "in-review", status: "reviewing", paused: false }),
+      task({ column: "in-review", status: "landing", paused: false }),
       task({ column: "in-review", status: "fixing", paused: false }),
       task({ column: "in-review", status: "fixing", paused: true }),
       task({ column: "todo" }),
       task({ column: "done" }),
       task({ column: "archived" }),
-    ])).toBe(7);
+    ])).toBe(8);
   });
 
   it("normalizes display counts for zero, one, multi-project, unopened, and oversubscribed states", () => {

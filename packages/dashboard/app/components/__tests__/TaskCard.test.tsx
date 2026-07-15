@@ -2351,9 +2351,27 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("merging")).toBeDefined();
+    expect(screen.getByText("Merging…")).toBeDefined();
     expect(screen.queryByText("Merge blocked")).toBeNull();
   });
+
+  it.each(["merging", "reviewing", "landing", "merging-pr"] as const)(
+    "FN-merge-badge: shows Merging… badge while task.status is %s",
+    (status) => {
+      render(
+        <TaskCard
+          task={makeTask({
+            column: "in-review",
+            status,
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Merging…")).toBeDefined();
+    },
+  );
 
   it.each([
     {

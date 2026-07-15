@@ -1,3 +1,4 @@
+import { isActiveMergeStatus } from "./active-merge-status.js";
 import { IN_REVIEW_STALL_LOG_PREFIX } from "./in-review-stall.js";
 import type { Task } from "./types.js";
 
@@ -27,8 +28,6 @@ export interface InReviewStalledContext {
 
 export const DEFAULT_IN_REVIEW_STALLED_THRESHOLD_MS = 24 * 60 * 60_000;
 
-const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
-
 type InReviewStalledTask = Pick<Task, "id" | "column" | "paused" | "status" | "columnMovedAt" | "updatedAt" | "log" | "mergeDetails">;
 
 type ActivityCandidate = {
@@ -45,7 +44,7 @@ export function getInReviewStalledSignal(
   if (context.autoMerge === false) return undefined;
   if (task.mergeDetails?.mergeConfirmed === true) return undefined;
   if (task.status === "awaiting-user-review" || task.status === "awaiting-approval") return undefined;
-  if (task.status && ACTIVE_MERGE_STATUSES.has(task.status)) return undefined;
+  if (isActiveMergeStatus(task.status)) return undefined;
   if (context.activeMergeTaskId === task.id || context.executingTaskIds?.has(task.id)) return undefined;
 
   const thresholdMs = context.thresholdMs ?? DEFAULT_IN_REVIEW_STALLED_THRESHOLD_MS;

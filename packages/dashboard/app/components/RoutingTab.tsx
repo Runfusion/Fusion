@@ -26,7 +26,21 @@ function getRoutingPolicyLabel(policy: RoutingSettings["unavailableNodePolicy"] 
   return t("routing.policyLabel.notConfigured", "Not configured");
 }
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
+/*
+FNXC:MergeQueue 2026-07-15-10:40:
+Routing tab active-status styling includes AI-merge reviewing/landing for parity with TaskCard.
+*/
+const ACTIVE_STATUSES = new Set([
+  "planning",
+  "researching",
+  "executing",
+  "finalizing",
+  "merging",
+  "merging-pr",
+  "merging-fix",
+  "reviewing",
+  "landing",
+]);
 
 function isUnhealthy(status: NodeInfo["status"] | undefined): boolean {
   return status !== undefined && status !== "online";
