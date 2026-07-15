@@ -352,6 +352,8 @@ const mocks = vi.hoisted(() => {
     const pluginLoader = {
       loadPlugin: vi.fn().mockResolvedValue(undefined),
       loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
+      getPluginSkills: vi.fn().mockReturnValue([]),
+      stopAllPlugins: vi.fn().mockResolvedValue(undefined),
       stopPlugin: vi.fn().mockResolvedValue(undefined),
       reloadPlugin: vi.fn().mockResolvedValue(undefined),
       getPluginRoutes: vi.fn().mockReturnValue([]),
@@ -381,6 +383,7 @@ const mocks = vi.hoisted(() => {
   };
 
   const refreshAllCustomProviderModels = vi.fn().mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
+  const createSkillsAdapterMock = vi.fn().mockReturnValue(undefined);
 
   const agentSemaphoreCtor = vi.fn().mockImplementation(function () {
     return {
@@ -532,6 +535,7 @@ const mocks = vi.hoisted(() => {
     missionAutopilotInstances,
     missionExecutionLoopInstances,
     notifierInstances,
+    pluginLoaderInstances,
     projectEngineInstances,
     listenCalls,
     taskStoreCtor,
@@ -560,6 +564,7 @@ const mocks = vi.hoisted(() => {
     authStorage,
     modelRegistry,
     refreshAllCustomProviderModels,
+    createSkillsAdapterMock,
     globalSettingsGetSettings,
     reset() {
       taskStores.length = 0;
@@ -634,7 +639,7 @@ resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved
   GitHubClient: vi.fn().mockImplementation(function () {
     return {};
   }),
-  createSkillsAdapter: vi.fn().mockReturnValue(undefined),
+  createSkillsAdapter: mocks.createSkillsAdapterMock,
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
   refreshAllCustomProviderModels: mocks.refreshAllCustomProviderModels,
@@ -916,6 +921,32 @@ describe("runServe", () => {
     expect(mocks.stuckDetectorInstances[0].start).toHaveBeenCalledTimes(1);
     expect(mocks.selfHealingInstances[0].start).toHaveBeenCalledTimes(1);
     expect(mocks.executorInstances[0].resumeOrphaned).toHaveBeenCalledTimes(1);
+
+    await triggerSignal("SIGINT");
+  });
+
+  /*
+   * FNXC:PluginSkillsPostgres 2026-07-14-17:47:
+   * `fn serve` skill discovery is metadata-only. Its request-scoped loader must not persist synthetic plugin starts, stops, or errors.
+   */
+  it("keeps request-scoped plugin skill discovery read-only", async () => {
+    await runServe(0, {});
+    const adapterOptions = mocks.createSkillsAdapterMock.mock.calls.at(-1)?.[0] as {
+      getPluginSkills?: (rootDir: string, resolvedProjectStore: (typeof mocks.taskStores)[number]) => Promise<unknown[]>;
+    };
+    const resolvedProjectStore = mocks.taskStores[0];
+    resolvedProjectStore.getPluginStore().listPlugins.mockResolvedValue([
+      { id: "enabled-plugin", updatedAt: "2026-07-14T00:00:00.000Z" },
+    ]);
+    mocks.pluginLoaderCtor.mockClear();
+
+    await expect(adapterOptions.getPluginSkills?.("/repo-secondary", resolvedProjectStore)).resolves.toEqual([]);
+    expect(mocks.pluginLoaderCtor).toHaveBeenCalledWith({
+      pluginStore: resolvedProjectStore.getPluginStore(),
+      taskStore: resolvedProjectStore,
+      persistRuntimeState: false,
+    });
+    expect(mocks.pluginLoaderInstances.at(-1)?.stopAllPlugins).toHaveBeenCalledOnce();
 
     await triggerSignal("SIGINT");
   });

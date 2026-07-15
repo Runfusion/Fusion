@@ -304,6 +304,21 @@ describe("PluginLoader Hot-Reload", () => {
       await expect(pluginLoader.stopPlugin("nonexistent")).resolves.not.toThrow();
       expect(pluginLoader.isPluginLoaded("nonexistent")).toBe(false);
     });
+
+    it("unloads request-scoped plugins without persisting a stopped runtime state", async () => {
+      pluginLoader = new PluginLoader({
+        pluginStore: mockPluginStore,
+        taskStore: mockTaskStore,
+        persistRuntimeState: false,
+      });
+      await pluginLoader.loadPlugin("hot-reload-test");
+      expect((mockPluginStore as any)._installation.state).toBe("installed");
+
+      await pluginLoader.stopAllPlugins();
+
+      expect(pluginLoader.isPluginLoaded("hot-reload-test")).toBe(false);
+      expect((mockPluginStore as any)._installation.state).toBe("installed");
+    });
   });
 
   describe("reloadPlugin() - hot reload", () => {
