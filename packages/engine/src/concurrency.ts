@@ -14,9 +14,24 @@ export const PRIORITY_SPECIFY = 0;
 interface PriorityWaiter {
   priority: number;
   resolve: () => void;
+  /** Optional reject for abortable acquires — not used by the priority drain path. */
+  reject?: (err: Error) => void;
 }
 
 export const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
+
+function createAbortError(): Error {
+  if (typeof DOMException === "function") {
+    try {
+      return new DOMException("The operation was aborted", "AbortError");
+    } catch {
+      // fall through
+    }
+  }
+  const err = new Error("The operation was aborted");
+  err.name = "AbortError";
+  return err;
+}
 
 /*
 FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
@@ -241,21 +256,47 @@ export class AgentSemaphore {
    * @param priority - Numeric priority (higher = served first). Defaults to `0`
    *   ({@link PRIORITY_SPECIFY}). Use {@link PRIORITY_MERGE} (`2`) for merge
    *   agents and {@link PRIORITY_EXECUTE} (`1`) for execution agents.
+   * @param signal - Optional AbortSignal. When aborted while queued, the waiter
+   *   is removed and the promise rejects with an AbortError so cancelled
+   *   verification/merge work does not block the queue forever.
    */
-  acquire(priority: number = 0): Promise<void> {
+  acquire(priority: number = 0, signal?: AbortSignal): Promise<void> {
     const limit = this.limit; // Uses the guarded getter (returns min 1)
+    if (signal?.aborted) {
+      return Promise.reject(createAbortError());
+    }
     if (this._active < limit) {
       this._active++;
       return Promise.resolve();
     }
-    return new Promise<void>((resolve) => {
-      this._waiters.push({
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const waiter: PriorityWaiter = {
         priority,
         resolve: () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
           this._active++;
           resolve();
         },
-      });
+        reject: (err: Error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(err);
+        },
+      };
+      const onAbort = () => {
+        const idx = this._waiters.indexOf(waiter);
+        if (idx >= 0) this._waiters.splice(idx, 1);
+        waiter.reject?.(createAbortError());
+      };
+      const cleanup = () => {
+        signal?.removeEventListener("abort", onAbort);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this._waiters.push(waiter);
     });
   }
 

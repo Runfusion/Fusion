@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  clampMaxConcurrentVerifications,
   getMaxConcurrentVerifications,
   getVerificationSemaphore,
+  MAX_CONCURRENT_VERIFICATIONS_HARD_CAP,
   setMaxConcurrentVerifications,
   withVerificationSlot,
 } from "../verification-concurrency.js";
@@ -15,6 +17,15 @@ describe("verification concurrency", () => {
 
   it("defaults to one concurrent verification", () => {
     expect(getMaxConcurrentVerifications()).toBe(1);
+  });
+
+  it("clamps limit to 1–8", () => {
+    expect(clampMaxConcurrentVerifications(0)).toBe(1);
+    expect(clampMaxConcurrentVerifications(-3)).toBe(1);
+    expect(clampMaxConcurrentVerifications(50)).toBe(MAX_CONCURRENT_VERIFICATIONS_HARD_CAP);
+    expect(clampMaxConcurrentVerifications(3.9)).toBe(3);
+    setMaxConcurrentVerifications(99);
+    expect(getMaxConcurrentVerifications()).toBe(8);
   });
 
   it("serializes overlapping withVerificationSlot callers when limit is 1", async () => {
@@ -65,5 +76,29 @@ describe("verification concurrency", () => {
     );
 
     expect(peak).toBe(2);
+  });
+
+  it("rejects with AbortError when aborted while queued for a slot", async () => {
+    setMaxConcurrentVerifications(1);
+    let releaseHolder!: () => void;
+    const holderGate = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+
+    const holder = withVerificationSlot(async () => {
+      await holderGate;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const ac = new AbortController();
+    const waiting = withVerificationSlot(async () => "ran", ac.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+    ac.abort();
+
+    await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
+    releaseHolder();
+    await holder;
   });
 });

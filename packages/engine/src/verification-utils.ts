@@ -5,10 +5,7 @@
 import type { TaskStore, AgentRole } from "@fusion/core";
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend, SandboxRunStreamingOptions, SandboxStreamingResult } from "./sandbox/index.js";
-import {
-  setMaxConcurrentVerifications,
-  withVerificationSlot,
-} from "./verification-concurrency.js";
+import { withVerificationSlot } from "./verification-concurrency.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -380,27 +377,27 @@ export async function runVerificationCommand(
   /*
   FNXC:VerificationConcurrency 2026-07-15-03:35:
   Merge/mission verification shares the process-wide verification slot with fn_run_verification so stacked monorepo builds cannot run unbounded across concurrent tasks.
+
+  FNXC:VerificationConcurrency 2026-07-15-08:20:
+  Pass signal into the slot wait so cancelled merge verification leaves the queue.
+  Limit is process-wide from engine settings wiring, not re-set per call.
   */
-  try {
-    const settings = await store.getSettings();
-    setMaxConcurrentVerifications(settings.maxConcurrentVerifications ?? 1);
-  } catch {
-    // Best-effort; keep default limit 1.
-  }
-  return withVerificationSlot(() =>
-    runVerificationCommandUnlocked(
-      store,
-      rootDir,
-      taskId,
-      command,
-      type,
-      signal,
-      log,
-      agentLabel,
-      extraEnv,
-      timeoutMsOverride,
-      backend,
-    ),
+  return withVerificationSlot(
+    () =>
+      runVerificationCommandUnlocked(
+        store,
+        rootDir,
+        taskId,
+        command,
+        type,
+        signal,
+        log,
+        agentLabel,
+        extraEnv,
+        timeoutMsOverride,
+        backend,
+      ),
+    signal,
   );
 }
 

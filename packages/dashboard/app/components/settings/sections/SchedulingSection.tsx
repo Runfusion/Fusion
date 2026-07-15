@@ -68,9 +68,15 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
         <label htmlFor="maxConcurrentVerifications">{t("settings.scheduling.maxConcurrentVerifications", "Max Concurrent Verifications")}</label>
         <input id="maxConcurrentVerifications" type="number" min={1} max={8} disabled={concurrencyLoading} value={form.maxConcurrentVerifications ?? ""} onChange={(e) => {
             const val = e.target.value;
-            setForm((f) => ({ ...f, maxConcurrentVerifications: val === "" ? undefined : Number(val) } as SettingsFormState));
+            if (val === "") {
+              setForm((f) => ({ ...f, maxConcurrentVerifications: undefined } as SettingsFormState));
+              return;
+            }
+            // FNXC:VerificationConcurrency 2026-07-15-08:20: Clamp to 1–8 on the form path so UI cannot persist values outside the engine hard cap.
+            const n = Math.min(8, Math.max(1, Math.floor(Number(val)) || 1));
+            setForm((f) => ({ ...f, maxConcurrentVerifications: n } as SettingsFormState));
         }}/>
-        <small>{t("settings.scheduling.maxConcurrentVerificationsHint", "Caps stacked typecheck/build verification across tasks. Default: 1.")}</small>
+        <small>{t("settings.scheduling.maxConcurrentVerificationsHint", "Caps stacked typecheck/build verification across tasks. Default: 1. Range: 1–8.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="maxTriageConcurrent">{t("settings.scheduling.maxTriageConcurrent", "Max Triage Concurrent")}</label>

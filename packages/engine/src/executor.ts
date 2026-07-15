@@ -11034,8 +11034,6 @@ export class TaskExecutor {
           taskId: task.id,
           recordActivity: () => stuckDetector?.recordActivity(task.id),
           verificationCommandTimeoutMs: settings.verificationCommandTimeoutMs,
-          // FNXC:VerificationConcurrency 2026-07-15-03:35: Cap stacked verify/build across concurrent tasks.
-          maxConcurrentVerifications: settings.maxConcurrentVerifications ?? 1,
           onVerificationStart: (timeoutMs) => stuckDetector?.beginVerification(task.id, timeoutMs),
           onVerificationEnd: () => stuckDetector?.endVerification(task.id),
           log: {

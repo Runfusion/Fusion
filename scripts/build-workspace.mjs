@@ -509,6 +509,33 @@ function formatPlanLine(pkg) {
  * `--force` rebuilds every package ignoring the skip cache. `--full` sets
  * FUSION_CLI_FULL_PACKAGE for the CLI packaging path (desktop + plugins + DTS).
  */
+/**
+ * FNXC:WorkspaceBuild 2026-07-15-08:15:
+ * Greptile P1: a warm fast build caches CLI after emitting only bin.js/extension.js.
+ * `pnpm build:full` must still run tsup so desktop/plugins/DTS stage. Force-include
+ * @runfusion/fusion whenever fullPackage is requested, even if content-hash says skip.
+ */
+export function ensureFullPackageCliPlanned(plannedPackages, skippedPackages, { fullPackage = false } = {}) {
+  if (!fullPackage) {
+    return { plannedPackages, skippedPackages };
+  }
+  const cliName = "@runfusion/fusion";
+  if (plannedPackages.some((pkg) => pkg.name === cliName)) {
+    return { plannedPackages, skippedPackages };
+  }
+  const skippedCli = (skippedPackages ?? []).find((pkg) => pkg.name === cliName);
+  if (!skippedCli) {
+    return { plannedPackages, skippedPackages };
+  }
+  return {
+    plannedPackages: [
+      ...plannedPackages,
+      { ...skippedCli, buildReason: "full-package", sourceHash: skippedCli.sourceHash },
+    ],
+    skippedPackages: (skippedPackages ?? []).filter((pkg) => pkg.name !== cliName),
+  };
+}
+
 export function main({
   rootDir = repoRoot,
   spawnFn = spawnSync,
@@ -520,9 +547,13 @@ export function main({
   const cache = force ? { version: BUILD_CACHE_VERSION, entries: {} } : readPluginBuildCache(rootDir);
   const snapshot = createRepoContentSnapshot({ rootDir, gitFn });
   const plan = planWorkspaceBuild({ rootDir, cache, gitFn, snapshot, force });
-  const plannedPackages = pluginsOnly ? plan.plannedPackages.filter((pkg) => pkg.isPlugin) : plan.plannedPackages;
+  let plannedPackages = pluginsOnly ? plan.plannedPackages.filter((pkg) => pkg.isPlugin) : plan.plannedPackages;
+  let skippedPackages = plan.skippedPackages ?? plan.skippedPlugins;
+  if (!pluginsOnly) {
+    ({ plannedPackages, skippedPackages } = ensureFullPackageCliPlanned(plannedPackages, skippedPackages, { fullPackage }));
+  }
   const plannedNames = plannedPackages.map(formatPlanLine);
-  const skippedNames = (plan.skippedPackages ?? plan.skippedPlugins).map((pkg) => pkg.name);
+  const skippedNames = skippedPackages.map((pkg) => pkg.name);
 
   const scope = pluginsOnly ? "changed plugins" : "planned builds";
   console.log(`[build-workspace] ${scope}: ${plannedNames.join(", ") || "(none)"}`);

@@ -6648,7 +6648,7 @@ export default interface Resources {
         "maxConcurrentTasks": "Max Concurrent Tasks",
         "maxConcurrentTasksHint": "Default: 2.",
         "maxConcurrentVerifications": "Max Concurrent Verifications",
-        "maxConcurrentVerificationsHint": "Caps stacked typecheck/build verification across tasks. Default: 1.",
+        "maxConcurrentVerificationsHint": "Caps stacked typecheck/build verification across tasks. Default: 1. Range: 1–8.",
         "maxStuckRetries": "Max Stuck Retries",
         "maxTriageConcurrent": "Max Triage Concurrent",
         "maximumAgeInHoursBeforeAPlanIs": "Maximum age in hours before a plan is considered stale. Default: 6 hours.",

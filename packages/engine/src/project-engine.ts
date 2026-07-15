@@ -66,6 +66,7 @@ import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
+import { setMaxConcurrentVerifications } from "./verification-concurrency.js";
 import { runtimeLog } from "./logger.js";
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
@@ -971,6 +972,12 @@ export class ProjectEngine {
 
     // 5. Wire settings event listeners
     this.wireSettingsListeners(store);
+    /*
+    FNXC:VerificationConcurrency 2026-07-15-08:20:
+    Apply maxConcurrentVerifications once at start (and on settings:updated) so verification
+    slots do not re-race last-writer-wins on every fn_run_verification / merge command.
+    */
+    setMaxConcurrentVerifications(settings.maxConcurrentVerifications ?? 1);
 
     // 6. Wire auto-merge on task:moved and task:updated pause interruptions
     this.wireAutoMerge(store, cwd);
@@ -4854,6 +4861,23 @@ export class ProjectEngine {
     };
     store.on("settings:updated", onStuckTimeoutChange);
     this.settingsHandlers.push(onStuckTimeoutChange);
+
+    // 7b. Verification concurrency — process-wide slot cap (clamped 1–8)
+    const onVerificationConcurrencyChange = ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
+      if (s.maxConcurrentVerifications === prev.maxConcurrentVerifications) return;
+      setMaxConcurrentVerifications(s.maxConcurrentVerifications ?? 1);
+      runtimeLog.log(
+        `maxConcurrentVerifications updated to ${s.maxConcurrentVerifications ?? 1}`,
+      );
+    };
+    store.on("settings:updated", onVerificationConcurrencyChange);
+    this.settingsHandlers.push(onVerificationConcurrencyChange);
 
     // 8. Memory maintenance settings change — sync automations
     const onInsightSettingsChange = async ({

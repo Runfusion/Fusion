@@ -10,6 +10,7 @@ import {
   PLUGIN_BUILD_GLOBAL_INPUT_PATHS,
   computePluginSourceHash,
   discoverWorkspacePackages,
+  ensureFullPackageCliPlanned,
   planWorkspaceBuild,
   readPluginBuildCache,
   requiredPluginOutputs,
@@ -288,4 +289,24 @@ test("root package build script points at the workspace build wrapper", () => {
   const rootPackage = JSON.parse(readFileSync(path.resolve("package.json"), "utf8"));
 
   assert.equal(rootPackage.scripts.build, "node scripts/build-workspace.mjs");
+});
+
+test("full package mode force-includes CLI even when content-hash would skip it", () => {
+  const skipped = [
+    { name: "@runfusion/fusion", isPlugin: false, buildReason: "unchanged", sourceHash: "abc" },
+    { name: "@fusion/core", isPlugin: false, buildReason: "unchanged", sourceHash: "def" },
+  ];
+  const { plannedPackages, skippedPackages } = ensureFullPackageCliPlanned([], skipped, { fullPackage: true });
+  assert.equal(plannedPackages.length, 1);
+  assert.equal(plannedPackages[0].name, "@runfusion/fusion");
+  assert.equal(plannedPackages[0].buildReason, "full-package");
+  assert.deepEqual(skippedPackages.map((p) => p.name), ["@fusion/core"]);
+});
+
+test("full package mode is a no-op when CLI already planned", () => {
+  const planned = [{ name: "@runfusion/fusion", buildReason: "changed-inputs" }];
+  const skipped = [{ name: "@fusion/core", buildReason: "unchanged" }];
+  const result = ensureFullPackageCliPlanned(planned, skipped, { fullPackage: true });
+  assert.equal(result.plannedPackages.length, 1);
+  assert.equal(result.plannedPackages[0].buildReason, "changed-inputs");
 });
