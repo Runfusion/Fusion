@@ -92,7 +92,7 @@
   "packages/engine/src/agent-tools.ts": 4793,
   "packages/engine/src/executor.ts": 19107,
   "packages/engine/src/merger-ai.ts": 2148,
-  "packages/engine/src/merger.ts": 12487,
+  "packages/engine/src/merger.ts": 11809,
   "packages/engine/src/pi.ts": 2799,
   "packages/engine/src/project-engine.ts": 5051,
   "packages/engine/src/scheduler.ts": 3370,
