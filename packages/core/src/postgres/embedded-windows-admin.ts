@@ -406,11 +406,23 @@ export async function startServerAsNonAdminUser(
       // logon session. Best-effort (nonzero if none running) — status ignored.
       spawnSync("taskkill", ["/im", "postgres.exe", "/f", "/t"], { encoding: "utf8" });
       spawnSync("taskkill", ["/pid", String(wrapperPid), "/f", "/t"], { encoding: "utf8" });
-      // Give the OS a moment to release the postgres file locks before the
-      // caller's cleanup rmSync races in.
-      const { promise: sleep, resolve: wake } = Promise.withResolvers<void>();
-      setTimeout(wake, 300);
-      await sleep;
+      // FNXC:WindowsDesktopPackaging 2026-07-15-01:40:
+      // Wait for the OS to terminate postgres + release its file locks, THEN
+      // remove postmaster.pid. Without this, a later start() on the SAME data
+      // dir (the reuse/idempotent tests) reads the stale postmaster.pid via
+      // isAlreadyRunning and skips booting — connecting to a dead server and
+      // timing out.
+      const wait1 = Promise.withResolvers<void>();
+      setTimeout(wait1.resolve, 400);
+      await wait1.promise;
+      try {
+        rmSync(join(opts.dataDir, "postmaster.pid"), { force: true });
+      } catch {
+        // best-effort; a lingering lock surfaces via the caller's rmSync retries
+      }
+      const wait2 = Promise.withResolvers<void>();
+      setTimeout(wait2.resolve, 200);
+      await wait2.promise;
     },
   };
 }
