@@ -20,6 +20,11 @@ Coverage (FN-5893 surfaces):
 - retry/park: a partial-land failure consumes one mergeRetry; after MAX it parks
   (shouldRetryWorkspacePartialLand boundary, fake timers).
 */
+/*
+FNXC:TestVelocity 2026-07-14-19:10:
+Tier multi-repo real-git landWorkspaceTask suite into engine-slow (FN-5048). ~12s wall-time with createWorkspaceFixture.
+*/
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";

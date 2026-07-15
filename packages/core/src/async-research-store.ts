@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer, type DbTransaction } from "./postgres/data-layer.js";
 import {
   ResearchLifecycleError,
   TERMINAL_STATUSES,
@@ -171,13 +171,23 @@ export async function appendResearchRunEvent(
   input: { id: string; runId: string; type: string; message: string; status?: ResearchRunStatus | null; classification?: string | null; metadata?: Record<string, unknown> | null },
 ): Promise<void> {
   await layer.transactionImmediate(async (tx) => {
+    const parentRows = await tx
+      .select({ projectId: schema.project.researchRuns.projectId })
+      .from(schema.project.researchRuns)
+      .where(eq(schema.project.researchRuns.id, input.runId))
+      .limit(1);
+    const ownership = projectOwnershipPartition(parentRows[0]?.projectId ?? layer.projectId);
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.researchRunEvents.seq}), 0) + 1` })
       .from(schema.project.researchRunEvents)
-      .where(eq(schema.project.researchRunEvents.runId, input.runId));
+      .where(and(
+        eq(schema.project.researchRunEvents.projectId, ownership),
+        eq(schema.project.researchRunEvents.runId, input.runId),
+      ));
     const seq = seqRows[0]?.nextSeq ?? 1;
     const createdAt = new Date().toISOString();
     await tx.insert(schema.project.researchRunEvents).values({
+      projectId: ownership,
       id: input.id,
       runId: input.runId,
       seq,
@@ -209,7 +219,14 @@ export async function createResearchExport(
   handle: QueryHandle,
   input: { id: string; runId: string; format: ResearchExportFormat; content: string; createdAt: string },
 ): Promise<ResearchExport> {
+  const parentRows = await handle
+    .select({ projectId: schema.project.researchRuns.projectId })
+    .from(schema.project.researchRuns)
+    .where(eq(schema.project.researchRuns.id, input.runId))
+    .limit(1);
+  const ownership = projectOwnershipPartition(parentRows[0]?.projectId);
   await handle.insert(schema.project.researchExports).values({
+    projectId: ownership,
     id: input.id,
     runId: input.runId,
     format: input.format,

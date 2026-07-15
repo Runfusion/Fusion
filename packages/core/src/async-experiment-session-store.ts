@@ -18,7 +18,7 @@
  */
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer, type DbTransaction } from "./postgres/data-layer.js";
 import type {
   ExperimentSession,
   ExperimentSessionListOptions,
@@ -166,13 +166,23 @@ export async function appendExperimentRecord(
   input: { id: string; sessionId: string; segment: number; type: ExperimentRecordType; payload: Record<string, unknown> },
 ): Promise<ExperimentSessionRecord> {
   return layer.transactionImmediate(async (tx) => {
+    const parentRows = await tx
+      .select({ projectId: schema.project.experimentSessions.projectId })
+      .from(schema.project.experimentSessions)
+      .where(eq(schema.project.experimentSessions.id, input.sessionId))
+      .limit(1);
+    const ownership = projectOwnershipPartition(parentRows[0]?.projectId ?? layer.projectId);
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.experimentSessionRecords.seq}), 0) + 1` })
       .from(schema.project.experimentSessionRecords)
-      .where(eq(schema.project.experimentSessionRecords.sessionId, input.sessionId));
+      .where(and(
+        eq(schema.project.experimentSessionRecords.projectId, ownership),
+        eq(schema.project.experimentSessionRecords.sessionId, input.sessionId),
+      ));
     const seq = seqRows[0]?.nextSeq ?? 1;
     const createdAt = new Date().toISOString();
     await tx.insert(schema.project.experimentSessionRecords).values({
+      projectId: ownership,
       id: input.id,
       sessionId: input.sessionId,
       segment: input.segment,
