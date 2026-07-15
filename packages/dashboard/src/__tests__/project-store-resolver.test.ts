@@ -278,6 +278,29 @@ describe("project-store-resolver", () => {
     await expect(getOrCreateProjectStore("proj_project_then_all")).resolves.toBeDefined();
   });
 
+  it("makes a project eviction join an overlapping evict-all shutdown", async () => {
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-21:42:
+    A project-specific caller arriving after evict-all owns that project's cleanup must join the same barrier instead of reporting completion before backend shutdown finishes.
+    */
+    await getOrCreateProjectStore("proj_all_then_project");
+    delayedShutdownProjectIds.add("proj_all_then_project");
+
+    const globalEviction = evictAllProjectStores();
+    await vi.waitFor(() => expect(releaseDelayedShutdowns.has("proj_all_then_project")).toBe(true));
+    const projectEviction = evictProjectStore("proj_all_then_project");
+    let projectSettled = false;
+    void projectEviction.then(() => { projectSettled = true; });
+    await Promise.resolve();
+
+    expect(projectSettled).toBe(false);
+    await expect(getOrCreateProjectStore("proj_all_then_project")).rejects.toThrow("shutting down");
+    expect(backendShutdowns.get("proj_all_then_project")).toHaveBeenCalledTimes(1);
+
+    releaseDelayedShutdowns.get("proj_all_then_project")?.();
+    await Promise.all([globalEviction, projectEviction]);
+  });
+
   it("evictAllProjectStores cleans up all cached stores", async () => {
     await getOrCreateProjectStore("proj_a");
     await getOrCreateProjectStore("proj_b");
