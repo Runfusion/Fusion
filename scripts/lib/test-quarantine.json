@@ -195,6 +195,11 @@
       "file": "packages/dashboard/app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
       "reason": "Flake under concurrent dashboard quality load: Unable to find planning-other-input / clears confirm Other text (local 2026-07-14 final dashboard lanes). Passes isolated. Quarantine on sight per deletion ratchet; mirrored in packages/dashboard/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/src/routes/__tests__/tasks-planner-overseer-state.test.ts",
+      "reason": "VAL-REMOVAL-005 PG migration: TaskStore/Database.init. Local 2026-07-14 api-backfill-1. Mirrored in packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
     }
   ]
 }

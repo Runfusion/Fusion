@@ -348,6 +348,7 @@ const quarantinedDashboardTests: string[] = [
   "src/__tests__/routes-system.test.ts",
   "src/routes/__tests__/register-settings-memory-worktrunk.test.ts",
   "src/routes/__tests__/tasks-overseer-controls.test.ts",
+  "src/routes/__tests__/tasks-planner-overseer-state.test.ts",
   "src/__tests__/mcp-helper-forwarding.test.ts",
   "src/routes/__tests__/workflow-validate-route.test.ts",
 ];
