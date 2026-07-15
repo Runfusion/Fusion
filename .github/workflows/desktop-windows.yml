@@ -26,7 +26,21 @@ jobs:
       # The manual Windows installer path must boot the same embedded database
       # payload used by Local mode before it can publish an installer artifact.
       - name: Smoke embedded Postgres on Windows
-        run: pnpm --filter @fusion/core test:embedded-postgres
+        # FNXC:WindowsDesktopPackaging 2026-07-15-00:35:
+        # The embedded-PG smoke boots the server under a non-admin helper user
+        # (the runner runs elevated, which Postgres refuses). The test creates
+        # data dirs via tmpdir(), which defaults to the launching user's profile
+        # temp — not traversable by the helper user, and granting traverse
+        # through it is prohibitively slow. Redirect TMP/TEMP to a fresh
+        # Users-traversable root so data dirs land there and the helper user
+        # (a member of Users) can reach them with no per-user ACL grants.
+        shell: pwsh
+        run: |
+          $env:TMP = "C:\fusionpg-tmp"
+          $env:TEMP = "C:\fusionpg-tmp"
+          New-Item -ItemType Directory -Force -Path $env:TMP | Out-Null
+          icacls $env:TMP /grant "*S-1-5-32-545:(OI)(CI)F" | Out-Null
+          pnpm --filter @fusion/core test:embedded-postgres
 
       # FNXC:WindowsDesktopPackaging 2026-07-01-19:45:
       # Mirror release.yml: build every workspace package's tsc dist (incl.

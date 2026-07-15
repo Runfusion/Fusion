@@ -26,7 +26,7 @@
 // and full control on the data dir.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 /** Handle returned by {@link startServerAsNonAdminUser}; call stop() to kill it. */
@@ -124,53 +124,43 @@ function ensureNonAdminUser(): { user: string; password: string } {
   dedicatedPassword = password;
   return { user: DEDICATED_USER, password };
 }
+let stagedNativeCache: string | null = null;
 /**
- * FNXC:WindowsDesktopPackaging 2026-07-15-00:10:
- * Grant the non-admin user FullControl on the data dir, ReadAndExecute on the
- * native binary root, and ReadAndExecute (traverse) on each ancestor of both.
- * Traverse ancestors ARE required — "Bypass traverse checking" does not let the
- * non-admin user reach a data dir under the launching user's profile.
- *
- * Profiling: icacls has ~1.85s fixed spawn overhead per invocation, so a
- * per-ancestor walk (~18 dirs) took ~37s, and a PowerShell Get-Acl/Set-Acl
- * script hung on pnpm junctions. Batch ALL traverse ancestors into a SINGLE
- * icacls invocation (icacls accepts multiple name args), so the whole grant is
- * ~3 icacls calls (~7s). The F/RX grants are required (throw); traverse is
- * best-effort (icacls /C continues past per-dir errors).
+ * FNXC:WindowsDesktopPackaging 2026-07-15-00:30:
+ * Stage the native postgres binaries to a traversable, Users-readable location
+ * (C:\ProgramData\fusion\embedded-pg\native) and return that path. The repo's
+ * native root (under D:\...\node_modules\.pnpm\...) is NOT traversable by the
+ * non-admin helper user, and granting traverse through the whole repo chain is
+ * prohibitively slow (~37s of icacls calls). Staging copies the binaries once
+ * (cached for the process) into C:\ProgramData (Users-traversable by default)
+ * and grants the Users group RX, so the helper user (a member of Users) can
+ * read them. This replaces the per-ancestor ACL walk entirely.
  */
-function grantNonAdminAccess(user: string, nativeRoot: string, dataDir: string): void {
-  // Collect every ancestor dir of dataDir + nativeRoot up to the drive root.
-  const ancestors = new Set<string>();
-  for (const leaf of [dataDir, nativeRoot]) {
-    let dir = dirname(leaf);
-    for (let depth = 0; depth < 16; depth += 1) {
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      ancestors.add(dir);
-      dir = parent;
-    }
+function stageNativeRoot(nativeRoot: string): string {
+  if (stagedNativeCache) return stagedNativeCache;
+  const staged = join(process.env.PROGRAMDATA ?? "C:\\ProgramData", "fusion", "embedded-pg", "native");
+  if (!existsSync(join(staged, "bin", "postgres.exe"))) {
+    rmSync(staged, { recursive: true, force: true });
+    // Create the PARENT only; let cpSync create `staged` so the native root's
+    // contents land at staged/bin, staged/lib, ... (pre-creating staged would
+    // copy them nested under staged/<nativeRoot-basename>).
+    mkdirSync(dirname(staged), { recursive: true });
+    cpSync(nativeRoot, staged, { recursive: true });
   }
-  const targets = [...ancestors].filter((d) => existsSync(d));
-  // Required: postgres must write the data dir and read the native binaries.
-  const required: ReadonlyArray<readonly string[]> = [
-    ["icacls", dataDir, "/grant", `${user}:(OI)(CI)F`, "/T", "/C"],
-    ["icacls", nativeRoot, "/grant", `${user}:(OI)(CI)RX`, "/T", "/C"],
-  ];
-  for (const [bin, ...args] of required) {
-    const r = spawnSync(bin, args, { encoding: "utf8" });
-    if (r.status !== 0) {
-      throw new Error(
-        `embedded postgres: non-admin ACL grant failed (icacls status=${r.status} args=${args.join(" ").slice(0, 200)}): ${(r.stderr || "").trim().slice(0, 400)}`,
-      );
-    }
+  // Grant the well-known BUILTIN\Users SID (*S-1-5-32-545) RX so the non-admin
+  // helper user (a member of Users) can read the staged binaries without any
+  // per-user ancestor grants. The SID is locale-independent (unlike "Users").
+  const r = spawnSync("icacls", [staged, "/grant", "*S-1-5-32-545:(OI)(CI)RX", "/T", "/C"], {
+    encoding: "utf8",
+  });
+  if (r.status !== 0) {
+    throw new Error(
+      `embedded postgres: failed to grant Users RX on staged native root ${staged} ` +
+        `(icacls status=${r.status}): ${(r.stderr || "").trim().slice(0, 400)}`,
+    );
   }
-  // Best-effort traverse: one icacls call over ALL ancestors (ReadAndExecute,
-  // this-dir only). /C continues past per-dir errors so a blocked ancestor
-  // does not abort the rest; any genuinely blocked path surfaces later via the
-  // Start-Process launch error.
-  if (targets.length > 0) {
-    spawnSync("icacls", [...targets, "/grant", `${user}:RX`, "/C"], { encoding: "utf8" });
-  }
+  stagedNativeCache = staged;
+  return staged;
 }
 
 
@@ -235,10 +225,14 @@ export async function startServerAsNonAdminUser(
   const startMs = Date.now();
   const { user, password } = ensureNonAdminUser();
   const tGrant = Date.now();
-  grantNonAdminAccess(user, opts.nativeRoot, opts.dataDir);
-  opts.onLog(`non-admin timing: user=${tGrant - startMs}ms grant=${Date.now() - tGrant}ms`);
+  // Stage native binaries to a Users-traversable location (no per-ancestor
+  // grants). The data dir is expected to live under a Users-traversable temp
+  // root (the Windows smoke step redirects TMP/TEMP there), so it needs no
+  // per-user grant either — the helper user reaches both via the Users group.
+  const stagedNative = stageNativeRoot(opts.nativeRoot);
+  opts.onLog(`non-admin timing: user=${tGrant - startMs}ms stage=${Date.now() - tGrant}ms`);
 
-  const pgExe = join(opts.nativeRoot, "bin", "postgres.exe");
+  const pgExe = join(stagedNative, "bin", "postgres.exe");
   const runDir = join(opts.dataDir, ".pgrunner");
   mkdirSync(runDir, { recursive: true });
   const logFile = join(runDir, "postgres.log");
