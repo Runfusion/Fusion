@@ -683,14 +683,24 @@ export class EmbeddedPostgresLifecycle {
           const pg = this.pg;
           if (!pg) return false;
           const client = pg.getPgClient("postgres", "localhost");
-          client.connectionTimeoutMillis = 1000;
+          // FNXC:WindowsDesktopPackaging 2026-07-14-23:40:
+          // pg copies connectionTimeoutMillis into _connectionTimeoutMillis
+          // only in the Client constructor, so setting it after getPgClient()
+          // does not bound connect(). Race connect+SELECT against a hard 1.5s
+          // timeout so the probe resolves fast even if postgres accepts the
+          // socket but stalls its startup response during crash recovery.
+          const { promise: timeout, reject: timeoutReject } = Promise.withResolvers<never>();
+          const timer = setTimeout(() => timeoutReject(new Error("probe timeout")), 1500);
           try {
-            await client.connect();
-            await client.query("SELECT 1");
+            await Promise.race([
+              client.connect().then(() => client.query("SELECT 1")),
+              timeout,
+            ]);
             return true;
           } catch {
             return false;
           } finally {
+            clearTimeout(timer);
             await client.end().catch(() => {});
           }
         },
