@@ -225,6 +225,11 @@
       "file": "packages/dashboard/src/routes/__tests__/mission-workflow-triage-route.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: sync SQLite Database/TaskStore.init. Local 2026-07-14 api-backfill-2. Mirrored packages/dashboard/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
+      "reason": "Flake under concurrent quality load: Unable to find quick-entry-priority-button after task creation (local 2026-07-14). Quarantine on sight; mirrored packages/dashboard/vitest.config.ts.",
+      "quarantinedAt": "2026-07-14"
     }
   ]
 }

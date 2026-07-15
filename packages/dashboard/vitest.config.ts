@@ -338,6 +338,7 @@ const quarantinedDashboardTests: string[] = [
   */
   "app/components/__tests__/RuntimeFallbackBadge.test.tsx",
   "app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
+  "app/components/__tests__/QuickEntryBox.test.tsx",
   // FNXC:DashboardTests 2026-07-14-22:15: VAL-REMOVAL-005 — API backfill suites still boot sync SQLite Database via TaskStore.init; quarantine until PG harness conversion (ledger lockstep).
   "src/__tests__/chat-project-services.test.ts",
   "src/__tests__/planning-generation-cancellation.test.ts",
