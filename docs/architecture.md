@@ -779,15 +779,20 @@ Implemented in `agent-heartbeat.ts`:
 - `WakeContext` / per-agent runtime config support
 
 ### Node/mesh runtime services
-- `NodeHealthMonitor` (`node-health-monitor.ts`) — remote node liveness/metrics checks
-- `PeerExchangeService` (`peer-exchange-service.ts`) — peer sync orchestration
-- `MeshLeaseManager` (`mesh-lease-manager.ts`) — canonical abandoned-lease detection + recovery path
+<!--
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+Under shared PostgreSQL, mesh services own membership/auth/claims — not task replication. Durable board state is the shared database; PeerExchange no longer multi-masters tasks or settings over HTTP.
+-->
+- `NodeHealthMonitor` (`node-health-monitor.ts`) — remote node liveness/metrics checks for handoff and recovery
+- `PeerExchangeService` (`peer-exchange-service.ts`) — membership gossip + optional auth material; settings/task HTTP replication disabled when nodes share Postgres
+- `MeshLeaseManager` (`mesh-lease-manager.ts`) — canonical abandoned-lease detection + recovery path (`central.task_claims` then task-row mirror)
 
-### Outage ownership boundaries (degraded reads + queued write replay)
-- `CentralCore` owns durable outage state in central persistence (`meshSharedSnapshots` + `meshWriteQueue`) and exposes stable assertion methods: `recordMeshSnapshot`, `getLatestMeshSnapshot`, `enqueueMeshWrite`, `listPendingMeshWrites`, `markMeshWriteReplayStarted`, `markMeshWriteApplied`, `markMeshWriteFailed`, and `getMeshDegradedReadState`.
-- `PeerExchangeService` owns retryability classification for sync/apply failures, queue insertion for retryable failures, replay execution (`replayPendingWritesForNode(targetNodeId)`), and observable sync results (`queuedWriteId`, `replaySummary`) for partition/replay assertions.
-- `NodeHealthMonitor` provides liveness transitions as replay hints only via deterministic recovery callback `onNodeRecovered(nodeId, previousStatus)`; `online` is a trigger to attempt replay, not proof that replay succeeded.
-- Dashboard mesh routes (`register-mesh-routes.ts`) preserve `GET /api/mesh/state` array shape and attach per-node degraded `readState` metadata so stale fallback data is explicit during partitions.
+### Outage ownership boundaries (topology/auth only)
+- Durable **task** state does not queue offline over mesh when Postgres is down. If the shared database is unavailable, nodes do not invent alternate local task truth.
+- `CentralCore` still exposes `meshSharedSnapshots` + `meshWriteQueue` for **topology / auth** retry and degraded membership reads (`recordMeshSnapshot`, `getLatestMeshSnapshot`, `enqueueMeshWrite`, `listPendingMeshWrites`, `markMeshWrite*`, `getMeshDegradedReadState`).
+- `PeerExchangeService` classifies retryable **membership/auth** sync failures, may enqueue those narrow scopes, and replays them via `replayPendingWritesForNode(targetNodeId)`. Task/settings payloads are not queued for multi-leader replay under Postgres.
+- `NodeHealthMonitor` liveness transitions may trigger membership/auth replay attempts (`onNodeRecovered`); `online` is not proof that replay succeeded.
+- Dashboard mesh routes (`register-mesh-routes.ts`) keep `GET /api/mesh/state` and attach degraded `readState` metadata when peer probes fail.
 
 ### Mesh task lease ownership and recovery
 
@@ -808,26 +813,14 @@ A lease is recoverable only when there is **no active local executor session for
 
 1. the owning node is `offline` or `error`, or
 2. the owner heartbeat/run age exceeds `max(agentHeartbeatTimeoutMs * 2, 120_000)` measured against the most recent lease renewal timestamp.
-- Canonical replication/write-coordination contract: [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md)
-  - Defines protocol versioning, write classes, quorum/ack semantics, lease epochs/fencing, offline queue/replay, reconciliation outcomes, restart recovery hooks, and degraded-read staleness metadata.
-  - Existing `/api/mesh/sync` and settings-sync payloads remain the active exchange primitives while follow-on runtime tasks implement full v1 coordinator/quorum behavior.
-- Distributed task-ID allocation (`packages/core/src/distributed-task-id.ts`) is the first mesh-aware coordinated write primitive.
-  - Durable state lives in PostgreSQL tables `distributed_task_id_state` (prefix sequence + authoritative committed count) and `distributed_task_id_reservations` (reservation lifecycle rows).
-  - Reserve/commit/abort execute through the async allocator inside PostgreSQL transactions. Lazy reservation expiry cleanup runs in the same transaction model, and task creation commits the reservation flip with the authoritative `project.tasks` insert so both share one durability point.
-  - Default reservation TTL is `15 * 60 * 1000` ms (15 minutes). Expired/aborted reservations are **burned IDs** and are never reissued. If a post-insert create step fails after the reservation was committed (for example `task.json`/`PROMPT.md` disk materialization, file-scope validation, or duplicate-intake tombstone checks), the failed-create rollback deletes the just-created task row/partial directory, moves the reservation to `aborted`, recomputes committed reservation counters, and emits `task:reservation-commit-rolled-back`; the sequence stays burned for FN-5105 ID permanence.
-  - `committedClusterTaskCount` from allocator state is the only authoritative cluster-wide committed-task count. Local task-row counts and ID suffix math are not authoritative.
-  - Store open reconciles every known prefix in `distributed_task_id_state` to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)`. This self-heals stale counters before ordinary task creation resumes.
-  - Mesh allocator write routes (`/api/mesh/task-ids/reserve|commit|abort`) return `503` when the coordinator node is unreachable; they never fall back to local-only cluster ID issuance.
-- Cluster task creation now uses a strong-write reserve → create → replicate → commit/abort sequence.
-  - Ordinary local task creation (`TaskStore.createTask()`, duplicate, and refine flows) now allocates IDs through the same distributed reserve/commit/abort lifecycle owned by `TaskStore`; the invariant is `distributed_task_id_reservations.status = 'committed'` iff a live durable `tasks` row and task directory landed for that ID. `applyReplicatedTaskCreate(...)` remains a direct reserved-ID apply path and does not require a local reservation row.
-  - `POST /api/tasks` uses the store-owned allocator path for local creates rather than maintaining a separate route-local allocator implementation.
-  - `POST /api/tasks` reserves a distributed ID, creates the authoritative local task with that reserved ID, then POSTs authenticated replication payloads to peer nodes.
-  - All create-class writes use conflict-raising inserts, not upserts. Existing PostgreSQL task rows and `.fusion/tasks/{id}` contents always win over stale counters or colliding reservations.
-  - Local create paths perform a final active+archived existence check immediately before insert. If a reserved `FN-*` still collides, the reservation is aborted/burned and the create fails loudly instead of rewriting the existing task.
-  - Creation self-heals stale overlap state at the route layer: if a reserved `FN-*` collides with an existing task (`Task ID already exists...` or replicated-create collision), the route aborts that reservation, cleans up partial local state, reserves the next ID, and retries up to a bounded limit.
-  - Replica apply uses `TaskStore.applyReplicatedTaskCreate(...)`, which is idempotent by task ID: replaying the same payload returns the existing task without creating duplicates.
-  - If an incoming replicated payload conflicts with a different existing task record for the same ID, the apply path returns a deterministic collision error instead of overwriting data.
-  - Any replication/coordinator failure aborts the reservation and returns write failure (`503`), so this path does not report success for local-only partial writes.
+- Canonical multi-node contract: [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md) (shared Postgres + claims; multi-leader HTTP task replication retired).
+- Distributed task-ID allocation is a **shared-database** primitive (not a remote mesh coordinator):
+  - Durable state lives in Postgres `project.distributed_task_id_state` / `distributed_task_id_reservations` (async allocator path).
+  - Reserve/commit/abort run against those shared rows under the project’s transactions. Default reservation TTL is `15 * 60 * 1000` ms. Expired/aborted reservations are **burned** and never reissued. Failed creates after a committed reservation abort the reservation and emit `task:reservation-commit-rolled-back`.
+  - `committedClusterTaskCount` is the authoritative committed-task count for a prefix within a project partition.
+  - Store open reconciles each prefix high-water mark past existing live/archived/reservation sequences.
+  - `/api/mesh/task-ids/*` always uses the local allocator under Postgres (shared rows are the coordinator). Remote coordinator forwarding is disabled.
+- Task creation: reserve → insert task (shared DB) → commit reservation (or abort on failure). HTTP peer task replication and `applyReplicatedTaskCreate` multi-node fan-out are not part of the Postgres multi-node path.
 - Process lifecycle ownership:
   - `fn serve` / `fn dashboard` start a single process-level `PeerExchangeService` and stop it during shutdown.
   - `CentralCore.startDiscovery()` is invoked from CLI startup only after HTTP bind completes so discovery advertises the actual listening port.

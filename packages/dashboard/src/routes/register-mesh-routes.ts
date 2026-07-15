@@ -1,7 +1,6 @@
 import { createFusionAuthStorage } from "@fusion/engine";
 import { ApiError, badRequest } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
-import { fetchFromRemoteNode } from "./register-settings-sync-helpers.js";
 
 export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, store, options, emitRemoteRouteDiagnostic, rethrowAsApiError } = ctx;
@@ -21,41 +20,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         await central.close();
       }
     }
-  };
-
-  const resolveAllocator = async (coordinatorNodeId?: string) => {
-    /*
-    FNXC:PostgresCutover 2026-07-12:
-    Task mesh replication is REMOVED on the PostgreSQL backend: every node
-    connects to the same shared database, so the shared
-    `distributed_task_id_state` rows ARE the coordinator. Never forward a
-    reservation to a remote coordinator node — the local allocator commits
-    atomically against the shared rows, and a remote hop only adds a failure
-    mode (and double-reservation risk against the same table).
-    */
-    if (store.backendMode) {
-      return { mode: "local" as const };
-    }
-    return withCentralCore(async (central) => {
-      if (!coordinatorNodeId) {
-        return { mode: "local" as const };
-      }
-      const coordinator = await central.getNode(coordinatorNodeId);
-      if (coordinator?.type === "local") {
-        return { mode: "local" as const };
-      }
-      if (!coordinator) {
-        throw new ApiError(503, "Allocator coordinator is unavailable");
-      }
-      return { mode: "remote" as const, coordinator };
-    });
-  };
-
-  const mapCoordinatorWriteError = (err: unknown): never => {
-    if (err instanceof ApiError && [502, 504].includes(err.statusCode)) {
-      throw new ApiError(503, "Allocator coordinator is unavailable");
-    }
-    throw err;
   };
 
   const requireMeshAuth = async (
@@ -200,28 +164,17 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/mesh/task-ids/reserve", async (req, res) => {
     try {
+      /*
+      FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+      Always allocate against shared distributed_task_id_* rows. coordinatorNodeId is ignored.
+      */
       const prefix = String(req.body?.prefix ?? "").trim();
       const nodeId = String(req.body?.nodeId ?? "").trim();
       const ttlMs = req.body?.ttlMs;
-      const coordinatorNodeId = typeof req.body?.coordinatorNodeId === "string" ? req.body.coordinatorNodeId : undefined;
       const senderNodeId = typeof req.body?.senderNodeId === "string" ? req.body.senderNodeId : undefined;
       if (!prefix) throw badRequest("prefix is required");
       if (!nodeId) throw badRequest("nodeId is required");
       if (!(await requireMeshAuth(req, res, senderNodeId))) return;
-
-      const target = await resolveAllocator(coordinatorNodeId);
-      if (target.mode === "remote") {
-        try {
-          const remote = await fetchFromRemoteNode(target.coordinator, "/api/mesh/task-ids/reserve", {
-            method: "POST",
-            body: { prefix, nodeId, ttlMs },
-          });
-          res.json(remote);
-          return;
-        } catch (err) {
-          mapCoordinatorWriteError(err);
-        }
-      }
 
       const result = await store.getDistributedTaskIdAllocator().reserveDistributedTaskId({ prefix, nodeId, ttlMs });
       res.json(result);
@@ -235,25 +188,10 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const reservationId = String(req.body?.reservationId ?? "").trim();
       const nodeId = String(req.body?.nodeId ?? "").trim();
-      const coordinatorNodeId = typeof req.body?.coordinatorNodeId === "string" ? req.body.coordinatorNodeId : undefined;
       const senderNodeId = typeof req.body?.senderNodeId === "string" ? req.body.senderNodeId : undefined;
       if (!reservationId) throw badRequest("reservationId is required");
       if (!nodeId) throw badRequest("nodeId is required");
       if (!(await requireMeshAuth(req, res, senderNodeId))) return;
-
-      const target = await resolveAllocator(coordinatorNodeId);
-      if (target.mode === "remote") {
-        try {
-          const remote = await fetchFromRemoteNode(target.coordinator, "/api/mesh/task-ids/commit", {
-            method: "POST",
-            body: { reservationId, nodeId },
-          });
-          res.json(remote);
-          return;
-        } catch (err) {
-          mapCoordinatorWriteError(err);
-        }
-      }
 
       const result = await store.getDistributedTaskIdAllocator().commitDistributedTaskIdReservation({ reservationId, nodeId });
       res.json(result);
@@ -271,7 +209,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
       const reservationId = String(req.body?.reservationId ?? "").trim();
       const nodeId = String(req.body?.nodeId ?? "").trim();
       const reason = req.body?.reason;
-      const coordinatorNodeId = typeof req.body?.coordinatorNodeId === "string" ? req.body.coordinatorNodeId : undefined;
       const senderNodeId = typeof req.body?.senderNodeId === "string" ? req.body.senderNodeId : undefined;
       if (!reservationId) throw badRequest("reservationId is required");
       if (!nodeId) throw badRequest("nodeId is required");
@@ -279,20 +216,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest("reason must be one of: abort, expired, failed-create");
       }
       if (!(await requireMeshAuth(req, res, senderNodeId))) return;
-
-      const target = await resolveAllocator(coordinatorNodeId);
-      if (target.mode === "remote") {
-        try {
-          const remote = await fetchFromRemoteNode(target.coordinator, "/api/mesh/task-ids/abort", {
-            method: "POST",
-            body: { reservationId, nodeId, reason },
-          });
-          res.json(remote);
-          return;
-        } catch (err) {
-          mapCoordinatorWriteError(err);
-        }
-      }
 
       const result = await store.getDistributedTaskIdAllocator().abortDistributedTaskIdReservation({ reservationId, nodeId, reason });
       res.json(result);
@@ -384,22 +307,17 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
       // Get local node info
       const localPeer = await central.getLocalPeerInfo();
 
-      // ── Settings sync: handle incoming settings and prepare response ──
       /*
       FNXC:PostgresCutover 2026-07-10:
-      Node settings sync is REMOVED on the PostgreSQL backend: nodes connect to
-      the same shared PostgreSQL database, so mesh-level settings replication is
-      redundant and can only introduce churn/clobber against the shared rows.
-      Inbound settings payloads are ignored (with a diagnostic) and no settings
-      are included in the response. The legacy SQLite topology (one DB file per
-      node) keeps the sync path unchanged.
+      FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+      Settings and projectSettings mesh sync are retired: shared Postgres is the
+      settings SoT. Inbound settings/projectSettings are ignored. Only
+      authMaterial (per-machine auth.json) is applied/offered over mesh HTTP.
       */
-      let responseSettings: import("@fusion/core").SettingsSyncPayload | undefined;
-      const remoteSettings = store.backendMode ? undefined : req.body?.settings;
-      if (store.backendMode && req.body?.settings) {
+      if (req.body?.settings) {
         emitRemoteRouteDiagnostic({
           route: "mesh-sync",
-          message: "Ignored inbound settings payload — settings sync is disabled on the PostgreSQL backend (nodes share the database)",
+          message: "Ignored inbound settings payload — settings live in shared PostgreSQL",
           nodeId: senderNodeId,
           upstreamPath: "/api/mesh/sync",
           operationStage: "settings-sync",
@@ -407,82 +325,17 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         });
       }
 
-      if (remoteSettings) {
-        try {
-          // Get local settings from the dashboard's GlobalSettingsStore
-          const localGlobal = await store.getGlobalSettingsStore().getSettings();
-          const localPayload = await central.getSettingsForSync(localGlobal);
-          const localChecksum = localPayload.checksum;
-
-          // Apply remote settings if checksum differs (remote is newer/different)
-          if (remoteSettings.checksum !== localChecksum) {
-            const applyResult = await central.applyRemoteSettings(remoteSettings);
-
-            if (applyResult.success) {
-              emitRemoteRouteDiagnostic({
-                route: "mesh-sync",
-                message: "Applied remote settings payload",
-                nodeId: senderNodeId,
-                upstreamPath: "/api/mesh/sync",
-                operationStage: "apply-remote-settings",
-                level: "info",
-                context: {
-                  globalCount: applyResult.globalCount,
-                  projectCount: applyResult.projectCount,
-                  authCount: applyResult.authCount,
-                },
-              });
-            } else {
-              emitRemoteRouteDiagnostic({
-                route: "mesh-sync",
-                message: "Failed to apply remote settings payload",
-                nodeId: senderNodeId,
-                upstreamPath: "/api/mesh/sync",
-                operationStage: "apply-remote-settings",
-                level: "warn",
-                error: new Error(applyResult.error ?? "Unknown applyRemoteSettings failure"),
-              });
-            }
-          }
-
-          // Always respond with our settings if sender included theirs
-          responseSettings = localPayload;
-        } catch (err) {
-          // Log but don't fail the sync - peers are more important
-          emitRemoteRouteDiagnostic({
-            route: "mesh-sync",
-            message: "Settings sync operation failed",
-            nodeId: senderNodeId,
-            upstreamPath: "/api/mesh/sync",
-            operationStage: "settings-sync",
-            error: err,
-          });
-        }
-      }
-
-      // ── Shared state sync (settings/auth only) ──
+      // ── Shared state: auth material only ──
       const { validateSnapshotEnvelope } = await import("@fusion/core");
-      /*
-      FNXC:PostgresCutover 2026-07-12:
-      Task/state mesh replication is REMOVED: the task-metadata,
-      mission-hierarchy, agents, agent-runs, activity-log, and run-audit
-      shared-state domains (and the store snapshot machinery behind them) are
-      gone — all replication is handled at the PostgreSQL level (nodes share
-      the database). What remains of sharedState is the settings-adjacent
-      pair: projectSettings (legacy sqlite settings sync only; ignored on the
-      PostgreSQL backend like the rest of settings sync) and authMaterial
-      (auth.json is per-machine file state — the one domain not in the
-      database, kept on both backends).
-      */
       const rawSharedState = req.body?.sharedState;
       let sharedState = rawSharedState;
       if (rawSharedState && typeof rawSharedState === "object") {
-        const allowedDomains = store.backendMode ? ["authMaterial"] : ["projectSettings", "authMaterial"];
+        const allowedDomains = ["authMaterial"];
         const ignoredDomains = Object.keys(rawSharedState).filter((domain) => !allowedDomains.includes(domain));
         if (ignoredDomains.length > 0) {
           emitRemoteRouteDiagnostic({
             route: "mesh-sync",
-            message: `Ignored inbound shared-state domains [${ignoredDomains.join(", ")}] — task/state mesh replication is removed (replication is handled at the PostgreSQL level)`,
+            message: `Ignored inbound shared-state domains [${ignoredDomains.join(", ")}] — only authMaterial is exchanged over mesh (durable state is shared PostgreSQL)`,
             nodeId: senderNodeId,
             upstreamPath: "/api/mesh/sync",
             operationStage: "shared-state-sync",
@@ -511,15 +364,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
             });
           }
         };
-
-        await applyDomain("project-settings", async () => {
-          if (!sharedState.projectSettings) return;
-          validateSnapshotEnvelope(sharedState.projectSettings);
-          const result = await central.applyProjectSettingsSnapshot(sharedState.projectSettings as Parameters<typeof central.applyProjectSettingsSnapshot>[0]);
-          if (!result.success) {
-            throw new Error(result.error ?? "applyProjectSettingsSnapshot failed");
-          }
-        });
 
         await applyDomain("auth-material", async () => {
           if (!sharedState.authMaterial) return;
@@ -554,7 +398,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
 
       }
 
-      // Build shared-state response from fresh local snapshots per request.
+      // Build shared-state response: authMaterial only (file-local credentials).
       const responseSharedState: Record<string, unknown> = {};
       const collectSnapshot = async (domain: string, fn: () => Promise<unknown>): Promise<void> => {
         try {
@@ -584,18 +428,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         }
       };
 
-      /*
-      FNXC:PostgresCutover 2026-07-12:
-      Outbound shared-state mirrors the inbound surface: the database-backed
-      domain snapshots are removed; projectSettings is offered only on the
-      legacy sqlite topology; authMaterial is offered on both backends.
-      */
-      if (!store.backendMode) {
-        await collectSnapshot("projectSettings", async () => {
-          const localGlobal = await store.getGlobalSettingsStore().getSettings();
-          return central.getProjectSettingsSnapshot(localGlobal);
-        });
-      }
       await collectSnapshot("authMaterial", async () => {
         const authPathsModule = await import("./register-settings-sync-helpers.js");
         const allProviders = await authPathsModule.readStoredAuthProvidersFromDisk();
@@ -604,7 +436,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
 
       await central.close();
 
-      // Return sync response
+      // Return sync response (membership + optional auth material only)
       const response: Record<string, unknown> = {
         senderNodeId: localPeer.nodeId,
         senderNodeUrl: localPeer.nodeUrl,
@@ -613,10 +445,6 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         timestamp: new Date().toISOString(),
       };
 
-      // Include settings in response if sender sent settings
-      if (responseSettings) {
-        response.settings = responseSettings;
-      }
       if (Object.keys(responseSharedState).length > 0) {
         response.sharedState = responseSharedState;
       }

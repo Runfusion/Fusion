@@ -5591,12 +5591,13 @@ export interface MeshDegradedReadState {
 export interface SharedMeshStatePayload {
   /*
   FNXC:PostgresCutover 2026-07-12:
-  Task/state mesh replication is REMOVED — replication is handled at the
-  PostgreSQL level (nodes share the database). Only the settings-adjacent
-  domains remain on the wire: projectSettings (legacy sqlite settings sync)
-  and authMaterial (per-machine auth.json). Receivers ignore any other
-  domain a legacy peer may still send.
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Task/state mesh replication is REMOVED — shared PostgreSQL is the SoT.
+  projectSettings is deprecated on the wire (ignored by receivers; settings
+  live in the shared DB). authMaterial remains (per-machine auth.json).
+  Receivers ignore any other domain a legacy peer may still send.
   */
+  /** @deprecated Ignored under shared Postgres; kept for wire compatibility with old peers. */
   projectSettings?: SnapshotBase & { payload: { global: GlobalSettings; projects?: Record<string, ProjectSettings> } };
   authMaterial?: SnapshotBase & { payload: { providerAuth?: Record<string, ProviderAuthEntry> } };
 }

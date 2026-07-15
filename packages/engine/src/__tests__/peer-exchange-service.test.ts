@@ -81,6 +81,8 @@ describe("PeerExchangeService", () => {
     mockGetNode = vi.fn();
 
     mockCentralCore = {
+      // Default: not shared-Postgres backendMode so legacy settings-sync tests remain valid.
+      backendMode: false,
       listNodes: mockListNodes,
       getAllKnownPeerInfo: mockGetAllKnownPeerInfo,
       mergePeers: mockMergePeers,
@@ -405,6 +407,104 @@ describe("PeerExchangeService", () => {
       expect(result.replaySummary).toEqual({ replayed: 1, applied: 1, failed: 0, queuedWriteIds: ["mq-1"] });
       expect(mockMarkMeshWriteReplayStarted).toHaveBeenCalledWith("mq-1");
       expect(mockMarkMeshWriteApplied).toHaveBeenCalledWith("mq-1", {});
+    });
+  });
+
+  /*
+  FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+  Under shared Postgres, settings gossip is forced off, queue rows are
+  topology/auth-scoped, and non-topology pending writes are failed rather than
+  replayed as multi-leader task/settings payloads.
+  */
+  describe("shared PostgreSQL backendMode", () => {
+    beforeEach(() => {
+      Object.defineProperty(mockCentralCore, "backendMode", { value: true, configurable: true });
+    });
+
+    it("force-disables settingsSyncEnabled even when the option is true", async () => {
+      mockGetSettingsForSync.mockResolvedValue(makeSettingsPayload());
+      const service = new PeerExchangeService(mockCentralCore, { settingsSyncEnabled: true });
+      setupSuccessfulSync();
+      await service.syncWithNode(makeNode());
+      expect(mockGetSettingsForSync).not.toHaveBeenCalled();
+    });
+
+    it("enqueues retryable peer failures as mesh.topology / topology-sync", async () => {
+      const node = makeNode();
+      mockListNodes.mockResolvedValue([makeNode({ id: "node_local", type: "local", status: "online" })]);
+      mockGetAllKnownPeerInfo.mockResolvedValue([]);
+      mockReportMeshState.mockResolvedValue({});
+      mockFetch.mockResolvedValue({ ok: false, status: 503, statusText: "Service Unavailable" });
+      mockEnqueueMeshWrite.mockResolvedValue({ id: "mq-topo-1" });
+
+      const service = new PeerExchangeService(mockCentralCore);
+      const result = await service.syncWithNode(node);
+
+      expect(result.queuedWriteId).toBe("mq-topo-1");
+      expect(mockEnqueueMeshWrite).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: "mesh.topology",
+          entityType: "topology-sync",
+        }),
+      );
+      const payload = mockEnqueueMeshWrite.mock.calls[0][0].payload.request;
+      expect(payload.settings).toBeUndefined();
+      expect(payload.sharedState?.projectSettings).toBeUndefined();
+    });
+
+    it("replays topology scopes and fails retired task/settings queue rows", async () => {
+      const node = makeNode();
+      setupSuccessfulSync(node);
+      mockListPendingMeshWrites.mockResolvedValue([
+        {
+          id: "mq-topo",
+          originNodeId: "node_local",
+          targetNodeId: node.id,
+          projectId: null,
+          scope: "mesh.topology",
+          entityType: "topology-sync",
+          entityId: node.id,
+          operation: "sync",
+          payload: { request: { senderNodeId: "node_local", knownPeers: [], senderNodeUrl: "", timestamp: "2026-04-01T12:00:00.000Z" } },
+          intentVersion: "1.0",
+          status: "pending",
+          attemptCount: 0,
+          createdAt: "2026-04-01T12:00:00.000Z",
+          updatedAt: "2026-04-01T12:00:00.000Z",
+        },
+        {
+          id: "mq-task",
+          originNodeId: "node_local",
+          targetNodeId: node.id,
+          projectId: "proj-1",
+          scope: "task.strong",
+          entityType: "task-create",
+          entityId: "FN-1",
+          operation: "create",
+          payload: { request: {} },
+          intentVersion: "1.0",
+          status: "pending",
+          attemptCount: 0,
+          createdAt: "2026-04-01T12:00:00.000Z",
+          updatedAt: "2026-04-01T12:00:00.000Z",
+        },
+      ]);
+
+      const service = new PeerExchangeService(mockCentralCore);
+      const result = await service.syncWithNode(node);
+
+      expect(result.replaySummary).toEqual({
+        replayed: 1,
+        applied: 1,
+        failed: 0,
+        queuedWriteIds: ["mq-topo"],
+      });
+      expect(mockMarkMeshWriteFailed).toHaveBeenCalledWith(
+        "mq-task",
+        expect.objectContaining({ lastError: expect.stringContaining("retired") }),
+      );
+      expect(mockMarkMeshWriteReplayStarted).toHaveBeenCalledWith("mq-topo");
+      expect(mockMarkMeshWriteApplied).toHaveBeenCalledWith("mq-topo", {});
     });
   });
 

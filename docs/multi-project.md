@@ -18,17 +18,33 @@ Use multi-project mode when you need to:
 
 Multi-project metadata is stored in the PostgreSQL `central` schema. Embedded mode uses Fusion's managed PostgreSQL data directory; external mode uses `DATABASE_URL`.
 
-Core tables:
+<!--
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+Multi-node durable state lives in shared PostgreSQL (central + project schemas), not per-node SQLite files or HTTP task replication. Embedded Postgres is per-machine only; multi-node shared boards require external DATABASE_URL.
+-->
+
+Fusion stores multi-project and multi-node coordination state in **PostgreSQL**:
+
+| Schema | Role |
+|---|---|
+| `central` | Project registry, nodes, path mappings, global concurrency, **task claims**, mesh topology helpers |
+| `project` | Tasks, agents, settings, workflows, missions, distributed task IDs (row-isolated by `project_id` + RLS) |
+| `archive` | Cold archive storage |
+
+**Default (single machine):** unset `DATABASE_URL` → embedded Postgres under `~/.fusion/embedded-postgres/`. That data directory is **local to the host**. Two laptops each running embedded Postgres do **not** share a board.
+
+**Multi-node (shared board):** every Fusion node sets the **same external** `DATABASE_URL` (and `DATABASE_MIGRATION_URL` when the runtime URL is a transaction pooler). All nodes share one database; execution (worktrees, agent processes) stays per node.
+
+Core `central` tables (names as exposed by the data layer; SQL uses snake_case):
 
 - `projects`
-- `projectHealth`
-- `centralActivityLog`
-- `globalConcurrency`
-- `nodes`
-- `peerNodes`
-- `settingsSyncState`
-- `taskClaims` (authoritative cross-node task checkout claims keyed by `(projectId, taskId)`)
-- `__meta`
+- `project_health`
+- `central_activity_log`
+- `global_concurrency`
+- `nodes` / `peer_nodes`
+- `project_node_path_mappings`
+- `task_claims` (authoritative cross-node checkout mutex keyed by `(project_id, task_id)`)
+- Topology helpers: `mesh_shared_snapshots`, `mesh_write_queue` (membership/auth retry only — **not** task-state replication)
 
 Per-project task data is keyed by `projectId` in PostgreSQL's `project` schema. Each repo keeps `.fusion/project.json` as its filesystem identity marker; `.fusion/fusion.db` is read only by the one-time legacy migrator.
 
@@ -36,30 +52,47 @@ Use PostgreSQL-native backup/restore tooling for authoritative runtime data. Leg
 
 `taskClaims` is the central cross-node lease mutex introduced by FN-4819 §2: claim acquisition/renewal/release happen in PostgreSQL, while per-project lease fields mirror the central winner for local scheduler/runtime consumption.
 
-Peer/mesh coordination spans core + engine, with startup ownership in CLI process entrypoints:
+Legacy SQLite paths (`~/.fusion/fusion-central.db`, `<repo>/.fusion/fusion.db`) are migration/input only. Runtime writes go through the PostgreSQL schemas above.
 
-- Topology visibility is now cluster-wide from any connected node: dashboard mesh reads aggregate remote local snapshots and dedupe by `nodeId`, with fallback to last-known local mesh state when a peer is temporarily unreachable.
-- Outage tolerance persistence is central and project-scoped: degraded mesh snapshots and queued write replay rows are stored with `projectId` keys so partitions in one project do not blur reconciliation state across other registered projects.
-- `NodeDiscovery` and `NodeConnection` in `@fusion/core` handle discovery and remote node connectivity/auth primitives.
-- `PeerExchangeService` in `@fusion/engine` coordinates node-to-node sync/exchange workflows.
-- `MeshLeaseManager` in `@fusion/engine` is the single authority for stale lease detection and abandoned-work recovery across nodes.
-- Canonical replication semantics live in [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md). That protocol separates strongly coordinated shared state from append-only streams, queued replay classes, and node-local runtime state.
-- Distributed task-ID allocation is one strongly coordinated shared-state path: reserve/commit/abort are coordinator-mediated writes, and cluster-wide committed task totals come from allocator `committedClusterTaskCount` state (not per-node local task counts).
-- `runServe()` and `runDashboard()` (CLI) own process-level mesh service lifecycle:
-  - start one process-wide `PeerExchangeService` instance
-  - call `CentralCore.startDiscovery()` only after the HTTP server is listening and the real bound port is known
-  - stop peer exchange + discovery on shutdown
-- `InProcessRuntime` remains project-scoped (scheduler/executor/heartbeat/missions) and does **not** start mesh services, which avoids one peer-exchange instance per project.
+`task_claims` is the cross-node lease mutex (FN-4819 §2): claim acquire/renew/release hit `central.task_claims` first; per-task lease columns on the project task row mirror the winner for scheduler/UI.
+
+### Shared Postgres multi-node runbook
+
+1. Provision one Postgres (local Docker, RDS, Supabase, etc.).
+2. On **every** Fusion node: `export DATABASE_URL=...` (same URL). If you use PgBouncer/Supavisor in transaction mode, also set `DATABASE_MIGRATION_URL` to a direct (non-pooled) connection for schema work.
+3. Register projects and nodes so they appear in shared `central.projects` / `central.nodes`.
+4. For each host, set `project_node_path_mappings` so that host’s absolute checkout path is recorded for each project.
+5. Run `fn serve` / the engine on each node. Task IDs and settings are shared via Postgres; checkout exclusivity uses `task_claims`; abandoned-owner recovery uses `MeshLeaseManager`.
+6. Keep provider credentials (`auth.json`) in mind: they are still file-local unless you use auth-sync. Task filesystem blobs under `.fusion/tasks/{ID}/` remain on the node that materializes them until a later blob strategy.
+
+What is **not** multi-node via shared DB alone:
+
+- Live agent/executor process migration mid-task
+- Scheduler failover of another node’s tick loop
+- Embedded Postgres sharing across machines
+
+Canonical ownership / control-plane contract: [`docs/shared-mesh-protocol.md`](./shared-mesh-protocol.md).
+
+### Cluster membership and process ownership
+
+- Topology visibility is cluster-wide: dashboard mesh reads aggregate node registry state (and optional remote health probes), with degraded fallback metadata when a peer HTTP probe fails.
+- `mesh_write_queue` / `mesh_shared_snapshots` are **not** a multi-leader task write log. Under shared Postgres they are limited to topology/auth retry and degraded membership reads. Task durability is the database commit itself.
+- `NodeDiscovery` and `NodeConnection` in `@fusion/core` handle discovery and remote connectivity/auth probes.
+- `PeerExchangeService` in `@fusion/engine` gossips membership (and optional `authMaterial`); it does **not** replicate tasks/settings over HTTP when nodes share Postgres.
+- `MeshLeaseManager` is the single authority for stale lease detection and abandoned-work recovery.
+- Distributed task-ID allocation uses shared `project.distributed_task_id_*` rows. Under Postgres, reserve/commit/abort always hit the local allocator against those shared rows — never a remote “coordinator” hop.
+- `runServe()` / `runDashboard()` own process-level peer-exchange + discovery lifecycle (one instance per process, after the HTTP port is known).
+- `InProcessRuntime` stays project-scoped and does **not** start mesh services.
 
 ## Mesh lease recovery in multi-node execution
 
-Task ownership is shared as persisted lease metadata (`checkedOutBy`, `checkedOutAt`, `checkoutNodeId`, `checkoutRunId`, `checkoutLeaseRenewedAt`, `checkoutLeaseEpoch`) through the canonical mesh sync payloads.
+Task ownership is durable lease metadata on the shared task row (`checkedOutBy`, `checkedOutAt`, `checkoutNodeId`, `checkoutRunId`, `checkoutLeaseRenewedAt`, `checkoutLeaseEpoch`) plus the authoritative `central.task_claims` row.
 
-When a node disappears or stops renewing ownership, recovery is routed only through `MeshLeaseManager.recoverAbandonedLease(...)`. The manager now performs a two-write release: it releases the authoritative central `taskClaims` row first, then clears per-project owner fields (`checkedOutBy`, `checkoutNodeId`, `checkoutRunId`, `checkoutLeaseRenewedAt`, `checkedOutAt`) and bumps `checkoutLeaseEpoch` locally.
+When a node disappears or stops renewing ownership, recovery is routed only through `MeshLeaseManager.recoverAbandonedLease(...)`. The manager performs a two-write release: release the central `task_claims` row first, then clear per-task owner fields and bump `checkoutLeaseEpoch`.
 
-If one side succeeds and the other fails, the next scheduler/self-healing tick runs `reconcileLeaseRow(taskId)` to deterministically converge local and central lease state without a side queue. Recovery/reconciliation paths emit `task:auto-recover-lease-*` run-audit events (`...-released`, `...-already-healed`, `...-foreign-owner`, `...-central-unavailable`, `...-partial-write`, `...-reconciled`) for traceability.
+If one side succeeds and the other fails, the next scheduler/self-healing tick runs `reconcileLeaseRow(taskId)` to converge claim and task-row state. Recovery emits `task:auto-recover-lease-*` run-audit events for traceability.
 
-This fencing prevents double-claims: a restarted or delayed stale owner cannot reclaim work once central ownership has been released and lease generation has advanced.
+This fencing prevents double-claims: a restarted or delayed stale owner cannot reclaim work once central ownership has been released and the lease generation has advanced.
 
 ## Recovering a missing central project row
 
@@ -69,7 +102,7 @@ If a project's PostgreSQL central-registry row is deleted, Fusion recovers it on
 2. If missing, it reads `<project>/.fusion/project.json` (or imports a legacy SQLite identity once).
 3. If present, central reattaches that exact `projectId` instead of creating a new one.
 
-This prevents “empty workspace” regressions where project data still exists locally but is keyed to an older `projectId`.
+This prevents “empty workspace” regressions where project data still exists but is keyed to an older `projectId`.
 
 PostgreSQL backups remain the first-line protection strategy, but this identity reattach path restores the path-to-project mapping without minting a new ID.
 

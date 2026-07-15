@@ -9,10 +9,9 @@ import {
 
 /*
 FNXC:PostgresCutover 2026-07-12:
-Task/state mesh replication is REMOVED (replication is handled at the
-PostgreSQL level), so only the surviving settings-adjacent snapshot pair —
-projectSettings and authMaterial — plus the envelope/checksum plumbing are
-covered here.
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+Task/state mesh replication is REMOVED. Live mesh routes exchange authMaterial
+only; projectSettings helpers remain for legacy envelope tests/checksum plumbing.
 */
 describe("shared-mesh-state", () => {
   const exportedAt = "2026-05-04T00:00:00.000Z";

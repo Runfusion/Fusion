@@ -61,7 +61,7 @@ Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Referenc
 | [Storage](./storage.md) | PostgreSQL runtime storage, archive, migration compatibility, and file-backed payloads |
 | [DAG Architecture Deliverables](./dag/) | Milestone A DAG architecture documents plus Milestone B prototype scaffold docs (schema migration plan, DagCoordinator design, implementation checklist) |
 | [Dev Server Module Audit](./dev-server-modules.md) | Analysis of parallel dashboard dev-server module families, production wiring, and consolidation guidance |
-| [Shared Mesh Replication Protocol](./shared-mesh-protocol.md) | Canonical multi-leader replication/write-coordination contract (versioning, quorum, leases/fencing, queue/replay, reconciliation, and degraded-read semantics) |
+| [Shared Cluster Protocol](./shared-mesh-protocol.md) | Shared PostgreSQL multi-node contract: claims/leases, membership, auth, and retired multi-leader mesh replication |
 | [Signals Connectors](./signals-connectors.md) | HMAC-signed external signal connectors for setup, payload mapping, and security notes across Sentry, Datadog, PagerDuty, and generic webhooks |
 | [Multi-Project Sequencing and Dependency Analysis](./multi-project-sequencing.md) | Sequencing guidance for FN-3448/FN-3449/FN-3503/FN-3182, including identity boundaries and recommended board dependency edges |
 | [Contributing](./contributing.md) | Local development setup, testing, release flow, and contributor conventions |

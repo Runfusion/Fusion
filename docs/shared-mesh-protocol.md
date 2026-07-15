@@ -1,202 +1,135 @@
-# Shared Mesh Replication Protocol (v1)
+# Shared Cluster Protocol (Postgres multi-node)
 
 [← Docs index](./README.md)
 
-This document is the canonical contract for Fusion multi-leader mesh replication.
+<!--
+FNXC:SharedPostgresMultiNode 2026-07-14-23:45:
+This document supersedes the multi-leader SQLite mesh replication contract. Durable project state is shared PostgreSQL; mesh HTTP is membership, optional auth material, and execution ownership — not a second database.
+-->
+
+This document is the canonical contract for Fusion **multi-node operation on shared PostgreSQL**.
+
+The historical multi-leader SQLite mesh (HTTP task replication, settings gossip, strong-write quorum, offline task write queues) is **retired**. Nodes that share `DATABASE_URL` already share durable state at the database layer.
 
 ## 1. Goals and non-goals
 
 ### Goals
-- Preserve one shared durable project state across multiple nodes.
-- Keep task and planning state strongly coordinated by default.
-- Allow local progress during peer outages via durable queues.
-- Support deterministic replay/reconciliation after recovery.
-- Expose read staleness so clients can decide whether to trust last-known global state.
 
-### Runtime scope and non-goals (v1, updated for FN-4772/FN-4813)
-- `HybridExecutor` is the canonical multi-project/multi-node runtime orchestration path.
-- Scheduler failover (a peer node taking over another node's live scheduler tick loop) is an explicit non-goal.
-- Live-process state migration (moving in-memory executor/session state between nodes mid-task) is an explicit non-goal.
-- Supported alternative: lease handoff under `OwningNodeHandoffPolicy` (`park`, `reassign-to-local`, `reassign-any-healthy`) so tasks resume from durable state on the picking node.
-- Immediate global consistency for every data class remains a non-goal.
+- One shared durable project + central state across multiple Fusion nodes.
+- Exclusive execution ownership per task via central claims + lease epochs.
+- Per-node worktrees, processes, and path mappings without live process migration.
+- Explicit degraded topology reads when peer **HTTP** health probes fail (membership visibility), without inventing divergent local task truth.
+
+### Non-goals
+
+- Scheduler failover (a peer does not take over another node’s live scheduler tick loop).
+- Live-process / in-memory session migration mid-task.
+- Multi-leader task writes when Postgres is unavailable (if the DB is down, nodes do not queue alternate task realities over HTTP).
+- Treating embedded Postgres as a multi-host shared backend (embedded is per-machine only).
+
+Supported recovery model: **lease handoff** under `OwningNodeHandoffPolicy` (`park`, `reassign-to-local`, `reassign-any-healthy`) so a healthy node resumes from **durable** task state.
 
 ## 2. Terms
 
-- **Node**: A Fusion runtime instance participating in mesh sync.
-- **Coordinator**: Node currently responsible for committing a write intent.
-- **Intent**: Durable write proposal before global ack quorum completes.
-- **Envelope**: Wire record carrying replication metadata + payload.
-- **Epoch**: Monotonic lease/fencing generation for coordinator authority.
-- **Fence token**: `epoch + coordinatorNodeId + sequence` token that invalidates stale coordinators.
-- **Queue entry**: Durable locally-accepted write waiting for replay.
+- **Node**: A Fusion runtime/API process with a registered `central.nodes` row and local execution capacity.
+- **Shared database**: One Postgres cluster (schemas `project`, `central`, `archive`) reached via the same `DATABASE_URL` on every participating node.
+- **Claim**: Authoritative ownership row in `central.task_claims` keyed by `(projectId, taskId)`.
+- **Lease epoch**: Monotonic fencing generation on the task row that invalidates stale owners after recovery.
+- **Membership gossip**: Optional peer HTTP exchange of known peers / metrics; does not carry task or settings payloads under Postgres.
+- **Auth material**: Provider credentials in per-machine `auth.json` (not in the shared DB by default); optional secure HTTP sync remains.
 
-## 3. Versioning
-
-- Protocol id: `fusion.shared-mesh`
-- Initial version: `1.0`
-- All envelopes must include `{ protocol, version }`.
-- Minor versions (`1.x`) are backward-compatible additive.
-- Major versions (`2.0+`) may change semantics and require explicit compatibility checks.
-
-## 4. Data-class coordination matrix
+## 3. Data-class matrix (current truth)
 
 | Data class | Mode | Notes |
 |---|---|---|
-| Tasks (core fields, deps, steps, column transitions) | Strongly coordinated | Quorum-acked intent/commit path; replayable with fencing |
-| Task metadata (priority, model overrides, docs metadata refs) | Strongly coordinated | Same write path as tasks |
-| Missions/milestones/slices/features | Strongly coordinated | Ordered writes preserve hierarchy invariants |
-| Agent definitions/configuration | Strongly coordinated | Durable config replicated; runtime process handles excluded |
-| Agent runtime state (heartbeat ticks, local process internals, worktree paths) | Node-local only | Exposed as local telemetry, not global truth |
-| Project settings | Strongly coordinated | Existing settings payloads remain canonical payload shape |
-| Auth material / provider credentials | Queued-for-later (secured transport only) | Explicit auth snapshot channel (`sharedState.authMaterial`); never merged as ordinary settings payload |
-| Execution runs / live activity streams | Node-local + queued summary | Live events local; durable run outcomes appended later |
-| Audit / event streams (`activityLog`, `runAuditEvents`) | Append-only replicated | Immutable event replication with origin metadata |
-| Filesystem blobs (`.fusion/tasks/*` prompts/logs/attachments) | Queued-for-later | Metadata in replicated records, blob transfer out-of-band |
+| Tasks, deps, steps, columns | **Shared Postgres** | Commit is cluster-visible; no HTTP task replication |
+| Missions / agents config / workflows / audit | **Shared Postgres** | Same |
+| Project + global settings | **Shared Postgres** | Settings HTTP push/pull between nodes is disabled (`409`) |
+| Distributed task IDs | **Shared Postgres** | `distributed_task_id_state` / `_reservations`; always local allocator against shared rows |
+| Checkout ownership | **Central claim + task mirror** | `task_claims` then task lease columns |
+| Agent runtime / worktrees / live sessions | **Node-local** | Paths may differ via `project_node_path_mappings` |
+| Auth credentials (`auth.json`) | **Node-local + optional sync** | `sharedState.authMaterial` / auth routes only |
+| FS blobs (`.fusion/tasks/*`) | **Node-local** | Metadata may be in PG; bytes on the materializing host |
+| Topology / peer metrics | **Registry + probes** | `central.nodes` / peers; optional gossip + health HTTP |
 
-## 5. Write classes
+## 4. Execution ownership
 
-- **`strong`**: Requires coordinator fence + quorum ack before `committed`.
-- **`append-only`**: Event-style immutable replication; dedupe by event id.
-- **`queued`**: Accept locally when peers unavailable; replay later.
-- **`local`**: Never replicated globally.
+### Claim path
 
-## 6. Replication envelope
+1. `AgentStore.checkoutTask` → `CentralClaimStore.tryClaimTask` (`central.task_claims`).
+2. Mirror winner onto the task row (`tryClaimCheckout`: `checkedOutBy`, `checkoutNodeId`, `checkoutRunId`, `checkoutLeaseRenewedAt`, `checkoutLeaseEpoch`).
+3. Scheduler/executor on the winning node run locally; other nodes must not start a second exclusive execution lane for the same claim.
 
-Every replicated record uses:
-- `protocol`, `version`
-- `recordId`, `entityType`, `entityId`
-- `originNodeId`, `originSeq`
-- `writeClass`
-- `leaseEpoch`, `fenceToken`
-- `intentId` and `state` (`intent` | `committed` | `rejected` | `queued` | `reconciled`)
-- `createdAt`, `committedAt?`
-- `payload`
-- `precondition?` (base revision / expected epoch)
+### Recovery path
 
-`PeerSyncRequest` / `PeerSyncResponse` remain mesh exchange carriers. v1 envelopes are payloads exchanged through current mesh sync infrastructure and follow-on sync endpoints.
+Only `MeshLeaseManager.recoverAbandonedLease(...)`:
 
-### Auth snapshot contract (v1)
+1. Prove recoverable (owner offline/error, or lease/heartbeat stale; not active local execution).
+2. Apply handoff policy when configured.
+3. Release **central claim first**, then clear task lease fields and **bump epoch**.
+4. Requeue to `todo` (preserve progress when appropriate).
+5. Partial split-brain → `reconcileLeaseRow` on a later tick.
 
-Auth replication uses `AuthMaterialSnapshot` (`version`, `exportedAt`, `checksum`, `payload`) with:
-- `payload.providerAuth: Record<string, ProviderAuthEntry>`
-- `ProviderAuthEntry.type`: `api_key | oauth`
-- `api_key` fields: `key`
-- `oauth` fields: `accessToken`, `refreshToken`, `expires`, optional `accountId`
+Run-audit: `task:auto-recover-lease-*`, `node:lease:*`, `node:handoff:*` as applicable.
 
-Transport paths:
-- Mesh shared-state channel: `POST /api/mesh/sync` (`sharedState.authMaterial`)
-- Explicit node auth channel: `POST /api/nodes/:id/auth/sync` and inbound `POST /api/settings/auth-receive` / `GET /api/settings/auth-export`
+## 5. Membership and HTTP mesh surfaces
 
-Security/redaction rules:
-- Auth snapshots are only exchanged over API-key-authenticated node links.
-- Raw secrets (`key`, `accessToken`, `refreshToken`, bearer headers) MUST NOT be logged.
-- Route diagnostics may emit provider names/counts only.
+Still useful under shared Postgres:
 
-## 7. Quorum and acknowledgements
+| Surface | Role |
+|---|---|
+| `GET /api/mesh/state` | Topology snapshot for dashboard Nodes UI |
+| `POST /api/mesh/sync` | Peer gossip: `knownPeers` (+ optional `authMaterial` only) |
+| `POST/GET /api/mesh/task-ids/*` | Local allocator against shared ID tables (no remote coordinator hop) |
+| Auth sync routes | Optional credential fan-out for file-local auth |
+| mDNS discovery | Join convenience, not task SoT |
+| Docker mesh config generator | Provision managed peers |
 
-For `strong` writes:
-1. Coordinator accepts intent locally.
-2. Coordinator requests acknowledgements from peers in current membership view.
-3. Commit requires `quorum = floor(eligibleVoters / 2) + 1` including coordinator.
-4. If quorum fails before timeout, intent becomes `queued` with retry metadata.
+Removed / disabled:
 
-`append-only` writes can be accepted locally and replicated asynchronously, but must preserve origin ordering `(originNodeId, originSeq)`.
+| Surface | Status |
+|---|---|
+| `POST /api/mesh/tasks/create` | Removed — DB is the replication plane |
+| Task/agent/mission/audit shared-state domains | Removed |
+| Settings gossip / node settings push-pull | Disabled on Postgres (`409`) |
+| Remote task-ID coordinator forwarding | Disabled on Postgres |
 
-## 8. Lease epochs and fencing
+## 6. Write queue and degraded topology (narrowed)
 
-- Coordinator authority is leased with a monotonic `leaseEpoch`.
-- Any write with stale epoch/fence must be rejected (`fenced`).
-- Restarted nodes must reacquire lease and increment epoch before coordinating strong writes.
-- Replay workers must carry original fence metadata; reconciler can reject stale queued entries after epoch advancement.
+Historical multi-leader design used `meshWriteQueue` for offline **task** write replay and `meshSharedSnapshots` for last-known global task state.
 
-## 9. Offline queueing and replay
+Under shared Postgres:
 
-When a strong/queued write cannot reach quorum:
-- Persist queue entry durably in `meshWriteQueue` (`status`: `pending | replaying | applied | failed`).
-- Retryable queueing is limited to transport/outage failures: HTTP `502/503/504`, timeout/abort, and transport errors (`TypeError` fetch/network rejections, or Node-style `ECONNREFUSED`, `ENOTFOUND`, `ETIMEDOUT`, `ECONNRESET`).
-- Non-retryable HTTP failures (`400/401/403/404/409/422`) are recorded as immediate failures and are not queued for replay.
-- `applied` and `failed` rows are retained as durable reconciliation history (no auto-cleanup in v1).
+- **Do not** invent local task commits when Postgres is unavailable.
+- `meshWriteQueue` is limited to **topology / auth** retry classes (membership sync / auth material), not task or settings payloads.
+- `meshSharedSnapshots` support **degraded membership/topology** reads only; they are not a substitute board store.
+- `PeerExchangeService.replayPendingWritesForNode` replays only those narrow scopes.
 
-Replay ordering:
-1. Sort by `(createdAt asc, id asc)`.
-2. Transition idempotently on the same row (`pending → replaying → applied|failed`) while incrementing `attemptCount` on each attempt.
-3. Re-validate preconditions/fencing and record deterministic outcome.
+If Postgres is down, operators fix the database; nodes do not multi-master task rows over HTTP.
 
-## 10. Reconciliation
+## 7. Process lifecycle
 
-Reconciliation outcomes are explicit:
-- `applied` — replayed successfully.
-- `noop_already_applied` — idempotent duplicate.
-- `superseded` — newer committed revision already exists.
-- `conflict_requires_merge` — semantic conflict; requires policy/agent/manual resolution.
-- `rejected_fenced` — stale epoch/fence.
+- `fn serve` / `fn dashboard` start one process-wide `PeerExchangeService` and call `CentralCore.startDiscovery()` after the HTTP server binds the real port.
+- `InProcessRuntime` is project-scoped (scheduler/executor/heartbeat) and does **not** start mesh services.
+- `HybridExecutor` remains the multi-project / multi-node orchestration path when the hybrid gate enables it.
 
-Conflict policy must never silently downgrade strong writes to local-only updates.
+## 8. Security boundary
 
-## 11. Restart recovery hooks
+- Peer HTTP (sync, auth, remote isolation runtime) requires node API-key authentication when configured.
+- Never log raw secrets from auth snapshots.
+- Database credentials in `DATABASE_URL` must not appear in logs (redaction helpers in the Postgres connection layer).
 
-On node startup:
-1. Load durable queue.
-2. Rebuild last known lease epoch / origin sequence.
-3. Mark in-flight intents without terminal state as `queued` recovery candidates.
-4. Start replay loop only after mesh membership snapshot and lease status are known.
+## 9. Operator checklist
 
-## 12. Degraded reads and staleness
+See the **Shared Postgres multi-node runbook** in [`docs/multi-project.md`](./multi-project.md).
 
-Mesh state reads expose a canonical `MeshDegradedReadState` contract:
+Short form:
 
-```ts
-type MeshDegradedReadState = {
-  mode: "fresh" | "degraded";
-  asOf: string;
-  sourceNodeId: string | null;
-  snapshotVersion: string | null;
-  stalenessMs: number;
-  queueDepth: number;
-  pendingWriteCount: number;
-  failedWriteCount: number;
-};
-```
+1. Same external `DATABASE_URL` on every node.
+2. Register nodes/projects + path mappings per host.
+3. Run engines; claims enforce exclusive execution.
+4. Expect worktrees/auth/blobs to remain node-local unless you opt into auth-sync or a future blob store.
 
-Rules:
-- `mode="fresh"` only when data came from the live mesh read path.
-- `mode="degraded"` when read falls back to `meshSharedSnapshots`.
-- `asOf` comes from snapshot `capturedAt`; `stalenessMs = Date.now() - new Date(asOf).getTime()`.
-- `snapshotVersion` is the stored 64-char SHA-256 hex digest of snapshot payload.
-- `queueDepth` is computed from queue rows where `status IN ('pending','replaying','failed')`.
+## 10. Historical note
 
-API behavior must never hide fallback mode: degraded reads are explicit so clients can distinguish stale last-known state from fresh cluster state.
-
-Concrete exported/runtime surfaces:
-- Core types are exported from `@fusion/core`: `MeshSnapshotQuery`, `MeshSnapshotRecord`, `MeshSnapshotRecordInput`, `MeshWriteQueueStatus`, `MeshWriteQueueEntry`, `MeshWriteQueueInput`, `MeshWriteQueueFilter`, `MeshWriteApplyResult`, `MeshWriteFailureResult`, `MeshWriteReplaySummary`, and `MeshDegradedReadState`.
-- `CentralCore` persistence/assertion methods: `recordMeshSnapshot`, `getLatestMeshSnapshot`, `enqueueMeshWrite`, `listPendingMeshWrites`, `markMeshWriteReplayStarted`, `markMeshWriteApplied`, `markMeshWriteFailed`, and `getMeshDegradedReadState`.
-- Runtime replay/assertion methods: `PeerExchangeService.replayPendingWritesForNode(targetNodeId)` and `NodeHealthMonitor` recovery callback `onNodeRecovered(nodeId, previousStatus)`.
-
-## 13. End-to-end v1 write path
-
-1. **Intent creation**: Node creates write intent + envelope.
-2. **Coordinator selection**: Node routes to current coordinator lease holder for the entity scope.
-3. **Commit/ack**:
-   - strong: quorum commit
-   - append-only: local append + async replication
-4. **Fallback**: if unreachable/quorum-fail, persist queue entry (`queued`).
-5. **Replay**: on recovery, replay durable queue in canonical order with fencing checks.
-6. **Reconciliation**: produce explicit outcome and update entity revision state.
-
-## 14. Contract for FN-3449 through FN-3456
-
-Follow-on tasks must implement against this contract and not redefine it:
-- **FN-3449**: distributed ids/origin sequence allocation + monotonic ordering.
-- **FN-3450**: coordinator selection and lease management runtime.
-- **FN-3451**: strong-write commit path + quorum ack handling.
-- **FN-3452**: durable offline queue persistence and replay engine.
-- **FN-3453**: reconciliation executor + conflict outcome handling.
-- **FN-3454**: restart recovery bootstrap and in-flight intent recovery.
-- **FN-3455**: degraded-read APIs exposing staleness metadata.
-- **FN-3456**: partition behavior policy, observability, and operator controls.
-
-## 15. Security boundary
-
-- Mesh transport authentication (node API keys / trust) is mandatory for replication traffic.
-- Auth credential replication is explicit and separately controlled from ordinary settings replication.
-- Sensitive payloads must be redacted from non-secure logs and diagnostics.
+Earlier revisions of this file described protocol id `fusion.shared-mesh` v1 with strong/queued/append-only write classes and quorum acks for multi-leader SQLite. That contract is archived by this rewrite. Implementation remnants that still mention multi-leader envelopes are compatibility shims and must not reintroduce HTTP task replication.
