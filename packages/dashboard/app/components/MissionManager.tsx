@@ -1015,10 +1015,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       const fetched = await fetchMissions(projectId);
       // Defensive: API helpers can return an envelope or non-array under
       // failure paths; downstream code (render, filter) assumes an array.
-      const data = Array.isArray(fetched)
+      // Annotate as MissionWithSummary[] (component mission-types) so the
+      // Array.isArray ternary cannot widen into a dual MissionWithSummary union
+      // from api/legacy vs ./mission-types (TS2345 after the taskPrefix port).
+      const data: MissionWithSummary[] = Array.isArray(fetched)
         ? fetched
         : fetched && Array.isArray((fetched as { data?: unknown }).data)
-          ? ((fetched as { data: MissionWithSummary[] }).data)
+          ? (fetched as { data: MissionWithSummary[] }).data
           : [];
       setMissions(data);
       writeCache(

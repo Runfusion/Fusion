@@ -56,7 +56,11 @@ export interface Mission {
     mode: "project-default" | "existing" | "custom-new" | "auto-per-task";
     branchName?: string;
   };
-  taskPrefix?: string;
+  /*
+  FNXC:MissionTaskPrefix 2026-07-14-19:50:
+  Align with API Mission (legacy.ts): undefined/absent inherits the project prefix; null means a stored override was cleared (PATCH null). Keep the same union as the fetch return type so MissionWithSummary[] from fetchMissions assigns into component state without dual-definition TS2345 unions.
+  */
+  taskPrefix?: string | null;
   status: MissionStatus;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
   autoAdvance?: boolean;
