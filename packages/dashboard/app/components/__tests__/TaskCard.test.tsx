@@ -12,6 +12,7 @@ import { CostBadgeProvider } from "../../context/CostBadgeContext";
 // "useToast must be used within ToastProvider" failure across this file.
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
+  useOptionalToast: () => null,
     addToast: vi.fn(),
     removeToast: vi.fn(),
     toasts: [],

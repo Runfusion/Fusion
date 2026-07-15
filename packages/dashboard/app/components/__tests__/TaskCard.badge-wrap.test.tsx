@@ -52,6 +52,7 @@ vi.mock("../../hooks/useAgentsMapCache", () => ({
 }));
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
+  useOptionalToast: () => null,
     addToast: vi.fn(),
     removeToast: vi.fn(),
     toasts: [],

@@ -57,6 +57,7 @@ the badge throw unmounts the tree (buttons/labels vanish), so mock the hook like
 */
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
+  useOptionalToast: () => null,
     addToast: vi.fn(),
     removeToast: vi.fn(),
     toasts: [],

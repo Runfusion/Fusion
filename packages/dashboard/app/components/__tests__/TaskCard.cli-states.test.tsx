@@ -28,6 +28,7 @@ vi.mock("lucide-react", () => {
 // ToastProvider", matching the TaskCard.test.tsx pattern.
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
+  useOptionalToast: () => null,
     addToast: vi.fn(),
     removeToast: vi.fn(),
     toasts: [],

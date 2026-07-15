@@ -76,6 +76,7 @@ to avoid "useToast must be used within ToastProvider", matching the TaskCard.tes
 */
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
+  useOptionalToast: () => null,
     addToast: vi.fn(),
     removeToast: vi.fn(),
     toasts: [],
