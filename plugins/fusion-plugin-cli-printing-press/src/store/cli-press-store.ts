@@ -142,12 +142,14 @@ export interface CliPressStore {
   deleteService(id: string): Promise<void>;
   listSpecs(serviceId: string): Promise<CliSpec[]>;
   listAllSpecs(): Promise<CliSpec[]>;
+  listGeneratedSpecs(): Promise<CliSpec[]>;
   getSpec(id: string): Promise<CliSpec | undefined>;
   createSpec(input: CliSpecCreateInput): Promise<CliSpec>;
   updateSpec(id: string, updates: CliSpecUpdateInput): Promise<CliSpec>;
   deleteSpec(id: string): Promise<void>;
   listArtifacts(specId: string): Promise<CliArtifact[]>;
   listAllArtifacts(): Promise<CliArtifact[]>;
+  listExecutableArtifacts(): Promise<CliArtifact[]>;
   createArtifact(input: CliArtifactCreateInput): Promise<CliArtifact>;
   updateArtifact(id: string, updates: CliArtifactUpdateInput): Promise<CliArtifact>;
   deleteArtifact(id: string): Promise<void>;
@@ -442,6 +444,19 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
       return rows.map(mapSpec);
     },
 
+    /** FNXC:CliPrintingPressRuntime 2026-07-14-23:53: Executor dispatch only consumes generated definitions; filter them in the owning database instead of transferring draft and failed history into every task launch. */
+    async listGeneratedSpecs(): Promise<CliSpec[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressSpecs)
+          .where(and(eq(cliPressSpecs.projectId, projectId()), eq(cliPressSpecs.status, "generated")))
+          .orderBy(desc(cliPressSpecs.createdAt));
+        return (rows as CliSpecRow[]).map(mapSpec);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_cli_specs WHERE status = ? ORDER BY createdAt DESC")
+        .all("generated") as unknown as CliSpecRow[];
+      return rows.map(mapSpec);
+    },
+
     async getSpec(id: string): Promise<CliSpec | undefined> {
       if (asyncLayer) {
         const rows = await asyncLayer.db
@@ -532,6 +547,19 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
         return (rows as CliArtifactRow[]).map(mapArtifact);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_artifacts ORDER BY createdAt DESC").all() as unknown as CliArtifactRow[];
+      return rows.map(mapArtifact);
+    },
+
+    /** FNXC:CliPrintingPressRuntime 2026-07-14-23:53: Runtime PATH construction needs executable artifacts only; keep non-executable generation history out of the dispatch catalog at the SQL boundary. */
+    async listExecutableArtifacts(): Promise<CliArtifact[]> {
+      if (asyncLayer) {
+        const rows = await asyncLayer.db.select().from(cliPressArtifacts)
+          .where(and(eq(cliPressArtifacts.projectId, projectId()), eq(cliPressArtifacts.executable, true)))
+          .orderBy(desc(cliPressArtifacts.createdAt));
+        return (rows as CliArtifactRow[]).map(mapArtifact);
+      }
+      const rows = syncDb().prepare("SELECT * FROM cli_press_artifacts WHERE executable = ? ORDER BY createdAt DESC")
+        .all(1) as unknown as CliArtifactRow[];
       return rows.map(mapArtifact);
     },
 
@@ -724,18 +752,12 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
     async setSetting(input: ServiceSettingCreateInput): Promise<ServiceSetting> {
       const now = nowIso();
       if (asyncLayer) {
-        const rows = await asyncLayer.db
-          .select()
-          .from(cliPressSettings)
-          .where(and(eq(cliPressSettings.projectId, projectId()), eq(cliPressSettings.serviceId, input.serviceId), eq(cliPressSettings.key, input.key), eq(cliPressSettings.scope, input.scope)))
-          .limit(1);
-        const existing = rows[0] as ServiceSettingRow | undefined;
-        if (existing) {
-          await asyncLayer.db.update(cliPressSettings).set({ value: input.value, updatedAt: now }).where(and(eq(cliPressSettings.projectId, projectId()), eq(cliPressSettings.id, existing.id)));
-          return mapSetting({ ...existing, value: input.value, updatedAt: now });
-        }
+        /*
+        FNXC:CliPrintingPressConcurrency 2026-07-14-23:53:
+        Settings are unique by project, service, key, and scope. Resolve concurrent first writes with one PostgreSQL conflict upsert so callers cannot race between SELECT and INSERT or create a transient uniqueness failure.
+        */
         const setting: ServiceSetting = { id: createId("set"), ...input, createdAt: now, updatedAt: now };
-        await asyncLayer.db.insert(cliPressSettings).values({
+        const rows = await asyncLayer.db.insert(cliPressSettings).values({
           projectId: projectId(),
           id: setting.id,
           serviceId: setting.serviceId,
@@ -744,8 +766,11 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           scope: setting.scope,
           createdAt: setting.createdAt,
           updatedAt: setting.updatedAt,
-        });
-        return setting;
+        }).onConflictDoUpdate({
+          target: [cliPressSettings.projectId, cliPressSettings.serviceId, cliPressSettings.key, cliPressSettings.scope],
+          set: { value: input.value, updatedAt: now },
+        }).returning();
+        return mapSetting(rows[0] as ServiceSettingRow);
       }
       const existing = syncDb().prepare("SELECT * FROM cli_press_service_settings WHERE serviceId = ? AND key = ? AND scope = ?")
         .get(input.serviceId, input.key, input.scope) as unknown as ServiceSettingRow | undefined;

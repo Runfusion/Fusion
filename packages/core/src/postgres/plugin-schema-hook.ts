@@ -38,6 +38,41 @@ export type PluginSchemaInitHook = {
   init(db: PostgresJsDatabase<Record<string, never>>): Promise<void>;
 };
 
+type ProjectIndexDefinition = {
+  readonly name: string;
+  readonly table: string;
+  readonly columns: string;
+  readonly unique?: boolean;
+};
+
+async function ensureProjectIndexes(
+  db: PostgresJsDatabase<Record<string, never>>,
+  definitions: readonly ProjectIndexDefinition[],
+): Promise<void> {
+  const rows = (await db.execute(sql`
+    SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'project'
+  `)) as unknown as Array<{ indexname: string; indexdef: string }>;
+  const actual = new Map(rows.map((row) => [row.indexname, row.indexdef]));
+  const stale = definitions.filter((definition) => {
+    const catalogName = /^[a-z_][a-z0-9_]*$/.test(definition.name)
+      ? definition.name
+      : `"${definition.name}"`;
+    const expected = `CREATE ${definition.unique ? "UNIQUE " : ""}INDEX ${catalogName} ON project.${definition.table} USING btree (${definition.columns})`;
+    return actual.get(definition.name) !== expected;
+  });
+  if (stale.length === 0) return;
+
+  /*
+  FNXC:PluginIndexIsolation 2026-07-14-23:55:
+  Every bundled-plugin lookup runs through a project-bound data layer. Reconcile named secondary indexes to project_id-leading definitions so PostgreSQL can prune other tenants before applying status, relationship, or time predicates; preserve matching index OIDs on steady-state boots.
+  */
+  await db.execute(sql.raw(stale.map((definition) => `
+    DROP INDEX IF EXISTS project."${definition.name}";
+    CREATE ${definition.unique ? "UNIQUE " : ""}INDEX "${definition.name}"
+      ON project.${definition.table}(${definition.columns});
+  `).join("\n")));
+}
+
 /**
  * FNXC:PostgresSchema 2026-06-24-03:45:
  * Default roadmap plugin schema-init hook. Creates roadmaps, roadmap_milestones,
@@ -49,44 +84,41 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
   async init(db) {
     await db.execute(sql.raw(`
       CREATE TABLE IF NOT EXISTS project.roadmaps (
-        id text PRIMARY KEY,
-        project_id text,
+        project_id text NOT NULL,
+        id text NOT NULL,
         title text NOT NULL,
         description text,
         created_at text NOT NULL,
-        updated_at text NOT NULL
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id)
       );
 
       CREATE TABLE IF NOT EXISTS project.roadmap_milestones (
-        id text PRIMARY KEY,
-        project_id text,
+        project_id text NOT NULL,
+        id text NOT NULL,
         roadmap_id text NOT NULL,
         title text NOT NULL,
         description text,
         order_index integer NOT NULL,
         created_at text NOT NULL,
         updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
         CONSTRAINT roadmap_milestones_roadmap_id_fkey
-          FOREIGN KEY (roadmap_id) REFERENCES project.roadmaps(id) ON DELETE CASCADE
+          FOREIGN KEY (project_id, roadmap_id) REFERENCES project.roadmaps(project_id, id) ON DELETE CASCADE
       );
-      CREATE INDEX IF NOT EXISTS "idxRoadmapMilestonesRoadmapOrder"
-        ON project.roadmap_milestones(project_id, roadmap_id, order_index, created_at, id);
-
       CREATE TABLE IF NOT EXISTS project.roadmap_features (
-        id text PRIMARY KEY,
-        project_id text,
+        project_id text NOT NULL,
+        id text NOT NULL,
         milestone_id text NOT NULL,
         title text NOT NULL,
         description text,
         order_index integer NOT NULL,
         created_at text NOT NULL,
         updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
         CONSTRAINT roadmap_features_milestone_id_fkey
-          FOREIGN KEY (milestone_id) REFERENCES project.roadmap_milestones(id) ON DELETE CASCADE
+          FOREIGN KEY (project_id, milestone_id) REFERENCES project.roadmap_milestones(project_id, id) ON DELETE CASCADE
       );
-      CREATE INDEX IF NOT EXISTS "idxRoadmapFeaturesMilestoneOrder"
-        ON project.roadmap_features(project_id, milestone_id, order_index, created_at, id);
-
       /*
        * FNXC:PluginPostgresIsolation 2026-07-13-22:37:
        * Bundled plugin rows share one embedded PostgreSQL schema, so every roadmap hierarchy row must carry the bound project ID. The upgrade below derives or rejects legacy ownership before enforcing non-null, while runtime stores reject unbound layers and always filter these columns.
@@ -94,6 +126,57 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
       ALTER TABLE project.roadmaps ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.roadmap_milestones ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.roadmap_features ADD COLUMN IF NOT EXISTS project_id text;
+    `));
+
+    await ensureProjectIndexes(db, [
+      { name: "idxRoadmapMilestonesRoadmapOrder", table: "roadmap_milestones", columns: "project_id, roadmap_id, order_index, created_at, id" },
+      { name: "idxRoadmapFeaturesMilestoneOrder", table: "roadmap_features", columns: "project_id, milestone_id, order_index, created_at, id" },
+      { name: "idxRoadmapsProject", table: "roadmaps", columns: "project_id, created_at, id" },
+      { name: "idxRoadmapMilestonesProject", table: "roadmap_milestones", columns: "project_id, roadmap_id, order_index, id" },
+      { name: "idxRoadmapFeaturesProject", table: "roadmap_features", columns: "project_id, milestone_id, order_index, id" },
+    ]);
+
+    const readiness = (await db.execute(sql`
+      SELECT
+        EXISTS (
+          SELECT 1 FROM project.roadmaps WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.roadmap_milestones WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.roadmap_features WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'project.roadmaps'::regclass AND conname = 'roadmaps_pkey'
+            AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, id)'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'project.roadmap_milestones'::regclass AND conname = 'roadmap_milestones_pkey'
+            AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, id)'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'project.roadmap_features'::regclass AND conname = 'roadmap_features_pkey'
+            AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, id)'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'project.roadmap_milestones'::regclass AND conname = 'roadmap_milestones_roadmap_id_fkey'
+            AND pg_get_constraintdef(oid) LIKE 'FOREIGN KEY (project_id, roadmap_id) REFERENCES project.roadmaps(project_id, id) ON DELETE CASCADE%'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'project.roadmap_features'::regclass AND conname = 'roadmap_features_milestone_id_fkey'
+            AND pg_get_constraintdef(oid) LIKE 'FOREIGN KEY (project_id, milestone_id) REFERENCES project.roadmap_milestones(project_id, id) ON DELETE CASCADE%'
+        )
+        AS needs_upgrade
+    `)) as unknown as Array<{ needs_upgrade: boolean }>;
+    /*
+    FNXC:PluginSchemaPerformance 2026-07-14-23:40:
+    PostgreSQL gate workers and production boots repeatedly apply bundled hooks. Preserve existing constraint OIDs when the Roadmap hierarchy already has project-local keys and no recoverable legacy ownership instead of taking unnecessary ACCESS EXCLUSIVE locks.
+    */
+    if (readiness[0]?.needs_upgrade === false) return;
+
+    await db.execute(sql.raw(`
 
       /*
        * FNXC:RoadmapPostgresUpgrade 2026-07-14-22:45:
@@ -152,13 +235,23 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
             WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__');
         END IF;
 
+        /*
+         * FNXC:RoadmapProjectIdentity 2026-07-14-23:55:
+         * Roadmap IDs are project-local after cutover. Validate each child against the composite parent identity instead of joining on id alone, which falsely rejects two valid projects that reuse the same roadmap or milestone ID.
+         */
         SELECT
           (SELECT count(*) FROM project.roadmap_milestones milestone
-            JOIN project.roadmaps roadmap ON roadmap.id = milestone.roadmap_id
-            WHERE milestone.project_id IS DISTINCT FROM roadmap.project_id)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM project.roadmaps roadmap
+              WHERE roadmap.project_id = milestone.project_id
+                AND roadmap.id = milestone.roadmap_id
+            ))
           + (SELECT count(*) FROM project.roadmap_features feature
-            JOIN project.roadmap_milestones milestone ON milestone.id = feature.milestone_id
-            WHERE feature.project_id IS DISTINCT FROM milestone.project_id)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM project.roadmap_milestones milestone
+              WHERE milestone.project_id = feature.project_id
+                AND milestone.id = feature.milestone_id
+            ))
         INTO ownership_conflicts;
         IF ownership_conflicts > 0 THEN
           RAISE EXCEPTION 'Roadmap PostgreSQL upgrade found % cross-project hierarchy relationship(s)', ownership_conflicts;
@@ -179,15 +272,6 @@ export const roadmapPluginSchemaInit: PluginSchemaInitHook = {
         FOREIGN KEY (project_id, roadmap_id) REFERENCES project.roadmaps(project_id, id) ON DELETE CASCADE;
       ALTER TABLE project.roadmap_features ADD CONSTRAINT roadmap_features_milestone_id_fkey
         FOREIGN KEY (project_id, milestone_id) REFERENCES project.roadmap_milestones(project_id, id) ON DELETE CASCADE;
-      DROP INDEX IF EXISTS project."idxRoadmapMilestonesRoadmapOrder";
-      CREATE INDEX "idxRoadmapMilestonesRoadmapOrder"
-        ON project.roadmap_milestones(project_id, roadmap_id, order_index, created_at, id);
-      DROP INDEX IF EXISTS project."idxRoadmapFeaturesMilestoneOrder";
-      CREATE INDEX "idxRoadmapFeaturesMilestoneOrder"
-        ON project.roadmap_features(project_id, milestone_id, order_index, created_at, id);
-      CREATE INDEX IF NOT EXISTS "idxRoadmapsProject" ON project.roadmaps(project_id, created_at, id);
-      CREATE INDEX IF NOT EXISTS "idxRoadmapMilestonesProject" ON project.roadmap_milestones(project_id, roadmap_id, order_index, id);
-      CREATE INDEX IF NOT EXISTS "idxRoadmapFeaturesProject" ON project.roadmap_features(project_id, milestone_id, order_index, id);
     `));
   },
 };
@@ -231,13 +315,6 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
       -- integer via the CREATE TABLE IF NOT EXISTS above, so widen it in place.
       -- Idempotent: ALTER ... TYPE bigint on an already-bigint column is a no-op.
       ALTER TABLE project.ce_sessions ALTER COLUMN last_activity_at TYPE bigint;
-      CREATE INDEX IF NOT EXISTS "idxCeSessionsStatusUpdated"
-        ON project.ce_sessions(status, updated_at DESC, id);
-      CREATE INDEX IF NOT EXISTS "idxCeSessionsStageCreated"
-        ON project.ce_sessions(stage, created_at DESC, id);
-      CREATE INDEX IF NOT EXISTS "idxCeSessionsProject"
-        ON project.ce_sessions(project_id, updated_at DESC, id);
-
       CREATE TABLE IF NOT EXISTS project.ce_plan_handoff_claims (
         project_id text NOT NULL,
         artifact_path text NOT NULL,
@@ -258,11 +335,6 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
         created_at text NOT NULL,
         PRIMARY KEY (project_id, id)
       );
-      CREATE INDEX IF NOT EXISTS "idxCePipelineLinksPipeline"
-        ON project.ce_pipeline_links(ce_pipeline_id, created_at DESC, id);
-      CREATE UNIQUE INDEX IF NOT EXISTS "idxCePipelineLinksTask"
-        ON project.ce_pipeline_links(task_id);
-
       CREATE TABLE IF NOT EXISTS project.ce_pipeline_state (
         project_id text NOT NULL,
         ce_pipeline_id text NOT NULL,
@@ -275,8 +347,6 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
         updated_at text NOT NULL,
         PRIMARY KEY (project_id, ce_pipeline_id)
       );
-      CREATE INDEX IF NOT EXISTS "idxCePipelineStateStatus"
-        ON project.ce_pipeline_state(status, updated_at DESC, ce_pipeline_id);
 
       CREATE TABLE IF NOT EXISTS project.ce_pipeline_sync_queue (
         project_id text NOT NULL,
@@ -290,10 +360,6 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
         processed_at text,
         PRIMARY KEY (project_id, id)
       );
-      CREATE INDEX IF NOT EXISTS "idxCePipelineSyncQueuePending"
-        ON project.ce_pipeline_sync_queue(processed_at, enqueued_at, id);
-      CREATE INDEX IF NOT EXISTS "idxCePipelineSyncQueuePipeline"
-        ON project.ce_pipeline_sync_queue(ce_pipeline_id, enqueued_at, id);
 
       /*
        * FNXC:CePipelineProjectIsolation 2026-07-14-21:41:
@@ -302,6 +368,47 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
       ALTER TABLE project.ce_pipeline_links ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.ce_pipeline_state ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.ce_pipeline_sync_queue ADD COLUMN IF NOT EXISTS project_id text;
+    `));
+
+    await ensureProjectIndexes(db, [
+      { name: "idxCeSessionsStatusUpdated", table: "ce_sessions", columns: "project_id, status, updated_at DESC, id" },
+      { name: "idxCeSessionsStageCreated", table: "ce_sessions", columns: "project_id, stage, created_at DESC, id" },
+      { name: "idxCeSessionsProject", table: "ce_sessions", columns: "project_id, updated_at DESC, id" },
+      { name: "idxCePipelineLinksPipeline", table: "ce_pipeline_links", columns: "project_id, ce_pipeline_id, created_at DESC, id" },
+      { name: "idxCePipelineLinksTask", table: "ce_pipeline_links", columns: "project_id, task_id", unique: true },
+      { name: "idxCePipelineStateStatus", table: "ce_pipeline_state", columns: "project_id, status, updated_at DESC, ce_pipeline_id" },
+      { name: "idxCePipelineSyncQueuePending", table: "ce_pipeline_sync_queue", columns: "project_id, processed_at, enqueued_at, id" },
+      { name: "idxCePipelineSyncQueuePipeline", table: "ce_pipeline_sync_queue", columns: "project_id, ce_pipeline_id, enqueued_at, id" },
+    ]);
+
+    const readiness = (await db.execute(sql`
+      SELECT
+        EXISTS (
+          SELECT 1 FROM project.ce_pipeline_links WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.ce_pipeline_state WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.ce_pipeline_sync_queue WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conrelid = 'project.ce_pipeline_links'::regclass
+            AND conname = 'ce_pipeline_links_pkey' AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, id)'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conrelid = 'project.ce_pipeline_state'::regclass
+            AND conname = 'ce_pipeline_state_pkey' AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, ce_pipeline_id)'
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conrelid = 'project.ce_pipeline_sync_queue'::regclass
+            AND conname = 'ce_pipeline_sync_queue_pkey' AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, id)'
+        )
+        AS needs_upgrade
+    `)) as unknown as Array<{ needs_upgrade: boolean }>;
+    /*
+    FNXC:PluginSchemaPerformance 2026-07-14-23:40:
+    Keep steady-state Compound Engineering startup validation read-only once pipeline identities and task uniqueness already use project-local keys; legacy rows or stale catalog definitions still enter the fail-closed upgrade.
+    */
+    if (readiness[0]?.needs_upgrade === false) return;
+
+    await db.execute(sql.raw(`
       DO $ce_pipeline_upgrade$
       DECLARE
         unowned_count bigint;
@@ -339,8 +446,6 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
       ALTER TABLE project.ce_pipeline_state ADD CONSTRAINT ce_pipeline_state_pkey PRIMARY KEY (project_id, ce_pipeline_id);
       ALTER TABLE project.ce_pipeline_sync_queue DROP CONSTRAINT IF EXISTS ce_pipeline_sync_queue_pkey;
       ALTER TABLE project.ce_pipeline_sync_queue ADD CONSTRAINT ce_pipeline_sync_queue_pkey PRIMARY KEY (project_id, id);
-      DROP INDEX IF EXISTS project."idxCePipelineLinksTask";
-      CREATE UNIQUE INDEX "idxCePipelineLinksTask" ON project.ce_pipeline_links(project_id, task_id);
     `));
   },
 };
@@ -470,20 +575,37 @@ export const reportsPluginSchemaInit: PluginSchemaInitHook = {
         PRIMARY KEY (project_id, id)
       );
 
-      CREATE INDEX IF NOT EXISTS "idxReportsCadenceCreated"
-        ON project.reports(cadence, created_at DESC, id);
-
-      CREATE INDEX IF NOT EXISTS "idxReportsStatusUpdated"
-        ON project.reports(status, updated_at DESC, id);
-
-      CREATE INDEX IF NOT EXISTS "idxReportsPeriod"
-        ON project.reports(period_start, period_end, id);
-
       /*
        * FNXC:ReportsProjectIsolation 2026-07-14-21:41:
        * Upgrade existing report rows without hiding preserved reports behind an unqueryable sentinel. Only a single central.projects registration establishes unambiguous ownership; otherwise schema startup fails before the composite identity is enforced.
        */
       ALTER TABLE project.reports ADD COLUMN IF NOT EXISTS project_id text;
+    `));
+
+    await ensureProjectIndexes(db, [
+      { name: "idxReportsCadenceCreated", table: "reports", columns: "project_id, cadence, created_at DESC, id" },
+      { name: "idxReportsStatusUpdated", table: "reports", columns: "project_id, status, updated_at DESC, id" },
+      { name: "idxReportsPeriod", table: "reports", columns: "project_id, period_start, period_end, id" },
+    ]);
+
+    const readiness = (await db.execute(sql`
+      SELECT
+        EXISTS (
+          SELECT 1 FROM project.reports
+          WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conrelid = 'project.reports'::regclass
+            AND conname = 'reports_pkey' AND pg_get_constraintdef(oid) = 'PRIMARY KEY (project_id, id)'
+        ) AS needs_upgrade
+    `)) as unknown as Array<{ needs_upgrade: boolean }>;
+    /*
+    FNXC:PluginSchemaPerformance 2026-07-14-23:40:
+    Reports schema validation must not replace an already-correct composite primary key on every boot. Only legacy ownership or a stale key shape requires the destructive upgrade path.
+    */
+    if (readiness[0]?.needs_upgrade === false) return;
+
+    await db.execute(sql.raw(`
       DO $reports_upgrade$
       DECLARE
         unowned_count bigint;
@@ -560,9 +682,6 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
           FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
         CONSTRAINT uq_cli_press_specs_service_name UNIQUE (project_id, service_id, name)
       );
-      CREATE INDEX IF NOT EXISTS "idx_cli_press_specs_service"
-        ON project.cli_press_cli_specs(service_id, created_at, id);
-
       CREATE TABLE IF NOT EXISTS project.cli_press_artifacts (
         project_id text NOT NULL,
         id text NOT NULL,
@@ -578,9 +697,6 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
         CONSTRAINT cli_press_artifacts_cli_spec_id_fkey
           FOREIGN KEY (project_id, cli_spec_id) REFERENCES project.cli_press_cli_specs(project_id, id) ON DELETE CASCADE
       );
-      CREATE INDEX IF NOT EXISTS "idx_cli_press_artifacts_spec"
-        ON project.cli_press_artifacts(cli_spec_id, created_at, id);
-
       CREATE TABLE IF NOT EXISTS project.cli_press_credentials (
         project_id text NOT NULL,
         id text NOT NULL,
@@ -596,9 +712,6 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
           FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
         CONSTRAINT uq_cli_press_credentials_service_name UNIQUE (project_id, service_id, name)
       );
-      CREATE INDEX IF NOT EXISTS "idx_cli_press_credentials_service"
-        ON project.cli_press_credentials(service_id, created_at, id);
-
       CREATE TABLE IF NOT EXISTS project.cli_press_service_settings (
         project_id text NOT NULL,
         id text NOT NULL,
@@ -613,9 +726,6 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
           FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
         CONSTRAINT uq_cli_press_settings_service_key_scope UNIQUE (project_id, service_id, key, scope)
       );
-      CREATE INDEX IF NOT EXISTS "idx_cli_press_settings_service"
-        ON project.cli_press_service_settings(service_id, created_at, id);
-
       /*
        * FNXC:CliPressProjectIsolation 2026-07-14-21:41:
        * Upgrade every legacy table together so composite ownership keys and child foreign keys remain valid across repeated schema application. Pre-project definitions may be claimed only by the sole registered project; ambiguous ownership fails closed instead of assigning rows to an invisible sentinel.
@@ -625,6 +735,56 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
       ALTER TABLE project.cli_press_artifacts ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.cli_press_credentials ADD COLUMN IF NOT EXISTS project_id text;
       ALTER TABLE project.cli_press_service_settings ADD COLUMN IF NOT EXISTS project_id text;
+    `));
+
+    await ensureProjectIndexes(db, [
+      { name: "idx_cli_press_specs_service", table: "cli_press_cli_specs", columns: "project_id, service_id, created_at, id" },
+      { name: "idx_cli_press_artifacts_spec", table: "cli_press_artifacts", columns: "project_id, cli_spec_id, created_at, id" },
+      { name: "idx_cli_press_credentials_service", table: "cli_press_credentials", columns: "project_id, service_id, created_at, id" },
+      { name: "idx_cli_press_settings_service", table: "cli_press_service_settings", columns: "project_id, service_id, created_at, id" },
+    ]);
+
+    const readiness = (await db.execute(sql`
+      SELECT
+        EXISTS (
+          SELECT 1 FROM project.cli_press_services WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.cli_press_cli_specs WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.cli_press_artifacts WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.cli_press_credentials WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+          UNION ALL SELECT 1 FROM project.cli_press_service_settings WHERE project_id IS NULL OR project_id IN ('', '__legacy_unscoped__')
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM (VALUES
+            ('project.cli_press_services', 'cli_press_services_pkey', 'PRIMARY KEY (project_id, id)'),
+            ('project.cli_press_services', 'uq_cli_press_services_project_slug', 'UNIQUE (project_id, slug)'),
+            ('project.cli_press_cli_specs', 'cli_press_cli_specs_pkey', 'PRIMARY KEY (project_id, id)'),
+            ('project.cli_press_cli_specs', 'uq_cli_press_specs_service_name', 'UNIQUE (project_id, service_id, name)'),
+            ('project.cli_press_cli_specs', 'cli_press_cli_specs_service_id_fkey', 'FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE'),
+            ('project.cli_press_artifacts', 'cli_press_artifacts_pkey', 'PRIMARY KEY (project_id, id)'),
+            ('project.cli_press_artifacts', 'cli_press_artifacts_cli_spec_id_fkey', 'FOREIGN KEY (project_id, cli_spec_id) REFERENCES project.cli_press_cli_specs(project_id, id) ON DELETE CASCADE'),
+            ('project.cli_press_credentials', 'cli_press_credentials_pkey', 'PRIMARY KEY (project_id, id)'),
+            ('project.cli_press_credentials', 'uq_cli_press_credentials_service_name', 'UNIQUE (project_id, service_id, name)'),
+            ('project.cli_press_credentials', 'cli_press_credentials_service_id_fkey', 'FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE'),
+            ('project.cli_press_service_settings', 'cli_press_service_settings_pkey', 'PRIMARY KEY (project_id, id)'),
+            ('project.cli_press_service_settings', 'uq_cli_press_settings_service_key_scope', 'UNIQUE (project_id, service_id, key, scope)'),
+            ('project.cli_press_service_settings', 'cli_press_service_settings_service_id_fkey', 'FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE')
+          ) AS expected(table_name, constraint_name, definition)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = expected.table_name::regclass
+              AND conname = expected.constraint_name
+              AND pg_get_constraintdef(oid) LIKE expected.definition || '%'
+          )
+        ) AS needs_upgrade
+    `)) as unknown as Array<{ needs_upgrade: boolean }>;
+    /*
+    FNXC:PluginSchemaPerformance 2026-07-14-23:40:
+    The CLI Printing Press hierarchy has thirteen project-local identity constraints. Treat a matching catalog plus fully owned rows as steady state so repeated schema application never drops and recreates the hierarchy.
+    */
+    if (readiness[0]?.needs_upgrade === false) return;
+
+    await db.execute(sql.raw(`
       /*
        * FNXC:CliPressProjectIsolation 2026-07-14-22:48:
        * A repeated upgrade can encounter composite child foreign keys installed by an earlier boot. Drop them before moving sentinel-owned parents and children to the recovered project together; the same transaction rebuilds every relationship after ownership validation.

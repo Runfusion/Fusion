@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { buildExecutorRuntimeEnv } from "../runtime/executor-runtime-env.js";
 import type { CliPressStore } from "../store/cli-press-store.js";
 
-it("builds every service environment with a constant four-query catalog load", async () => {
+it("builds every service environment with a constant four-query filtered catalog load", async () => {
   const now = new Date().toISOString();
   const services = ["one", "two"].map((id) => ({
     id,
@@ -16,7 +16,7 @@ it("builds every service environment with a constant four-query catalog load", a
     updatedAt: now,
   }));
   const listServices = vi.fn().mockResolvedValue(services);
-  const listAllSpecs = vi.fn().mockResolvedValue(services.map((service) => ({
+  const listGeneratedSpecs = vi.fn().mockResolvedValue(services.map((service) => ({
     id: `spec-${service.id}`,
     serviceId: service.id,
     name: service.id,
@@ -29,7 +29,7 @@ it("builds every service environment with a constant four-query catalog load", a
     createdAt: now,
     updatedAt: now,
   })));
-  const listAllArtifacts = vi.fn().mockResolvedValue([]);
+  const listExecutableArtifacts = vi.fn().mockResolvedValue([]);
   const listAllCredentials = vi.fn().mockResolvedValue(services.map((service) => ({
     id: `credential-${service.id}`,
     serviceId: service.id,
@@ -42,8 +42,8 @@ it("builds every service environment with a constant four-query catalog load", a
   })));
   const store = {
     listServices,
-    listAllSpecs,
-    listAllArtifacts,
+    listGeneratedSpecs,
+    listExecutableArtifacts,
     listAllCredentials,
     listSpecs: vi.fn(() => { throw new Error("per-service query must not run"); }),
     listArtifacts: vi.fn(() => { throw new Error("per-spec query must not run"); }),
@@ -57,5 +57,5 @@ it("builds every service environment with a constant four-query catalog load", a
   );
 
   expect(result.env).toEqual({ SERVICE_ONE: "one", SERVICE_TWO: "two" });
-  expect([listServices, listAllSpecs, listAllArtifacts, listAllCredentials].every((fn) => fn.mock.calls.length === 1)).toBe(true);
+  expect([listServices, listGeneratedSpecs, listExecutableArtifacts, listAllCredentials].every((fn) => fn.mock.calls.length === 1)).toBe(true);
 });

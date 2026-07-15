@@ -21,6 +21,13 @@ function transactionalDb(execute: ReturnType<typeof vi.fn>) {
   };
 }
 
+function executedSql(execute: ReturnType<typeof vi.fn>): string {
+  return execute.mock.calls
+    .map((call) => (call[0] as { queryChunks?: Array<{ value: string[] }> }).queryChunks
+      ?.flatMap((chunk) => chunk.value).join("") ?? "")
+    .join("\n");
+}
+
 describe("PostgreSQL plugin schema registry", () => {
   /*
   FNXC:PluginPostgresSchema 2026-07-14-18:45:
@@ -229,8 +236,7 @@ describe("PostgreSQL plugin schema registry", () => {
   it("repairs Roadmap ownership outside legacy foreign keys and restores composite relationships", async () => {
     const execute = vi.fn().mockResolvedValue([]);
     await roadmapPluginSchemaInit.init({ execute } as never);
-    const ddl = (execute.mock.calls[0]?.[0] as { queryChunks: Array<{ value: string[] }> })
-      .queryChunks.flatMap((chunk) => chunk.value).join("");
+    const ddl = executedSql(execute);
 
     const dropMilestoneFk = ddl.indexOf("DROP CONSTRAINT IF EXISTS roadmap_milestones_roadmap_id_fkey");
     const ownershipBackfill = ddl.indexOf("UPDATE project.roadmap_milestones milestone");
@@ -241,6 +247,41 @@ describe("PostgreSQL plugin schema registry", () => {
     expect(compositeMilestoneFk).toBeGreaterThan(validation);
     expect(ddl).toContain("PRIMARY KEY (project_id, id)");
     expect(ddl).toContain("FOREIGN KEY (project_id, milestone_id)");
+    expect(ddl).toContain("roadmap.project_id = milestone.project_id");
+    expect(ddl).toContain("roadmap.id = milestone.roadmap_id");
+    expect(ddl).toContain("milestone.project_id = feature.project_id");
+    expect(ddl).toContain("milestone.id = feature.milestone_id");
+    expect(ddl).not.toContain("JOIN project.roadmaps roadmap ON roadmap.id = milestone.roadmap_id");
+  });
+
+  /*
+  FNXC:PluginIndexIsolation 2026-07-14-23:55:
+  Project-scoped plugin readers need tenant-leading lookup indexes across every status, relationship, and time query surface. Assert the generated reconciliation DDL rather than a second hand-maintained runtime inventory.
+  */
+  it.each([
+    [cePluginSchemaInit, [
+      'project.ce_sessions(project_id, status, updated_at DESC, id)',
+      'project.ce_sessions(project_id, stage, created_at DESC, id)',
+      'project.ce_pipeline_links(project_id, ce_pipeline_id, created_at DESC, id)',
+      'project.ce_pipeline_state(project_id, status, updated_at DESC, ce_pipeline_id)',
+      'project.ce_pipeline_sync_queue(project_id, processed_at, enqueued_at, id)',
+    ]],
+    [reportsPluginSchemaInit, [
+      'project.reports(project_id, cadence, created_at DESC, id)',
+      'project.reports(project_id, status, updated_at DESC, id)',
+      'project.reports(project_id, period_start, period_end, id)',
+    ]],
+    [cliPressPluginSchemaInit, [
+      'project.cli_press_cli_specs(project_id, service_id, created_at, id)',
+      'project.cli_press_artifacts(project_id, cli_spec_id, created_at, id)',
+      'project.cli_press_credentials(project_id, service_id, created_at, id)',
+      'project.cli_press_service_settings(project_id, service_id, created_at, id)',
+    ]],
+  ] as const)("creates project_id-leading bundled-plugin secondary indexes", async (hook, definitions) => {
+    const execute = vi.fn().mockResolvedValue([]);
+    await hook.init({ execute } as never);
+    const indexDdl = executedSql(execute);
+    for (const definition of definitions) expect(indexDdl).toContain(definition);
   });
 
   /*
@@ -257,10 +298,8 @@ describe("PostgreSQL plugin schema registry", () => {
 
     await hook.init({ execute } as never);
 
-    expect(execute).toHaveBeenCalledTimes(1);
-    const query = (execute.mock.calls[0]?.[0] as {
-      queryChunks: Array<{ value: string[] }>;
-    }).queryChunks.flatMap((chunk) => chunk.value).join("");
+    expect(execute).toHaveBeenCalledTimes(5);
+    const query = executedSql(execute);
     const upgradeStart = query.indexOf(`DO ${blockTag}`);
     const upgradeEnd = query.indexOf(blockTag, upgradeStart + blockTag.length);
     const upgrade = query.slice(upgradeStart, upgradeEnd + blockTag.length);

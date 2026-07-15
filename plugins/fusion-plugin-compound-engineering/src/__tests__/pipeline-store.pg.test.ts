@@ -16,7 +16,7 @@
 
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { getTableColumns, sql } from "drizzle-orm";
 import {
   applySchemaBaseline,
   createAsyncDataLayer,
@@ -26,6 +26,11 @@ import {
   type ResolvedBackend,
 } from "@fusion/core";
 import { CePipelineStore } from "../sync/pipeline-store.js";
+import {
+  cePipelineLinks as localCePipelineLinks,
+  cePipelineState as localCePipelineState,
+  cePipelineSyncQueue as localCePipelineSyncQueue,
+} from "../sync/pg-schema.js";
 import { CeSessionStore, PlanHandoffClaimError } from "../session/session-store.js";
 import {
   PG_AVAILABLE,
@@ -118,6 +123,24 @@ afterAll(async () => {
     await ctx.close();
     ctx = null;
   }
+});
+
+it("keeps bundle-local CE Drizzle columns aligned with the canonical core schema", () => {
+  /*
+  FNXC:CompoundEngineeringSchema 2026-07-14-23:53:
+  This contract is deliberately outside the PostgreSQL-gated suite: schema drift must fail in every test environment even when the published-bundle shim prevents importing canonical core table objects at runtime.
+  */
+  const columnSignature = (table: Parameters<typeof getTableColumns>[0]) =>
+    Object.entries(getTableColumns(table)).map(([property, column]) => ({
+      property,
+      name: column.name,
+      dataType: column.dataType,
+      notNull: column.notNull,
+    })).sort((a, b) => a.name.localeCompare(b.name));
+
+  expect(columnSignature(localCePipelineLinks)).toEqual(columnSignature(postgresSchema.plugin.cePipelineLinks));
+  expect(columnSignature(localCePipelineState)).toEqual(columnSignature(postgresSchema.plugin.cePipelineState));
+  expect(columnSignature(localCePipelineSyncQueue)).toEqual(columnSignature(postgresSchema.plugin.cePipelineSyncQueue));
 });
 
 pgDescribe("CePipelineStore (PG backend mode)", () => {
@@ -265,6 +288,35 @@ pgDescribe("CePipelineStore (PG backend mode)", () => {
 
     const all = await store.listAllStateAsync();
     expect(all.some((s) => s.cePipelineId === "pipe-state-1")).toBe(true);
+  });
+
+  it("atomically preserves independently omitted state fields under concurrent upserts", async () => {
+    const store = new CePipelineStore(null, ctx!.layer);
+    await store.upsertStateAsync({
+      cePipelineId: "pipe-state-concurrent",
+      currentStage: "work",
+      status: "running",
+      lastArtifactPath: null,
+    });
+
+    await Promise.all([
+      store.upsertStateAsync({
+        cePipelineId: "pipe-state-concurrent",
+        currentStage: "review",
+        status: "awaiting_board",
+      }),
+      store.upsertStateAsync({
+        cePipelineId: "pipe-state-concurrent",
+        currentStage: "review",
+        lastArtifactPath: "/artifacts/concurrent-review.md",
+      }),
+    ]);
+
+    expect(await store.getStateAsync("pipe-state-concurrent")).toMatchObject({
+      currentStage: "review",
+      status: "awaiting_board",
+      lastArtifactPath: "/artifacts/concurrent-review.md",
+    });
   });
 
   it("transitionStateAsync advances status and stage", async () => {

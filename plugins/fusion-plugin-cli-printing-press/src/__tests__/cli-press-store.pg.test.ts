@@ -225,6 +225,35 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
       });
       const settingsAfterUpsert = await store.listSettings(service.id);
       expect(settingsAfterUpsert).toHaveLength(1);
+
+      const concurrent = await Promise.all(Array.from({ length: 8 }, (_, index) => store.setSetting({
+        serviceId: service.id,
+        key: "parallel",
+        value: String(index),
+        scope: "wizard",
+      })));
+      expect(new Set(concurrent.map((setting) => setting.id)).size).toBe(1);
+      expect((await store.listSettings(service.id)).filter((setting) => setting.key === "parallel")).toHaveLength(1);
+
+      const generated = await store.updateSpec(spec.id, { status: "generated", generatedAt: new Date().toISOString() });
+      await store.createSpec({
+        serviceId: service.id,
+        name: "draft-history",
+        version: "1.0.0",
+        generatorVersion: "cli-printing-press",
+        specJson: "{}",
+        status: "draft",
+      });
+      await store.createArtifact({
+        cliSpecId: generated.id,
+        kind: "metadata",
+        path: "plugins/cli-printing-press/artifacts/gamma/metadata.json",
+        executable: false,
+      });
+      expect((await store.listGeneratedSpecs()).map((row) => row.id)).toContain(generated.id);
+      expect((await store.listGeneratedSpecs()).some((row) => row.name === "draft-history")).toBe(false);
+      expect((await store.listExecutableArtifacts()).map((row) => row.id)).toContain(artifact.id);
+      expect((await store.listExecutableArtifacts()).every((row) => row.executable)).toBe(true);
     } finally {
       await h.teardown();
     }

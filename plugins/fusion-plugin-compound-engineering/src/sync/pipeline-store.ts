@@ -351,29 +351,30 @@ export class CePipelineStore {
   async upsertStateAsync(input: UpsertCePipelineStateInput): Promise<CePipelineState> {
     if (!this.asyncLayer) return this.upsertState(input);
     const now = new Date().toISOString();
-    const existing = await this.getStateAsync(input.cePipelineId);
-    const status = input.status ?? existing?.status ?? "running";
-    const lastArtifactPath =
-      input.lastArtifactPath !== undefined ? input.lastArtifactPath : existing?.lastArtifactPath ?? null;
-    if (existing) {
-      await this.dbAsync().update(cePipelineStateTable).set({
-        currentStage: input.currentStage,
-        status,
-        lastArtifactPath,
-        updatedAt: now,
-      }).where(and(eq(cePipelineStateTable.projectId, this.projectId()), eq(cePipelineStateTable.cePipelineId, input.cePipelineId)));
-    } else {
-      await this.dbAsync().insert(cePipelineStateTable).values({
+    /*
+    FNXC:CompoundEngineeringConcurrency 2026-07-14-23:53:
+    Pipeline state writers may independently advance status or attach an artifact. A read-before-write upsert lets concurrent callers replace an omitted field with a stale snapshot, so PostgreSQL must resolve the composite-key conflict atomically and retain the stored column whenever the caller omitted it.
+    */
+    const rows = await this.dbAsync().insert(cePipelineStateTable).values({
         projectId: this.projectId(),
         cePipelineId: input.cePipelineId,
         currentStage: input.currentStage,
-        status,
-        lastArtifactPath,
+        status: input.status ?? "running",
+        lastArtifactPath: input.lastArtifactPath ?? null,
         createdAt: now,
         updatedAt: now,
-      });
-    }
-    return (await this.getStateAsync(input.cePipelineId))!;
+      }).onConflictDoUpdate({
+        target: [cePipelineStateTable.projectId, cePipelineStateTable.cePipelineId],
+        set: {
+          currentStage: input.currentStage,
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.lastArtifactPath !== undefined
+            ? { lastArtifactPath: input.lastArtifactPath }
+            : {}),
+          updatedAt: now,
+        },
+      }).returning();
+    return rowToState(rows[0] as CePipelineStateRow);
   }
 
   /**

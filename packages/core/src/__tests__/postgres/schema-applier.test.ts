@@ -30,6 +30,9 @@ import {
   applySchemaBaseline,
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
+  cePluginSchemaInit,
+  cliPressPluginSchemaInit,
+  reportsPluginSchemaInit,
   roadmapPluginSchemaInit,
 } from "../../postgres/index.js";
 import {
@@ -1414,6 +1417,79 @@ pgDescribe("schema-applier: VAL-SCHEMA-007 plugin-owned tables materialize via s
       WHERE n.nspname = 'project' AND c.relname = 'even_realities_seen_tasks'
     `)) as unknown as Array<{ rls: boolean; forced: boolean }>;
     expect(rows).toEqual([{ rls: true, forced: true }]);
+  });
+
+  it("preserves bundled plugin constraint and index OIDs on steady-state reapply", async () => {
+    ctx = await setupFreshDb();
+    await ctx.db.execute(sql.raw(`
+      CREATE SCHEMA project;
+      CREATE SCHEMA central;
+      CREATE TABLE central.projects (id text PRIMARY KEY);
+    `));
+    const hooks = [
+      roadmapPluginSchemaInit,
+      cePluginSchemaInit,
+      reportsPluginSchemaInit,
+      cliPressPluginSchemaInit,
+    ];
+    for (const hook of hooks) await hook.init(ctx.db);
+
+    /*
+    FNXC:PluginSchemaPerformance 2026-07-14-23:40:
+    Reapplying the PostgreSQL baseline is a steady-state validation path, not a reason to replace bundled-plugin keys and indexes. Stable catalog OIDs prove the hooks avoided destructive DROP/ADD churn while retaining the same schema objects.
+    */
+    const catalogObjects = async () => (await ctx!.db.execute(sql`
+      SELECT 'constraint' AS kind, conname AS name, oid::text AS oid, pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint
+      WHERE connamespace = 'project'::regnamespace
+        AND conname IN (
+          'roadmaps_pkey', 'roadmap_milestones_pkey', 'roadmap_features_pkey',
+          'roadmap_milestones_roadmap_id_fkey', 'roadmap_features_milestone_id_fkey',
+          'ce_pipeline_links_pkey', 'ce_pipeline_state_pkey', 'ce_pipeline_sync_queue_pkey',
+          'reports_pkey',
+          'cli_press_services_pkey', 'uq_cli_press_services_project_slug',
+          'cli_press_cli_specs_pkey', 'uq_cli_press_specs_service_name', 'cli_press_cli_specs_service_id_fkey',
+          'cli_press_artifacts_pkey', 'cli_press_artifacts_cli_spec_id_fkey',
+          'cli_press_credentials_pkey', 'uq_cli_press_credentials_service_name', 'cli_press_credentials_service_id_fkey',
+          'cli_press_service_settings_pkey', 'uq_cli_press_settings_service_key_scope', 'cli_press_service_settings_service_id_fkey'
+        )
+      UNION ALL
+      SELECT 'index' AS kind, c.relname AS name, c.oid::text AS oid, pg_get_indexdef(c.oid) AS definition
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'project'
+        AND c.relname IN (
+          'idxRoadmapMilestonesRoadmapOrder',
+          'idxRoadmapFeaturesMilestoneOrder',
+          'idxRoadmapsProject',
+          'idxRoadmapMilestonesProject',
+          'idxRoadmapFeaturesProject',
+          'idxCeSessionsStatusUpdated',
+          'idxCeSessionsStageCreated',
+          'idxCeSessionsProject',
+          'idxCePipelineLinksPipeline',
+          'idxCePipelineLinksTask',
+          'idxCePipelineStateStatus',
+          'idxCePipelineSyncQueuePending',
+          'idxCePipelineSyncQueuePipeline',
+          'idxReportsCadenceCreated',
+          'idxReportsStatusUpdated',
+          'idxReportsPeriod',
+          'idx_cli_press_specs_service',
+          'idx_cli_press_artifacts_spec',
+          'idx_cli_press_credentials_service',
+          'idx_cli_press_settings_service'
+        )
+      ORDER BY kind, name
+    `)) as unknown as Array<{ kind: string; name: string; oid: string; definition: string }>;
+
+    const before = await catalogObjects();
+    expect(before).toHaveLength(42);
+    for (const index of before.filter((entry) => entry.kind === "index")) {
+      expect(index.definition, index.name).toMatch(/USING btree \(project_id,/);
+    }
+    for (const hook of hooks) await hook.init(ctx.db);
+    expect(await catalogObjects()).toEqual(before);
   });
 
   it("roadmap FK cascade: deleting a roadmap removes its milestones and features", async () => {

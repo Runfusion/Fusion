@@ -9,6 +9,9 @@ tables are plugin-OWNED (created by ensureCeSchema's raw DDL / the
 plugin-schema-hook); defining their typed shapes here keeps the bundle
 self-contained. Must stay column-identical to ensureCeSchema
 (../schema.ts) and core's mirror in postgres/schema/plugin.ts.
+
+FNXC:CompoundEngineeringSchema 2026-07-14-23:53:
+The published plugin bundle still cannot import core's canonical Drizzle objects because the CLI aliases @fusion/core to a deliberately minimal runtime shim. Keep these bundle-local definitions until that boundary exports schema objects, and enforce exact column-name parity through pipeline-store.pg.test.ts so either side cannot drift silently.
 */
 import { text, index, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
 import { pgSchema } from "drizzle-orm/pg-core";

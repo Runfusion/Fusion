@@ -18,13 +18,13 @@ export async function buildExecutorRuntimeEnv(
   const pathDirs: string[] = [];
   const env: Record<string, string> = {};
   /*
-  FNXC:CliPrintingPressRuntime 2026-07-14-18:45:
-  Build the runtime catalog with four fixed queries, then join in memory. Per-service and per-spec queries turned the former local SQLite traversal into dispatch-latency fanout after the PostgreSQL cutover.
+  FNXC:CliPrintingPressRuntime 2026-07-14-23:53:
+  Build the runtime catalog with four fixed, SQL-filtered queries, then join in memory. Per-service fanout and loading draft specs or non-executable artifact history both add dispatch latency without contributing to the task environment.
   */
   const [services, specs, artifacts, credentials] = await Promise.all([
     store.listServices(),
-    store.listAllSpecs(),
-    store.listAllArtifacts(),
+    store.listGeneratedSpecs(),
+    store.listExecutableArtifacts(),
     store.listAllCredentials(),
   ]);
   const specsByService = groupBy(specs, (spec) => spec.serviceId);
@@ -33,13 +33,12 @@ export async function buildExecutorRuntimeEnv(
 
   for (const service of services) {
     const serviceSpecs = (specsByService.get(service.id) ?? [])
-      .filter((spec) => spec.status === "generated")
       .sort((a, b) => toEpoch(b.generatedAt ?? b.updatedAt) - toEpoch(a.generatedAt ?? a.updatedAt));
 
     const selectedSpec = serviceSpecs.find((spec) =>
-      (artifactsBySpec.get(spec.id) ?? []).some((artifact) => artifact.executable));
+      (artifactsBySpec.get(spec.id) ?? []).length > 0);
     if (selectedSpec) {
-      const executableArtifacts = (artifactsBySpec.get(selectedSpec.id) ?? []).filter((artifact) => artifact.executable);
+      const executableArtifacts = artifactsBySpec.get(selectedSpec.id) ?? [];
       for (const artifact of executableArtifacts) {
         const absoluteArtifactPath = isAbsolute(artifact.path)
           ? artifact.path
