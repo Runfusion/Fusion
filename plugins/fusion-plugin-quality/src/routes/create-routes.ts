@@ -3,13 +3,8 @@ import type { Database } from "@fusion/core";
 import { ensureQualitySchema } from "../quality-schema.js";
 import { QualityStore } from "../store/quality-store.js";
 import { isQualityPresetId, listPresetCatalog, resolvePresetCommand } from "../runner/command-presets.js";
-import { cancelQualityRun, defaultTimeoutMs, executeQualityRun } from "../runner/command-runner.js";
-import {
-  getAllowRootFallback,
-  getDefaultPreviewScript,
-  getLogTruncateKb,
-  getRunRetentionCount,
-} from "../settings.js";
+import { defaultTimeoutMs, executeQualityRun } from "../runner/command-runner.js";
+import { getAllowRootFallback, getLogTruncateKb, getRunRetentionCount } from "../settings.js";
 import { buildHeuristicSuggestedCases } from "../suggestions/heuristic-cases.js";
 import type { QualityPresetId } from "../store/quality-types.js";
 import { createPreviewSessionManager } from "../preview/preview-sessions.js";
@@ -219,15 +214,24 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
     {
       method: "POST",
       path: "/runs/:runId/cancel",
-      description: "Cancel a queued/running run and kill its supervised process",
+      description: "Mark a queued/running run cancelled (best-effort)",
       handler: async (req, ctx) => {
         const r = req as Req;
         const projectId = requireProjectId(r);
         const runId = r.params?.runId;
         if (!runId) httpError(400, "runId required");
         const store = getStore(ctx);
-        const updated = cancelQualityRun(store, projectId, runId);
-        if (!updated) httpError(404, "Run not found");
+        const run = store.getRun(projectId, runId);
+        if (!run) httpError(404, "Run not found");
+        if (run.status !== "queued" && run.status !== "running") {
+          return { run };
+        }
+        // Active child kill is best-effort via status mark; process supervisor may still exit.
+        const updated = store.updateRun(projectId, runId, {
+          status: "cancelled",
+          finishedAt: new Date().toISOString(),
+          errorMessage: "Cancelled by operator",
+        });
         return { run: updated };
       },
     },
@@ -252,12 +256,8 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const name = typeof body.name === "string" ? body.name.trim() : "";
         if (!name) httpError(400, "name is required");
         const stepsRaw = Array.isArray(body.steps) ? body.steps : [];
-        if (stepsRaw.length === 0) httpError(400, "steps must include at least one known preset");
-        const invalid = stepsRaw.filter((s) => !isQualityPresetId(s));
-        if (invalid.length > 0) {
-          httpError(400, `Unknown plan steps: ${invalid.map(String).join(", ")}`);
-        }
-        const steps = stepsRaw as QualityPresetId[];
+        const steps = stepsRaw.filter(isQualityPresetId);
+        if (steps.length === 0) httpError(400, "steps must include at least one known preset");
         const plan = getStore(ctx).createPlan({ projectId, name, steps });
         return { plan };
       },
@@ -356,7 +356,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const script =
           typeof body.command === "string" && body.command.trim()
             ? body.command.trim()
-            : getDefaultPreviewScript(ctx.settings as Record<string, unknown>);
+            : "dev";
         const session = await previewManager.start({
           projectId,
           taskId,

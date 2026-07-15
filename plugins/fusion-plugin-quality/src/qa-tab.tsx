@@ -50,8 +50,7 @@ interface SuggestedCase {
   done: boolean;
 }
 
-
-function section(title: string, testId: string, ...children: ReactNode[]): ReactElement {
+function Section({ title, children, testId }: { title: string; children: ReactNode; testId: string }): ReactElement {
   return createElement(
     "section",
     {
@@ -64,10 +63,9 @@ function section(title: string, testId: string, ...children: ReactNode[]): React
       },
     },
     createElement("h3", { style: { marginTop: 0, marginBottom: 8, fontSize: 14 } }, title),
-    ...children,
+    children,
   );
 }
-
 
 export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
   const ctx = props.context ?? {};
@@ -106,36 +104,17 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
   const refresh = useCallback(async () => {
     if (!projectId || !taskId) return;
     setError(null);
-    /*
-    FNXC:Quality 2026-07-14-22:10:
-    PR review: use allSettled so a single endpoint failure (e.g. preview) does not
-    hide runs or suggestions sections.
-    */
-    const settled = await Promise.allSettled([
-      api(`/runs?taskId=${encodeURIComponent(taskId)}`),
-      api(`/preview/${encodeURIComponent(taskId)}`),
-      api(`/suggestions/${encodeURIComponent(taskId)}`),
-    ]);
-    const errors: string[] = [];
-    if (settled[0].status === "fulfilled") {
-      setRuns((settled[0].value as { runs?: RunRow[] }).runs ?? []);
-    } else {
-      errors.push(settled[0].reason instanceof Error ? settled[0].reason.message : String(settled[0].reason));
-    }
-    if (settled[1].status === "fulfilled") {
-      setPreview((settled[1].value as { session?: PreviewSession | null }).session ?? null);
-    } else {
-      errors.push(settled[1].reason instanceof Error ? settled[1].reason.message : String(settled[1].reason));
-    }
-    if (settled[2].status === "fulfilled") {
-      setCases(
-        (settled[2].value as { suggestions?: { cases?: SuggestedCase[] } | null }).suggestions?.cases ?? [],
-      );
-    } else {
-      errors.push(settled[2].reason instanceof Error ? settled[2].reason.message : String(settled[2].reason));
-    }
-    if (errors.length > 0) {
-      setError(errors.join(" · "));
+    try {
+      const [runsRes, prevRes, sugRes] = await Promise.all([
+        api(`/runs?taskId=${encodeURIComponent(taskId)}`),
+        api(`/preview/${encodeURIComponent(taskId)}`),
+        api(`/suggestions/${encodeURIComponent(taskId)}`),
+      ]);
+      setRuns((runsRes as { runs?: RunRow[] }).runs ?? []);
+      setPreview((prevRes as { session?: PreviewSession | null }).session ?? null);
+      setCases((sugRes as { suggestions?: { cases?: SuggestedCase[] } | null }).suggestions?.cases ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   }, [api, projectId, taskId]);
 
@@ -171,10 +150,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     setBusy(true);
     setError(null);
     try {
-      // Omit command so the server applies settings.defaultPreviewScript (not hard-coded "dev").
       const data = (await api(`/preview/${encodeURIComponent(taskId)}/start`, {
         method: "POST",
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ projectId, command: "dev" }),
       })) as { session?: PreviewSession };
       setPreview(data.session ?? null);
     } catch (err) {
@@ -232,7 +210,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
       : null,
 
     // Preview server
-    section("Preview server", "quality-qa-preview",
+    createElement(
+      Section,
+      { title: "Preview server", testId: "quality-qa-preview" },
       !worktree
         ? createElement("p", { style: { margin: 0, opacity: 0.8 } }, "Checkout/start this task to get a worktree before starting a preview server.")
         : createElement(
@@ -273,7 +253,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Run tests
-    section("Run tests", "quality-qa-run-tests",
+    createElement(
+      Section,
+      { title: "Run tests", testId: "quality-qa-run-tests" },
       createElement(
         "p",
         { style: { margin: "0 0 8px", fontSize: 12, opacity: 0.75 } },
@@ -329,7 +311,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Reports
-    section("Reports", "quality-qa-reports",
+    createElement(
+      Section,
+      { title: "Reports", testId: "quality-qa-reports" },
       runs.length === 0
         ? createElement("p", { style: { margin: 0, opacity: 0.7, fontSize: 13 } }, "No task runs yet.")
         : createElement(
@@ -374,7 +358,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Screenshots
-    section("Screenshots", "quality-qa-screenshots",
+    createElement(
+      Section,
+      { title: "Screenshots", testId: "quality-qa-screenshots" },
       createElement(
         "p",
         { style: { margin: 0, fontSize: 13, opacity: 0.8 } },
@@ -383,7 +369,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Suggested cases
-    section("Suggested test cases", "quality-qa-suggestions",
+    createElement(
+      Section,
+      { title: "Suggested test cases", testId: "quality-qa-suggestions" },
       createElement(
         "div",
         { style: { display: "flex", gap: 8, marginBottom: 8 } },
@@ -403,7 +391,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // CI placeholder
-    section("CI checks", "quality-qa-ci",
+    createElement(
+      Section,
+      { title: "CI checks", testId: "quality-qa-ci" },
       createElement(
         "p",
         { style: { margin: 0, fontSize: 13, opacity: 0.8 } },

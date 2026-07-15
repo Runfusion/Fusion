@@ -25,10 +25,6 @@ export interface PreviewSession {
 }
 
 const FORBIDDEN_PORT = 4040;
-/** Cap finished (stopped/failed) sessions retained in memory. */
-const MAX_FINISHED_SESSIONS = 32;
-/** Drop finished sessions after this age (ms). */
-const FINISHED_TTL_MS = 15 * 60 * 1000;
 
 async function allocateFreePort(): Promise<number> {
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -65,42 +61,12 @@ export function createPreviewSessionManager() {
     return `${projectId}::${taskId}`;
   }
 
-  function publicView(s: LiveSession): PreviewSession {
-    const { supervised: _s, ...publicSession } = s;
-    return publicSession;
-  }
-
-  /*
-  FNXC:Quality 2026-07-14-22:10:
-  PR review: finished preview sessions must not accumulate unbounded in the process map.
-  Prune stopped/failed by TTL and cap; remove entry after stop when no longer live.
-  */
-  function pruneFinishedSessions(): void {
-    const now = Date.now();
-    const finished: Array<{ k: string; stoppedAt: number }> = [];
-    for (const [k, s] of sessions) {
-      if (s.status === "running" || s.status === "starting") continue;
-      const stoppedAt = s.stoppedAt ? Date.parse(s.stoppedAt) : 0;
-      if (stoppedAt && now - stoppedAt > FINISHED_TTL_MS) {
-        sessions.delete(k);
-        continue;
-      }
-      finished.push({ k, stoppedAt: stoppedAt || 0 });
-    }
-    if (finished.length <= MAX_FINISHED_SESSIONS) return;
-    finished.sort((a, b) => a.stoppedAt - b.stoppedAt);
-    const drop = finished.length - MAX_FINISHED_SESSIONS;
-    for (let i = 0; i < drop; i++) {
-      sessions.delete(finished[i]!.k);
-    }
-  }
-
   return {
     get(projectId: string, taskId: string): PreviewSession | null {
-      pruneFinishedSessions();
       const s = sessions.get(key(projectId, taskId));
       if (!s) return null;
-      return publicView(s);
+      const { supervised: _s, ...publicSession } = s;
+      return publicSession;
     },
 
     async start(input: {
@@ -109,11 +75,11 @@ export function createPreviewSessionManager() {
       cwd: string;
       script: string;
     }): Promise<PreviewSession> {
-      pruneFinishedSessions();
       const k = key(input.projectId, input.taskId);
       const existing = sessions.get(k);
       if (existing && (existing.status === "running" || existing.status === "starting")) {
-        return publicView(existing);
+        const { supervised: _s, ...pub } = existing;
+        return pub;
       }
 
       if (!isSafeScriptName(input.script)) {
@@ -173,44 +139,32 @@ export function createPreviewSessionManager() {
             session.errorMessage = `Exited with code ${code}`;
           }
           session.supervised = undefined;
-          pruneFinishedSessions();
         });
       } catch (err) {
         session.status = "failed";
         session.errorMessage = err instanceof Error ? err.message : String(err);
         session.stoppedAt = new Date().toISOString();
-        pruneFinishedSessions();
       }
 
-      return publicView(session);
+      const { supervised: _s, ...pub } = session;
+      return pub;
     },
 
     async stop(projectId: string, taskId: string): Promise<PreviewSession | null> {
       const k = key(projectId, taskId);
       const session = sessions.get(k);
       if (!session) return null;
-      /*
-      FNXC:Quality 2026-07-14-22:20:
-      PR review: keep a local ref to supervised so delayed SIGKILL is not cleared
-      when session.supervised is nulled; wait for exit before finalizing status.
-      */
-      const supervised = session.supervised;
-      if (supervised) {
-        supervised.kill("SIGTERM");
-        const forceKillTimer = setTimeout(() => {
-          supervised.kill("SIGKILL");
-        }, 2_000);
-        try {
-          await supervised.waitExit();
-        } finally {
-          clearTimeout(forceKillTimer);
-        }
+      if (session.supervised) {
+        session.supervised.kill("SIGTERM");
+        setTimeout(() => {
+          session.supervised?.kill("SIGKILL");
+        }, 2000);
       }
       session.status = "stopped";
       session.stoppedAt = new Date().toISOString();
       session.supervised = undefined;
-      pruneFinishedSessions();
-      return publicView(session);
+      const { supervised: _s, ...pub } = session;
+      return pub;
     },
   };
 }
