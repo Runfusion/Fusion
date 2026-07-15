@@ -1,7 +1,8 @@
 /**
- * FNXC:FasterStartup 2026-07-14-23:55:
- * ProjectEngine.start returns before notifiers/OAuth/merge sweep finish, but
+ * FNXC:FasterStartup 2026-07-14-23:55 / 2026-07-15-00:20:
+ * ProjectEngine.start returns before notifiers/OAuth/merge enqueue finish, but
  * OAuth refresh must still start before the expiry monitor when deferred work runs.
+ * Stale merging/merging-pr statuses clear on the critical path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -10,6 +11,8 @@ const oauthExpiryStart = vi.fn(async () => undefined);
 const notificationStart = vi.fn(async () => undefined);
 const notifierStart = vi.fn(async () => undefined);
 const oauthValidityStart = vi.fn(async () => undefined);
+const updateTask = vi.fn(async () => undefined);
+const listTasks = vi.fn(async () => [] as Array<{ id: string; column: string; status: string | null }>);
 
 vi.mock("../notification/index.js", () => ({
   NotificationService: vi.fn().mockImplementation(function () {
@@ -48,8 +51,8 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
       getTaskStore: vi.fn(() => ({
         getSettings: vi.fn(async () => ({})),
         getAsyncLayer: vi.fn(() => ({})),
-        listTasks: vi.fn(async () => []),
-        updateTask: vi.fn(async () => undefined),
+        listTasks,
+        updateTask,
         on: vi.fn(),
         off: vi.fn(),
       })),
@@ -128,9 +131,39 @@ vi.mock("../merger.js", () => ({
 
 import { ProjectEngine } from "../project-engine.js";
 
+function makeEngine(projectId: string, skipNotifier: boolean) {
+  return new ProjectEngine(
+    {
+      projectId,
+      workingDirectory: `/tmp/${projectId}`,
+      isolationMode: "in-process",
+      maxConcurrent: 1,
+      maxWorktrees: 1,
+    },
+    { on: vi.fn(), off: vi.fn() } as any,
+    { skipNotifier, projectId },
+  );
+}
+
 describe("ProjectEngine deferred startup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listTasks.mockResolvedValue([]);
+  });
+
+  it("clears stale merging statuses during start critical path", async () => {
+    listTasks.mockResolvedValue([
+      { id: "FN-1", column: "in-review", status: "merging" },
+      { id: "FN-2", column: "in-review", status: "merging-pr" },
+      { id: "FN-3", column: "in-review", status: null },
+    ]);
+
+    const engine = makeEngine("proj_stale", true);
+    await engine.start();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-1", { status: null });
+    expect(updateTask).toHaveBeenCalledWith("FN-2", { status: null });
+    expect(updateTask).not.toHaveBeenCalledWith("FN-3", expect.anything());
   });
 
   it("returns from start before OAuth refresh completes, then runs refresh before expiry monitor", async () => {
@@ -142,17 +175,7 @@ describe("ProjectEngine deferred startup", () => {
       await refreshGate;
     });
 
-    const engine = new ProjectEngine(
-      {
-        projectId: "proj_deferred",
-        workingDirectory: "/tmp/proj_deferred",
-        isolationMode: "in-process",
-        maxConcurrent: 1,
-        maxWorktrees: 1,
-      },
-      { on: vi.fn(), off: vi.fn() } as any,
-      { skipNotifier: false, projectId: "proj_deferred" },
-    );
+    const engine = makeEngine("proj_deferred", false);
 
     const startPromise = engine.start();
     await expect(startPromise).resolves.toBeUndefined();
@@ -174,5 +197,27 @@ describe("ProjectEngine deferred startup", () => {
     expect(oauthRefreshStart.mock.invocationCallOrder[0]).toBeLessThan(
       oauthExpiryStart.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("stop sets shuttingDown so deferred work exits without throwing", async () => {
+    let resolveRefresh!: () => void;
+    oauthRefreshStart.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+
+    const engine = makeEngine("proj_stop", false);
+    await engine.start();
+    await vi.waitFor(() => {
+      expect(oauthRefreshStart).toHaveBeenCalled();
+    });
+
+    await engine.stop();
+    resolveRefresh();
+    // Deferred chain should observe shuttingDown and not reject after stop.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(oauthExpiryStart).not.toHaveBeenCalled();
   });
 });

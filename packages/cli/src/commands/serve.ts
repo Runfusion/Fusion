@@ -418,6 +418,18 @@ export async function runServe(
   });
 
   /*
+  FNXC:FasterStartup 2026-07-15-00:20:
+  Apply --paused before any ensureEngine/startAll so recovery, merge enqueue,
+  and deferred OAuth side effects observe enginePaused on the shared factory
+  store (cwd path). Idempotent re-apply on the primary store after ensure.
+  Matches dashboard's pause-before-engine ordering.
+  */
+  if (opts.paused) {
+    await centralBootResult.taskStore.updateSettings({ enginePaused: true });
+    console.log("[engine] Starting in paused mode — automation disabled");
+  }
+
+  /*
   FNXC:FasterStartup 2026-07-14-23:55:
   Do not await startAll() before listen — multi-project count must not gate
   HTTP readiness. Warm the primary project (cwd / flag / default) fully so
@@ -557,9 +569,10 @@ export async function runServe(
   // Set up database health check for diagnostics
   setServeDbHealthCheck(() => store.healthCheck());
 
+  // Re-apply pause on the primary store when it is not the factory/cwd share
+  // (non-cwd --project / fallback). No-op when already set on the shared store.
   if (opts.paused) {
     await store.updateSettings({ enginePaused: true });
-    console.log("[engine] Starting in paused mode — automation disabled");
   }
 
   // ── PluginStore: plugin installation management ─────────────────────

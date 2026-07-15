@@ -681,17 +681,48 @@ vi.mock("@fusion/engine", async (importOriginal) => {
     ProjectEngine: mocks.projectEngineCtor,
     ProjectEngineManager: vi.fn().mockImplementation(function (centralCore: any, options: any) {
     const engines = new Map<string, any>();
+    const starting = new Map<string, Promise<any>>();
+    /*
+    FNXC:FasterStartup 2026-07-15-00:20:
+    Serve no longer awaits startAll before primary ensureEngine. The mock must
+    create-on-ensure (matching real ProjectEngineManager) so primary resolution
+    works when background startAll has not finished yet.
+    */
+    const ensureEngine = async (id: string) => {
+      const existing = engines.get(id);
+      if (existing) return existing;
+      const pending = starting.get(id);
+      if (pending) return pending;
+      const promise = (async () => {
+        // Prefer listProjects path (authoritative registry fixture) over getProject,
+        // which some multi-project suite stubs invent as `/repo/${id}`.
+        const listed = await centralCore.listProjects();
+        const fromList = listed.find((p: { id: string }) => p.id === id);
+        const project = fromList ?? (await centralCore.getProject(id));
+        const engine = mocks.projectEngineCtor(
+          {
+            projectId: id,
+            workingDirectory: project?.path ?? `/tmp/${id}`,
+            isolationMode: "in-process",
+            maxConcurrent: 4,
+            maxWorktrees: 10,
+          },
+          centralCore,
+          { ...options, projectId: id },
+        );
+        await engine.start();
+        engines.set(id, engine);
+        starting.delete(id);
+        return engine;
+      })();
+      starting.set(id, promise);
+      return promise;
+    };
     return {
       startAll: vi.fn(async () => {
         const projects = await centralCore.listProjects();
         for (const project of projects) {
-          const engine = mocks.projectEngineCtor(
-            { projectId: project.id, workingDirectory: project.path, isolationMode: "in-process", maxConcurrent: 4, maxWorktrees: 10 },
-            centralCore,
-            { ...options, projectId: project.id },
-          );
-          await engine.start();
-          engines.set(project.id, engine);
+          await ensureEngine(project.id);
         }
       }),
       // Track which engine is used to verify correct cwd/default routing
@@ -701,11 +732,12 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       }),
       getAllEngines: vi.fn(() => engines),
       getStore: vi.fn((id: string) => engines.get(id)?.getTaskStore()),
-      has: vi.fn((id: string) => engines.has(id)),
-      ensureEngine: vi.fn(async (id: string) => engines.get(id)),
+      has: vi.fn((id: string) => engines.has(id) || starting.has(id)),
+      ensureEngine: vi.fn(async (id: string) => ensureEngine(id)),
       stopAll: vi.fn(async () => {
         for (const engine of engines.values()) await engine.stop();
         engines.clear();
+        starting.clear();
       }),
       onProjectAccessed: vi.fn(),
       startReconciliation: vi.fn(),

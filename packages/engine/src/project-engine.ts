@@ -497,6 +497,13 @@ export class ProjectEngine {
   // would let a second caller overwrite the first, stranding its promise.
   private manualMergeResolvers = new Map<string, Array<MergeResolver>>();
   private shuttingDown = false;
+  /**
+   * FNXC:FasterStartup 2026-07-15-00:20:
+   * stop() clears shuttingDown so the engine can restart, which would otherwise
+   * let in-flight deferred startup work resume after stop. Bump this generation
+   * on stop (and capture it when scheduling deferred work) so post-stop tails abort.
+   */
+  private startupGeneration = 0;
 
   private addMergeResolver(taskId: string, r: MergeResolver): void {
     const list = this.manualMergeResolvers.get(taskId);
@@ -994,13 +1001,25 @@ export class ProjectEngine {
     this.wireTaskPauseMergeInterruption(store);
     this.wireAutostashOrphanRecovery(store);
 
-    // 7–9. Deferred: notifiers/OAuth (ordered), automation syncs, merge sweep
-    void this.startDeferredStartupWork(store, coreAutomationModule).catch((err) => {
+    /*
+    FNXC:FasterStartup 2026-07-15-00:20:
+    Clear crash-leftover merging/merging-pr statuses on the critical path so
+    manual merge is not blocked while deferred work finishes. Auto-merge enqueue
+    stays deferred (pause-aware) after the engine handle is returnable.
+    */
+    const statusClearT0 = Date.now();
+    await this.clearStaleMergingStatuses(store);
+    runtimeLog.log(`ProjectEngine stale merging status clear: ${Date.now() - statusClearT0}ms`);
+
+    // 7–9. Deferred: notifiers/OAuth (ordered), automation syncs, merge enqueue
+    const deferredGeneration = this.startupGeneration;
+    void this.startDeferredStartupWork(store, coreAutomationModule, deferredGeneration).catch((err) => {
+      if (this.shuttingDown || this.startupGeneration !== deferredGeneration) return;
       const message = err instanceof Error ? err.message : String(err);
       runtimeLog.error(`Deferred ProjectEngine startup work failed: ${message}`);
     });
 
-    // 8. Start periodic merge retry sweep (does not require merge sweep to have finished)
+    // 8. Start periodic merge retry sweep (does not require merge enqueue to have finished)
     this.scheduleMergeRetry(store);
     this.scheduleMergeActiveReconciliation(settings.maintenanceIntervalMs ?? 900_000);
 
@@ -1017,16 +1036,24 @@ export class ProjectEngine {
   /**
    * Non-route-critical startup work. Runs after the engine handle is returnable.
    * OAuth refresh must still complete before the expiry monitor's first check.
+   * Aborts cleanly when stop() sets shuttingDown.
    */
+  private deferredStartupAborted(generation: number): boolean {
+    return this.shuttingDown || this.startupGeneration !== generation;
+  }
+
   private async startDeferredStartupWork(
     store: TaskStore,
     coreAutomationModule: typeof import("@fusion/core") | undefined,
+    generation: number,
   ): Promise<void> {
+    if (this.deferredStartupAborted(generation)) return;
     const t0 = Date.now();
 
     if (!this.options.skipNotifier && this.notificationService && this.authStorage) {
       const notifiersT0 = Date.now();
       await this.notificationService.start();
+      if (this.deferredStartupAborted(generation)) return;
       const oauthAlertState = new OAuthAlertStateStore({
         statePath: getFusionOAuthAlertStatePath(),
       });
@@ -1039,26 +1066,32 @@ export class ProjectEngine {
       */
       this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage: this.authStorage });
       await this.oauthRefreshScheduler.start();
+      if (this.deferredStartupAborted(generation)) return;
       this.oauthExpiryMonitor = new OAuthExpiryMonitor({
         authStorage: this.authStorage,
         notificationService: this.notificationService,
         alertState: oauthAlertState,
       });
       await this.oauthExpiryMonitor.start();
+      if (this.deferredStartupAborted(generation)) return;
       this.oauthValidityLogger = new OAuthValidityLogger({
         authStorage: this.authStorage,
         alertState: oauthAlertState,
       });
       await this.oauthValidityLogger.start();
+      if (this.deferredStartupAborted(generation)) return;
       if (this.notifier) {
         await this.notifier.start();
       }
       runtimeLog.log(`ProjectEngine deferred notifiers+oauth: ${Date.now() - notifiersT0}ms`);
     }
 
+    if (this.deferredStartupAborted(generation)) return;
+
     if (this.automationStore && coreAutomationModule) {
       const syncT0 = Date.now();
       const settings = await store.getSettings();
+      if (this.deferredStartupAborted(generation)) return;
       const startupSyncFailures: string[] = [];
 
       if (typeof coreAutomationModule.syncInsightExtractionAutomation === "function") {
@@ -1073,6 +1106,8 @@ export class ProjectEngine {
         runtimeLog.warn("syncInsightExtractionAutomation is unavailable; skipping startup sync");
       }
 
+      if (this.deferredStartupAborted(generation)) return;
+
       if (typeof coreAutomationModule.syncAutoSummarizeAutomation === "function") {
         try {
           await coreAutomationModule.syncAutoSummarizeAutomation(this.automationStore, settings);
@@ -1085,6 +1120,8 @@ export class ProjectEngine {
         runtimeLog.warn("syncAutoSummarizeAutomation is unavailable; skipping startup sync");
       }
 
+      if (this.deferredStartupAborted(generation)) return;
+
       if (typeof coreAutomationModule.syncMemoryDreamsAutomation === "function") {
         try {
           await coreAutomationModule.syncMemoryDreamsAutomation(this.automationStore, settings);
@@ -1096,6 +1133,8 @@ export class ProjectEngine {
       } else {
         runtimeLog.warn("syncMemoryDreamsAutomation is unavailable; skipping startup sync");
       }
+
+      if (this.deferredStartupAborted(generation)) return;
 
       if (typeof coreAutomationModule.syncScheduledEvalBatchAutomation === "function") {
         try {
@@ -1123,10 +1162,13 @@ export class ProjectEngine {
       runtimeLog.log(`ProjectEngine deferred automation syncs: ${Date.now() - syncT0}ms`);
     }
 
+    if (this.deferredStartupAborted(generation)) return;
+
     const mergeT0 = Date.now();
-    await this.startupMergeSweep(store);
+    await this.startupMergeEnqueue(store);
+    if (this.deferredStartupAborted(generation)) return;
     runtimeLog.log(
-      `ProjectEngine deferred mergeSweep: ${Date.now() - mergeT0}ms (total deferred ${Date.now() - t0}ms)`,
+      `ProjectEngine deferred mergeEnqueue: ${Date.now() - mergeT0}ms (total deferred ${Date.now() - t0}ms)`,
     );
   }
 
@@ -1138,14 +1180,20 @@ export class ProjectEngine {
    * promptly without continuing git/verification work after shutdown starts.
    */
   async stop(): Promise<void> {
+    /*
+    FNXC:FasterStartup 2026-07-15-00:20:
+    Always raise shuttingDown first so deferred startup work (OAuth, automation
+    sync, merge enqueue) observes the flag even if start() has not flipped
+    started yet — prevents unhandled post-stop side effects on fast recycle.
+    */
+    this.shuttingDown = true;
+    this.startupGeneration += 1;
     if (!this.started) {
       return;
     }
 
-    this.shuttingDown = true;
     // FNXC:VerificationConcurrency 2026-07-15-09:05: Drop this project's cap so it no longer pins process min.
     unregisterProjectVerificationLimit(this.config.projectId);
-
     // Stop merge retry timer
     if (this.mergeRetryTimer) {
       clearTimeout(this.mergeRetryTimer);
@@ -4736,32 +4784,56 @@ export class ProjectEngine {
     store.on("task:deleted", this.taskDeletedHandler);
   }
 
-  private async startupMergeSweep(store: TaskStore): Promise<void> {
-    try {
-      const tasks = await store.listTasks({ column: "in-review" });
-
-      // Clear stale "merging"/"merging-pr" statuses left by a prior crash.
-      // No merge is actually running at startup, so any task still marked
-      // as merging is a leftover from a previous engine lifecycle.
-      // This runs unconditionally (regardless of autoMerge setting) because
-      // stale statuses block manual merges too.
-      const staleStatuses = new Set(["merging", "merging-pr"]);
-      for (const t of tasks) {
-        if (t.status && staleStatuses.has(t.status)) {
-          runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
-          await store.updateTask(t.id, { status: null });
-          // Update in-memory object so canMergeTask sees the cleared status
-
-          (t as any).status = null;
-        }
+  /**
+   * Clear crash-leftover merging statuses so manual merge is unblocked.
+   * Unconditional (not gated on autoMerge). Safe to run on the critical path.
+   */
+  private async clearStaleMergingStatuses(store: TaskStore): Promise<Task[]> {
+    const tasks = await store.listTasks({ column: "in-review" });
+    // No merge is actually running at startup, so any task still marked
+    // as merging is a leftover from a previous engine lifecycle.
+    const staleStatuses = new Set(["merging", "merging-pr"]);
+    for (const t of tasks) {
+      if (t.status && staleStatuses.has(t.status)) {
+        runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
+        await store.updateTask(t.id, { status: null });
+        // Update in-memory object so canMergeTask sees the cleared status
+        (t as any).status = null;
       }
+    }
+    return tasks as Task[];
+  }
 
+  /**
+   * Enqueue auto-merge-eligible in-review tasks. Pause-aware; deferred after
+   * status clear so ensureEngine is not blocked by enqueue work.
+   */
+  private async startupMergeEnqueue(store: TaskStore): Promise<void> {
+    if (this.shuttingDown) return;
+    try {
       const settings = await store.getSettings();
-
+      if (settings.globalPause || settings.enginePaused) {
+        runtimeLog.log("Auto-merge startup enqueue skipped: pause active");
+        return;
+      }
+      const tasks = await store.listTasks({ column: "in-review" });
+      if (this.shuttingDown) return;
       const enqueued = await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
       if (enqueued > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${enqueued} task(s)`);
       }
+    } catch (err: unknown) {
+      runtimeLog.warn(
+        `Auto-merge startup enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Full startup merge sweep (status clear + enqueue). Kept for tests/callers. */
+  private async startupMergeSweep(store: TaskStore): Promise<void> {
+    try {
+      await this.clearStaleMergingStatuses(store);
+      await this.startupMergeEnqueue(store);
     } catch (err: unknown) {
       runtimeLog.warn(
         `Auto-merge startup sweep failed: ${err instanceof Error ? err.message : String(err)}`,
