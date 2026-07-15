@@ -450,6 +450,41 @@ describe("AgentSemaphore", () => {
     clearPreHeldExecutorSlotsForTests();
   });
 
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
+  Graph fallback re-registers a scheduler pre-held slot for the legacy execute path. That registration must always be either take()n (legacy agent work under runWithExecutorSemaphore) or drop()ped on early exits. A re-register without a subsequent take/drop is the permanent global-capacity leak Greptile P1 (PR #2107) caught: activeCount stays inflated while the task is no longer holding work.
+  */
+  it("treats graph→legacy re-register as a leak unless take or drop follows", () => {
+    clearPreHeldExecutorSlotsForTests();
+    const sem = new AgentSemaphore(1);
+    expect(sem.tryAcquire()).toBe(true);
+    // Scheduler reserved the slot before todo→in-progress.
+    registerPreHeldExecutorSlot("FN-LEGACY-HANDOFF");
+
+    // Graph claims then re-registers for legacy (transferPreHeldToLegacy).
+    expect(takePreHeldExecutorSlot("FN-LEGACY-HANDOFF")).toBe(true);
+    registerPreHeldExecutorSlot("FN-LEGACY-HANDOFF");
+    expect(hasPreHeldExecutorSlot("FN-LEGACY-HANDOFF")).toBe(true);
+    expect(sem.activeCount).toBe(1);
+
+    // Authoritative / work-engine / heartbeat-defer early returns must drop, not leave the registration.
+    dropPreHeldExecutorSlot("FN-LEGACY-HANDOFF", sem);
+    expect(hasPreHeldExecutorSlot("FN-LEGACY-HANDOFF")).toBe(false);
+    expect(sem.activeCount).toBe(0);
+
+    // Happy path: re-register then take + release (runWithExecutorSemaphore contract).
+    expect(sem.tryAcquire()).toBe(true);
+    registerPreHeldExecutorSlot("FN-LEGACY-TAKE");
+    expect(takePreHeldExecutorSlot("FN-LEGACY-TAKE")).toBe(true);
+    expect(hasPreHeldExecutorSlot("FN-LEGACY-TAKE")).toBe(false);
+    sem.release();
+    expect(sem.activeCount).toBe(0);
+    // Second drop after take is a no-op — safe for execute()'s outer finally belt-and-suspenders.
+    dropPreHeldExecutorSlot("FN-LEGACY-TAKE", sem);
+    expect(sem.activeCount).toBe(0);
+    clearPreHeldExecutorSlotsForTests();
+  });
+
   it("recovers idle semaphore leaks only after a stable persisted-idle window", async () => {
     const sem = new AgentSemaphore(2);
     await sem.acquire();

@@ -5470,6 +5470,10 @@ export class TaskExecutor {
       if (hadPreHeldExecutorSlot) {
         this.outerConcurrencyClaims.delete(task.id);
         if (transferPreHeldToLegacy) {
+          /*
+          FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
+          Graph declined ownership and is handing the reserved global slot to the legacy execute path. Re-register only; do not release here. execute() must take this registration via runWithExecutorSemaphore or dropPreHeldExecutorSlot on every early return (authoritative dispatch accept, work-engine claim, heartbeat defer, lock contention, soft-delete, etc.). Leaving the registration live after execute returns permanently reduces global capacity.
+          */
           registerPreHeldExecutorSlot(task.id);
         } else {
           this.options.semaphore?.release();
@@ -9756,8 +9760,15 @@ export class TaskExecutor {
       }
       const graphOwned = await this.maybeExecuteWorkflowGraph(task);
       if (graphOwned) return;
+      /*
+      FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
+      After graph falls back it may have re-registered a scheduler pre-held slot for legacy execute. Any return that does not reach runWithExecutorSemaphore (which take()s the registration) must dropPreHeldExecutorSlot or the shared semaphore stays permanently inflated.
+      */
       const authoritativeOwned = await this.options.workflowAuthoritativeDispatch?.(task);
-      if (authoritativeOwned) return;
+      if (authoritativeOwned) {
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+        return;
+      }
     }
 
     // FN-4811 follow-up (FN-4814/FN-4809/FN-4811 production failure): claim a
@@ -9772,7 +9783,11 @@ export class TaskExecutor {
     // active-session-registry.ts, a module-level Set.
     const claimed = executingTaskLock.tryClaim(task.id);
     executorLog.log(`execute() called for ${task.id} (claimed=${claimed}, perInstanceExecuting=${this.executing.has(task.id)})`);
-    if (!claimed) return;
+    if (!claimed) {
+      // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: graph fallback may have re-registered a pre-held slot; drop it when this process cannot claim the executor lock.
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      return;
+    }
 
     // Maintain the per-instance Set too, for back-compat with all the existing
     // `this.executing.has()` checks throughout the file (handler gates,
@@ -9784,6 +9799,7 @@ export class TaskExecutor {
       executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
       return;
     }
 
@@ -9791,6 +9807,8 @@ export class TaskExecutor {
       executorLog.log(`${task.id}: workflow work engine claimed execution`);
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
+      // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: work-engine ownership never take()s the legacy handoff registration — release the reserved global slot.
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
       return;
     }
 
@@ -9808,6 +9826,8 @@ export class TaskExecutor {
       // Release the slot we just claimed — we never actually ran.
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
+      // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: heartbeat defer must free any re-registered pre-held global slot so capacity is not stranded until the next dispatch.
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
       return;
     }
 
@@ -9872,6 +9892,8 @@ export class TaskExecutor {
         await moveTaskToReplanColumn(this.store, task);
         await this.store.updateTask(task.id, { status: "needs-replan" });
         await this.store.logEntry(task.id, staleness.reason, undefined, this.getRunContextFor(task.id));
+        // FNXC:GlobalConcurrencyControls 2026-07-15-02:55: replan handoff never starts agent work — free any re-registered pre-held slot before leaving execute().
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
         return;
       }
     }
@@ -9888,6 +9910,7 @@ export class TaskExecutor {
       if (await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "execute-preflight")) {
         this.executing.delete(task.id);
         executingTaskLock.release(task.id);
+        dropPreHeldExecutorSlot(task.id, this.options.semaphore);
         return;
       }
     }
@@ -12591,6 +12614,12 @@ export class TaskExecutor {
           await this.transitionReviewAddressing(task.id, ["in-progress", "queued"], "failed");
         }
       }
+
+      /*
+      FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
+      Belt-and-suspenders for graph→legacy pre-held handoff: if execute entered the main try and returned before runWithExecutorSemaphore take()d the registration (e.g. unmet deps, early preflight returns), release the reserved global slot. No-op when take already consumed the registration or no pre-held slot existed.
+      */
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
 
       this.executing.delete(task.id);
       executingTaskLock.release(task.id);
