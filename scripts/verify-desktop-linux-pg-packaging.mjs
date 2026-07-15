@@ -173,10 +173,21 @@ function assertPlatformSonameLinks(unpackedDir, platformRoot, platform) {
   const packageRoot = join(platformRoot, platform);
   let missing = 0;
   for (const entry of entries) {
-    if (!entry || typeof entry !== "object") continue;
+    // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:45:
+    // Review feedback requires malformed link manifests to fail closed. Skipping
+    // them could let an empty or producer-corrupted manifest claim SONAME success.
+    if (!entry || typeof entry !== "object") {
+      fail(`${unpackedDir}: ${platform} has an invalid pg-symlinks entry`);
+      missing += 1;
+      continue;
+    }
     const sourceRel = typeof entry.source === "string" ? entry.source : "";
     const targetRel = typeof entry.target === "string" ? entry.target : "";
-    if (!sourceRel || !targetRel) continue;
+    if (!sourceRel || !targetRel) {
+      fail(`${unpackedDir}: ${platform} has a pg-symlinks entry without source/target`);
+      missing += 1;
+      continue;
+    }
 
     // Paths in pg-symlinks.json are relative to the platform package root
     // (e.g. "native/lib/libicui18n.so.60.2" -> "native/lib/libicui18n.so.60").
@@ -217,8 +228,33 @@ function pathExists(p) {
 }
 
 function listIncludesAsarPath(list, entry) {
-  // asar list prints paths with a leading slash.
-  return list.includes(entry) || list.includes(entry.replace(/^\//, ""));
+  // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:45:
+  // ASAR listings may omit a leading slash. Normalize line entries before exact
+  // matching so a source map (for example index.js.map) cannot satisfy a runtime
+  // entrypoint requirement through a substring match.
+  const normalizedEntries = new Set(
+    list
+      .split(/\r?\n/)
+      .map((path) => `/${path.trim().replace(/^\/+/, "")}`)
+      .filter((path) => path !== "/"),
+  );
+  return normalizedEntries.has(`/${entry.replace(/^\/+/, "")}`);
+}
+
+function expectedLinuxPlatform(unpackedDir) {
+  const name = unpackedDir.split(/[/\\]/).pop() ?? "";
+  // electron-builder calls x64's default output linux-unpacked and appends
+  // non-default target architectures such as linux-arm64-unpacked.
+  return name.includes("arm64") ? "linux-arm64" : "linux-x64";
+}
+
+function isRegularExecutable(path) {
+  try {
+    const stat = statSync(path);
+    return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
 }
 
 function assertUnpackedTree(unpackedDir, asarBin) {
@@ -243,18 +279,29 @@ function assertUnpackedTree(unpackedDir, asarBin) {
     fail(`${unpackedDir}: app.asar.unpacked is missing @embedded-postgres/*`);
   } else {
     const platforms = readdirSync(platformRoot).filter((n) => n.startsWith("linux-"));
+    const expectedPlatform = expectedLinuxPlatform(unpackedDir);
     if (platforms.length === 0) {
       fail(`${unpackedDir}: no @embedded-postgres/linux-* packages in asar.unpacked (got: ${readdirSync(platformRoot).join(", ") || "none"})`);
     } else {
       ok(`${unpackedDir}: platform packages: ${platforms.join(", ")}`);
       for (const platform of platforms) {
+        // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:45:
+        // Each unpacked Electron target must contain binaries for its own CPU.
+        // A bundled but wrong-architecture package cannot boot Local mode.
+        if (platform !== expectedPlatform) {
+          fail(`${unpackedDir}: found ${platform}; expected ${expectedPlatform} for this unpacked target`);
+          continue;
+        }
         for (const bin of ["initdb", "pg_ctl", "postgres"]) {
           const binPath = join(platformRoot, platform, "native", "bin", bin);
-          if (!existsSync(binPath)) {
-            fail(`${unpackedDir}: missing ${platform}/native/bin/${bin}`);
+          if (!isRegularExecutable(binPath)) {
+            fail(`${unpackedDir}: missing executable file ${platform}/native/bin/${bin}`);
           }
         }
         assertPlatformSonameLinks(unpackedDir, platformRoot, platform);
+      }
+      if (!platforms.includes(expectedPlatform)) {
+        fail(`${unpackedDir}: missing @embedded-postgres/${expectedPlatform}`);
       }
     }
   }
@@ -273,7 +320,7 @@ function assertUnpackedTree(unpackedDir, asarBin) {
     return;
   }
   const list = listed.stdout;
-  if (!list.includes("main-bootstrap.cjs") && !list.includes("/dist/main-bootstrap.cjs")) {
+  if (!listIncludesAsarPath(list, "/dist/main-bootstrap.cjs")) {
     fail(`${unpackedDir}: app.asar is missing dist/main-bootstrap.cjs`);
   } else {
     ok(`${unpackedDir}: main-bootstrap.cjs present in app.asar`);

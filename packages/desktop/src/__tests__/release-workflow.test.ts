@@ -66,6 +66,12 @@ describe("desktop release workflow wiring", () => {
     expect(manualWindows).toContain("fusion-pg");
     expect(manualWindows).toContain("Start-Process");
     expect(manualWindows).toContain("Prewarm embedded-PG helper user profile");
+    // FNXC:WindowsDesktopPackaging 2026-07-15-11:45:
+    // GitHub-hosted runners provide GITHUB_WORKSPACE; never couple the helper
+    // user's ACLs or batch working directory to Fusion's current path on D:.
+    expect(manualWindows).toContain("icacls $env:GITHUB_WORKSPACE");
+    expect(manualWindows).toContain('"cd /d $env:GITHUB_WORKSPACE"');
+    expect(manualWindows).not.toContain("D:\\a\\Fusion\\Fusion");
     expect(advisoryPackaging).toContain("Smoke embedded Postgres lifecycle");
     expect(advisoryPackaging).toContain("pnpm --filter @fusion/core test:embedded-postgres");
   });

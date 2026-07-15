@@ -63,7 +63,7 @@ jobs:
           # win-pg-diag). Narrow grants miss pnpm resolution targets and exit 1
           # with no useful signal. Capture the bat log so failures surface.
           Write-Host "granting ACL (workspace + tooling) for $user..."
-          icacls D:\a\Fusion\Fusion /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
+          icacls $env:GITHUB_WORKSPACE /grant "*S-1-5-32-545:(OI)(CI)M" /T /C 2>&1 | Out-Null
           if (Test-Path D:\.pnpm-store) {
             icacls D:\.pnpm-store /grant "*S-1-5-32-545:(OI)(CI)RX" /T /C 2>&1 | Out-Null
           }
@@ -88,7 +88,7 @@ jobs:
             "set `"TEMP=$h\tmp`"",
             "set `"TMP=$h\tmp`"",
             "set `"PATH=$nodeDir;$pnpmDir;%PATH%`"",
-            "cd /d D:\a\Fusion\Fusion",
+            "cd /d $env:GITHUB_WORKSPACE",
             "call pnpm --filter @fusion/core test:embedded-postgres > `"$log`" 2>&1",
             "exit /b %ERRORLEVEL%"
           )
