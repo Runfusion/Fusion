@@ -231,10 +231,18 @@ describe("OverseerAdvisorService", () => {
     const addSteeringComment = vi.fn(async () => ({}));
     const task = baseTask({ autoMerge: undefined });
     let settings = { autoMerge: true as boolean | undefined };
+    /*
+    FNXC:PlannerOversight 2026-07-14-18:16:
+    Prefer vi.waitFor over a fixed setTimeout so the inject-time withhold settles
+    without flaky fixed sleeps (CodeRabbit on #2082). Withhold returns before
+    emitSteeringSafe, so wait on getSettings (the inject-time re-fetch) rather
+    than recordRunAuditEvent.
+    */
+    const getSettings = vi.fn(async () => settings);
     const store = {
       addSteeringComment,
       getTask: async () => task,
-      getSettings: async () => settings,
+      getSettings,
       recordRunAuditEvent: vi.fn((input) => ({
         id: "e1",
         timestamp: new Date().toISOString(),
@@ -268,7 +276,57 @@ describe("OverseerAdvisorService", () => {
     await service.onExecutorLogDelta(task.id, [
       { type: "text", text: "still working after autoMerge flip", agent: "executor" },
     ]);
-    await new Promise((r) => setTimeout(r, 80));
+    await vi.waitFor(() => expect(getSettings).toHaveBeenCalled());
     expect(addSteeringComment).not.toHaveBeenCalled();
+  });
+
+  it("withholds inject when getSettings fails (fail closed)", async () => {
+    /*
+    FNXC:PlannerOversight 2026-07-14-18:16:
+    Greptile P1 security: a getSettings() throw must not fall back to a stale
+    autoMerge:true cache — withhold inject instead.
+    */
+    const addSteeringComment = vi.fn(async () => ({}));
+    const task = baseTask({ autoMerge: undefined });
+    const getSettings = vi.fn(async () => {
+      throw new Error("settings store unavailable");
+    });
+    const store = {
+      addSteeringComment,
+      getTask: async () => task,
+      getSettings,
+      recordRunAuditEvent: vi.fn((input) => ({
+        id: "e1",
+        timestamp: new Date().toISOString(),
+        domain: "database",
+        mutationType: "overseer:intervention",
+        target: "FN-9001",
+        ...input,
+      })),
+      getRunAuditEvents: () => [],
+    };
+
+    const service = new OverseerAdvisorService({
+      store,
+      settings: { autoMerge: true },
+      resolveLevel: () => "autonomous",
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory: async ({ systemPrompt, onAdvice }) =>
+        createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async () =>
+            JSON.stringify({ note: "Must not inject when settings read fails.", severity: "blocker" }),
+        }),
+    });
+
+    expect(await service.ensureTask(task)).toBe(true);
+    await service.onExecutorLogDelta(task.id, [
+      { type: "text", text: "working while settings store is down", agent: "executor" },
+    ]);
+    // Wait until inject-time getSettings ran (then failed closed); no steering inject.
+    await vi.waitFor(() => expect(getSettings).toHaveBeenCalled());
+    expect(addSteeringComment).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
   });
 });

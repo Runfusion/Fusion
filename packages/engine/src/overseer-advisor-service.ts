@@ -319,6 +319,14 @@ export class OverseerAdvisorService {
       CodeRabbit: do not rely solely on poll-refreshed this.settings — the live
       log-flush inject path can race a project autoMerge flip. Prefer a fresh
       getSettings() at inject time when the store exposes it.
+
+      FNXC:PlannerOversight 2026-07-14-18:16:
+      Greptile P1 security: when store.getSettings() fails, do NOT fall back to
+      the cached settings for inject-time human-control evaluation. A stale
+      cache can still say autoMerge:true after the operator flipped the project
+      to autoMerge:false, which would bypass the human-review withhold and inject
+      a [session-advisor] steering comment. Fail closed: withhold delivery when
+      current settings cannot be loaded.
       */
       let settingsForControl = this.settings;
       if (this.store.getSettings) {
@@ -329,7 +337,8 @@ export class OverseerAdvisorService {
             this.settings = live;
           }
         } catch {
-          /* keep cached settings */
+          // Fail closed — cannot prove autoMerge is still allowed.
+          return;
         }
       }
 
