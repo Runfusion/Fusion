@@ -994,6 +994,12 @@ export async function runDaemon(opts: DaemonOptions = {}) {
 
     await engineManager.stopAll();
 
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-22:07:
+    Preserve the command-level TaskStore close barrier before CentralCore releases its retained backend. Runtime shutdown normally closes this store first; the idempotent explicit close also covers partial-start and test-owned runtimes.
+    */
+    await store.close();
+
     // Stop peer exchange service
     if (peerExchangeService) {
       try {

@@ -238,10 +238,31 @@ export class PluginRunner {
     // Load all enabled plugins
     const result = await this.options.pluginLoader.loadAllPlugins();
     executorLog.log(`PluginRunner loaded ${result.loaded} plugins (${result.errors} errors)`);
-    /*
-    FNXC:PluginPostgresSchema 2026-07-14-21:48:
-    PluginLoader completes each plugin's backend-specific schema initialization before loadAllPlugins counts it as loaded. PluginRunner must not replay the accumulated contracts after loading.
-    */
+
+    // Execute onSchemaInit hooks from loaded plugins.
+    const schemaInitHooks = this.options.pluginLoader.getPluginSchemaInitHooks();
+    if (schemaInitHooks.length > 0) {
+      executorLog.log(`Executing onSchemaInit hooks from ${schemaInitHooks.length} plugins`);
+      try {
+        /*
+         * FNXC:PostgresCutover 2026-07-04:
+         * Skip the SQLite-specific runPluginSchemaInits path in backend mode.
+         * PostgreSQL uses Drizzle migrations for schema management. Matches the
+         * daemon.ts / dashboard.ts / serve.ts convention. Previously
+         * getDatabase() threw in backend mode and the catch swallowed it, so
+         * plugin onSchemaInit hooks silently never ran.
+         */
+        if (this.options.taskStore.isBackendMode()) {
+          executorLog.log("onSchemaInit skipped — backend mode (PostgreSQL Drizzle migrations)");
+        } else {
+          const db = this.options.taskStore.getDatabase();
+          await db.runPluginSchemaInits(schemaInitHooks);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        executorLog.log(`onSchemaInit execution failed: ${message}`);
+      }
+    }
 
     // Subscribe to store events for task lifecycle hooks
     this.subscribeToStoreEvents();

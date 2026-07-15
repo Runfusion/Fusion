@@ -1949,15 +1949,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   };
 
   /*
-  FNXC:PostgresDashboardLifecycle 2026-07-14-21:48:
-  Dispose secondary stores first, then invoke the cwd startup factory's single owner shutdown. That handle closes the cwd TaskStore and its AsyncDataLayer before stopping embedded PostgreSQL, so disposeAsync must not call store.close separately and double-close the same pool.
+  FNXC:PostgresDashboardLifecycle 2026-07-14-22:07:
+  Dispose secondary stores first, explicitly close the cwd TaskStore so its watcher and timers stop, then invoke the startup factory shutdown that releases the remaining backend resources. The exported dispose path must await every stage.
   */
   disposeCallbacks.push(async () => {
     await closeProjectStores();
+    await store?.close();
     if (dashboardBackendShutdown) {
       await dashboardBackendShutdown().catch(() => undefined);
-    } else {
-      await store?.close();
     }
   });
 
