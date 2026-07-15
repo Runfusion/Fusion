@@ -338,6 +338,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const [gitlabItems, setGitlabItems] = useState<GitLabImportItem[]>([]);
   const [selectedGitlabKey, setSelectedGitlabKey] = useState<string | null>(null);
   const [gitlabEnabled, setGitlabEnabled] = useState(true);
+  const [gitlabSettingsLoaded, setGitlabSettingsLoaded] = useState(false);
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>("issues");
@@ -693,12 +694,26 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   useEffect(() => {
     let cancelled = false;
     if (!isOpen) return () => { cancelled = true; };
+    setGitlabSettingsLoaded(false);
     fetchSettings(projectId, { forceFresh: true })
       .then((settings) => {
-        if (!cancelled) setGitlabEnabled(settings.gitlabEnabled !== false);
+        if (cancelled) return;
+        const resolvedGitlabEnabled = settings.gitlabEnabled !== false;
+        setGitlabEnabled(resolvedGitlabEnabled);
+        setGitlabSettingsLoaded(true);
+        if (!resolvedGitlabEnabled) {
+          setProvider("github");
+          setGitlabItems([]);
+          setSelectedGitlabKey(null);
+          pendingRestoreSelectionRef.current.gitlabKey = null;
+          needsGitlabAutoLoadRef.current = false;
+        }
       })
       .catch(() => {
-        if (!cancelled) setGitlabEnabled(true);
+        if (!cancelled) {
+          setGitlabEnabled(true);
+          setGitlabSettingsLoaded(true);
+        }
       });
     return () => { cancelled = true; };
   }, [isOpen, projectId]);
@@ -774,15 +789,19 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   (project for project_issue/merge_request, group for group_issue), trigger exactly one auto-load so the restored
   selection has a list to be validated/re-applied against (see handleLoadGitLab). One-shot via the ref flag so manual
   reloads/tab switches never re-trigger this.
+
+  FNXC:GitLabImportVisibility 2026-07-15-00:00:
+  FN-7971 changed disabled GitLab from visible-but-disabled to hidden. Wait for effective settings before replaying a persisted GitLab auto-load so `gitlabEnabled === false` can coerce the provider back to GitHub without firing a GitLab request.
   */
   useEffect(() => {
     if (!needsGitlabAutoLoadRef.current) return;
+    if (!gitlabSettingsLoaded || !gitlabEnabled) return;
     if (provider !== "gitlab") return;
     const ready = gitlabResource === "group_issue" ? Boolean(gitlabGroup.trim()) : Boolean(gitlabProject.trim());
     if (!ready) return;
     needsGitlabAutoLoadRef.current = false;
     handleLoadGitLab();
-  }, [provider, gitlabResource, gitlabProject, gitlabGroup, handleLoadGitLab]);
+  }, [provider, gitlabSettingsLoaded, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, handleLoadGitLab]);
 
   /*
   FNXC:GitHubImport 2026-07-07-00:00:
@@ -1311,7 +1330,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         <div className="modal-body github-import-modal__body">
           <div className="github-import-provider" role="group" aria-label={t("git.providerAriaLabel", "Import provider")}>
             <button type="button" className={`github-import-tab ${provider === "github" ? "active" : ""}`} aria-pressed={provider === "github"} onClick={() => setProvider("github")} disabled={loading || importing}>GitHub</button>
-            <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing} title={gitlabEnabled ? undefined : t("git.gitlabDisabledTabTitle", "GitLab integration is disabled in Settings")}>GitLab</button>
+            {gitlabEnabled ? <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing}>GitLab</button> : null}
           </div>
           {provider === "github" ? (
           <>

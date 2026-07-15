@@ -268,19 +268,69 @@ describe("GitHubImportModal", () => {
     expect(onImport).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-099" }));
   });
 
-  it("shows disabled GitLab import controls without fetching when GitLab is off", async () => {
+  it("hides the GitLab import provider and keeps GitHub active when GitLab is off", async () => {
     vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
     vi.mocked(fetchSettings).mockResolvedValueOnce({ gitlabEnabled: false } as never);
 
     render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
-    fireEvent.click(await screen.findByRole("button", { name: "GitLab" }));
 
-    expect(await screen.findByTestId("gitlab-import-disabled")).toHaveTextContent("GitLab integration disabled");
-    expect(screen.getByRole("button", { name: /Load/ })).toBeDisabled();
-    expect(screen.getByLabelText("GitLab project path or ID")).toBeDisabled();
-    expect(screen.getByRole("tab", { name: "Group issues" })).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "GitLab" })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "GitHub" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("gitlab-import-panel")).toBeNull();
+    expect(screen.queryByTestId("gitlab-import-disabled")).toBeNull();
     expect(apiFetchGitLabProjectIssues).not.toHaveBeenCalled();
     expect(apiImportGitLabProjectIssue).not.toHaveBeenCalled();
+  });
+
+  it("shows the GitLab import provider when GitLab is explicitly enabled", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    vi.mocked(fetchSettings).mockResolvedValueOnce({ gitlabEnabled: true } as never);
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    expect(await screen.findByRole("button", { name: "GitLab" })).toBeInTheDocument();
+  });
+
+  it("shows the GitLab import provider when the GitLab enabled setting is undefined", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    vi.mocked(fetchSettings).mockResolvedValueOnce({} as never);
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    expect(await screen.findByRole("button", { name: "GitLab" })).toBeInTheDocument();
+  });
+
+  it("coerces a persisted GitLab provider to GitHub without auto-loading when GitLab is off", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    vi.mocked(fetchSettings).mockResolvedValueOnce({ gitlabEnabled: false } as never);
+    window.localStorage.setItem(`kb:project-1:${GITHUB_IMPORT_STATE_KEY}`, JSON.stringify({
+      provider: "gitlab",
+      activeTab: "issues",
+      labels: "bug",
+      selectedRemoteName: "",
+      owner: "",
+      repo: "",
+      gitlabResource: "project_issue",
+      gitlabProject: "group/project",
+      gitlabGroup: "",
+      selectedIssueNumber: null,
+      selectedPullNumber: null,
+      selectedGitlabKey: "project_issue:3:2",
+    }));
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "GitLab" })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "GitHub" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("gitlab-import-panel")).toBeNull();
+    expect(screen.queryByTestId("gitlab-import-disabled")).toBeNull();
+    expect(apiFetchGitLabProjectIssues).not.toHaveBeenCalled();
+    expect(apiFetchGitLabGroupIssues).not.toHaveBeenCalled();
+    expect(apiFetchGitLabMergeRequests).not.toHaveBeenCalled();
   });
 
   it("fetches group issues and merge requests without GitHub-only copy", async () => {
