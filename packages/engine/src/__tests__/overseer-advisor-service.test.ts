@@ -329,4 +329,51 @@ describe("OverseerAdvisorService", () => {
     expect(addSteeringComment).not.toHaveBeenCalled();
     expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
   });
+
+  it("withholds inject when getSettings resolves to undefined (fail closed)", async () => {
+    /*
+    FNXC:PlannerOversight 2026-07-14-18:25:
+    Greptile P1: undefined live settings must not fall back to a stale
+    autoMerge:true cache — withhold inject the same as a throw.
+    */
+    const addSteeringComment = vi.fn(async () => ({}));
+    const task = baseTask({ autoMerge: undefined });
+    const getSettings = vi.fn(async () => undefined);
+    const store = {
+      addSteeringComment,
+      getTask: async () => task,
+      getSettings,
+      recordRunAuditEvent: vi.fn((input) => ({
+        id: "e1",
+        timestamp: new Date().toISOString(),
+        domain: "database",
+        mutationType: "overseer:intervention",
+        target: "FN-9001",
+        ...input,
+      })),
+      getRunAuditEvents: () => [],
+    };
+
+    const service = new OverseerAdvisorService({
+      store,
+      settings: { autoMerge: true },
+      resolveLevel: () => "autonomous",
+      resolveModel: () => ({ provider: "mock", modelId: "scripted" }),
+      agentFactory: async ({ systemPrompt, onAdvice }) =>
+        createParsingOverseerAgent({
+          systemPrompt,
+          onAdvice,
+          complete: async () =>
+            JSON.stringify({ note: "Must not inject when settings are missing.", severity: "blocker" }),
+        }),
+    });
+
+    expect(await service.ensureTask(task)).toBe(true);
+    await service.onExecutorLogDelta(task.id, [
+      { type: "text", text: "working while settings are missing", agent: "executor" },
+    ]);
+    await vi.waitFor(() => expect(getSettings).toHaveBeenCalled());
+    expect(addSteeringComment).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+  });
 });

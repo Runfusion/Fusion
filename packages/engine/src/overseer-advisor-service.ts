@@ -327,15 +327,22 @@ export class OverseerAdvisorService {
       to autoMerge:false, which would bypass the human-review withhold and inject
       a [session-advisor] steering comment. Fail closed: withhold delivery when
       current settings cannot be loaded.
+
+      FNXC:PlannerOversight 2026-07-14-18:25:
+      Greptile P1 follow-up: getSettings() resolving to undefined is the same
+      class of uncertainty as a throw — do not keep using the cached settings.
+      Fail closed and withhold inject until a live settings object is available.
       */
       let settingsForControl = this.settings;
       if (this.store.getSettings) {
         try {
           const live = await this.store.getSettings();
-          if (live) {
-            settingsForControl = live;
-            this.settings = live;
+          if (!live) {
+            // Fail closed — cannot prove autoMerge is still allowed.
+            return;
           }
+          settingsForControl = live;
+          this.settings = live;
         } catch {
           // Fail closed — cannot prove autoMerge is still allowed.
           return;
