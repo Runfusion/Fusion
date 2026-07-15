@@ -106,17 +106,36 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
   const refresh = useCallback(async () => {
     if (!projectId || !taskId) return;
     setError(null);
-    try {
-      const [runsRes, prevRes, sugRes] = await Promise.all([
-        api(`/runs?taskId=${encodeURIComponent(taskId)}`),
-        api(`/preview/${encodeURIComponent(taskId)}`),
-        api(`/suggestions/${encodeURIComponent(taskId)}`),
-      ]);
-      setRuns((runsRes as { runs?: RunRow[] }).runs ?? []);
-      setPreview((prevRes as { session?: PreviewSession | null }).session ?? null);
-      setCases((sugRes as { suggestions?: { cases?: SuggestedCase[] } | null }).suggestions?.cases ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    /*
+    FNXC:Quality 2026-07-14-22:10:
+    PR review: use allSettled so a single endpoint failure (e.g. preview) does not
+    hide runs or suggestions sections.
+    */
+    const settled = await Promise.allSettled([
+      api(`/runs?taskId=${encodeURIComponent(taskId)}`),
+      api(`/preview/${encodeURIComponent(taskId)}`),
+      api(`/suggestions/${encodeURIComponent(taskId)}`),
+    ]);
+    const errors: string[] = [];
+    if (settled[0].status === "fulfilled") {
+      setRuns((settled[0].value as { runs?: RunRow[] }).runs ?? []);
+    } else {
+      errors.push(settled[0].reason instanceof Error ? settled[0].reason.message : String(settled[0].reason));
+    }
+    if (settled[1].status === "fulfilled") {
+      setPreview((settled[1].value as { session?: PreviewSession | null }).session ?? null);
+    } else {
+      errors.push(settled[1].reason instanceof Error ? settled[1].reason.message : String(settled[1].reason));
+    }
+    if (settled[2].status === "fulfilled") {
+      setCases(
+        (settled[2].value as { suggestions?: { cases?: SuggestedCase[] } | null }).suggestions?.cases ?? [],
+      );
+    } else {
+      errors.push(settled[2].reason instanceof Error ? settled[2].reason.message : String(settled[2].reason));
+    }
+    if (errors.length > 0) {
+      setError(errors.join(" · "));
     }
   }, [api, projectId, taskId]);
 
@@ -152,9 +171,10 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     setBusy(true);
     setError(null);
     try {
+      // Omit command so the server applies settings.defaultPreviewScript (not hard-coded "dev").
       const data = (await api(`/preview/${encodeURIComponent(taskId)}/start`, {
         method: "POST",
-        body: JSON.stringify({ projectId, command: "dev" }),
+        body: JSON.stringify({ projectId }),
       })) as { session?: PreviewSession };
       setPreview(data.session ?? null);
     } catch (err) {
