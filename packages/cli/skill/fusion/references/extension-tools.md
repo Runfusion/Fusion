@@ -303,7 +303,7 @@ Import GitHub issues as Fusion tasks. Fetches open issues from a repository and 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `ownerRepo` | string | ✓ | Repository in owner/repo format (e.g., 'dustinbyrne/fusion') |
-| `limit` | number | — | Max issues to import (default: 30, max: 100) |
+| `limit` | number | — | Max issues to import (default: 30, max: 50) |
 | `labels` | array | — | Label names to filter by |
 
 ### fn_task_import_github_issue
@@ -324,7 +324,7 @@ List open GitHub issues from a repository to browse before importing. Returns is
 |-----------|------|----------|-------------|
 | `owner` | string | ✓ | Repository owner (e.g., 'dustinbyrne') |
 | `repo` | string | ✓ | Repository name (e.g., 'fusion') |
-| `limit` | number | — | Max issues to show (default: 30, max: 100) |
+| `limit` | number | — | Max issues to show (default: 30, max: 50) |
 | `labels` | array | — | Label names to filter by |
 
 ## Mission Tools
