@@ -28,6 +28,7 @@ vi.mock("@fusion/engine", () => ({
 
 import {
   __resetAgentOnboardingState,
+  agentOnboardingStreamManager,
   cancelAgentOnboardingSession,
   createAgentOnboardingSessionPrompt,
   getAgentOnboardingSession,
@@ -63,6 +64,23 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+/*
+FNXC:AgentOnboarding 2026-07-15-14:32:
+Recovery regressions must await the onboarding event seam rather than poll wall-clock session state. Buffered-event replay covers generations that complete before the test subscribes.
+*/
+function waitForOnboardingEvent(sessionId: string, eventTypes: string[]): Promise<void> {
+  if (agentOnboardingStreamManager.getBufferedEvents(sessionId, 0).some((event) => eventTypes.includes(event.event))) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const unsubscribe = agentOnboardingStreamManager.subscribe(sessionId, (event) => {
+      if (!eventTypes.includes(event.type)) return;
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 function createSkillPluginRunner(skills: Array<{ name: string; enabled?: boolean }>) {
@@ -461,10 +479,7 @@ describe("agent-onboarding", () => {
       process.cwd(),
     );
 
-    await waitFor(() => {
-      const session = getAgentOnboardingSession(sessionId);
-      return Boolean(session?.currentQuestion || session?.error);
-    });
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
 
     const session = getAgentOnboardingSession(sessionId);
     expect(session?.error).toBeUndefined();
@@ -487,10 +502,7 @@ describe("agent-onboarding", () => {
       process.cwd(),
     );
 
-    await waitFor(() => {
-      const session = getAgentOnboardingSession(sessionId);
-      return Boolean(session?.currentQuestion || session?.error);
-    });
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
 
     const session = getAgentOnboardingSession(sessionId);
     expect(session?.error).toBeUndefined();
