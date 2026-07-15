@@ -50,9 +50,6 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
   const openCentralCore = async (): Promise<import("@fusion/core").CentralCore> => {
     const sharedCentral = options?.centralCore;
     if (sharedCentral) {
-      if (typeof sharedCentral.isInitialized === "function" && !sharedCentral.isInitialized()) {
-        await sharedCentral.init();
-      }
       return sharedCentral;
     }
 

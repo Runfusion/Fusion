@@ -22,7 +22,8 @@ vi.mock("@fusion/core", async () => {
 
 function createFixture() {
   const centralCore = {
-    isInitialized: vi.fn(() => true),
+    init: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
     listNodes: vi.fn(async () => [
       { id: "node_z", name: "Zulu", type: "remote", status: "online" },
       { id: "node_a", name: "Alpha", type: "local", status: "online" },
@@ -69,6 +70,8 @@ describe("registerNodeRoutes PostgreSQL authority", () => {
       { id: "node_z", name: "Zulu", type: "remote", status: "online" },
     ]);
     expect(centralCore.listNodes).toHaveBeenCalledOnce();
+    expect(centralCore.init).not.toHaveBeenCalled();
+    expect(centralCore.close).not.toHaveBeenCalled();
     expect(legacyCentralConstructor).not.toHaveBeenCalled();
   });
 
@@ -98,6 +101,8 @@ describe("registerNodeRoutes PostgreSQL authority", () => {
       capabilities: undefined,
       dockerConfig: undefined,
     });
+    expect(centralCore.init).not.toHaveBeenCalled();
+    expect(centralCore.close).not.toHaveBeenCalled();
     expect(legacyCentralConstructor).not.toHaveBeenCalled();
   });
 });
