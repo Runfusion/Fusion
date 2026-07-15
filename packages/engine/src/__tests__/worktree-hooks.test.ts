@@ -93,6 +93,21 @@ describe("worktree-hooks", () => {
     expect(hook).not.toContain('PREFIX="FN"');
   });
 
+  // FNXC:WorktreeHooks 2026-07-14-12:00: fallback options.taskPrefix is quoted in case and escaped for sed -E so metacharacters cannot break the hook or strip the wrong value (greptile P2 on PR #1930).
+  it("quotes the case prefix and escapes sed ERE metacharacters on the fallback taskPrefix path", () => {
+    const hook = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "A.B+C" });
+    expect(hook).toContain('PREFIX="A.B+C"');
+    expect(hook).toContain('"$PREFIX"-*) ;;');
+    expect(hook).toContain("s/^A\\.B\\+C-//i");
+    expect(hook).not.toMatch(/s\/\^A\.B\+C-\/\/i/);
+  });
+
+  it("quotes the case pattern for derived alphanumeric prefixes too", () => {
+    const hook = buildCommitMsgTrailerHook("FN-42");
+    expect(hook).toContain('"$PREFIX"-*) ;;');
+    expect(hook).not.toContain("  FN-*) ;;");
+  });
+
   it("installs metadata and pre-commit + commit-msg hooks in linked worktree", async () => {
     const root = mkdtempSync(join(tmpdir(), "wt-hook-root-"));
     execFileSync("git", ["init"], { cwd: root });

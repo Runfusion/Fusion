@@ -8042,8 +8042,11 @@ export interface Mission {
     mode: "project-default" | "existing" | "custom-new" | "auto-per-task";
     branchName?: string;
   };
-  /** Per-mission ticket id prefix (e.g. "ERR"); undefined inherits the project prefix. */
-  taskPrefix?: string;
+  /**
+   * Per-mission ticket id prefix (e.g. "ERR"); undefined inherits the project prefix.
+   * FNXC:MissionTaskPrefix 2026-07-14-12:00: PATCH may send null to clear a stored override so the mission re-inherits the project prefix (omit the key to leave unchanged).
+   */
+  taskPrefix?: string | null;
   status: MissionStatus;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
   autoAdvance?: boolean;
@@ -8147,8 +8150,12 @@ export function fetchMission(missionId: string, projectId?: string): Promise<Mis
   return api<MissionWithHierarchy>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId));
 }
 
-/** Update mission */
-export function updateMission(missionId: string, updates: Partial<Mission>, projectId?: string): Promise<Mission> {
+/** Update mission. Pass `taskPrefix: null` to clear a per-mission override (inherit project prefix). */
+export function updateMission(
+  missionId: string,
+  updates: Partial<Omit<Mission, "taskPrefix">> & { taskPrefix?: string | null },
+  projectId?: string,
+): Promise<Mission> {
   return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
     method: "PATCH",
     body: JSON.stringify(updates),

@@ -1657,6 +1657,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       } else if (editingMissionId) {
         // Build update payload - when autopilot is enabled, also set autoAdvance
         // for backward compat with the engine (though engine no longer reads it)
+        /*
+        FNXC:MissionTaskPrefix 2026-07-14-12:00:
+        Edit-save must send taskPrefix:null when the field is cleared. Empty input must not map to undefined: JSON.stringify drops undefined keys, the PATCH route treats a missing key as "no change", and a previously stored mission prefix would keep minting stale ids instead of inheriting the project prefix (greptile P1 on PR #1930).
+        */
         const updates: Record<string, unknown> = {
           title: missionForm.title.trim(),
           description: missionForm.description.trim() || undefined,
@@ -1664,7 +1668,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           autopilotEnabled: missionForm.autopilotEnabled,
           baseBranch: missionForm.baseBranch.trim() || "",
           branchStrategy,
-          taskPrefix: missionForm.taskPrefix.trim() || undefined,
+          taskPrefix: missionForm.taskPrefix.trim() || null,
         };
         if (missionForm.autopilotEnabled) {
           updates.autoAdvance = true;

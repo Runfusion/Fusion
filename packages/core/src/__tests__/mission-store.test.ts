@@ -204,6 +204,17 @@ describe("MissionStore", () => {
       expect(store.getMission(mission.id)?.taskPrefix).toBe("BUG");
     });
 
+    // FNXC:MissionTaskPrefix 2026-07-14-12:00: clearing the override must write NULL so triage re-inherits the project prefix (greptile P1 on PR #1930).
+    it("clears mission taskPrefix when set to undefined", () => {
+      const mission = store.createMission({ title: "Prefixed", taskPrefix: "ERR" });
+      expect(store.getMission(mission.id)?.taskPrefix).toBe("ERR");
+      const updated = store.updateMission(mission.id, { taskPrefix: undefined });
+      expect(updated.taskPrefix).toBeUndefined();
+      expect(store.getMission(mission.id)?.taskPrefix).toBeUndefined();
+      const raw = db.prepare("SELECT taskPrefix FROM missions WHERE id = ?").get(mission.id) as { taskPrefix: string | null };
+      expect(raw.taskPrefix).toBeNull();
+    });
+
     it("reads undefined taskPrefix for legacy rows", () => {
       const mission = store.createMission({ title: "Legacy row" });
       db.prepare("UPDATE missions SET taskPrefix = NULL WHERE id = ?").run(mission.id);

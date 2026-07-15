@@ -197,6 +197,14 @@ fi
 `;
 }
 
+/*
+FNXC:WorktreeHooks 2026-07-14-12:00:
+options.taskPrefix is a fallback when taskId is not a well-formed "<PREFIX>-<n>" id. It is interpolated into the generated commit-msg hook's case arm and sed -E strip. Escape ERE metacharacters for sed and quote the case pattern via "$PREFIX" so a misconfigured prefix cannot break the hook or strip the wrong id (greptile P2 on PR #1930). Valid UI prefixes remain letter-led alphanumeric; escaping is defense-in-depth for the fallback path.
+*/
+function escapeSedEre(value: string): string {
+  return value.replace(/[\\.^$*+?()[\]{}|]/g, "\\$&");
+}
+
 export function buildCommitMsgTrailerHook(
   taskId: string,
   options: {
@@ -217,6 +225,7 @@ export function buildCommitMsgTrailerHook(
     ? trimmedTaskId.replace(/-\d+$/, "").toUpperCase()
     : "";
   const taskPrefix = (derivedPrefix || options.taskPrefix || "FN").trim() || "FN";
+  const taskPrefixSedEre = escapeSedEre(taskPrefix);
   const trailerName = (options.trailerName ?? "Fusion-Task-Id").trim() || "Fusion-Task-Id";
   const commitAuthorName = (options.commitAuthorName ?? DEFAULT_COMMIT_AUTHOR_NAME).trim() || DEFAULT_COMMIT_AUTHOR_NAME;
   const commitAuthorEmail = (options.commitAuthorEmail ?? DEFAULT_COMMIT_AUTHOR_EMAIL).trim() || DEFAULT_COMMIT_AUTHOR_EMAIL;
@@ -245,8 +254,8 @@ TASK_ID=$(cat "$TASK_FILE")
 
 PREFIX=${JSON.stringify(taskPrefix)}
 case "$TASK_ID" in
-  ${taskPrefix}-*) ;;
-  *) TASK_ID="$PREFIX-$(printf '%s' "$TASK_ID" | sed -E "s/^${taskPrefix}-//i")" ;;
+  "$PREFIX"-*) ;;
+  *) TASK_ID="$PREFIX-$(printf '%s' "$TASK_ID" | sed -E "s/^${taskPrefixSedEre}-//i")" ;;
 esac
 
 TRAILER_NAME=${JSON.stringify(trailerName)}

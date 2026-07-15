@@ -180,10 +180,14 @@ function validateMissionBranchStrategy(value: unknown): MissionBranchStrategy | 
   };
 }
 
+/*
+FNXC:MissionTaskPrefix 2026-07-14-12:00:
+PATCH/POST accept taskPrefix as a string, empty string, or null. null/empty normalizes to undefined so MissionStore writes NULL and the mission inherits the project-wide prefix. The key must still be present on PATCH (null, not omitted) so clearing is distinct from "leave unchanged" (greptile P1 on PR #1930).
+*/
 function validateTaskPrefix(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") {
-    throw new Error("taskPrefix must be a string");
+    throw new Error("taskPrefix must be a string or null");
   }
   const trimmed = value.trim().toUpperCase();
   if (!trimmed) return undefined; // empty => inherit the project prefix
