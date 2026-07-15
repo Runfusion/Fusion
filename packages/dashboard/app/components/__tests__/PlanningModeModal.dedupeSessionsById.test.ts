@@ -9,7 +9,6 @@ function makeSession(id: string, updatedAt: string, title = id): AiSessionSummar
     status: "complete",
     title,
     projectId: null,
-    lockedByTab: null,
     updatedAt,
     archived: false,
   };

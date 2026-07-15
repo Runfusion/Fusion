@@ -248,8 +248,6 @@ describe("answered planning questions are never re-emittable", () => {
       projectId: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      lockedByTab: null,
-      lockedAt: null,
     };
     const rows = new Map<string, AiSessionRow>([
       ["restored-error", { ...baseRow, id: "restored-error", status: "error" }],

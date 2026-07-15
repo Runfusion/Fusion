@@ -906,10 +906,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Rate limit exceeded",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -977,10 +975,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Temporary failure",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1022,10 +1018,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
@@ -1061,10 +1055,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Temporary failure",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1134,10 +1126,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Temporary failure",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       try {
@@ -1208,10 +1198,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Watchdog aborted a stalled turn",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       try {
@@ -1280,10 +1268,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "Still thinking...",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1336,10 +1322,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -2113,7 +2097,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Completed planning session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2124,7 +2107,6 @@ describe("PlanningModeModal", () => {
           title: "New planning session",
           preview: "Draft plan from history",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -2243,7 +2225,6 @@ describe("PlanningModeModal", () => {
           status: "error",
           title: "Sidebar errored session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2298,7 +2279,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Malformed result session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2359,7 +2339,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Reopen recover session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2473,7 +2452,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Sidebar deleted session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2520,7 +2498,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Resume-to-task",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -3870,7 +3847,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Duplicate session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -3900,7 +3876,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Duplicate session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         });
@@ -3919,7 +3894,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Delete me",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -3957,7 +3931,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Still here",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -4002,7 +3975,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "older",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-01T00:00:00.000Z",
             archived: false,
           },
@@ -4012,7 +3984,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "peer",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-02T00:00:00.000Z",
             archived: false,
           },
@@ -4022,7 +3993,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "newer",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-03T00:00:00.000Z",
             archived: false,
           },
@@ -4032,7 +4002,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "tie-first",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-02T00:00:00.000Z",
             archived: false,
           },
@@ -4044,7 +4013,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "newer",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-03T00:00:00.000Z",
           archived: false,
         },
@@ -4054,7 +4022,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "peer",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -4064,7 +4031,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "tie-first",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },

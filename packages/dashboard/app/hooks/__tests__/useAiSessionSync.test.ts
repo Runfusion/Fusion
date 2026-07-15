@@ -70,7 +70,7 @@ describe("AiSessionSyncStore", () => {
     return store;
   }
 
-  it("handles session updates/completion and tab ownership messages", () => {
+  it("handles session updates and completion", () => {
     const storeA = createStore();
     const storeB = createStore();
 
@@ -87,12 +87,6 @@ describe("AiSessionSyncStore", () => {
     const syncedUpdate = storeB.getSnapshot().sessions.get("sess-1");
     expect(syncedUpdate?.status).toBe("awaiting_input");
     expect(syncedUpdate?.needsInput).toBe(true);
-
-    storeA.broadcastLock("sess-1", "tab-a");
-    expect(storeB.getSnapshot().activeTabMap.get("sess-1")?.tabId).toBe("tab-a");
-
-    storeA.broadcastUnlock("sess-1", "tab-a");
-    expect(storeB.getSnapshot().activeTabMap.has("sess-1")).toBe(false);
 
     storeA.broadcastCompleted({ sessionId: "sess-1", status: "complete", timestamp: 20 });
 
@@ -142,7 +136,6 @@ describe("AiSessionSyncStore", () => {
       title: "Mission planning",
       projectId: "proj-1",
       timestamp: 50,
-      owningTabId: "tab-source",
     });
 
     storeB.requestSync();
@@ -197,15 +190,18 @@ describe("AiSessionSyncStore", () => {
     expect(state?.needsInput).toBe(true);
   });
 
-  it("broadcasts tab:inactive for owned sessions during page unload cleanup", () => {
-    const storeA = createStore();
-    const storeB = createStore();
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  This store carries no tab-ownership concept: sessions are multi-tab, so there is no lock to
+  broadcast, no heartbeat to keep alive, and nothing to release on unload. A snapshot exposes
+  session status only.
+  */
+  it("exposes no tab-ownership surface", () => {
+    const store = createStore();
 
-    storeA.broadcastLock("sess-5", "tab-owner");
-    expect(storeB.getSnapshot().activeTabMap.get("sess-5")?.tabId).toBe("tab-owner");
-
-    window.dispatchEvent(new Event("beforeunload"));
-
-    expect(storeB.getSnapshot().activeTabMap.has("sess-5")).toBe(false);
+    expect("broadcastLock" in store).toBe(false);
+    expect("broadcastUnlock" in store).toBe(false);
+    expect("broadcastHeartbeat" in store).toBe(false);
+    expect("activeTabMap" in store.getSnapshot()).toBe(false);
   });
 });

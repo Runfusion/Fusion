@@ -19,7 +19,6 @@ const mockFetchMissionInterviewDrafts = vi.fn();
 const mockDiscardMissionInterviewDraft = vi.fn();
 const mockDeleteMission = vi.fn();
 const mockSubscribeSse = vi.fn(() => vi.fn());
-const mockGetSessionTabId = vi.fn(() => "mission-manager-tab");
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
@@ -38,10 +37,6 @@ vi.mock("../../hooks/useNavigationHistory", async (importOriginal) => {
 
 vi.mock("../../sse-bus", () => ({
   subscribeSse: (...args: unknown[]) => mockSubscribeSse(...args),
-}));
-
-vi.mock("../../utils/getSessionTabId", () => ({
-  getSessionTabId: () => mockGetSessionTabId(),
 }));
 
 vi.mock("../MissionInterviewModal", () => ({
@@ -306,7 +301,7 @@ describe("MissionManager mission delete confirmation", () => {
     clickConfirmPanelAction("Discard");
 
     await waitFor(() => {
-      expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-duplicate-b", projectId, "mission-manager-tab");
+      expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-duplicate-b", projectId);
     });
     await waitFor(() => {
       expect(document.querySelector(".mission-confirm-panel")).toBeNull();
@@ -332,7 +327,7 @@ describe("MissionManager mission delete confirmation", () => {
     clickConfirmPanelAction("Discard");
 
     await waitFor(() => {
-      expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-mobile", projectId, "mission-manager-tab");
+      expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-mobile", projectId);
     });
     expect(screen.queryByText("Mobile draft")).not.toBeInTheDocument();
     expect(document.querySelector(".mission-confirm-panel")).toBeNull();
@@ -376,7 +371,7 @@ describe("MissionManager mission delete confirmation", () => {
     clickConfirmPanelAction("Discard");
 
     await waitFor(() => {
-      expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-locked", projectId, "mission-manager-tab");
+      expect(mockDiscardMissionInterviewDraft).toHaveBeenCalledWith("draft-locked", projectId);
     });
     expect(screen.getByText("Locked draft")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Discard draft" })).toBeInTheDocument();

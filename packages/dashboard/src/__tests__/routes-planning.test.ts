@@ -2253,7 +2253,6 @@ describe("Planning Mode Routes", () => {
                     status: storedSession.status,
                     title: storedSession.title,
                     projectId: storedSession.projectId,
-                    lockedByTab: null,
                     updatedAt: storedSession.updatedAt,
                     archived: false,
                   },
@@ -3752,8 +3751,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(retrySpy).toHaveBeenCalled();
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock that returns conflict
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: subtask retry is lock-free; another tab's lock never 409s.
+    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
+      const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-locked" }),
         releaseLock: vi.fn(),
@@ -3761,7 +3761,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
 
       const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
 
-      const conflictRes = await REQUEST(
+      const res = await REQUEST(
         app,
         "POST",
         "/api/subtasks/subtask-locked-retry/retry",
@@ -3769,11 +3769,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-locked",
-      });
+      expect(res.status).toBe(200);
+      expect(retrySpy).toHaveBeenCalled();
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 });

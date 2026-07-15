@@ -796,7 +796,6 @@ describe("PlanningModeModal", () => {
           title: "Existing session",
           preview: "An existing planning session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: new Date().toISOString(),
           archived: false,
         },

@@ -35,7 +35,6 @@ function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiMo
     status: overrides.status ?? "generating",
     title: overrides.title ?? overrides.id,
     projectId: overrides.projectId ?? null,
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
   };
 }
@@ -603,7 +602,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("subtask-session");
     });
 
-    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined, expect.any(String));
+    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("subtask-session");
   });
 
@@ -622,7 +621,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("interview-session");
     });
 
-    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined, expect.any(String));
+    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("interview-session");
   });
 

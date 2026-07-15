@@ -106,7 +106,6 @@ import {
 import type { AutopilotState, MissionInterviewDraftSummary } from "./mission-types";
 import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { getSessionTabId } from "../utils/getSessionTabId";
 
 const MISSION_SIDEBAR_DEFAULT_WIDTH = 300;
 const MISSION_SIDEBAR_MIN_WIDTH = 220;
@@ -618,7 +617,6 @@ function normalizeMissionHierarchy(mission: MissionWithHierarchy): MissionWithHi
 export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, workflowId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError, onNavigateToGoal }: MissionManagerProps) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
-  const sessionTabId = useMemo(() => getSessionTabId(), []);
   /*
   FNXC:Missions 2026-06-27-20:25:
   Inline Missions can stay mounted while hidden, so tab visibility must drive active state. Re-opening the tab must reset to overview instead of preserving the previously selected mission.
@@ -4221,7 +4219,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       FNXC:MissionDraftDiscard 2026-06-24-02:42:
       The mission draft Discard confirmation must send the current browser tab id so a draft locked by this tab can be removed while a draft actively owned by another tab returns the lock warning and stays visible.
       */
-      await discardMissionInterviewDraft(sessionId, projectId, sessionTabId);
+      await discardMissionInterviewDraft(sessionId, projectId);
       setMissionInterviewDrafts((current) => current.filter((session) => session.id !== sessionId));
     } catch (err) {
       if (err instanceof ApiRequestError && err.status === 409) {

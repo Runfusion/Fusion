@@ -2,6 +2,6 @@
 "@runfusion/fusion": minor
 ---
 
-summary: Planning Mode sessions are now lock-free — any browser tab can read and interact with the same session.
+summary: AI planning, subtask, and mission interviews are now multi-tab — any tab can use the same session.
 category: feature
-dev: Removed the per-tab session lock (checkSessionLock 409s, Take Control overlay) and BroadcastChannel sync from all planning surfaces; the persisted session row plus per-session SSE and global `ai_session:updated` events are the single source of truth. `tabId` params were dropped from the planning API client functions and `/planning/*` routes ignore any tabId sent by older clients. Subtask/mission interviews keep their existing lock behavior.
+dev: Removed the per-tab session lock end to end: the `/ai-sessions/:id/lock{,/force,/beacon}` routes, `checkSessionLock` on every planning/subtask/mission/milestone route, the store's acquire/release/force/holder/stale-release methods and their `@fusion/core` async helpers, the `useSessionLock` hook, the `getSessionTabId` util, the Take Control overlay + "active in another tab" banners, and the `useAiSessionSync` tab-ownership half (activeTabMap, broadcastLock/Unlock/Heartbeat, owningTabId). `tabId` params are gone from the session API client; routes ignore any tabId older clients still send. The persisted session row is the single source of truth, with per-session SSE plus global `ai_session:updated` events keeping tabs current and each producer's generation-in-progress guard resolving concurrent writes. The `ai_sessions.locked_by_tab`/`locked_at` columns are retained as dead, always-NULL columns — dropping them is an irreversible migration that would break older installed binaries whose upsert names those columns.

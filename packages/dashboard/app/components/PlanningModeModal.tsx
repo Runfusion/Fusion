@@ -395,7 +395,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   of truth: every tab may read and interact, the per-session SSE stream plus the global
   ai_session:updated events (consumed by useBackgroundSessions) keep all tabs current, and the
   server's generation-in-progress guard resolves concurrent writes. The former tab-lock
-  (useSessionLock, lockedByTab 409s, Take Control overlay) and BroadcastChannel sync
+  (useSessionLock, per-tab lock 409s, Take Control overlay) and BroadcastChannel tab-ownership sync
   (useAiSessionSync broadcasts) were removed from planning.
   */
   const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
@@ -2197,7 +2197,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                                 title: response.title,
                                 preview: content.length > 80 ? `${content.slice(0, 79).trimEnd()}…` : content,
                                 projectId: projectId ?? null,
-                                lockedByTab: null,
                                 updatedAt: new Date().toISOString(),
                                 archived: false,
                               };

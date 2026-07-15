@@ -18,15 +18,13 @@ import {
   getSubtaskDescription,
   clearSubtaskDescription,
 } from "../hooks/modalPersistence";
-import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2, RefreshCw, Lock } from "lucide-react";
+import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp, ArrowDown, Minimize2, RefreshCw } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
-import { useSessionLock } from "../hooks/useSessionLock";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useConfirm } from "../hooks/useConfirm";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useViewportMode } from "../hooks/useViewportMode";
-import { getSessionTabId } from "../utils/getSessionTabId";
 
 const WARNING_ICON = "⚠️";
 
@@ -119,25 +117,18 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const streamRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const titleRefs = useRef<Array<HTMLInputElement | null>>([]);
   const autoStartedRef = useRef(false);
-  const trackedLockSessionRef = useRef<string | null>(null);
 
   const sessionId = view.type === "generating" || view.type === "editing" || view.type === "creating" || view.type === "error"
     ? view.sessionId
     : null;
-  const sessionTabId = useMemo(() => getSessionTabId(), []);
-  const {
-    isLockedByOther,
-    takeControl,
-    isLoading: isLockLoading,
-  } = useSessionLock(isOpen ? sessionId : null);
-  const {
-    activeTabMap,
-    broadcastUpdate,
-    broadcastCompleted,
-    broadcastLock,
-    broadcastUnlock,
-    broadcastHeartbeat,
-  } = useAiSessionSync();
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  No tab lock: the persisted session row is the shared source of truth, so every tab may read
+  and interact with this breakdown. The lock overlay, Take Control affordance, ownership
+  broadcasts, heartbeat, and the "active in another tab" banner were removed; only
+  session-status sync remains.
+  */
+  const { broadcastUpdate, broadcastCompleted } = useAiSessionSync();
 
   const isInvalid = useMemo(() => {
     if (subtasks.length === 0) return true;
@@ -147,11 +138,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   }, [branchMode, branchName, subtasks]);
 
   const showSendToBackgroundButton = view.type === "generating" || view.type === "editing" || view.type === "error";
-  const activeLockInfo = sessionId ? activeTabMap.get(sessionId) : null;
   const { confirm } = useConfirm();
-  const activeRemoteTab = activeLockInfo && activeLockInfo.tabId !== sessionTabId;
-  const activeInAnotherTab = Boolean(activeRemoteTab && !activeLockInfo.stale);
-  const allowTakeover = isLockedByOther && (!activeRemoteTab || activeLockInfo.stale);
 
   const resetState = useCallback(() => {
     // Save to localStorage before cleanup (preserve for re-entry)
@@ -191,12 +178,11 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       sessionId,
       status: resumableStatus,
       needsInput: resumableStatus === "awaiting_input",
-      owningTabId: sessionTabId,
       type: "subtask",
       title: localDescription.trim() || undefined,
       projectId: projectId ?? null,
     });
-  }, [broadcastUpdate, localDescription, projectId, sessionId, sessionTabId, view.type]);
+  }, [broadcastUpdate, localDescription, projectId, sessionId, view.type]);
 
   const handleSendToBackground = useCallback(() => {
     keepSessionReachableInBackground();
@@ -234,7 +220,6 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
             sessionId: activeSessionId,
             status: "generating",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: "subtask",
             title: localDescription.trim() || undefined,
             projectId: projectId ?? null,
@@ -252,7 +237,6 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
             sessionId: activeSessionId,
             status: "awaiting_input",
             needsInput: true,
-            owningTabId: sessionTabId,
             type: "subtask",
             title: localDescription.trim() || undefined,
             projectId: projectId ?? null,
@@ -269,7 +253,6 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
             sessionId: activeSessionId,
             status: "error",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: "subtask",
             title: localDescription.trim() || undefined,
             projectId: projectId ?? null,
@@ -289,7 +272,6 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
       broadcastUpdate,
       localDescription,
       projectId,
-      sessionTabId,
     ],
   );
 
@@ -308,8 +290,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
         sessionId,
         status: "generating",
         needsInput: false,
-        owningTabId: sessionTabId,
-        type: "subtask",
+          type: "subtask",
         title: localDescription.trim() || undefined,
         projectId: projectId ?? null,
       });
@@ -320,7 +301,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     } finally {
       setIsStartingBreakdown(false);
     }
-  }, [broadcastUpdate, connectToSubtaskStream, localDescription, projectId, sessionTabId, t]);
+  }, [broadcastUpdate, connectToSubtaskStream, localDescription, projectId, t]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -375,56 +356,11 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     })();
   }, [connectToSubtaskStream, isOpen, resumeSessionId, view.type, projectId]);
 
-  // Broadcast lock ownership transitions across tabs.
-  useEffect(() => {
-    if (!isOpen) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
-      return;
-    }
-
-    if (sessionId && trackedLockSessionRef.current !== sessionId) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      }
-      broadcastLock(sessionId, sessionTabId);
-      trackedLockSessionRef.current = sessionId;
-      return;
-    }
-
-    if (!sessionId && trackedLockSessionRef.current) {
-      broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      trackedLockSessionRef.current = null;
-    }
-  }, [broadcastLock, broadcastUnlock, isOpen, sessionId, sessionTabId]);
-
-  // Keep ownership heartbeat alive while this tab is interacting with the session.
-  useEffect(() => {
-    if (!isOpen || !sessionId || trackedLockSessionRef.current !== sessionId) {
-      return;
-    }
-
-    broadcastHeartbeat(sessionTabId);
-    const timer = setInterval(() => {
-      broadcastHeartbeat(sessionTabId);
-    }, 30_000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [broadcastHeartbeat, isOpen, sessionId, sessionTabId]);
-
   useEffect(() => {
     return () => {
       streamRef.current?.close();
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
     };
-  }, [broadcastUnlock, sessionTabId]);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -591,7 +527,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     connectToSubtaskStream(retrySessionId);
 
     try {
-      await retrySubtaskSession(retrySessionId, projectId, sessionTabId);
+      await retrySubtaskSession(retrySessionId, projectId);
     } catch (err) {
       let retryError: unknown = err;
       const retryErrorMessage = getErrorMessage(err) || "";
@@ -646,7 +582,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     } finally {
       setIsRetrying(false);
     }
-  }, [connectToSubtaskStream, projectId, sessionTabId, view]);
+  }, [connectToSubtaskStream, projectId, view]);
 
   if (!isOpen) return null;
 
@@ -678,11 +614,6 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
           {isReconnecting && <div className="form-hint text-muted">{t("subtasks.reconnecting", "Reconnecting…")}</div>}
-          {activeInAnotherTab && (
-            <div className="form-hint text-muted" data-testid="session-active-another-tab-banner">
-              {t("subtasks.sessionActiveAnotherTab", "Session is active in another tab.")}
-            </div>
-          )}
 
           {view.type === "initial" && (
             <div className="planning-loading" data-testid="subtask-progress-state">
@@ -969,30 +900,6 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
             </div>
           )}
 
-          {isLockedByOther && (
-            <div className="session-lock-overlay" data-testid="session-lock-overlay">
-              <div className="session-lock-banner">
-                <Lock size={16} />
-                <span>
-                  {allowTakeover
-                    ? t("subtasks.sessionActiveAnotherTabTakeover", "This session is active in another tab")
-                    : t("subtasks.sessionActiveAnotherTabLive", "This session is active in another tab (live heartbeat)")}
-                </span>
-                {allowTakeover && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void takeControl();
-                    }}
-                    disabled={isLockLoading}
-                    className="btn btn-primary session-lock-take-control"
-                  >
-                    {isLockLoading ? t("subtasks.takingControl", "Taking control...") : t("subtasks.takeControl", "Take Control")}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

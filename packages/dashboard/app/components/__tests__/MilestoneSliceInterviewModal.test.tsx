@@ -36,27 +36,11 @@ vi.mock("../../api", () => ({
   parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
 }));
 
-vi.mock("../../hooks/useSessionLock", () => ({
-  useSessionLock: vi.fn(() => ({
-    isLockedByOther: false,
-    takeControl: vi.fn(),
-    isLoading: false,
-  })),
-}));
-
 vi.mock("../../hooks/useAiSessionSync", () => ({
   useAiSessionSync: vi.fn(() => ({
-    activeTabMap: new Map(),
     broadcastUpdate: vi.fn(),
     broadcastCompleted: vi.fn(),
-    broadcastLock: vi.fn(),
-    broadcastUnlock: vi.fn(),
-    broadcastHeartbeat: vi.fn(),
   })),
-}));
-
-vi.mock("../../utils/getSessionTabId", () => ({
-  getSessionTabId: vi.fn(() => "test-tab-id"),
 }));
 
 const mockUseMobileKeyboard = vi.fn();
@@ -495,7 +479,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "session-123",
           { _other: "Split this differently" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -546,7 +529,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "session-123",
           { _other: "Define a custom scope" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -604,7 +586,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { priorities: ["speed"] },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -658,7 +639,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { _other: "Reframe around dependencies" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -709,7 +689,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { _other: "Ask customers first" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -762,7 +741,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "slice-session-123",
           { priorities: ["speed"], _other: "Preserve manual review" },
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -806,7 +784,6 @@ describe("MilestoneSliceInterviewModal", () => {
           "session-123",
           expect.objectContaining({ scope: "mvp", _comment: "Keep this aligned with mission MVP" }),
           "test-project",
-          "test-tab-id",
         );
       });
     });
@@ -819,7 +796,6 @@ describe("MilestoneSliceInterviewModal", () => {
       status: "awaiting_input" as const,
       title: "Plan milestone scope",
       projectId: "proj-1",
-      lockedByTab: null,
       updatedAt: new Date().toISOString(),
       inputPayload: JSON.stringify({
         targetType: "milestone",
@@ -834,7 +810,6 @@ describe("MilestoneSliceInterviewModal", () => {
       thinkingOutput: "",
       error: null,
       createdAt: new Date().toISOString(),
-      lockedAt: null,
     };
 
     const mockSessionGenerating = {
