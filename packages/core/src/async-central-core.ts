@@ -41,8 +41,8 @@
  *   central.projects table and cascade correctly.
  *
  * These helpers program against the stable `AsyncDataLayer` interface so the
- * backend swap is invisible to the CentralCore contract. The sync SQLite path
- * remains as the legacy fallback for `FUSION_NO_EMBEDDED_PG` mode.
+ * backend swap is invisible to the CentralCore contract. Production startup
+ * requires this PostgreSQL path; `FUSION_NO_EMBEDDED_PG` is rejected.
  */
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";

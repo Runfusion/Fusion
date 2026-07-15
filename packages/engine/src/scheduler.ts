@@ -9,6 +9,7 @@ import {
   type TaskStore,
   type Task,
   type MissionStore,
+  type AsyncMissionStore,
   type MissionFeature,
   type PrInfo,
   type AgentStore,
@@ -499,7 +500,7 @@ export interface SchedulerOptions {
   /** Optional PR monitor for tracking in-review PRs */
   prMonitor?: PrMonitor;
   /** Optional MissionStore for slice activation and auto-advance */
-  missionStore?: MissionStore;
+  missionStore?: MissionStore | AsyncMissionStore;
   /** Optional lease manager used to recover stale checkout leases before scheduling. */
   leaseManager?: MeshLeaseManager;
   /** Optional MissionAutopilot for autonomous mission progression */
@@ -707,7 +708,6 @@ export class Scheduler {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
             const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
-            const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
             for (const dependent of todoTasks) {
               const mentionsCompletedTask = dependent.dependencies.includes(task.id);
               const currentlyBlockedByCompletedTask = dependent.blockedBy === task.id;
@@ -716,9 +716,16 @@ export class Scheduler {
               const markerAcceptedByTaskId = settings.mergeRequestContractShadowEnabled === true
                 ? new Map(await Promise.all(dependent.dependencies.map(async (depId) => [depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null] as const)))
                 : undefined;
+              /*
+              FNXC:SchedulerArchiveReads 2026-07-14-19:10:
+              Dependency reconciliation is event-scoped. Resolve only the dependent's referenced IDs so one completed task cannot make the scheduler download and parse the entire cold archive.
+              */
+              const dependencyTasks = (await Promise.all(
+                dependent.dependencies.map((dependencyId) => this.store.getTask(dependencyId).catch(() => null)),
+              )).filter((candidate) => candidate !== null);
               const unresolvedDeps = getUnmetSchedulingDependencies(
                 dependent,
-                [dependent, ...allTasks],
+                [dependent, task, ...dependencyTasks],
                 markerAcceptedByTaskId
                   ? {
                     markerAcceptedByTaskId,
@@ -869,7 +876,6 @@ export class Scheduler {
           const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
           const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
           const dependents = [...todoTasks, ...inProgressTasks];
-          const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
 
           for (const dependent of dependents) {
             const mentionsDeletedTask = dependent.dependencies.includes(task.id);
@@ -879,9 +885,12 @@ export class Scheduler {
             const markerAcceptedByTaskId = settings.mergeRequestContractShadowEnabled === true
               ? new Map(await Promise.all(dependent.dependencies.map(async (depId) => [depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null] as const)))
               : undefined;
+            const dependencyTasks = (await Promise.all(
+              dependent.dependencies.map((dependencyId) => this.store.getTask(dependencyId).catch(() => null)),
+            )).filter((candidate) => candidate !== null);
             const unresolvedDeps = getUnmetSchedulingDependencies(
               dependent,
-              [dependent, ...allTasks],
+              [dependent, ...dependencyTasks],
               markerAcceptedByTaskId
                 ? {
                   markerAcceptedByTaskId,
@@ -979,12 +988,15 @@ export class Scheduler {
     // and start watching all missions with autopilotEnabled: true
     if (this.options.missionAutopilot && this.options.missionStore) {
       this.options.missionAutopilot.setScheduler(this);
-      const missions = this.options.missionStore.listMissions();
-      for (const mission of missions) {
-        if (mission.autopilotEnabled && mission.status !== "complete" && mission.status !== "archived") {
-          this.options.missionAutopilot.watchMission(mission.id);
+      const missionStore = this.options.missionStore;
+      const missionAutopilot = this.options.missionAutopilot;
+      void Promise.resolve(missionStore.listMissions()).then((missions) => {
+        for (const mission of missions) {
+          if (mission.autopilotEnabled && mission.status !== "complete" && mission.status !== "archived") {
+            missionAutopilot.watchMission(mission.id);
+          }
         }
-      }
+      }).catch((error) => schedulerLog.error("Failed to initialize mission autopilot watches:", error));
       this.options.missionAutopilot.start();
     }
   }
@@ -1438,11 +1450,11 @@ export class Scheduler {
         for (const t of todo) {
           if (t.sliceId && !blockedSliceIds.has(t.sliceId)) {
             try {
-              const slice = this.options.missionStore.getSlice(t.sliceId);
+              const slice = await this.options.missionStore.getSlice(t.sliceId);
               if (slice) {
-                const milestone = this.options.missionStore.getMilestone(slice.milestoneId);
+                const milestone = await this.options.missionStore.getMilestone(slice.milestoneId);
                 if (milestone) {
-                  const mission = this.options.missionStore.getMission(milestone.missionId);
+                  const mission = await this.options.missionStore.getMission(milestone.missionId);
                   if (mission && mission.status === "blocked") {
                     blockedSliceIds.add(t.sliceId);
                   }
@@ -2314,9 +2326,9 @@ export class Scheduler {
 
           if (this.options.missionStore && task.sliceId) {
             try {
-              const slice = this.options.missionStore.getSlice(task.sliceId);
-              const milestone = slice ? this.options.missionStore.getMilestone(slice.milestoneId) : undefined;
-              const mission = milestone ? this.options.missionStore.getMission(milestone.missionId) : undefined;
+              const slice = await this.options.missionStore.getSlice(task.sliceId);
+              const milestone = slice ? await this.options.missionStore.getMilestone(slice.milestoneId) : undefined;
+              const mission = milestone ? await this.options.missionStore.getMission(milestone.missionId) : undefined;
               if (mission?.status === "blocked") {
                 await this.store.updateTask(task.id, { status: "queued" });
                 await this.logDispatchQueuedReason(task.id, "queued — mission is blocked");
@@ -2816,7 +2828,7 @@ export class Scheduler {
         return;
       }
 
-      const feature = this.resolveMissionFeatureForTask(missionStore, task);
+      const feature = await this.resolveMissionFeatureForTask(missionStore, task);
       if (!feature) {
         schedulerLog.log(`No linked feature found for task ${taskId} (sliceId=${task.sliceId ?? "none"}) — skipping mission status update`);
         return;
@@ -2829,9 +2841,7 @@ export class Scheduler {
         return;
       }
 
-      const hasLinkedAssertions = typeof missionStore.listAssertionsForFeature === "function"
-        ? missionStore.listAssertionsForFeature(feature.id).length > 0
-        : false;
+      const hasLinkedAssertions = (await missionStore.listAssertionsForFeature(feature.id)).length > 0;
 
       const reconciliation = await reconcileMissionFeatureState(
         this.store,
@@ -2853,7 +2863,7 @@ export class Scheduler {
       const sliceIdBeforeUpdate = feature.sliceId;
 
       if (reconciliation.kind === "update") {
-        missionStore.updateFeatureStatus(feature.id, reconciliation.status);
+        await missionStore.updateFeatureStatus(feature.id, reconciliation.status);
         schedulerLog.log(
           `Feature ${feature.id} marked ${reconciliation.status} (${reconciliation.reason})`,
         );
@@ -2867,8 +2877,8 @@ export class Scheduler {
     }
   }
 
-  private resolveMissionFeatureForTask(missionStore: MissionStore, task: Task): MissionFeature | undefined {
-    const linkedFeature = missionStore.getFeatureByTaskId(task.id);
+  private async resolveMissionFeatureForTask(missionStore: MissionStore | AsyncMissionStore, task: Task): Promise<MissionFeature | undefined> {
+    const linkedFeature = await missionStore.getFeatureByTaskId(task.id);
     if (linkedFeature) {
       return linkedFeature;
     }
@@ -2878,8 +2888,8 @@ export class Scheduler {
     }
 
     const normalizedTaskTitle = this.normalizeMissionFeatureTitle(task.title);
-    const matchingFeature = missionStore
-      .listFeatures(task.sliceId)
+    const matchingFeature = (await missionStore
+      .listFeatures(task.sliceId))
       .find((feature) =>
         !feature.taskId
         && this.normalizeMissionFeatureTitle(feature.title) === normalizedTaskTitle
@@ -2916,7 +2926,7 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const feature = missionStore.getFeatureByTaskId(taskId);
+      const feature = await missionStore.getFeatureByTaskId(taskId);
       if (!feature) return;
 
       if (feature.sliceId !== sliceId) {
@@ -2945,7 +2955,7 @@ export class Scheduler {
       }
 
       // Check if the slice became complete after the feature update
-      const slice = missionStore.getSlice(sliceIdBeforeUpdate);
+      const slice = await missionStore.getSlice(sliceIdBeforeUpdate);
       if (slice && slice.status === "complete") {
         // If MissionAutopilot is available AND actively watching this mission,
         // delegate progression to it. The autopilot handles: watching missions,
@@ -2956,7 +2966,7 @@ export class Scheduler {
         // autoAdvance=true but no autopilot instance, or autopilot unwatched),
         // fall back to onSliceComplete() which uses the compatibility rule.
         const autopilot = this.options.missionAutopilot;
-        const milestone = missionStore.getMilestone(slice.milestoneId);
+        const milestone = await missionStore.getMilestone(slice.milestoneId);
         const missionId = milestone?.missionId;
         const isWatching = autopilot && missionId ? autopilot.isWatching(missionId) : false;
 
@@ -2980,13 +2990,13 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const milestone = missionStore.getMilestone(slice.milestoneId);
+      const milestone = await missionStore.getMilestone(slice.milestoneId);
       if (!milestone) {
         schedulerLog.warn(`Milestone ${slice.milestoneId} not found for slice ${slice.id}`);
         return;
       }
 
-      const mission = missionStore.getMission(milestone.missionId);
+      const mission = await missionStore.getMission(milestone.missionId);
       // Use autopilotEnabled as canonical, fall back to autoAdvance for backward compat
       const shouldAutoAdvance =
         mission?.autopilotEnabled === true || mission?.autoAdvance === true;
@@ -2994,7 +3004,7 @@ export class Scheduler {
         return;
       }
 
-      const missionHierarchy = missionStore.getMissionWithHierarchy(mission.id);
+      const missionHierarchy = await missionStore.getMissionWithHierarchy(mission.id);
       const hasActiveSlice = missionHierarchy?.milestones.some((candidateMilestone) =>
         candidateMilestone.slices.some((candidateSlice) =>
           candidateSlice.id !== slice.id && candidateSlice.status === "active"
@@ -3028,7 +3038,7 @@ export class Scheduler {
     const missionStore = this.options.missionStore;
 
     try {
-      const mission = missionStore.getMissionWithHierarchy(missionId);
+      const mission = await missionStore.getMissionWithHierarchy(missionId);
       if (!mission || mission.status !== "active") {
         schedulerLog.log(`Mission ${missionId}: not active, skipping slice activation`);
         return null;
@@ -3084,7 +3094,7 @@ export class Scheduler {
     let totalFixed = 0;
 
     try {
-      const missions = missionStore.listMissions();
+      const missions = await missionStore.listMissions();
       const activeMissions = missions.filter((m) => m.status === "active");
       const activeMissionIds = new Set(activeMissions.map((mission) => mission.id));
       const taskBySliceAndTitle = new Map<string, Task | null>();
@@ -3103,7 +3113,7 @@ export class Scheduler {
       }
 
       for (const mission of activeMissions) {
-        const hierarchy = missionStore.getMissionWithHierarchy(mission.id);
+        const hierarchy = await missionStore.getMissionWithHierarchy(mission.id);
         if (!hierarchy) continue;
 
         const activeSlices = hierarchy.milestones
@@ -3112,8 +3122,7 @@ export class Scheduler {
 
         for (const slice of activeSlices) {
           const missionAutoTriageEnabled = mission.autopilotEnabled === true || mission.autoAdvance === true;
-          const supersededFixes = missionStore.reconcileSupersededGeneratedFixFeatures?.(slice.id)
-            ?? { supersededCount: 0, featureIds: [] };
+          const supersededFixes = await missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
           if (supersededFixes.supersededCount > 0) {
             totalFixed += supersededFixes.supersededCount;
             schedulerLog.warn(
@@ -3121,12 +3130,12 @@ export class Scheduler {
             );
           }
           const features = supersededFixes.supersededCount > 0
-            ? missionStore.listFeatures(slice.id)
+            ? await missionStore.listFeatures(slice.id)
             : slice.features;
           const supersededFeatureIds = new Set(supersededFixes.featureIds);
 
           if (supersededFixes.supersededCount > 0) {
-            const refreshedSlice = missionStore.getSlice?.(slice.id);
+            const refreshedSlice = await missionStore.getSlice(slice.id);
             if (refreshedSlice?.status === "complete") {
               /*
               FNXC:Missions 2026-07-11-12:35:
@@ -3167,7 +3176,7 @@ export class Scheduler {
                 schedulerLog.warn(
                   `Repairing one-way mission link during reconciliation: task ${matchedTask.id} matched unlinked feature ${feature.id}`,
                 );
-                featureForReconciliation = missionStore.linkFeatureToTask(feature.id, matchedTask.id);
+                featureForReconciliation = await missionStore.linkFeatureToTask(feature.id, matchedTask.id);
                 task = matchedTask;
                 totalFixed++;
                 await this.emitStrandedFeatureTriageAudit(mission.id, slice.id, feature.id, matchedTask.id);
@@ -3180,7 +3189,7 @@ export class Scheduler {
                     schedulerLog.warn(
                       `Blocking stranded generated fix feature ${feature.id}: no linked task and no title-matched task available`,
                     );
-                    missionStore.updateFeature(feature.id, {
+                    await missionStore.updateFeature(feature.id, {
                       status: "blocked",
                       loopState: "blocked",
                       taskId: undefined,
@@ -3195,7 +3204,7 @@ export class Scheduler {
                   try {
                     const featureToTriage = feature.status === "defined"
                       ? feature
-                      : missionStore.updateFeature(feature.id, {
+                      : await missionStore.updateFeature(feature.id, {
                         status: "defined",
                         loopState: "idle",
                         taskId: undefined,
@@ -3231,9 +3240,7 @@ export class Scheduler {
 
             if (!task) continue;
 
-            const hasLinkedAssertions = typeof missionStore.listAssertionsForFeature === "function"
-              ? missionStore.listAssertionsForFeature(featureForReconciliation.id).length > 0
-              : false;
+            const hasLinkedAssertions = (await missionStore.listAssertionsForFeature(featureForReconciliation.id)).length > 0;
             const reconciliation = await reconcileMissionFeatureState(this.store, task, featureForReconciliation, {
               hasLinkedAssertions,
             });
@@ -3254,7 +3261,7 @@ export class Scheduler {
             }
 
             if (reconciliation.kind === "update") {
-              missionStore.updateFeatureStatus(featureForReconciliation.id, reconciliation.status);
+              await missionStore.updateFeatureStatus(featureForReconciliation.id, reconciliation.status);
               totalFixed++;
             }
           }

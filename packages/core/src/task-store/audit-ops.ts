@@ -17,6 +17,7 @@ import "../builtin-traits.js";
 import {toJson, fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
 import {readTaskRow, updateTaskColumns} from "../task-store/async-persistence.js";
+import { getLiveTaskColumn } from "./async-comments-attachments.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();
@@ -112,6 +113,11 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         outcome: truncateTaskLogOutcome(outcome),
       };
       if (runContext) {
+        if (store.backendMode) {
+          const state = await getLiveTaskColumn(store.asyncLayer!.db, id);
+          if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
+          if (state === null) throw new Error(`Task ${id} not found`);
+        }
         if (store.isTaskArchived(id)) {
           throw new Error(`Task ${id} is archived — logging is read-only`);
         }
@@ -158,14 +164,11 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       // available in backend mode" (discovered by sqlite-final-removal session 3).
       if (store.backendMode) {
         const layer = store.asyncLayer!;
-        const pgRow = await readTaskRow(layer, id, { includeDeleted: false });
+        const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
         if (!pgRow) {
-          if (store.isTaskArchived(id)) {
-            throw new Error(`Task ${id} is archived — logging is read-only`);
-          }
           throw new Error(`Task ${id} not found`);
         }
-        if (pgRow.column === "archived") {
+        if (pgRow.column === "archived" || pgRow.deletedAt != null) {
           throw new Error(`Task ${id} is archived — logging is read-only`);
         }
         // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
@@ -234,4 +237,3 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       return emittedTask;
     });
   }
-

@@ -1,8 +1,9 @@
 /**
- * AgentStore - SQLite-backed persistence for agent lifecycle management.
+ * AgentStore - persistence for agent lifecycle management.
  *
+ * FNXC:PostgresRuntimeStorage 2026-07-14-18:49:
  * Agent records, heartbeat events, runs, task sessions, API keys, config
- * revisions, and blocked-state snapshots are stored in `.fusion/fusion.db`.
+ * revisions, and blocked-state snapshots are stored in project-scoped PostgreSQL tables.
  * Managed instruction bundle markdown files remain on disk because they are
  * edited as normal project files.
  */
@@ -1812,7 +1813,7 @@ export class AgentStore extends EventEmitter {
     }
 
     if (this.claimStore && this.claimProjectId && task.checkoutNodeId) {
-      this.claimStore.releaseTaskClaim({
+      await this.claimStore.releaseTaskClaim({
         projectId: this.claimProjectId,
         taskId,
         nodeId: task.checkoutNodeId,

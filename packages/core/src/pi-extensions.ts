@@ -101,13 +101,11 @@ export function getProjectRootFromWorktree(
  * refusal on a bind-mounted repo owned by a different UID, or any other non-zero
  * exit) returned null with NO thrown error — by design, so a non-worktree cwd
  * doesn't explode — but with no non-git fallback. resolveProjectRoot's caller then
- * fell back to a naive upward walk for the first ancestor with a `.fusion` dir,
- * which matched IMMEDIATELY at the task's own worktree (hydrateWorktreeDb's
- * ensureWorktreeSchema already created a local, one-way-hydrated `.fusion/fusion.db`
- * there for the dependency-closure copy). Every write tool call then silently
- * landed in that throwaway worktree-local db — never synced back to the project
- * root — with zero error surfaced. See task FN-7730 `research` document for the
- * full investigation.
+ * FNXC:PostgresWorktreeStorage 2026-07-14-18:49:
+ * The fallback landed on the first ancestor with a `.fusion` directory.
+ * That historical SQLite hydration behavior is removed; worktrees now share
+ * the project-scoped PostgreSQL store. Resolving the main repository remains
+ * required so filesystem artifacts and project identity use the correct root.
  *
  * Fix: resolve the linked-worktree relationship directly from git's own on-disk
  * worktree metadata (the `.git` file + its `commondir` sidecar) FIRST. This is

@@ -24,13 +24,14 @@ import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async-allocator.js";
 import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
+import { taskProjectScope } from "../postgres/data-layer.js";
 import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
 import { ActivityLogRow } from "./row-types.js";
 import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
@@ -293,23 +294,26 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
     return row ? store.toWorkflowDefinition(row) : undefined;
 }
 
-export function occupantsByColumnForWorkflowImpl(store: TaskStore,
+export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
     workflowId: string,
     includeNullSelection: boolean,
-  ): Map<string, number> {
-    /*
-    FNXC:PostgresCutover 2026-07-04-00:00:
-    Assessed safe-default: the occupied-column guard is skipped in PG mode (empty Map →
-    removed=[] → no OccupiedColumnsError). The async enforcement path in workflow-ops.ts
-    (lines 365-372) does read columns via Drizzle, but it's gated on removed.length > 0
-    which is always false here. Full fix requires async listWorkflowOccupantTaskIds +
-    async occupancy map — a deep refactor of the workflow occupancy system. Low-impact:
-    flag-gated (workflowColumnsFlagOn, off by default), only triggers on workflow IR
-    edits that remove columns. Tasks in removed columns are orphaned but not lost.
-    */
-    if (store.backendMode) return new Map();
+  ): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
-    for (const taskId of store.listWorkflowOccupantTaskIds(workflowId, includeNullSelection)) {
+    const taskIds = await store.listWorkflowOccupantTaskIds(workflowId, includeNullSelection);
+    if (store.backendMode) {
+      if (taskIds.length === 0) return counts;
+      const rows = await store.asyncLayer!.db
+        .select({ column: schema.project.tasks.column })
+        .from(schema.project.tasks)
+        .where(and(
+          inArray(schema.project.tasks.id, taskIds),
+          isNull(schema.project.tasks.deletedAt),
+          taskProjectScope(store.asyncLayer!),
+        ));
+      for (const row of rows) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
+      return counts;
+    }
+    for (const taskId of taskIds) {
       const row = store.db.prepare(`SELECT "column" AS column FROM tasks WHERE id = ?`).get(taskId) as
         | { column: string }
         | undefined;

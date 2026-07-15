@@ -122,7 +122,7 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
       always wrote the changed-column subset.
       */
       await layer.transactionImmediate(async (tx) => {
-        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
+        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
         if (!pgRow || pgRow.deletedAt != null) {
           // Update-only path: never resurrect a soft-deleted row; a missing row
           // falls through to the legacy full upsert (matches sqlite's

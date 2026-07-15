@@ -52,8 +52,17 @@ import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
  *    WHERE sourceParentTaskId = ? AND id != ? AND "column" != 'archived'
  *      AND <ACTIVE_TASKS_WHERE>
  */
-export function liveLineageChildFilter(parentId: string) {
+/*
+FNXC:ArchiveProjectIsolation 2026-07-14-16:20:
+Lineage IDs are project-local. Every lineage gate and rewrite must include the task partition so archiving or deleting a parent cannot inspect or detach a same-ID child owned by another project; unbound compatibility callers stay inside the legacy quarantine.
+*/
+function projectPartition(projectId?: string): string {
+  return projectId?.trim() || "__legacy_unscoped__";
+}
+
+export function liveLineageChildFilter(parentId: string, projectId?: string) {
   return and(
+    eq(schema.project.tasks.projectId, projectPartition(projectId)),
     eq(schema.project.tasks.sourceParentTaskId, parentId),
     ne(schema.project.tasks.id, parentId),
     ne(schema.project.tasks.column, "archived"),
@@ -83,11 +92,12 @@ export function liveLineageChildFilter(parentId: string) {
 export async function findLiveLineageChildren(
   db: AsyncDataLayer["db"] | DbTransaction,
   parentId: string,
+  projectId?: string,
 ): Promise<string[]> {
   const rows = await db
     .select({ id: schema.project.tasks.id })
     .from(schema.project.tasks)
-    .where(liveLineageChildFilter(parentId));
+    .where(liveLineageChildFilter(parentId, projectId));
   return rows.map((row) => row.id);
 }
 
@@ -120,6 +130,7 @@ export async function removeLineageReferences(
   parentId: string,
   childIds: readonly string[],
   nowIso: string,
+  projectId?: string,
 ): Promise<number> {
   // FNXC:TaskStoreLifecycle 2026-06-24-06:05:
   // A single bulk UPDATE clears all children that still point at this parent.
@@ -139,6 +150,7 @@ export async function removeLineageReferences(
     })
     .where(
       and(
+        eq(schema.project.tasks.projectId, projectPartition(projectId)),
         sql`${schema.project.tasks.id} IN ${childIds}`,
         eq(schema.project.tasks.sourceParentTaskId, parentId),
       ),
@@ -163,11 +175,12 @@ export async function removeLineageReferences(
 export async function hasLiveLineageChildren(
   db: AsyncDataLayer["db"] | DbTransaction,
   parentId: string,
+  projectId?: string,
 ): Promise<boolean> {
   const rows = await db
     .select({ one: sql<number>`1` })
     .from(schema.project.tasks)
-    .where(liveLineageChildFilter(parentId))
+    .where(liveLineageChildFilter(parentId, projectId))
     .limit(1);
   return rows.length > 0;
 }

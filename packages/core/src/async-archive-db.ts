@@ -39,10 +39,11 @@
  *   PostgreSQL integration tests consume. They target the stable
  *   `AsyncDataLayer` interface (U4), not the underlying driver.
  */
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import type { ArchivedTaskEntry } from "./types.js";
+import { buildTsqueryFragment, sanitizeSearchTokens } from "./task-store/async-search.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
@@ -152,6 +153,28 @@ export async function listArchivedTasks(
 }
 
 /**
+ * FNXC:PostgresArchiveReadPerformance 2026-07-14-17:50:
+ * Merged live/cold task pages fetch only the prefix that can contribute to the requested global page. This order exactly matches TaskStore.listTasks: createdAt ASC followed by the numeric task-id suffix.
+ */
+export async function listArchivedTasksByCreatedOrder(
+  handle: QueryHandle,
+  limit: number,
+  projectId?: string,
+): Promise<ArchivedTaskEntry[]> {
+  if (limit <= 0) return [];
+  const rows = await handle
+    .select({ taskJson: archivedTaskColumns.taskJson })
+    .from(schema.archive.archivedTasks)
+    .where(archiveProjectScope(projectId))
+    .orderBy(
+      asc(archivedTaskColumns.createdAt),
+      sql`COALESCE(substring(${archivedTaskColumns.id} from '-([0-9]+)$')::int, 0) ASC`,
+    )
+    .limit(limit);
+  return rows.map((row) => JSON.parse((row as { taskJson: string }).taskJson) as ArchivedTaskEntry);
+}
+
+/**
  * FNXC:ArchivePagination 2026-07-08-00:00:
  * Bounded page of archived task snapshots for the Archived board column
  * (FN-7659), ordered `archivedAt DESC` with an `id DESC` tie-break (Postgres
@@ -185,11 +208,12 @@ export async function listArchivedTaskEntriesPage(
 export async function getArchivedTask(
   handle: QueryHandle,
   id: string,
+  projectId?: string,
 ): Promise<ArchivedTaskEntry | undefined> {
   const rows = await handle
     .select({ taskJson: archivedTaskColumns.taskJson })
     .from(schema.archive.archivedTasks)
-    .where(eq(archivedTaskColumns.id, id))
+    .where(and(eq(archivedTaskColumns.id, id), archiveProjectScope(projectId)))
     .limit(1);
   const row = rows[0] as { taskJson: string } | undefined;
   return row ? (JSON.parse(row.taskJson) as ArchivedTaskEntry) : undefined;
@@ -260,11 +284,8 @@ export async function getArchivedRowCount(handle: QueryHandle, projectId?: strin
 
 /**
  * FNXC:ArchiveDatabase 2026-06-24-19:40:
- * Full-text search over archived tasks. Mirrors sync
- * `ArchiveDatabase.search()` but uses an ILIKE-based scan (the sync LIKE
- * fallback). The tsvector/GIN path slots in here when U7 (fts-replacement)
- * lands; until then the ILIKE scan provides the same row-membership contract
- * the SQLite LIKE fallback did.
+ * Full-text search over archived tasks through the generated tsvector and GIN
+ * index, preserving the SQLite FTS prefix/OR membership contract.
  *
  * Tokenization matches the sync path: the query is split on whitespace,
  * FTS-special characters are stripped, and every token must OR-match across
@@ -278,45 +299,44 @@ export async function getArchivedRowCount(handle: QueryHandle, projectId?: strin
 export async function searchArchivedTasks(
   handle: QueryHandle,
   query: string,
-  limit: number,
+  limit: number | undefined,
   projectId?: string,
+  offset = 0,
 ): Promise<ArchivedTaskEntry[]> {
   const trimmed = query?.trim();
   if (!trimmed) return [];
 
-  const tokens = trimmed
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-    .map((t) => t.replace(/["{}:*^+()]/g, ""))
-    .filter((t) => t.length > 0);
+  const tokens = sanitizeSearchTokens(trimmed);
   if (tokens.length === 0) return [];
 
-  // Build an OR across tokens; within each token, OR across the searchable
-  // columns. ILIKE is case-insensitive; the sync LIKE fallback used ESCAPE '\'
-  // on a %pattern%. Each token is escaped for LIKE special chars.
-  //
-  // The columns: id, title, description (text), and comments (jsonb, cast to
-  // text so token search covers the serialized comment payload — matching the
-  // SQLite LIKE-over-text behavior).
-  const tokenClauses: SQL[] = [];
-  for (const token of tokens) {
-    const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
-    const columnLikes = [
-      ilike(archivedTaskColumns.id, pattern),
-      ilike(archivedTaskColumns.title, pattern),
-      ilike(archivedTaskColumns.description, pattern),
-      ilike(sql<unknown>`${archivedTaskColumns.comments}::text`, pattern),
-    ];
-    tokenClauses.push(or(...columnLikes) ?? sql`false`);
-  }
-  const where = or(...tokenClauses);
+  const tsquery = buildTsqueryFragment(tokens.join(" "));
+  /*
+  FNXC:ArchiveSearch 2026-07-14-19:02:
+  Normal archive queries use search_vector @@ to_tsquery so PostgreSQL can use idxArchivedTasksSearchVector. If sanitization leaves only tsquery operators, retain the escaped ILIKE safety fallback instead of throwing or broadening the query.
+  */
+  const where = tsquery
+    ? sql`${schema.archive.archivedTasks.searchVector} @@ ${tsquery}`
+    : or(...tokens.map((token) => {
+      const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
+      return or(
+        ilike(archivedTaskColumns.id, pattern),
+        ilike(archivedTaskColumns.title, pattern),
+        ilike(archivedTaskColumns.description, pattern),
+        ilike(sql<unknown>`${archivedTaskColumns.comments}::text`, pattern),
+      ) ?? sql`false`;
+    }));
   if (!where) return [];
 
-  const rows = await handle
+  const baseQuery = handle
     .select({ taskJson: archivedTaskColumns.taskJson })
     .from(schema.archive.archivedTasks)
     .where(and(where, archiveProjectScope(projectId)))
-    .orderBy(desc(archivedTaskColumns.archivedAt))
-    .limit(limit);
+    .orderBy(
+      ...(tsquery ? [sql`ts_rank(${schema.archive.archivedTasks.searchVector}, ${tsquery}) DESC`] : []),
+      desc(archivedTaskColumns.archivedAt),
+    );
+  const rows = limit === undefined
+    ? (offset > 0 ? await baseQuery.offset(offset) : await baseQuery)
+    : await baseQuery.limit(Math.max(0, limit)).offset(Math.max(0, offset));
   return rows.map((row) => JSON.parse((row as { taskJson: string }).taskJson) as ArchivedTaskEntry);
 }

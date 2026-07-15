@@ -85,6 +85,7 @@ import {
 } from "./reliability-metrics.js";
 import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
 import { maybeStartOtelExporter, type OtelExporterHandle } from "./otel-exporter.js";
+import { requireAsyncLayer } from "./require-async-layer.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1097,14 +1098,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   // Create ChatStore for chat session management (available for SSE event forwarding)
-  // FNXC:RuntimeSatelliteAsync 2026-06-24-21:45:
-  // ChatStore dual-path: uses async layer in backend mode, sync DB otherwise.
-  const chatLayer = store.getAsyncLayer();
-  const chatStore = options?.chatStore ?? new ChatStore(
-    store.getFusionDir(),
-    chatLayer ? null : store.getDatabase(),
-    { asyncLayer: chatLayer },
-  );
+  // FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Dashboard chat persistence is PostgreSQL-only and shares the scoped project layer.
+  const chatLayer = requireAsyncLayer(store, "Dashboard ChatStore");
+  const chatStore = options?.chatStore ?? new ChatStore(chatLayer);
   store.on("task:moved", (data: { task: Task; from: string; to: string }) => {
     if (data.to !== "archived") return;
     /*
@@ -1161,7 +1157,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     if (!projectId) {
       // Create AgentStore for default project SSE
       const { AgentStore: AgentStoreClass } = await import("@fusion/core");
-      const defaultAgentStore = new AgentStoreClass({ rootDir: store.getFusionDir() });
+      /* FNXC:PostgresSseAgentStore 2026-07-14-19:35: SSE fallback stores must subscribe to the authoritative project PostgreSQL layer so agent events never read a SQLite shadow. */
+      const defaultAgentStore = new AgentStoreClass({
+        rootDir: store.getFusionDir(),
+        asyncLayer: requireAsyncLayer(store, "Default SSE AgentStore"),
+      });
       await defaultAgentStore.init();
       const defaultMessageStore = options?.engine?.getMessageStore();
       createSSE(
@@ -1202,7 +1202,10 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       // Fallback: create AgentStore if engine doesn't have one
       if (!agentStore) {
         const { AgentStore: AgentStoreClass } = await import("@fusion/core");
-        agentStore = new AgentStoreClass({ rootDir: scopedStore.getFusionDir() });
+        agentStore = new AgentStoreClass({
+          rootDir: scopedStore.getFusionDir(),
+          asyncLayer: requireAsyncLayer(scopedStore, "Project SSE AgentStore"),
+        });
         await agentStore.init();
       }
       if (!automationStore) {
@@ -1441,13 +1444,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   // Create AiSessionStore for background task persistence
-  // FNXC:RuntimeSatelliteCompletion 2026-06-25-00:05:
-  // AiSessionStore dual-path: uses async layer in backend mode, sync DB otherwise.
-  const aiSessionLayer = store.getAsyncLayer();
-  const aiSessionStore: AiSessionStore | undefined = options?.aiSessionStore ?? new AiSessionStore(
-    aiSessionLayer ? null as unknown as import("@fusion/core").Database : store.getDatabase(),
-    { asyncLayer: aiSessionLayer },
-  );
+  // FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Background AI sessions must use the authoritative project PostgreSQL layer.
+  const aiSessionLayer = requireAsyncLayer(store, "Dashboard AiSessionStore");
+  const aiSessionStore: AiSessionStore | undefined = options?.aiSessionStore ?? new AiSessionStore(aiSessionLayer);
   if (aiSessionStore) {
     // FNXC:RuntimeSatelliteCompletion 2026-06-25-00:20:
     // recoverStaleSessions + rehydrateFromStore are now async. Fire-and-forget
@@ -1480,7 +1479,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const totalRehydrated = 0;
   if (totalRehydrated > 0) {
     runtimeLogger.info("AI session rehydrate summary", {
-      message: "Rehydrated AI sessions from SQLite",
+      message: "Rehydrated AI sessions from PostgreSQL",
       planningRehydratedCount,
       subtaskRehydratedCount,
       missionRehydratedCount,
@@ -1490,13 +1489,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   // Create AgentStore for chat prompt enrichment (initialized lazily by ChatManager)
-  // FNXC:SqliteFinalRemoval 2026-06-26-11:00:
-  // In backend mode, pass the AsyncDataLayer so AgentStore delegates to the
-  // async helpers; otherwise use the legacy SQLite path.
-  const chatAgentLayer = store.getAsyncLayer();
+  // FNXC:PostgresSseAgentStore 2026-07-14-19:35: Chat enrichment shares the mandatory default-project PostgreSQL layer.
+  const chatAgentLayer = requireAsyncLayer(store, "Chat AgentStore");
   const chatAgentStore = new AgentStore({
     rootDir: store.getFusionDir(),
-    ...(chatAgentLayer ? { asyncLayer: chatAgentLayer } : {}),
+    asyncLayer: chatAgentLayer,
   });
 
   // Create ChatManager for AI chat message handling.
@@ -1841,7 +1838,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           taskId: event.taskId ?? undefined,
           metadata: event.metadata ?? undefined,
         })))
-      : Promise.resolve(scopedStore.getRunAuditEvents(auditFilter));
+      : scopedStore.getRunAuditEventsAsync(auditFilter);
     const [runAuditEvents, enteredByDay, bouncedByDay, durationEvents, mergedTaskIds] = await Promise.all([
       runAuditEventsPromise,
       scopedStore.getTaskMovedCountsByDay({ since: startIso, until: endIso, toColumn: "in-review" }),
@@ -2543,7 +2540,7 @@ export function setupTerminalWebSocket(
   }, 60_000);
 
   // Stop eviction timer when the server shuts down
-  server.once("close", () => {
+  server.once("close", async () => {
     clearInterval(staleEvictionInterval);
   });
 
@@ -2790,18 +2787,49 @@ export function setupBadgeWebSocket(
     wsManager.addClient(ws, randomUUID(), projectId);
   });
 
-  server.once("close", () => {
+  server.once("close", async () => {
     // Clean up all scoped listeners
     for (const cleanup of scopedCleanups.values()) {
       cleanup();
     }
     scopedCleanups.clear();
 
+    /*
+    FNXC:PostgresResourceLifecycle 2026-07-14-19:05:
+    Dashboard shutdown must publish this node as offline before project engines close their PostgreSQL pools, then drain every project-scoped store before CentralCore releases its owned embedded backend. This prevents terminal mesh writes or late resolver creations from racing a stopped postmaster.
+    */
+    try {
+      options?.centralCore?.stopDiscovery();
+      await options?.centralCore?.markLocalNodeOffline();
+    } catch (error) {
+      options?.runtimeLogger?.warn("Failed to mark the dashboard node offline during shutdown", {
+        ...normalizeErrorForLog(error),
+      });
+    }
+
+    try {
+      if (options?.engineManager) {
+        await options.engineManager.stopAll();
+      } else {
+        await options?.engine?.stop();
+      }
+    } catch (error) {
+      options?.runtimeLogger?.warn("Failed to stop dashboard project engines", {
+        ...normalizeErrorForLog(error),
+      });
+    }
+
     for (const scopedStore of scopedStores.values()) {
       // Don't close the default store - it's managed externally
       if (scopedStore !== store) {
         scopedStore.stopWatching?.();
-        scopedStore.close?.();
+        try {
+          await Promise.resolve(scopedStore.close?.());
+        } catch (error) {
+          options?.runtimeLogger?.warn("Failed to close a dashboard-scoped project store", {
+            ...normalizeErrorForLog(error),
+          });
+        }
       }
     }
     scopedStores.clear();
@@ -2814,7 +2842,14 @@ export function setupBadgeWebSocket(
     void badgePubSub.dispose();
     wss.close();
     // Clean up cached project-scoped stores (stop watchers, close DB connections)
-    evictAllProjectStores();
+    await evictAllProjectStores();
+    try {
+      await options?.centralCore?.close();
+    } catch (error) {
+      options?.runtimeLogger?.warn("Failed to close CentralCore during dashboard shutdown", {
+        ...normalizeErrorForLog(error),
+      });
+    }
     setRunningAgentCountSource(undefined);
     dashboardApp.terminalWsServer = null;
     dashboardApp.badgeWsServer = null;

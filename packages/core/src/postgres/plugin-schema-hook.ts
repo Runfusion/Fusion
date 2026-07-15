@@ -17,6 +17,15 @@
 
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import type { PluginPostgresSchemaDefinition } from "../plugin-types.js";
+
+export interface LoadedPluginSchemaContract {
+  pluginId: string;
+  /** @deprecated compatibility alias for legacyHook. */
+  hook?: unknown;
+  legacyHook?: unknown;
+  postgresSchema?: PluginPostgresSchemaDefinition;
+}
 
 /**
  * A plugin schema-init hook. Receives the Drizzle connection and is expected
@@ -301,6 +310,46 @@ export const whatsappPluginSchemaInit: PluginSchemaInitHook = {
 };
 
 /**
+ * FNXC:EvenRealitiesPostgres 2026-07-14-17:25:
+ * The bundled glasses notifier previously registered only SQLite DDL, so backend startup skipped its table and onLoad later reached a removed synchronous database. Materialize the project-owned PostgreSQL snapshot table explicitly; arbitrary SQLite hook SQL is never translated or executed as PostgreSQL.
+ */
+export const evenRealitiesPluginSchemaInit: PluginSchemaInitHook = {
+  pluginId: "fusion-plugin-even-realities-glasses",
+  async init(db) {
+    await db.execute(sql.raw(`
+      CREATE TABLE IF NOT EXISTS project.even_realities_seen_tasks (
+        project_id text NOT NULL DEFAULT COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'),
+        task_id text NOT NULL,
+        last_column text NOT NULL,
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, task_id)
+      );
+      CREATE INDEX IF NOT EXISTS "idxEvenRealitiesSeenTasksProjectUpdated"
+        ON project.even_realities_seen_tasks(project_id, updated_at, task_id);
+      ALTER TABLE project.even_realities_seen_tasks ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE project.even_realities_seen_tasks FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS fusion_project_isolation ON project.even_realities_seen_tasks;
+      CREATE POLICY fusion_project_isolation ON project.even_realities_seen_tasks
+        USING (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true))
+        WITH CHECK (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true));
+      DO $even_realities_runtime$
+      BEGIN
+        IF to_regprocedure('project.fusion_assign_project_id()') IS NOT NULL THEN
+          DROP TRIGGER IF EXISTS fusion_assign_project_id ON project.even_realities_seen_tasks;
+          CREATE TRIGGER fusion_assign_project_id
+            BEFORE INSERT OR UPDATE OF project_id ON project.even_realities_seen_tasks
+            FOR EACH ROW EXECUTE FUNCTION project.fusion_assign_project_id();
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+          GRANT SELECT, INSERT, UPDATE, DELETE ON project.even_realities_seen_tasks TO fusion_runtime;
+        END IF;
+      END
+      $even_realities_runtime$;
+    `));
+  },
+};
+
+/**
  * FNXC:PostgresSchema 2026-07-04-00:00:
  * Reports plugin schema-init hook. Creates the reports table in the project
  * schema with the same columns and indexes as the plugin's SQLite schema
@@ -455,9 +504,131 @@ export const DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS: readonly PluginSchemaInitHook[] =
   roadmapPluginSchemaInit,
   cePluginSchemaInit,
   whatsappPluginSchemaInit,
+  evenRealitiesPluginSchemaInit,
   reportsPluginSchemaInit,
   cliPressPluginSchemaInit,
 ];
+
+const POSTGRES_PLUGIN_SCHEMA_HOOKS = new Map(
+  DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS.map((hook) => [hook.pluginId, hook] as const),
+);
+
+const SAFE_POSTGRES_PLUGIN_STATEMENT = /^(?:CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+project\.[a-z][a-z0-9_]*\s*\(|CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+(?:"[^"]+"|[a-z][a-z0-9_]*)\s+ON\s+project\.[a-z][a-z0-9_]*\s*\(|ALTER\s+TABLE\s+project\.[a-z][a-z0-9_]*\s+)/i;
+const CREATE_PLUGIN_TABLE = /^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+project\.([a-z][a-z0-9_]*)\s*\(/i;
+
+/**
+ * Validate a third-party schema plan before plugin lifecycle side effects run.
+ * This is a capability boundary, not a SQL sandbox: installed plugins already
+ * execute JavaScript, but ordinary hooks never receive migration credentials.
+ */
+export function validatePluginPostgresSchema(
+  pluginId: string,
+  definition: PluginPostgresSchemaDefinition,
+): void {
+  if (!Number.isSafeInteger(definition.version) || definition.version < 1) {
+    throw new Error(`Plugin "${pluginId}" PostgreSQL schema version must be a positive integer`);
+  }
+  if (!/^[a-z][a-z0-9_]*_$/.test(definition.tablePrefix)) {
+    throw new Error(`Plugin "${pluginId}" PostgreSQL tablePrefix must be lowercase snake_case ending in underscore`);
+  }
+  if (!Array.isArray(definition.statements) || definition.statements.length === 0) {
+    throw new Error(`Plugin "${pluginId}" PostgreSQL schema must declare at least one statement`);
+  }
+  for (const statement of definition.statements) {
+    const normalized = statement.trim().replace(/;\s*$/, "");
+    if (!normalized || normalized.includes(";")) {
+      throw new Error(`Plugin "${pluginId}" PostgreSQL schema requires exactly one statement per item`);
+    }
+    if (!SAFE_POSTGRES_PLUGIN_STATEMENT.test(normalized)) {
+      throw new Error(
+        `Plugin "${pluginId}" PostgreSQL schema may only use idempotent CREATE TABLE/INDEX or ALTER TABLE statements in the project schema`,
+      );
+    }
+    for (const [, table] of normalized.matchAll(/\bproject\.([a-z][a-z0-9_]*)\b/gi)) {
+      if (!table.toLowerCase().startsWith(definition.tablePrefix)) {
+        throw new Error(`Plugin "${pluginId}" PostgreSQL schema may only reference tables beginning with ${definition.tablePrefix}`);
+      }
+    }
+    if (CREATE_PLUGIN_TABLE.test(normalized)) {
+      if (!/\bproject_id\s+text\s+NOT\s+NULL\b/i.test(normalized)) {
+        throw new Error(`Plugin "${pluginId}" PostgreSQL tables must declare project_id text NOT NULL`);
+      }
+      if (!/\bPRIMARY\s+KEY\s*\(\s*project_id\s*,/i.test(normalized)) {
+        throw new Error(`Plugin "${pluginId}" PostgreSQL tables must use a project_id-leading composite primary key`);
+      }
+    }
+  }
+}
+
+/**
+ * Validate runtime-loaded legacy hooks against the PostgreSQL registry.
+ * Runtime AsyncDataLayer connections intentionally have DML-only privileges;
+ * DDL is executed by applySchemaBaseline's migration connection on every boot.
+ */
+export function assertLoadedPluginSchemaInitHooksSupported(
+  hooks: ReadonlyArray<LoadedPluginSchemaContract>,
+): void {
+  for (const loaded of hooks) {
+    if (loaded.postgresSchema) {
+      validatePluginPostgresSchema(loaded.pluginId, loaded.postgresSchema);
+      continue;
+    }
+    if ((loaded.legacyHook ?? loaded.hook) && !POSTGRES_PLUGIN_SCHEMA_HOOKS.has(loaded.pluginId)) {
+      throw new Error(
+        `Plugin "${loaded.pluginId}" declares legacy SQLite onSchemaInit but has no registered PostgreSQL schema hook`,
+      );
+    }
+  }
+}
+
+/**
+ * Run the explicit PostgreSQL schema contract for plugins loaded at runtime.
+ * A legacy `onSchemaInit(Database)` callback is evidence that schema is needed,
+ * but its SQLite SQL is not portable. Only registered PostgreSQL equivalents
+ * may run; unknown hooks fail loudly with an actionable contract error.
+ */
+export async function runLoadedPluginSchemaInitHooks(
+  db: PostgresJsDatabase<Record<string, never>>,
+  hooks: ReadonlyArray<LoadedPluginSchemaContract>,
+): Promise<void> {
+  assertLoadedPluginSchemaInitHooksSupported(hooks);
+  for (const loaded of hooks) {
+    if (loaded.postgresSchema) {
+      const tables = new Set<string>();
+      for (const statement of loaded.postgresSchema.statements) {
+        const normalized = statement.trim().replace(/;\s*$/, "");
+        const table = normalized.match(CREATE_PLUGIN_TABLE)?.[1];
+        if (table) tables.add(table);
+        await db.execute(sql.raw(normalized));
+      }
+      for (const table of tables) {
+        /*
+        FNXC:PluginPostgresContract 2026-07-14-18:32:
+        Fusion owns the isolation envelope for third-party tables. Plugins
+        declare project-local keys; the privileged executor installs forced
+        RLS, ownership stamping, runtime grants, and a single scoped policy.
+        */
+        await db.execute(sql.raw(`
+          ALTER TABLE project."${table}" ALTER COLUMN project_id
+            SET DEFAULT COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__');
+          ALTER TABLE project."${table}" ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE project."${table}" FORCE ROW LEVEL SECURITY;
+          DROP POLICY IF EXISTS fusion_project_isolation ON project."${table}";
+          CREATE POLICY fusion_project_isolation ON project."${table}"
+            USING (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true))
+            WITH CHECK (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true));
+          DROP TRIGGER IF EXISTS fusion_assign_project_id ON project."${table}";
+          CREATE TRIGGER fusion_assign_project_id BEFORE INSERT OR UPDATE OF project_id
+            ON project."${table}" FOR EACH ROW EXECUTE FUNCTION project.fusion_assign_project_id();
+          GRANT SELECT, INSERT, UPDATE, DELETE ON project."${table}" TO fusion_runtime;
+        `));
+      }
+      continue;
+    }
+    const postgresHook = POSTGRES_PLUGIN_SCHEMA_HOOKS.get(loaded.pluginId);
+    if (postgresHook) await postgresHook.init(db);
+  }
+}
 
 /**
  * Run the given plugin schema-init hooks in registration order. Each hook is

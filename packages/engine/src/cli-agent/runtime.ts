@@ -7,8 +7,8 @@
  * factory is the single place that actually instantiates the live bundle and
  * stitches the seams:
  *
- * - Builds a {@link CliSessionStore} over the project's EXISTING core Database
- *   (never opens a second connection — the store is a thin query layer).
+ * - Builds a {@link CliSessionStore} over the project's existing PostgreSQL
+ *   data layer (never opens a second connection).
  * - Registers all bundled adapters into a fresh {@link CliAdapterRegistry} (a
  *   per-runtime registry, NOT the process-wide `defaultCliAdapterRegistry`, so
  *   multi-project boots never collide on duplicate-registration).
@@ -25,7 +25,7 @@
  */
 
 import { CliSessionStore } from "@fusion/core";
-import type { Database } from "@fusion/core";
+import type { AsyncDataLayer } from "@fusion/core";
 import { CliAdapterRegistry } from "./adapter.js";
 import { BUNDLED_CLI_ADAPTERS } from "./adapters/index.js";
 import { CliSessionManager, type CliSessionManagerOptions } from "./session-manager.js";
@@ -38,8 +38,8 @@ import type { CliAgentRuntime } from "../executor.js";
 export interface CreateCliAgentRuntimeOptions {
   /** The project's `.fusion` dir (scratch root for hook scripts). */
   fusionDir: string;
-  /** The project's already-open core Database (reused, never re-opened). */
-  db: Database;
+  /** The project's already-open PostgreSQL data layer (reused, never re-opened). */
+  asyncLayer: AsyncDataLayer;
   /** Project this runtime drives (`cli_sessions.projectId`). */
   projectId: string;
   /**
@@ -82,7 +82,7 @@ export interface BootstrappedCliAgentRuntime {
    */
   isCliSessionWaitingOnInput: (taskId: string) => boolean;
   /** Tear down the PTY manager (scoped SIGKILL of this runtime's PTYs only). */
-  dispose: () => void;
+  dispose: () => Promise<void>;
 }
 
 /**
@@ -90,13 +90,15 @@ export interface BootstrappedCliAgentRuntime {
  * beyond the store's reads against the supplied Database; spawning a PTY or
  * running recovery is the caller's job (`resumeCoordinator.recoverOnStart()`).
  */
-export function createCliAgentRuntime(
+export async function createCliAgentRuntime(
   options: CreateCliAgentRuntimeOptions,
-): BootstrappedCliAgentRuntime {
-  const { fusionDir, db, projectId, hookEndpointUrl } = options;
+): Promise<BootstrappedCliAgentRuntime> {
+  const { asyncLayer, projectId, hookEndpointUrl } = options;
 
-  // 1. Store over the project's existing Database (thin query layer; no new conn).
-  const store = new CliSessionStore(fusionDir, db);
+  // FNXC:CliAgentPostgres 2026-07-14-12:00:
+  // Hydrate the project-scoped cache before state machines or recovery inspect
+  // it; mutations remain ordered through the shared PostgreSQL data layer.
+  const store = await CliSessionStore.create(asyncLayer, projectId);
 
   // 2. A per-runtime registry with every bundled adapter (not the process-wide
   //    singleton — avoids duplicate-registration across multi-project boots).
@@ -163,8 +165,9 @@ export function createCliAgentRuntime(
         return false;
       }
     },
-    dispose: () => {
+    dispose: async () => {
       manager.dispose();
+      await store.flush();
     },
   };
 }

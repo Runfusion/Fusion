@@ -15,6 +15,7 @@ import { EventEmitter } from "node:events";
 import type {
   TaskStore,
   MissionStore,
+  AsyncMissionStore,
   MissionContractAssertion,
   MissionFeature,
   MissionValidatorRun,
@@ -88,7 +89,7 @@ export interface MissionExecutionLoopOptions {
   /** Task store for accessing task data */
   taskStore: TaskStore;
   /** Mission store for accessing mission/feature data */
-  missionStore: MissionStore;
+  missionStore: MissionStore | AsyncMissionStore;
   /** Optional MissionAutopilot for notifying on loop state changes */
   missionAutopilot?: {
     notifyValidationComplete?: (featureId: string, status: "passed" | "failed" | "blocked" | "error") => void | Promise<void>;
@@ -114,7 +115,7 @@ export interface MissionExecutionLoopOptions {
 export class MissionExecutionLoop extends EventEmitter {
   private running = false;
   private taskStore: TaskStore;
-  private missionStore: MissionStore;
+  private missionStore: MissionStore | AsyncMissionStore;
   private rootDir: string;
   private maxRetryBudget: number;
   private missionAutopilot?: MissionExecutionLoopOptions["missionAutopilot"];
@@ -176,7 +177,7 @@ export class MissionExecutionLoop extends EventEmitter {
    * terminated by maintenance while their session is still in-flight.
    */
   async reapStaleValidatorRuns(maxAgeMs: number): Promise<{ reapedCount: number }> {
-    const staleRuns = this.missionStore.listStaleRunningValidatorRuns(maxAgeMs);
+    const staleRuns = await this.missionStore.listStaleRunningValidatorRuns(maxAgeMs);
     let reapedCount = 0;
 
     for (const run of staleRuns) {
@@ -185,15 +186,15 @@ export class MissionExecutionLoop extends EventEmitter {
       }
 
       try {
-        const reapedRun = this.missionStore.reapValidatorRun(
+        const reapedRun = await this.missionStore.reapValidatorRun(
           run.id,
           `Validator run reaped after exceeding stale threshold (${maxAgeMs}ms) without a live owner.`,
         );
         reapedCount += 1;
 
         try {
-          const milestone = this.missionStore.getMilestone(reapedRun.milestoneId);
-          const missionId = milestone ? this.missionStore.getMission(milestone.missionId)?.id : undefined;
+          const milestone = await this.missionStore.getMilestone(reapedRun.milestoneId);
+          const missionId = milestone ? (await this.missionStore.getMission(milestone.missionId))?.id : undefined;
           const elapsedMs = Math.max(0, Date.now() - new Date(run.startedAt).getTime());
           void this.taskStore.recordRunAuditEvent({
             agentId: "store",
@@ -238,7 +239,7 @@ export class MissionExecutionLoop extends EventEmitter {
     }
 
     try {
-      const missions = this.missionStore.listMissions();
+      const missions = await this.missionStore.listMissions();
       let recoveredCount = 0;
 
       for (const mission of missions) {
@@ -246,7 +247,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
         let hierarchy;
         try {
-          hierarchy = this.missionStore.getMissionWithHierarchy(mission.id);
+          hierarchy = await this.missionStore.getMissionWithHierarchy(mission.id);
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           loopLog.warn(`getMissionWithHierarchy failed for mission ${mission.id}: ${errorMessage} — skipping`);
@@ -260,7 +261,7 @@ export class MissionExecutionLoop extends EventEmitter {
           for (const slice of milestone.slices) {
             if (slice.status !== "active") continue;
 
-            const supersededFixes = this.missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
+            const supersededFixes = await this.missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
             const supersededFeatureIds = new Set(supersededFixes.featureIds);
             if (supersededFixes.supersededCount > 0) {
               loopLog.warn(
@@ -270,7 +271,13 @@ export class MissionExecutionLoop extends EventEmitter {
               recoveredCount += supersededFixes.supersededCount;
             }
 
-            for (const feature of slice.features) {
+            /*
+            FNXC:PostgresMissionRecoveryPerformance 2026-07-14-17:55:
+            Superseded-fix reconciliation can change multiple feature states. Refresh the slice once and reuse that coherent snapshot throughout recovery instead of issuing getFeature for every implementing or stranded feature.
+            */
+            const refreshedFeatures = await this.missionStore.listFeatures(slice.id);
+            const refreshedById = new Map(refreshedFeatures.map((feature) => [feature.id, feature]));
+            for (const feature of refreshedFeatures) {
               if (supersededFeatureIds.has(feature.id)) {
                 continue;
               }
@@ -316,7 +323,7 @@ export class MissionExecutionLoop extends EventEmitter {
               // Features that remained implementing while their linked task already finished
               // can be stranded after restart; recover by re-triggering task outcome.
               if (feature.loopState === "implementing" && feature.taskId) {
-                const currentFeature = this.missionStore.getFeature(feature.id) ?? feature;
+                const currentFeature = refreshedById.get(feature.id) ?? feature;
                 if (
                   this.activeValidations.has(feature.id)
                   || currentFeature.loopState === "passed"
@@ -386,7 +393,7 @@ export class MissionExecutionLoop extends EventEmitter {
                 && feature.lastValidatorStatus !== "passed"
                 && !this.activeValidations.has(feature.id)
               ) {
-                const currentFeature = this.missionStore.getFeature(feature.id) ?? feature;
+                const currentFeature = refreshedById.get(feature.id) ?? feature;
                 if (
                   currentFeature.loopState === "passed"
                   || currentFeature.lastValidatorStatus === "passed"
@@ -437,7 +444,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
     try {
       // Find the feature linked to this task
-      const feature = this.missionStore.getFeatureByTaskId(taskId);
+      const feature = await this.missionStore.getFeatureByTaskId(taskId);
       if (!feature) {
         loopLog.log(`Task ${taskId} has no linked feature; skipping validation`);
         return;
@@ -447,10 +454,10 @@ export class MissionExecutionLoop extends EventEmitter {
       // recoverActiveMissions guard. A parked/blocked/completed mission must
       // not keep minting validations (and Fix features) for completed tasks.
       // Features that don't resolve to a mission keep the current behavior.
-      const mission = this.resolveFeatureMission(feature);
+      const mission = await this.resolveFeatureMission(feature);
       if (mission && mission.status !== "active") {
         loopLog.log(`Feature ${feature.id} belongs to mission ${mission.id} with status "${mission.status}"; skipping validation`);
-        this.logFeatureWarningEvent(feature.id, "validation_skipped_mission_inactive", `Validation skipped: mission ${mission.id} status is "${mission.status}" (expected "active").`, {
+        await this.logFeatureWarningEvent(feature.id, "validation_skipped_mission_inactive", `Validation skipped: mission ${mission.id} status is "${mission.status}" (expected "active").`, {
           taskId,
           missionId: mission.id,
           missionStatus: mission.status,
@@ -459,14 +466,14 @@ export class MissionExecutionLoop extends EventEmitter {
       }
 
       if (feature.loopState === "needs_fix") {
-        this.missionStore.transitionLoopState(feature.id, "implementing");
+        await this.missionStore.transitionLoopState(feature.id, "implementing");
         feature.loopState = "implementing";
       }
 
       // Only validate features in "implementing" state
       if (feature.loopState !== "implementing") {
         loopLog.log(`Feature ${feature.id} loopState is "${feature.loopState}"; skipping validation`);
-        this.logFeatureWarningEvent(feature.id, "validation_skipped_loop_state", `Validation skipped: feature ${feature.id} is in loopState "${feature.loopState}" (expected "implementing").`, {
+        await this.logFeatureWarningEvent(feature.id, "validation_skipped_loop_state", `Validation skipped: feature ${feature.id} is in loopState "${feature.loopState}" (expected "implementing").`, {
           taskId,
           loopState: feature.loopState,
         });
@@ -475,7 +482,7 @@ export class MissionExecutionLoop extends EventEmitter {
 
       if (this.activeValidations.has(feature.id)) {
         loopLog.log(`Feature ${feature.id} already has an active validation; skipping duplicate trigger`);
-        this.logFeatureWarningEvent(feature.id, "validation_deduplicated", `Validation already running for feature ${feature.id}; duplicate trigger ignored.`, {
+        await this.logFeatureWarningEvent(feature.id, "validation_deduplicated", `Validation already running for feature ${feature.id}; duplicate trigger ignored.`, {
           taskId,
         });
         return;
@@ -500,10 +507,10 @@ export class MissionExecutionLoop extends EventEmitter {
   private async runFeatureValidation(feature: MissionFeature): Promise<void> {
     // Lazily guarantee a linked assertion before validation so every feature
     // is evaluated by the validator even when legacy data is missing links.
-    let assertions = this.missionStore.listAssertionsForFeature(feature.id);
+    let assertions = await this.missionStore.listAssertionsForFeature(feature.id);
     if (assertions.length === 0) {
       loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
-      assertions = this.missionStore.ensureFeatureAssertionLinked(feature.id);
+      assertions = await this.missionStore.ensureFeatureAssertionLinked(feature.id);
     }
 
     // Mark feature as being validated
@@ -513,7 +520,7 @@ export class MissionExecutionLoop extends EventEmitter {
       loopLog.log(`Running internal validation for feature ${feature.id} — no board task created (policy: docs/missions.md)`);
 
       // Start the validator run (no board task per docs/missions.md)
-      const run = this.missionStore.startValidatorRun(feature.id, "task_completion");
+      const run = await this.missionStore.startValidatorRun(feature.id, "task_completion");
       loopLog.log(`Started validator run ${run.id} for feature ${feature.id}`);
 
       // Run the validation
@@ -622,7 +629,7 @@ export class MissionExecutionLoop extends EventEmitter {
   ): Promise<ValidationResult> {
     loopLog.log(`Running validation for feature ${feature.id} with ${assertions.length} assertions`);
 
-    const milestone = this.resolveFeatureMilestone(feature);
+    const milestone = await this.resolveFeatureMilestone(feature);
 
     // Build the validation prompt
     const prompt = this.buildValidationPrompt(feature, assertions, milestone);
@@ -1288,8 +1295,8 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     return lines.join("\n");
   }
 
-  private resolveFeatureMilestone(feature: MissionFeature): Milestone | undefined {
-    const slice = this.missionStore.getSlice(feature.sliceId);
+  private async resolveFeatureMilestone(feature: MissionFeature): Promise<Milestone | undefined> {
+    const slice = await this.missionStore.getSlice(feature.sliceId);
     if (!slice) {
       return undefined;
     }
@@ -1297,8 +1304,8 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     return this.missionStore.getMilestone(slice.milestoneId);
   }
 
-  private resolveFeatureMission(feature: MissionFeature): Mission | undefined {
-    const milestone = this.resolveFeatureMilestone(feature);
+  private async resolveFeatureMission(feature: MissionFeature): Promise<Mission | undefined> {
+    const milestone = await this.resolveFeatureMilestone(feature);
     if (!milestone) {
       return undefined;
     }
@@ -1306,27 +1313,27 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     return this.missionStore.getMission(milestone.missionId);
   }
 
-  private completeValidatorRunIfStillRunning(
+  private async completeValidatorRunIfStillRunning(
     runId: string | undefined,
     status: "passed" | "failed" | "blocked" | "error",
     summaryOrReason?: string,
-  ): boolean {
+  ): Promise<boolean> {
     if (!runId) {
       return false;
     }
 
     if (typeof this.missionStore.getValidatorRun !== "function") {
-      this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
+      await this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
       return true;
     }
 
-    const run = this.missionStore.getValidatorRun(runId);
+    const run = await this.missionStore.getValidatorRun(runId);
     if (!run || run.status !== "running") {
       loopLog.warn(`Validator run ${runId} is no longer running; skipping ${status} completion.`);
       return false;
     }
 
-    this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
+    await this.missionStore.completeValidatorRun(runId, status, summaryOrReason);
     return true;
   }
 
@@ -1339,11 +1346,11 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     summary: string,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "passed", summary);
+      await this.completeValidatorRunIfStillRunning(runId, "passed", summary);
 
-      const feature = this.missionStore.getFeature(featureId);
+      const feature = await this.missionStore.getFeature(featureId);
       if (feature && feature.status !== "done") {
-        this.missionStore.updateFeatureStatus(featureId, "done");
+        await this.missionStore.updateFeatureStatus(featureId, "done");
       }
 
       loopLog.log(`Feature ${featureId} passed validation`);
@@ -1383,15 +1390,13 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           actual: a.actual,
         }));
 
-      const canCompleteRun = runId
-        ? typeof this.missionStore.getValidatorRun !== "function" || this.missionStore.getValidatorRun(runId)?.status === "running"
-        : false;
+      const canCompleteRun = runId ? (await this.missionStore.getValidatorRun(runId))?.status === "running" : false;
 
       if (runId && failures.length > 0 && canCompleteRun) {
-        this.missionStore.recordValidatorFailures(runId, failures);
+        await this.missionStore.recordValidatorFailures(runId, failures);
       }
 
-      this.completeValidatorRunIfStillRunning(runId, "failed", result.summary);
+      await this.completeValidatorRunIfStillRunning(runId, "failed", result.summary);
 
       loopLog.log(`Feature ${featureId} failed validation with ${failures.length} failures`);
 
@@ -1401,7 +1406,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
 
       // R16 — durable observability: a verification/validation failure is a
       // persisted mission event, not just a log line.
-      this.logFeatureMissionEvent(featureId, "error", "validation_failed", `Validation failed for feature ${featureId}: ${result.summary}`, {
+      await this.logFeatureMissionEvent(featureId, "error", "validation_failed", `Validation failed for feature ${featureId}: ${result.summary}`, {
         runId: runId ?? null,
         failedAssertionIds: failures.map((f) => f.assertionId),
         reason: failureReason,
@@ -1410,7 +1415,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
 
       // Create fix feature
       try {
-        const fixFeature = this.missionStore.createGeneratedFixFeature(
+        const fixFeature = await this.missionStore.createGeneratedFixFeature(
           featureId,
           runId || "unknown",
           failures.map((f) => f.assertionId),
@@ -1429,7 +1434,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           // logged. The branch-group-collision learning: silent triage stalls
           // are invisible mission deadlocks. The Fix Feature was created and can
           // be triaged manually, so we continue, but the failure is persisted.
-          this.logFeatureMissionEvent(featureId, "error", "fix_feature_triage_failed", `Auto-triage of fix feature ${fixFeature.id} failed: ${triageMessage}`, {
+          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_triage_failed", `Auto-triage of fix feature ${fixFeature.id} failed: ${triageMessage}`, {
             runId: runId ?? null,
             fixFeatureId: fixFeature.id,
             error: triageMessage,
@@ -1448,14 +1453,14 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
           loopLog.warn(`Feature ${featureId} retry budget exhausted; marking as blocked`);
           // completeValidatorRun already handles the blocked transition when budget is exhausted
           terminalStatus = "blocked";
-          this.logFeatureMissionEvent(featureId, "error", "retry_budget_exhausted", `Feature ${featureId} exhausted its retry budget`, {
+          await this.logFeatureMissionEvent(featureId, "error", "retry_budget_exhausted", `Feature ${featureId} exhausted its retry budget`, {
             runId: runId ?? null,
           });
           this.emit("validation:budget_exhausted", { featureId, runId });
         } else {
           loopLog.error(`Error creating fix feature for ${featureId}:`, message);
           // R16 — a swallowed Fix-Feature creation error is durably recorded.
-          this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_failed", `Failed to create fix feature for ${featureId}: ${message}`, {
+          await this.logFeatureMissionEvent(featureId, "error", "fix_feature_creation_failed", `Failed to create fix feature for ${featureId}: ${message}`, {
             runId: runId ?? null,
             error: message,
           });
@@ -1517,13 +1522,13 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     reason: string | undefined,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "blocked", reason);
+      await this.completeValidatorRunIfStillRunning(runId, "blocked", reason);
       loopLog.warn(`Feature ${featureId} verification inconclusive: ${reason ?? "no reason provided"}`);
 
       // R16/R21 — durable, distinguishable infra-failure event. The `outcome`
       // marker separates infra-driven non-passes from real behavioral fails so
       // the infra-failure rate can be tracked without conflating the two.
-      this.logFeatureMissionEvent(featureId, "warning", "verification_inconclusive", `Verification inconclusive for feature ${featureId}: ${reason ?? "verification could not conclude"}`, {
+      await this.logFeatureMissionEvent(featureId, "warning", "verification_inconclusive", `Verification inconclusive for feature ${featureId}: ${reason ?? "verification could not conclude"}`, {
         runId: runId ?? null,
         reason: reason ?? null,
         outcome: "inconclusive",
@@ -1552,9 +1557,9 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     blockedReason: string | undefined,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "blocked", blockedReason);
+      await this.completeValidatorRunIfStillRunning(runId, "blocked", blockedReason);
       loopLog.log(`Feature ${featureId} blocked: ${blockedReason}`);
-      this.logFeatureErrorEvent(featureId, "validation_blocked", `Validation blocked for feature ${featureId}: ${blockedReason ?? "no reason provided"}`, {
+      await this.logFeatureErrorEvent(featureId, "validation_blocked", `Validation blocked for feature ${featureId}: ${blockedReason ?? "no reason provided"}`, {
         runId,
         blockedReason: blockedReason ?? null,
       });
@@ -1579,9 +1584,9 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     error: string,
   ): Promise<void> {
     try {
-      this.completeValidatorRunIfStillRunning(runId, "error", error);
+      await this.completeValidatorRunIfStillRunning(runId, "error", error);
       loopLog.error(`Feature ${featureId} validation error: ${error}`);
-      this.logFeatureErrorEvent(featureId, "validation_error", `Validation error for feature ${featureId}: ${error}`, {
+      await this.logFeatureErrorEvent(featureId, "validation_error", `Validation error for feature ${featureId}: ${error}`, {
         runId,
         error,
       });
@@ -1597,40 +1602,39 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     }
   }
 
-  private logFeatureWarningEvent(
+  private async logFeatureWarningEvent(
     featureId: string,
     code: string,
     description: string,
     metadata: Record<string, unknown>,
-  ): void {
-    this.logFeatureMissionEvent(featureId, "warning", code, description, metadata);
+  ): Promise<void> {
+    await this.logFeatureMissionEvent(featureId, "warning", code, description, metadata);
   }
 
-  private logFeatureErrorEvent(
+  private async logFeatureErrorEvent(
     featureId: string,
     code: string,
     description: string,
     metadata: Record<string, unknown>,
-  ): void {
-    this.logFeatureMissionEvent(featureId, "error", code, description, metadata);
+  ): Promise<void> {
+    await this.logFeatureMissionEvent(featureId, "error", code, description, metadata);
   }
 
-  private logFeatureMissionEvent(
+  private async logFeatureMissionEvent(
     featureId: string,
     eventType: "warning" | "error",
     code: string,
     description: string,
     metadata: Record<string, unknown>,
-  ): void {
-    const feature = this.missionStore.getFeature(featureId);
-    if (!feature) return;
-    const slice = this.missionStore.getSlice(feature.sliceId);
-    if (!slice) return;
-    const milestone = this.missionStore.getMilestone(slice.milestoneId);
-    if (!milestone) return;
-
+  ): Promise<void> {
     try {
-      this.missionStore.logMissionEvent?.(milestone.missionId, eventType, description, {
+      const feature = await this.missionStore.getFeature(featureId);
+      if (!feature) return;
+      const slice = await this.missionStore.getSlice(feature.sliceId);
+      if (!slice) return;
+      const milestone = await this.missionStore.getMilestone(slice.milestoneId);
+      if (!milestone) return;
+      await this.missionStore.logMissionEvent?.(milestone.missionId, eventType, description, {
         code,
         featureId,
         sliceId: slice.id,

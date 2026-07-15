@@ -188,7 +188,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         if (store.backendMode) {
           const layer = store.asyncLayer!;
           await layer.transactionImmediate(async (tx) => {
-            const liveRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
+            const liveRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
             if (liveRow?.deletedAt) {
               throw new HandoffInvariantViolationError(
                 id,

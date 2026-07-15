@@ -897,6 +897,8 @@ export {
   ProjectIdentityMismatchError,
   readProjectIdentity,
   writeProjectIdentity,
+  hasProjectIdentity,
+  PROJECT_IDENTITY_FILENAME,
   readProjectIdentityAsync,
   writeProjectIdentityAsync,
 } from "./project-identity.js";
@@ -1178,6 +1180,8 @@ export type {
   PluginOnLoad,
   PluginOnUnload,
   PluginOnSchemaInit,
+  PluginOnPostgresSchemaInit,
+  PluginPostgresSchemaDefinition,
   PluginOnTaskCreated,
   PluginOnTaskMoved,
   PluginOnTaskCompleted,
@@ -1813,6 +1817,7 @@ export { InsightLifecycleError, InsightStore, computeInsightFingerprint } from "
 // so the dashboard insights routes + run sweeper can type the run-execution store
 // path as the `InsightStore | AsyncInsightStore` union (insight-run execution in PG mode).
 export { AsyncInsightStore } from "./async-insight-store.js";
+export { AsyncCentralClaimStore } from "./async-central-db.js";
 export {
   classifyInsightRunError,
   executeInsightRunLifecycle,
@@ -2262,8 +2267,9 @@ export {
   // Runtime startup factory (cutover milestone). Production construction sites
   // (engine, dashboard, CLI serve/dashboard, desktop) consult this to boot
   // against PostgreSQL. Post default-flip: embedded PG is the default when
-  // DATABASE_URL is unset; FUSION_NO_EMBEDDED_PG=1 opts back to legacy SQLite.
+  // DATABASE_URL is unset; obsolete SQLite opt-out settings fail explicitly.
   createTaskStoreForBackend,
+  createCentralBackendLayer,
   shouldUsePostgresBackend,
   isEmbeddedPgRequested,
   isEmbeddedPgOptedOut,
@@ -2277,6 +2283,7 @@ export type {
   PostgresConnections,
   CreateConnectionOptions,
   AsyncDataLayer,
+  CentralBackendLayerResult,
   DrizzleDb,
   DbTransaction,
   TransactionOptions,
@@ -2298,6 +2305,7 @@ export type {
   StampMigratedProjectRowsResult,
   BackendBootResult,
   CreateTaskStoreForBackendOptions,
+  LoadedPluginSchemaContract,
 } from "./postgres/index.js";
 
 // FNXC:RuntimeSatelliteAsync 2026-06-24-13:30:
@@ -2362,6 +2370,14 @@ export { sql as drizzleSql, eq as drizzleEq } from "drizzle-orm";
 // postgres internals. The shape definitions are harmless to expose: they only
 // describe tables the AsyncDataLayer can already reach.
 export { schema as postgresSchema } from "./postgres/index.js";
+export {
+  countKnowledgePagesInPostgres,
+  queryKnowledgePagesInPostgres,
+  upsertKnowledgePageInPostgres,
+  type AsyncKnowledgePage,
+  type AsyncKnowledgePageInput,
+  type AsyncKnowledgeQueryOptions,
+} from "./async-knowledge.js";
 export {
   upsertWorkflowStepResult,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,

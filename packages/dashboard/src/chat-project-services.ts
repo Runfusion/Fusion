@@ -1,6 +1,7 @@
 import { AgentStore, ChatStore, type MessageStore, type TaskStore } from "@fusion/core";
 import type { ProjectEngineManager } from "@fusion/engine";
 import { ChatManager } from "./chat.js";
+import { requireAsyncLayer } from "./require-async-layer.js";
 
 const scopedChatStoreCache = new Map<string, ChatStore>();
 
@@ -18,10 +19,9 @@ export function getOrCreateScopedChatStore(store: TaskStore, fallbackChatStore?:
   const cached = scopedChatStoreCache.get(key);
   if (cached) return cached;
 
-  // FNXC:RuntimeSatelliteAsync 2026-06-24-21:50:
-  // ChatStore dual-path: pass async layer in backend mode, sync DB otherwise.
-  const layer = store.getAsyncLayer();
-  const chatStore = new ChatStore(store.getFusionDir(), layer ? null : store.getDatabase(), { asyncLayer: layer });
+  /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Project-scoped chat stores require the authoritative PostgreSQL layer; missing wiring must not create SQLite state. */
+  const layer = requireAsyncLayer(store, "Scoped ChatStore");
+  const chatStore = new ChatStore(layer);
   scopedChatStoreCache.set(key, chatStore);
   return chatStore;
 }

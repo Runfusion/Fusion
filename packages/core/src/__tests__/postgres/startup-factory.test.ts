@@ -3,15 +3,16 @@
  * Tests for the runtime startup factory (createTaskStoreForBackend).
  *
  * Post default-flip (flip-embedded-pg-default), embedded PostgreSQL is the
- * DEFAULT backend when DATABASE_URL is unset. FUSION_NO_EMBEDDED_PG=1 is the
- * opt-out back to legacy SQLite. These gate-relevant tests assert the
+ * DEFAULT backend when DATABASE_URL is unset. The former
+ * FUSION_NO_EMBEDDED_PG escape hatch is rejected after the final cutover so
+ * production cannot silently return to a removed SQLite runtime. These
+ * gate-relevant tests assert the
  * resolution contract without requiring a real embedded boot (the merge gate
  * must stay green without running initdb):
  *   - isEmbeddedPgRequested / isEmbeddedPgOptedOut resolution (opt-out
  *     semantics: embedded is on by default unless opted out).
- *   - shouldUsePostgresBackend resolution (true by default; false only on opt-out).
- *   - createTaskStoreForBackend returns null ONLY when the operator opted out
- *     (FUSION_NO_EMBEDDED_PG=1) or passed embeddedPgRequested:false.
+ *   - shouldUsePostgresBackend always selects PostgreSQL.
+ *   - createTaskStoreForBackend rejects obsolete SQLite opt-out controls.
  *   - createTaskStoreForBackend requires rootDir when projectId is absent.
  *
  * The external-mode and embedded-boot integration tests (real PG / real initdb)
@@ -34,9 +35,8 @@ import { resolveBackend } from "../../postgres/backend-resolver.js";
 
 describe("startup-factory: isEmbeddedPgOptedOut (FUSION_NO_EMBEDDED_PG)", () => {
   // FNXC:BackendFlip 2026-06-26-15:00:
-  // Post default-flip, the opt-out is the single control. Truthy values opt
-  // OUT of embedded PG (back to legacy SQLite); everything else keeps the
-  // embedded default.
+  // The parser remains for a precise startup diagnostic. Truthy values detect
+  // the removed opt-out configuration; createTaskStoreForBackend rejects it.
   const cases: Array<[string, boolean]> = [
     ["1", true],
     ["true", true],
@@ -53,7 +53,7 @@ describe("startup-factory: isEmbeddedPgOptedOut (FUSION_NO_EMBEDDED_PG)", () => 
   ];
 
   for (const [raw, expected] of cases) {
-    it(`treats FUSION_NO_EMBEDDED_PG="${raw}" as ${expected ? "opted-out (legacy SQLite)" : "not opted-out (embedded PG default)"}`, () => {
+    it(`treats FUSION_NO_EMBEDDED_PG="${raw}" as ${expected ? "obsolete opt-out configured" : "embedded PG default"}`, () => {
       expect(isEmbeddedPgOptedOut({ [NO_EMBEDDED_PG_ENV]: raw })).toBe(expected);
     });
   }
@@ -67,12 +67,13 @@ describe("startup-factory: isEmbeddedPgOptedOut (FUSION_NO_EMBEDDED_PG)", () => 
 describe("startup-factory: isEmbeddedPgRequested (inverted: default-on)", () => {
   // FNXC:BackendFlip 2026-06-26-15:00:
   // isEmbeddedPgRequested is now the logical inverse of isEmbeddedPgOptedOut:
-  // embedded PG is requested (used) UNLESS FUSION_NO_EMBEDDED_PG opts out.
+  // embedded PG is requested UNLESS the obsolete opt-out is present; startup
+  // rejects that configuration instead of selecting another backend.
   it("returns true by default (embedded PG is the default backend)", () => {
     expect(isEmbeddedPgRequested({})).toBe(true);
   });
 
-  it("returns false when FUSION_NO_EMBEDDED_PG=1 is set (opt-out to legacy SQLite)", () => {
+  it("returns false when obsolete FUSION_NO_EMBEDDED_PG=1 is detected", () => {
     expect(isEmbeddedPgRequested({ [NO_EMBEDDED_PG_ENV]: "1" })).toBe(false);
   });
 
@@ -88,7 +89,7 @@ describe("startup-factory: isEmbeddedPgRequested (inverted: default-on)", () => 
     // FNXC:BackendFlip 2026-06-26-15:00:
     // Setting FUSION_EMBEDDED_PG=1 used to opt in; now it is a no-op because
     // embedded is already the default. Setting it to 0 also does nothing
-    // (it cannot opt out — only FUSION_NO_EMBEDDED_PG can).
+    // (it cannot opt out; the former opt-out now fails startup).
     expect(isEmbeddedPgRequested({ [EMBEDDED_PG_ENV]: "1" })).toBe(true);
     expect(isEmbeddedPgRequested({ [EMBEDDED_PG_ENV]: "0" })).toBe(true);
   });
@@ -112,14 +113,14 @@ describe("startup-factory: shouldUsePostgresBackend", () => {
     expect(shouldUsePostgresBackend({ DATABASE_URL: "   " })).toBe(true);
   });
 
-  it("returns false when DATABASE_URL is unset AND FUSION_NO_EMBEDDED_PG=1 (opt-out)", () => {
+  it("returns true when the obsolete SQLite opt-out is present", () => {
     expect(
       shouldUsePostgresBackend({ [NO_EMBEDDED_PG_ENV]: "1" }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("returns false when embeddedPgRequested override is false (force legacy SQLite)", () => {
-    expect(shouldUsePostgresBackend({}, { embeddedPgRequested: false })).toBe(false);
+  it("returns true when the obsolete embedded override is false", () => {
+    expect(shouldUsePostgresBackend({}, { embeddedPgRequested: false })).toBe(true);
   });
 
   it("returns true when embeddedPgRequested override is true (force embedded)", () => {
@@ -138,33 +139,26 @@ describe("startup-factory: createTaskStoreForBackend resolution (no real boot)",
     await rm(rootDir, { recursive: true, force: true });
   });
 
-  it("returns null when FUSION_NO_EMBEDDED_PG=1 opts out (legacy SQLite path)", async () => {
-    // FNXC:BackendFlip 2026-06-26-15:00:
-    // The ONLY way to get the legacy SQLite null result post default-flip is
-    // the explicit opt-out. This keeps the gate fast (no initdb) for tests
-    // that need the legacy path.
-    const result = await createTaskStoreForBackend({
+  it("rejects FUSION_NO_EMBEDDED_PG instead of falling back to SQLite", async () => {
+    await expect(createTaskStoreForBackend({
       rootDir,
-      env: { [NO_EMBEDDED_PG_ENV]: "1" }, // no DATABASE_URL, opt-out
-    });
-    expect(result).toBeNull();
+      env: { [NO_EMBEDDED_PG_ENV]: "1" },
+    })).rejects.toThrow(/SQLite opt-out.*removed/i);
   });
 
-  it("returns null when DATABASE_URL is whitespace and FUSION_NO_EMBEDDED_PG=1", async () => {
-    const result = await createTaskStoreForBackend({
+  it("rejects the SQLite opt-out when DATABASE_URL is whitespace", async () => {
+    await expect(createTaskStoreForBackend({
       rootDir,
       env: { DATABASE_URL: "   ", [NO_EMBEDDED_PG_ENV]: "1" },
-    });
-    expect(result).toBeNull();
+    })).rejects.toThrow(/SQLite opt-out.*removed/i);
   });
 
-  it("returns null when embeddedPgRequested override is false (force legacy SQLite)", async () => {
-    const result = await createTaskStoreForBackend({
+  it("rejects embeddedPgRequested:false instead of forcing SQLite", async () => {
+    await expect(createTaskStoreForBackend({
       rootDir,
       env: {},
       embeddedPgRequested: false,
-    });
-    expect(result).toBeNull();
+    })).rejects.toThrow(/SQLite opt-out.*removed/i);
   });
 
   it("throws when rootDir is missing and projectId is absent (and PG is requested)", async () => {
@@ -176,13 +170,10 @@ describe("startup-factory: createTaskStoreForBackend resolution (no real boot)",
     ).rejects.toThrow(/rootDir is required/i);
   });
 
-  it("does not throw on the legacy SQLite opt-out path even without rootDir (short-circuits before the guard)", async () => {
-    // FNXC:BackendFlip 2026-06-26-15:00:
-    // Opt-out path: returns null before reaching the rootDir guard.
-    const result = await createTaskStoreForBackend({
+  it("rejects the removed SQLite opt-out before validating a project root", async () => {
+    await expect(createTaskStoreForBackend({
       env: { [NO_EMBEDDED_PG_ENV]: "1" },
-    });
-    expect(result).toBeNull();
+    })).rejects.toThrow(/SQLite opt-out.*removed/i);
   });
 });
 

@@ -44,6 +44,8 @@ export function isWorkflowColumnsCompatibilityFlagEnabled(settings: Pick<Setting
   return settings?.experimentalFeatures?.workflowColumns === true;
 }
 import { type PluginGateVerdict } from "./plugin-gate-verdict.js";
+import type { PluginOnSchemaInit, PluginPostgresSchemaDefinition } from "./plugin-types.js";
+import { assertLoadedPluginSchemaInitHooksSupported, type LoadedPluginSchemaContract } from "./postgres/plugin-schema-hook.js";
 import { DEFAULT_WORKFLOW_POOL_ID } from "./workflow-capacity.js";
 import type { WorkflowIr, WorkflowFieldDefinition, WorkflowSettingDefinition } from "./workflow-ir-types.js";
 import type { WorkflowMovePolicyInput } from "./workflow-extension-types.js";
@@ -66,6 +68,7 @@ import { ArchiveDatabase } from "./archive-db.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import { MissionStore } from "./mission-store.js";
 import { AsyncMissionStore } from "./async-mission-store.js";
+import { reconcileSoftDeletedColumnDriftAsync } from "./task-store/async-self-healing.js";
 import { PluginStore } from "./plugin-store.js";
 import { InsightStore } from "./insight-store.js";
 import { ResearchStore } from "./research-store.js";
@@ -106,6 +109,9 @@ import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWi
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
+import { pruneOperationalLogsAsync, type OperationalLogPruneResult } from "./task-store/async-maintenance.js";
+import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async-phantom-reservations.js";
+import { queryRunAuditEvents } from "./task-store/async-audit.js";
 import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
 import { upsertWorkflowWorkItemImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
@@ -313,7 +319,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return getOrCreateForProjectImpl(this, projectId, centralCore, globalSettingsDir, asyncLayer);
   }
 
-  /** Hybrid storage: task metadata in SQLite, blob files on disk. Reads tolerate missing files/dirs. */
+  /** FNXC:PostgresRuntimeStorage 2026-07-14-18:47: Task metadata is authoritative in PostgreSQL; task document/blob files remain on disk. */
   public fusionDir: string;
   public tasksDir: string;
   public configPath: string;
@@ -324,12 +330,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public _archiveDb: ArchiveDatabase | null = null;
 
   /**
-   * FNXC:RuntimeBackendInjection 2026-06-24-14:00: When an AsyncDataLayer is injected, TaskStore operates in "backend mode": all data access delegates to PostgreSQL via Drizzle and no SQLite Database is constructed.
-   * When absent, the legacy SQLite path is byte-identical to pre-migration. Co-located stores receive the layer via getAsyncLayer().
+   * FNXC:PostgresRuntimeStorage 2026-07-14-18:47: Production TaskStores receive an AsyncDataLayer and delegate all persistence to PostgreSQL. A missing layer is a construction error; retained sync members exist only until compatibility tests and types are removed.
    */
   public readonly asyncLayer: AsyncDataLayer | null = null;
+  private pluginPostgresSchemaExecutor: ((contracts: readonly LoadedPluginSchemaContract[]) => Promise<void>) | null = null;
 
-  /** True when AsyncDataLayer was injected. Gates all SQLite construction sites. */
+  /** True when the mandatory production AsyncDataLayer was injected. */
   /** @internal TaskStore decomposition: accessible to extracted modules */
   public get backendMode(): boolean {
     return this.asyncLayer !== null;
@@ -682,23 +688,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return reconcileOrphanedTaskDirsImpl(this, opts);
   }
 
-  /**
-   * FNXC:TaskStoreConsistency 2026-06-27-15:00:
-   * FN-7069 phantoms are committed task-id reservations without any task row or task.json.
-   * Maintenance must prune their orphaned child rows without resurrecting/freeing the ID.
-   * In backend mode (PostgreSQL), this is a no-op returning empty results until the async
-   * layer gains an equivalent reconciliation method. The SQLite path is unreachable because
-   * production runs in backend mode.
-   */
+  /** Reconcile committed reservations whose task and archive representations are absent. */
   async reconcilePhantomCommittedReservations(): Promise<{
     reconciled: string[];
     skipped: Array<{ id: string; reason: string }>;
   }> {
-    if (this.backendMode) {
-      return { reconciled: [], skipped: [] };
-    }
-    // SQLite fallback (unreachable in production — backend mode is the default).
-    return { reconciled: [], skipped: [] };
+    return reconcilePhantomCommittedReservationsAsync(this);
   }
   public async readTaskJson(dir: string): Promise<Task> {
     return readTaskJsonImpl(this, dir);
@@ -1166,7 +1161,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   getWorkflowSettingsProjectId(): string {
     return getWorkflowSettingsProjectIdImpl(this);
   }
-  listWorkflowSettingValuesForProject(): Record<string, Record<string, unknown>> {
+  async listWorkflowSettingValuesForProject(): Promise<Record<string, Record<string, unknown>>> {
     return listWorkflowSettingValuesForProjectImpl(this);
   }
   async computeMovedSettingsTargetWorkflowIds(): Promise<Set<string>> {
@@ -1458,12 +1453,33 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    getRunAuditEvents(options: RunAuditEventFilter = {}): RunAuditEvent[] {
     return getRunAuditEventsImpl(this, options);
   }
-   getWorkflowParitySummary(options: { since?: string; limit?: number } = {}): WorkflowParitySummary {
+  /** PostgreSQL-authoritative audit reader; sync fallback remains for test doubles. */
+  async getRunAuditEventsAsync(options: RunAuditEventFilter = {}): Promise<RunAuditEvent[]> {
+    if (this.asyncLayer) {
+      const events = await queryRunAuditEvents(this.asyncLayer.db, options);
+      return events.map((event) => ({
+        ...event,
+        taskId: event.taskId ?? undefined,
+        metadata: event.metadata ?? undefined,
+        domain: event.domain as RunAuditEvent["domain"],
+        mutationType: event.mutationType as RunAuditEvent["mutationType"],
+      }));
+    }
+    return getRunAuditEventsImpl(this, options);
+  }
+  /** PostgreSQL soft-delete invariant repair used by engine self-healing. */
+  async reconcileSoftDeletedColumnDriftBackend(
+    recordAudit: (candidate: { id: string; previousColumn: string }) => Promise<void>,
+  ): Promise<{ reconciled: number }> {
+    if (!this.asyncLayer) return { reconciled: 0 };
+    return reconcileSoftDeletedColumnDriftAsync(this.asyncLayer, recordAudit);
+  }
+   async getWorkflowParitySummary(options: { since?: string; limit?: number } = {}): Promise<WorkflowParitySummary> {
     return getWorkflowParitySummaryImpl(this, options);
   }
 
 /** Aggregate the `workflowColumns` flag default-flip criteria (U12, KTD-8) into */
-  computeWorkflowColumnsGraduationReport( options: { since?: string; limit?: number } = {}, ): WorkflowColumnsGraduationReport {
+  async computeWorkflowColumnsGraduationReport( options: { since?: string; limit?: number } = {}, ): Promise<WorkflowColumnsGraduationReport> {
     return computeWorkflowColumnsGraduationReportImpl(this, options);
   }
 
@@ -1818,7 +1834,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async cleanupBranchForTask(task: Task): Promise<string[]> {
     return cleanupBranchForTaskImpl(this, task);
   }
-  clearStaleExecutionStartBranchReferences(deletedBranches: string[], ownerTaskId?: string): string[] {
+  async clearStaleExecutionStartBranchReferences(deletedBranches: string[], ownerTaskId?: string): Promise<string[]> {
     return clearStaleExecutionStartBranchReferencesImpl(this, deletedBranches, ownerTaskId);
   }
   public async collectMergeDetails( _id: string, _branch: string, task: Task, commitMessage: string, mergeTarget?: { branch: string; source: "task-base-branch" | "task-branch-context" | "branch-group-integration" | "project-default" | "legacy-main"; }, ): Promise<import("./types.js").MergeDetails> {
@@ -2188,13 +2204,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async workflowColumnsFlagOn(): Promise<boolean> {
     return isWorkflowColumnsCompatibilityFlagEnabled(await this.getSettingsFast());
   }
-  public listWorkflowOccupantTaskIds(workflowId: string, includeNullSelection: boolean): string[] {
+  public async listWorkflowOccupantTaskIds(workflowId: string, includeNullSelection: boolean): Promise<string[]> {
     return listWorkflowOccupantTaskIdsImpl(this, workflowId, includeNullSelection);
   }
 
   /** Map column id → occupant count for the tasks selecting `workflowId`
    *  (plus null-selection tasks when `includeNullSelection`). */
-  public occupantsByColumnForWorkflow( workflowId: string, includeNullSelection: boolean, ): Map<string, number> {
+  public async occupantsByColumnForWorkflow( workflowId: string, includeNullSelection: boolean, ): Promise<Map<string, number>> {
     return occupantsByColumnForWorkflowImpl(this, workflowId, includeNullSelection);
   }
   public async rehomeOccupant( taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>, ): Promise<void> {
@@ -2400,6 +2416,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   pruneOperationalLogs(retentionMs: number): { deletedByTable: Record<string, number>; deletedTotal: number } {
     return this.db.pruneOperationalLogs(retentionMs);
   }
+
+  async pruneOperationalLogsAsync(retentionMs: number): Promise<OperationalLogPruneResult> {
+    if (!this.asyncLayer) {
+      return this.pruneOperationalLogs(retentionMs);
+    }
+    return pruneOperationalLogsAsync(this.asyncLayer, retentionMs);
+  }
   pruneAgentLogFiles(retentionDays: number): { prunedFiles: number; prunedEntries: number; freedBytes: number } {
     return pruneAgentLogFilesImpl(this, retentionDays);
   }
@@ -2507,6 +2530,45 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   getPluginStore(): PluginStore {
     return getPluginStoreImpl(this);
+  }
+  /**
+   * FNXC:PluginPostgresSchema 2026-07-14-17:25:
+   * Every host (engine, CLI, and desktop) uses this backend-aware schema entrypoint after loading plugins. PostgreSQL executes only registered PG-native hooks and fails on SQLite-only third-party hooks; legacy mode retains the existing Database runner.
+   */
+  /** @internal Installed by the backend startup factory; never exposed through PluginContext. */
+  setPluginPostgresSchemaExecutor(
+    executor: (contracts: readonly LoadedPluginSchemaContract[]) => Promise<void>,
+  ): void {
+    this.pluginPostgresSchemaExecutor = executor;
+  }
+
+  preflightPluginSchema(
+    pluginId: string,
+    hooks: { onSchemaInit?: PluginOnSchemaInit; onPostgresSchemaInit?: () => PluginPostgresSchemaDefinition },
+  ): LoadedPluginSchemaContract | null {
+    const postgresSchema = hooks.onPostgresSchemaInit?.();
+    const contract = hooks.onSchemaInit || postgresSchema
+      ? { pluginId, legacyHook: hooks.onSchemaInit, postgresSchema }
+      : null;
+    if (this.backendMode && contract) assertLoadedPluginSchemaInitHooksSupported([contract]);
+    return contract;
+  }
+
+  async runPluginSchemaInits(hooks: LoadedPluginSchemaContract[]): Promise<void> {
+    if (this.backendMode) {
+      if (!this.getAsyncLayer()) throw new Error("backend TaskStore is missing its AsyncDataLayer");
+      assertLoadedPluginSchemaInitHooksSupported(hooks);
+      if (!this.pluginPostgresSchemaExecutor) {
+        throw new Error("backend TaskStore is missing its PostgreSQL plugin schema executor");
+      }
+      await this.pluginPostgresSchemaExecutor(hooks);
+      return;
+    }
+    await this.getDatabase().runPluginSchemaInits(
+      hooks.flatMap((entry) => entry.legacyHook
+        ? [{ pluginId: entry.pluginId, hook: entry.legacyHook as PluginOnSchemaInit }]
+        : []),
+    );
   }
   public async isPluginInstalled(pluginId: string): Promise<boolean> {
     return isPluginInstalledImpl(this, pluginId);

@@ -6,7 +6,7 @@ import { stat, readdir, readFile as fsReadFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  TaskStore,
+  type TaskStore,
   AutomationStore,
   CentralCore,
   AgentStore,
@@ -773,6 +773,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // (they're assigned after initialization, but the variables exist from the start).
   // prefer-const disabled: callbacks close over these identifiers before the
   // single assignment below, which requires `let` even though no reassignment occurs.
+  // eslint-disable-next-line prefer-const
   let store: TaskStore | undefined;
   // eslint-disable-next-line prefer-const
   let agentStore: AgentStore | undefined;
@@ -877,28 +878,25 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // FNXC:BackendFlip 2026-06-26-14:40:
   // Consult the startup factory to boot a PostgreSQL-backed TaskStore. Post
   // default-flip: the factory boots embedded PG by default when DATABASE_URL
-  // is unset, external PG when DATABASE_URL is set, and returns null only
-  // when the operator opted out via FUSION_NO_EMBEDDED_PG=1 (legacy SQLite
-  // path). When it returns null, the legacy SQLite path runs unchanged. The
+  // is unset and external PG when DATABASE_URL is set. The
   // backend shutdown handle is captured so the dashboard teardown path can
   // release the pool / stop an embedded cluster; it is invoked via the
   // existing store.close() (which closes the AsyncDataLayer) plus the
   // dashboardBackendShutdown
   // registered below for embedded-cluster teardown.
-  let dashboardBackendShutdown: (() => Promise<void>) | undefined;
   const dashboardBackendBoot = await createTaskStoreForBackend({ rootDir: cwd });
-  if (dashboardBackendBoot) {
-    store = dashboardBackendBoot.taskStore;
-    dashboardBackendShutdown = dashboardBackendBoot.shutdown;
-  } else {
-    store = new TaskStore(cwd);
-  }
+  // FNXC:PostgresFinalCutover 2026-07-14-17:20: Dashboard runtime storage is
+  // PostgreSQL-only; factory failure is surfaced instead of creating a dead store.
+  store = dashboardBackendBoot.taskStore;
+  const dashboardBackendShutdown = dashboardBackendBoot.shutdown;
+  const dashboardLayer = store.getAsyncLayer();
+  if (!dashboardLayer) throw new Error("Dashboard runtime requires the project PostgreSQL AsyncDataLayer");
   // FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:05:
   // Propagate the backend mode (asyncLayer) from the resolved TaskStore so
   // AutomationStore does not construct a SQLite file under PostgreSQL. The
   // `?? undefined` coerces `AsyncDataLayer | null` to the optional option
   // shape used by the other satellite stores.
-  const automationStore = new AutomationStore(cwd, { asyncLayer: store.getAsyncLayer() ?? undefined });
+  const automationStore = new AutomationStore(cwd, { asyncLayer: dashboardLayer });
 
   // CentralCore.init() is independent of store inits — start it early so it
   // overlaps with plugin loading and extension resolution instead of running
@@ -916,7 +914,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // kanban board and all dashboard UI flows.
   const centralCoreInitPromise = !noEngine
     ? (async () => {
-        const core = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() ?? undefined });
+        const core = new CentralCore(undefined, { asyncLayer: dashboardLayer });
         try { await core.init(); } catch { /* non-fatal — fallback defaults */ }
         return core;
       })()
@@ -936,13 +934,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     }
   };
 
-  // TaskStore / AutomationStore / PluginStore / AgentStore all open the SAME
-  // .fusion/fusion.db file and run addColumnIfMissing migrations (a TOCTOU
-  // `hasColumn` → ALTER pattern with no per-process lock). node:sqlite's
-  // DatabaseSync is synchronous, so Promise.all on these gives no real
-  // parallelism anyway — explicit sequencing keeps the schema-migration race
-  // from triggering if any init() body ever introduces an `await` between
-  // hasColumn and ALTER TABLE.
+  // FNXC:PostgresFinalCutover 2026-07-14-17:20: Initialize the PostgreSQL-backed
+  // store and satellite adapters in dependency order so each receives the live
+  // AsyncDataLayer before watchers and engines begin dispatching work.
   await phaseTime("store.init", () => store.init());
   await phaseTime("automationStore.init", () => automationStore.init());
   const pluginStore = store.getPluginStore();
@@ -956,7 +950,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // any getter touches `this.db`. Mirrors the AutomationStore fix on line ~893
   // (VAL-CROSS-008 dashboard boot on embedded PostgreSQL). The `?? undefined`
   // coerces `AsyncDataLayer | null` to the optional option shape.
-  agentStore = new AgentStore({ rootDir: store.getFusionDir(), asyncLayer: store.getAsyncLayer() ?? undefined });
+  agentStore = new AgentStore({ rootDir: store.getFusionDir(), asyncLayer: dashboardLayer });
   if (tui) tui.setLoadingStatus(DASHBOARD_STARTUP_STATUS.initializingAgentStore);
   await phaseTime("agentStore.init", () => agentStore!.init());
   // store.watch() is filesystem-watcher setup — no DB schema work, safe to
@@ -1004,13 +998,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       projectStore = store;
     } else {
       const boot = await createTaskStoreForBackend({ rootDir: projectPath });
-      if (boot) {
-        projectStore = boot.taskStore;
-        projectStoreShutdowns.set(projectPath, boot.shutdown);
-      } else {
-        projectStore = new TaskStore(projectPath);
-        await projectStore.init();
-      }
+      projectStore = boot.taskStore;
+      projectStoreShutdowns.set(projectPath, boot.shutdown);
     }
     projectStores.set(projectPath, projectStore);
     return projectStore;
@@ -1175,7 +1164,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     event: string | symbol;
     handler: (...args: any[]) => void;
   }> = [];
-  const disposeCallbacks: Array<() => void> = [];
+  const disposeCallbacks: Array<() => Promise<void> | void> = [];
   let disposed = false;
   let shutdownInProgress = false;
 
@@ -1451,21 +1440,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
       if (schemaHooks.length > 0) {
         try {
-          /*
-           * FNXC:SqliteFinalRemoval 2026-06-25-16:25:
-           * Skip SQLite-specific plugin schema init in backend mode (PostgreSQL
-           * uses Drizzle migrations for schema management).
-           */
-          if (store.isBackendMode()) {
-            logSink.log("[plugins] Schema initialization skipped — backend mode (PostgreSQL Drizzle migrations)");
-          } else {
-            await store.getDatabase().runPluginSchemaInits(schemaHooks);
-          }
+          /* FNXC:PluginPostgresSchema 2026-07-14-17:30: Dashboard startup materializes runtime-loaded plugin schemas through the backend-aware TaskStore contract instead of skipping PostgreSQL hooks. */
+          await store.runPluginSchemaInits(schemaHooks);
         } catch (err) {
           logSink.log(
             `Schema initialization failed: ${err instanceof Error ? err.message : err}`,
             "plugins",
           );
+          throw err;
         }
       }
     } catch (err) {
@@ -1924,7 +1906,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       })
     : undefined;
 
-  function dispose(): void {
+  async function disposeAsync(): Promise<void> {
     if (disposed) return;
     disposed = true;
 
@@ -1945,29 +1927,42 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       // after q" regression. We are exiting; drop teardown output instead.
       // FUSION_DEBUG_SHUTDOWN still surfaces per-step timing on stderr.
       logSink.silence();
-      void tui.stop();
+      await tui.stop();
     }
 
     for (const { target, event, handler } of handlers) {
       target.off(event, handler);
     }
     handlers.length = 0;
-    for (const callback of disposeCallbacks.splice(0)) {
-      callback();
+    /* FNXC:PostgresDashboardLifecycle 2026-07-14-19:10: Teardown runs in reverse ownership order and is fully awaited before process.exit, so engines stop before their shared PostgreSQL backend and no pool shutdown is fire-and-forget. */
+    for (const callback of disposeCallbacks.splice(0).reverse()) {
+      try {
+        await callback();
+      } catch (error) {
+        logSink.warn(`Dashboard dispose callback failed: ${error instanceof Error ? error.message : String(error)}`, "dashboard");
+      }
     }
   }
+
+  const dispose = (): void => {
+    void disposeAsync();
+  };
 
   // FNXC:RuntimeStartupWiring 2026-06-24-10:20:
   // Register the backend shutdown (release PG pool / stop embedded cluster)
   // so it runs during dispose(). store.close() already closes the
   // AsyncDataLayer pool; this adds embedded-cluster teardown.
   if (dashboardBackendShutdown) {
-    disposeCallbacks.push(() => {
-      void dashboardBackendShutdown!().catch(() => undefined);
+    disposeCallbacks.push(async () => {
+      await dashboardBackendShutdown!().catch(() => undefined);
     });
   }
-  disposeCallbacks.push(() => {
-    void closeProjectStores();
+  /*
+  FNXC:PostgresConflictResolution 2026-07-14-19:47:
+  Preserve main's project-store reuse while awaiting every factory-owned shutdown through dashboard's single disposal chain. PostgreSQL-only startup has no layerless fallback, and direct signal handlers must not close the same stores a second time.
+  */
+  disposeCallbacks.push(async () => {
+    await closeProjectStores();
   });
 
   // ── createServer: deferred until engine is conditionally started ────
@@ -2297,7 +2292,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       await logShutdownDiagnostics(signal);
-      dispose();
+      await disposeAsync();
       stopDiagnosticInterval();
 
       // Tear down user-project dev-server children (and their process groups)
@@ -2331,8 +2326,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         closeCentralCoreBestEffort(centralCoreForEngine, `shutdown (${signal})`),
       );
 
-      await timeShutdownStep("closeProjectStores", () => closeProjectStores());
-      store.close();
       process.exit(shutdownExitCode);
     };
     /*
@@ -2370,7 +2363,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // instance for peer exchange and mDNS discovery.
     //
     try {
-      centralCoreForMesh = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() ?? undefined });
+      centralCoreForMesh = new CentralCore(undefined, { asyncLayer: dashboardLayer });
       await centralCoreForMesh.init();
 
       peerExchangeService = new PeerExchangeService(centralCoreForMesh);
@@ -2635,7 +2628,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       await logShutdownDiagnostics(signal);
-      dispose();
+      await disposeAsync();
       stopDiagnosticInterval();
       if (triggerScheduler) triggerScheduler.stop();
       if (heartbeatMonitorImpl) heartbeatMonitorImpl.stop();
@@ -2665,8 +2658,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         );
       }
 
-      await timeShutdownStep("closeProjectStores", () => closeProjectStores());
-      store.close();
       process.exit(shutdownExitCode);
     };
     // FNXC:SystemPanel 2026-07-12-11:00: System panel restart binding for
