@@ -50,7 +50,8 @@ interface SuggestedCase {
   done: boolean;
 }
 
-function Section({ title, children, testId }: { title: string; children: ReactNode; testId: string }): ReactElement {
+
+function section(title: string, testId: string, ...children: ReactNode[]): ReactElement {
   return createElement(
     "section",
     {
@@ -63,9 +64,10 @@ function Section({ title, children, testId }: { title: string; children: ReactNo
       },
     },
     createElement("h3", { style: { marginTop: 0, marginBottom: 8, fontSize: 14 } }, title),
-    children,
+    ...children,
   );
 }
+
 
 export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
   const ctx = props.context ?? {};
@@ -210,9 +212,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
       : null,
 
     // Preview server
-    createElement(
-      Section,
-      { title: "Preview server", testId: "quality-qa-preview" },
+    section("Preview server", "quality-qa-preview",
       !worktree
         ? createElement("p", { style: { margin: 0, opacity: 0.8 } }, "Checkout/start this task to get a worktree before starting a preview server.")
         : createElement(
@@ -253,9 +253,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Run tests
-    createElement(
-      Section,
-      { title: "Run tests", testId: "quality-qa-run-tests" },
+    section("Run tests", "quality-qa-run-tests",
       createElement(
         "p",
         { style: { margin: "0 0 8px", fontSize: 12, opacity: 0.75 } },
@@ -311,9 +309,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Reports
-    createElement(
-      Section,
-      { title: "Reports", testId: "quality-qa-reports" },
+    section("Reports", "quality-qa-reports",
       runs.length === 0
         ? createElement("p", { style: { margin: 0, opacity: 0.7, fontSize: 13 } }, "No task runs yet.")
         : createElement(
@@ -358,9 +354,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Screenshots
-    createElement(
-      Section,
-      { title: "Screenshots", testId: "quality-qa-screenshots" },
+    section("Screenshots", "quality-qa-screenshots",
       createElement(
         "p",
         { style: { margin: 0, fontSize: 13, opacity: 0.8 } },
@@ -369,9 +363,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // Suggested cases
-    createElement(
-      Section,
-      { title: "Suggested test cases", testId: "quality-qa-suggestions" },
+    section("Suggested test cases", "quality-qa-suggestions",
       createElement(
         "div",
         { style: { display: "flex", gap: 8, marginBottom: 8 } },
@@ -391,9 +383,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     ),
 
     // CI placeholder
-    createElement(
-      Section,
-      { title: "CI checks", testId: "quality-qa-ci" },
+    section("CI checks", "quality-qa-ci",
       createElement(
         "p",
         { style: { margin: 0, fontSize: 13, opacity: 0.8 } },
