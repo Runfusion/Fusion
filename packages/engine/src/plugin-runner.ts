@@ -238,20 +238,10 @@ export class PluginRunner {
     // Load all enabled plugins
     const result = await this.options.pluginLoader.loadAllPlugins();
     executorLog.log(`PluginRunner loaded ${result.loaded} plugins (${result.errors} errors)`);
-
-    // Execute onSchemaInit hooks from loaded plugins.
-    const schemaInitHooks = this.options.pluginLoader.getPluginSchemaInitHooks();
-    if (schemaInitHooks.length > 0) {
-      executorLog.log(`Executing onSchemaInit hooks from ${schemaInitHooks.length} plugins`);
-      try {
-        /* FNXC:PluginPostgresSchema 2026-07-14-17:30: Loaded plugin schemas must initialize on both backends. TaskStore dispatches legacy SQLite hooks or their explicit PostgreSQL equivalents and rejects unsupported SQLite-only plugins. */
-        await this.options.taskStore.runPluginSchemaInits(schemaInitHooks);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        executorLog.log(`onSchemaInit execution failed: ${message}`);
-        throw error;
-      }
-    }
+    /*
+    FNXC:PluginPostgresSchema 2026-07-14-21:48:
+    PluginLoader completes each plugin's backend-specific schema initialization before loadAllPlugins counts it as loaded. PluginRunner must not replay the accumulated contracts after loading.
+    */
 
     // Subscribe to store events for task lifecycle hooks
     this.subscribeToStoreEvents();

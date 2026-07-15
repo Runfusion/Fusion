@@ -610,14 +610,25 @@ export async function runServe(
 
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
+  /*
+  FNXC:PluginPostgresSchema 2026-07-14-21:48:
+  Optional plugin module-load failures remain nonfatal for serve compatibility. A schema initialization failure from a loaded plugin is instead a fatal storage-integrity error and must escape startup rather than being swallowed by the module-load catch.
+  */
+  let pluginsLoaded = false;
   try {
     const { loaded, errors } = await pluginLoader.loadAllPlugins();
     console.log(`[plugins] Loaded ${loaded} plugins (${errors} errors)`);
+    pluginsLoaded = true;
+  } catch (err) {
+    console.error(
+      `[plugins] Failed to load plugins: ${err instanceof Error ? err.message : err}`
+    );
+  }
 
-    const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
+  if (pluginsLoaded) {
+    const schemaHooks = pluginLoader.getPluginSchemaInitHooks?.() ?? [];
     if (schemaHooks.length > 0) {
       try {
-        /* FNXC:PluginPostgresSchema 2026-07-14-17:30: Runtime-loaded plugins execute their backend-specific schema contract; PostgreSQL never evaluates legacy SQLite SQL. */
         await store.runPluginSchemaInits(schemaHooks);
       } catch (err) {
         console.error(
@@ -626,10 +637,6 @@ export async function runServe(
         throw err;
       }
     }
-  } catch (err) {
-    console.error(
-      `[plugins] Failed to load plugins: ${err instanceof Error ? err.message : err}`
-    );
   }
 
   // Get subsystems from the primary engine for the HTTP layer

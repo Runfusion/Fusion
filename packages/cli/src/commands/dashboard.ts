@@ -1948,21 +1948,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     void disposeAsync();
   };
 
-  // FNXC:RuntimeStartupWiring 2026-06-24-10:20:
-  // Register the backend shutdown (release PG pool / stop embedded cluster)
-  // so it runs during dispose(). store.close() already closes the
-  // AsyncDataLayer pool; this adds embedded-cluster teardown.
-  if (dashboardBackendShutdown) {
-    disposeCallbacks.push(async () => {
-      await dashboardBackendShutdown!().catch(() => undefined);
-    });
-  }
   /*
-  FNXC:PostgresConflictResolution 2026-07-14-19:47:
-  Preserve main's project-store reuse while awaiting every factory-owned shutdown through dashboard's single disposal chain. PostgreSQL-only startup has no layerless fallback, and direct signal handlers must not close the same stores a second time.
+  FNXC:PostgresDashboardLifecycle 2026-07-14-21:48:
+  Dispose secondary stores first, then invoke the cwd startup factory's single owner shutdown. That handle closes the cwd TaskStore and its AsyncDataLayer before stopping embedded PostgreSQL, so disposeAsync must not call store.close separately and double-close the same pool.
   */
   disposeCallbacks.push(async () => {
     await closeProjectStores();
+    if (dashboardBackendShutdown) {
+      await dashboardBackendShutdown().catch(() => undefined);
+    } else {
+      await store?.close();
+    }
   });
 
   // ── createServer: deferred until engine is conditionally started ────
