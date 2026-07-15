@@ -8,7 +8,7 @@ after the session ends. Ported from fusion-plugin-grok-runtime for full fn_* par
 */
 
 import { createServer, type Server } from "node:http";
-import { writeFileSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -195,6 +195,16 @@ export async function startFusionToolBridge(
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
+      /*
+      FNXC:OmpAcp 2026-07-14-00:30:
+      Remove the temp schema JSON on session end so repeated sessions do not accumulate
+      fusion-omp-mcp-schemas-* files under tmpdir().
+      */
+      try {
+        unlinkSync(schemaPath);
+      } catch {
+        // best-effort cleanup
+      }
     },
   };
 }

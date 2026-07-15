@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   FUSION_OMP_TOOL_BRIDGE_URL,
@@ -83,7 +84,12 @@ describe("tool-bridge", () => {
     expect(showBody.isError).toBe(false);
     expect(showBody.content?.[0]?.text).toContain("FN-2");
 
+    const schemaPath = "args" in bridge!.mcpServer ? bridge!.mcpServer.args[1] : undefined;
+    expect(schemaPath).toBeTruthy();
+    expect(existsSync(schemaPath!)).toBe(true);
+
     await bridge!.dispose();
+    expect(existsSync(schemaPath!)).toBe(false);
   });
 
   it("returns null when there are no custom tools", async () => {
