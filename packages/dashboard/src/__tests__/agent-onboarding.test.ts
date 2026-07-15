@@ -406,6 +406,72 @@ describe("agent-onboarding", () => {
     expect(options.skillSelection?.requestedSkillNames).toEqual(["fusion"]);
   });
 
+  it("preserves valid JSON from thinking-only assistant responses", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "goal", type: "text", question: "What is the primary goal?" },
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: "thinking"; thinking: string }>;
+    }> = [];
+    mockCreateFnAgent.mockImplementationOnce(async (options: unknown) => {
+      const callbacks = options as { onThinking?: (delta: string) => void };
+      return {
+        session: {
+          state: { messages },
+          prompt: vi.fn(async () => {
+            callbacks.onThinking?.(response);
+            messages.push({ role: "assistant", content: [{ type: "thinking", thinking: response }] });
+          }),
+          dispose: vi.fn(),
+        },
+      };
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "thinking-only response", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitFor(() => {
+      const session = getAgentOnboardingSession(sessionId);
+      return Boolean(session?.currentQuestion || session?.error);
+    });
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+  });
+
+  it("retries once when the model response is not valid JSON", async () => {
+    const agent = createMockAgent([
+      "I can help design that agent.",
+      JSON.stringify({
+        type: "question",
+        data: { id: "goal", type: "text", question: "What is the primary goal?" },
+      }),
+    ]);
+    mockCreateFnAgent.mockResolvedValueOnce(agent);
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "recover malformed output", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitFor(() => {
+      const session = getAgentOnboardingSession(sessionId);
+      return Boolean(session?.currentQuestion || session?.error);
+    });
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+    expect(agent.session.prompt).toHaveBeenCalledTimes(2);
+  });
+
   it("progresses through start -> question -> response -> final summary", async () => {
     mockCreateFnAgent.mockResolvedValueOnce(
       createMockAgent([

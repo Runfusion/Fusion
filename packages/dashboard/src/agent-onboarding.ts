@@ -65,6 +65,10 @@ type SkillSelectionPluginRunner = Parameters<typeof buildSessionSkillContextSync
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const GENERATION_TIMEOUT_MS = 120_000;
+const REFORMAT_PROMPT =
+  "Your previous response could not be parsed as JSON. " +
+  'Respond with ONLY one valid JSON object using either {"type":"question","data":{...}} or {"type":"complete","data":{...}}. ' +
+  "No markdown, no explanation, just the JSON.";
 
 export const AGENT_ONBOARDING_SYSTEM_PROMPT = `You are an agent onboarding assistant for the fn task board system.
 
@@ -377,6 +381,31 @@ async function runGenerationWithTimeout<T>(session: Session, operation: () => Pr
   }
 }
 
+type OnboardingMessage = {
+  role: string;
+  content?: string | Array<
+    | { type: "text"; text: string }
+    | { type: "thinking"; thinking: string }
+    | { type: string }
+  >;
+};
+
+function extractLastAssistantResponse(messages: unknown[], streamedOutput: string): string {
+  const assistant = (messages as OnboardingMessage[]).filter((message) => message.role === "assistant").pop();
+  if (typeof assistant?.content === "string") return assistant.content;
+  if (!Array.isArray(assistant?.content)) return streamedOutput;
+
+  const textContent = assistant.content
+    .filter((block): block is { type: "text"; text: string } => block.type === "text" && "text" in block && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+  const thinkingContent = assistant.content
+    .filter((block): block is { type: "thinking"; thinking: string } => block.type === "thinking" && "thinking" in block && typeof block.thinking === "string")
+    .map((block) => block.thinking)
+    .join("");
+  return textContent || thinkingContent || streamedOutput;
+}
+
 async function continueConversation(session: Session, message: string): Promise<void> {
   if (!session.agent) throw new Error("Session agent not initialized");
   const agent = session.agent;
@@ -384,13 +413,16 @@ async function continueConversation(session: Session, message: string): Promise<
   try {
     await runGenerationWithTimeout(session, async () => {
       await agent.session.prompt(message);
-      const assistant = (agent.session.state.messages as Array<{ role: string; content?: string | Array<{ type: string; text: string }> }>).filter((m) => m.role === "assistant").pop();
-      let responseText = session.thinkingOutput;
-      if (assistant?.content) {
-        if (typeof assistant.content === "string") responseText = assistant.content;
-        else responseText = assistant.content.filter((c) => c.type === "text").map((c) => c.text).join("");
+      let responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
+      let parsed: ReturnType<typeof parseAgentOnboardingResponse>;
+      try {
+        parsed = parseAgentOnboardingResponse(responseText);
+      } catch {
+        session.thinkingOutput = "";
+        await agent.session.prompt(REFORMAT_PROMPT);
+        responseText = extractLastAssistantResponse(agent.session.state.messages, session.thinkingOutput);
+        parsed = parseAgentOnboardingResponse(responseText);
       }
-      const parsed = parseAgentOnboardingResponse(responseText);
       session.error = undefined;
       session.updatedAt = new Date();
       if (parsed.type === "question") {
