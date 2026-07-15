@@ -109,6 +109,12 @@ describe("desktop release workflow wiring", () => {
     for (const workflow of [release, testRelease, advisoryPackaging]) {
       expect(workflow).toContain("Verify Linux AppImage embedded Postgres packaging");
       expect(workflow).toContain("node scripts/verify-desktop-linux-pg-packaging.mjs");
+      // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:55:
+      // This verifier reads electron-builder's unpacked tree, so invoking it
+      // before the Linux packaging command would only validate stale output.
+      expect(workflow.indexOf("node scripts/verify-desktop-linux-pg-packaging.mjs")).toBeGreaterThan(
+        workflow.indexOf("Package Linux desktop artifacts"),
+      );
     }
   });
 
