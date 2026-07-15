@@ -26,9 +26,9 @@ import { retryOnLock } from "../lock-retry.js";
  * event loop alive after the command's work is done. Fixed by resolving the
  * name→path via `resolveProjectPathOnly` (closes+evicts the cached store
  * internally) and retaining the startup factory shutdown owner for every
- * caller. The non-wait create path prints immediately but drains its active
- * in-process run before shutdown, matching its former long-lived execution
- * without leaking PostgreSQL resources. Discrete board/settings reads that gate run-critical
+ * caller. The non-wait create path transfers backend ownership to its active
+ * in-process run so the command can return immediately while completion is
+ * still observed and releases PostgreSQL resources. Discrete board/settings reads that gate run-critical
  * decisions (`getSettings()` in `getResearchRuntime`) and the `createExport`
  * write are wrapped in `retryOnLock` so a momentary `database is locked`
  * from an active engine/agent writer is retried instead of failing the
@@ -189,6 +189,23 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
 
     const runPromise = orchestrator.startRun(runId, options.query);
     if (!options.waitForCompletion) {
+      /*
+      FNXC:ResearchCliBackground 2026-07-14-21:20:
+      Non-wait research preserves its operator contract by returning immediately after run creation. Transfer the backend owner and observe completion before any further await so a fast rejection cannot become unhandled; PostgreSQL shuts down only after the in-process orchestrator finishes using it.
+      */
+      const backgroundOwner = owned;
+      owned = undefined;
+      void runPromise
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Background cited-research run ${runId} failed: ${message}`);
+        })
+        .finally(async () => {
+          await backgroundOwner?.shutdown().catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`Failed to close cited-research backend for ${runId}: ${message}`);
+          });
+        });
       const run = await store.getResearchStore().getRun(runId);
       if (options.json) {
         jsonOut(run);
@@ -196,9 +213,6 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
         console.log(`Created cited-research run ${runId}.`);
         if (run) printRun(run);
       }
-      /* FNXC:PostgresCliLifecycle 2026-07-14-19:10: The non-wait command prints its acknowledgement immediately, then drains the already-running in-process orchestrator before releasing PostgreSQL. This preserves the prior long-lived execution without leaking the pool after completion. */
-      await runPromise;
-      await closeStore();
       return;
     }
 

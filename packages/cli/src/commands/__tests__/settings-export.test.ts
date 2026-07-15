@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createTaskStoreForBackend, exportSettings, generateExportFilename } from "@fusion/core";
-import { resolveProject } from "../../project-context.js";
+import { closeProjectStore, resolveProject } from "../../project-context.js";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
   const mock = vi.fn(function () {});
@@ -37,6 +37,7 @@ vi.mock("@fusion/core", () => ({
 
 vi.mock("../../project-context.js", () => ({
   resolveProject: vi.fn(),
+  closeProjectStore: vi.fn(async () => undefined),
 }));
 
 import { runSettingsExport } from "../settings-export.js";
@@ -158,6 +159,15 @@ describe("runSettingsExport", () => {
     await runSettingsExport({ projectName: "alpha" });
 
     expect(resolveProject).toHaveBeenCalledWith("alpha");
+    expect(closeProjectStore).toHaveBeenCalledWith(expect.objectContaining({ projectId: "proj-1" }));
     expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: "/tmp/demo" });
+  });
+
+  it("closes the resolver-owned project before backend startup fails", async () => {
+    vi.mocked(createTaskStoreForBackend).mockRejectedValueOnce(new Error("startup failed"));
+
+    await expect(runSettingsExport({ projectName: "alpha" })).rejects.toThrow("startup failed");
+
+    expect(closeProjectStore).toHaveBeenCalledTimes(1);
   });
 });

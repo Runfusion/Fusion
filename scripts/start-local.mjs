@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import net from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasLocalProjectMigrationInput } from "./lib/start-local-project.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -205,8 +206,9 @@ function projectNameFromPackage() {
 }
 
 function ensureProjectInitialized() {
-  if (existsSync(resolve(repoRoot, ".fusion/project.json"))) {
-    ok("Project marker exists");
+  if (hasLocalProjectMigrationInput(repoRoot)) {
+    /* FNXC:LocalStartupPostgresMigration 2026-07-14-21:20: A pre-cutover `.fusion/fusion.db` is valid migration input even without the newer project identity marker; local startup must preserve it for project registration instead of classifying the repository as uninitialized. */
+    ok("Project marker or legacy migration input exists");
     return;
   }
 
