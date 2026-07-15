@@ -70,6 +70,10 @@ const REFORMAT_PROMPT =
   'Respond with ONLY one valid JSON object using either {"type":"question","data":{...}} or {"type":"complete","data":{...}}. ' +
   "No markdown, no explanation, just the JSON.";
 
+/*
+FNXC:AgentOnboarding 2026-07-15-16:15:
+Requests for Hermes, computer use, desktop automation, or UI testing must use the exact runtimeHint "hermes". Descriptive runtime names are not valid routing identifiers.
+*/
 export const AGENT_ONBOARDING_SYSTEM_PROMPT = `You are an agent onboarding assistant for the fn task board system.
 
 Your job is to guide users through creating a new agent with a short interview.
@@ -400,7 +404,7 @@ function extractLastAssistantResponse(messages: unknown, streamedOutput: string)
       && (message as { role?: unknown }).role === "assistant"
     ))
     .pop();
-  if (typeof assistant?.content === "string") return assistant.content;
+  if (typeof assistant?.content === "string") return assistant.content.trim() || streamedOutput;
   if (!Array.isArray(assistant?.content)) return streamedOutput;
 
   const textContent = assistant.content
@@ -411,7 +415,22 @@ function extractLastAssistantResponse(messages: unknown, streamedOutput: string)
     .filter((block): block is { type: "thinking"; thinking: string } => block.type === "thinking" && "thinking" in block && typeof block.thinking === "string")
     .map((block) => block.thinking)
     .join("");
-  return textContent || thinkingContent || streamedOutput;
+  /*
+  FNXC:AgentOnboarding 2026-07-15-16:15:
+  Pi can emit valid onboarding JSON in a thinking block alongside explanatory text. Select the first parseable text, thinking, or streamed candidate; only preserve the historical text-first fallback when none parses so the bounded reformat turn still receives the model's visible response.
+  */
+  const candidates = [textContent, thinkingContent, streamedOutput]
+    .map((candidate) => candidate.trim())
+    .filter((candidate) => candidate.length > 0);
+  for (const candidate of candidates) {
+    try {
+      parseAgentOnboardingResponse(candidate);
+      return candidate;
+    } catch {
+      // Try the next model-output surface before invoking the bounded recovery turn.
+    }
+  }
+  return candidates[0] ?? streamedOutput;
 }
 
 async function continueConversation(session: Session, message: string): Promise<void> {

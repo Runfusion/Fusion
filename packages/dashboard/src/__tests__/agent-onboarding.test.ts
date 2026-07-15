@@ -486,6 +486,74 @@ describe("agent-onboarding", () => {
     expect(session?.currentQuestion?.id).toBe("goal");
   });
 
+  it("prefers parseable thinking JSON over non-JSON text in the same assistant response", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "goal", type: "text", question: "What is the primary goal?" },
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: "text"; text: string } | { type: "thinking"; thinking: string }>;
+    }> = [];
+    const prompt = vi.fn(async () => {
+      messages.push({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: response },
+          { type: "text", text: "I worked through the onboarding request." },
+        ],
+      });
+    });
+    mockCreateFnAgent.mockResolvedValueOnce({
+      session: { state: { messages }, prompt, dispose: vi.fn() },
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "mixed thinking and text response", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses streamed output when assistant string content is blank", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "goal", type: "text", question: "What is the primary goal?" },
+    });
+    const messages: Array<{ role: string; content: string }> = [];
+    let prompt: ReturnType<typeof vi.fn>;
+    mockCreateFnAgent.mockImplementationOnce(async (options: unknown) => {
+      const callbacks = options as { onText?: (delta: string) => void };
+      prompt = vi.fn(async () => {
+        callbacks.onText?.(response);
+        messages.push({ role: "assistant", content: "   " });
+      });
+      return {
+        session: { state: { messages }, prompt, dispose: vi.fn() },
+      };
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "blank assistant content", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    await waitForOnboardingEvent(sessionId, ["question", "error"]);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBeUndefined();
+    expect(session?.currentQuestion?.id).toBe("goal");
+    expect(prompt!).toHaveBeenCalledTimes(1);
+  });
+
   it("retries once when the model response is not valid JSON", async () => {
     const agent = createMockAgent([
       "I can help design that agent.",
