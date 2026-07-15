@@ -271,6 +271,63 @@ Transient inline toast confirming issue close. Sits directly under the preview h
   color: var(--color-error);
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-14-12:00:
+Opt-in translation banner for import preview when content language differs from the dashboard locale.
+Compact row under metadata so title/body stay readable; error uses the same token language as the close toast.
+*/
+.github-import-translate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.github-import-translate__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.github-import-translate__icon {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.github-import-translate__message {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.github-import-translate__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.github-import-translate__action,
+.github-import-translate__dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+
+.github-import-translate__error {
+  font-size: 12px;
+  color: var(--color-error);
+}
+
 .github-import-pane-content {
   flex: 1;
   min-height: 0;

@@ -1417,13 +1417,6 @@
     "versionMismatchPrefix": "설치된",
     "versionMismatchSuffix": "최신 버전으로 업데이트하여 동기화를 유지하세요."
   },
-  "storageMigrationNotice": {
-    "body": "",
-    "dismissLabel": "",
-    "getHelp": "",
-    "getHelpLabel": "",
-    "title": ""
-  },
   "cliBinary": {
     "binaryLabel": "",
     "checking": "확인 중…",
@@ -2865,7 +2858,17 @@
     "worktreesInUse_one": "",
     "worktreesInUse_other": "",
     "worktreesTotal_one": "",
-    "worktreesTotal_other": ""
+    "worktreesTotal_other": "",
+    "translateAction": "",
+    "translateDismiss": "",
+    "translateOffer": "",
+    "translateRegionAriaLabel": "",
+    "translateShowingOriginal": "",
+    "translateShowingTranslated": "",
+    "translateShowOriginal": "",
+    "translateShowTranslated": "",
+    "translateUnknownLanguage": "",
+    "translateWorking": ""
   },
   "githubStarPrompt": {
     "body": "",

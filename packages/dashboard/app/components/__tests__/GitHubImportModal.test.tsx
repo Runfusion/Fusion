@@ -17,6 +17,7 @@ import {
   apiImportGitLabMergeRequest,
   fetchSettings,
   fetchGitRemotes,
+  translateImportContent,
 } from "../../api";
 import type { Task } from "@fusion/core";
 import type { GitRemote } from "../../api";
@@ -43,6 +44,7 @@ vi.mock("../../api", async (importOriginal) => {
     apiImportGitLabMergeRequest: vi.fn(),
     fetchSettings: vi.fn(),
     fetchGitRemotes: vi.fn(),
+    translateImportContent: vi.fn(),
   };
 });
 
@@ -471,6 +473,78 @@ describe("GitHubImportModal", () => {
     expect(within(previewCard).getByText("First Issue")).toBeTruthy();
     expect(within(previewCard).getByText("Body 1")).toBeTruthy();
     expect(screen.queryByTestId("github-import-preview-empty")).toBeNull();
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-14-12:00:
+  When selected issue prose is not the dashboard language, the preview must offer Translate / Dismiss and swap title+body after a successful AI translation without changing import provenance.
+  */
+  it("offers translation when selected issue content is not the dashboard language", async () => {
+    const frenchBody =
+      "Cette issue décrit le problème avec l'aperçu d'importation et ce que nous devrions changer pour les utilisateurs qui ont du contenu dans une autre langue dans le tableau de bord.";
+    const issues = [
+      {
+        number: 7,
+        title: "Problème d'aperçu d'importation",
+        body: frenchBody,
+        html_url: "https://github.com/owner/repo/issues/7",
+        labels: [],
+      },
+    ];
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+    vi.mocked(translateImportContent).mockResolvedValueOnce({
+      title: "Import preview problem",
+      body: "This issue describes the import preview problem and what we should change for users who have content in another language in the dashboard.",
+    });
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Problème d'aperçu/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("radio", { name: /Select issue #7/i }));
+
+    const translateRegion = await screen.findByTestId("github-import-translate");
+    expect(translateRegion).toBeTruthy();
+    expect(screen.getByTestId("github-import-translate-action")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("github-import-translate-action"));
+
+    await waitFor(() => {
+      expect(translateImportContent).toHaveBeenCalled();
+      expect(screen.getByText("Import preview problem")).toBeTruthy();
+    });
+
+    expect(screen.getByTestId("github-import-translate-toggle")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("github-import-translate-toggle"));
+    const previewCard = screen.getByTestId("github-import-preview-card");
+    expect(within(previewCard).getByText(/Problème d'aperçu d'importation/)).toBeTruthy();
+  });
+
+  it("does not show translate controls for English content when dashboard language is English", async () => {
+    const issues = [
+      {
+        number: 8,
+        title: "Import preview problem",
+        body: "This issue describes the problem with the import preview and what we should change for the users that have content in another language when they open the dashboard.",
+        html_url: "https://github.com/owner/repo/issues/8",
+        labels: [],
+      },
+    ];
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Import preview problem")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("radio", { name: /Select issue #8/i }));
+    await screen.findByTestId("github-import-preview-card");
+    expect(screen.queryByTestId("github-import-translate")).toBeNull();
   });
 
   it("preserves the no-description fallback for empty and null issue bodies", async () => {

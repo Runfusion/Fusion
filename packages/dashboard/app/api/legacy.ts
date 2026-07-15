@@ -6173,6 +6173,77 @@ export async function draftGoalDescription(title: string, projectId?: string): P
   return response.description;
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-14-12:00:
+Client for POST /api/ai/translate-text — used by the GitHub/GitLab import preview when issue/PR prose is not the dashboard language.
+Structured title+body fields keep markdown import content intact; shares the AI-helper rate-limit budget with refine/draft.
+*/
+export interface TranslateImportFields {
+  title?: string;
+  body?: string;
+}
+
+export interface TranslateImportContentResponse {
+  fields: TranslateImportFields;
+}
+
+/**
+ * Translate import-preview title/body into the dashboard locale via AI.
+ * @param fields - Original title and/or body
+ * @param targetLocale - Active dashboard locale
+ * @param projectId - Optional project scope for settings/MCP
+ * @param sourceLocale - Optional detection hint for the model
+ */
+export async function translateImportContent(
+  fields: TranslateImportFields,
+  targetLocale: string,
+  projectId?: string,
+  sourceLocale?: string,
+): Promise<TranslateImportFields> {
+  const response = await api<TranslateImportContentResponse>(
+    withProjectId("/ai/translate-text", projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        fields,
+        targetLocale,
+        ...(sourceLocale ? { sourceLocale } : {}),
+      }),
+    },
+  );
+  return response.fields;
+}
+
+/** User-facing error copy for translateImportContent failures (toast/banner). */
+export const TRANSLATE_ERROR_MESSAGES = {
+  RATE_LIMIT: "Too many translation requests. Please wait an hour.",
+  NETWORK: "Failed to translate content. Please try again.",
+} as const;
+
+/**
+ * Map a translateImportContent error to banner-safe copy.
+ */
+export function getTranslateErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return TRANSLATE_ERROR_MESSAGES.NETWORK;
+  }
+
+  const message = error.message.toLowerCase();
+  if (message.includes("rate limit") || message.includes("429")) {
+    return TRANSLATE_ERROR_MESSAGES.RATE_LIMIT;
+  }
+  if (
+    message.startsWith("fields") ||
+    message.startsWith("text to translate") ||
+    message.startsWith("targetlocale") ||
+    message.includes("targetlocale must") ||
+    message.includes("sourceLocale must")
+  ) {
+    return error.message;
+  }
+  return TRANSLATE_ERROR_MESSAGES.NETWORK;
+}
+
 export function startSubtaskBreakdown(description: string, projectId?: string): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/subtasks/start-streaming", projectId), {
     method: "POST",

@@ -303,7 +303,7 @@ Use Import Tasks on desktop/tablet:
 3. Stay on **Issues** or switch to **Pull Requests**, then optionally enter issue label filters before loading results.
    Expected outcome: the list pane shows matching open issues or pull requests and marks entries that already exist on the board.
 4. Select an issue or pull request row.
-   Expected outcome: the preview pane shows its title, source link, body excerpt/content, labels or PR metadata, and import availability.
+   Expected outcome: the preview pane shows its title, source link, body excerpt/content, labels or PR metadata, and import availability. When the selected title/body appear to be in a language other than the current dashboard language, the preview offers **Translate** (into the dashboard language), **Show original** / **Show translation** after a successful translation, and **Dismiss**. Translation is display-only in the preview; imported task text stays the original source language.
 5. Select the import action.
    Expected outcome: Fusion creates a task (or review task for a pull request) on the board and preserves GitHub provenance/tracking metadata. After a successful issue import, the issue selection clears and the view returns to the main issue list/no-selection preview so completed issue actions do not leave stale buttons active.
 

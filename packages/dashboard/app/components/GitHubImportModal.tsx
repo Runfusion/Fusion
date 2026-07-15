@@ -1,8 +1,7 @@
 import "./GitHubImportModal.css";
 import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { Task } from "@fusion/core";
-import { getErrorMessage } from "@fusion/core";
+import { DEFAULT_LOCALE, getErrorMessage, isLocale, type Locale, type Task } from "@fusion/core";
 import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
@@ -30,6 +29,7 @@ import {
 import { Loader2, RefreshCw, ArrowLeft, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User } from "lucide-react";
 import { GithubIcon } from "./GithubIcon";
 import { MailboxMessageContent } from "./MailboxMessageContent";
+import { useGitHubImportTranslation } from "./GitHubImportTranslateControls";
 import type { TFunction } from "i18next";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
@@ -319,7 +319,14 @@ The full body renders as GitHub-flavored markdown via the shared MailboxMessageC
 export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId, presentation = "modal" }: GitHubImportModalProps) {
   const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
-  const { t } = useTranslation("app");
+  const { t, i18n } = useTranslation("app");
+  /*
+  FNXC:GitHubImportTranslate 2026-07-14-12:00:
+  Translation target is the active dashboard locale (i18n.resolvedLanguage). When content is another language, the preview offers Translate / Show original / Dismiss.
+  */
+  const dashboardLocale: Locale = isLocale(i18n.resolvedLanguage ?? i18n.language)
+    ? (i18n.resolvedLanguage ?? i18n.language) as Locale
+    : DEFAULT_LOCALE;
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [labels, setLabels] = useState("");
@@ -1202,6 +1209,43 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const selectedIssueClosed =
     !!selectedIssue && (selectedIssue.state === "closed" || closedIssueNumbers.has(selectedIssue.number));
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-14-12:00:
+  One translation hook covers GitHub issues, GitHub PRs, and GitLab selections. selectionKey isolates cache/dismiss state so switching items does not show the wrong translation.
+  */
+  const translateSelection = useMemo(() => {
+    if (provider === "gitlab" && selectedGitlabItem) {
+      return {
+        key: `gitlab:${selectedGitlabKey ?? ""}`,
+        title: selectedGitlabItem.title ?? "",
+        body: selectedGitlabItem.description ?? "",
+      };
+    }
+    if (provider === "github" && activeTab === "issues" && selectedIssue) {
+      return {
+        key: `issue:${selectedIssue.number}`,
+        title: selectedIssue.title ?? "",
+        body: selectedIssue.body ?? "",
+      };
+    }
+    if (provider === "github" && activeTab === "pulls" && selectedPull) {
+      return {
+        key: `pull:${selectedPull.number}`,
+        title: selectedPull.title ?? "",
+        body: selectedPull.body ?? "",
+      };
+    }
+    return { key: null as string | null, title: "", body: "" };
+  }, [provider, selectedGitlabItem, selectedGitlabKey, activeTab, selectedIssue, selectedPull]);
+
+  const importTranslation = useGitHubImportTranslation({
+    selectionKey: translateSelection.key,
+    title: translateSelection.title,
+    body: translateSelection.body,
+    dashboardLocale,
+    projectId,
+  });
+
   if (!isOpen) return null;
 
   // Determine state flags
@@ -1641,7 +1685,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 {activeTab === "issues" && selectedIssue ? (
                   <div className="issue-preview" data-testid="github-import-preview-card">
                     <div className="preview-meta">{t("git.previewIssueMeta", "Issue #{{number}}", { number: selectedIssue.number })}</div>
-                    <div className="preview-title">{selectedIssue.title}</div>
+                    <div className="preview-title">{importTranslation.display.title}</div>
                     <div className="preview-metadata">
                       {/* FNXC:GitHubImport 2026-06-23-03:15: Badge reflects the local close (closedIssueNumbers) so closing the issue flips it to "closed" without a refetch. */}
                       {(() => {
@@ -1664,10 +1708,15 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                         ))}
                       </span>
                     )}
-                    {selectedIssue.body ? (
+                    {/*
+                    FNXC:GitHubImportTranslate 2026-07-14-12:00:
+                    Translate banner appears only when detected content language differs from the dashboard locale. Displayed title/body swap between original and AI translation without changing what gets imported.
+                    */}
+                    {importTranslation.controls}
+                    {importTranslation.display.body ? (
                       <MailboxMessageContent
                         className="preview-body preview-body--markdown"
-                        content={selectedIssue.body}
+                        content={importTranslation.display.body}
                         testId="github-import-preview-body"
                       />
                     ) : (
@@ -1710,7 +1759,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 {activeTab === "pulls" && selectedPull ? (
                   <div className="issue-preview" data-testid="github-import-preview-card">
                     <div className="preview-meta">{t("git.previewPullMeta", "Pull Request #{{number}}", { number: selectedPull.number })}</div>
-                    <div className="preview-title">{selectedPull.title}</div>
+                    <div className="preview-title">{importTranslation.display.title}</div>
                     <div className="preview-metadata">
                       {selectedPull.state && (
                         <span className={`preview-state-badge preview-state-badge--${selectedPull.state}`}>{selectedPull.state}</span>
@@ -1725,10 +1774,12 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     <div className="preview-branch">
                       <strong>{t("git.branchLabel", "Branch:")}</strong> {selectedPull.headBranch} → {selectedPull.baseBranch}
                     </div>
-                    {selectedPull.body ? (
+                    {/* FNXC:GitHubImportTranslate 2026-07-14-12:00: Same opt-in translate banner as the issue preview (title + body only; comments stay original). */}
+                    {importTranslation.controls}
+                    {importTranslation.display.body ? (
                       <MailboxMessageContent
                         className="preview-body preview-body--markdown"
-                        content={selectedPull.body}
+                        content={importTranslation.display.body}
                         testId="github-import-preview-body"
                       />
                     ) : (
@@ -1843,9 +1894,11 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 <div className="github-import-preview-pane">
                   {selectedGitlabItem ? (
                     <div className="issue-preview" data-testid="gitlab-import-preview-card">
-                      <h4>{selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}{selectedGitlabItem.iid} {selectedGitlabItem.title}</h4>
+                      <h4>{selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}{selectedGitlabItem.iid} {importTranslation.display.title}</h4>
                       <div className="preview-meta-row"><span className={`preview-state-badge preview-state-badge--${selectedGitlabItem.state}`}>{selectedGitlabItem.state}</span><a href={selectedGitlabItem.webUrl} target="_blank" rel="noopener noreferrer">{t("git.openSource", "Open source")}</a></div>
-                      <MailboxMessageContent className="preview-body preview-body--markdown" content={selectedGitlabItem.description?.trim() || t("git.noDescription", "(no description)")} testId="gitlab-import-preview-body" />
+                      {/* FNXC:GitHubImportTranslate 2026-07-14-12:00: GitLab import preview reuses the same language-detect + translate controls as GitHub. */}
+                      {importTranslation.controls}
+                      <MailboxMessageContent className="preview-body preview-body--markdown" content={importTranslation.display.body?.trim() || t("git.noDescription", "(no description)")} testId="gitlab-import-preview-body" />
                       <button type="button" className="btn btn-primary" onClick={handleImportGitLab} disabled={!gitlabEnabled || importing || importedUrls.has(selectedGitlabItem.webUrl)}>{importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}</button>
                     </div>
                   ) : <div className="github-import-state github-import-state--idle" data-testid="gitlab-import-preview-empty"><strong>{t("git.gitlabNoSelection", "No GitLab resource selected")}</strong><span>{t("git.gitlabNoSelectionHint", "Choose a resource from the list to preview it.")}</span></div>}

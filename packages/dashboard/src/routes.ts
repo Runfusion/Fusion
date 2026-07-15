@@ -1992,6 +1992,73 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * POST /api/ai/translate-text
+   * AI-powered translation for GitHub/GitLab import preview title+body.
+   * Body: { fields: { title?: string, body?: string }, targetLocale: string, sourceLocale?: string }
+   * Returns: { fields: { title?: string, body?: string } }
+   *
+   * Rate limited: shared AI-helper budget (10 requests per hour per IP with refine/draft)
+   *
+   * FNXC:GitHubImportTranslate 2026-07-14-12:00:
+   * Import Tasks offers on-demand translation when selected content is not the dashboard language.
+   */
+  router.post("/ai/translate-text", async (req, res) => {
+    try {
+      const { fields, targetLocale, sourceLocale } = req.body ?? {};
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = scopedStore.getRootDir();
+      const settings = await scopedStore.getSettings();
+
+      const {
+        validateTranslateRequest,
+        checkRateLimit,
+        getRateLimitResetTime,
+        translateText,
+        AiServiceError: _AiServiceErrorTranslate,
+        ValidationError,
+      } = await import("./ai-translate.js");
+
+      if (!checkRateLimit(ip)) {
+        const resetTime = getRateLimitResetTime(ip);
+        throw rateLimited(
+          `Rate limit exceeded. Maximum 10 AI helper requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
+        );
+      }
+
+      let validated;
+      try {
+        validated = validateTranslateRequest(fields, targetLocale, sourceLocale);
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          throw badRequest(err instanceof Error ? err.message : String(err));
+        }
+        throw err;
+      }
+
+      const translated = await translateText(
+        validated,
+        rootDir,
+        settings.promptOverrides,
+        scopedStore,
+      );
+      res.json({ fields: translated });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "RateLimitError") {
+        throw rateLimited(err.message);
+      } else if (err instanceof Error && err.name === "AiServiceError") {
+        rethrowAsApiError(err, "AI service error");
+      } else {
+        rethrowAsApiError(err, "Failed to translate text");
+      }
+    }
+  });
+
+  /**
    * POST /api/ai/draft-goal-description
    * AI-powered goal description drafting from a goal title.
    * Body: { title: string }
