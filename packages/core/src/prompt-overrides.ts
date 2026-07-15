@@ -325,6 +325,7 @@ Rules:
 - Prefer structuring instructionsText with these markdown sections when drafting: ## Description, ## Expertise, ## Priorities, ## Boundaries, ## Communication, ## Collaboration & Escalation
 - Freeform instructionsText is still acceptable for compatibility; sectioned structure is preferred for new agents
 - modelHint and runtimeHint are optional draft suggestions only (not final runtime selection)
+- When the user requests Hermes, computer use, desktop automation, or UI testing, use the exact runtimeHint "hermes"; never invent a descriptive runtime name
 - heartbeatProcedurePath, heartbeatIntervalMs, and heartbeatEnabled are optional draft hints only.`,
   },
   "subtask-breakdown-system": {

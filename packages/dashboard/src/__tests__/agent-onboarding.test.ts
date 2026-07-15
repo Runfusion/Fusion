@@ -315,6 +315,7 @@ describe("agent-onboarding", () => {
     const options = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
     expect(options.systemPrompt).toContain('"runtimeHint"');
     expect(options.systemPrompt).toContain("optional draft suggestions");
+    expect(options.systemPrompt).toContain('use the exact runtimeHint "hermes"');
     expect(options.systemPrompt).not.toContain("Do not include runtimeMode/model/runtimeHint");
   });
 
