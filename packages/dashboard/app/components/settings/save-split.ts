@@ -225,8 +225,10 @@ export interface SaveSplitInput {
   initialValues: Settings | null;
   /** Initial scoped values, used to detect changed/cleared project overrides. */
   initialScopedValues: { global: GlobalSettings; project: Partial<Settings> } | null;
-  /** The active section id; gates where `githubTrackingDefaultRepo` is written. */
+  /** The active section id; gates where section-owned values are written. */
   activeSection: string;
+  /** Current raw MCP values for both scopes, preserved even after section navigation. */
+  scopedMcpValues?: { global: McpServersSettings | undefined; project: McpServersSettings | undefined };
 }
 
 export interface SaveSplitResult {
@@ -240,22 +242,16 @@ export type ScopedSettingsValues = { global: GlobalSettings; project: Partial<Se
 /**
  * Return the raw MCP value owned by one settings scope.
  *
- * SettingsModal's general form is project-effective, so reading `form.mcpServers`
- * from the Global MCP section can incorrectly render a project override as a
- * global value. MCP is intentionally dual-scoped; its editor must bind to the
- * raw scoped values returned by `/api/settings/scopes`.
+ * FNXC:McpSettingsScopes 2026-07-14-21:59:
+ * SettingsModal's general form is project-effective, so MCP editing and saving must use the raw values returned by `/api/settings/scopes`. Preserve `undefined` for an absent project override: normalizing it to `{ enabled: false, servers: [] }` would replace global inheritance with an explicit disabled project setting on a no-op save.
  */
 export function resolveScopedMcpSettings(
   scope: McpSettingsScope,
   scopedSettings: ScopedSettingsValues | null,
-): McpServersSettings {
-  const value = scope === "global"
+): McpServersSettings | undefined {
+  return scope === "global"
     ? scopedSettings?.global.mcpServers
     : scopedSettings?.project.mcpServers;
-  return {
-    enabled: value?.enabled === true,
-    servers: Array.isArray(value?.servers) ? value.servers : [],
-  };
 }
 
 function hasOwn(obj: object | null | undefined, key: string): boolean {
@@ -380,6 +376,7 @@ export function splitSettingsSave({
   initialValues,
   initialScopedValues,
   activeSection,
+  scopedMcpValues,
 }: SaveSplitInput): SaveSplitResult {
   const globalPatch: Partial<GlobalSettings> = {};
 
@@ -399,6 +396,9 @@ export function splitSettingsSave({
       continue;
     }
     if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "global-general") {
+      continue;
+    }
+    if (key === "mcpServers" && scopedMcpValues) {
       continue;
     }
     if (key === "mcpServers" && activeSection !== "global-mcp") {
@@ -461,6 +461,7 @@ export function splitSettingsSave({
     if (key === "customProviders") continue; // persisted via dedicated routes, not save-split (see global branch above)
     if (key === "githubTrackingDefaultRepo" && activeSection === "global-general") continue;
     if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "global-general") continue;
+    if (key === "mcpServers" && scopedMcpValues) continue;
     if (key === "mcpServers" && activeSection === "global-mcp") continue;
     if (!isProjectSettingsKey(key)) continue;
 
@@ -487,6 +488,18 @@ export function splitSettingsSave({
           (projectPatch as Record<string, unknown>)[key] = value;
         }
       }
+    }
+  }
+
+  if (scopedMcpValues && initialScopedValues) {
+    const initialGlobalMcp = resolveScopedMcpSettings("global", initialScopedValues);
+    if (!settingsValueEquals(scopedMcpValues.global, initialGlobalMcp)) {
+      (globalPatch as Record<string, unknown>).mcpServers = scopedMcpValues.global ?? null;
+    }
+
+    const initialProjectMcp = resolveScopedMcpSettings("project", initialScopedValues);
+    if (!settingsValueEquals(scopedMcpValues.project, initialProjectMcp)) {
+      (projectPatch as Record<string, unknown>).mcpServers = scopedMcpValues.project ?? null;
     }
   }
 

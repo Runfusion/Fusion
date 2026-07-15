@@ -68,6 +68,13 @@ describe("resolveScopedMcpSettings", () => {
       servers: [projectServer],
     });
   });
+
+  it("preserves an absent project override so global MCP settings remain inherited", () => {
+    expect(resolveScopedMcpSettings("project", {
+      global: { mcpServers: { enabled: true, servers: [globalServer] } },
+      project: {},
+    } as never)).toBeUndefined();
+  });
 });
 
 describe("splitSettingsSave", () => {
@@ -414,6 +421,50 @@ describe("splitSettingsSave", () => {
     });
     expect(projectResult.globalPatch).toEqual({});
     expect(projectResult.projectPatch).toEqual({ mcpServers: projectMcp });
+  });
+
+  it("persists changed MCP scopes after navigating away from the MCP sections", () => {
+    const initialGlobalMcp = { enabled: false, servers: [] } as const;
+    const initialProjectMcp = { enabled: true, servers: [{ name: "deepwiki", transport: "stdio", command: "docs" }] } as const;
+    const nextGlobalMcp = { enabled: true, servers: [{ name: "global-docs", transport: "stdio", command: "docs" }] } as const;
+    const nextProjectMcp = { enabled: false, servers: [{ name: "deepwiki", transport: "stdio", command: "docs" }] } as const;
+
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: { mcpServers: initialProjectMcp, language: "en" },
+      initialValues: { language: "en", mcpServers: initialProjectMcp } as never,
+      initialScopedValues: {
+        global: { mcpServers: initialGlobalMcp },
+        project: { mcpServers: initialProjectMcp },
+      } as never,
+      activeSection: "global-general",
+      scopedMcpValues: {
+        global: nextGlobalMcp,
+        project: nextProjectMcp,
+      },
+    });
+
+    expect(globalPatch).toEqual({ mcpServers: nextGlobalMcp });
+    expect(projectPatch).toEqual({ mcpServers: nextProjectMcp });
+  });
+
+  it("does not materialize inherited global MCP settings as a project override on a no-op save", () => {
+    const globalMcp = { enabled: true, servers: [{ name: "global-docs", transport: "stdio", command: "docs" }] } as const;
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: { language: "en" },
+      initialValues: { language: "en", mcpServers: globalMcp } as never,
+      initialScopedValues: {
+        global: { mcpServers: globalMcp },
+        project: {},
+      } as never,
+      activeSection: "general",
+      scopedMcpValues: {
+        global: globalMcp,
+        project: undefined,
+      },
+    });
+
+    expect(globalPatch).toEqual({});
+    expect(projectPatch).toEqual({});
   });
 
   it("maps flattened remote access fields to the canonical global remoteAccess patch", () => {

@@ -239,6 +239,33 @@ describe("SettingsModal", () => {
     expect(await screen.findByTestId("mcp-server-row-deepwiki")).toHaveTextContent("project local");
   });
 
+  it("persists a scoped MCP edit after navigating to another section before saving", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      mcpServers: { enabled: true, servers: [deepwikiServer] },
+    });
+    mockFetchSettingsByScope.mockResolvedValue({
+      global: { ...defaultSettings, mcpServers: { enabled: false, servers: [] } },
+      project: { mcpServers: { enabled: true, servers: [deepwikiServer] } },
+    });
+
+    renderModal({ initialSection: "mcp", projectId: "proj-1" });
+    await waitForSettingsModalReady();
+
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i }));
+    await settingsModalUser.click(screen.getByRole("button", { name: /^General$/ }));
+    await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mcpServers: { enabled: false, servers: [deepwikiServer] },
+        }),
+        "proj-1",
+      );
+    });
+  });
+
   it("applies keyboard CSS variables when mobile keyboard is open", async () => {
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOpen: true,

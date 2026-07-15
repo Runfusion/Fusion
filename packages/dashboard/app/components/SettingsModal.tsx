@@ -3103,11 +3103,6 @@ export function SettingsModal({
         worktreeCopyFiles: normalizedWorktreeCopyFiles.length > 0 || initialScopedValues?.project?.worktreeCopyFiles !== undefined
           ? normalizedWorktreeCopyFiles
           : undefined,
-        mcpServers: activeSection === "global-mcp"
-          ? resolveScopedMcpSettings("global", scopedSettings)
-          : activeSection === "mcp"
-            ? resolveScopedMcpSettings("project", scopedSettings)
-            : form.mcpServers,
         experimentalFeatures: normalizeExperimentalFeaturesForSave(form.experimentalFeatures),
       };
 
@@ -3138,6 +3133,10 @@ export function SettingsModal({
         initialValues,
         initialScopedValues,
         activeSection,
+        scopedMcpValues: scopedSettings ? {
+          global: resolveScopedMcpSettings("global", scopedSettings),
+          project: resolveScopedMcpSettings("project", scopedSettings),
+        } : undefined,
       });
 
       // Save both scopes in parallel if they have changes.
