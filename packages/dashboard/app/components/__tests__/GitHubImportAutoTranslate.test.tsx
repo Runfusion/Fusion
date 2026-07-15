@@ -195,6 +195,33 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-20:15:
+  Regression: PR #2147 review. `capped` used to be state written from the translation effect, which
+  forced `capExceeded` into that effect's deps — so a 51st open issue appearing (eligible first 50
+  unchanged) cleared the translations and re-requested all 50 just to update a badge.
+  */
+  it("does not restart translation when the open count crosses the cap", async () => {
+    autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
+    const fifty = makeItems(50);
+    const { rerender, result } = renderHook(
+      ({ items }) => useGitHubImportAutoTranslate({ ...base, items }),
+      { initialProps: { items: fifty } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const callsAfterFirstRun = autoTranslateImportIssues.mock.calls.length;
+    expect(result.current.capped).toBe(false);
+    expect(result.current.translations.size).toBe(50);
+
+    // A 51st open issue appears: the eligible first 50 are unchanged, so this must
+    // flip `capped` WITHOUT clearing translations or re-billing the page.
+    rerender({ items: [...fifty, { number: 51, title: "t51", body: "b", state: "open" as const }] });
+    await waitFor(() => expect(result.current.capped).toBe(true));
+
+    expect(autoTranslateImportIssues.mock.calls.length).toBe(callsAfterFirstRun);
+    expect(result.current.translations.size).toBe(50);
+  });
+
   it("never sends closed issues and caps the page at the 50 most recent open", async () => {
     const items = [...makeItems(60), { number: 999, title: "x", body: "b", state: "closed" as const }];
     autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));

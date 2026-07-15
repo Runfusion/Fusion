@@ -13,7 +13,10 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
 import { GeneralSection } from "../GeneralSection";
 import type { SettingsFormState } from "../context";
-import { fetchWorkflows } from "../../../../api";
+const { fetchWorkflows, fetchProjectDefaultWorkflow } = vi.hoisted(() => ({
+  fetchWorkflows: vi.fn(),
+  fetchProjectDefaultWorkflow: vi.fn(),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -21,14 +24,24 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-vi.mock("../../../../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../../api")>();
-  return { ...actual, fetchWorkflows: vi.fn() };
-});
+/*
+FNXC:GitHubImportTranslate 2026-07-15-20:15:
+Mock the NARROW seam, not the whole module (PR #2147 review). `importOriginal()` pulls in the entire
+`app/api/legacy.ts` implementation, which is what exhausts the jsdom heap in the sibling translation
+test. GeneralSection imports exactly one thing from `../../../api` — `fetchWorkflows` — so there is
+nothing else to preserve.
+*/
+vi.mock("../../../../api", () => ({
+  fetchWorkflows,
+  // Pulled in by WorkflowSelector, which GeneralSection renders.
+  fetchProjectDefaultWorkflow,
+}));
 
 beforeEach(() => {
-  vi.mocked(fetchWorkflows).mockReset();
-  vi.mocked(fetchWorkflows).mockResolvedValue([]);
+  fetchWorkflows.mockReset();
+  fetchWorkflows.mockResolvedValue([]);
+  fetchProjectDefaultWorkflow.mockReset();
+  fetchProjectDefaultWorkflow.mockResolvedValue(null);
 });
 afterEach(() => cleanup());
 

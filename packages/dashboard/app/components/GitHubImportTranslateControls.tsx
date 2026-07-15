@@ -114,7 +114,6 @@ export function useGitHubImportAutoTranslate({
     () => new Map(),
   );
   const [loading, setLoading] = useState(false);
-  const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /*
@@ -158,14 +157,19 @@ export function useGitHubImportAutoTranslate({
     [enabled, owner, repo, targetLocale, eligible, contentSignature],
   );
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-20:15:
+  `capped` is DERIVED, not state (PR #2147 review). Holding it in state meant setting it from the translation effect, which forced `capExceeded` into that effect's dependency list — so a 51st open issue appearing (while the eligible first 50 were unchanged) re-ran the whole effect, cleared the translations, and re-requested all 50 purely to update a badge.
+  Deriving it removes the dependency, and with it the entire class of "cap indicator restarts translation" bug: there is nothing to keep in sync.
+  */
   const capExceeded = openCount > AUTO_TRANSLATE_MAX_ISSUES;
+  const capped = requestKey !== null && capExceeded;
 
   useEffect(() => {
     if (!requestKey) {
       // Identity-preserving resets: returning the previous value when there is
       // nothing to clear avoids a state change (and therefore a re-render loop).
       setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
-      setCapped((prev) => (prev ? false : prev));
       setError((prev) => (prev ? null : prev));
       setLoading((prev) => (prev ? false : prev));
       return;
@@ -176,7 +180,6 @@ export function useGitHubImportAutoTranslate({
     setLoading(true);
     setError((prev) => (prev ? null : prev));
     setTranslations((prev) => (prev.size > 0 ? new Map() : prev));
-    setCapped(capExceeded);
 
     /*
     FNXC:GitHubImportTranslate 2026-07-15-17:05:
@@ -244,7 +247,8 @@ export function useGitHubImportAutoTranslate({
     // Deps are STRING/scalar only. `requestKey` already encodes repo+locale+issue
     // set; adding `items`/`eligible` (array identities) would re-fire the effect on
     // every render and loop. Live data comes from `eligibleRef`.
-  }, [requestKey, owner, repo, targetLocale, projectId, capExceeded]);
+    // NOTE: `capExceeded` is deliberately absent — see the derived-`capped` note above.
+  }, [requestKey, owner, repo, targetLocale, projectId]);
 
   return { translations, loading, capped, error };
 }
