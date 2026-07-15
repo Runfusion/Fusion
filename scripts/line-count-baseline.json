@@ -88,7 +88,7 @@
   "packages/engine/src/__tests__/self-healing.test.ts": 11148,
   "packages/engine/src/__tests__/step-session-executor.test.ts": 3217,
   "packages/engine/src/__tests__/triage.test.ts": 6605,
-  "packages/engine/src/agent-heartbeat.ts": 5495,
+  "packages/engine/src/agent-heartbeat.ts": 5084,
   "packages/engine/src/agent-tools.ts": 4793,
   "packages/engine/src/executor.ts": 19107,
   "packages/engine/src/merger-ai.ts": 2148,

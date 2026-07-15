@@ -1,4 +1,10 @@
 /**
+ * FNXC:CodeOrganization 2026-07-15-00:00:
+ * Domain module for task commit-association persistence (was remaining-ops-9).
+ * Migrated out of opaque remaining-ops dump naming per package organization plan.
+ */
+
+/**
  * remaining-ops-9 operations.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
