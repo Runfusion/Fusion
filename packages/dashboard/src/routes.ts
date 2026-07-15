@@ -4282,12 +4282,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw notFound("Session not found");
     }
 
-    await aiSessionStore.delete(id);
-
+    let deletedByPlanningCleanup = false;
     try {
-      if (await getPlanningSession(id)) cleanupPlanningSession(id);
+      if (await getPlanningSession(id)) {
+        await cleanupPlanningSession(id);
+        deletedByPlanningCleanup = true;
+      }
     } catch {
       // Session may not belong to planning or may already be cleaned up.
+    }
+
+    if (!deletedByPlanningCleanup) {
+      await aiSessionStore.delete(id);
     }
 
     try {

@@ -1947,6 +1947,70 @@ describe("Planning Mode Routes", () => {
         expect(res.body.success).toBe(true);
       });
 
+      it("queues deletion behind an upsert that already passed its tombstone check", async () => {
+        let releaseUpsert!: () => void;
+        let announceUpsert!: (sessionId: string) => void;
+        const upsertGate = new Promise<void>((resolve) => {
+          releaseUpsert = resolve;
+        });
+        const upsertStarted = new Promise<string>((resolve) => {
+          announceUpsert = resolve;
+        });
+
+        class DeferredUpsertStore extends MockAiSessionStore {
+          deleteCalls: string[] = [];
+          private shouldDefer = true;
+
+          override async upsert(row: AiSessionRow): Promise<void> {
+            if (this.shouldDefer) {
+              this.shouldDefer = false;
+              announceUpsert(row.id);
+              await upsertGate;
+            }
+            await super.upsert(row);
+          }
+
+          override async delete(id: string): Promise<void> {
+            this.deleteCalls.push(id);
+            await super.delete(id);
+          }
+        }
+
+        /*
+        FNXC:PostgresPlanningPersistence 2026-07-14-21:20:
+        Cancellation must serialize its delete behind a write that has already begun so the older write cannot land after deletion and resurrect the planning session.
+        */
+        const deferredStore = new DeferredUpsertStore();
+        setAiSessionStore(deferredStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+        const app = buildApp();
+        const startRequest = REQUEST(
+          app,
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Exercise queued planning persistence deletion" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = await upsertStarted;
+        const cancelRequest = REQUEST(
+          app,
+          "POST",
+          "/api/planning/cancel",
+          JSON.stringify({ sessionId }),
+          { "Content-Type": "application/json" },
+        );
+
+        await Promise.resolve();
+        expect(deferredStore.deleteCalls).toEqual([]);
+
+        releaseUpsert();
+        const [startRes, cancelRes] = await Promise.all([startRequest, cancelRequest]);
+
+        expect(startRes.status).toBe(201);
+        expect(cancelRes.status).toBe(200);
+        expect(deferredStore.deleteCalls).toEqual([sessionId]);
+        expect(await deferredStore.get(sessionId)).toBeNull();
+      });
+
       it("returns 404 for non-existent session", async () => {
         const res = await REQUEST(
           buildApp(),
