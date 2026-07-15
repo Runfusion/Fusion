@@ -1,7 +1,9 @@
 ---
 title: "feat: Faster dashboard and serve startup"
-status: active
+status: completed
 date: 2026-07-14
+completed: 2026-07-15
+pr: https://github.com/Runfusion/Fusion/pull/2132
 type: feat
 origin: conversation (startup path analysis on feature/faster-startup)
 ---
