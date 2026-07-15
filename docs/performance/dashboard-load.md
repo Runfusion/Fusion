@@ -1,5 +1,7 @@
 # Dashboard Load Performance Analysis
 
+> Historical pre-cutover analysis: the SQLite query plans below do not describe the current PostgreSQL runtime. Retained for performance archaeology and regression context.
+
 **Date:** 2026-04-10
 **Task:** FN-1532
 

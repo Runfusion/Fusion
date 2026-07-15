@@ -1,5 +1,7 @@
 # Code Review — SQLite → PostgreSQL Storage Migration
 
+> **Historical review:** This document records the incomplete migration branch as reviewed on 2026-06-26. Its NOT READY verdict and line-specific findings are not the current cutover status. See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-review-2026-07-14.md) for the audited current architecture, residual legacy-reader inventory, and deployment contract.
+
 **Date:** 2026-06-26
 **Branch:** `feature/postgres` reviewed against `origin/main` (merge-base `7d13f880b`)
 **HEAD:** `387cec1a7` — `feat: migrate storage from SQLite to PostgreSQL (squash)`
@@ -119,7 +121,7 @@ The backup subsystem is independently broken three ways in the default embedded 
 3. `pg_dump`/`pg_restore` not bundled (#26).
 4. No auto-migrate → empty-DB-on-first-boot data-loss for naive upgraders.
 
-The full checklist (pre-migration baseline row-count queries, dry-run, FTS parity spot-check, post-migrate verification, rollback via `FUSION_NO_EMBEDDED_PG=1`, 24h monitoring of pool/process/disk) is in the deployment-verification agent output under the run artifact directory.
+Historical note: the original checklist included rollback via `FUSION_NO_EMBEDDED_PG=1`. The final cutover removed that runtime fallback; recovery now restores the retained SQLite backup into a controlled migration workflow, while normal startup always uses embedded PostgreSQL or `DATABASE_URL`.
 
 ---
 

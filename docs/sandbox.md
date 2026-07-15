@@ -34,7 +34,7 @@ Use `fusionWorktreePreset(ctx)` to get the standard Fusion-friendly defaults:
 
 - Worktree writable
 - pnpm store writable
-- `.fusion/fusion.db` is not added to writable mounts
+- `.fusion/` compatibility metadata and task artifacts are not added to writable mounts
 
 ### Troubleshooting
 
@@ -71,7 +71,7 @@ Port 4040 is always blocked in the emitted SBPL profile (`(deny network-bind (lo
 
 ### `.fusion/` write guard
 
-Writable paths under `.fusion/` (including `.fusion/fusion.db` and `.fusion/tasks/**`) are rejected by policy validation.
+Writable paths under `.fusion/` (including `.fusion/project.json`, retained migration inputs, and `.fusion/tasks/**`) are rejected by policy validation.
 
 ### Troubleshooting
 

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Fusion's secrets subsystem provides encrypted-at-rest secret storage with project scope (`.fusion/fusion.db`) and global scope (`~/.fusion/fusion-central.db`).
+Fusion's secrets subsystem provides encrypted-at-rest secret storage in PostgreSQL, with project scope in `project.secrets` and global scope in `central.secrets_global`.
 
 ## Implementation Status
 
@@ -35,7 +35,7 @@ Current shipped behavior in this branch includes:
 
 Threat-model baseline:
 
-- Secret plaintext is **not** stored in SQLite.
+- Secret plaintext is **not** stored in PostgreSQL.
 - Ciphertext + nonce are persisted; plaintext exists only in process memory during create/reveal.
 - Secret values must never be logged.
 - MCP server settings store only secret references for sensitive env/header/token fields; imports surface plaintext as secret-creation descriptors instead of persisting it in settings.
@@ -45,10 +45,10 @@ See also: [Storage](./storage.md), [Multi-project](./multi-project.md), [Archite
 
 ## Architecture
 
-Fusion stores secrets in two SQLite tables:
+Fusion stores secrets in two PostgreSQL tables:
 
-- Project scope: `secrets` in `.fusion/fusion.db`
-- Global scope: `secrets_global` in `~/.fusion/fusion-central.db`
+- Project scope: `project.secrets`, isolated by project identity
+- Global scope: `central.secrets_global`
 
 Both tables share the same column contract:
 
@@ -56,8 +56,8 @@ Both tables share the same column contract:
 |---|---|---|
 | `id` | `TEXT` | Primary key UUID. |
 | `key` | `TEXT` | Unique secret key (`idxSecretsKey` / `idxSecretsGlobalKey`). |
-| `value_ciphertext` | `BLOB` | AES-GCM ciphertext payload (includes auth tag). |
-| `nonce` | `BLOB` | Per-row random nonce. |
+| `value_ciphertext` | `BYTEA` | AES-GCM ciphertext payload (includes auth tag). |
+| `nonce` | `BYTEA` | Per-row random nonce. |
 | `description` | `TEXT` | Optional metadata. |
 | `access_policy` | `TEXT` | `CHECK` constrained to `auto`, `prompt`, `deny`. |
 | `env_exportable` | `INTEGER` | `0/1` flag for env-materialization intent metadata. |
@@ -206,7 +206,7 @@ Track follow-up: **FN-5031** (missing `packages/core/src/__tests__/secrets-env.t
 
 ## Operational Notes
 
-- Backups: preserve both SQLite data and master-key material/provider source used by deployment.
+- Backups: preserve PostgreSQL project/central schemas and the master-key material/provider source used by the deployment. Retain legacy SQLite backups only as controlled migration/recovery inputs; they are not runtime authority.
 - If master key material is lost, encrypted secret values become unrecoverable.
 - Pending advanced capabilities:
   - Master-key rotation UX and key lifecycle tooling

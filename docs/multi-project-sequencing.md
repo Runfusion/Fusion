@@ -11,8 +11,8 @@ Evidence highlights:
 - `packages/core/src/central-db.ts` defines `projects(id, path UNIQUE, nodeId, settings)` where `id` is canonical registry identity and `path` is a unique local filesystem location.
 - `packages/core/src/central-core.ts` generates `RegisteredProject.id` (`proj_<uuid>`), stores absolute `path`, and treats node assignment via `assignProjectToNode()` / `unassignProjectFromNode()` as separate from registration.
 - `docs/multi-project.md` already distinguishes runtime placement (`projects.nodeId`) from task-routing defaults (`defaultNodeId`).
-- `packages/core/src/plugin-store.ts` persists plugin rows in per-project `.fusion/fusion.db` today (project-root-scoped store).
-- FN-3182 spec moves plugin install metadata to central DB with per-project state keyed by project path; FN-3503 introduces project-per-node path mappings to avoid assuming identical absolute paths on every node.
+- `packages/core/src/async-plugin-store.ts` persists global plugin installs in PostgreSQL `central.plugin_installs` and project activation state in `central.project_plugin_states`.
+- FN-3182's global-install/project-activation split is implemented; project activation remains keyed by normalized project path, so FN-3503's node-specific path mapping remains relevant to future cluster-wide identity alignment.
 
 ## Identity model
 
@@ -21,7 +21,7 @@ Current identity boundaries are not interchangeable:
 - `projects.path` (local absolute path): host-local location; unique in one registry DB, but not portable identity across nodes.
 - `projects.nodeId` (runtime placement): where a project runtime is hosted; not a task routing default and not a filesystem mapping key.
 - Project settings `defaultNodeId` (task dispatch default): separate from runtime placement (`docs/multi-project.md`).
-- Plugin scope today is project-local (`PluginStore(rootDir)`); FN-3182 proposes global install + project-scoped enablement, but its draft model still depends on path-based keys and therefore intersects FN-3503 identity work.
+- Plugin scope is global install + project-scoped enablement. The activation model still depends on path-based keys and therefore intersects FN-3503 identity work.
 
 Implication: any multi-node plugin/project-state design that treats `projects.path` as cluster identity will conflict with FN-3503’s per-node path mapping direction.
 

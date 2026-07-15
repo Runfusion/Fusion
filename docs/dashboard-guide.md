@@ -819,7 +819,7 @@ Anthropic also supports a raw `ANTHROPIC_API_KEY` from a separate **Anthropic AP
 
 ## Setup Warning Banner
 
-The dashboard banner cluster can also show a one-time storage notice announcing that the next Fusion version replaces the current SQLite data store with an embedded Postgres backend; dismissing it stores a browser-local acknowledgement so it does not reappear.
+The retired pre-cutover SQLite-to-PostgreSQL storage notice is no longer rendered. Current setup banners cover actionable provider and GitHub readiness only.
 
 The dashboard and New Task modal show setup warnings only after readiness checks finish. AI-provider warnings appear immediately because agents cannot work without a provider. GitHub warnings are delayed per project: Fusion records the first time GitHub OAuth and authenticated `gh` CLI are both missing, waits one day, and then shows **GitHub not connected** if GitHub is still unavailable. Reconnecting GitHub clears the timer so a later disconnect starts a fresh one-day grace period.
 
@@ -1976,10 +1976,10 @@ UI surfaces:
 - Task cards show grouped/shared branch metadata for grouped tasks.
 - Clicking either grouped badge opens the dedicated **Group Task Modal** for that branch group.
 - Task detail renders a branch-group card with member landed progress.
-- If a task references a stale/missing branch group, Task Detail shows a **Stale branch group reference** recovery message with **Reset branch group for this task**. The action uses the supported assign API to clear only the current task's context, then reloads the detail so the card disappears and the task can proceed ungrouped without raw SQLite surgery.
+- If a task references a stale/missing branch group, Task Detail shows a **Stale branch group reference** recovery message with **Reset branch group for this task**. The action uses the supported assign API to clear only the current task's context, then reloads the detail so the card disappears and the task can proceed ungrouped without direct database surgery.
 - In Task Detail Logs on mobile, the branch-group card includes a collapse/expand toggle so logs can reclaim vertical space while keeping group summary progress visible.
 
-The Group Task Modal shows shared branch name/status, member list (`taskId`, title, column, landed state), quick links to open each member task detail, completion progress (`X of Y members finished`), and tracked PR state when present. Branch groups are durable SQLite state keyed by real `BG-*` ids, so valid grouped tasks continue to list/show after a server restart. It live-refreshes from the same dashboard task-update stream and ignores stale cross-project events.
+The Group Task Modal shows shared branch name/status, member list (`taskId`, title, column, landed state), quick links to open each member task detail, completion progress (`X of Y members finished`), and tracked PR state when present. Branch groups are durable PostgreSQL state keyed by real `BG-*` ids, so valid grouped tasks continue to list/show after a server restart. It live-refreshes from the same dashboard task-update stream and ignores stale cross-project events.
 
 > **FN-7532:** a member only counts as "landed" once it merge-confirms onto its OWN group's branch via the branch-group-integration path (`mergeDetails.mergeTargetSource === "branch-group-integration"` and a matching `mergeTargetBranch`) — this is the same predicate the engine's promotion gate uses, so the checklist can never show "complete" when a real promotion would still be refused (or vice versa). The merge engine now stamps this attribution for every merge (previously only the legacy merge path did, so shared-group members merged through the current path were undercounted).
 

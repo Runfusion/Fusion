@@ -58,7 +58,7 @@ When `--project` is not supplied, Fusion resolves project context in this order:
 
 1. Explicit `--project` flag
 2. Default project (set via `fn project set-default <name>`)
-3. Current-directory auto-detection (`.fusion/fusion.db` lookup upward)
+3. Current-directory auto-detection (`.fusion/project.json` lookup upward; legacy `fusion.db` is recognized only for migration)
 
 ---
 
@@ -590,10 +590,10 @@ fn task logs FN-001 --follow --limit 50 --type tool
 - unavailable-node policy value
 - source provenance line (`Source: <origin>`), including parent task / GitHub issue URL context when present
 
-Every `fn task` subcommand that touches the board retries on lock (FN-7731,
-generalized to all subcommands in FN-7734): if the board database
-(`.fusion/fusion.db`) is momentarily locked by the engine or another agent,
-the command retries with bounded exponential backoff instead of failing
+Every `fn task` subcommand that touches the board retries transient storage
+failures (FN-7731, generalized to all subcommands in FN-7734): if PostgreSQL
+reports a retryable transaction or availability error, the command retries
+with bounded exponential backoff instead of failing
 outright. If the lock hasn't cleared once the retry deadline (default 15s)
 is reached, the command fails fast with a clear, actionable, non-zero-exit
 error naming the task and operation rather than hanging. Override the
@@ -635,7 +635,7 @@ lock, the canonical transient-lock case) and closes the resolved store
 BEFORE each `process.exit()` call, since `runDbVacuum` always exits
 explicitly and a pending `finally` does not run after `process.exit()`. MCP
 global-scope settings live in the file-backed `GlobalSettingsStore`
-(`~/.fusion/settings.json`, no SQLite handle) and are intentionally left
+(`~/.fusion/settings.json`, no database handle) and are intentionally left
 with no close and no lock-retry. All of the above honor the same
 `FUSION_CLI_LOCK_RETRY_MS` deadline override.
 

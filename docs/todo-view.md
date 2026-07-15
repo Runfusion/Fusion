@@ -121,7 +121,7 @@ When omitted, Todo APIs operate against the default/local project scope (`""` pr
 
 ## Storage linkage
 
-Todo data is persisted in the project SQLite database (`.fusion/fusion.db`) via:
+Todo data is persisted in the project PostgreSQL schema, isolated by `project_id`, via:
 
 - `todo_lists`
 - `todo_items`
