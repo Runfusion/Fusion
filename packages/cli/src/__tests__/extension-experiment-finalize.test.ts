@@ -34,6 +34,7 @@ const mockErrors = vi.hoisted(() => ({
 }));
 
 vi.mock("@fusion/core", () => ({
+  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: makeConstructibleMock(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     getExperimentSessionStore: vi.fn(() => ({})),

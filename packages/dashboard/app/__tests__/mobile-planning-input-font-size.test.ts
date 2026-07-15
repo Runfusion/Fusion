@@ -17,25 +17,15 @@ describe("mobile planning input font size CSS", () => {
 
   describe("mobile @media (max-width: 768px)", () => {
     it("contains mobile font-size override for planning-textarea", () => {
-      // Find the mobile planning modal media query
-      const planningModalMediaMatch = css.match(
-        /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{[^}]*\.planning-modal/s,
+      const planningTextarea16pxMatch = css.match(
+        /\.planning-textarea\s*\{[^}]*font-size:\s*16px[^}]*\}/,
       );
-      expect(planningModalMediaMatch).not.toBeNull();
-
-      // Extract the mobile planning modal block
-      const mediaStart = css.search(
-        /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{[^}]*\.planning-modal/s,
-      );
-      const afterMedia = css.slice(mediaStart);
-
-      // Find the end of this specific media block (next @media or end of string)
-      const nextMedia = afterMedia.slice(1).search(/@media/);
-      const mobileBlock = nextMedia > 0 ? afterMedia.slice(0, nextMedia + 1) : afterMedia;
-
-      // Should contain .planning-textarea with 16px font-size
-      expect(mobileBlock).toContain(".planning-textarea");
-      expect(mobileBlock).toContain("font-size: 16px");
+      expect(planningTextarea16pxMatch).not.toBeNull();
+      const matchIndex = css.indexOf(planningTextarea16pxMatch![0]);
+      const cssBeforeMatch = css.slice(0, matchIndex);
+      const lastMediaQuery = cssBeforeMatch.lastIndexOf("@media");
+      expect(lastMediaQuery).toBeGreaterThanOrEqual(0);
+      expect(cssBeforeMatch.slice(lastMediaQuery, lastMediaQuery + 80)).toContain("max-width: 768px");
     });
 
     it("applies 16px font-size globally to all text-entry controls on mobile", () => {
