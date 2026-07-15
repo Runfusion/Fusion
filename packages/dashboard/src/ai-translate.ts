@@ -17,6 +17,7 @@ import { createFnAgent as engineCreateFnAgent, resolveMcpServersForStore } from 
 import {
   checkRateLimit,
   getRateLimitResetTime,
+  RATE_LIMIT_WINDOW_MS,
   AiServiceError,
   ValidationError,
 } from "./ai-refine.js";
@@ -30,6 +31,59 @@ function ensureEngineReady(): Promise<void> {
 
 /** Re-export shared AI helper rate-limit so routes share the refine/translate budget. */
 export { checkRateLimit, getRateLimitResetTime, AiServiceError, ValidationError };
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Translation needs its OWN request budget, separate from the 10/hour refine/draft budget it originally shared.
+Auto-translate fans out up to one call per listed issue (bounded at IMPORT_TRANSLATE_MAX_ISSUES), so on the shared budget a single panel open would both fail partway through AND starve refine/goal-draft for the rest of the hour.
+The budget stays bounded (not removed) because each request still spends real model tokens; it is sized to allow a couple of full panel loads per hour, with the durable cache absorbing repeat views.
+*/
+
+/** Max issues auto-translated per panel load. Beyond this, remaining issues
+ *  translate on selection instead. Operator-visible cap — surfaced in the UI. */
+export const IMPORT_TRANSLATE_MAX_ISSUES = 50;
+
+/** Max translate requests per IP per hour (own budget; see FNXC above). */
+export const MAX_TRANSLATE_REQUESTS_PER_HOUR = 150;
+
+interface TranslateRateLimitEntry {
+  count: number;
+  firstRequestAt: number;
+}
+
+const translateRateLimits = new Map<string, TranslateRateLimitEntry>();
+
+/**
+ * Reserve `cost` translate requests for an IP against the translate-only budget.
+ * Returns true when the whole cost fits. Callers reserve the batch size up
+ * front so a partially-translated page never silently drops issues.
+ */
+export function checkTranslateRateLimit(ip: string, cost = 1): boolean {
+  const now = Date.now();
+  const entry = translateRateLimits.get(ip);
+
+  if (!entry || now - entry.firstRequestAt > RATE_LIMIT_WINDOW_MS) {
+    if (cost > MAX_TRANSLATE_REQUESTS_PER_HOUR) return false;
+    translateRateLimits.set(ip, { count: cost, firstRequestAt: now });
+    return true;
+  }
+
+  if (entry.count + cost > MAX_TRANSLATE_REQUESTS_PER_HOUR) return false;
+  entry.count += cost;
+  return true;
+}
+
+/** Reset time for the translate budget, or null when the IP has no entry. */
+export function getTranslateRateLimitResetTime(ip: string): Date | null {
+  const entry = translateRateLimits.get(ip);
+  if (!entry) return null;
+  return new Date(entry.firstRequestAt + RATE_LIMIT_WINDOW_MS);
+}
+
+/** Test seam: clear translate budget state. */
+export function resetTranslateRateLimits(): void {
+  translateRateLimits.clear();
+}
 
 /** Maximum combined characters accepted for translation (title + body). */
 export const MAX_TRANSLATE_TEXT_LENGTH = 12000;
@@ -252,6 +306,8 @@ export async function translateText(
   rootDir: string,
   _promptOverrides?: PromptOverrideMap,
   store?: TaskStore,
+  provider?: string,
+  modelId?: string,
 ): Promise<TranslateFields> {
   await ensureEngineReady();
 
@@ -264,12 +320,30 @@ export async function translateText(
    * FNXC:McpConfig 2026-07-14-12:00:
    * Import-preview translation is a readonly dashboard helper. Resolve MCP from the request-scoped store like refine/goal-draft; never log secrets.
    */
-  const agentResult = await createFnAgent({
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Translation resolves its own model lane (see `resolveImportTranslateSettingsModel`) so operators can pin a cheap/fast model for what is one short readonly call per issue.
+  Provider and model are applied only as a COMPLETE pair — a partial pair falls through to automatic resolution rather than half-pinning a model, matching the both-or-neither rule every other lane enforces.
+  */
+  const agentOptions: {
+    cwd: string;
+    systemPrompt: string;
+    tools: "readonly";
+    mcpServers: typeof mcpServers;
+    defaultProvider?: string;
+    defaultModelId?: string;
+  } = {
     cwd: rootDir,
     systemPrompt: TRANSLATE_SYSTEM_PROMPT,
     tools: "readonly",
     mcpServers,
-  });
+  };
+  if (provider && modelId) {
+    agentOptions.defaultProvider = provider;
+    agentOptions.defaultModelId = modelId;
+  }
+
+  const agentResult = await createFnAgent(agentOptions);
 
   if (!agentResult?.session) {
     throw new AiServiceError("Failed to initialize AI agent");

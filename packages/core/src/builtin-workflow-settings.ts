@@ -406,24 +406,17 @@ export const BUILTIN_TRIAGE_POLICY_SETTINGS: WorkflowSettingDefinition[] = [
   {
     id: "triageDecisionOnlyWorkflowId",
     name: "Triage decision-only workflow",
-    type: "enum",
+    type: "string",
     default: "builtin:quick-fix",
-    options: [
-      { value: "builtin:quick-fix", label: "Quick fix" },
-      { value: "builtin:coding", label: "Coding" },
-    ],
-    description: "Preferred workflow id for decision-only or investigation tasks that expect no code changes.",
+    description: "Preferred built-in or custom workflow id for decision-only or investigation tasks that expect no code changes.",
   },
   {
     id: "triageDefaultWorkflowId",
     name: "Triage default workflow",
-    type: "enum",
-    default: "builtin:coding",
-    options: [
-      { value: "builtin:coding", label: "Coding" },
-      { value: "builtin:quick-fix", label: "Quick fix" },
-    ],
-    description: "Default workflow id for standard coding tasks.",
+    type: "string",
+    default: "",
+    description:
+      "Optional built-in or custom workflow id override for triage. Empty inherits config.settings.defaultWorkflowId.",
   },
   {
     id: "leanPlanning",
@@ -602,7 +595,19 @@ const TRIAGE_POLICY_DEFAULTS = new Map(
   BUILTIN_TRIAGE_POLICY_SETTINGS.map((setting) => [setting.id, setting.default]),
 );
 
-function formatTriagePolicyValue(id: string, value: unknown): string {
+function formatTriagePolicyValue(id: string, value: unknown, settings: Partial<Settings>): string {
+  /*
+   * FNXC:WorkflowRouting 2026-07-15-00:00:
+   * The triage prompt must name the operator's project default workflow when no
+   * per-workflow override is configured. This keeps planning guidance aligned
+   * with config.settings.defaultWorkflowId and accepts custom workflow IDs.
+   */
+  if (id === "triageDefaultWorkflowId") {
+    const explicitValue = typeof value === "string" ? value.trim() : "";
+    if (explicitValue && explicitValue !== "builtin:coding") return explicitValue;
+    const projectDefault = typeof settings.defaultWorkflowId === "string" ? settings.defaultWorkflowId.trim() : "";
+    return projectDefault || "builtin:coding";
+  }
   if (id === "triageNoCommitsDecisionVerbs") {
     const verbs = Array.isArray(value) ? value : TRIAGE_POLICY_DEFAULTS.get(id);
     return (Array.isArray(verbs) ? verbs : []).map((verb) => String(verb)).join(", ");
@@ -647,7 +652,7 @@ export function renderTriagePolicyPlaceholders(prompt: string, settings: Partial
   const values = settings as Record<string, unknown>;
   for (const setting of BUILTIN_TRIAGE_POLICY_SETTINGS) {
     const token = new RegExp(`\\{\\{${setting.id}\\}\\}`, "g");
-    rendered = rendered.replace(token, formatTriagePolicyValue(setting.id, values[setting.id] ?? setting.default));
+    rendered = rendered.replace(token, formatTriagePolicyValue(setting.id, values[setting.id] ?? setting.default, settings));
   }
   const leftover = rendered.match(/\{\{[^}]+\}\}/);
   if (leftover) {

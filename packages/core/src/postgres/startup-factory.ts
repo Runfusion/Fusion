@@ -422,9 +422,17 @@ export async function createTaskStoreForBackend(
   }
   const rootDir = options.rootDir ?? "";
 
+  /*
+  FNXC:FasterStartup 2026-07-14-23:55:
+  Factory substep timings feed CLI phase logs so operators can separate embedded
+  PG start + schema work from engine bring-up. Cheap permanent diagnostics.
+  */
+  const factoryT0 = Date.now();
   let boot: SchemaBackendBootResult;
   try {
+    const schemaT0 = Date.now();
     boot = await bootSchemaBackend(options);
+    log.log(`startup phase backend.schemaBackend: ${Date.now() - schemaT0}ms`);
   } catch (err) {
     throw new Error(
       `startup-factory: failed to initialize PostgreSQL schema backend: ${err instanceof Error ? err.message : String(err)}`,
@@ -721,6 +729,7 @@ export async function createTaskStoreForBackend(
   */
   let taskStore: TaskStore;
   try {
+    const constructT0 = Date.now();
     if (options.projectId && !options.rootDir) {
       taskStore = await TaskStore.getOrCreateForProject(
         options.projectId,
@@ -734,6 +743,7 @@ export async function createTaskStoreForBackend(
       });
       await taskStore.init();
     }
+    log.log(`startup phase backend.taskStore.construct: ${Date.now() - constructT0}ms`);
   } catch (err) {
     await asyncLayer.close().catch(() => undefined);
     if (embeddedLifecycle) {
@@ -745,6 +755,7 @@ export async function createTaskStoreForBackend(
       }`,
     );
   }
+  log.log(`startup phase backend.factory.total: ${Date.now() - factoryT0}ms`);
 
   /*
   FNXC:PluginPostgresContract 2026-07-14-18:32:

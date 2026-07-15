@@ -82,6 +82,7 @@ import { registerCustomProviders, reregisterCustomProviders } from "./custom-pro
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
+import { phaseTime } from "../startup-phase.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -292,11 +293,20 @@ export async function runServe(
   /*
    * FNXC:PostgresFinalCutover 2026-07-14-17:20:
    * Serve must share one successfully booted PostgreSQL layer between CentralCore and the cwd engine. A backend boot error is fatal; constructing a layerless CentralCore would make project discovery appear empty and split control-plane state.
+   *
+   * FNXC:FasterStartup 2026-07-14-23:55:
+   * Phase labels mirror dashboard so time-to-listen can be compared across surfaces.
    */
-  const centralBootResult = await createTaskStoreForBackend({ rootDir: cwd });
+  const serveStartedAt = Date.now();
+  const logPhase = (message: string, scope = "serve") => console.log(`[${scope}] ${message}`);
+  const centralBootResult = await phaseTime(
+    "backend.factory",
+    () => createTaskStoreForBackend({ rootDir: cwd }),
+    logPhase,
+  );
   /*
-  FNXC:MergeQueue 2026-07-15-11:40:
-  Share the serve TaskStore with the host pi extension so agent fn_* tools reuse the engine pool (no dual-boot).
+  FNXC:FasterStartup 2026-07-15-12:38:
+  Preserve both the timed backend-factory phase and the host-store injection during rebases. The serve command must report its critical-path duration without allowing host fn_* tools to boot a second TaskStore pool.
   */
   setHostTaskStore(cwd, centralBootResult.taskStore);
   let centralBackendShutdownPromise: Promise<void> | undefined;
@@ -306,7 +316,7 @@ export async function runServe(
   };
   sharedCentralCore = new CentralCore(undefined, { asyncLayer: centralBootResult.asyncLayer });
   try {
-    await sharedCentralCore.init();
+    await phaseTime("centralCore.init", () => sharedCentralCore!.init(), logPhase);
   } catch (error) {
     /* FNXC:PostgresServeLifecycle 2026-07-14-18:03: A failed shared CentralCore boot occurs before serve installs signal teardown, so release the sole shared TaskStore pool and embedded lifecycle here. */
     await shutdownCentralBackendOnce().catch(() => undefined);
@@ -402,11 +412,35 @@ export async function runServe(
     // FNXC:SqliteFinalRemoval 2026-06-26-11:15: share the central boot's TaskStore
     // as the externalTaskStore so the cwd engine reuses the same connection pool
     // (no second embedded PG).
+    // FNXC:FasterStartup 2026-07-14-23:55: Manager only injects this store when
+    // the project's working directory matches the store root (multi-project safe).
     externalTaskStore: centralBootResult.taskStore,
   });
 
-  // Start engines for all registered projects eagerly
-  await engineManager.startAll();
+  /*
+  FNXC:FasterStartup 2026-07-15-00:20:
+  Apply --paused before any ensureEngine/startAll so recovery, merge enqueue,
+  and deferred OAuth side effects observe enginePaused on the shared factory
+  store (cwd path). Idempotent re-apply on the primary store after ensure.
+  Matches dashboard's pause-before-engine ordering.
+  */
+  if (opts.paused) {
+    await centralBootResult.taskStore.updateSettings({ enginePaused: true });
+    console.log("[engine] Starting in paused mode — automation disabled");
+  }
+
+  /*
+  FNXC:FasterStartup 2026-07-14-23:55:
+  Do not await startAll() before listen — multi-project count must not gate
+  HTTP readiness. Warm the primary project (cwd / flag / default) fully so
+  createServer receives a live engine; other projects continue via startAll
+  + reconciliation in the background.
+  */
+  void engineManager.startAll().catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[serve] Background startAll failed: ${message}`);
+  });
+  engineManager.startReconciliation();
 
   let hybridExecutor: HybridExecutor | null = null;
   const hybridGate = await shouldUseHybridExecutor(sharedCentralCore);
@@ -435,14 +469,6 @@ export async function runServe(
     }
   })();
 
-  // Start background reconciliation to detect and start engines for projects
-  // registered after startup (without requiring headless node API access).
-  // This ensures project task execution starts from backend runtime alone.
-  // The onProjectFirstAccessed callback in createServer remains as a fast-path
-  // fallback for immediate engine startup on project access, but it is NOT
-  // required for correctness — reconciliation handles all cases.
-  engineManager.startReconciliation();
-
   // ── PeerExchangeService: gossip protocol for mesh peer discovery ──────
   //
   // Periodically exchanges peer information with connected remote nodes
@@ -460,52 +486,61 @@ export async function runServe(
     }
   }
 
-  const startedEngines = [...engineManager.getAllEngines().values()];
   const projects = sharedCentralCore ? await sharedCentralCore.listProjects() : [];
 
   const resolvePrimaryEngine = async (): Promise<{
-    engine: (typeof startedEngines)[number];
+    engine: import("@fusion/engine").ProjectEngine;
     source: "cli-flag" | "default-setting" | "cwd" | "fallback";
   } | null> => {
+    const ensure = async (projectId: string, source: "cli-flag" | "default-setting" | "cwd" | "fallback") => {
+      const engine = await phaseTime(
+        `engine: ensureEngine(${source})`,
+        () => engineManager.ensureEngine(projectId),
+        logPhase,
+      );
+      return { engine, source };
+    };
+
     if (opts.project) {
-      const byId = startedEngines.find((engine) => engine.getProjectId() === opts.project);
-      if (byId) {
-        return { engine: byId, source: "cli-flag" };
+      const byIdProject = projects.find((project) => project.id === opts.project);
+      if (byIdProject) {
+        return ensure(byIdProject.id, "cli-flag");
       }
 
       const projectMatch = projects.find((project) => project.name === opts.project);
       if (projectMatch) {
-        const byName = engineManager.getEngine(projectMatch.id);
-        if (byName) {
-          return { engine: byName, source: "cli-flag" };
-        }
+        return ensure(projectMatch.id, "cli-flag");
       }
 
-      console.error(`[serve] --project "${opts.project}" did not match any started engine`);
+      console.error(`[serve] --project "${opts.project}" did not match any registered project`);
       process.exit(1);
       return null;
     }
 
     const defaultProjectId = await sharedCentralCore?.getDefaultProjectId?.();
     if (defaultProjectId) {
-      const defaultEngine = engineManager.getEngine(defaultProjectId);
-      if (defaultEngine) {
-        return { engine: defaultEngine, source: "default-setting" };
+      try {
+        return await ensure(defaultProjectId, "default-setting");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[serve] defaultProjectId ${defaultProjectId} failed to start — falling through: ${message}`);
       }
-      console.warn(`[serve] defaultProjectId ${defaultProjectId} is set but no engine started for it — falling through`);
     }
 
-    const cwdEngine = ntfyProjectId ? engineManager.getEngine(ntfyProjectId) : undefined;
-    if (cwdEngine) {
-      return { engine: cwdEngine, source: "cwd" };
+    if (ntfyProjectId) {
+      try {
+        return await ensure(ntfyProjectId, "cwd");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[serve] cwd project engine failed to start — falling through: ${message}`);
+      }
     }
 
-    const fallback = startedEngines[0];
-    if (!fallback) {
+    const fallbackProject = projects[0];
+    if (!fallbackProject) {
       return null;
     }
-
-    return { engine: fallback, source: "fallback" };
+    return ensure(fallbackProject.id, "fallback");
   };
 
   const primarySelection = await resolvePrimaryEngine();
@@ -534,9 +569,10 @@ export async function runServe(
   // Set up database health check for diagnostics
   setServeDbHealthCheck(() => store.healthCheck());
 
+  // Re-apply pause on the primary store when it is not the factory/cwd share
+  // (non-cwd --project / fallback). No-op when already set on the shared store.
   if (opts.paused) {
     await store.updateSettings({ enginePaused: true });
-    console.log("[engine] Starting in paused mode — automation disabled");
   }
 
   // ── PluginStore: plugin installation management ─────────────────────
@@ -1017,6 +1053,7 @@ export async function runServe(
   });
 
   const actualPort = (server.address() as AddressInfo).port;
+  logPhase(`startup phase time-to-listen: ${Date.now() - serveStartedAt}ms`);
 
   /*
   FNXC:CustomProviders 2026-06-30-00:00:

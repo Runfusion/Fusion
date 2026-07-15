@@ -8,6 +8,10 @@ import {
   renderTriagePolicyPlaceholders,
 } from "../builtin-workflow-settings.js";
 import { MOVED_SETTINGS_KEYS } from "../moved-settings.js";
+import {
+  resolveEffectiveSettingValues,
+  validateSettingValuePatch,
+} from "../workflow-settings.js";
 
 const expectedDefaults: Record<string, { type: string; default: unknown }> = {
   triageProactiveSubtaskSplittingEnabled: { type: "boolean", default: true },
@@ -24,8 +28,8 @@ const expectedDefaults: Record<string, { type: string; default: unknown }> = {
     type: "multi-enum",
     default: ["Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", "Investigate and report"],
   },
-  triageDecisionOnlyWorkflowId: { type: "enum", default: "builtin:quick-fix" },
-  triageDefaultWorkflowId: { type: "enum", default: "builtin:coding" },
+  triageDecisionOnlyWorkflowId: { type: "string", default: "builtin:quick-fix" },
+  triageDefaultWorkflowId: { type: "string", default: "" },
   leanPlanning: { type: "boolean", default: false },
   autoApproveSpec: { type: "boolean", default: false },
 };
@@ -197,6 +201,23 @@ describe("workflow-native built-in workflow settings", () => {
     ).toBe(false);
   });
 
+  it("accepts custom triage workflow ids and retains them as effective values", () => {
+    const patch = validateSettingValuePatch(BUILTIN_TRIAGE_POLICY_SETTINGS, {
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+
+    expect(patch.rejections).toEqual([]);
+    expect(patch.accepted).toMatchObject({
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+    expect(resolveEffectiveSettingValues(BUILTIN_TRIAGE_POLICY_SETTINGS, patch.accepted)).toMatchObject({
+      triageDefaultWorkflowId: "WF-005",
+      triageDecisionOnlyWorkflowId: "WF-009",
+    });
+  });
+
   it("renders placeholders from resolved settings and rejects dangling tokens", () => {
     const prompt = [
       "Size S (<{{triageSizeSmallMaxHours}}h)",
@@ -215,6 +236,24 @@ describe("workflow-native built-in workflow settings", () => {
     expect(rendered).toContain("verbs: Audit, Confirm");
     expect(rendered).not.toContain("{{");
     expect(() => renderTriagePolicyPlaceholders("{{unknownTriageToken}}", {})).toThrow(/Unresolved triage policy placeholder/);
+  });
+
+  it("renders the triage default workflow from project settings unless explicitly overridden", () => {
+    const prompt = "Keep the project default workflow (`{{triageDefaultWorkflowId}}`)";
+
+    expect(renderTriagePolicyPlaceholders(prompt, { defaultWorkflowId: "WF-005" })).toContain("`WF-005`");
+    expect(renderTriagePolicyPlaceholders(prompt, {
+      triageDefaultWorkflowId: "builtin:coding",
+      defaultWorkflowId: "WF-005",
+    } as never)).toContain("`WF-005`");
+    expect(renderTriagePolicyPlaceholders(prompt, {
+      triageDefaultWorkflowId: "WF-009",
+      defaultWorkflowId: "WF-005",
+    } as never)).toContain("`WF-009`");
+
+    const fallback = renderTriagePolicyPlaceholders(prompt, {});
+    expect(fallback).toContain("`builtin:coding`");
+    expect(fallback).not.toContain("{{");
   });
 
   it("renders proactive splitting policy as enabled by default", () => {

@@ -205,6 +205,13 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   mergerGlobalProvider: undefined,
   mergerGlobalModelId: undefined,
   /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Global import-translate baseline lane. Undefined falls through to the summarization lane then defaultProvider/defaultModelId at resolve time.
+  */
+  importTranslateGlobalProvider: undefined,
+  importTranslateGlobalModelId: undefined,
+  importTranslateGlobalThinkingLevel: undefined,
+  /*
   FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
   Global model lanes can override the default thinking effort independently. Undefined preserves the existing inheritance to `defaultThinkingLevel`.
   */
@@ -618,6 +625,15 @@ export const DEFAULT_PROJECT_SETTINGS = {
   titleSummarizerFallbackProvider: undefined,
   titleSummarizerFallbackModelId: undefined,
   titleSummarizerFallbackThinkingLevel: undefined,
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Import auto-translation defaults OFF: operators who never opt in keep byte-faithful import provenance. Target locale undefined means "follow the active dashboard locale". Translate model lane stays project-scoped like the summarizer lane.
+  */
+  githubImportAutoTranslate: false,
+  importTranslateTargetLocale: undefined,
+  importTranslateProvider: undefined,
+  importTranslateModelId: undefined,
+  importTranslateThinkingLevel: undefined,
   /*
   FNXC:Settings-MergerModel 2026-07-13-07:52:
   Merger model lane stays project-scoped (not workflow-moved) like title summarizer: Settings → Project Models can override the global merger baseline without binding the choice to a workflow graph.

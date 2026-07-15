@@ -1012,3 +1012,139 @@ export function recordVerificationCachePassImpl(store: TaskStore,
       )
       .run(treeSha, normalizedTest, normalizedBuild, recordedAt, taskId);
 }
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import auto-translation persists translations so an issue is translated at most once per target locale — reopening the Import Tasks panel or reloading the dashboard must never re-bill the AI helper.
+These are PostgreSQL-only async ops. Unlike the legacy sync `verification_cache` helpers above (which still use SQLite `db.prepare`), they go through `asyncLayer` and always carry an explicit `project_id` predicate: every project shares one flat `project` schema, so an unscoped read would serve another project's translations.
+*/
+
+export interface ImportTranslationCacheEntry {
+  translatedTitle: string;
+  translatedBody: string;
+  detectedLocale: string | null;
+  recordedAt: string;
+}
+
+export interface ImportTranslationCacheKey {
+  provider: string;
+  repoKey: string;
+  issueNumber: number;
+  targetLocale: string;
+  /** Hash of the ORIGINAL title+body; a mismatch means the issue was edited. */
+  sourceHash: string;
+}
+
+function importTranslationScope(store: TaskStore) {
+  const projectId = store.asyncLayer?.projectId;
+  return projectId
+    ? eq(schema.project.importTranslationCache.projectId, projectId)
+    : undefined;
+}
+
+/**
+ * Read a cached translation. Returns null on miss, and also on a `sourceHash`
+ * mismatch — an edited issue must re-translate rather than serve stale prose.
+ */
+export async function getImportTranslationImpl(
+  store: TaskStore,
+  key: ImportTranslationCacheKey,
+): Promise<ImportTranslationCacheEntry | null> {
+  if (!store.asyncLayer) return null;
+  const table = schema.project.importTranslationCache;
+  const rows = await store.asyncLayer.db
+    .select({
+      translatedTitle: table.translatedTitle,
+      translatedBody: table.translatedBody,
+      detectedLocale: table.detectedLocale,
+      recordedAt: table.recordedAt,
+      sourceHash: table.sourceHash,
+    })
+    .from(table)
+    .where(
+      and(
+        importTranslationScope(store),
+        eq(table.provider, key.provider),
+        eq(table.repoKey, key.repoKey),
+        eq(table.issueNumber, key.issueNumber),
+        eq(table.targetLocale, key.targetLocale),
+      ),
+    )
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+  // Stale-content guard: the issue body changed since we translated it.
+  if (row.sourceHash !== key.sourceHash) return null;
+  return {
+    translatedTitle: row.translatedTitle,
+    translatedBody: row.translatedBody,
+    detectedLocale: row.detectedLocale ?? null,
+    recordedAt: row.recordedAt,
+  };
+}
+
+/**
+ * Upsert a translation. Re-translating the same issue (after an edit) replaces
+ * the row rather than accumulating one row per revision.
+ */
+export async function recordImportTranslationImpl(
+  store: TaskStore,
+  key: ImportTranslationCacheKey,
+  value: { translatedTitle: string; translatedBody: string; detectedLocale?: string | null },
+  recordedAt: string,
+): Promise<void> {
+  if (!store.asyncLayer) return;
+  const table = schema.project.importTranslationCache;
+  const projectId = store.asyncLayer.projectId;
+  await store.asyncLayer.db
+    .insert(table)
+    .values({
+      ...(projectId ? { projectId } : {}),
+      provider: key.provider,
+      repoKey: key.repoKey,
+      issueNumber: key.issueNumber,
+      targetLocale: key.targetLocale,
+      sourceHash: key.sourceHash,
+      translatedTitle: value.translatedTitle,
+      translatedBody: value.translatedBody,
+      detectedLocale: value.detectedLocale ?? null,
+      recordedAt,
+    })
+    .onConflictDoUpdate({
+      target: [table.projectId, table.provider, table.repoKey, table.issueNumber, table.targetLocale],
+      set: {
+        sourceHash: key.sourceHash,
+        translatedTitle: value.translatedTitle,
+        translatedBody: value.translatedBody,
+        detectedLocale: value.detectedLocale ?? null,
+        recordedAt,
+      },
+    });
+}
+
+/**
+ * Drop cached translations for issues that are no longer open. This is the
+ * requirement's expiry rule — a translation persists "until the issue is
+ * closed". No-ops on an empty list so a fully-open page costs no query.
+ */
+export async function pruneImportTranslationsImpl(
+  store: TaskStore,
+  provider: string,
+  repoKey: string,
+  closedIssueNumbers: number[],
+): Promise<number> {
+  if (!store.asyncLayer || closedIssueNumbers.length === 0) return 0;
+  const table = schema.project.importTranslationCache;
+  await store.asyncLayer.db
+    .delete(table)
+    .where(
+      and(
+        importTranslationScope(store),
+        eq(table.provider, provider),
+        eq(table.repoKey, repoKey),
+        inArray(table.issueNumber, closedIssueNumbers),
+      ),
+    );
+  return closedIssueNumbers.length;
+}

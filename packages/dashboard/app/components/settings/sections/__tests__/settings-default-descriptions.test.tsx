@@ -235,6 +235,10 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   ephemeralAgentsCanCreateTasks: "general.allowEphemeralAgentsToCreateTasksHint",
   ephemeralAgentsEnabled: "general.whenEnabledDefaultFusionSpawnsShortLived",
   githubLinkImportedIssuesToTracking: "general.whenEnabledImportedGitHubIssuesUseTheirSource",
+  // FNXC:GitHubImportTranslate 2026-07-15-09:30: surfaced as plain rows in
+  // GeneralSection beside the other import-scoped GitHub settings.
+  githubImportAutoTranslate: "general.autoTranslateImportedIssuesHelp",
+  importTranslateTargetLocale: "general.translationTargetLanguageHelp",
   githubTrackingDedupEnabled: "general.whenEnabledFusionChecksOpenAndClosedIssues",
   githubTrackingEnabledByDefault: "general.offDefault",
   sessionAdvisorEnabledByDefault: "general.offDefault",
@@ -327,6 +331,14 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   gitlabCommentOnDone: "not yet exposed as a distinct Settings field",
   gitlabCommentTemplate: "not yet exposed as a distinct Settings field",
   gitlabCloseSourceIssueOnDone: "not yet exposed as a distinct Settings field",
+  // FNXC:GitHubImportTranslate 2026-07-15-09:30: the import-translate lane is a
+  // model-lane picker (Settings -> Project/Global Models), not a description field.
+  importTranslateProvider: "configured via the model-lane picker, not a plain description field",
+  importTranslateModelId: "configured via the model-lane picker, not a plain description field",
+  importTranslateThinkingLevel: "configured via the model-lane picker, not a plain description field",
+  importTranslateGlobalProvider: "configured via the model-lane picker, not a plain description field",
+  importTranslateGlobalModelId: "configured via the model-lane picker, not a plain description field",
+  importTranslateGlobalThinkingLevel: "configured via the model-lane picker, not a plain description field",
   titleSummarizerProvider: "configured via the model-lane picker, not a plain description field",
   titleSummarizerModelId: "configured via the model-lane picker, not a plain description field",
   titleSummarizerFallbackProvider: "configured via the model-lane picker, not a plain description field",

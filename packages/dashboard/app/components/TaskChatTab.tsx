@@ -533,12 +533,16 @@ function TaskChatToolGroup({ entries }: { entries: AgentLogEntry[] }) {
   );
 }
 
+/*
+ FNXC:Chat-Thinking 2026-07-15-10:33:
+ Chat thinking (reasoning) blocks render collapsed by default so the response is scannable without manually closing each block; the summary remains an expand-on-click affordance. (FN-7974)
+*/
 function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
   const { t } = useTranslation("app");
   const combinedThinkingText = entries.map((entry) => entry.text).join("");
 
   return (
-    <details className="task-chat-thinking" data-testid="task-chat-thinking" open>
+    <details className="task-chat-thinking" data-testid="task-chat-thinking">
       <summary className="task-chat-thinking-summary">
         <span>{t("taskChat.thinking", "Thinking")}</span>
         <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Thinking block timestamp" />

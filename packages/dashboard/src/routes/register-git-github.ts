@@ -2116,6 +2116,48 @@ function isIssueAlreadyImported(
       && sourceIssue.issueNumber === issueNumber);
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Shared by BOTH import surfaces (single import and batch import) so a batch-imported task carries the same translation a singly-imported one does — the requirement is about imported issues, not about which button was pressed.
+Returns null (import the original) whenever auto-translate is off, no target locale resolves, the issue is closed, or nothing is cached for the issue's CURRENT content. Never calls the model: import must not block on, or fail because of, a translation.
+*/
+async function resolveImportedIssueTranslation(
+  req: Request,
+  store: TaskStore,
+  owner: string,
+  repo: string,
+  issue: { number: number; title: string; body: string | null; state: "open" | "closed" },
+): Promise<{ title: string; body: string } | null> {
+  try {
+    const settings = await store.getSettings();
+    if (settings.githubImportAutoTranslate !== true) return null;
+
+    const { getCachedImportTranslation, resolveTargetLocale } = await import(
+      "../import-translate-service.js"
+    );
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-14:10:
+    The DEFAULT config leaves `importTranslateTargetLocale` unset ("follow the dashboard language"), so resolving from the project setting plus a client-sent locale alone made a default-configured import silently create the task from the ORIGINAL prose even though the panel showed a translation (PR #2141 review, P1).
+    Resolution therefore falls through to the global `language` setting server-side, which also fixes direct API callers and stale clients; the request locale stays as the last tier because `language` is itself unset when a surface browser-detects its locale.
+    */
+    const targetLocale = resolveTargetLocale(
+      settings.importTranslateTargetLocale,
+      // The panel forwards its active locale; a direct API caller may not.
+      (req.body as { targetLocale?: unknown } | undefined)?.targetLocale,
+      settings.language,
+    );
+    if (!targetLocale) return null;
+
+    return await getCachedImportTranslation(
+      { store, provider: "github", repoKey: `${owner}/${repo}`, targetLocale },
+      issue,
+    );
+  } catch {
+    // Translation lookup must never break an import.
+    return null;
+  }
+}
+
 async function resolveImportedIssueGithubTracking(store: TaskStore): Promise<{ enabled: true } | undefined> {
   const projectSettings = await store.getSettings();
   if (projectSettings.githubLinkImportedIssuesToTracking === true) {
@@ -4064,9 +4106,15 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         }
       }
 
-      // Create the task
-      const title = issue.title.slice(0, 200);
-      const body = issue.body?.trim() || "(no description)";
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      An imported issue carries the TRANSLATED prose when a translation exists, so the task an operator creates reads the same as the preview they approved.
+      Cache-read only: a miss imports the original rather than blocking the import on a fresh model call, because import must stay fast and must never fail because translation failed.
+      The `Source: <url>` suffix is appended AFTER translation so the URL is never rewritten by the model.
+      */
+      const translatedIssue = await resolveImportedIssueTranslation(req, scopedStore, owner, repo, issue);
+      const title = (translatedIssue?.title || issue.title).slice(0, 200);
+      const body = (translatedIssue?.body ?? issue.body)?.trim() || "(no description)";
       const description = `${body}\n\nSource: ${sourceUrl}`;
 
       const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore);
@@ -4098,6 +4146,109 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       if (err instanceof ApiError) {
         throw err;
       }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Auto-translate endpoint for the Import Tasks list. The panel calls this once per load when `githubImportAutoTranslate` is on; it returns translated title+body for the foreign-language OPEN issues so the list reads in the operator's language rather than one issue at a time.
+  Results are cached durably server-side, so a second load of the same repo costs no model calls, and the import path reads the same cache — which is what makes the imported task carry the translation the operator previewed.
+  Requirement (2026-07-15): translate the 50 most recent OPEN issues; closed issues are never translated and their cached rows are pruned on sight.
+  */
+  /**
+   * POST /api/github/issues/auto-translate
+   * Body: { owner, repo, items: [{number,title,body,state}], targetLocale? }
+   * Returns: { translations: Record<number, {title,body}>, enabled, targetLocale, capped }
+   */
+  router.post("/github/issues/auto-translate", async (req, res) => {
+    try {
+      const { owner, repo, items, targetLocale: requestedLocale } = req.body ?? {};
+      if (!owner || typeof owner !== "string") throw badRequest("owner is required");
+      if (!repo || typeof repo !== "string") throw badRequest("repo is required");
+      if (!Array.isArray(items)) throw badRequest("items must be an array");
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+
+      const {
+        translateImportItems,
+        resolveTargetLocale,
+        selectEligibleItems,
+        partitionImportItemsByCache,
+        isTranslatable,
+      } = await import("../import-translate-service.js");
+      const {
+        checkTranslateRateLimit,
+        getTranslateRateLimitResetTime,
+      } = await import("../ai-translate.js");
+
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      The setting is enforced server-side, not only by hiding UI: an off setting must mean "no model calls and no billing", even if a stale client or a direct API caller asks for translation.
+      */
+      if (settings.githubImportAutoTranslate !== true) {
+        res.json({ translations: {}, enabled: false, targetLocale: null, capped: false });
+        return;
+      }
+
+      const targetLocale = resolveTargetLocale(
+        settings.importTranslateTargetLocale,
+        requestedLocale,
+        settings.language,
+      );
+      if (!targetLocale) {
+        res.json({ translations: {}, enabled: true, targetLocale: null, capped: false });
+        return;
+      }
+
+      const normalized = items
+        .filter((item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .map((item) => ({
+          number: Number(item.number),
+          title: typeof item.title === "string" ? item.title : "",
+          body: typeof item.body === "string" ? item.body : null,
+          state: item.state === "closed" ? ("closed" as const) : ("open" as const),
+        }))
+        .filter((item) => Number.isInteger(item.number) && item.number > 0);
+
+      const ctx = {
+        store: scopedStore,
+        rootDir: scopedStore.getRootDir(),
+        provider: "github" as const,
+        repoKey: `${owner}/${repo}`,
+        targetLocale,
+      };
+
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-14:10:
+      Charge the budget for MODEL CALLS ONLY — partition against the durable cache BEFORE reserving.
+      Reserving per foreign issue meant reopening a panel of 50 cached issues burned 50 slots while calling the model zero times, rate-limiting the panel for the rest of the hour despite costing nothing (PR #2141 review, P1).
+      The `capped` flag likewise reflects eligible issues (what the operator sees capped), while `cost` reflects only the uncached ones.
+      */
+      const allEligible = normalized.filter((item) => isTranslatable(item, targetLocale));
+      const eligible = selectEligibleItems(normalized, targetLocale);
+      const capped = allEligible.length > eligible.length;
+      const partition = await partitionImportItemsByCache(ctx, eligible);
+      const cost = partition.uncached.length;
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (cost > 0 && !checkTranslateRateLimit(ip, cost)) {
+        const resetTime = getTranslateRateLimitResetTime(ip);
+        throw rateLimited(
+          `Translation rate limit exceeded. Reset at ${resetTime?.toISOString() || "unknown"}`,
+        );
+      }
+
+      const translated = await translateImportItems(ctx, normalized, partition);
+
+      const translations: Record<number, { title: string; body: string }> = {};
+      for (const [number, value] of translated) {
+        translations[number] = { title: value.title, body: value.body };
+      }
+      res.json({ translations, enabled: true, targetLocale, capped });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
   });
@@ -4164,11 +4315,16 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
 
         // Use throttled fetch to avoid rate limits
+        /*
+        FNXC:GitHubImportTranslate 2026-07-15-09:30:
+        `state` is surfaced on the batch fetch so batch import applies the same closed-issue rule as single import: a closed issue never serves a cached translation.
+        */
         const fetchResult = await githubClient.fetchThrottled<{
           number: number;
           title: string;
           body: string | null;
           html_url: string;
+          state?: "open" | "closed";
           pull_request?: unknown;
         }>(url, {}, { delayMs: delayMs ?? 1000, maxRetries: 3 });
 
@@ -4207,9 +4363,18 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           continue;
         }
 
-        // Create the task
-        const title = issue.title.slice(0, 200);
-        const body = issue.body?.trim() || "(no description)";
+        /*
+        FNXC:GitHubImportTranslate 2026-07-15-09:30:
+        Batch import carries translations exactly like single import (shared helper) — the requirement is about imported issues, not about which import button was used.
+        */
+        const batchTranslation = await resolveImportedIssueTranslation(req, scopedStore, owner, repo, {
+          number: issue.number,
+          title: issue.title,
+          body: issue.body,
+          state: issue.state === "closed" ? "closed" : "open",
+        });
+        const title = (batchTranslation?.title || issue.title).slice(0, 200);
+        const body = (batchTranslation?.body ?? issue.body)?.trim() || "(no description)";
         const description = `${body}\n\nSource: ${sourceUrl}`;
 
         try {

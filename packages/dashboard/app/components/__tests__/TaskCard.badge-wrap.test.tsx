@@ -42,6 +42,14 @@ vi.mock("../PluginSlot", () => ({
 vi.mock("../../hooks/useTaskDiffStats", () => ({
   useTaskDiffStats: () => ({ stats: null, loading: false }),
 }));
+vi.mock("../../hooks/useAgentsMapCache", () => ({
+  useAgentsMapCache: () => ({
+    agentsMap: new Map([["agent-ci", { name: "CI Engineer with a very long display name" }]]),
+    agents: [],
+    loading: false,
+    refresh: vi.fn(),
+  }),
+}));
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
     addToast: vi.fn(),
@@ -549,6 +557,31 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     const styles = getComputedStyle(badge as Element);
     expect(styles.maxWidth).not.toBe("none");
     expect(styles.whiteSpace).toBe("nowrap");
+  });
+
+  it("keeps assigned-agent badge text visible and truncated in mobile and narrow-card CSS", () => {
+    const { container: assignedAgentContainer } = render(
+      <TaskCard
+        task={makeTask({ assignedAgentId: "agent-ci" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const label = assignedAgentContainer.querySelector(".card-agent-badge-text") as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.textContent).toBe("CI Engineer ...");
+
+    const labelStyles = getComputedStyle(label);
+    expect(labelStyles.display).not.toBe("none");
+    expect(labelStyles.overflow).toBe("hidden");
+    expect(labelStyles.textOverflow).toBe("ellipsis");
+    expect(labelStyles.whiteSpace).toBe("nowrap");
+
+    // jsdom does not apply media or container queries, so lock the source declaration that would otherwise hide this visible label.
+    const mobileSection = getCssBlocks(loadedCss, "max-width: 768px").join("\n");
+    expect(mobileSection).not.toMatch(/\.card-agent-badge-text\s*\{[^}]*display\s*:\s*none/);
+    expect(loadedCss).not.toMatch(/@container\s+task-card\s*\(max-width:\s*240px\)\s*\{\s*\.card-agent-badge-text\s*\{[^}]*display\s*:\s*none/);
   });
 
   it("places the agent badge in a left-aligned bottom row outside the header badge cluster", () => {

@@ -855,7 +855,8 @@ describe("ChatView core interactions", () => {
     expect(streamingMessage?.textContent).toContain("Typing");
   });
 
-  it("shows thinking blocks collapsed by default", async () => {
+  it("keeps persisted thinking blocks collapsed until expanded", async () => {
+    const user = userEvent.setup();
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -866,9 +867,15 @@ describe("ChatView core interactions", () => {
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     const message = screen.getByTestId("chat-message-msg-001");
-    const details = message.querySelector("details");
+    const details = message.querySelector("details") as HTMLDetailsElement;
     expect(details).toBeInTheDocument();
-    expect(details).toHaveProperty("open", false);
+    expect(details).not.toHaveAttribute("open");
+    expect(within(message).getByText("I need to think about this...")).not.toBeVisible();
+
+    await user.click(within(details).getByText("Thinking"));
+
+    expect(details).toHaveAttribute("open");
+    expect(within(message).getByText("I need to think about this...")).toBeVisible();
   });
 
   describe("streaming states", () => {
@@ -995,7 +1002,8 @@ describe("ChatView core interactions", () => {
       expect(typingIndicator?.querySelectorAll("span").length).toBe(3);
     });
 
-    it("shows thinking indicator when streaming thinking arrives before text", async () => {
+    it("keeps streaming thinking collapsed until expanded", async () => {
+      const user = userEvent.setup();
       setupMockChat({
         activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
         messages: [
@@ -1014,9 +1022,15 @@ describe("ChatView core interactions", () => {
       expect(streamingMessage?.textContent).toContain("Thinking");
 
       // Thinking details should be rendered
-      const thinkingDetails = streamingMessage?.querySelector("details.chat-message-thinking");
+      const thinkingDetails = streamingMessage?.querySelector("details.chat-message-thinking") as HTMLDetailsElement;
       expect(thinkingDetails).toBeInTheDocument();
-      expect(thinkingDetails?.querySelector(".chat-message-thinking-content")?.textContent).toContain("analyzing the request");
+      expect(thinkingDetails).not.toHaveAttribute("open");
+      expect(within(thinkingDetails).getByText("analyzing the request...")).not.toBeVisible();
+
+      await user.click(within(thinkingDetails).getByText("Thinking"));
+
+      expect(thinkingDetails).toHaveAttribute("open");
+      expect(within(thinkingDetails).getByText("analyzing the request...")).toBeVisible();
 
       // Typing indicator dots should be rendered
       const typingIndicator = streamingMessage?.querySelector(".chat-typing-indicator");

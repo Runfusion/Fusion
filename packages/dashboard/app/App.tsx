@@ -474,9 +474,36 @@ function AppInner() {
   Open popped-out task-detail windows. Each entry is a task snapshot rendered inside its own movable, resizable, non-blocking FloatingWindow. Several can be open at once and coexist with the right-dock pop-out and terminal (all click-through overlays). Snapshots survive a tasks revalidation; rendering prefers the live row by id and falls back to the snapshot. Pop-out dedupes by task id — re-popping an already-open task is a no-op (its window stays; focus-to-front in FloatingWindow handles re-raising on click).
   */
   const { entries: poppedOutTaskEntries, popOut: popOutTaskDetail, close: closePoppedOutTask } = usePoppedOutTasks();
+  const popupNavCloseRef = useRef(new Map<string, () => void>());
+
+  /*
+  FNXC:TaskDetailSwipeBack 2026-07-15-10:32:
+  Mobile task popups keep Board or List visible, but they are still task-detail
+  surfaces. Give each newly opened popup its own navigation callback so browser,
+  iOS swipe, and Android Back dismiss only that popup rather than leaving the
+  Fusion stack empty and allowing Back to skip past the originating task view.
+  */
+  const closePoppedOutTaskWithNav = useCallback((taskId: string) => {
+    const closeFromHistory = popupNavCloseRef.current.get(taskId);
+    if (closeFromHistory) {
+      popupNavCloseRef.current.delete(taskId);
+      removeNav(closeFromHistory);
+    }
+    closePoppedOutTask(taskId);
+  }, [closePoppedOutTask, removeNav]);
+
   const popOutTaskDetailForCurrentView = useCallback((task: Task | TaskDetail) => {
+    const alreadyOpen = poppedOutTaskEntries.some((entry) => entry.task.id === task.id);
+    if (isMobile && !alreadyOpen) {
+      const closeFromHistory = () => {
+        popupNavCloseRef.current.delete(task.id);
+        closePoppedOutTask(task.id);
+      };
+      popupNavCloseRef.current.set(task.id, closeFromHistory);
+      pushNav({ type: "modal", close: closeFromHistory });
+    }
     popOutTaskDetail(task, taskView);
-  }, [popOutTaskDetail, taskView]);
+  }, [isMobile, poppedOutTaskEntries, popOutTaskDetail, pushNav, closePoppedOutTask, taskView]);
 
   const boardSourceTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
   const [graphWorkflowSelection, setGraphWorkflowSelection] = useState<GraphWorkflowSelection | null>(null);
@@ -1079,12 +1106,12 @@ function AppInner() {
         ],
       },
       {
-        closePoppedOutTask,
+        closePoppedOutTask: closePoppedOutTaskWithNav,
         closeQuickChat: () => setQuickChatOpen(false),
         closeTerminal: closeTerminalWithNav,
       },
     );
-  }, [closePoppedOutTask, closeTerminalWithNav, modalManager, quickChatOpen, visiblePoppedOutTasks]);
+  }, [closePoppedOutTaskWithNav, closeTerminalWithNav, modalManager, quickChatOpen, visiblePoppedOutTasks]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
@@ -1812,7 +1839,7 @@ function AppInner() {
       */}
       {visiblePoppedOutTaskEntries.map(({ task: snapshot }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
-        const close = () => closePoppedOutTask(snapshot.id);
+        const close = () => closePoppedOutTaskWithNav(snapshot.id);
         return (
           <FloatingWindow
             key={snapshot.id}

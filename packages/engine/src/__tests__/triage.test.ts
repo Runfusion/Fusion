@@ -895,6 +895,9 @@ describe("fast-mode triage", () => {
       for (const text of required) expect(prompt).toContain(text);
       for (const text of forbidden) expect(prompt).not.toContain(text);
     }
+    expect(renderTriagePolicyPlaceholders(TRIAGE_POLICY_PROMPT, { defaultWorkflowId: "WF-005" })).toContain(
+      "Keep the project default workflow (`WF-005`)",
+    );
   });
 
   it("includes task-artifact location guidance for forensic/reconciliation tasks", () => {
@@ -956,6 +959,44 @@ describe("fast-mode triage", () => {
     await processor.specifyTask(task);
 
     expect(capturedSystemPrompt).toContain("## Review Level");
+  });
+
+  it("renders a stored triage workflow override over the configured project default", async () => {
+    const task = createTriageTask({ id: "FN-7967", executionMode: "standard" });
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: task.id, attachments: [], comments: [] }),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        defaultWorkflowId: "WF-005",
+      } as Settings),
+      getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
+      getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-1"),
+      getWorkflowSettingValues: vi.fn().mockReturnValue({ triageDefaultWorkflowId: "WF-009" }),
+    });
+
+    let capturedSystemPrompt = "";
+    mockCreateFnAgent.mockImplementationOnce(async (opts: any) => {
+      capturedSystemPrompt = opts.systemPrompt;
+      return {
+        session: {
+          state: {},
+          sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      };
+    });
+
+    const processor = new TriageProcessor(store, "/tmp/root");
+    await processor.specifyTask(task);
+
+    expect(capturedSystemPrompt).toContain("Keep the project default workflow (`WF-009`)");
+    expect(capturedSystemPrompt).not.toContain("Keep the project default workflow (`WF-005`)");
   });
 
   it("renders disabled proactive splitting while preserving explicit breakIntoSubtasks prompts", async () => {

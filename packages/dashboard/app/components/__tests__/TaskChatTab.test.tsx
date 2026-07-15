@@ -997,7 +997,7 @@ describe("TaskChatTab", () => {
     expect(within(standaloneEntry).getByLabelText("Tool entry timestamp")).toHaveTextContent(expectedTime);
   });
 
-  it("renders thinking in an expanded-by-default collapsible block", async () => {
+  it("renders thinking in a collapsed-by-default expandable block", async () => {
     const user = userEvent.setup();
     mockLogs([
       makeEntry({ agent: "triage", type: "thinking", text: "I am considering options" }),
@@ -1006,10 +1006,15 @@ describe("TaskChatTab", () => {
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
 
     const thinking = screen.getByTestId("task-chat-thinking");
-    expect(thinking).toHaveAttribute("open");
+    expect(thinking).not.toHaveAttribute("open");
     expect(within(thinking).getByText("Thinking")).toBeVisible();
-    expect(screen.getByText("I am considering options")).toBeVisible();
+    expect(screen.getByText("I am considering options")).not.toBeVisible();
     expect(within(thinking).getAllByTestId("task-chat-entry-thinking")).toHaveLength(1);
+
+    await user.click(within(thinking).getByText("Thinking"));
+
+    expect(thinking).toHaveAttribute("open");
+    expect(screen.getByText("I am considering options")).toBeVisible();
 
     await user.click(within(thinking).getByText("Thinking"));
 
@@ -1055,7 +1060,7 @@ describe("TaskChatTab", () => {
     expect(within(toolGroups[1]).getByLabelText("Tool names")).toHaveTextContent("second tool");
     expect(screen.getAllByTestId("task-chat-entry-text")).toHaveLength(1);
     expect(screen.getByText("plain response")).toBeVisible();
-    expect(screen.getByText("thinking between tools")).toBeVisible();
+    expect(screen.getByText("thinking between tools")).not.toBeVisible();
   });
 
   it("appends newly streamed entries from the hook without auto-opening tool groups", () => {

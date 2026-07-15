@@ -115,7 +115,8 @@ describe("EngineControlMenu", () => {
   });
 
 
-  it("matches the Command Center slider geometry contract for footer current-use markers", () => {
+  // FNXC:GlobalConcurrencyControls 2026-07-15-00:00: FN-7973 requires touch-action:none on both concurrency slider surfaces because the mobile pan-y ancestor lock otherwise steals horizontal native thumb drags.
+  it("matches the Command Center slider geometry and mobile touch contract for footer current-use markers", () => {
     const footerWrap = cssRule(engineControlMenuCss, ".engine-control-menu__range-wrap");
     const footerRange = cssRule(engineControlMenuCss, ".engine-control-menu__range");
     const footerMarker = cssRule(engineControlMenuCss, ".engine-control-menu__use-marker");
@@ -131,11 +132,13 @@ describe("EngineControlMenu", () => {
     expect(footerRange).toContain("inline-size: 100%;");
     expect(footerRange).toContain("min-block-size: var(--space-xl);");
     expect(footerRange).toContain("accent-color: var(--accent);");
-    expect(footerRange).toContain("touch-action: pan-y;");
+    expect(footerRange).toContain("touch-action: none;");
+    expect(footerRange).not.toContain("touch-action: pan-y;");
     expect(commandTouchSliderRule).toContain("inline-size: 100%;");
     expect(commandTouchSliderRule).toContain("min-block-size: var(--space-xl);");
     expect(commandTouchSliderRule).toContain("accent-color: var(--accent);");
-    expect(commandTouchSliderRule).toContain("touch-action: pan-y;");
+    expect(commandTouchSliderRule).toContain("touch-action: none;");
+    expect(commandTouchSliderRule).not.toContain("touch-action: pan-y;");
     for (const declaration of ["position: absolute;", "inset-block-start: 50%;", "inset-inline-start: var(--use-offset, var(--use-pct));", "transform: translate(-50%, -50%);", "pointer-events: none;"]) {
       expect(footerMarker).toContain(declaration);
       expect(commandMarker).toContain(declaration);
@@ -495,6 +498,8 @@ describe("EngineControlMenu", () => {
     await openMenu();
 
     const loadingGlobalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    // FNXC:GlobalConcurrencyControls 2026-07-15-00:00: FN-7973 restores native touch dragging only for enabled ranges; loading caps remain disabled no-ops.
+    expect(loadingGlobalMaxConcurrent).toHaveAttribute("disabled");
     expect(loadingGlobalMaxConcurrent).toBeDisabled();
 
     vi.useFakeTimers();

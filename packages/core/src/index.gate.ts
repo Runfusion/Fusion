@@ -1375,6 +1375,7 @@ export {
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
   resolveTitleSummarizerSettingsModel,
+  resolveImportTranslateSettingsModel,
   resolveValidatorSettingsModel,
   TEST_MODE_RESOLVED,
   routeTaskExecutionModel,

@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { WorkflowDefinition } from "@fusion/core";
+import { isLocale, SUPPORTED_LOCALES, type WorkflowDefinition } from "@fusion/core";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Locale labels come from core's shared `localeDisplayName` (endonyms), NOT from the LanguageSelector component: importing a component module for a constant drags its i18n/react-i18next initialization into every consumer of this section, which breaks tests that mock react-i18next narrowly.
+The core helper is the same list the translate banner labels source languages with, so the two surfaces cannot drift.
+*/
+import { localeDisplayName } from "@fusion/core/detect-content-language";
 import { ProjectDefaultWorkflowField } from "../../WorkflowSelector";
 import { WorkflowIcon } from "../../WorkflowIcon";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
@@ -358,6 +366,45 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
           <input id="githubLinkImportedIssuesToTracking" type="checkbox" checked={form.githubLinkImportedIssuesToTracking === true} onChange={(e) => setForm((f) => ({ ...f, githubLinkImportedIssuesToTracking: e.target.checked }))}/>{t("settings.general.alwaysLinkImportedGitHubIssuesToTracking", " Always link imported GitHub issues to GitHub tracking ")}</label>
         <small>{t("settings.general.whenEnabledImportedGitHubIssuesUseTheirSource", "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.")}</small>
       </div>
+      {/*
+        FNXC:GitHubImportTranslate 2026-07-15-09:30:
+        Both controls live beside the other import-scoped GitHub settings because they
+        only ever affect the Import Tasks panel, never ordinary task creation.
+        Auto-translate is OFF by default: translation is a per-issue AI call, so operators
+        on all-English repos must never pay for it without asking. When ON, the panel
+        translates foreign-language issue titles/bodies into the target language and shows
+        the translation by default (the original stays one toggle away).
+        Target language is deliberately clearable — the empty option means "follow the
+        dashboard language", so an operator who switches the dashboard to Korean gets Korean
+        translations without touching this setting twice.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "githubImportAutoTranslate",
+          label: t("settings.general.autoTranslateImportedIssues", "Auto-translate imported issues"),
+          help: t("settings.general.autoTranslateImportedIssuesHelp", "When enabled, the Import Tasks panel automatically translates foreign-language issue titles and bodies into the target language below and shows the translation by default. You can always switch back to the original text, and imported tasks carry the translated text. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.githubImportAutoTranslate === true}
+        onChange={(v) => setForm((f) => ({ ...f, githubImportAutoTranslate: v ?? undefined }))}
+      />
+      <SettingsSelectRow
+        descriptor={{
+          key: "importTranslateTargetLocale",
+          label: t("settings.general.translationTargetLanguage", "Translation target language"),
+          help: t("settings.general.translationTargetLanguageHelp", "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language."),
+          scope: "project",
+          options: [
+            { value: "", label: t("settings.general.followDashboardLanguage", "Follow dashboard language") },
+            ...SUPPORTED_LOCALES.map((locale) => ({ value: locale, label: localeDisplayName(locale) })),
+          ],
+        }}
+        value={form.importTranslateTargetLocale ?? ""}
+        onChange={(v) => setForm((f) => ({
+          ...f,
+          importTranslateTargetLocale: v && isLocale(v) ? v : undefined,
+        }))}
+      />
       <div className="form-group">
         <label htmlFor="projectGithubTrackingDefaultRepoGeneral">{t("settings.general.projectDefaultTrackingRepo", "Project default tracking repo")}</label>
         <TrackingRepoSelect id="projectGithubTrackingDefaultRepoGeneral" ariaLabel="Project default tracking repo" value={form.githubTrackingDefaultRepo ?? ""} options={projectTrackingRepoOptions} loading={projectTrackingRepoLoading} error={projectTrackingRepoError ?? undefined} placeholder={t("settings.general.ownerRepo", "owner/repo")} onChange={(nextValue) => setForm((f) => ({ ...f, githubTrackingDefaultRepo: nextValue || undefined }))}/>

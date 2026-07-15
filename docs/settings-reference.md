@@ -122,6 +122,9 @@ Fusion automatically falls back to ntfy's JSON publish format when a notificatio
 | `titleSummarizerGlobalProvider` | `string` | `undefined` | Global baseline provider for title summarization. Project `titleSummarizerProvider` overrides this. |
 | `titleSummarizerGlobalModelId` | `string` | `undefined` | Global baseline model ID for title summarization. |
 | `titleSummarizerGlobalThinkingLevel` | `ThinkingLevel` | `undefined` | Optional global summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. |
+| `importTranslateGlobalProvider` | `string` | `undefined` | Global baseline provider for import auto-translation. Project `importTranslateProvider` overrides this. |
+| `importTranslateGlobalModelId` | `string` | `undefined` | Global baseline model ID for import auto-translation. |
+| `importTranslateGlobalThinkingLevel` | `ThinkingLevel` | `undefined` | Optional global import-translate-lane thinking override. Inherits `defaultThinkingLevel` when unset. |
 | `daemonToken` | `string` | `undefined` | Daemon authentication token (`fn_<32 hex chars>`) used by CLI clients. |
 | `daemonPort` | `number` | `4040` | Port for daemon/serve mode binding. |
 | `daemonHost` | `string` | `"127.0.0.1"` | Host for daemon/serve mode binding. Defaults to localhost only; pass `"0.0.0.0"` to expose on all interfaces. |
@@ -367,8 +370,8 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 | `triageSubtaskFileScopeThreshold` | `20` | File Scope entry count that signals broad work. |
 | `triageSubtaskRemediationBatchThreshold` | `30` | Large remediation batch threshold. |
 | `triageNoCommitsDecisionVerbs` | all seven built-ins | Decision-only verbs: Decide, Evaluate, Verify, Confirm, Audit, Review whether, Investigate and report. |
-| `triageDecisionOnlyWorkflowId` | `builtin:quick-fix` | Preferred workflow for decision-only/no-commit tasks when the user explicitly requests that routing or the agent is creating the task. |
-| `triageDefaultWorkflowId` | `builtin:coding` | Default workflow for standard coding tasks and for existing tasks without an explicit user-requested or creator-owned workflow selection. |
+| `triageDecisionOnlyWorkflowId` | `builtin:quick-fix` | Preferred built-in or custom workflow for decision-only/no-commit tasks when the user explicitly requests that routing or the agent is creating the task. |
+| `triageDefaultWorkflowId` | empty (inherits project default) | Accepts any valid built-in or custom workflow id as a triage override. Empty (and legacy `builtin:coding`) inherits `config.settings.defaultWorkflowId`; the triage prompt falls back to `builtin:coding` only when neither is configured. |
 | `leanPlanning` | `false` | Workflow-native fast-mode policy: select the lean `planning-fast` prompt variant instead of the full triage spec prompt. |
 | `autoApproveSpec` | `false` | Legacy compatibility setting. Workflow Plan Review now owns optional pre-execution AI plan approval. |
 | `planReviewMaxRevisions` | unset | Workflow-native Plan Review/spec revision cap. Unset/empty means unbounded automatic replans; a non-negative integer caps attempts; `0` disables automatic Plan Review revision. |
@@ -635,6 +638,8 @@ Default notes:
 | `githubTrackingEnabledByDefault` | `boolean` | `false` | Project-level default for enabling issue tracking on ordinary new tasks. When this is false, the Quick Entry GitHub toggle is disabled until tracking is enabled in Settings. Imported GitHub issues still follow this default unless `githubLinkImportedIssuesToTracking` is enabled. |
 | `sessionAdvisorEnabledByDefault` | `boolean` | `false` | Project-level default for the session advisor (LLM overseer agent that reviews live executor transcripts). Off by default (opt-in). Quick Add exposes an eye toggle next to GitHub that inherits this default; each task can override via `sessionAdvisorEnabled`. Provider and model ids still come from workflow settings (`plannerOverseerAdvisorProvider` / `plannerOverseerAdvisorModelId`). Dashboard location: **Settings → Project → General → Session advisor (overseer agent)**. |
 | `githubLinkImportedIssuesToTracking` | `boolean` | `false` | Project-scoped, import-only option. When enabled, GitHub issue imports from the dashboard, CLI, and extension tools persist `githubTracking: { enabled: true }` so Fusion adopts the imported source issue as the tracking issue without turning tracking on for ordinary new tasks. Duplicate/skipped imports do not create tasks or tracking metadata. |
+| `githubImportAutoTranslate` | `boolean` | `false` | Project-scoped, import-only option. When enabled, the Import Tasks panel automatically translates foreign-language GitHub/GitLab issue titles and bodies into `importTranslateTargetLocale` and shows the translation by default (the original text stays one toggle away). Off by default so all-English projects never pay for a per-issue AI call. Dashboard location: **Settings → Project → General → GitHub Tracking**. |
+| `importTranslateTargetLocale` | `Locale` | `undefined` | Target language for `githubImportAutoTranslate`. One of `SUPPORTED_LOCALES`. When unset, import translation follows the dashboard's own `language` setting. Dashboard location: **Settings → Project → General → GitHub Tracking**. |
 | `githubTrackingDefaultRepo` | `string` | `undefined` | Project default issue-tracking repo (`owner/repo`) used before global fallback for tracked task creation (precedence: task override → project default → global default). In Settings UI this is a detected-remote dropdown with a Custom fallback for manual entry. This key is dual-scope: project saves go through `PUT /api/settings` (Settings → General → GitHub Tracking) while global saves go through `PUT /api/settings/global` (Settings → Global General). |
 | `gitlabEnabled` | `boolean` | `undefined` (effective global fallback, then `true`) | Project GitLab integration enable switch. Explicit `false` disables outbound GitLab API imports, completion comments, close/reopen, source closed-at backfill, and tracking refresh side effects for this project without deleting saved URL/token fields. Dashboard location: **Settings → Project → General → GitLab Configuration** and **Settings → Project → Merge → GitLab Authentication** disclosure headers. |
 | `gitlabInstanceUrl` | `string` | `undefined` (effective global fallback, then `https://gitlab.com`) | Project GitLab web instance URL for GitLab.com or self-managed GitLab. Blank/unset inherits global `gitlabInstanceUrl` and then defaults to GitLab.com. Values are trimmed and must be absolute `http://` or `https://` URLs without username/password userinfo; trailing slashes are normalized by `resolveGitlabConfig`. Dashboard location: **Settings → Project → General → GitLab Configuration**. |
@@ -1092,6 +1097,19 @@ Project-scoped model lane used for task title auto-summarization, GitHub trackin
 6. Automatic provider/model resolution
 
 If the configured title summarizer provider/model is stale and no longer exists in the pi model registry, title generation logs a warning with the stale id and retries once with automatic provider/model resolution. Other AI failures (auth, empty output, unavailable engine) still fail normally.
+
+### Import auto-translation model
+
+Dedicated model lane used by `githubImportAutoTranslate` to translate foreign-language GitHub/GitLab issue titles and bodies in the Import Tasks panel. Configurable under **Settings → Global Models** and **Settings → Project Models**. It is separate from the summarization lane because translation is one short, readonly, per-issue call with no repo context: operators can pin a cheap/fast model here without dragging the summarization lane (task titles, merge commit messages) onto that same model. It still falls back *through* summarization, so leaving it unset is a supported no-configuration path.
+
+1. Project `importTranslateProvider` + `importTranslateModelId`
+2. Global `importTranslateGlobalProvider` + `importTranslateGlobalModelId`
+3. Summarization lane (project `titleSummarizerProvider` + `titleSummarizerModelId`, then global `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId`)
+4. Project `defaultProviderOverride` + `defaultModelIdOverride`
+5. Global `defaultProvider` + `defaultModelId`
+6. Automatic provider/model resolution
+
+Thinking level for import translation: project `importTranslateThinkingLevel` → global `importTranslateGlobalThinkingLevel` → project `defaultThinkingLevelOverride` → global `defaultThinkingLevel`. Resolved by `resolveImportTranslateSettingsModel` (`@fusion/core`).
 
 > **Note:** Runtime fallback precedence logic is implemented in engine and dashboard routes. The hierarchies above reflect current runtime behavior.
 

@@ -2759,6 +2759,22 @@ export function SettingsModal({
       helperText: "AI model used for auto-generating task titles and merge commit summaries.",
         fallbackOrder: "Project override → Global summarization lane → Project planning lane → Project default lane → Global default lane → Automatic resolution",
     },
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-09:30:
+    Import auto-translation gets its OWN lane instead of riding the summarization lane. Translating an imported GitHub/GitLab issue is one short, readonly, per-issue call with no repo context, so operators must be able to pin a cheap/fast model to it without dragging the summarization lane (which titles tasks and writes merge commit messages) onto that same cheap model. It still falls back THROUGH summarization, so operators who do not care get sensible behavior with zero configuration.
+    */
+    {
+      laneId: "import-translate",
+      label: "Import Auto-Translation Model",
+      globalProviderKey: "importTranslateGlobalProvider",
+      globalModelKey: "importTranslateGlobalModelId",
+      globalThinkingKey: "importTranslateGlobalThinkingLevel",
+      projectProviderKey: "importTranslateProvider",
+      projectModelKey: "importTranslateModelId",
+      projectThinkingKey: "importTranslateThinkingLevel",
+      helperText: "AI model used to translate foreign-language GitHub/GitLab issue titles and bodies in the Import Tasks panel.",
+      fallbackOrder: "Project override → Global import-translate lane → Summarization lane → Project default → Global default",
+    },
   ];
 
   /**

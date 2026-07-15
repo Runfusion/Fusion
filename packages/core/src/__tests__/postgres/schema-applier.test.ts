@@ -40,6 +40,7 @@ import {
   MONITOR_APPROVAL_ISOLATION_SCHEMA_VERSION,
   MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
   MISSION_FIX_IDEMPOTENCY_VERSION,
+  IMPORT_TRANSLATION_CACHE_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
@@ -91,7 +92,14 @@ describe("schema-applier: immutable migration identities", () => {
 
   it("keeps mission fix idempotency assigned to version 0009", () => {
     expect(MISSION_FIX_IDEMPOTENCY_VERSION).toBe("0009");
-    expect(SCHEMA_BASELINE_VERSION).toBe(MISSION_FIX_IDEMPOTENCY_VERSION);
+    // FNXC:GitHubImportTranslate 2026-07-15-09:30: the baseline marker advanced to
+    // 0010; 0009 keeps its immutable identity so its migration cannot be skipped.
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(MISSION_FIX_IDEMPOTENCY_VERSION));
+  });
+
+  it("keeps the import translation cache assigned to version 0010", () => {
+    expect(IMPORT_TRANSLATION_CACHE_VERSION).toBe("0010");
+    expect(SCHEMA_BASELINE_VERSION).toBe(IMPORT_TRANSLATION_CACHE_VERSION);
   });
 });
 
@@ -366,7 +374,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 89 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 90 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -381,9 +389,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       GROUP BY table_schema
     `)) as unknown as Array<{ table_schema: string; n: number }>;
     const bySchema = Object.fromEntries(rows.map((r) => [r.table_schema, r.n]));
-    // Project: 87 typed core tables + 2 lossless legacy preservation tables.
+    // Project: 87 typed core tables + 2 lossless legacy preservation tables
+    // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30).
     // Plugin tables are added separately by the hook.
-    expect(bySchema.project).toBe(89);
+    expect(bySchema.project).toBe(90);
     expect(bySchema.central).toBe(17);
     expect(bySchema.archive).toBe(1);
   });
@@ -944,7 +953,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     const versions = (await ctx.db.execute(sql`
       SELECT version FROM public.fusion_schema_migrations ORDER BY version
     `)) as unknown as Array<{ version: string }>;
-    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, SCHEMA_BASELINE_VERSION]);
+    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, MISSION_FIX_IDEMPOTENCY_VERSION, SCHEMA_BASELINE_VERSION]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
@@ -968,7 +977,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       applySchemaBaseline(ctx.db, { pluginHooks: [] }),
     ]);
     expect(results.filter(({ applied }) => applied)).toHaveLength(1);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, SCHEMA_BASELINE_VERSION]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, MISSION_FIX_IDEMPOTENCY_VERSION, SCHEMA_BASELINE_VERSION]);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
@@ -1004,7 +1013,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
   });
 
   /**
@@ -1042,7 +1051,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
   });
 
   /*
@@ -1080,7 +1089,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       "project_auth_users",
       "task_reviewer_runs",
     ]);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
   });
 });
 

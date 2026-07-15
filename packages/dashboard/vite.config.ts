@@ -123,6 +123,13 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      The browser bundle aliases `@fusion/core` to the leaf `types.ts` to keep Node-only deps out of the client, so anything the app imports from core must resolve to a browser-safe module.
+      Language detection is pure string logic shared with the server; alias its subpath explicitly rather than widening the `@fusion/core` alias, which would drag the full index (and its Node deps) into the bundle.
+      This alias MUST precede the `@fusion/core` entry — Vite matches aliases in order, so the broader key would otherwise swallow the subpath.
+      */
+      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
       "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
       // FNXC:PluginBuild 2026-06-22-03:50: Bundled plugin source can import the dashboard's shared ViewHeader through the package export; Vite needs the same source alias during dashboard builds so plugin UI normalization does not fail only in CI merge builds.

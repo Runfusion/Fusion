@@ -1401,7 +1401,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               <Network size={16} />
             </button>
           </div>
-          <div className="agents-view-primary-actions">
+          <div className={`agents-view-primary-actions${isControlsPanelOpen ? " agents-view-primary-actions--controls-open" : ""}`}>
             <button
               ref={controlsTriggerRef}
               className={`btn-icon agent-controls-trigger${isControlsPanelOpen ? " agent-controls-trigger--active" : ""}`}

@@ -885,17 +885,10 @@ falling through to an unstyled transparent shell.
   white-space: nowrap;
 }
 
-@container task-card (max-width: 240px) {
-  .card-agent-badge-text {
-    display: none;
-  }
-}
-
-@media (max-width: 768px) {
-  .card-agent-badge-text {
-    display: none;
-  }
-}
+/*
+FNXC:TaskCardBadges 2026-07-15-00:00:
+Task-card agent badges must retain their visible text label in narrow containers and on mobile. Do not hide the label into an icon-only pill; the existing ellipsis constraints preserve the card's no-wrap badge geometry for long names.
+*/
 
 .card-agent-badge--loading {
   animation: pulse 1.5s ease-in-out infinite;

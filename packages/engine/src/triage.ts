@@ -20,7 +20,7 @@ import {
   resolveAgentPrompt,
   builtinSeamPrompt,
   renderTriagePolicyPlaceholders,
-  resolveEffectiveSettings,
+  resolveEffectiveSettingsDetailed,
   resolveEffectivePlannerHeartbeatPatrolEnabled,
   resolveTaskPlanningPrompt,
   resolveTaskSeamPrompt,
@@ -1144,8 +1144,28 @@ export class TriageProcessor {
         const workflowFastPlanningPrompt = leanPlanning
           ? await resolveTaskSeamPrompt(this.store, task.id, "planning-fast").catch(() => undefined)
           : undefined;
-        const effectiveWorkflowSettings = await resolveEffectiveSettings(this.store, task).catch(() => ({}));
-        const plannerHeartbeatPatrolEnabled = resolveEffectivePlannerHeartbeatPatrolEnabled(effectiveWorkflowSettings);
+        const resolvedWorkflowSettings = await resolveEffectiveSettingsDetailed(this.store, task).catch((): {
+          effective: Record<string, unknown>;
+          storedKeys: Set<string>;
+        } => ({
+          effective: {},
+          storedKeys: new Set<string>(),
+        }));
+        const plannerHeartbeatPatrolEnabled = resolveEffectivePlannerHeartbeatPatrolEnabled(resolvedWorkflowSettings.effective);
+        /*
+         * FNXC:WorkflowRouting 2026-07-15-13:00:
+         * Triage policy values are workflow-scoped, while defaultWorkflowId remains
+         * project-scoped. Only an explicitly stored triageDefaultWorkflowId may
+         * override the project settings; a declaration default must inherit the
+         * project default and must not clobber legacy triage policy values.
+         */
+        const triageDefaultWorkflowId = resolvedWorkflowSettings.storedKeys.has("triageDefaultWorkflowId")
+          ? resolvedWorkflowSettings.effective.triageDefaultWorkflowId
+          : undefined;
+        const triagePolicySettings = {
+          ...settings,
+          ...(triageDefaultWorkflowId === undefined ? {} : { triageDefaultWorkflowId }),
+        } as Partial<Settings>;
         // FN-6232: standard-mode built-in triage policy is sourced from the workflow IR planning node; the former engine duplicate was removed.
         const userTriagePrompt = settings.agentPrompts?.roleAssignments?.triage
           ? resolveAgentPrompt("triage", settings.agentPrompts, { plannerHeartbeatPatrolEnabled })
@@ -1158,7 +1178,7 @@ export class TriageProcessor {
         // Apply the workflow-native triage policy renderer to both standard and
         // fast prompts. Fast mode currently has no policy placeholders, making
         // this a no-op there while still guaranteeing no dangling token leaks.
-        const renderedBasePrompt = renderTriagePolicyPlaceholders(resolvedBasePrompt, settings);
+        const renderedBasePrompt = renderTriagePolicyPlaceholders(resolvedBasePrompt, triagePolicySettings);
         const triageLayers = buildPromptLayers({
           basePrompt: renderedBasePrompt,
           goalContext: triageGoalResolution.goalContext,

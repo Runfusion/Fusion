@@ -2786,6 +2786,19 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for merger agent sessions.
    *  Must be set together with `mergerGlobalProvider`. */
   mergerGlobalModelId?: string;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Global baseline translate lane. Import auto-translation runs one short readonly call per issue, so operators typically pin a cheap/fast model here rather than inheriting the executor/planner model.
+  */
+  /** Global baseline AI model provider for import auto-translation.
+   *  Must be set together with `importTranslateGlobalModelId`. Falls back to the
+   *  summarization lane, then `defaultProvider`/`defaultModelId`. */
+  importTranslateGlobalProvider?: string;
+  /** Global baseline AI model ID for import auto-translation.
+   *  Must be set together with `importTranslateGlobalProvider`. */
+  importTranslateGlobalModelId?: string;
+  /** Optional global translate-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  importTranslateGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global execution-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
   executionGlobalThinkingLevel?: ThinkingLevel;
   /** Optional global planning-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
@@ -3998,6 +4011,32 @@ export interface ProjectSettings {
   mergerModelId?: string;
   /** Optional project merger-lane thinking override. Inherits through global merger thinking then default thinking when unset. */
   mergerThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Import Tasks auto-translation is a dedicated one-off AI helper lane, kept separate from the summarization lane so operators can pin a cheap/fast translation model without dragging title summarization onto it.
+  Both provider and model id must be set together; partial pairs are ignored and fall through to global translate lane, then summarization, then project/global default.
+  */
+  /** Project AI model provider for GitHub/GitLab import auto-translation.
+   *  Must be set together with `importTranslateModelId`. Falls back to
+   *  `importTranslateGlobalProvider`/`importTranslateGlobalModelId`, then the
+   *  summarization lane, then project/global default. */
+  importTranslateProvider?: string;
+  /** Project AI model ID for import auto-translation.
+   *  Must be set together with `importTranslateProvider`. */
+  importTranslateModelId?: string;
+  /** Optional project translate-lane thinking override. Inherits through global translate thinking then default thinking when unset. */
+  importTranslateThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Auto-translation is OFF by default. This reverses the original opt-in-only stance (PR #2128) at operator request: import panels routinely list issues in languages the operator cannot read, so translation may now run automatically — but only when explicitly enabled, so import provenance stays faithful for operators who never opt in.
+  */
+  /** When true, the import panel automatically translates foreign-language issue
+   *  title+body into `importTranslateTargetLocale` and shows the translation by
+   *  default. Default: false (opt-in). */
+  githubImportAutoTranslate?: boolean;
+  /** Target language for import auto-translation. When unset, follows the
+   *  operator's active dashboard locale. */
+  importTranslateTargetLocale?: Locale;
   /** Fallback model provider for title summarization. When unset, falls back to
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackModelId`. */

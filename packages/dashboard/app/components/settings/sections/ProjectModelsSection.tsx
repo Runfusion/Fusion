@@ -275,7 +275,8 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
     // here. Execution/planning/validator workflow-specific lanes still redirect to
     // workflow settings below.
     // FNXC:Settings-MergerModel 2026-07-13-07:52: Merger is project-scoped (like summarization), not workflow-moved.
-    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "summarization"].includes(lane.laneId));
+    // FNXC:GitHubImportTranslate 2026-07-15-09:30: The import-translate lane is project-scoped (like merger/summarization), so its project override must be editable here — otherwise the lane's projectProviderKey/projectModelKey would be unreachable and only the global lane could ever be set.
+    const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "summarization", "import-translate"].includes(lane.laneId));
     const getProjectLaneLabel = (lane: ModelLane) => {
         if (lane.laneId === "default") {
             return "Project Default Model";
@@ -285,6 +286,9 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         }
         if (lane.laneId === "summarization") {
             return "Project Summarization Model";
+        }
+        if (lane.laneId === "import-translate") {
+            return "Project Import Auto-Translation Model";
         }
         return lane.label;
     };
@@ -297,6 +301,9 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         }
         if (lane.laneId === "summarization") {
             return "Model used for title auto-summarization, merge commit summaries, GitHub tracking issue titles, and PR title/body generation.";
+        }
+        if (lane.laneId === "import-translate") {
+            return "Model used to translate foreign-language GitHub/GitLab issue titles and bodies in the Import Tasks panel. One short readonly call per issue — a cheap, fast model is usually the right pick.";
         }
         return lane.helperText;
     };

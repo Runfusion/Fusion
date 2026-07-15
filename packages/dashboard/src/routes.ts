@@ -34,6 +34,7 @@ import {
   resolvePluginEntryPath,
   resolveExecutionSettingsModel,
   resolveTitleSummarizerSettingsModel,
+  resolveImportTranslateSettingsModel,
   writeAgentMemoryFile,
   validateMcpServerDefinitionDetailed,
 } from "@fusion/core";
@@ -2037,11 +2038,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
 
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      Manual (operator-clicked) translation resolves the same translate lane as auto-translation, so the model shown in Settings is the model that actually runs on both paths.
+      */
+      const resolvedTranslateModel = resolveImportTranslateSettingsModel(settings);
       const translated = await translateText(
         validated,
         rootDir,
         settings.promptOverrides,
         scopedStore,
+        resolvedTranslateModel.provider,
+        resolvedTranslateModel.modelId,
       );
       res.json({ fields: translated });
     } catch (err: unknown) {

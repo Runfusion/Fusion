@@ -647,13 +647,15 @@ describe("AgentsView", () => {
       });
     });
 
-    it("keeps New Agent directly accessible on desktop while controls live in popup", async () => {
-      renderView(<AgentsView addToast={mockAddToast} />);
+    it("keeps New Agent directly accessible on desktop while controls live in an elevated popup", async () => {
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(screen.getByRole("button", { name: "New Agent" })).toBeTruthy();
       expect(screen.queryByRole("dialog", { name: "Agent controls" })).toBeNull();
+      expect(container.querySelector(".agents-view-primary-actions--controls-open")).toBeNull();
 
       await openControlsPanel();
+      expect(container.querySelector(".agents-view-primary-actions--controls-open")).toBeTruthy();
       expect(screen.getByLabelText("Filter agents by state")).toBeTruthy();
       expect(screen.getByLabelText("Show system agents")).toBeTruthy();
       expect(screen.getAllByRole("button", { name: "Import" }).length).toBeGreaterThan(0);
@@ -661,14 +663,15 @@ describe("AgentsView", () => {
       expect(screen.getByLabelText("Heartbeat speed preset")).toBeTruthy();
     });
 
-    it("moves import and new-agent actions into the controls popup on mobile", async () => {
+    it("moves import and new-agent actions into an elevated controls popup on mobile", async () => {
       mockViewportMode.mockReturnValue("mobile");
-      renderView(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
       expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
 
       await openControlsPanel();
+      expect(container.querySelector(".agents-view-primary-actions--controls-open")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Import" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "New Agent" })).toBeTruthy();
     });
@@ -1629,10 +1632,14 @@ describe("AgentsView", () => {
       expect(css).toContain("pointer-events: none");
     });
 
-    it("keeps a compact mobile Agents label visible, anchors the controls popup to the action row, and expands view toggles to 36px touch targets", () => {
+    it("keeps a compact mobile Agents label visible, elevates the open controls overlay above Agents content, and expands view toggles to 36px touch targets", () => {
       const css = loadAllAppCss();
+      const mobileCss = css.slice(css.indexOf("@media (max-width: 768px)"));
       expect(css).toContain(".agents-view-primary-actions {\n  position: relative;");
+      expect(css).toContain(".agents-view-primary-actions--controls-open {\n  z-index: 50;\n}");
       expect(css).toContain(".agent-controls-panel {\n  position: absolute;\n  top: calc(100% + var(--space-sm));\n  right: 0;");
+      expect(css).toContain("background: var(--card);");
+      expect(mobileCss).not.toMatch(/\.agents-view-primary-actions--controls-open\s*\{[^}]*z-index:\s*(?:auto|0)/);
       expect(css).toContain(".agents-view-title h2 {\n    display: block;\n    font-size: var(--space-lg);");
       expect(css).toContain(".agent-controls-mobile-actions {");
       expect(css).toContain(".agent-controls-mobile-actions .btn {");

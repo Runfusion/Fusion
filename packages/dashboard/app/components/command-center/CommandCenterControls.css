@@ -135,13 +135,16 @@
 /*
 FNXC:CommandCenter 2026-06-20-00:25:
 Mobile users must be able to drag horizontal concurrency sliders without the page scroll gesture stealing the thumb movement. Scope touch-action to these range inputs and preserve desktop accent/full-width behavior while increasing the hit area with design tokens.
+
+FNXC:CommandCenter 2026-07-15-00:00:
+FN-7973 requires touch-action:none because the mobile pan-y ancestor lock otherwise claims near-horizontal thumb drags as page pans. This shared rule covers every Command Center concurrency range input while preserving disabled and loading no-op behavior.
 */
 .cc-controls-slider input[type="range"],
 .cc-controls-touch-slider {
   inline-size: 100%;
   min-block-size: var(--space-xl);
   accent-color: var(--accent);
-  touch-action: pan-y;
+  touch-action: none;
 }
 
 @media (max-width: 768px) {

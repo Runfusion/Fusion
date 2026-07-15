@@ -186,6 +186,37 @@ export function resolveTitleSummarizerSettingsModel(settings?: Partial<Settings>
   );
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import auto-translation resolves its own lane so operators can pin a cheap/fast translation model independently of summarization.
+Hierarchy: project translate lane -> global translate lane -> summarization lane (nearest one-off readonly helper) -> project/global default.
+Partial provider/model pairs are skipped by `pickFirstModelPair`, and test mode still forces mock like every other lane.
+*/
+export function resolveImportTranslateSettingsModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.importTranslateProvider,
+        modelId: settings?.importTranslateModelId,
+      },
+      {
+        provider: settings?.importTranslateGlobalProvider,
+        modelId: settings?.importTranslateGlobalModelId,
+      },
+      {
+        provider: settings?.titleSummarizerProvider,
+        modelId: settings?.titleSummarizerModelId,
+      },
+      {
+        provider: settings?.titleSummarizerGlobalProvider,
+        modelId: settings?.titleSummarizerGlobalModelId,
+      },
+      resolveProjectDefaultModel(settings),
+    ),
+    settings,
+  );
+}
+
 /**
  * FNXC:Settings-MergerModel 2026-07-13-07:52:
  * Merger sessions resolve project merger lane → global merger lane → project/global default.

@@ -1875,6 +1875,36 @@ export const verificationCache = projectSchema.table("verification_cache", {
   index("idxVerificationCacheRecordedAt").on(t.recordedAt),
 ]);
 
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import auto-translation must survive modal close and page reload — the operator should never re-bill the AI helper for an issue already translated. Cache one translation per (project, provider, repo, issue, target locale).
+`sourceHash` is the hash of the original title+body: an edited issue produces a new hash so the stale translation is never served. Rows are only ever written for OPEN issues, and are pruned once an issue is observed closed, which is the requirement's natural expiry ("persist until the issue is closed").
+`projectId` is part of the PK because all projects share one flat `project` schema — omitting it (as the older `verification_cache` PK does) would leak one project's translations into another.
+*/
+export const importTranslationCache = projectSchema.table("import_translation_cache", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  /** Import source: "github" | "gitlab". */
+  provider: text("provider").notNull(),
+  /** Canonical repo identity, e.g. "owner/repo" (GitLab: project path). */
+  repoKey: text("repo_key").notNull(),
+  /** Issue/PR/MR number within the repo. */
+  issueNumber: integer("issue_number").notNull(),
+  /** BCP-47 target locale the cached fields were translated into. */
+  targetLocale: text("target_locale").notNull(),
+  /** Hash of the ORIGINAL title+body; a mismatch means the issue was edited. */
+  sourceHash: text("source_hash").notNull(),
+  translatedTitle: text("translated_title").notNull(),
+  translatedBody: text("translated_body").notNull(),
+  /** Detected source language, or null when detection was inconclusive. */
+  detectedLocale: text("detected_locale"),
+  recordedAt: text("recorded_at").notNull(),
+}, (t) => [
+  primaryKey({
+    columns: [t.projectId, t.provider, t.repoKey, t.issueNumber, t.targetLocale],
+  }),
+  index("idxImportTranslationCacheRecordedAt").on(t.recordedAt),
+]);
+
 export const approvalRequests = projectSchema.table("approval_requests", {
   id: text("id").primaryKey(),
   status: text("status").notNull(),
@@ -1988,7 +2018,8 @@ export const projectTableNames = [
   "agent_ratings", "chat_sessions", "cli_sessions", "chat_messages",
   "run_audit_events", "mission_contract_assertions", "mission_feature_assertions",
   "mission_validator_runs", "mission_validator_failures",
-  "mission_fix_feature_lineage", "verification_cache", "approval_requests",
+  "mission_fix_feature_lineage", "verification_cache", "import_translation_cache",
+  "approval_requests",
   "approval_request_audit_events", "chat_rooms", "chat_room_members",
   "chat_room_messages", "chat_token_usage",
 ] as const;

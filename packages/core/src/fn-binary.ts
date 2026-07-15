@@ -186,12 +186,19 @@ function readVersionFromResolvedBinaryPath(resolvedPath: string): string | undef
     // Fall back to the original resolved path.
   }
 
-  for (const shimTarget of resolveShimTargets(resolvedPath)) {
-    candidatePaths.add(shimTarget);
-  }
-
+  // FNXC:CliBinaryProbe 2026-07-15-14:45: Check the resolved
+  // executable and its realpath before scanning shim contents. Dashboard
+  // status polling calls this path; parsing a normal JavaScript entrypoint as
+  // an npm shim can trap the server event loop in the shim-target regex.
   for (const candidatePath of candidatePaths) {
     const version = readPackageVersionFromPath(candidatePath);
+    if (version) return version;
+  }
+
+  // A package manifest was not adjacent to either direct path, so this may be
+  // an npm-generated Windows shim whose target is the only useful clue.
+  for (const shimTarget of resolveShimTargets(resolvedPath)) {
+    const version = readPackageVersionFromPath(shimTarget);
     if (version) return version;
   }
 

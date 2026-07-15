@@ -146,7 +146,7 @@ function resourcesRoot(unpackedDir) {
  * with missing libicui18n.so.60 (etc.). Assert every recorded target path exists
  * (symlink or regular file) under the platform native root.
  */
-function assertPlatformSonameLinks(unpackedDir, platformRoot, platform) {
+export function assertPlatformSonameLinks(unpackedDir, platformRoot, platform) {
   const nativeRoot = join(platformRoot, platform, "native");
   const markerPath = join(nativeRoot, "pg-symlinks.json");
   if (!existsSync(markerPath)) {
@@ -227,7 +227,7 @@ function pathExists(p) {
   }
 }
 
-function listIncludesAsarPath(list, entry) {
+export function listIncludesAsarPath(list, entry) {
   // FNXC:DesktopEmbeddedPostgres 2026-07-15-11:45:
   // ASAR listings may omit a leading slash. Normalize line entries before exact
   // matching so a source map (for example index.js.map) cannot satisfy a runtime
@@ -241,17 +241,31 @@ function listIncludesAsarPath(list, entry) {
   return normalizedEntries.has(`/${entry.replace(/^\/+/, "")}`);
 }
 
-function expectedLinuxPlatform(unpackedDir) {
+export function expectedLinuxPlatform(unpackedDir) {
   const name = unpackedDir.split(/[/\\]/).pop() ?? "";
   // electron-builder calls x64's default output linux-unpacked and appends
   // non-default target architectures such as linux-arm64-unpacked.
   return name.includes("arm64") ? "linux-arm64" : "linux-x64";
 }
 
-function isRegularExecutable(path) {
+export function isRegularExecutable(path) {
   try {
     const stat = statSync(path);
     return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+export function hasExpectedElfArchitecture(path, platform) {
+  try {
+    const header = readFileSync(path);
+    if (header.length < 20 || header[0] !== 0x7f || header.toString("ascii", 1, 4) !== "ELF") {
+      return false;
+    }
+    const littleEndian = header[5] === 1;
+    const machine = littleEndian ? header.readUInt16LE(18) : header.readUInt16BE(18);
+    return (platform === "linux-x64" && machine === 62) || (platform === "linux-arm64" && machine === 183);
   } catch {
     return false;
   }
@@ -295,6 +309,11 @@ function assertUnpackedTree(unpackedDir, asarBin) {
           const binPath = join(platformRoot, expectedPlatform, "native", "bin", bin);
           if (!isRegularExecutable(binPath)) {
             fail(`${unpackedDir}: missing executable file ${expectedPlatform}/native/bin/${bin}`);
+          // FNXC:DesktopEmbeddedPostgres 2026-07-15-12:05:
+          // A correctly named package can still contain another CPU's payload.
+          // Verify ELF e_machine for the target platform before release approval.
+          } else if (!hasExpectedElfArchitecture(binPath, expectedPlatform)) {
+            fail(`${unpackedDir}: ${expectedPlatform}/native/bin/${bin} is not a ${expectedPlatform} ELF binary`);
           }
         }
         assertPlatformSonameLinks(unpackedDir, platformRoot, expectedPlatform);
@@ -390,4 +409,6 @@ function main() {
   ok("Linux desktop embedded Postgres packaging verification passed");
 }
 
-main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

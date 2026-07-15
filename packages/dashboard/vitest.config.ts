@@ -467,6 +467,11 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      /*
+      FNXC:GitHubImportTranslate 2026-07-15-09:30:
+      Must precede the `@fusion/core` alias: Vite string aliases match by PREFIX, so the broader key would rewrite this subpath to `index.ts/detect-content-language` and fail to resolve.
+      */
+      "@fusion/core/detect-content-language": resolve(__dirname, "../core/src/detect-content-language.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
       "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
       "@fusion/plugin-sdk": resolve(__dirname, "../plugin-sdk/src/index.ts"),
