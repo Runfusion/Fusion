@@ -9,6 +9,40 @@ Hard timeout with process-group kill; truncates logs; never accepts client comma
 */
 
 const HARD_TIMEOUT_MS = 1_800_000;
+type ActiveQualityRun = Pick<ReturnType<typeof superviseSpawn>, "kill">;
+
+const activeQualityRuns = new Map<string, ActiveQualityRun>();
+
+function activeRunKey(projectId: string, runId: string): string {
+  return `${projectId}:${runId}`;
+}
+
+/*
+FNXC:Quality 2026-07-15-13:05:
+Operator cancellation is a process-control action, not only a database update.
+Keep each live supervisor by project/run so the cancel route can terminate its
+process group, while the runner's final write preserves the cancelled terminal
+state if the child closes after that request.
+*/
+export function cancelQualityRun(store: QualityStore, projectId: string, runId: string): TestRun | null {
+  const current = store.getRun(projectId, runId);
+  if (!current || (current.status !== "queued" && current.status !== "running")) return current;
+
+  activeQualityRuns.get(activeRunKey(projectId, runId))?.kill("SIGTERM");
+  return store.updateRun(projectId, runId, {
+    status: "cancelled",
+    finishedAt: new Date().toISOString(),
+    errorMessage: "Cancelled by operator",
+  });
+}
+
+export function __clearActiveQualityRunsForTests(): void {
+  activeQualityRuns.clear();
+}
+
+export function __registerActiveQualityRunForTests(projectId: string, runId: string, run: ActiveQualityRun): void {
+  activeQualityRuns.set(activeRunKey(projectId, runId), run);
+}
 
 export interface RunCommandOptions {
   store: QualityStore;
@@ -46,6 +80,7 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
       shell: opts.shell !== false,
       env: process.env,
     });
+    activeQualityRuns.set(activeRunKey(projectId, runId), supervised);
 
     const child = supervised.child;
     child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -93,10 +128,12 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
 
   const finishedAt = new Date().toISOString();
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
+  const current = store.getRun(projectId, runId);
+  const wasCancelled = current?.status === "cancelled";
   const updated = store.updateRun(projectId, runId, {
-    status,
+    status: wasCancelled ? "cancelled" : status,
     exitCode,
-    errorMessage,
+    errorMessage: wasCancelled ? current.errorMessage ?? "Cancelled by operator" : errorMessage,
     finishedAt,
     durationMs,
     stdout,
@@ -105,6 +142,7 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
   if (!updated) {
     throw new Error(`Quality run ${runId} missing after execution`);
   }
+  activeQualityRuns.delete(activeRunKey(projectId, runId));
   return updated;
 }
 

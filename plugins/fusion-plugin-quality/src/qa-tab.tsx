@@ -50,7 +50,7 @@ interface SuggestedCase {
   done: boolean;
 }
 
-function Section({ title, children, testId }: { title: string; children: ReactNode; testId: string }): ReactElement {
+function Section({ title, children, testId }: { title: string; children?: ReactNode; testId: string }): ReactElement {
   return createElement(
     "section",
     {
@@ -77,6 +77,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
   const [selectedRun, setSelectedRun] = useState<RunRow | null>(null);
   const [preview, setPreview] = useState<PreviewSession | null>(null);
   const [cases, setCases] = useState<SuggestedCase[]>([]);
+  const [loadErrors, setLoadErrors] = useState<Partial<Record<"runs" | "preview" | "suggestions", string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -103,19 +104,24 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
 
   const refresh = useCallback(async () => {
     if (!projectId || !taskId) return;
-    setError(null);
-    try {
-      const [runsRes, prevRes, sugRes] = await Promise.all([
-        api(`/runs?taskId=${encodeURIComponent(taskId)}`),
-        api(`/preview/${encodeURIComponent(taskId)}`),
-        api(`/suggestions/${encodeURIComponent(taskId)}`),
-      ]);
-      setRuns((runsRes as { runs?: RunRow[] }).runs ?? []);
-      setPreview((prevRes as { session?: PreviewSession | null }).session ?? null);
-      setCases((sugRes as { suggestions?: { cases?: SuggestedCase[] } | null }).suggestions?.cases ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
+    /*
+    FNXC:Quality 2026-07-15-13:05:
+    Task QA panels are independent backend surfaces. A transient preview error
+    must not hide completed runs or suggested cases that loaded successfully.
+    */
+    const [runsResult, previewResult, suggestionsResult] = await Promise.allSettled([
+      api(`/runs?taskId=${encodeURIComponent(taskId)}`),
+      api(`/preview/${encodeURIComponent(taskId)}`),
+      api(`/suggestions/${encodeURIComponent(taskId)}`),
+    ]);
+    const nextErrors: Partial<Record<"runs" | "preview" | "suggestions", string>> = {};
+    if (runsResult.status === "fulfilled") setRuns((runsResult.value as { runs?: RunRow[] }).runs ?? []);
+    else nextErrors.runs = runsResult.reason instanceof Error ? runsResult.reason.message : String(runsResult.reason);
+    if (previewResult.status === "fulfilled") setPreview((previewResult.value as { session?: PreviewSession | null }).session ?? null);
+    else nextErrors.preview = previewResult.reason instanceof Error ? previewResult.reason.message : String(previewResult.reason);
+    if (suggestionsResult.status === "fulfilled") setCases((suggestionsResult.value as { suggestions?: { cases?: SuggestedCase[] } | null }).suggestions?.cases ?? []);
+    else nextErrors.suggestions = suggestionsResult.reason instanceof Error ? suggestionsResult.reason.message : String(suggestionsResult.reason);
+    setLoadErrors(nextErrors);
   }, [api, projectId, taskId]);
 
   useEffect(() => {
@@ -152,7 +158,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
     try {
       const data = (await api(`/preview/${encodeURIComponent(taskId)}/start`, {
         method: "POST",
-        body: JSON.stringify({ projectId, command: "dev" }),
+        body: JSON.stringify({ projectId }),
       })) as { session?: PreviewSession };
       setPreview(data.session ?? null);
     } catch (err) {
@@ -250,6 +256,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
               ? createElement("p", { style: { color: "var(--error, #c00)", fontSize: 12 } }, preview.errorMessage)
               : null,
           ),
+      loadErrors.preview
+        ? createElement("p", { role: "alert", style: { color: "var(--error, #c00)", margin: "8px 0 0" } }, loadErrors.preview)
+        : null,
     ),
 
     // Run tests
@@ -338,6 +347,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
               ),
             ),
           ),
+      loadErrors.runs
+        ? createElement("p", { role: "alert", style: { color: "var(--error, #c00)", margin: "8px 0 0" } }, loadErrors.runs)
+        : null,
       selectedRun
         ? createElement(
             "div",
@@ -388,6 +400,9 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
             { style: { margin: 0, paddingLeft: 18, fontSize: 13 } },
             ...cases.map((c) => createElement("li", { key: c.id }, c.text)),
           ),
+      loadErrors.suggestions
+        ? createElement("p", { role: "alert", style: { color: "var(--error, #c00)", margin: "8px 0 0" } }, loadErrors.suggestions)
+        : null,
     ),
 
     // CI placeholder

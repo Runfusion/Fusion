@@ -3,8 +3,8 @@ import type { Database } from "@fusion/core";
 import { ensureQualitySchema } from "../quality-schema.js";
 import { QualityStore } from "../store/quality-store.js";
 import { isQualityPresetId, listPresetCatalog, resolvePresetCommand } from "../runner/command-presets.js";
-import { defaultTimeoutMs, executeQualityRun } from "../runner/command-runner.js";
-import { getAllowRootFallback, getLogTruncateKb, getRunRetentionCount } from "../settings.js";
+import { cancelQualityRun, defaultTimeoutMs, executeQualityRun } from "../runner/command-runner.js";
+import { getAllowRootFallback, getDefaultPreviewScript, getLogTruncateKb, getRunRetentionCount } from "../settings.js";
 import { buildHeuristicSuggestedCases } from "../suggestions/heuristic-cases.js";
 import type { QualityPresetId } from "../store/quality-types.js";
 import { createPreviewSessionManager } from "../preview/preview-sessions.js";
@@ -57,6 +57,21 @@ function httpError(status: number, message: string): never {
 }
 
 const previewManager = createPreviewSessionManager();
+
+/*
+FNXC:Quality 2026-07-15-13:05:
+Test plans are execution contracts: silently dropping an unknown requested
+preset makes a successful API response misrepresent the plan that was saved.
+Reject the entire request unless every supplied step is allowlisted.
+*/
+export function validatePlanSteps(stepsRaw: unknown[]): QualityPresetId[] {
+  if (stepsRaw.length === 0) httpError(400, "steps must include at least one known preset");
+  const invalid = stepsRaw.filter((step) => !isQualityPresetId(step));
+  if (invalid.length > 0) {
+    httpError(400, `Unknown plan steps: ${invalid.map(String).join(", ")}`);
+  }
+  return stepsRaw as QualityPresetId[];
+}
 
 export function createQualityRoutes(): PluginRouteDefinition[] {
   return [
@@ -226,12 +241,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         if (run.status !== "queued" && run.status !== "running") {
           return { run };
         }
-        // Active child kill is best-effort via status mark; process supervisor may still exit.
-        const updated = store.updateRun(projectId, runId, {
-          status: "cancelled",
-          finishedAt: new Date().toISOString(),
-          errorMessage: "Cancelled by operator",
-        });
+        const updated = cancelQualityRun(store, projectId, runId);
         return { run: updated };
       },
     },
@@ -255,9 +265,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const body = asRecord(r.body);
         const name = typeof body.name === "string" ? body.name.trim() : "";
         if (!name) httpError(400, "name is required");
-        const stepsRaw = Array.isArray(body.steps) ? body.steps : [];
-        const steps = stepsRaw.filter(isQualityPresetId);
-        if (steps.length === 0) httpError(400, "steps must include at least one known preset");
+        const steps = validatePlanSteps(Array.isArray(body.steps) ? body.steps : []);
         const plan = getStore(ctx).createPlan({ projectId, name, steps });
         return { plan };
       },
@@ -356,7 +364,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const script =
           typeof body.command === "string" && body.command.trim()
             ? body.command.trim()
-            : "dev";
+            : getDefaultPreviewScript(ctx.settings as Record<string, unknown>);
         const session = await previewManager.start({
           projectId,
           taskId,
