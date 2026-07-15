@@ -144,7 +144,7 @@ export function DashboardBanners({
               return {
                 ...current,
                 status:
-                  report.status === "anomaly"
+                  report.status !== "ok"
                   || !current.database.healthy
                   || current.database.corruptionDetected
                     ? "degraded"

@@ -245,9 +245,19 @@ export interface DashboardHealthResponse {
     lastCheckedAt: string | null;
     isRunning: boolean;
   };
-  taskIdIntegrity: TaskIdIntegrityReport & {
-    recommendedAction: string | null;
-  };
+  /*
+  FNXC:PostgresHealth 2026-07-14-23:45:
+  Health cannot label an unavailable PostgreSQL integrity detector as "ok". Preserve the existing report fields while exposing a distinct error state and diagnostic for the dashboard response contract.
+  */
+  taskIdIntegrity:
+    | (TaskIdIntegrityReport & { recommendedAction: string | null })
+    | {
+        status: "error";
+        checkedAt: string;
+        anomalies: [];
+        error: string;
+        recommendedAction: string | null;
+      };
 }
 
 export function fetchDashboardHealth(): Promise<DashboardHealthResponse> {

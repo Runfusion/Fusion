@@ -119,7 +119,7 @@ A singleton central record enforces system-wide limits so one project cannot mon
 
 Plugin persistence is split across global and project scopes:
 
-- Global installation metadata is shared across projects in PostgreSQL `plugin.plugin_installs`
+- Global installation metadata is shared across projects in PostgreSQL `central.plugin_installs`
 - Per-project activation/runtime state is tracked separately per normalized project path (`project_plugin_states`)
 - Project-local `.fusion/fusion.db` `plugins` rows are legacy migration-only input and are no longer a write target for installs
 
@@ -345,7 +345,7 @@ See also: [Architecture](./architecture.md), [CLI Reference](./cli-reference.md)
 
 ## Identity persistence and recovery
 
-Each project persists its canonical central identity in `.fusion/project.json` as `projectId` and `projectCreatedAt`. Registration paths use `CentralCore.ensureProjectForPath({ path, identity, ... })` after `readProjectIdentity()`; that reader accepts a legacy SQLite identity only as migration input. Reattachment refuses silent remint when the persisted ID belongs to another path.
+Each project persists its canonical central identity in `.fusion/project.json` as `id` and `createdAt`. Registration paths use `CentralCore.ensureProjectForPath({ path, identity, ... })` after `readProjectIdentity()`; that reader accepts a legacy SQLite identity only as migration input. Reattachment refuses silent remint when the persisted ID belongs to another path.
 
 Dashboard `POST /api/projects` now surfaces this mismatch as `409` with `error: "orphan-identity"` and recovery metadata, and callers can opt into recovery flows with `acceptRecovery: true` behavior at the route layer.
 

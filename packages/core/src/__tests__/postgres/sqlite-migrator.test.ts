@@ -1178,6 +1178,27 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       { project_path: projectA, plugin_id: "shared-plugin", enabled: 1, state: "started", error: null, updated_at: "2026-02-01T00:00:00.000Z" },
       { project_path: projectB, plugin_id: "shared-plugin", enabled: 0, state: "stopped", error: "disabled in B", updated_at: "2026-03-01T00:00:00.000Z" },
     ]);
+
+    /*
+    FNXC:PluginLegacyMigration 2026-07-14-23:51:
+    After the first successful bridge, retained SQLite cannot regain authority even if its timestamps are edited to look newer. Backend restarts consult the durable project marker and preserve PostgreSQL operator state.
+    */
+    const retained = new DatabaseSync(sqliteA);
+    retained.prepare(`UPDATE plugins SET name = ?, enabled = ?, updatedAt = ? WHERE id = ?`).run(
+      "Retained SQLite must not win",
+      0,
+      "2027-01-01T00:00:00.000Z",
+      "shared-plugin",
+    );
+    retained.close();
+    await migrateLegacyProjectPluginRows(ctx!.db, sqliteA, projectA);
+    const preserved = (await ctx!.db.execute(sql`
+      SELECT install.name, state.enabled
+      FROM central.plugin_installs install
+      JOIN central.project_plugin_states state ON state.plugin_id = install.id
+      WHERE install.id = 'shared-plugin' AND state.project_path = ${projectA}
+    `)) as unknown as Array<{ name: string; enabled: number }>;
+    expect(preserved).toEqual([{ name: "Shared from B", enabled: 1 }]);
   });
 
   it("treats missing SQLite files and databases without plugins as a no-op", async () => {
@@ -1738,12 +1759,28 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     expect(tasks.sourceRows).toBe(2);
     expect(tasks.skipped).toBe(true);
 
-    // PostgreSQL target should have ZERO rows (baseline applied but no data copied).
-    const pgTasks = (await ctx!.db.execute(sql`SELECT COUNT(*)::int AS n FROM project.tasks`)) as unknown as Array<{ n: number }>;
-    expect(pgTasks[0].n).toBe(0);
-
-    const pgSecrets = (await ctx!.db.execute(sql`SELECT COUNT(*)::int AS n FROM project.secrets`)) as unknown as Array<{ n: number }>;
-    expect(pgSecrets[0].n).toBe(0);
+    /*
+    FNXC:PostgresMigration 2026-07-14-23:47:
+    VAL-MIGRATE-005 applies to catalog state as well as copied rows. A preview against a pristine external target must leave no schemas, tables, or migration marker behind after it reports the plan.
+    */
+    const catalog = (await ctx!.db.execute(sql`
+      SELECT
+        to_regnamespace('project')::text AS project_schema,
+        to_regclass('project.tasks')::text AS tasks_table,
+        to_regclass('project.secrets')::text AS secrets_table,
+        to_regclass('public.fusion_sqlite_migrations')::text AS migration_table
+    `)) as unknown as Array<{
+      project_schema: string | null;
+      tasks_table: string | null;
+      secrets_table: string | null;
+      migration_table: string | null;
+    }>;
+    expect(catalog).toEqual([{
+      project_schema: null,
+      tasks_table: null,
+      secrets_table: null,
+      migration_table: null,
+    }]);
 
     // No sequences should have been bumped in dry-run.
     expect(report.sequenceBumps).toHaveLength(0);

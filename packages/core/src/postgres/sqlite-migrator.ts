@@ -399,14 +399,23 @@ export async function migrateSqliteToPostgres(
     FNXC:PostgresMigrationSession 2026-07-14-00:05:
     Pin the complete cutover to one transaction-backed PostgreSQL session. Advisory locking, trigger deferral, copy, verification, and reset must not hop across connections when callers provide a multi-connection pool.
     */
-    return await migrationDb.transaction((tx) =>
-      migrateSqliteToPostgresOnSession(
+    return await migrationDb.transaction(async (tx) => {
+      const report = await migrateSqliteToPostgresOnSession(
         tx as unknown as PostgresJsDatabase<Record<string, never>>,
         sources,
         options,
-      ),
-    );
+      );
+      if (options.dryRun === true) {
+        /*
+        FNXC:PostgresMigration 2026-07-14-23:47:
+        A dry run may materialize the target schema inside its private transaction so column mapping can be planned against a pristine cluster, but the operator contract forbids any durable PostgreSQL change. Carry the completed report through a deliberate rollback instead of committing temporary DDL.
+        */
+        throw new DryRunRollback(report);
+      }
+      return report;
+    });
   } catch (error) {
+    if (error instanceof DryRunRollback) return error.report;
     const errorMessage = getErrorMessage(error);
     emitMigrationProgress(options, {
       phase: "failed",
@@ -426,6 +435,13 @@ export async function migrateSqliteToPostgres(
       });
     }
     throw error;
+  }
+}
+
+class DryRunRollback extends Error {
+  constructor(readonly report: MigrationReport) {
+    super("SQLite migration dry run completed; rolling back target changes");
+    this.name = "DryRunRollback";
   }
 }
 
@@ -464,9 +480,9 @@ async function migrateSqliteToPostgresOnSession(
     `);
   }
 
-  // 1. Apply the schema baseline (idempotent). In dry-run we still need to
-  //    read the PostgreSQL column types, so the schema must exist. If the
-  //    caller set skipBaseline, assume it's already there.
+  // 1. Apply the schema baseline (idempotent). A dry run creates it only inside
+  //    the enclosing transaction, which is deliberately rolled back after the
+  //    report is complete. If skipBaseline is set, assume it already exists.
   let appliedBaseline = false;
   try {
     if (!options.skipBaseline) {
@@ -855,10 +871,7 @@ function normalizeLegacyJson(value: string | null, fallback: string): string {
   }
 }
 
-/**
- * Backfill the split PostgreSQL plugin model from one retained project SQLite file.
- * Safe to call on every startup: equal/older legacy timestamps never mutate central rows.
- */
+/** Backfill the split PostgreSQL plugin model once from retained project SQLite. */
 export async function migrateLegacyProjectPluginRows(
   db: PostgresJsDatabase<Record<string, never>>,
   sqlitePath: string,
@@ -879,6 +892,21 @@ async function migrateLegacyProjectPluginRowsOnSession(
   projectPath: string,
 ): Promise<void> {
   if (!sqliteTableExists(sqlitePath, "plugins")) return;
+  const canonicalProjectPath = resolve(projectPath);
+  const migrationKey = `project-plugins:${canonicalProjectPath}`;
+  await ensureMigrationStateTable(db);
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${migrationKey}, 0))`);
+  const completed = (await db.execute(sql`
+    SELECT 1 AS complete
+    FROM public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+    WHERE migration_key = ${migrationKey} AND status = 'complete'
+    LIMIT 1
+  `)) as unknown as Array<{ complete: number }>;
+  /*
+  FNXC:PluginLegacyMigration 2026-07-14-23:51:
+  Retained SQLite is immutable cutover evidence, not a recurring authority. Once a project's plugin rows have been split into PostgreSQL install metadata and path-scoped state, a durable marker prevents later edits to fusion.db from changing live plugin behavior on restart.
+  */
+  if (completed.length > 0) return;
   const sqlite = openSqlite(sqlitePath);
   let rows: LegacyProjectPluginMigrationRow[];
   try {
@@ -886,7 +914,6 @@ async function migrateLegacyProjectPluginRowsOnSession(
   } finally {
     sqlite.close();
   }
-  const canonicalProjectPath = resolve(projectPath);
   for (const row of rows) {
     const settings = normalizeLegacyJson(row.settings, "{}");
     const settingsSchema = row.settingsSchema == null ? null : normalizeLegacyJson(row.settingsSchema, "null");
@@ -928,6 +955,13 @@ async function migrateLegacyProjectPluginRowsOnSession(
       WHERE EXCLUDED.updated_at > central.project_plugin_states.updated_at
     `);
   }
+  await db.execute(sql`
+    INSERT INTO public.${sql.identifier(SQLITE_MIGRATION_STATE_TABLE)}
+      (migration_key, project_id, status, last_error, updated_at)
+    VALUES (${migrationKey}, NULL, 'complete', NULL, now())
+    ON CONFLICT (migration_key) DO UPDATE
+    SET status = 'complete', last_error = NULL, updated_at = now()
+  `);
 }
 
 /** List every SQLite table so the migration report can account for all source data. */

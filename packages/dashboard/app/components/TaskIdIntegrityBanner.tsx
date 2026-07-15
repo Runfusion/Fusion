@@ -2,13 +2,20 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TaskIdIntegrityReport } from "@fusion/core";
-import { refreshDashboardHealth } from "../api";
+import { refreshDashboardHealth, type DashboardHealthResponse } from "../api";
 import "./TaskIdIntegrityBanner.css";
 
+/*
+FNXC:PostgresHealth 2026-07-14-23:58:
+An on-demand integrity refresh may return a PostgreSQL detector error as well as an ok or anomaly report. Propagate the complete health contract so the dashboard cannot discard a failed readiness check after the banner requests a recheck.
+*/
 interface TaskIdIntegrityBannerProps {
   report: TaskIdIntegrityReport;
   recommendedAction: string;
-  onRefresh?: (report: TaskIdIntegrityReport, recommendedAction: string | null) => void;
+  onRefresh?: (
+    report: DashboardHealthResponse["taskIdIntegrity"],
+    recommendedAction: string | null,
+  ) => void;
 }
 
 function getAnomalyLabel(kind: TaskIdIntegrityReport["anomalies"][number]["kind"], t: ReturnType<typeof useTranslation>["t"]): string {

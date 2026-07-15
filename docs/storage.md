@@ -105,7 +105,7 @@ Fusion runs a read-only task-ID integrity detector at startup and on demand to s
 
 The latest report is exposed in two operator-facing places:
 
-- `GET /api/health` returns a `taskIdIntegrity` object with `status`, `checkedAt`, `anomalies`, and a `recommendedAction` string. When anomalies are present, the top-level health `status` becomes `"degraded"` even if the PostgreSQL connectivity check is healthy.
+- `GET /api/health` returns a `taskIdIntegrity` object with `status`, `checkedAt`, `anomalies`, and a `recommendedAction` string. Anomalies or an integrity-query `error` degrade the top-level health status; missing PostgreSQL layers and connectivity failures also fail closed rather than reporting the backend-mode healthy sentinel.
 - The dashboard renders a non-dismissible task-ID integrity banner for anomalous reports so the operator sees the issue in the same session.
 
 ### Operator playbook

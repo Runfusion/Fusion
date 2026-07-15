@@ -174,7 +174,7 @@ Concrete references:
 - **Database adapter**: `packages/core/src/postgres/`
   - Drizzle-backed PostgreSQL connection and async data layers
   - Project-scoped rows carry `projectId`; central/plugin schemas hold shared control-plane state
-  - `packages/core/src/sqlite-migrator.ts` and SQLite adapters are legacy import tooling, not runtime authority
+  - `packages/core/src/postgres/sqlite-migrator.ts` and SQLite adapters are legacy import tooling, not runtime authority
   - `ai_sessions.status` lifecycle includes `draft` (pre-start planning session), then `generating`, `awaiting_input`, terminal `complete` / `error`; deletion is final within a bounded tombstone window that blocks a straggling post-delete write from resurrecting the row (FN-7949) — see `docs/storage.md` "AI session delete tombstones"
 - **Roadmap feature ownership**: roadmap contracts, ordering/handoff helpers, persistence, routes, and dashboard UI live in `plugins/fusion-plugin-roadmap` (package `@fusion-plugin-examples/roadmap`, plugin id `fusion-plugin-roadmap`) rather than dashboard/core ownership.
 - **CentralCore**: `packages/core/src/central-core.ts`
@@ -408,7 +408,7 @@ Hybrid evaluator pipeline (FN-3389/FN-3391):
 ### Plugin System
 
 - `PluginStore` (`plugin-store.ts`) is a facade over two persistence scopes:
-  - **Global install metadata** in PostgreSQL table `plugin.plugin_installs`, including manifest/path/settings/schema/dependencies
+  - **Global install metadata** in PostgreSQL table `central.plugin_installs`, including manifest/path/settings/schema/dependencies
   - **Per-project runtime state** in central DB table `project_plugin_states` keyed by normalized project path (`enabled`, `state`, `error`)
 - Legacy project-local `plugins` rows in `.fusion/fusion.db` are one-time migration input; migration is idempotent and keeps newest `updatedAt` install metadata as global canonical data while preserving per-project enablement rows
 - Post-FN-3722, the project-local `plugins` table is legacy read-only migration input; any new install writer targeting it is a bug
@@ -1021,11 +1021,11 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 ### Health and monitoring endpoints
 - **Health check**: `GET /api/health`
   - Returns liveness status for load balancers and monitoring
-  - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly", checkedAt: string | null, anomalies: [...], recommendedAction: string | null } }`
-  - PostgreSQL startup and explicit refreshes never open or inspect a SQLite file.
-  - The `corruptionDetected` and `corruptionErrors` response fields remain as compatibility placeholders and do not currently report PostgreSQL connectivity failures.
+  - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly" | "error", checkedAt: string | null, anomalies: [...], error?: string, recommendedAction: string | null } }`
+  - PostgreSQL startup and explicit refreshes never open or inspect a SQLite file. The server derives the live async layer from its `TaskStore`; a missing layer fails health closed instead of falling back to a synchronous healthy sentinel.
+  - The compatibility-shaped `database.corruptionDetected` and `database.corruptionErrors` fields carry PostgreSQL connectivity and health-query failures so existing dashboard clients receive an actionable degraded response.
   - The former background `PRAGMA integrity_check` scheduling, per-`fusion.db` deduplication, and SQLite corruption notification behavior are pre-cutover history only; they are not a runtime fallback.
-  - `POST /api/health/refresh` recomputes the task-ID integrity section on demand and returns the same top-level shape, including the current database corruption fields.
+  - `POST /api/health/refresh` recomputes PostgreSQL connectivity and task-ID integrity on demand. Detector failures return `taskIdIntegrity.status: "error"` and degrade the top-level status; they are never rewritten as an empty healthy report.
   - No authentication required
 
 ### Custom Provider endpoints
@@ -1202,7 +1202,7 @@ Some data remains intentionally filesystem-based:
 Agent/message/approval metadata and history persist in PostgreSQL.
 
 ### Migration from legacy SQLite/file storage
-- Detection + migration: `packages/core/src/sqlite-migrator.ts` and startup-factory migration helpers
+- Detection + migration: `packages/core/src/postgres/sqlite-migrator.ts` and startup-factory migration helpers
 - Imports legacy `fusion.db`, `archive.db`, and file records into PostgreSQL once
 - Legacy databases/backups remain recovery input and are never runtime write targets
 

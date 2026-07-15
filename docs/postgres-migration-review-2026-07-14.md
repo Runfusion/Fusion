@@ -49,6 +49,7 @@ The following readers are authorized after cutover. Their scope is deliberately 
 | `packages/core/src/sqlite-validation.ts` | Validate a retained legacy SQLite source before migration/recovery. |
 | `packages/core/src/postgres/startup-factory.ts` | Import a legacy central registry during the controlled first PostgreSQL startup. |
 | `packages/cli/src/commands/db.ts` | Explicit migration/dry-run and legacy-source inspection, including read-only central-source discovery. |
+| `scripts/lib/start-local-project.mjs` | Read legacy local project metadata while the development launcher resolves a project; it never supplies runtime database authority. |
 
 Legacy SQLite adapter/store modules and exports may remain for migration compatibility and historical tests, but mandatory runtime constructors do not select them. Any new production call that opens one for ordinary task, dashboard, engine, CLI, desktop, or plugin traffic is a cutover regression.
 
@@ -77,7 +78,7 @@ Treat the first production cutover as a maintenance-window migration:
 4. Create a full PostgreSQL backup that includes `central`, `project`, `archive`, plugin tables, and public migration bookkeeping. The built-in paired project/central dumps are not a single cluster-wide snapshot, so a quiesced full-cluster backup remains the deployment safety boundary.
 5. Restore the backup into an isolated scratch database and run row-count, schema-version, ownership, and project-isolation checks there. Listing a dump is not a restore test.
 6. Use PostgreSQL 15-compatible `pg_dump`, `pg_restore`, and `psql` clients. For external transaction poolers, provide a direct `DATABASE_MIGRATION_URL` for schema work.
-7. Run the migration preview, then the migration once from one approved owner. Embedded mode performs the legacy import during the first controlled startup; external mode uses `fn db migrate`.
+7. Run the migration preview, then the migration once from one approved owner. `fn db migrate` is the recommended explicit external-database path; first startup retains a fail-safe verified auto-import for either backend so Fusion never boots an empty PostgreSQL authority over valid legacy data.
 8. Before resuming writers, require complete migration markers, no failed/running marker, no unexplained `__legacy_unscoped__` or stale `local-*` partition, matching baselines, and a project-A-cannot-read-project-B isolation proof.
 
 Rollback is restore-only. Stop writers, preserve failure evidence, and restore the tested PostgreSQL backup/snapshot. Do not try to roll back by enabling SQLite or by writing new runtime data into the retained legacy files. If a legacy import must be retried, restore/copy its immutable source into a controlled migration workspace and re-run the supported migration workflow.
@@ -98,7 +99,7 @@ Rollback is restore-only. Stop writers, preserve failure evidence, and restore t
 | `pnpm test:gate` | PASS — 40 files and 478 tests |
 | `pnpm smoke:boot` | PASS — CLI help, health 200 on an ephemeral port, clean shutdown |
 | `pnpm verify:fast` | PASS — artifact bootstrap, CLI build, and boot smoke |
-| `git diff --check` and final production SQLite-reader grep | PASS — exactly the five documented read-only legacy boundaries remain |
+| `git diff --check` and final production SQLite-reader grep | PASS — exactly the six documented read-only legacy boundaries remain |
 
 The explicit full workspace suite remains opt-in and is not a substitute for the thin merge gate or the file-scoped PostgreSQL regression tests.
 

@@ -14,7 +14,6 @@ import type {
   CentralCore,
   MessageStore,
   AgentLogEntry,
-  TaskIdIntegrityReport,
   RunAuditEvent,
 } from "@fusion/core";
 import { AgentStore, ChatStore, queryRunAuditEvents, setRunningAgentCountSource } from "@fusion/core";
@@ -86,6 +85,11 @@ import {
 import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
 import { maybeStartOtelExporter, type OtelExporterHandle } from "./otel-exporter.js";
 import { requireAsyncLayer } from "./require-async-layer.js";
+import {
+  evaluateDashboardPostgresHealth,
+  resolveDashboardPostgresLayer,
+  type DashboardTaskIdIntegrityHealth,
+} from "./dashboard-postgres-health.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -106,28 +110,31 @@ function parseVersion(version: string): number[] {
     .map((value) => (Number.isFinite(value) ? value : 0));
 }
 
-function buildTaskIdIntegrityHealth(report: TaskIdIntegrityReport) {
+function buildTaskIdIntegrityHealth(report: DashboardTaskIdIntegrityHealth) {
   return {
     status: report.status,
     checkedAt: report.checkedAt,
     anomalies: report.anomalies,
+    ...(report.status === "error" ? { error: report.error } : {}),
     recommendedAction:
       report.status === "anomaly"
         ? "Pause task delegation, inspect the affected task IDs, and run the allocator audit before creating new tasks."
+        : report.status === "error"
+          ? "Restore PostgreSQL connectivity and rerun the health check before creating new tasks."
         : null,
   };
 }
 
 function buildHealthPayload(args: {
   database: ReturnType<TaskStore["getDatabaseHealth"]>;
-  taskIdIntegrityReport: ReturnType<TaskStore["getTaskIdIntegrityReport"]>;
+  taskIdIntegrityReport: DashboardTaskIdIntegrityHealth;
   cliPackageVersion: string;
   engineAvailable: boolean;
 }) {
   const { database, cliPackageVersion, engineAvailable } = args;
   const taskIdIntegrity = buildTaskIdIntegrityHealth(args.taskIdIntegrityReport);
   return {
-    status: !database.healthy || database.corruptionDetected || taskIdIntegrity.status === "anomaly" ? "degraded" : "ok",
+    status: !database.healthy || database.corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
     version: cliPackageVersion,
     uptime: Math.floor(process.uptime()),
     /*
@@ -513,13 +520,10 @@ export interface ServerOptions {
   };
   /*
    * FNXC:PostgresHealth 2026-06-24-16:00:
-   * Optional PostgreSQL health layer. When provided, the /api/health and
-   * /api/health/refresh endpoints use PostgreSQL-native health checks
-   * (connectivity probe, schema drift, task-ID integrity) instead of the
-   * SQLite-specific integrity_check path. This is the integration seam
-   * between the async PostgreSQL data layer and the dashboard health surface.
-   * When absent, the endpoints fall back to the legacy SQLite health checks
-   * via store.getDatabaseHealth().
+   * Optional PostgreSQL health-layer override for integration hosts and tests.
+   * Normal production servers derive the live layer from TaskStore. The
+   * health endpoints fail closed if neither source provides one; PostgreSQL
+   * health must never fall back to the backend-mode healthy sentinel.
    */
   postgresHealthLayer?: import("@fusion/core").AsyncDataLayer;
   /*
@@ -1710,41 +1714,17 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
    * FNXC:PostgresHealth 2026-06-24-16:10:
    * The /api/health endpoint is async because PostgreSQL health checks
    * (connectivity probe, task-ID integrity via Drizzle) are inherently async.
-   * When postgresHealthLayer is provided, the endpoint uses PostgreSQL-native
-   * checks; otherwise it falls back to the legacy SQLite health checks.
+   * The endpoint derives the live PostgreSQL layer from TaskStore unless an
+   * integration host supplies an explicit override. Missing layers and failed
+   * connectivity/integrity queries return degraded health.
    * VAL-HEALTH-001: healthy backend reports green; VAL-HEALTH-002: corrupt/
    * unreachable backend surfaces degraded status + errors.
    */
   app.get("/api/health", async (_req, res) => {
-    const pgLayer = options?.postgresHealthLayer;
-    if (pgLayer) {
-      const { checkPostgresHealth } = await import("@fusion/core");
-      const { detectTaskIdIntegrityAnomaliesAsync } = await import("@fusion/core");
-      const errors = await checkPostgresHealth(pgLayer).catch((err: unknown) => [
-        `PostgreSQL health check failed: ${err instanceof Error ? err.message : String(err)}`,
-      ]);
-      const integrityReport = await detectTaskIdIntegrityAnomaliesAsync(pgLayer.db).catch(() => ({
-        status: "ok" as const,
-        checkedAt: new Date().toISOString(),
-        anomalies: [],
-      }));
-      res.json(buildHealthPayload({
-        database: {
-          healthy: errors.length === 0,
-          corruptionDetected: errors.length > 0,
-          corruptionErrors: errors.slice(0, 5),
-          lastCheckedAt: new Date(),
-          isRunning: false,
-        },
-        taskIdIntegrityReport: integrityReport,
-        cliPackageVersion,
-        engineAvailable: hasDashboardEngine(options),
-      }));
-      return;
-    }
+    const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer);
     res.json(buildHealthPayload({
-      database: store.getDatabaseHealth(),
-      taskIdIntegrityReport: store.getTaskIdIntegrityReport(),
+      database: health.database,
+      taskIdIntegrityReport: health.taskIdIntegrity,
       cliPackageVersion,
       engineAvailable: hasDashboardEngine(options),
     }));
@@ -1942,40 +1922,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   app.post("/api/health/refresh", async (_req, res) => {
     /*
      * FNXC:PostgresHealth 2026-06-24-16:15:
-     * Force-recompute integrity + database health. When postgresHealthLayer
-     * is provided, uses PostgreSQL-native checks (VAL-HEALTH-002: clears stale
-     * corruption banner after repair). Otherwise falls back to the legacy
-     * SQLite refresh path.
+     * Force-recompute PostgreSQL connectivity and task-ID integrity through
+     * the live TaskStore layer (or an explicit integration override). Query
+     * failures remain visible as degraded health instead of healthy fallback.
      */
-    const pgLayer = options?.postgresHealthLayer;
-    if (pgLayer) {
-      const { checkPostgresHealth } = await import("@fusion/core");
-      const { detectTaskIdIntegrityAnomaliesAsync } = await import("@fusion/core");
-      const errors = await checkPostgresHealth(pgLayer).catch((err: unknown) => [
-        `PostgreSQL health check failed: ${err instanceof Error ? err.message : String(err)}`,
-      ]);
-      const integrityReport = await detectTaskIdIntegrityAnomaliesAsync(pgLayer.db).catch(() => ({
-        status: "ok" as const,
-        checkedAt: new Date().toISOString(),
-        anomalies: [],
-      }));
-      res.json(buildHealthPayload({
-        database: {
-          healthy: errors.length === 0,
-          corruptionDetected: errors.length > 0,
-          corruptionErrors: errors.slice(0, 5),
-          lastCheckedAt: new Date(),
-          isRunning: false,
-        },
-        taskIdIntegrityReport: integrityReport,
-        cliPackageVersion,
-        engineAvailable: hasDashboardEngine(options),
-      }));
-      return;
-    }
+    const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer);
     res.json(buildHealthPayload({
-      database: store.refreshDatabaseHealth(),
-      taskIdIntegrityReport: store.refreshTaskIdIntegrityReport(),
+      database: health.database,
+      taskIdIntegrityReport: health.taskIdIntegrity,
       cliPackageVersion,
       engineAvailable: hasDashboardEngine(options),
     }));
@@ -1984,13 +1938,27 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   /*
    * FNXC:PostgresHealth 2026-06-24-16:20:
    * Explicit compaction command: runs VACUUM/ANALYZE on the project-schema
-   * tables and reports per-table stats (VAL-HEALTH-005). Only available when
-   * the PostgreSQL health layer is provided; returns 501 otherwise.
+   * tables and reports per-table stats (VAL-HEALTH-005). Derive the production
+   * layer from TaskStore just like the read/refresh health routes; an explicit
+   * override remains available for integration hosts and tests.
+   *
+   * FNXC:PostgresHealth 2026-07-14-23:45:
+   * PostgreSQL compaction is a supported runtime capability. A missing layer
+   * is service unavailability, not an unimplemented endpoint, and must never
+   * be caused by production callers omitting an optional override.
    */
   app.post("/api/health/compact", async (_req, res) => {
-    const pgLayer = options?.postgresHealthLayer;
+    let pgLayer: import("@fusion/core").AsyncDataLayer | null;
+    try {
+      pgLayer = resolveDashboardPostgresLayer(store, options?.postgresHealthLayer);
+    } catch (error) {
+      res.status(503).json({
+        error: `PostgreSQL health layer resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return;
+    }
     if (!pgLayer) {
-      res.status(501).json({ error: "PostgreSQL compaction is not available (no postgresHealthLayer configured)." });
+      res.status(503).json({ error: "PostgreSQL health layer unavailable for compaction." });
       return;
     }
     try {
