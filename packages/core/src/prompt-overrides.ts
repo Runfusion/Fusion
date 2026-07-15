@@ -301,6 +301,10 @@ For questions:
 For completion:
 {\n  "type": "complete",\n  "data": {\n    "title": "Task title",\n    "description": "Detailed description",\n    "suggestedSize": "S|M|L",\n    "suggestedDependencies": [],\n    "keyDeliverables": ["Item 1", "Item 2"]\n  }\n}`,
   },
+  /**
+   * FNXC:AgentOnboardingRuntime 2026-07-15-15:25:
+   * Agent onboarding must emit the exact `hermes` runtime hint for computer-use, desktop-automation, and UI-testing agents so runtime resolution selects the Hermes tool surface instead of treating a descriptive label as an unknown runtime.
+   */
   "agent-onboarding-system": {
     key: "agent-onboarding-system",
     name: "Agent Onboarding System",
