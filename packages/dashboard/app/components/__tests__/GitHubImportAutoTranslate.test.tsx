@@ -26,7 +26,11 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (_k: string, f?: string) => f ?? _k }),
 }));
 
-import { useGitHubImportAutoTranslate, AUTO_TRANSLATE_CHUNK_SIZE } from "../GitHubImportTranslateControls";
+import {
+  useGitHubImportAutoTranslate,
+  AUTO_TRANSLATE_CHUNK_SIZE,
+  hashImportItemsForKey,
+} from "../GitHubImportTranslateControls";
 
 function makeItems(n: number) {
   return Array.from({ length: n }, (_, i) => ({
@@ -120,16 +124,18 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     const items = makeItems(AUTO_TRANSLATE_CHUNK_SIZE * 2);
     autoTranslateImportIssues.mockResolvedValue({ enabled: false, targetLocale: null, capped: false, translations: {} });
 
-    renderHook(() => useGitHubImportAutoTranslate({ ...base, items }));
-    await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1));
-    // Must not keep marching through the remaining chunks.
-    await new Promise((r) => setTimeout(r, 20));
+    const { result } = renderHook(() => useGitHubImportAutoTranslate({ ...base, items }));
+    // Wait for the run to FINISH (loading clears) rather than sleeping: a real-time
+    // wait would make this negative assertion scheduler-dependent.
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // Must not have marched through the remaining chunks.
     expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1);
   });
 
   it("never calls the server when auto-translate is disabled", async () => {
-    renderHook(() => useGitHubImportAutoTranslate({ ...base, enabled: false, items: makeItems(5) }));
-    await new Promise((r) => setTimeout(r, 20));
+    const { result } = renderHook(() => useGitHubImportAutoTranslate({ ...base, enabled: false, items: makeItems(5) }));
+    // Disabled means the effect never starts a run, so there is nothing to wait for.
+    expect(result.current.loading).toBe(false);
     expect(autoTranslateImportIssues).not.toHaveBeenCalled();
   });
 
@@ -176,15 +182,16 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
   it("does NOT re-request when the same issue set re-renders unchanged", async () => {
     autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
     const items = [{ number: 1, title: "t1", body: "same", state: "open" as const }];
-    const { rerender } = renderHook(
+    const { rerender, result } = renderHook(
       ({ items: i }) => useGitHubImportAutoTranslate({ ...base, items: i }),
       { initialProps: { items } },
     );
-    await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // A fresh array identity with identical content must not re-bill.
+    // A fresh array identity with identical content must not re-bill. Settling on
+    // `loading` keeps this deterministic instead of racing a real-time sleep.
     rerender({ items: [{ number: 1, title: "t1", body: "same", state: "open" as const }] });
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => expect(result.current.loading).toBe(false));
     expect(autoTranslateImportIssues).toHaveBeenCalledTimes(1);
   });
 
@@ -199,5 +206,39 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     expect(sent).toHaveLength(50);
     expect(sent.some((i) => i.number === 999)).toBe(false);
     expect(result.current.capped).toBe(true);
+  });
+});
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-19:30:
+Regression: PR #2147 review. The signature delimiter was ambiguous because prose may contain it, so
+moving a `|` between title and body produced an unchanged signature and the panel kept serving the
+OLD translation. Length-prefixing makes the encoding injective.
+*/
+describe("hashImportItemsForKey", () => {
+  it("distinguishes content that only differs in where a delimiter falls", () => {
+    const a = [{ number: 1, title: "a|b", body: "c", state: "open" as const }];
+    const b = [{ number: 1, title: "a", body: "b|c", state: "open" as const }];
+    expect(hashImportItemsForKey(a)).not.toBe(hashImportItemsForKey(b));
+  });
+
+  it("distinguishes an edit that shifts text across the field boundary", () => {
+    const a = [{ number: 1, title: "ab", body: "c", state: "open" as const }];
+    const b = [{ number: 1, title: "a", body: "bc", state: "open" as const }];
+    expect(hashImportItemsForKey(a)).not.toBe(hashImportItemsForKey(b));
+  });
+
+  it("is stable for identical content and changes when prose changes", () => {
+    const items = [{ number: 1, title: "t", body: "b", state: "open" as const }];
+    expect(hashImportItemsForKey(items)).toBe(hashImportItemsForKey([{ ...items[0] }]));
+    expect(hashImportItemsForKey(items)).not.toBe(
+      hashImportItemsForKey([{ ...items[0], body: "b2" }]),
+    );
+  });
+
+  it("distinguishes different issue numbers with identical prose", () => {
+    const a = [{ number: 1, title: "t", body: "b", state: "open" as const }];
+    const b = [{ number: 2, title: "t", body: "b", state: "open" as const }];
+    expect(hashImportItemsForKey(a)).not.toBe(hashImportItemsForKey(b));
   });
 });

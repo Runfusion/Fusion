@@ -51,11 +51,23 @@ Deliberately not a crypto hash: it runs on every eligible issue and only needs t
 */
 export function hashImportItemsForKey(items: AutoTranslateListItem[]): string {
   let hash = 5381;
-  for (const item of items) {
-    const text = `${item.number}|${item.title ?? ""}|${item.body ?? ""}|`;
+  const feed = (text: string) => {
     for (let i = 0; i < text.length; i++) {
       hash = (((hash << 5) + hash) ^ text.charCodeAt(i)) >>> 0;
     }
+  };
+  for (const item of items) {
+    const title = item.title ?? "";
+    const body = item.body ?? "";
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-19:30:
+    LENGTH-PREFIXED, not delimiter-separated (PR #2147 review). Prose may itself contain the delimiter, which made the encoding ambiguous: `{title:"a|b", body:"c"}` and `{title:"a", body:"b|c"}` both rendered `1|a|b|c|`, so moving a `|` between fields produced an unchanged signature and the panel kept serving the OLD translation.
+    Prefixing each field with its length makes the encoding injective, so no edit can collide with its own previous content.
+    */
+    feed(`${item.number}:${title.length}:`);
+    feed(title);
+    feed(`:${body.length}:`);
+    feed(body);
   }
   return hash.toString(36);
 }
