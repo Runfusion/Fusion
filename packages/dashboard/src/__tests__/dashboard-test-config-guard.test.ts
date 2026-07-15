@@ -75,7 +75,10 @@ describe("dashboard test config guard", () => {
       "app:app",
       "app:chat",
       "app:settings",
-      "app:backfill",
+      "app:backfill-1",
+      "app:backfill-2",
+      "app:backfill-3",
+      "app:backfill-4",
       "api:curated",
       "api:backfill-1",
       "api:backfill-2",
@@ -100,15 +103,16 @@ describe("dashboard test config guard", () => {
       "test:quality:app:app",
       "test:quality:app:chat",
       "test:quality:app:settings",
-      "test:quality:app:backfill",
+      "test:quality:app:backfill-1",
+      "test:quality:app:backfill-2",
+      "test:quality:app:backfill-3",
+      "test:quality:app:backfill-4",
       "test:quality:api:curated",
       "test:quality:api:backfill-1",
       "test:quality:api:backfill-2",
     ]) {
       expect(scripts[key]).toContain("node scripts/run-vitest-with-heap.mjs --heap=6144");
     }
-    // App backfill is unsharded so the Vitest --shard exit hang cannot wedge the quality runner.
-    expect(scripts["test:quality:app:backfill"]).not.toContain("--shard=");
   });
 
   it("runs the settings lane unfiltered so no describe block can fall through a -t name filter", async () => {
