@@ -24,17 +24,19 @@ import { projectSchema } from "./project.js";
  * plugin instantiates core's Database against the project connection.
  */
 export const roadmaps = projectSchema.table("roadmaps", {
-  id: text("id").primaryKey(),
+  id: text("id").notNull(),
   /** FNXC:RoadmapPostgresUpgrade 2026-07-13-23:40: Runtime Roadmap rows always carry the project partition enforced by the plugin upgrade hook. */
   projectId: text("project_id").notNull(),
   title: text("title").notNull(),
   description: text("description"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
-});
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+]);
 
 export const roadmapMilestones = projectSchema.table("roadmap_milestones", {
-  id: text("id").primaryKey(),
+  id: text("id").notNull(),
   projectId: text("project_id").notNull(),
   roadmapId: text("roadmap_id").notNull(),
   title: text("title").notNull(),
@@ -43,12 +45,13 @@ export const roadmapMilestones = projectSchema.table("roadmap_milestones", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  foreignKey({ columns: [t.roadmapId], foreignColumns: [roadmaps.id] }).onDelete("cascade"),
-  index("idxRoadmapMilestonesRoadmapOrder").on(t.roadmapId, t.orderIndex, t.createdAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.roadmapId], foreignColumns: [roadmaps.projectId, roadmaps.id] }).onDelete("cascade"),
+  index("idxRoadmapMilestonesRoadmapOrder").on(t.projectId, t.roadmapId, t.orderIndex, t.createdAt, t.id),
 ]);
 
 export const roadmapFeatures = projectSchema.table("roadmap_features", {
-  id: text("id").primaryKey(),
+  id: text("id").notNull(),
   projectId: text("project_id").notNull(),
   milestoneId: text("milestone_id").notNull(),
   title: text("title").notNull(),
@@ -57,8 +60,9 @@ export const roadmapFeatures = projectSchema.table("roadmap_features", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (t) => [
-  foreignKey({ columns: [t.milestoneId], foreignColumns: [roadmapMilestones.id] }).onDelete("cascade"),
-  index("idxRoadmapFeaturesMilestoneOrder").on(t.milestoneId, t.orderIndex, t.createdAt, t.id),
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.milestoneId], foreignColumns: [roadmapMilestones.projectId, roadmapMilestones.id] }).onDelete("cascade"),
+  index("idxRoadmapFeaturesMilestoneOrder").on(t.projectId, t.milestoneId, t.orderIndex, t.createdAt, t.id),
 ]);
 
 /**

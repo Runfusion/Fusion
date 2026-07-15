@@ -7,9 +7,19 @@ import {
   cliPressPluginSchemaInit,
   DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS,
   reportsPluginSchemaInit,
+  roadmapPluginSchemaInit,
   runLoadedPluginSchemaInitHooks,
   validatePluginPostgresSchema,
 } from "../../postgres/plugin-schema-hook.js";
+
+function transactionalDb(execute: ReturnType<typeof vi.fn>) {
+  return {
+    execute,
+    transaction: vi.fn(async (callback: (tx: { execute: typeof execute }) => Promise<unknown>) => (
+      callback({ execute })
+    )),
+  };
+}
 
 describe("PostgreSQL plugin schema registry", () => {
   /*
@@ -38,7 +48,7 @@ describe("PostgreSQL plugin schema registry", () => {
   it("runs the registered PostgreSQL hook instead of the legacy callback", async () => {
     const execute = vi.fn().mockResolvedValue([]);
     const legacy = vi.fn();
-    await runLoadedPluginSchemaInitHooks({ execute } as never, [{
+    await runLoadedPluginSchemaInitHooks(transactionalDb(execute) as never, [{
       pluginId: "fusion-plugin-even-realities-glasses",
       hook: legacy,
     }]);
@@ -67,12 +77,12 @@ describe("PostgreSQL plugin schema registry", () => {
       ],
     } as const;
 
-    await runLoadedPluginSchemaInitHooks({ execute } as never, [{
+    await runLoadedPluginSchemaInitHooks(transactionalDb(execute) as never, [{
       pluginId: "external-fixture",
       postgresSchema: definition,
     }]);
 
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 
   it("rejects unscoped or privileged third-party DDL", () => {
@@ -94,10 +104,151 @@ describe("PostgreSQL plugin schema registry", () => {
   });
 
   /*
+  FNXC:PluginPostgresContract 2026-07-14-22:42:
+  The declarative PostgreSQL contract may evolve ordinary plugin columns, while Fusion exclusively owns tenant identity, RLS, table identity, keys, and grants. Reject every ALTER shape that could weaken that boundary before a privileged transaction begins.
+  */
+  it.each([
+    "ALTER TABLE project.bad_rows DISABLE ROW LEVEL SECURITY",
+    "ALTER TABLE project.bad_rows DROP COLUMN project_id",
+    "ALTER TABLE project.bad_rows RENAME COLUMN project_id TO tenant_id",
+    "ALTER TABLE project.bad_rows ALTER COLUMN project_id SET DEFAULT 'stolen'",
+    "ALTER TABLE project.bad_rows DROP CONSTRAINT bad_rows_pkey",
+    "ALTER TABLE project.bad_rows OWNER TO postgres",
+  ])("rejects privileged third-party ALTER TABLE: %s", (statement) => {
+    expect(() => validatePluginPostgresSchema("external-fixture", {
+      version: 1,
+      tablePrefix: "bad_",
+      statements: [statement],
+    })).toThrow("non-project_id data columns");
+  });
+
+  it("reinstalls isolation for tables changed only by a safe ALTER", async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+
+    await runLoadedPluginSchemaInitHooks(transactionalDb(execute) as never, [{
+      pluginId: "external-fixture",
+      postgresSchema: {
+        version: 2,
+        tablePrefix: "external_fixture_",
+        statements: ["ALTER TABLE project.external_fixture_rows ADD COLUMN IF NOT EXISTS notes text"],
+      },
+    }]);
+
+    expect(execute).toHaveBeenCalledTimes(3);
+    const envelope = (execute.mock.calls[2]?.[0] as { queryChunks: Array<{ value: string[] }> })
+      .queryChunks.flatMap((chunk) => chunk.value).join("");
+    expect(envelope).toContain('FORCE ROW LEVEL SECURITY');
+    expect(envelope).toContain('project."external_fixture_rows"');
+  });
+
+  it("rolls back the whole contract when a later statement fails", async () => {
+    const committed: string[] = [];
+    const db = {
+      transaction: vi.fn(async (callback: (tx: { execute: (query: unknown) => Promise<unknown> }) => Promise<unknown>) => {
+        const pending: string[] = [];
+        const tx = {
+          execute: async (query: unknown) => {
+            const text = (query as { queryChunks: Array<{ value: string[] }> }).queryChunks
+              .flatMap((chunk) => chunk.value).join("");
+            pending.push(text);
+            if (text.includes("ALTER COLUMN notes SET NOT NULL")) throw new Error("fixture DDL failure");
+            return [];
+          },
+        };
+        const result = await callback(tx);
+        committed.push(...pending);
+        return result;
+      }),
+    };
+
+    await expect(runLoadedPluginSchemaInitHooks(db as never, [{
+      pluginId: "external-fixture",
+      postgresSchema: {
+        version: 2,
+        tablePrefix: "external_fixture_",
+        statements: [
+          "CREATE TABLE IF NOT EXISTS project.external_fixture_rows (project_id text NOT NULL, id text NOT NULL, notes text, PRIMARY KEY (project_id, id))",
+          "ALTER TABLE project.external_fixture_rows ALTER COLUMN notes SET NOT NULL",
+        ],
+      },
+    }])).rejects.toThrow("fixture DDL failure");
+    expect(committed).toEqual([]);
+  });
+
+  it("serializes concurrent contracts with the schema-applier advisory lock", async () => {
+    const events: string[] = [];
+    let release: (() => void) | undefined;
+    let held = false;
+    const waiters: Array<() => void> = [];
+    const acquire = async () => {
+      if (held) await new Promise<void>((resolve) => waiters.push(resolve));
+      held = true;
+      release = () => {
+        held = false;
+        waiters.shift()?.();
+      };
+    };
+    const db = {
+      transaction: async (callback: (tx: { execute: (query: unknown) => Promise<unknown> }) => Promise<unknown>) => {
+        let ownsLock = false;
+        try {
+          return await callback({
+            execute: async (query: unknown) => {
+              const text = (query as { queryChunks: Array<{ value: string[] }> }).queryChunks
+                .flatMap((chunk) => chunk.value).join("");
+              if (text.includes("pg_advisory_xact_lock")) {
+                await acquire();
+                ownsLock = true;
+                events.push("lock");
+              } else {
+                const table = text.match(/external_fixture_(one|two)/)?.[1] ?? "unknown";
+                events.push(table);
+                await Promise.resolve();
+              }
+              return [];
+            },
+          });
+        } finally {
+          if (ownsLock) release?.();
+        }
+      },
+    };
+    const contract = (suffix: "one" | "two") => runLoadedPluginSchemaInitHooks(db as never, [{
+      pluginId: `fixture-${suffix}`,
+      postgresSchema: {
+        version: 1,
+        tablePrefix: "external_fixture_",
+        statements: [`CREATE TABLE IF NOT EXISTS project.external_fixture_${suffix} (project_id text NOT NULL, id text NOT NULL, PRIMARY KEY (project_id, id))`],
+      },
+    }]);
+
+    await Promise.all([contract("one"), contract("two")]);
+    expect(events).toEqual(["lock", "one", "one", "lock", "two", "two"]);
+  });
+
+  it("repairs Roadmap ownership outside legacy foreign keys and restores composite relationships", async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    await roadmapPluginSchemaInit.init({ execute } as never);
+    const ddl = (execute.mock.calls[0]?.[0] as { queryChunks: Array<{ value: string[] }> })
+      .queryChunks.flatMap((chunk) => chunk.value).join("");
+
+    const dropMilestoneFk = ddl.indexOf("DROP CONSTRAINT IF EXISTS roadmap_milestones_roadmap_id_fkey");
+    const ownershipBackfill = ddl.indexOf("UPDATE project.roadmap_milestones milestone");
+    const compositeMilestoneFk = ddl.lastIndexOf("FOREIGN KEY (project_id, roadmap_id)");
+    const validation = ddl.indexOf("RAISE EXCEPTION 'Roadmap PostgreSQL upgrade found");
+    expect(dropMilestoneFk).toBeGreaterThanOrEqual(0);
+    expect(dropMilestoneFk).toBeLessThan(ownershipBackfill);
+    expect(compositeMilestoneFk).toBeGreaterThan(validation);
+    expect(ddl).toContain("PRIMARY KEY (project_id, id)");
+    expect(ddl).toContain("FOREIGN KEY (project_id, milestone_id)");
+  });
+
+  /*
   FNXC:PluginLegacyOwnership 2026-07-14-21:41:
   A migration connection is intentionally not bound to fusion.project_id. Bundled plugin upgrades must recover pre-project rows only from an unambiguous central.projects singleton and must reject zero/multiple candidates instead of silently making preserved data invisible behind __legacy_unscoped__.
   */
   it.each([
+    ["Roadmap", roadmapPluginSchemaInit, "$roadmap_upgrade$"],
     ["Compound Engineering", cePluginSchemaInit, "$ce_pipeline_upgrade$"],
     ["Reports", reportsPluginSchemaInit, "$reports_upgrade$"],
     ["CLI Printing Press", cliPressPluginSchemaInit, "$cli_press_upgrade$"],
@@ -119,7 +270,8 @@ describe("PostgreSQL plugin schema registry", () => {
     expect(upgrade).toContain("registered_project_count <> 1");
     expect(upgrade).toContain("SET project_id = singleton_project_id");
     expect(upgrade).toContain("RAISE EXCEPTION");
-    expect(upgrade).not.toContain("__legacy_unscoped__");
+    expect(upgrade).toContain("project_id IN ('', '__legacy_unscoped__')");
+    expect(upgrade).not.toContain("SET project_id = '__legacy_unscoped__'");
     expect(upgrade).not.toContain("current_setting('fusion.project_id'");
   });
 });

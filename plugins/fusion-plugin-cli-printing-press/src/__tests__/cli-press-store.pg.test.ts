@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "@fusion/core";
+import { cliPressPluginSchemaInit } from "../../../../packages/core/src/postgres/plugin-schema-hook.ts";
 import {
   createTaskStoreForTest,
   pgDescribe,
@@ -43,6 +44,40 @@ pgDescribe("CliPressStore (PostgreSQL / backend mode)", () => {
         "cli_press_service_settings",
         "cli_press_services",
       ]);
+    } finally {
+      await h.teardown();
+    }
+  });
+
+  it("backfills a complete sentinel-owned hierarchy under existing composite foreign keys", async () => {
+    const h = await createTaskStoreForTest({ prefix: "fusion_clipress_upgrade_single" });
+    try {
+      await h.adminDb.execute(sql.raw(`
+        /* FNXC:CliPressProjectIsolation 2026-07-14-22:48: Exercise the repeated-boot shape where composite foreign keys already exist and every preserved hierarchy row still carries the compatibility sentinel. */
+        INSERT INTO central.projects(id, name, path, created_at, updated_at)
+          VALUES ('cli-project-only', 'Only', '/only', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_services(project_id, id, slug, display_name, base_url, source_kind, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'svc-old', 'old', 'Old', 'https://old.example', 'manual', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_cli_specs(project_id, id, service_id, name, version, generator_version, spec_json, status, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'spec-old', 'svc-old', 'old-cli', '1.0.0', 'legacy', '{}', 'draft', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_artifacts(project_id, id, cli_spec_id, kind, path, executable, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'artifact-old', 'spec-old', 'script', 'old/bin', false, '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_credentials(project_id, id, service_id, name, kind, value, placement, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'credential-old', 'svc-old', 'token', 'header', '{}', '{}', '2026-07-14', '2026-07-14');
+        INSERT INTO project.cli_press_service_settings(project_id, id, service_id, key, value, scope, created_at, updated_at)
+          VALUES ('__legacy_unscoped__', 'setting-old', 'svc-old', 'region', 'west', 'runtime', '2026-07-14', '2026-07-14');
+      `));
+
+      await cliPressPluginSchemaInit.init(h.adminDb);
+
+      const ownership = await h.adminDb.execute(sql.raw(`
+        SELECT project_id FROM project.cli_press_services WHERE id='svc-old'
+        UNION ALL SELECT project_id FROM project.cli_press_cli_specs WHERE id='spec-old'
+        UNION ALL SELECT project_id FROM project.cli_press_artifacts WHERE id='artifact-old'
+        UNION ALL SELECT project_id FROM project.cli_press_credentials WHERE id='credential-old'
+        UNION ALL SELECT project_id FROM project.cli_press_service_settings WHERE id='setting-old'
+      `)) as unknown as Array<{ project_id: string }>;
+      expect(ownership.map((row) => row.project_id)).toEqual(Array(5).fill("cli-project-only"));
     } finally {
       await h.teardown();
     }
