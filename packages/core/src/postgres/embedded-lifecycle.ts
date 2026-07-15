@@ -51,11 +51,14 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   chmodSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { createServer, type Server } from "node:net";
 import { dirname, join, basename, sep } from "node:path";
@@ -74,6 +77,9 @@ const EMBEDDED_PG_BIN_NAMES = new Set([
   "initdb.exe",
   "pg_ctl.exe",
 ]);
+
+/** Materialization marker schema version; bump when the marker payload shape changes. */
+const MATERIALIZATION_MARKER_VERSION = 1;
 
 /**
  * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
@@ -111,8 +117,99 @@ export function resolveElectronAsarUnpackedPath(filePath: string): string {
 export function embeddedPostgresRuntimeBinRoot(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  home: string = homedir(),
 ): string {
-  return join(homedir(), ".fusion", "embedded-postgres", "runtime-bin", `${platform}-${arch}`);
+  return join(home, ".fusion", "embedded-postgres", "runtime-bin", `${platform}-${arch}`);
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+ * Content-aware fingerprint of a packaged native root. Packaged in-place updates
+ * keep `nativeRoot` path stable (same app.asar.unpacked layout) while replacing
+ * postgres binaries and libraries; path-only markers would reuse stale payload.
+ * Fingerprint mixes binary content hashes + sizes so both binary and library-only
+ * payload changes invalidate the host-local materialization cache.
+ */
+export function fingerprintEmbeddedPostgresNativeRoot(nativeRoot: string): string {
+  const hash = createHash("sha256");
+  const binNames =
+    process.platform === "win32"
+      ? (["postgres.exe", "initdb.exe", "pg_ctl.exe"] as const)
+      : (["postgres", "initdb", "pg_ctl"] as const);
+  for (const name of binNames) {
+    const path = join(nativeRoot, "bin", name);
+    hash.update(name);
+    hash.update("\0");
+    try {
+      const st = statSync(path);
+      hash.update(String(st.size));
+      hash.update("\0");
+      // Full content hash of each critical binary (sizes are small enough for startup).
+      hash.update(readFileSync(path));
+    } catch {
+      hash.update("missing");
+    }
+    hash.update("\0");
+  }
+  // Library / extension tree can change without bin renames (e.g. security patch
+  // to a shared library). Walk lib/ and record relative path + size for regular
+  // files so payload-only library updates also invalidate the cache.
+  const libDir = join(nativeRoot, "lib");
+  if (existsSync(libDir)) {
+    try {
+      hashLibTreeFingerprint(libDir, "", hash);
+    } catch {
+      hash.update("lib-unreadable");
+    }
+  } else {
+    hash.update("lib-missing");
+  }
+  return hash.digest("hex");
+}
+
+/** Bounded lib-tree walk for materialization fingerprints (path + size only). */
+function hashLibTreeFingerprint(
+  absDir: string,
+  relPrefix: string,
+  hash: ReturnType<typeof createHash>,
+  budget: { remaining: number } = { remaining: 256 },
+): void {
+  if (budget.remaining <= 0) return;
+  let entries: string[];
+  try {
+    entries = readdirSync(absDir).sort();
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (budget.remaining <= 0) return;
+    const abs = join(absDir, entry);
+    const rel = relPrefix ? `${relPrefix}/${entry}` : entry;
+    try {
+      const st = statSync(abs);
+      if (st.isDirectory()) {
+        hash.update(`d:${rel}\0`);
+        hashLibTreeFingerprint(abs, rel, hash, budget);
+      } else if (st.isFile()) {
+        budget.remaining -= 1;
+        hash.update(`f:${rel}:${st.size}\0`);
+      }
+    } catch {
+      hash.update(`?:${rel}\0`);
+    }
+  }
+}
+
+/**
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+ * Materialization cache marker. Must change whenever either the source path OR
+ * the native payload changes so in-place app updates re-copy fresh Postgres
+ * binaries instead of reusing the previous release's host-local cache.
+ * Legacy path-only markers fail equality and force rematerialization.
+ */
+export function buildEmbeddedPostgresMaterializationMarker(nativeRoot: string): string {
+  const fingerprint = fingerprintEmbeddedPostgresNativeRoot(nativeRoot);
+  return `v${MATERIALIZATION_MARKER_VERSION}\n${nativeRoot}\n${fingerprint}\n`;
 }
 
 function resolveMaterializedEmbeddedPostgresBinary(filePath: string): string | null {
@@ -123,13 +220,30 @@ function resolveMaterializedEmbeddedPostgresBinary(filePath: string): string | n
   return existsSync(candidate) ? candidate : null;
 }
 
+export interface MaterializeEmbeddedPostgresOptions {
+  /**
+   * Override the host-local dest root (tests). Defaults to
+   * `~/.fusion/embedded-postgres/runtime-bin/<platform>-<arch>`.
+   */
+  readonly destRoot?: string;
+}
+
 /**
  * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:45:
  * Copy initdb/pg_ctl/postgres (+ lib tree for dyld/@loader_path) from the packaged
  * native root into ~/.fusion so spawn never has to execute out of app.asar*.
  * Idempotent: skips when marker + binaries already exist.
+ *
+ * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+ * Marker identity includes a content fingerprint of the source native root, not
+ * only the path. Packaged app updates leave nativeRoot paths unchanged; without
+ * the fingerprint this guard would keep serving the previous release's binaries
+ * and libraries and bundled PostgreSQL fixes would never take effect.
  */
-export function materializeEmbeddedPostgresRuntimeBinaries(nativeRoot: string): string {
+export function materializeEmbeddedPostgresRuntimeBinaries(
+  nativeRoot: string,
+  options?: MaterializeEmbeddedPostgresOptions,
+): string {
   /*
    * FNXC:DesktopEmbeddedPostgres 2026-07-14-18:55:
    * Postgres expects a full install layout next to the binaries: bin/, lib/
@@ -137,19 +251,28 @@ export function materializeEmbeddedPostgresRuntimeBinaries(nativeRoot: string): 
    * A shallow bin-only copy fails at start with "could not open directory
    * .../lib/postgresql". Copy the entire native root recursively.
    */
-  const destRoot = embeddedPostgresRuntimeBinRoot();
+  const destRoot = options?.destRoot ?? embeddedPostgresRuntimeBinRoot();
   const destBin = join(destRoot, "bin");
   const marker = join(destRoot, ".materialized-from");
-  const sourceMarker = nativeRoot;
+  const sourceMarker = buildEmbeddedPostgresMaterializationMarker(nativeRoot);
   if (
     existsSync(marker) &&
-    readFileSync(marker, "utf8").trim() === sourceMarker &&
+    readFileSync(marker, "utf8") === sourceMarker &&
     existsSync(join(destBin, process.platform === "win32" ? "postgres.exe" : "postgres")) &&
     existsSync(join(destRoot, "lib", "postgresql"))
   ) {
     return destRoot;
   }
 
+  /*
+   * FNXC:DesktopEmbeddedPostgres 2026-07-15-02:55:
+   * Clear the previous materialization before re-copy so files removed in a newer
+   * payload cannot linger beside the updated binaries (force-copy alone does not
+   * delete orphans).
+   */
+  if (existsSync(destRoot)) {
+    rmSync(destRoot, { recursive: true, force: true });
+  }
   mkdirSync(destRoot, { recursive: true });
   // Recursive copy of bin/lib/share (and any other native install dirs).
   for (const entry of readdirSync(nativeRoot)) {
