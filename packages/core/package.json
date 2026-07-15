@@ -24,6 +24,11 @@
       "source": "./src/gh-cli.ts",
       "import": "./dist/gh-cli.js"
     },
+    "./detect-content-language": {
+      "types": "./src/detect-content-language.ts",
+      "source": "./src/detect-content-language.ts",
+      "import": "./dist/detect-content-language.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

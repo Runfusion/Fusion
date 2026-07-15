@@ -1,15 +1,24 @@
 /*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Auto-translation supersedes the original opt-in-only stance below, at operator request. Import panels routinely list issues in languages the operator cannot read, so translation MAY now run automatically — but only when `githubImportAutoTranslate` is switched on (default off), which preserves the faithful-provenance default for anyone who never opts in.
+When auto-translate is on: the 50 most recent OPEN foreign-language issues are translated eagerly on list load and shown translated BY DEFAULT, with a toggle back to the original. Translations persist server-side until the issue closes, so re-opening the panel neither waits nor re-bills.
+When it is off, behavior is unchanged from 2026-07-14: a manual per-selection offer.
+
 FNXC:GitHubImportTranslate 2026-07-14-12:00:
 Import Tasks preview shows translation controls only when selected issue/PR prose is not the dashboard language.
 Operators can translate title+body into the active UI locale, toggle original vs translated, or dismiss the offer for the current selection.
-Translation is opt-in (never automatic) so import provenance stays faithful until the operator asks.
+Translation is opt-in (never automatic) so import provenance stays faithful until the operator asks. [Superseded 2026-07-15 for the auto-translate path; still the behavior when the setting is off.]
 */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Languages, Loader2 } from "lucide-react";
 import type { Locale } from "@fusion/core";
-import { translateImportContent, getTranslateErrorMessage } from "../api";
+import {
+  translateImportContent,
+  getTranslateErrorMessage,
+  autoTranslateImportIssues,
+} from "../api";
 import {
   contentNeedsTranslation,
   localeDisplayName,
@@ -20,6 +29,133 @@ export type ImportTranslateFields = {
   title: string;
   body: string;
 };
+
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+List-level auto-translation. Requirement (2026-07-15): translate the 50 most recent OPEN issues eagerly so the LIST — not just the preview — reads in the operator's language.
+Sorting/capping happens here rather than server-side so the cap applies to what the operator can actually see; the server re-applies its own cap as the authority.
+Closed issues are excluded outright: their translations are neither created nor kept.
+*/
+export const AUTO_TRANSLATE_MAX_ISSUES = 50;
+
+export interface AutoTranslateListItem {
+  number: number;
+  title: string;
+  body: string | null;
+  state?: "open" | "closed";
+}
+
+export interface UseGitHubImportAutoTranslateArgs {
+  enabled: boolean;
+  owner: string;
+  repo: string;
+  items: AutoTranslateListItem[];
+  targetLocale: Locale;
+  projectId?: string;
+}
+
+export interface GitHubImportAutoTranslateState {
+  /** number -> translated fields, for issues the server translated. */
+  translations: Map<number, ImportTranslateFields>;
+  loading: boolean;
+  /** True when more foreign issues existed than the per-load cap. */
+  capped: boolean;
+  error: string | null;
+}
+
+/**
+ * Eagerly translate the visible open issues when auto-translate is enabled.
+ * One request per (repo, locale, issue-set); the server serves repeats from its
+ * durable cache, so re-opening the panel neither waits nor re-bills.
+ */
+export function useGitHubImportAutoTranslate({
+  enabled,
+  owner,
+  repo,
+  items,
+  targetLocale,
+  projectId,
+}: UseGitHubImportAutoTranslateArgs): GitHubImportAutoTranslateState {
+  const [translations, setTranslations] = useState<Map<number, ImportTranslateFields>>(
+    () => new Map(),
+  );
+  const [loading, setLoading] = useState(false);
+  const [capped, setCapped] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Only the 50 most recent OPEN issues are eligible. GitHub returns issues
+  // newest-first, so list order is already "most recent".
+  const eligible = useMemo(
+    () => items.filter((item) => item.state !== "closed").slice(0, AUTO_TRANSLATE_MAX_ISSUES),
+    [items],
+  );
+
+  /* Re-run only when the actual issue set changes — not on every list re-render,
+     which would re-request on unrelated state churn. */
+  const requestKey = useMemo(
+    () =>
+      enabled && owner && repo && eligible.length > 0
+        ? `${owner}/${repo}|${targetLocale}|${eligible.map((i) => i.number).join(",")}`
+        : null,
+    [enabled, owner, repo, targetLocale, eligible],
+  );
+
+  useEffect(() => {
+    if (!requestKey) {
+      setTranslations(new Map());
+      setCapped(false);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    autoTranslateImportIssues(
+      owner,
+      repo,
+      eligible.map((item) => ({
+        number: item.number,
+        title: item.title ?? "",
+        body: item.body ?? null,
+        state: item.state === "closed" ? "closed" : "open",
+      })),
+      targetLocale,
+      projectId,
+    )
+      .then((response) => {
+        if (cancelled) return;
+        const next = new Map<number, ImportTranslateFields>();
+        for (const [key, value] of Object.entries(response.translations ?? {})) {
+          const number = Number(key);
+          if (Number.isInteger(number)) {
+            next.set(number, { title: value.title, body: value.body });
+          }
+        }
+        setTranslations(next);
+        setCapped(Boolean(response.capped));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // Fail soft: the list still renders in the original language.
+        setError(getTranslateErrorMessage(err));
+        setTranslations(new Map());
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // `requestKey` encodes every input that should retrigger the fetch (repo,
+    // locale, issue set); depending on `eligible` directly would refetch on any
+    // list re-render.
+  }, [requestKey, owner, repo, eligible, targetLocale, projectId]);
+
+  return { translations, loading, capped, error };
+}
 
 export type ImportTranslateView = {
   /** Fields currently shown in the preview (original or translated). */
@@ -39,6 +175,14 @@ export interface UseGitHubImportTranslationArgs {
   body: string;
   dashboardLocale: Locale;
   projectId?: string;
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  When auto-translate is on, the selected item's translation is already fetched at list level. Passing it in means the preview shows the translation BY DEFAULT with no second request and no per-selection wait, while the toggle still reveals the untranslated original.
+  */
+  /** Pre-fetched translation for the current selection (auto-translate mode). */
+  autoTranslation?: ImportTranslateFields | null;
+  /** Whether auto-translate is enabled for this project. */
+  autoTranslateEnabled?: boolean;
 }
 
 /**
@@ -51,6 +195,8 @@ export function useGitHubImportTranslation({
   body,
   dashboardLocale,
   projectId,
+  autoTranslation = null,
+  autoTranslateEnabled = false,
 }: UseGitHubImportTranslationArgs): ImportTranslateView {
   const { t } = useTranslation("app");
   const original = useMemo<ImportTranslateFields>(
@@ -74,20 +220,34 @@ export function useGitHubImportTranslation({
   const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset view mode when selection changes; keep cache and dismissals.
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Selection change resets to the DEFAULT view for the current mode: translated when auto-translate supplied a translation for this item, original otherwise.
+  Requirement: "it should show translated version by default if it's turned on" — so the reset target is mode-dependent, not a hardcoded `false`.
+  */
+  const hasAutoTranslation = Boolean(autoTranslateEnabled && autoTranslation);
   useEffect(() => {
-    setShowingTranslation(false);
+    setShowingTranslation(hasAutoTranslation);
     setError(null);
     setTranslating(false);
-  }, [selectionKey]);
+  }, [selectionKey, hasAutoTranslation]);
 
-  const cached = selectionKey ? cache.get(selectionKey) : undefined;
+  // An auto-translation for the current selection takes precedence over any
+  // manually fetched one, so both modes read from a single source.
+  const cached = autoTranslateEnabled && autoTranslation
+    ? autoTranslation
+    : selectionKey
+      ? cache.get(selectionKey)
+      : undefined;
   const dismissed = selectionKey ? dismissedKeys.has(selectionKey) : true;
 
+  /* With a translation already in hand the row is a toggle, not an offer, so it
+     shows regardless of the local detector's verdict — the server already
+     decided this item was foreign. */
   const showControls = Boolean(
     selectionKey &&
-      needs.needed &&
       !dismissed &&
+      (hasAutoTranslation || needs.needed) &&
       (original.title.trim() || original.body.trim()),
   );
 

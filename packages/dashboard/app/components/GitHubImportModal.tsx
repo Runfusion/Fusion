@@ -29,7 +29,10 @@ import {
 import { Loader2, RefreshCw, ArrowLeft, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User } from "lucide-react";
 import { GithubIcon } from "./GithubIcon";
 import { MailboxMessageContent } from "./MailboxMessageContent";
-import { useGitHubImportTranslation } from "./GitHubImportTranslateControls";
+import {
+  useGitHubImportTranslation,
+  useGitHubImportAutoTranslate,
+} from "./GitHubImportTranslateControls";
 import type { TFunction } from "i18next";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
@@ -327,6 +330,38 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const dashboardLocale: Locale = isLocale(i18n.resolvedLanguage ?? i18n.language)
     ? (i18n.resolvedLanguage ?? i18n.language) as Locale
     : DEFAULT_LOCALE;
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Auto-translate is off by default, so the panel reads the project setting before translating anything. `importTranslateTargetLocale` overrides the dashboard locale when the operator wants issues in a language other than the one the UI is rendered in; unset means "follow the dashboard language".
+  The server re-checks the same setting, so a stale value here can never cause an unwanted model call — this fetch drives the UI only.
+  */
+  const [autoTranslateEnabled, setAutoTranslateEnabled] = useState(false);
+  const [translateLocaleSetting, setTranslateLocaleSetting] = useState<Locale | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetchSettings(projectId)
+      .then((settings) => {
+        if (cancelled) return;
+        setAutoTranslateEnabled(settings.githubImportAutoTranslate === true);
+        setTranslateLocaleSetting(
+          isLocale(settings.importTranslateTargetLocale)
+            ? settings.importTranslateTargetLocale
+            : null,
+        );
+      })
+      .catch(() => {
+        // Settings unavailable: stay on the safe default (no auto-translation).
+        if (!cancelled) setAutoTranslateEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, projectId]);
+
+  const translateTargetLocale: Locale = translateLocaleSetting ?? dashboardLocale;
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [labels, setLabels] = useState("");
@@ -1257,12 +1292,33 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     return { key: null as string | null, title: "", body: "" };
   }, [provider, selectedGitlabItem, selectedGitlabKey, activeTab, selectedIssue, selectedPull]);
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-09:30:
+  Requirement (2026-07-15): when auto-translate is on, translate foreign-language issues BEFORE showing them — so the list titles, not just the preview, read in the operator's language.
+  The 50-most-recent-open cap and the setting itself are enforced server-side; this only supplies the visible issue set and consumes the result.
+  */
+  const autoTranslate = useGitHubImportAutoTranslate({
+    enabled: autoTranslateEnabled && provider === "github" && activeTab === "issues",
+    owner: owner.trim(),
+    repo: repo.trim(),
+    items: issues,
+    targetLocale: translateTargetLocale,
+    projectId,
+  });
+
+  const selectedAutoTranslation =
+    provider === "github" && activeTab === "issues" && selectedIssue
+      ? autoTranslate.translations.get(selectedIssue.number) ?? null
+      : null;
+
   const importTranslation = useGitHubImportTranslation({
     selectionKey: translateSelection.key,
     title: translateSelection.title,
     body: translateSelection.body,
-    dashboardLocale,
+    dashboardLocale: translateTargetLocale,
     projectId,
+    autoTranslation: selectedAutoTranslation,
+    autoTranslateEnabled,
   });
 
   if (!isOpen) return null;
@@ -1557,7 +1613,17 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                           <div className="issue-main">
                             <div className="issue-heading-row">
                               <span className="issue-number">#{issue.number}</span>
-                              <span className="issue-title">{issue.title}</span>
+                              {/*
+                              FNXC:GitHubImportTranslate 2026-07-15-09:30:
+                              The LIST title shows the translation when auto-translate produced one — the requirement is that foreign issues are translated "before showing to the user", and the list is the first thing shown. `title` keeps the original so the untranslated text stays recoverable on hover.
+                              */}
+                              <span
+                                className="issue-title"
+                                title={autoTranslate.translations.has(issue.number) ? issue.title : undefined}
+                                data-translated={autoTranslate.translations.has(issue.number) ? "true" : undefined}
+                              >
+                                {autoTranslate.translations.get(issue.number)?.title ?? issue.title}
+                              </span>
                             </div>
                             {issue.labels.length > 0 && (
                               <span className="issue-labels">

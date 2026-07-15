@@ -27,7 +27,11 @@ import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 
 /** The latest PostgreSQL schema version known to this applier. */
-export const SCHEMA_BASELINE_VERSION = "0009";
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Advances to 0010 with the import-translation cache. Per-migration identities above stay fixed; only this latest-version marker moves.
+*/
+export const SCHEMA_BASELINE_VERSION = "0010";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -47,6 +51,11 @@ export const SQLITE_SCHEMA_PARITY_VERSION = "0007";
  */
 export const SESSION_ADVISOR_ENABLED_SCHEMA_VERSION = "0008";
 export const MISSION_FIX_IDEMPOTENCY_VERSION = "0009";
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Import-translation cache advances to 0010. Migrations are registered here explicitly (not auto-discovered from the migrations dir), so a new .sql file that is not wired through a version constant + bookkeeping check silently never runs.
+*/
+export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -97,6 +106,11 @@ const MISSION_FIX_IDEMPOTENCY_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0009_mission_fix_idempotency.sql",
+);
+const IMPORT_TRANSLATION_CACHE_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0010_import_translation_cache.sql",
 );
 
 /**
@@ -164,6 +178,7 @@ export async function applySchemaBaseline(
     const sqliteSchemaParityAlreadyApplied = applied.includes(SQLITE_SCHEMA_PARITY_VERSION);
     const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
+    const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -383,6 +398,19 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_FIX_IDEMPOTENCY_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-09:30:
+    Create the import-translation cache table independently of earlier schema versions so existing databases gain it on boot before any Import Tasks translate/import read runs against it.
+    */
+    if (!importTranslationCacheAlreadyApplied) {
+      const importTranslationCacheSql = await readFile(IMPORT_TRANSLATION_CACHE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(importTranslationCacheSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

@@ -6224,6 +6224,42 @@ export async function translateImportContent(
   return response.fields;
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-15-09:30:
+Auto-translate the visible import list in ONE request. The server reads through its durable cache, so a repeat load of the same repo returns instantly and bills nothing; the same cache is what the import path reads, so an imported task carries the translation shown here.
+The server enforces the auto-translate setting and the 50-issue cap itself and echoes `enabled`/`capped` back, so the client never has to duplicate that policy.
+*/
+export interface AutoTranslateImportItem {
+  number: number;
+  title: string;
+  body: string | null;
+  state?: "open" | "closed";
+}
+
+export interface AutoTranslateImportResponse {
+  translations: Record<number, { title: string; body: string }>;
+  enabled: boolean;
+  targetLocale: string | null;
+  /** True when more foreign issues existed than the per-load cap. */
+  capped: boolean;
+}
+
+export async function autoTranslateImportIssues(
+  owner: string,
+  repo: string,
+  items: AutoTranslateImportItem[],
+  targetLocale: string,
+  projectId?: string,
+): Promise<AutoTranslateImportResponse> {
+  return api<AutoTranslateImportResponse>(
+    withProjectId("/github/issues/auto-translate", projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({ owner, repo, items, targetLocale }),
+    },
+  );
+}
+
 /** User-facing error copy for translateImportContent failures (toast/banner). */
 export const TRANSLATE_ERROR_MESSAGES = {
   RATE_LIMIT: "Too many translation requests. Please wait an hour.",

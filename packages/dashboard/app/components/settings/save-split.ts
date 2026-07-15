@@ -46,12 +46,25 @@ import type { GlobalSettings, McpServersSettings, Settings } from "@fusion/core"
  * Merger project lane (provider/model/thinking) is project-scoped like
  * title summarizer — not workflow-moved — so it participates in the same
  * changed-only/null-as-delete project-branch write path.
+ *
+ * FNXC:GitHubImportTranslate 2026-07-15-09:30:
+ * The import auto-translation settings are PROJECT-scoped: which language a repo's
+ * issues get translated into, and whether to translate at all, is a per-project
+ * decision, so they must route to the project patch and inherit when untouched.
+ * The lane's provider/model/thinking trio travels with the two non-model keys
+ * (`githubImportAutoTranslate`, `importTranslateTargetLocale`) so that clearing the
+ * toggle or the target locale serializes as null-as-delete (restoring inheritance)
+ * instead of being dropped as an unchanged inherited value. The companion
+ * `importTranslateGlobal*` keys are deliberately NOT listed here — they are global
+ * scope and are gated by GLOBAL_SECTION_KEYS below.
  */
 export const MODEL_LANE_KEYS = [
   "defaultProviderOverride", "defaultModelIdOverride",
   "titleSummarizerProvider", "titleSummarizerModelId",
   "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackThinkingLevel",
   "mergerProvider", "mergerModelId", "mergerThinkingLevel",
+  "githubImportAutoTranslate", "importTranslateTargetLocale",
+  "importTranslateProvider", "importTranslateModelId", "importTranslateThinkingLevel",
 ] as const;
 
 const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
@@ -157,6 +170,15 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "mergerGlobalProvider",
     "mergerGlobalModelId",
     "mergerGlobalThinkingLevel",
+    /*
+    FNXC:GitHubImportTranslate 2026-07-15-09:30:
+    The import-translate GLOBAL lane keys must be section-allowlisted in both Models
+    sections (mirroring merger), otherwise the section gate in the global branch of
+    splitSettingsSave silently drops an operator's global lane edit on Save.
+    */
+    "importTranslateGlobalProvider",
+    "importTranslateGlobalModelId",
+    "importTranslateGlobalThinkingLevel",
   ]),
   "project-models": new Set([
     "defaultProvider",
@@ -184,6 +206,9 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "mergerGlobalProvider",
     "mergerGlobalModelId",
     "mergerGlobalThinkingLevel",
+    "importTranslateGlobalProvider",
+    "importTranslateGlobalModelId",
+    "importTranslateGlobalThinkingLevel",
   ]),
   "node-sync": new Set([
     "settingsSyncEnabled",
