@@ -59,6 +59,9 @@ describe("command-presets", () => {
   it("rejects unsafe path tokens", () => {
     expect(isSafeFilePathToken("../x")).toBe(false);
     expect(isSafeFilePathToken("a;rm -rf /")).toBe(false);
+    expect(isSafeFilePathToken("/abs/x.ts")).toBe(false);
+    expect(isSafeFilePathToken("C:/outside/x.test.ts")).toBe(false);
+    expect(isSafeFilePathToken("%TEMP%/x.test.ts")).toBe(false);
     expect(isSafeFilePathToken("src/ok.ts")).toBe(true);
   });
 });

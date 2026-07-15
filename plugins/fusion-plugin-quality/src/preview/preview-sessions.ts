@@ -189,11 +189,22 @@ export function createPreviewSessionManager() {
       const k = key(projectId, taskId);
       const session = sessions.get(k);
       if (!session) return null;
-      if (session.supervised) {
-        session.supervised.kill("SIGTERM");
-        setTimeout(() => {
-          session.supervised?.kill("SIGKILL");
-        }, 2000);
+      /*
+      FNXC:Quality 2026-07-14-22:20:
+      PR review: keep a local ref to supervised so delayed SIGKILL is not cleared
+      when session.supervised is nulled; wait for exit before finalizing status.
+      */
+      const supervised = session.supervised;
+      if (supervised) {
+        supervised.kill("SIGTERM");
+        const forceKillTimer = setTimeout(() => {
+          supervised.kill("SIGKILL");
+        }, 2_000);
+        try {
+          await supervised.waitExit();
+        } finally {
+          clearTimeout(forceKillTimer);
+        }
       }
       session.status = "stopped";
       session.stoppedAt = new Date().toISOString();

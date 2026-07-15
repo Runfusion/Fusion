@@ -22,7 +22,10 @@ interface RunRow {
 
 async function fetchRuns(projectId: string): Promise<RunRow[]> {
   const res = await fetch(`/api/plugins/fusion-plugin-quality/runs?projectId=${encodeURIComponent(projectId)}`);
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText || `Failed to load runs (${res.status})`);
+  }
   const data = (await res.json()) as { runs?: RunRow[] };
   return data.runs ?? [];
 }

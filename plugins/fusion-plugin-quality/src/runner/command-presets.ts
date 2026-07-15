@@ -35,13 +35,23 @@ export type ResolvePresetResult =
 
 /**
  * Reject path tokens that could escape the worktree or inject shell metacharacters.
+ * Paths must be relative POSIX-ish worktree tokens — no absolute UNIX/Windows forms.
  */
-export function isSafeFilePathToken(path: string): boolean {
-  if (!path || typeof path !== "string") return false;
-  if (path.includes("\0") || path.includes("\n") || path.includes("\r")) return false;
-  if (path.startsWith("/") || path.includes("..")) return false;
+export function isSafeFilePathToken(pathToken: string): boolean {
+  if (!pathToken || typeof pathToken !== "string") return false;
+  if (pathToken.includes("\0") || pathToken.includes("\n") || pathToken.includes("\r")) return false;
+  // Absolute UNIX, Windows drive, UNC, or env-var absolute forms.
+  if (
+    pathToken.startsWith("/")
+    || pathToken.startsWith("\\")
+    || /^[a-zA-Z]:[\\/]/.test(pathToken)
+    || pathToken.startsWith("%")
+    || pathToken.includes("..")
+  ) {
+    return false;
+  }
   // Disallow shell metacharacters when paths are joined into a shell command string.
-  if (/[;&|`$<>\\]/.test(path)) return false;
+  if (/[;&|`$<>]/.test(pathToken)) return false;
   return true;
 }
 
