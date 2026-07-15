@@ -372,14 +372,21 @@ async function runGenerationWithTimeout<T>(session: Session, operation: () => Pr
     existing.abortController.abort();
   }
   const abortController = new AbortController();
+  /*
+  FNXC:AgentOnboarding 2026-07-15-16:36:
+  A generation timeout must settle the wrapper even when the provider ignores cancellation and its prompt promise never resolves. Race the operation against an explicit rejection; abort remains best-effort cleanup, while continueConversation owns the single terminal error event.
+  */
+  let rejectTimeout!: (reason?: unknown) => void;
+  const timeout = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+  });
   const timer = setTimeout(() => {
-    session.error = "AI generation timed out. You can retry.";
-    agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
     abortController.abort();
+    rejectTimeout(new Error("AI generation timed out. You can retry."));
   }, GENERATION_TIMEOUT_MS);
   activeGenerations.set(session.id, { abortController, timer });
   try {
-    return await operation();
+    return await Promise.race([operation(), timeout]);
   } finally {
     clearTimeout(timer);
     activeGenerations.delete(session.id);

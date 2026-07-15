@@ -69,9 +69,12 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
 /*
 FNXC:AgentOnboarding 2026-07-15-14:32:
 Recovery regressions must await the onboarding event seam rather than poll wall-clock session state. Buffered-event replay covers generations that complete before the test subscribes.
+
+FNXC:AgentOnboarding 2026-07-15-16:42:
+Live subscribers receive AgentOnboardingStreamEvent objects keyed by `type`, while SessionEventBuffer replay records are keyed by `event` with JSON-serialized `data`. The test seam must honor both shapes.
 */
 function waitForOnboardingEvent(sessionId: string, eventTypes: string[]): Promise<void> {
-  if (agentOnboardingStreamManager.getBufferedEvents(sessionId, 0).some((event) => eventTypes.includes(event.type))) {
+  if (agentOnboardingStreamManager.getBufferedEvents(sessionId, 0).some((event) => eventTypes.includes(event.event))) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
@@ -98,6 +101,7 @@ describe("agent-onboarding", () => {
 
   afterEach(() => {
     __resetAgentOnboardingState();
+    vi.useRealTimers();
   });
 
   it("parses question responses", () => {
@@ -576,6 +580,39 @@ describe("agent-onboarding", () => {
     expect(session?.error).toBeUndefined();
     expect(session?.currentQuestion?.id).toBe("goal");
     expect(agent.session.prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("settles a stalled reformat turn when its timeout expires", async () => {
+    vi.useFakeTimers();
+    const messages: Array<{ role: string; content: string }> = [];
+    let callCount = 0;
+    const prompt = vi.fn(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        messages.push({ role: "assistant", content: "not valid JSON" });
+        return Promise.resolve();
+      }
+      return new Promise<void>(() => {});
+    });
+    mockCreateFnAgent.mockResolvedValueOnce({
+      session: { state: { messages }, prompt, dispose: vi.fn() },
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "stalled reformat response", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prompt).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toBe("AI generation timed out. You can retry.");
+    expect(agentOnboardingStreamManager.getBufferedEvents(sessionId, 0)).toContainEqual(
+      expect.objectContaining({ event: "error", data: JSON.stringify("AI generation timed out. You can retry.") }),
+    );
   });
 
   it("progresses through start -> question -> response -> final summary", async () => {
