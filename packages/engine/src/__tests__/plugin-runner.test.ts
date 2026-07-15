@@ -185,22 +185,15 @@ describe("PluginRunner", () => {
       expect(mockPluginLoader.loadAllPlugins).toHaveBeenCalled();
     });
 
-    it("should execute schema init hooks after plugin load", async () => {
-      const schemaHook = vi.fn();
+    it("does not replay schema init hooks after PluginLoader initializes each plugin", async () => {
       mockPluginLoader.getPluginSchemaInitHooks.mockReturnValue([
-        { pluginId: "plugin-a", hook: schemaHook },
+        { pluginId: "plugin-a", hook: vi.fn() },
       ]);
 
       await pluginRunner.init();
 
-      expect(mockPluginLoader.getPluginSchemaInitHooks).toHaveBeenCalledTimes(1);
-      expect(mockTaskStore.getDatabase).toHaveBeenCalledTimes(1);
-      const db = mockTaskStore.getDatabase.mock.results[0]?.value as {
-        runPluginSchemaInits: ReturnType<typeof vi.fn>;
-      };
-      expect(db.runPluginSchemaInits).toHaveBeenCalledWith([
-        { pluginId: "plugin-a", hook: schemaHook },
-      ]);
+      expect(mockPluginLoader.getPluginSchemaInitHooks).not.toHaveBeenCalled();
+      expect(mockTaskStore.getDatabase).not.toHaveBeenCalled();
     });
 
     it("should skip schema init execution when no hooks are registered", async () => {
