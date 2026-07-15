@@ -93,6 +93,18 @@ function createVisualViewport(scale = 1) {
   };
 }
 
+/*
+FNXC:BoardNavigation 2026-07-14-19:30:
+Board stabilization resets document horizontal scroll only — #board is the intentional column scroller and must not be forced to 0 on visualViewport resize/pageshow.
+*/
+function expectDocumentScrollPinned() {
+  expect(window.scrollX).toBe(0);
+  expect(document.documentElement.scrollLeft).toBe(0);
+  if (document.body) {
+    expect(document.body.scrollLeft).toBe(0);
+  }
+}
+
 function createTask(id: string, column: Task["column"]): Task {
   return {
     id,
@@ -113,16 +125,19 @@ function BaseBoardHarness({
   tasks,
   autoMerge,
   onToggleAutoMerge,
+  showWorktreeGrouping = false,
 }: {
   tasks: Task[];
   autoMerge: boolean;
   onToggleAutoMerge: () => void | Promise<void>;
+  showWorktreeGrouping?: boolean;
 }) {
   return (
     <PageErrorBoundary>
       <Board
         tasks={tasks}
         maxConcurrent={2}
+        showWorktreeGrouping={showWorktreeGrouping}
         onMoveTask={vi.fn(async () => ({} as Task))}
         onOpenDetail={vi.fn()}
         addToast={vi.fn()}
@@ -136,13 +151,22 @@ function BaseBoardHarness({
   );
 }
 
-function BoardHarness({ tasks, initialAutoMerge = true }: { tasks: Task[]; initialAutoMerge?: boolean }) {
+function BoardHarness({
+  tasks,
+  initialAutoMerge = true,
+  showWorktreeGrouping = false,
+}: {
+  tasks: Task[];
+  initialAutoMerge?: boolean;
+  showWorktreeGrouping?: boolean;
+}) {
   const [autoMerge, setAutoMerge] = useState(initialAutoMerge);
 
   return (
     <BaseBoardHarness
       tasks={tasks}
       autoMerge={autoMerge}
+      showWorktreeGrouping={showWorktreeGrouping}
       onToggleAutoMerge={() => setAutoMerge((current) => !current)}
     />
   );
@@ -219,7 +243,7 @@ describe("auto-merge toggle mobile blank regression", () => {
       visualViewport.dispatchResize();
       vi.runOnlyPendingTimers();
     });
-    expect(board.scrollLeft).toBe(0);
+    expectDocumentScrollPinned();
 
     board.scrollLeft = 240;
     fireEvent.click(screen.getByRole("checkbox", { name: "Auto-merge" }));
@@ -233,7 +257,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
 
     expectBoardVisible();
-    expect(board.scrollLeft).toBe(0);
+    expectDocumentScrollPinned();
     viewportSpy.mockRestore();
   });
 
@@ -265,7 +289,7 @@ describe("auto-merge toggle mobile blank regression", () => {
       vi.runOnlyPendingTimers();
     });
     expectBoardVisible();
-    expect(board.scrollLeft).toBe(0);
+    expectDocumentScrollPinned();
 
     fireEvent.click(toggle);
     expect(toggle).toBeChecked();
@@ -275,7 +299,7 @@ describe("auto-merge toggle mobile blank regression", () => {
       vi.runOnlyPendingTimers();
     });
     expectBoardVisible();
-    expect(board.scrollLeft).toBe(0);
+    expectDocumentScrollPinned();
     viewportSpy.mockRestore();
   });
 
@@ -290,6 +314,7 @@ describe("auto-merge toggle mobile blank regression", () => {
 
     render(
       <BoardHarness
+        showWorktreeGrouping
         tasks={[
           createTask("FN-5936", "in-review"),
           createTask("FN-IP", "in-progress"),
@@ -338,7 +363,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
 
     expectBoardVisible();
-    expect(board.scrollLeft).toBe(0);
+    expectDocumentScrollPinned();
     viewportSpy.mockRestore();
   });
 

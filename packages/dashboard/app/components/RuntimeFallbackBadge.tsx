@@ -15,7 +15,7 @@
 import { memo, useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useRuntimeFallbackStatus } from "../hooks/useRuntimeFallbackStatus";
-import { useToast } from "../hooks/useToast";
+import { useOptionalToast } from "../hooks/useToast";
 
 interface RuntimeFallbackBadgeProps {
   taskId?: string;
@@ -25,17 +25,21 @@ interface RuntimeFallbackBadgeProps {
 }
 
 function RuntimeFallbackBadgeComponent({ taskId, isInViewport, projectId }: RuntimeFallbackBadgeProps) {
-  const { addToast } = useToast();
+  /*
+  FNXC:ToastProvider 2026-07-14-19:25:
+  Prefer optional toast so board card unit/harness mounts without ToastProvider still render the badge (and do not throw through ErrorBoundary blanking the board).
+  */
+  const toast = useOptionalToast();
   const status = useRuntimeFallbackStatus(taskId, isInViewport, projectId);
 
   useEffect(() => {
     if (status.shouldToastNow && status.message) {
-      addToast(status.message, "warning");
+      toast?.addToast(status.message, "warning");
     }
     // FNXC:RuntimeFallbackUI 2026-07-08-00:00:
     // Intentionally omit addToast from deps — its identity is stable per ToastProvider instance, so re-toasting is keyed only on status changes.
     // Note: repo eslint config omits react-hooks/exhaustive-deps, so a disable directive for it is itself a lint error (rule-not-found). Do not re-add one.
-  }, [status.shouldToastNow, status.message]);
+  }, [status.shouldToastNow, status.message, toast]);
 
   if (!status.showBadge || !status.message) {
     return null;
