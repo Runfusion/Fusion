@@ -964,12 +964,17 @@ export class ProjectEngine {
         scope: "project", // Project-scoped execution — global schedules run separately
       });
 
-      this.cronRunner.start();
+      /*
+      FNXC:FasterStartup 2026-07-15-00:40:
+      Do not start CronRunner until deferred automation schedule syncs finish.
+      start() ticks immediately; running it before sync can fire one overdue
+      schedule with stale settings from the previous process (Greptile P1).
+      */
       this.setAutomationSubsystemHealth(
-        "ready",
-        "CronRunner started; automation schedule sync continues in background",
+        "initializing",
+        "AutomationStore ready; CronRunner starts after schedule sync",
       );
-      runtimeLog.log("CronRunner initialized and started");
+      runtimeLog.log("AutomationStore initialized; CronRunner start deferred until schedule sync");
     } catch (err) {
       // Non-fatal — automations are optional
       const { message, detail } = formatErrorDetails(err);
@@ -1050,40 +1055,51 @@ export class ProjectEngine {
     if (this.deferredStartupAborted(generation)) return;
     const t0 = Date.now();
 
+    /*
+    FNXC:FasterStartup 2026-07-15-00:40:
+    Isolate notifier/OAuth failures so automation schedule sync and merge
+    enqueue still run (Greptile: one reject must not skip reconciliation).
+    OAuth refresh still precedes expiry monitor inside the try block.
+    */
     if (!this.options.skipNotifier && this.notificationService && this.authStorage) {
-      const notifiersT0 = Date.now();
-      await this.notificationService.start();
-      if (this.deferredStartupAborted(generation)) return;
-      const oauthAlertState = new OAuthAlertStateStore({
-        statePath: getFusionOAuthAlertStatePath(),
-      });
-      /*
-      FNXC:ClaudeOAuth 2026-07-05-00:00 / 2026-07-08-12:10 / FNXC:FasterStartup 2026-07-14-23:55:
-      FN-7574: proactively refresh OAuth before expiry. Refresh scheduler still
-      starts BEFORE OAuthExpiryMonitor so a stale-but-refreshable token does not
-      fire a false "OAuth token expired" ntfy on restart. Only the await moved
-      off the ensureEngine critical path — relative order is unchanged.
-      */
-      this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage: this.authStorage });
-      await this.oauthRefreshScheduler.start();
-      if (this.deferredStartupAborted(generation)) return;
-      this.oauthExpiryMonitor = new OAuthExpiryMonitor({
-        authStorage: this.authStorage,
-        notificationService: this.notificationService,
-        alertState: oauthAlertState,
-      });
-      await this.oauthExpiryMonitor.start();
-      if (this.deferredStartupAborted(generation)) return;
-      this.oauthValidityLogger = new OAuthValidityLogger({
-        authStorage: this.authStorage,
-        alertState: oauthAlertState,
-      });
-      await this.oauthValidityLogger.start();
-      if (this.deferredStartupAborted(generation)) return;
-      if (this.notifier) {
-        await this.notifier.start();
+      try {
+        const notifiersT0 = Date.now();
+        await this.notificationService.start();
+        if (this.deferredStartupAborted(generation)) return;
+        const oauthAlertState = new OAuthAlertStateStore({
+          statePath: getFusionOAuthAlertStatePath(),
+        });
+        /*
+        FNXC:ClaudeOAuth 2026-07-05-00:00 / 2026-07-08-12:10 / FNXC:FasterStartup 2026-07-14-23:55:
+        FN-7574: proactively refresh OAuth before expiry. Refresh scheduler still
+        starts BEFORE OAuthExpiryMonitor so a stale-but-refreshable token does not
+        fire a false "OAuth token expired" ntfy on restart. Only the await moved
+        off the ensureEngine critical path — relative order is unchanged.
+        */
+        this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage: this.authStorage });
+        await this.oauthRefreshScheduler.start();
+        if (this.deferredStartupAborted(generation)) return;
+        this.oauthExpiryMonitor = new OAuthExpiryMonitor({
+          authStorage: this.authStorage,
+          notificationService: this.notificationService,
+          alertState: oauthAlertState,
+        });
+        await this.oauthExpiryMonitor.start();
+        if (this.deferredStartupAborted(generation)) return;
+        this.oauthValidityLogger = new OAuthValidityLogger({
+          authStorage: this.authStorage,
+          alertState: oauthAlertState,
+        });
+        await this.oauthValidityLogger.start();
+        if (this.deferredStartupAborted(generation)) return;
+        if (this.notifier) {
+          await this.notifier.start();
+        }
+        runtimeLog.log(`ProjectEngine deferred notifiers+oauth: ${Date.now() - notifiersT0}ms`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        runtimeLog.error(`Deferred notifiers/OAuth failed (continuing automation/merge startup): ${message}`);
       }
-      runtimeLog.log(`ProjectEngine deferred notifiers+oauth: ${Date.now() - notifiersT0}ms`);
     }
 
     if (this.deferredStartupAborted(generation)) return;
@@ -1148,6 +1164,14 @@ export class ProjectEngine {
         runtimeLog.warn("syncScheduledEvalBatchAutomation is unavailable; skipping startup sync");
       }
 
+      if (this.deferredStartupAborted(generation)) return;
+
+      // Start CronRunner only after schedule sync so the first tick is not stale.
+      if (this.cronRunner && !this.deferredStartupAborted(generation)) {
+        this.cronRunner.start();
+        runtimeLog.log("CronRunner started after schedule sync");
+      }
+
       if (startupSyncFailures.length > 0) {
         this.setAutomationSubsystemHealth(
           "degraded",
@@ -1160,6 +1184,10 @@ export class ProjectEngine {
         );
       }
       runtimeLog.log(`ProjectEngine deferred automation syncs: ${Date.now() - syncT0}ms`);
+    } else if (this.cronRunner && !this.deferredStartupAborted(generation)) {
+      // No sync module/store — still start the runner so schedules are not stuck offline.
+      this.cronRunner.start();
+      this.setAutomationSubsystemHealth("ready", "CronRunner started without schedule sync module");
     }
 
     if (this.deferredStartupAborted(generation)) return;
@@ -1188,9 +1216,6 @@ export class ProjectEngine {
     */
     this.shuttingDown = true;
     this.startupGeneration += 1;
-    if (!this.started) {
-      return;
-    }
 
     // FNXC:VerificationConcurrency 2026-07-15-09:05: Drop this project's cap so it no longer pins process min.
     unregisterProjectVerificationLimit(this.config.projectId);
@@ -1208,6 +1233,28 @@ export class ProjectEngine {
       this.mergeActiveReconcileTimer = null;
     }
     this.stopPlannerOverseerPoll();
+
+    /*
+    FNXC:FasterStartup 2026-07-15-00:40:
+    Even when start() never flipped started (partial/failed start), stop any
+    critical-path timers already running (gridlock, cron) so abandon/stop does
+    not leak intervals (Greptile partial-start cleanup).
+    */
+    if (!this.started) {
+      try {
+        this.gridlockDetector?.stop();
+        this.cronRunner?.stop();
+        this.oauthExpiryMonitor?.stop();
+        this.oauthRefreshScheduler?.stop();
+        this.oauthValidityLogger?.stop();
+        this.notificationService?.stop();
+        this.notifier?.stop();
+        this.setAutomationSubsystemHealth("not-initialized", "Automation subsystem stopped (partial start)");
+      } catch {
+        // Best-effort partial cleanup
+      }
+      return;
+    }
 
     // Abort active/pending merge work before tearing down sessions.
     this.mergeAbortController?.abort();

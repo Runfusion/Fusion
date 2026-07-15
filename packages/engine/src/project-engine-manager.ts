@@ -13,6 +13,7 @@
  *   - Graceful shutdown of all engines via `stopAll()`
  */
 
+import { realpathSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import type {
   CentralCore,
@@ -561,15 +562,16 @@ export class ProjectEngineManager {
     overrides?: Partial<ProjectEngineOptions>,
   ): ProjectEngineOptions {
     /*
-    FNXC:FasterStartup 2026-07-14-23:55:
+    FNXC:FasterStartup 2026-07-14-23:55 / 2026-07-15-00:40:
     Share the CLI-booted TaskStore only when the engine's working directory is
-    the same project root as the store. Path equality uses path.resolve so
-    trailing-slash / relative differences do not double-boot the cwd engine.
+    the same project root as the store. Compare realpath when available so a
+    symlinked CLI cwd and a registry-canonical path still share one pool
+    (Greptile: path.resolve alone double-boots symlink aliases).
     */
     const sharedStore = this.options.externalTaskStore;
     const shareForThisProject = Boolean(
       sharedStore
-      && pathResolve(sharedStore.getRootDir()) === pathResolve(workingDirectory),
+      && sameProjectRoot(sharedStore.getRootDir(), workingDirectory),
     );
     return {
       projectId: project.id,
@@ -586,4 +588,21 @@ export class ProjectEngineManager {
       ...overrides,
     };
   }
+}
+
+/**
+ * FNXC:FasterStartup 2026-07-15-00:40:
+ * Path identity for externalTaskStore matching: resolve then realpath so
+ * symlinked project roots compare equal to their canonical registry path.
+ */
+function sameProjectRoot(a: string, b: string): boolean {
+  const normalize = (p: string): string => {
+    const resolved = pathResolve(p);
+    try {
+      return realpathSync(resolved);
+    } catch {
+      return resolved;
+    }
+  };
+  return normalize(a) === normalize(b);
 }

@@ -133,6 +133,22 @@ describe("ProjectEngineManager", () => {
       );
     });
 
+    it("shares externalTaskStore when roots differ only by trailing slash", async () => {
+      const sharedStore = {
+        getRootDir: () => "/mapped/proj_aaa/",
+      } as any;
+      const manager = new ProjectEngineManager(centralCore, {
+        externalTaskStore: sharedStore,
+      });
+
+      await manager.ensureEngine("proj_aaa");
+      expect(ProjectEngine).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workingDirectory: "/mapped/proj_aaa" }),
+        centralCore,
+        expect.objectContaining({ externalTaskStore: sharedStore }),
+      );
+    });
+
     it("returns existing engine on repeated calls", async () => {
       const manager = new ProjectEngineManager(centralCore);
       const engine1 = await manager.ensureEngine("proj_aaa");
