@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
 /*
- * FNXC:BundledPlugins 2026-07-15-13:20:
+ * FNXC:BundledPlugins 2026-07-15-13:40:
  * Clean CI typechecks the CLI before @fusion/core emits dist, but published
  * bundled plugins need both postgresSchema runtime values and Quality's
  * process-group supervisor. Keep this alias implementation in untyped MJS so
@@ -17,8 +17,10 @@ export const FUSION_RESTART_EXIT_CODE = 86;
 export function superviseSpawn(command, args = [], options = {}) {
   const killGraceMs = options.killGraceMs ?? 2_000;
   const maxLifetimeMs = options.maxLifetimeMs;
-  const { killGraceMs: _killGraceMs, maxLifetimeMs: _maxLifetimeMs, ...spawnOptions } = options;
-  const processGroup = process.platform !== "win32";
+  const spawnOptions = { ...options };
+  delete spawnOptions.killGraceMs;
+  delete spawnOptions.maxLifetimeMs;
+  const processGroup = globalThis.process.platform !== "win32";
   const child = spawn(command, [...args], { ...spawnOptions, detached: processGroup });
   const pgid = processGroup && typeof child.pid === "number" ? child.pid : null;
   let settled = false;
@@ -30,22 +32,22 @@ export function superviseSpawn(command, args = [], options = {}) {
   const killProcess = (signal = "SIGTERM") => {
     if (typeof child.pid !== "number") return;
     try {
-      if (pgid != null) process.kill(-pgid, signal);
+      if (pgid != null) globalThis.process.kill(-pgid, signal);
       else child.kill(signal);
     } catch {
       try {
         child.kill(signal);
       } catch {
-        // FNXC:Quality 2026-07-15-13:20: A concurrently exited child needs no further cancellation action.
+        // FNXC:Quality 2026-07-15-13:40: A concurrently exited child needs no further cancellation action.
       }
     }
   };
 
   let lifetimeTimer = null;
   if (typeof maxLifetimeMs === "number" && Number.isFinite(maxLifetimeMs) && maxLifetimeMs > 0) {
-    lifetimeTimer = setTimeout(() => {
+    lifetimeTimer = globalThis.setTimeout(() => {
       killProcess("SIGTERM");
-      const escalationTimer = setTimeout(() => killProcess("SIGKILL"), killGraceMs);
+      const escalationTimer = globalThis.setTimeout(() => killProcess("SIGKILL"), killGraceMs);
       escalationTimer.unref?.();
     }, maxLifetimeMs);
     lifetimeTimer.unref?.();
@@ -53,10 +55,10 @@ export function superviseSpawn(command, args = [], options = {}) {
 
   child.once("close", (code, signal) => {
     settled = true;
-    if (lifetimeTimer) clearTimeout(lifetimeTimer);
+    if (lifetimeTimer) globalThis.clearTimeout(lifetimeTimer);
     resolveExit?.({ code, signal });
   });
-  // FNXC:Quality 2026-07-15-13:20: Spawn failures must not crash a bundled plugin; close settles waitExit.
+  // FNXC:Quality 2026-07-15-13:40: Spawn failures must not crash a bundled plugin; close settles waitExit.
   child.on("error", () => {});
 
   return {
@@ -67,7 +69,7 @@ export function superviseSpawn(command, args = [], options = {}) {
       if (settled) return;
       killProcess(signal);
       if (signal === "SIGTERM") {
-        const escalationTimer = setTimeout(() => {
+        const escalationTimer = globalThis.setTimeout(() => {
           if (!settled) killProcess("SIGKILL");
         }, killGraceMs);
         escalationTimer.unref?.();
