@@ -749,7 +749,19 @@ export class EmbeddedPostgresLifecycle {
     }
     const exists = await this.databaseExists(this.options.database);
     if (exists) return;
-    await this.pg.createDatabase(this.options.database);
+    // FNXC:WindowsDesktopPackaging 2026-07-15-01:20:
+    // Create the DB directly over TCP. embedded-postgres.createDatabase guards
+    // on its internal this.process, which is null on the non-admin Windows path
+    // (we boot the server ourselves, not via this.pg.start()), so it would
+    // throw "cluster must be running". The server IS up — start() probed it.
+    const client = this.pg.getPgClient("postgres", "localhost");
+    try {
+      await client.connect();
+      const ident = this.options.database.replace(/"/g, '""');
+      await client.query(`CREATE DATABASE "${ident}"`);
+    } finally {
+      await client.end().catch(() => {});
+    }
   }
 
   /** Check whether a database with the given name exists on the cluster. */
