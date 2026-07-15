@@ -3,7 +3,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  cePluginSchemaInit,
+  cliPressPluginSchemaInit,
   DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS,
+  reportsPluginSchemaInit,
   runLoadedPluginSchemaInitHooks,
   validatePluginPostgresSchema,
 } from "../../postgres/plugin-schema-hook.js";
@@ -88,5 +91,35 @@ describe("PostgreSQL plugin schema registry", () => {
       tablePrefix: "bad_",
       statements: ["DROP TABLE project.tasks"],
     })).toThrow("project schema");
+  });
+
+  /*
+  FNXC:PluginLegacyOwnership 2026-07-14-21:41:
+  A migration connection is intentionally not bound to fusion.project_id. Bundled plugin upgrades must recover pre-project rows only from an unambiguous central.projects singleton and must reject zero/multiple candidates instead of silently making preserved data invisible behind __legacy_unscoped__.
+  */
+  it.each([
+    ["Compound Engineering", cePluginSchemaInit, "$ce_pipeline_upgrade$"],
+    ["Reports", reportsPluginSchemaInit, "$reports_upgrade$"],
+    ["CLI Printing Press", cliPressPluginSchemaInit, "$cli_press_upgrade$"],
+  ] as const)("fails closed when %s legacy ownership is ambiguous", async (_name, hook, blockTag) => {
+    const execute = vi.fn().mockResolvedValue([]);
+
+    await hook.init({ execute } as never);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const query = (execute.mock.calls[0]?.[0] as {
+      queryChunks: Array<{ value: string[] }>;
+    }).queryChunks.flatMap((chunk) => chunk.value).join("");
+    const upgradeStart = query.indexOf(`DO ${blockTag}`);
+    const upgradeEnd = query.indexOf(blockTag, upgradeStart + blockTag.length);
+    const upgrade = query.slice(upgradeStart, upgradeEnd + blockTag.length);
+
+    expect(upgradeStart).toBeGreaterThanOrEqual(0);
+    expect(upgrade).toContain("FROM central.projects");
+    expect(upgrade).toContain("registered_project_count <> 1");
+    expect(upgrade).toContain("SET project_id = singleton_project_id");
+    expect(upgrade).toContain("RAISE EXCEPTION");
+    expect(upgrade).not.toContain("__legacy_unscoped__");
+    expect(upgrade).not.toContain("current_setting('fusion.project_id'");
   });
 });
