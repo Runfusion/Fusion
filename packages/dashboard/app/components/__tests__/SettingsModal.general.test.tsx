@@ -196,7 +196,8 @@ vi.mock("../FileBrowser", () => ({
 }));
 
 describe("SettingsModal", () => {
-  installSettingsModalEnv();
+  // Keep Advanced off by default so disclosure default/persist tests stay truthful.
+  installSettingsModalEnv({ advancedSettings: false });
 
   const deepwikiServer = {
     name: "deepwiki",
