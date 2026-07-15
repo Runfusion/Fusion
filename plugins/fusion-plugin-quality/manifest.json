@@ -11,7 +11,8 @@
       "componentPath": "./dashboard-view",
       "icon": "ShieldCheck",
       "placement": "primary",
-      "order": 32
+      "order": 32,
+      "description": "Project quality: runs, plans, and CI"
     }
   ],
   "uiSlots": [
@@ -19,7 +20,8 @@
       "slotId": "task-detail-tab",
       "label": "QA",
       "icon": "FlaskConical",
-      "componentPath": "./qa-tab"
+      "componentPath": "./qa-tab",
+      "order": 20
     }
   ]
 }

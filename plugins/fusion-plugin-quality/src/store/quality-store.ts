@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "@fusion/core";
+import { isQualityPresetId } from "../runner/command-presets.js";
 import type {
   CreateTestPlanInput,
   CreateTestRunInput,
@@ -77,7 +78,7 @@ function mapPlan(row: PlanRow): TestPlan {
   try {
     const parsed = JSON.parse(row.steps_json) as unknown;
     if (Array.isArray(parsed)) {
-      steps = parsed.filter((s): s is QualityPresetId => typeof s === "string");
+      steps = parsed.filter(isQualityPresetId);
     }
   } catch {
     steps = [];
