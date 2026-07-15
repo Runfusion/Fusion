@@ -491,7 +491,11 @@ export function splitSettingsSave({
     }
   }
 
-  if (scopedMcpValues && initialScopedValues) {
+  /*
+  FNXC:McpSettingsScopes 2026-07-14-22:10:
+  Saving must not discard scoped MCP edits merely because the initial scoped snapshot is unavailable. Compare against an undefined baseline in that case so the current raw scoped values are still persisted.
+  */
+  if (scopedMcpValues) {
     const initialGlobalMcp = resolveScopedMcpSettings("global", initialScopedValues);
     if (!settingsValueEquals(scopedMcpValues.global, initialGlobalMcp)) {
       (globalPatch as Record<string, unknown>).mcpServers = scopedMcpValues.global ?? null;

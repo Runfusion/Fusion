@@ -467,6 +467,24 @@ describe("splitSettingsSave", () => {
     expect(projectPatch).toEqual({});
   });
 
+  it("persists scoped MCP edits when the initial scoped snapshot is unavailable", () => {
+    const globalMcp = { enabled: true, servers: [{ name: "global-docs", transport: "stdio", command: "docs" }] } as const;
+    const projectMcp = { enabled: true, servers: [{ name: "project-docs", transport: "stdio", command: "project-docs" }] } as const;
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: {},
+      initialValues: null,
+      initialScopedValues: null,
+      activeSection: "general",
+      scopedMcpValues: {
+        global: globalMcp,
+        project: projectMcp,
+      },
+    });
+
+    expect(globalPatch).toEqual({ mcpServers: globalMcp });
+    expect(projectPatch).toEqual({ mcpServers: projectMcp });
+  });
+
   it("maps flattened remote access fields to the canonical global remoteAccess patch", () => {
     const { globalPatch, projectPatch } = splitSettingsSave({
       payload: {
