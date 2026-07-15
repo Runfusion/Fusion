@@ -203,6 +203,13 @@ export class CePipelineStore {
     return this.asyncLayer.db;
   }
 
+  /** FNXC:CePipelineProjectIsolation 2026-07-14-21:28: Pipeline links, state, and queue rows share one PostgreSQL schema, so every async read and mutation binds the owning AsyncDataLayer project. */
+  private projectId(): string {
+    const projectId = this.asyncLayer?.projectId?.trim();
+    if (!projectId) throw new Error("CePipelineStore: PostgreSQL backend requires asyncLayer.projectId");
+    return projectId;
+  }
+
   // ── Links (U7) ─────────────────────────────────────────────────────
 
   /** Record a task→pipeline/artifact link. */
@@ -234,6 +241,7 @@ export class CePipelineStore {
       createdAt: new Date().toISOString(),
     };
     await this.dbAsync().insert(cePipelineLinksTable).values({
+      projectId: this.projectId(),
       id: link.id,
       taskId: link.taskId,
       cePipelineId: link.cePipelineId,
@@ -256,7 +264,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.listByPipeline(cePipelineId);
     const rows = await this.dbAsync().select()
       .from(cePipelineLinksTable)
-      .where(eq(cePipelineLinksTable.cePipelineId, cePipelineId))
+      .where(and(eq(cePipelineLinksTable.projectId, this.projectId()), eq(cePipelineLinksTable.cePipelineId, cePipelineId)))
       .orderBy(desc(cePipelineLinksTable.createdAt), cePipelineLinksTable.id);
     return rows.map((r) => rowToLink(r as CePipelineLinkRow));
   }
@@ -273,7 +281,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.findByTaskId(taskId);
     const rows = await this.dbAsync().select()
       .from(cePipelineLinksTable)
-      .where(eq(cePipelineLinksTable.taskId, taskId))
+      .where(and(eq(cePipelineLinksTable.projectId, this.projectId()), eq(cePipelineLinksTable.taskId, taskId)))
       .limit(1);
     return rows[0] ? rowToLink(rows[0] as CePipelineLinkRow) : undefined;
   }
@@ -293,7 +301,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.getState(cePipelineId);
     const rows = await this.dbAsync().select()
       .from(cePipelineStateTable)
-      .where(eq(cePipelineStateTable.cePipelineId, cePipelineId))
+      .where(and(eq(cePipelineStateTable.projectId, this.projectId()), eq(cePipelineStateTable.cePipelineId, cePipelineId)))
       .limit(1);
     return rows[0] ? rowToState(rows[0] as CePipelineStateRow) : undefined;
   }
@@ -310,6 +318,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.listAllState();
     const rows = await this.dbAsync().select()
       .from(cePipelineStateTable)
+      .where(eq(cePipelineStateTable.projectId, this.projectId()))
       .orderBy(desc(cePipelineStateTable.updatedAt), cePipelineStateTable.cePipelineId);
     return rows.map((r) => rowToState(r as CePipelineStateRow));
   }
@@ -352,9 +361,10 @@ export class CePipelineStore {
         status,
         lastArtifactPath,
         updatedAt: now,
-      }).where(eq(cePipelineStateTable.cePipelineId, input.cePipelineId));
+      }).where(and(eq(cePipelineStateTable.projectId, this.projectId()), eq(cePipelineStateTable.cePipelineId, input.cePipelineId)));
     } else {
       await this.dbAsync().insert(cePipelineStateTable).values({
+        projectId: this.projectId(),
         cePipelineId: input.cePipelineId,
         currentStage: input.currentStage,
         status,
@@ -439,6 +449,7 @@ export class CePipelineStore {
       processedAt: null,
     };
     await this.dbAsync().insert(cePipelineSyncQueueTable).values({
+      projectId: this.projectId(),
       id: entry.id,
       cePipelineId: entry.cePipelineId,
       taskId: entry.taskId,
@@ -463,7 +474,7 @@ export class CePipelineStore {
     if (!this.asyncLayer) return this.listPendingSync();
     const rows = await this.dbAsync().select()
       .from(cePipelineSyncQueueTable)
-      .where(isNull(cePipelineSyncQueueTable.processedAt))
+      .where(and(eq(cePipelineSyncQueueTable.projectId, this.projectId()), isNull(cePipelineSyncQueueTable.processedAt)))
       .orderBy(cePipelineSyncQueueTable.enqueuedAt, cePipelineSyncQueueTable.id);
     return rows.map((r) => rowToQueueEntry(r as CeSyncQueueRow));
   }
@@ -483,6 +494,7 @@ export class CePipelineStore {
     await this.dbAsync().update(cePipelineSyncQueueTable)
       .set({ processedAt: new Date().toISOString() })
       .where(and(
+        eq(cePipelineSyncQueueTable.projectId, this.projectId()),
         eq(cePipelineSyncQueueTable.id, id),
         isNull(cePipelineSyncQueueTable.processedAt),
       ));

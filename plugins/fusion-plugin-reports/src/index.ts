@@ -45,7 +45,7 @@ const plugin = definePlugin({
     contributions: [
       {
         surface: "executor-system",
-        content: "Reports are project-scoped records with review status and approval state. Use reports_list/reports_get before reports_decide; approval and publish actions require an authorized agent id. Use reports_export_html only after generation completes.",
+        content: "Reports are project-scoped records with review status and approval state. Use reports_list/reports_get to inspect them and reports_export_html only after generation completes. Approval and publication remain authenticated dashboard actions.",
       },
       {
         surface: "executor-task",

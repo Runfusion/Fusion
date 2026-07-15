@@ -223,12 +223,14 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
       );
 
       CREATE TABLE IF NOT EXISTS project.ce_pipeline_links (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         task_id text NOT NULL,
         ce_pipeline_id text NOT NULL,
         ce_stage_id text NOT NULL,
         ce_artifact_path text,
-        created_at text NOT NULL
+        created_at text NOT NULL,
+        PRIMARY KEY (project_id, id)
       );
       CREATE INDEX IF NOT EXISTS "idxCePipelineLinksPipeline"
         ON project.ce_pipeline_links(ce_pipeline_id, created_at DESC, id);
@@ -236,32 +238,55 @@ export const cePluginSchemaInit: PluginSchemaInitHook = {
         ON project.ce_pipeline_links(task_id);
 
       CREATE TABLE IF NOT EXISTS project.ce_pipeline_state (
-        ce_pipeline_id text PRIMARY KEY,
+        project_id text NOT NULL,
+        ce_pipeline_id text NOT NULL,
         current_stage text NOT NULL,
         status text NOT NULL CHECK (status IN (
           'running','advancing','awaiting_board','completed'
         )),
         last_artifact_path text,
         created_at text NOT NULL,
-        updated_at text NOT NULL
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, ce_pipeline_id)
       );
       CREATE INDEX IF NOT EXISTS "idxCePipelineStateStatus"
         ON project.ce_pipeline_state(status, updated_at DESC, ce_pipeline_id);
 
       CREATE TABLE IF NOT EXISTS project.ce_pipeline_sync_queue (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         ce_pipeline_id text NOT NULL,
         task_id text NOT NULL,
         reason text NOT NULL,
         from_column text,
         to_column text,
         enqueued_at text NOT NULL,
-        processed_at text
+        processed_at text,
+        PRIMARY KEY (project_id, id)
       );
       CREATE INDEX IF NOT EXISTS "idxCePipelineSyncQueuePending"
         ON project.ce_pipeline_sync_queue(processed_at, enqueued_at, id);
       CREATE INDEX IF NOT EXISTS "idxCePipelineSyncQueuePipeline"
         ON project.ce_pipeline_sync_queue(ce_pipeline_id, enqueued_at, id);
+
+      /* FNXC:CePipelineProjectIsolation 2026-07-14-21:28: Idempotently upgrade pre-partition plugin tables before runtime stores begin applying project predicates. */
+      ALTER TABLE project.ce_pipeline_links ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.ce_pipeline_state ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.ce_pipeline_sync_queue ADD COLUMN IF NOT EXISTS project_id text;
+      UPDATE project.ce_pipeline_links SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      UPDATE project.ce_pipeline_state SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      UPDATE project.ce_pipeline_sync_queue SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      ALTER TABLE project.ce_pipeline_links ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.ce_pipeline_state ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.ce_pipeline_sync_queue ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.ce_pipeline_links DROP CONSTRAINT IF EXISTS ce_pipeline_links_pkey;
+      ALTER TABLE project.ce_pipeline_links ADD CONSTRAINT ce_pipeline_links_pkey PRIMARY KEY (project_id, id);
+      ALTER TABLE project.ce_pipeline_state DROP CONSTRAINT IF EXISTS ce_pipeline_state_pkey;
+      ALTER TABLE project.ce_pipeline_state ADD CONSTRAINT ce_pipeline_state_pkey PRIMARY KEY (project_id, ce_pipeline_id);
+      ALTER TABLE project.ce_pipeline_sync_queue DROP CONSTRAINT IF EXISTS ce_pipeline_sync_queue_pkey;
+      ALTER TABLE project.ce_pipeline_sync_queue ADD CONSTRAINT ce_pipeline_sync_queue_pkey PRIMARY KEY (project_id, id);
+      DROP INDEX IF EXISTS project."idxCePipelineLinksTask";
+      CREATE UNIQUE INDEX "idxCePipelineLinksTask" ON project.ce_pipeline_links(project_id, task_id);
     `));
   },
 };
@@ -362,7 +387,8 @@ export const reportsPluginSchemaInit: PluginSchemaInitHook = {
   async init(db) {
     await db.execute(sql.raw(`
       CREATE TABLE IF NOT EXISTS project.reports (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         cadence text NOT NULL CHECK (cadence IN ('daily','weekly','monthly','quarterly','manual')),
         period_start text NOT NULL,
         period_end text NOT NULL,
@@ -386,7 +412,8 @@ export const reportsPluginSchemaInit: PluginSchemaInitHook = {
         metadata_json text NOT NULL DEFAULT '{}',
         combined_review_json text,
         created_at text NOT NULL,
-        updated_at text NOT NULL
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id)
       );
 
       CREATE INDEX IF NOT EXISTS "idxReportsCadenceCreated"
@@ -397,6 +424,13 @@ export const reportsPluginSchemaInit: PluginSchemaInitHook = {
 
       CREATE INDEX IF NOT EXISTS "idxReportsPeriod"
         ON project.reports(period_start, period_end, id);
+
+      /* FNXC:ReportsProjectIsolation 2026-07-14-21:28: Upgrade existing report rows to project ownership without losing data, then enforce the composite identity on every subsequent boot. */
+      ALTER TABLE project.reports ADD COLUMN IF NOT EXISTS project_id text;
+      UPDATE project.reports SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      ALTER TABLE project.reports ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.reports DROP CONSTRAINT IF EXISTS reports_pkey;
+      ALTER TABLE project.reports ADD CONSTRAINT reports_pkey PRIMARY KEY (project_id, id);
     `));
   },
 };
@@ -416,19 +450,23 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
   async init(db) {
     await db.execute(sql.raw(`
       CREATE TABLE IF NOT EXISTS project.cli_press_services (
-        id text PRIMARY KEY,
-        slug text NOT NULL UNIQUE,
+        project_id text NOT NULL,
+        id text NOT NULL,
+        slug text NOT NULL,
         display_name text NOT NULL,
         description text,
         base_url text NOT NULL,
         source_kind text NOT NULL,
         source_ref text,
         created_at text NOT NULL,
-        updated_at text NOT NULL
+        updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
+        CONSTRAINT uq_cli_press_services_project_slug UNIQUE (project_id, slug)
       );
 
       CREATE TABLE IF NOT EXISTS project.cli_press_cli_specs (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         service_id text NOT NULL,
         name text NOT NULL,
         version text NOT NULL,
@@ -439,15 +477,17 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
         last_generation_error text,
         created_at text NOT NULL,
         updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
         CONSTRAINT cli_press_cli_specs_service_id_fkey
-          FOREIGN KEY (service_id) REFERENCES project.cli_press_services(id) ON DELETE CASCADE,
-        CONSTRAINT uq_cli_press_specs_service_name UNIQUE (service_id, name)
+          FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
+        CONSTRAINT uq_cli_press_specs_service_name UNIQUE (project_id, service_id, name)
       );
       CREATE INDEX IF NOT EXISTS "idx_cli_press_specs_service"
         ON project.cli_press_cli_specs(service_id, created_at, id);
 
       CREATE TABLE IF NOT EXISTS project.cli_press_artifacts (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         cli_spec_id text NOT NULL,
         kind text NOT NULL,
         path text NOT NULL,
@@ -456,14 +496,16 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
         size_bytes integer,
         created_at text NOT NULL,
         updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
         CONSTRAINT cli_press_artifacts_cli_spec_id_fkey
-          FOREIGN KEY (cli_spec_id) REFERENCES project.cli_press_cli_specs(id) ON DELETE CASCADE
+          FOREIGN KEY (project_id, cli_spec_id) REFERENCES project.cli_press_cli_specs(project_id, id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS "idx_cli_press_artifacts_spec"
         ON project.cli_press_artifacts(cli_spec_id, created_at, id);
 
       CREATE TABLE IF NOT EXISTS project.cli_press_credentials (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         service_id text NOT NULL,
         name text NOT NULL,
         kind text NOT NULL,
@@ -471,27 +513,74 @@ export const cliPressPluginSchemaInit: PluginSchemaInitHook = {
         placement text NOT NULL,
         created_at text NOT NULL,
         updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
         CONSTRAINT cli_press_credentials_service_id_fkey
-          FOREIGN KEY (service_id) REFERENCES project.cli_press_services(id) ON DELETE CASCADE,
-        CONSTRAINT uq_cli_press_credentials_service_name UNIQUE (service_id, name)
+          FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
+        CONSTRAINT uq_cli_press_credentials_service_name UNIQUE (project_id, service_id, name)
       );
       CREATE INDEX IF NOT EXISTS "idx_cli_press_credentials_service"
         ON project.cli_press_credentials(service_id, created_at, id);
 
       CREATE TABLE IF NOT EXISTS project.cli_press_service_settings (
-        id text PRIMARY KEY,
+        project_id text NOT NULL,
+        id text NOT NULL,
         service_id text NOT NULL,
         key text NOT NULL,
         value text NOT NULL,
         scope text NOT NULL,
         created_at text NOT NULL,
         updated_at text NOT NULL,
+        PRIMARY KEY (project_id, id),
         CONSTRAINT cli_press_service_settings_service_id_fkey
-          FOREIGN KEY (service_id) REFERENCES project.cli_press_services(id) ON DELETE CASCADE,
-        CONSTRAINT uq_cli_press_settings_service_key_scope UNIQUE (service_id, key, scope)
+          FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE,
+        CONSTRAINT uq_cli_press_settings_service_key_scope UNIQUE (project_id, service_id, key, scope)
       );
       CREATE INDEX IF NOT EXISTS "idx_cli_press_settings_service"
         ON project.cli_press_service_settings(service_id, created_at, id);
+
+      /* FNXC:CliPressProjectIsolation 2026-07-14-21:28: Upgrade every legacy table together so composite ownership keys and child foreign keys remain valid across repeated schema application. */
+      ALTER TABLE project.cli_press_services ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.cli_press_cli_specs ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.cli_press_artifacts ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.cli_press_credentials ADD COLUMN IF NOT EXISTS project_id text;
+      ALTER TABLE project.cli_press_service_settings ADD COLUMN IF NOT EXISTS project_id text;
+      UPDATE project.cli_press_services SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      UPDATE project.cli_press_cli_specs SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      UPDATE project.cli_press_artifacts SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      UPDATE project.cli_press_credentials SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      UPDATE project.cli_press_service_settings SET project_id=COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__') WHERE project_id IS NULL OR project_id='';
+      ALTER TABLE project.cli_press_services ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.cli_press_cli_specs ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.cli_press_artifacts ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.cli_press_credentials ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.cli_press_service_settings ALTER COLUMN project_id SET NOT NULL;
+      ALTER TABLE project.cli_press_artifacts DROP CONSTRAINT IF EXISTS cli_press_artifacts_cli_spec_id_fkey;
+      ALTER TABLE project.cli_press_cli_specs DROP CONSTRAINT IF EXISTS cli_press_cli_specs_service_id_fkey;
+      ALTER TABLE project.cli_press_credentials DROP CONSTRAINT IF EXISTS cli_press_credentials_service_id_fkey;
+      ALTER TABLE project.cli_press_service_settings DROP CONSTRAINT IF EXISTS cli_press_service_settings_service_id_fkey;
+      ALTER TABLE project.cli_press_artifacts DROP CONSTRAINT IF EXISTS cli_press_artifacts_pkey;
+      ALTER TABLE project.cli_press_cli_specs DROP CONSTRAINT IF EXISTS cli_press_cli_specs_pkey;
+      ALTER TABLE project.cli_press_credentials DROP CONSTRAINT IF EXISTS cli_press_credentials_pkey;
+      ALTER TABLE project.cli_press_service_settings DROP CONSTRAINT IF EXISTS cli_press_service_settings_pkey;
+      ALTER TABLE project.cli_press_services DROP CONSTRAINT IF EXISTS cli_press_services_pkey;
+      ALTER TABLE project.cli_press_services DROP CONSTRAINT IF EXISTS cli_press_services_slug_key;
+      ALTER TABLE project.cli_press_services DROP CONSTRAINT IF EXISTS uq_cli_press_services_project_slug;
+      ALTER TABLE project.cli_press_cli_specs DROP CONSTRAINT IF EXISTS uq_cli_press_specs_service_name;
+      ALTER TABLE project.cli_press_credentials DROP CONSTRAINT IF EXISTS uq_cli_press_credentials_service_name;
+      ALTER TABLE project.cli_press_service_settings DROP CONSTRAINT IF EXISTS uq_cli_press_settings_service_key_scope;
+      ALTER TABLE project.cli_press_services ADD CONSTRAINT cli_press_services_pkey PRIMARY KEY (project_id, id);
+      ALTER TABLE project.cli_press_services ADD CONSTRAINT uq_cli_press_services_project_slug UNIQUE (project_id, slug);
+      ALTER TABLE project.cli_press_cli_specs ADD CONSTRAINT cli_press_cli_specs_pkey PRIMARY KEY (project_id, id);
+      ALTER TABLE project.cli_press_cli_specs ADD CONSTRAINT uq_cli_press_specs_service_name UNIQUE (project_id, service_id, name);
+      ALTER TABLE project.cli_press_artifacts ADD CONSTRAINT cli_press_artifacts_pkey PRIMARY KEY (project_id, id);
+      ALTER TABLE project.cli_press_credentials ADD CONSTRAINT cli_press_credentials_pkey PRIMARY KEY (project_id, id);
+      ALTER TABLE project.cli_press_credentials ADD CONSTRAINT uq_cli_press_credentials_service_name UNIQUE (project_id, service_id, name);
+      ALTER TABLE project.cli_press_service_settings ADD CONSTRAINT cli_press_service_settings_pkey PRIMARY KEY (project_id, id);
+      ALTER TABLE project.cli_press_service_settings ADD CONSTRAINT uq_cli_press_settings_service_key_scope UNIQUE (project_id, service_id, key, scope);
+      ALTER TABLE project.cli_press_cli_specs ADD CONSTRAINT cli_press_cli_specs_service_id_fkey FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE;
+      ALTER TABLE project.cli_press_artifacts ADD CONSTRAINT cli_press_artifacts_cli_spec_id_fkey FOREIGN KEY (project_id, cli_spec_id) REFERENCES project.cli_press_cli_specs(project_id, id) ON DELETE CASCADE;
+      ALTER TABLE project.cli_press_credentials ADD CONSTRAINT cli_press_credentials_service_id_fkey FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE;
+      ALTER TABLE project.cli_press_service_settings ADD CONSTRAINT cli_press_service_settings_service_id_fkey FOREIGN KEY (project_id, service_id) REFERENCES project.cli_press_services(project_id, id) ON DELETE CASCADE;
     `));
   },
 };

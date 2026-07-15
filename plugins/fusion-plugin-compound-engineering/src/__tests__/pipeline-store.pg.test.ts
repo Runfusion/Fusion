@@ -220,6 +220,25 @@ pgDescribe("CePipelineStore (PG backend mode)", () => {
     expect(miss).toBeUndefined();
   });
 
+  it("isolates identical pipeline, task, and queue ids between two bound projects", async () => {
+    const projectA = new CePipelineStore(null, ctx!.layer);
+    const projectB = new CePipelineStore(null, ctx!.layerB);
+    await projectA.createLinkAsync({ id: "shared-link", taskId: "shared-task", cePipelineId: "shared-pipeline", ceStageId: "work" });
+    await projectB.createLinkAsync({ id: "shared-link", taskId: "shared-task", cePipelineId: "shared-pipeline", ceStageId: "review" });
+    await projectA.upsertStateAsync({ cePipelineId: "shared-pipeline", currentStage: "work" });
+    await projectB.upsertStateAsync({ cePipelineId: "shared-pipeline", currentStage: "review" });
+    await projectA.enqueueSyncAsync({ id: "shared-queue", cePipelineId: "shared-pipeline", taskId: "shared-task", reason: "task_moved" });
+    await projectB.enqueueSyncAsync({ id: "shared-queue", cePipelineId: "shared-pipeline", taskId: "shared-task", reason: "task_completed" });
+
+    expect((await projectA.findByTaskIdAsync("shared-task"))?.ceStageId).toBe("work");
+    expect((await projectB.findByTaskIdAsync("shared-task"))?.ceStageId).toBe("review");
+    expect((await projectA.getStateAsync("shared-pipeline"))?.currentStage).toBe("work");
+    expect((await projectB.getStateAsync("shared-pipeline"))?.currentStage).toBe("review");
+    await projectB.markSyncProcessedAsync("shared-queue");
+    expect((await projectA.listPendingSyncAsync()).some((entry) => entry.id === "shared-queue")).toBe(true);
+    expect((await projectB.listPendingSyncAsync()).some((entry) => entry.id === "shared-queue")).toBe(false);
+  });
+
   it("state upsert seeds then updates; listAllState sweeps all", async () => {
     const store = new CePipelineStore(null, ctx!.layer);
     const seeded = await store.upsertStateAsync({
