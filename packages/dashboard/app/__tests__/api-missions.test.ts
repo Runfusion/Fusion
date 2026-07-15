@@ -1045,15 +1045,19 @@ describe("mission interview draft api helpers", () => {
   });
 
   it("discards a mission interview draft", async () => {
+    /*
+    FNXC:DashboardTests 2026-07-15-11:40:
+    discardMissionInterviewDraft(sessionId, projectId) is a POST without a tab body —
+    tab scoping was removed from the client helper; assert the real shipped contract.
+    */
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { removed: true }));
 
-    const result = await discardMissionInterviewDraft("session-2", "project-a", "tab-1");
+    const result = await discardMissionInterviewDraft("session-2", "project-a");
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/missions/interview/drafts/session-2/discard?projectId=project-a",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ tabId: "tab-1" }),
       }),
     );
     expect(result).toEqual({ removed: true });

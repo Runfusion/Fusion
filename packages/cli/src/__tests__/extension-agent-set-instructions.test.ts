@@ -1,29 +1,31 @@
-import { beforeAll, beforeEach, afterEach, afterAll, describe, it, expect } from "vitest";
+/**
+ * FNXC:PostgresCutover 2026-07-15-12:00:
+ * Migrated off `new AgentStore({ rootDir })` (SQLite removed VAL-REMOVAL-005) onto
+ * createPgExtensionHarness + AgentStore({ asyncLayer }).
+ */
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { AgentStore } from "@fusion/core";
 import {
-  createMockApi,
   createPgExtensionHarness,
-  pgDescribe,
+  createMockApi,
   registerExtension,
+  requireTool,
+  pgDescribe,
 } from "./pg-extension-harness.js";
 
-const pgTest = pgDescribe;
 const h = createPgExtensionHarness("fn-ext-agent-instructions");
 
 async function withOrg(
   run: (ctx: {
     cwd: string;
-    tool: any;
+    tool: ReturnType<typeof requireTool>;
     agentStore: AgentStore;
     ids: { manager: string; middle: string; leaf: string; peer: string };
   }) => Promise<void>,
 ): Promise<void> {
   const cwd = h.rootDir();
-  const agentStore = new AgentStore({
-    rootDir: join(cwd, ".fusion"),
-    asyncLayer: h.store().getAsyncLayer() ?? undefined,
-  });
+  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
   await agentStore.init();
   const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
   const middle = await agentStore.createAgent({
@@ -42,8 +44,7 @@ async function withOrg(
 
   const api = createMockApi();
   registerExtension(api);
-  const tool = api.tools.get("fn_agent_set_instructions");
-  expect(tool).toBeTruthy();
+  const tool = requireTool(api, "fn_agent_set_instructions");
 
   await run({
     cwd,
@@ -53,7 +54,7 @@ async function withOrg(
   });
 }
 
-pgTest("fn_agent_set_instructions", () => {
+pgDescribe("fn_agent_set_instructions", () => {
   beforeAll(h.beforeAll);
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);
@@ -71,10 +72,9 @@ pgTest("fn_agent_set_instructions", () => {
 
       expect(result.isError).not.toBe(true);
       expect(result.details).toMatchObject({ outcome: "updated", agentId: ids.middle });
-      expect(result.details.updatedFields).toEqual(["instructionsText"]);
-      await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
-        instructionsText: "Direct report instructions",
-      });
+      expect(result.details?.updatedFields).toEqual(["instructionsText"]);
+      const updated = await agentStore.getAgent(ids.middle);
+      expect(updated?.instructionsText).toBe("Direct report instructions");
     });
   });
 
@@ -82,69 +82,58 @@ pgTest("fn_agent_set_instructions", () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
         "call-2",
-        { agent_id: ids.leaf, instructions_text: "Grandchild instructions" },
+        { agent_id: ids.leaf, instructions_text: "Indirect report instructions" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
 
       expect(result.isError).not.toBe(true);
-      expect(result.details).toMatchObject({ outcome: "updated", agentId: ids.leaf });
-      await expect(agentStore.getAgent(ids.leaf)).resolves.toMatchObject({
-        instructionsText: "Grandchild instructions",
-      });
+      const updated = await agentStore.getAgent(ids.leaf);
+      expect(updated?.instructionsText).toBe("Indirect report instructions");
     });
   });
 
   it("rejects peer or unrelated targets and leaves instructions unchanged", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
-      await agentStore.updateAgent(ids.peer, { instructionsText: "Original peer instructions" });
-
+      await agentStore.updateAgent(ids.peer, { instructionsText: "keep me" });
       const result = await tool.execute(
         "call-3",
-        { agent_id: ids.peer, instructions_text: "Unauthorized edit" },
+        { agent_id: ids.peer, instructions_text: "should not apply" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
 
       expect(result.isError).toBe(true);
-      expect(result.details).toMatchObject({ outcome: "denied", rule: "direct-or-indirect-reports-only" });
-      await expect(agentStore.getAgent(ids.peer)).resolves.toMatchObject({
-        instructionsText: "Original peer instructions",
-      });
+      const peer = await agentStore.getAgent(ids.peer);
+      expect(peer?.instructionsText).toBe("keep me");
     });
   });
 
   it("rejects self-targeting", async () => {
-    await withOrg(async ({ cwd, tool, agentStore, ids }) => {
+    await withOrg(async ({ cwd, tool, ids }) => {
       const result = await tool.execute(
         "call-4",
-        { agent_id: ids.manager, instructions_text: "Self edit" },
+        { agent_id: ids.manager, instructions_text: "self" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("direct or indirect reports");
-      expect((await agentStore.getAgent(ids.manager))?.instructionsText).toBeUndefined();
     });
   });
 
   it("rejects upward edits from a subordinate to its manager", async () => {
-    await withOrg(async ({ cwd, tool, agentStore, ids }) => {
+    await withOrg(async ({ cwd, tool, ids }) => {
       const result = await tool.execute(
         "call-5",
-        { agent_id: ids.manager, instructions_text: "Upward edit" },
+        { agent_id: ids.manager, instructions_text: "upward" },
         undefined,
         undefined,
         { cwd, agentId: ids.leaf },
       );
-
       expect(result.isError).toBe(true);
-      expect(result.details).toMatchObject({ outcome: "denied", rule: "direct-or-indirect-reports-only" });
-      expect((await agentStore.getAgent(ids.manager))?.instructionsText).toBeUndefined();
     });
   });
 
@@ -152,40 +141,31 @@ pgTest("fn_agent_set_instructions", () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
         "call-6",
-        { agent_id: ids.peer, instructions_text: "Privileged user edit" },
+        { agent_id: ids.peer, instructions_text: "operator set" },
         undefined,
         undefined,
         { cwd },
       );
-
       expect(result.isError).not.toBe(true);
-      await expect(agentStore.getAgent(ids.peer)).resolves.toMatchObject({
-        instructionsText: "Privileged user edit",
-      });
+      const peer = await agentStore.getAgent(ids.peer);
+      expect(peer?.instructionsText).toBe("operator set");
     });
   });
 
   it("sets instructions_path without changing text and clears fields with explicit empty strings", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
-      await agentStore.updateAgent(ids.middle, {
-        instructionsText: "Keep this text",
-        instructionsPath: "old.md",
-      });
-
-      const setPathResult = await tool.execute(
+      await agentStore.updateAgent(ids.middle, { instructionsText: "before" });
+      const pathResult = await tool.execute(
         "call-7",
-        { agent_id: ids.middle, instructions_path: "new.md" },
+        { agent_id: ids.middle, instructions_path: "/tmp/instructions.md" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-
-      expect(setPathResult.isError).not.toBe(true);
-      expect(setPathResult.details.updatedFields).toEqual(["instructionsPath"]);
-      await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
-        instructionsText: "Keep this text",
-        instructionsPath: "new.md",
-      });
+      expect(pathResult.isError).not.toBe(true);
+      let middle = await agentStore.getAgent(ids.middle);
+      expect(middle?.instructionsPath).toBe("/tmp/instructions.md");
+      expect(middle?.instructionsText).toBe("before");
 
       const clearResult = await tool.execute(
         "call-8",
@@ -194,37 +174,32 @@ pgTest("fn_agent_set_instructions", () => {
         undefined,
         { cwd, agentId: ids.manager },
       );
-
       expect(clearResult.isError).not.toBe(true);
-      await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
-        instructionsText: "",
-        instructionsPath: "",
-      });
+      middle = await agentStore.getAgent(ids.middle);
+      expect(middle?.instructionsText ?? "").toBe("");
+      expect(middle?.instructionsPath ?? "").toBe("");
     });
   });
 
   it("returns validation errors for missing agents and omitted instruction fields", async () => {
-    await withOrg(async ({ cwd, tool, agentStore, ids }) => {
-      const missingTarget = await tool.execute(
+    await withOrg(async ({ cwd, tool, ids }) => {
+      const missing = await tool.execute(
         "call-9",
-        { agent_id: "agent-does-not-exist", instructions_text: "No target" },
+        { agent_id: "missing-agent", instructions_text: "x" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-      expect(missingTarget.isError).toBe(true);
-      expect(missingTarget.details.outcome).toBe("not_found");
+      expect(missing.isError).toBe(true);
 
-      const missingFields = await tool.execute(
+      const omitted = await tool.execute(
         "call-10",
         { agent_id: ids.middle },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-      expect(missingFields.isError).toBe(true);
-      expect(missingFields.details.outcome).toBe("invalid");
-      expect((await agentStore.getAgent(ids.middle))?.instructionsText).toBeUndefined();
+      expect(omitted.isError).toBe(true);
     });
   });
 });

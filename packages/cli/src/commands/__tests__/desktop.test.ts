@@ -181,7 +181,6 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("@fusion/core", () => ({
-  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: mocks.taskStoreCtor,
   CentralCore: mocks.centralCoreCtor,
   createTaskStoreForBackend: mocks.createTaskStoreForBackend,

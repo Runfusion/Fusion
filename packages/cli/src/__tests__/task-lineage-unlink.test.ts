@@ -53,12 +53,16 @@ pgDescribe("fn_task_archive / fn_task_delete removeLineageReferences plumbing", 
     registerExtension(api);
     const tool = requireTool(api, "fn_task_archive");
 
-    await expect(tool.execute("call-1", { id: parent.id }, undefined, undefined, ctx())).rejects.toThrow(
-      /still referenced as a lineage parent/,
-    );
+    /*
+    FNXC:CliTests 2026-07-15-12:05:
+    Lineage guard failures return structured isError tool results (do not throw).
+    */
+    const rejected = await tool.execute("call-1", { id: parent.id }, undefined, undefined, ctx());
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toMatch(/still referenced as a lineage parent/);
 
     const row = await store.getTask(parent.id, { includeDeleted: true });
-    expect(row.column).not.toBe("archived");
+    expect(row?.column).not.toBe("archived");
   });
 
   it("fn_task_archive rejects a lineage parent when removeLineageReferences is explicitly false", async () => {
@@ -69,9 +73,15 @@ pgDescribe("fn_task_archive / fn_task_delete removeLineageReferences plumbing", 
     registerExtension(api);
     const tool = requireTool(api, "fn_task_archive");
 
-    await expect(
-      tool.execute("call-2", { id: parent.id, removeLineageReferences: false }, undefined, undefined, ctx()),
-    ).rejects.toThrow(/still referenced as a lineage parent/);
+    const rejected = await tool.execute(
+      "call-2",
+      { id: parent.id, removeLineageReferences: false },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toMatch(/still referenced as a lineage parent/);
   });
 
   it("fn_task_archive with removeLineageReferences:true archives the parent and clears the child reference", async () => {
@@ -115,12 +125,12 @@ pgDescribe("fn_task_archive / fn_task_delete removeLineageReferences plumbing", 
     registerExtension(api);
     const tool = requireTool(api, "fn_task_delete");
 
-    await expect(tool.execute("call-5", { id: parent.id }, undefined, undefined, ctx())).rejects.toThrow(
-      /still referenced as a lineage parent/,
-    );
+    const rejected = await tool.execute("call-5", { id: parent.id }, undefined, undefined, ctx());
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toMatch(/still referenced as a lineage parent/);
 
     const row = await store.getTask(parent.id, { includeDeleted: true });
-    expect(row.deletedAt).toBeUndefined();
+    expect(row?.deletedAt).toBeUndefined();
   });
 
   it("fn_task_delete rejects a lineage parent when removeLineageReferences is explicitly false", async () => {
@@ -131,9 +141,15 @@ pgDescribe("fn_task_archive / fn_task_delete removeLineageReferences plumbing", 
     registerExtension(api);
     const tool = requireTool(api, "fn_task_delete");
 
-    await expect(
-      tool.execute("call-6", { id: parent.id, removeLineageReferences: false }, undefined, undefined, ctx()),
-    ).rejects.toThrow(/still referenced as a lineage parent/);
+    const rejected = await tool.execute(
+      "call-6",
+      { id: parent.id, removeLineageReferences: false },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toMatch(/still referenced as a lineage parent/);
   });
 
   it("fn_task_delete with removeLineageReferences:true soft-deletes the parent and clears the child reference", async () => {

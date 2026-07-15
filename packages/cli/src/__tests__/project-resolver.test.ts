@@ -59,7 +59,6 @@ vi.mock("@fusion/core", async () => {
       getProjectHealth = vi.fn().mockResolvedValue(undefined);
       isInitialized = vi.fn().mockReturnValue(true);
     },
-    createTaskStoreForBackend: vi.fn(async () => null),
     isValidSqliteDatabaseFile: (...args: Parameters<typeof mockIsValidSqliteDatabaseFile>) =>
       mockIsValidSqliteDatabaseFile(...args),
     hasProjectIdentity: (...args: Parameters<typeof mockHasProjectIdentity>) =>

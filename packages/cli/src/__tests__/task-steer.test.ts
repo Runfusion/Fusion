@@ -23,7 +23,6 @@ vi.mock("node:readline/promises", () => ({
 // Mock @fusion/core before importing
 vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
-  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: makeConstructibleMock(),
   COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
   COLUMN_LABELS: {

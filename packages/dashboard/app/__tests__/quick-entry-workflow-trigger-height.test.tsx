@@ -89,6 +89,9 @@ vi.mock("lucide-react", () => ({
   Zap: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
+  // FNXC:DashboardTests 2026-07-15-11:55: session-advisor toggle icons on QuickEntryBox.
+  Eye: () => null,
+  EyeOff: () => null,
 }));
 
 vi.mock("../components/ModelSelectionModal", () => ({

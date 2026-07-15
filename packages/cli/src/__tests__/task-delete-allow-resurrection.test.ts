@@ -62,17 +62,21 @@ pgTest("task delete allowResurrection plumbing", () => {
     registerExtension(api);
     const tool = requireTool(api, "fn_task_delete");
 
-    await expect(
-      tool.execute("call-self", { id: task.id }, undefined, undefined, {
-        cwd: h.rootDir(),
-        taskId: task.id,
-        agentId: "agent-test",
-        runId: "run-test",
-      }),
-    ).rejects.toThrow(`Task ${task.id} cannot delete itself`);
+    /*
+    FNXC:CliTests 2026-07-15-12:05:
+    fn_task_delete returns a structured isError tool result for self-delete (does not throw).
+    */
+    const result = await tool.execute("call-self", { id: task.id }, undefined, undefined, {
+      cwd: h.rootDir(),
+      taskId: task.id,
+      agentId: "agent-test",
+      runId: "run-test",
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain(`Task ${task.id} cannot delete itself`);
 
     const row = await store.getTask(task.id, { includeDeleted: true });
-    expect(row.deletedAt).toBeUndefined();
+    expect(row?.deletedAt).toBeUndefined();
   });
 
   it("fn_task_delete lets a task-bound caller delete a different task", async () => {

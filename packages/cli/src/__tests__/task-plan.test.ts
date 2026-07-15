@@ -23,7 +23,6 @@ vi.mock("node:readline/promises", () => ({
 // Mock @fusion/core before importing
 vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
-  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: makeConstructibleMock(),
   COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
   COLUMN_LABELS: {
@@ -61,6 +60,24 @@ vi.mock("@fusion/dashboard/planning", () => ({
   },
 }));
 
+/*
+FNXC:CliTests 2026-07-15-12:05:
+runTaskPlan resolves a ProjectContext via createLocalStore (PostgreSQL path), not
+`new TaskStore`. Wire the same project-context seam as task.test.ts so createTask
+mocks remain the unit under test.
+*/
+const mockCreateLocalStore = vi.hoisted(() => vi.fn());
+vi.mock("../project-context.js", () => ({
+  resolveProject: vi.fn(async () => ({ name: "test", path: process.cwd() })),
+  createLocalStore: (...args: unknown[]) => mockCreateLocalStore(...args),
+  closeProjectStore: vi.fn(async () => undefined),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    store,
+  })),
+}));
+
 // Import after mocking
 import { createInterface } from "node:readline/promises";
 import { TaskStore } from "@fusion/core";
@@ -76,6 +93,7 @@ describe("runTaskPlan", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCreateLocalStore.mockReset();
     mockConsoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     mockConsoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockStdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -93,7 +111,7 @@ describe("runTaskPlan", () => {
   });
 
   function setupTaskStoreMock(overrides: Record<string, unknown> = {}) {
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    const store = {
       init: vi.fn().mockResolvedValue(undefined),
       createTask: vi.fn().mockResolvedValue({
         id: "FN-042",
@@ -103,7 +121,12 @@ describe("runTaskPlan", () => {
         dependencies: ["FN-001"],
         ...overrides,
       }),
-    }));
+      getSettings: vi.fn().mockResolvedValue({}),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => store);
+    mockCreateLocalStore.mockResolvedValue(store);
+    return store;
   }
 
   it("prompts for initial plan when not provided", async () => {
@@ -395,10 +418,14 @@ describe("runTaskPlan", () => {
       dependencies: ["FN-001"],
     });
 
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    const store = {
       init: vi.fn().mockResolvedValue(undefined),
       createTask: mockCreateTask,
-    }));
+      getSettings: vi.fn().mockResolvedValue({}),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => store);
+    mockCreateLocalStore.mockResolvedValue(store);
 
     (createSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       sessionId: "test-session-123",

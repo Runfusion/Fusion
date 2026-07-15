@@ -1,16 +1,19 @@
-import { beforeAll, beforeEach, afterEach, afterAll, it, expect } from "vitest";
+/**
+ * FNXC:PostgresCutover 2026-07-15-12:00:
+ * Agent create/delete tools need a PostgreSQL-backed extension store cache.
+ */
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
-  createMockApi,
   createPgExtensionHarness,
-  pgDescribe,
+  createMockApi,
   registerExtension,
   requireTool,
+  pgDescribe,
 } from "./pg-extension-harness.js";
 
-const pgTest = pgDescribe;
 const h = createPgExtensionHarness("fn-ext-provision");
 
-pgTest("extension agent provisioning tools", () => {
+pgDescribe("extension agent provisioning tools", () => {
   beforeAll(h.beforeAll);
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);

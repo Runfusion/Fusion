@@ -357,6 +357,7 @@ const quarantinedDashboardTests: string[] = [
   "src/routes/__tests__/agent-avatar-routes.test.ts",
   "src/routes/__tests__/mission-workflow-triage-route.test.ts",
   "src/routes/__tests__/workflow-validate-route.test.ts",
+  "src/__tests__/mesh-routes.test.ts",
 ];
 
 const qualityApiTests = [

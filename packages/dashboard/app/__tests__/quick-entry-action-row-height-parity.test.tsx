@@ -76,6 +76,9 @@ vi.mock("../api", () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  // FNXC:DashboardTests 2026-07-15-12:15: session-advisor Eye/EyeOff on QuickEntryBox.
+  Eye: () => null,
+  EyeOff: () => null,
   Link: () => null,
   Paperclip: () => null,
   Brain: () => null,

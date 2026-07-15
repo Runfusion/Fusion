@@ -73,7 +73,6 @@ vi.mock("@fusion/core", async (importActual) => {
 
   return {
     ...actual,
-    createTaskStoreForBackend: vi.fn(async () => null),
     TaskStore: TaskStoreMock,
     COLUMNS,
     COLUMN_LABELS,
@@ -2641,6 +2640,7 @@ describe("runTaskRetry", () => {
       workflowStepRetries: 0,
       verificationFailureCount: 0,
       postReviewFixCount: 0,
+      planReviewReplanCount: 0,
       mergeConflictBounceCount: 0,
       branchConflictRecoveryCount: 0,
       reviewerContextRetryCount: 0,
@@ -2652,7 +2652,6 @@ describe("runTaskRetry", () => {
       mergeAuditBounceCount: 0,
       mergeRetries: 0,
       resumeLimboCount: 0,
-      planReviewReplanCount: 0,
     });
     expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry");
@@ -2719,6 +2718,7 @@ describe("runTaskRetry", () => {
       workflowStepRetries: 0,
       verificationFailureCount: 0,
       postReviewFixCount: 0,
+      planReviewReplanCount: 0,
       mergeConflictBounceCount: 0,
       branchConflictRecoveryCount: 0,
       reviewerContextRetryCount: 0,
@@ -2730,7 +2730,6 @@ describe("runTaskRetry", () => {
       mergeAuditBounceCount: 0,
       mergeRetries: 0,
       resumeLimboCount: 0,
-      planReviewReplanCount: 0,
     });
     expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(mockLogEntry).toHaveBeenCalledWith("FN-001", "Retry requested from CLI", "Task reset to todo for retry");

@@ -37,6 +37,8 @@ vi.mock("../../runtimes/in-process-runtime.js", () => ({
       getRoutineRunner: vi.fn(),
       getHeartbeatMonitor: vi.fn(),
       getTriggerScheduler: vi.fn(),
+      // FNXC:EngineTests 2026-07-15-11:50: merge path requires runtime.getPluginRunner().
+      getPluginRunner: vi.fn(() => undefined),
     };
   }),
 }));

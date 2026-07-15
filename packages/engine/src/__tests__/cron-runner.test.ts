@@ -2229,7 +2229,7 @@ describe("CronRunner", () => {
         .executeLegacyCommand(schedule, new Date().toISOString());
 
       expect(runResult.success).toBe(false);
-      expect(runResult.error).toBe("project DB run backup command failed; source: /tmp/.fusion/fusion.db; cause: unknown error");
+      expect(runResult.error).toBe("project PostgreSQL run backup command failed; project state: /tmp/.fusion; cause: unknown error");
       expect(runResult.output).toBe("");
     });
 
@@ -2249,7 +2249,7 @@ describe("CronRunner", () => {
         .executeCommandStep(step, 0, 30_000, new Date().toISOString());
 
       expect(stepResult.success).toBe(false);
-      expect(stepResult.error).toBe("project DB run backup command failed; source: /tmp/.fusion/fusion.db; cause: unknown error");
+      expect(stepResult.error).toBe("project PostgreSQL run backup command failed; project state: /tmp/.fusion; cause: unknown error");
       expect(stepResult.output).toBe("");
     });
   });

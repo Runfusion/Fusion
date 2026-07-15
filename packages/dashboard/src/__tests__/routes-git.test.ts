@@ -1867,15 +1867,19 @@ describe("Workspace File Routes", () => {
 
     async function runWithAdvance(repoDir: string, toSha: string, options?: { headSha?: string; localIntegrationTipSha?: string }) {
       const headSha = options?.headSha ?? git(repoDir, ["rev-parse", "HEAD"]);
+      /*
+      FNXC:DashboardTests 2026-07-15-12:20:
+      collectRecentMergeAdvances now requires getRunAuditEventsAsync (PG-era API).
+      */
       const fakeStore = {
-        getRunAuditEvents: ({ mutationType }: { mutationType?: string }) => {
+        getRunAuditEventsAsync: async ({ mutationType }: { mutationType?: string }) => {
           if (mutationType === "merge:integration-ref-advance") {
             return [{ taskId: "FN-123", timestamp: new Date().toISOString(), metadata: { toSha, fromSha: null, succeeded: true } }];
           }
           return [];
         },
       } as unknown as TaskStore;
-      return collectRecentMergeAdvances(fakeStore, repoDir, headSha, options?.localIntegrationTipSha);
+      return collectRecentMergeAdvances(fakeStore as any, repoDir, headSha, options?.localIntegrationTipSha);
     }
 
     it("marks orphaned SHAs as handled", async () => {

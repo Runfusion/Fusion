@@ -1844,7 +1844,7 @@ describe("Engine pause/unpause cycle", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute(task);
 
-    // Task should complete normally (in-review), NOT moved to todo
+    // Soft pause: agent sessions continue and may complete to in-review; do not fail the task.
     expect(store.moveTask).toHaveBeenCalledWith("FN-EP1", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-EP1", "todo");
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-EP1", { status: "failed" });

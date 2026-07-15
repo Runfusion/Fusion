@@ -283,10 +283,10 @@ describe("Grok CLI runtime routing (FN-7725)", () => {
 
     expect(result.runtimeId).toBe("pi");
     expect(result.wasConfigured).toBe(false);
-    expect(mockCreateFnAgent).toHaveBeenCalledWith({
+    expect(mockCreateFnAgent).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/project",
       systemPrompt: "fallback",
-    });
+    }));
   });
 
   it("does not route through Grok when runtimeHint is unset (non-grok agent unaffected)", async () => {

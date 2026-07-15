@@ -50,6 +50,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       linkFeatureToTask: vi.fn(),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
     const store = createTaskStore(tasks);
 
@@ -78,6 +79,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       }),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
@@ -110,6 +112,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       }),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
@@ -147,6 +150,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       }),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore([]), { missionStore: missionStore as any });
@@ -184,6 +188,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       }),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore([]), { missionStore: missionStore as any });
@@ -216,6 +221,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       }),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
@@ -254,6 +260,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       }),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
@@ -278,6 +285,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       updateFeature: vi.fn(),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(createTaskStore([]), { missionStore: missionStore as any });
@@ -299,6 +307,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       })),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
     const store = createTaskStore(tasks);
 
@@ -326,6 +335,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       })),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
     const store = createTaskStore(tasks);
 
@@ -427,6 +437,7 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       linkFeatureToTask: vi.fn(),
       updateFeatureStatus: vi.fn(),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
     };
 
     const scheduler = new Scheduler(store, { missionStore: missionStore as any });
