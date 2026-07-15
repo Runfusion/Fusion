@@ -267,13 +267,13 @@ A horizontal row on the multi-lane board, one per workflow in use by visible car
 A workflow node kind expressing passive dwell — a card rests in its column until a release condition fires: manual promote, timer, downstream capacity available, dependency satisfied, or external event. Hold release is evaluated by a substrate sweep (the generalized scheduler), which reserves worktree + semaphore slots before issuing the release move.
 
 ### Split / Join
-Parallel-branch node kinds. A `split` launches its outgoing edges concurrently; a `join` synchronizes them with `mode: all | any | quorum(n)` and `onBranchFailure: fail-fast | collect`. During the parallel window the card stays in the split's column (its board position never forks); on join resolution it advances to the join's column. `execute`/`merge` seam nodes are forbidden inside branches (one worktree/session per task; merge is exclusive). Per-branch run state persists in SQLite so a crashed branch resumes where it died.
+Parallel-branch node kinds. A `split` launches its outgoing edges concurrently; a `join` synchronizes them with `mode: all | any | quorum(n)` and `onBranchFailure: fail-fast | collect`. During the parallel window the card stays in the split's column (its board position never forks); on join resolution it advances to the join's column. `execute`/`merge` seam nodes are forbidden inside branches (one worktree/session per task; merge is exclusive). Per-branch run state persists in PostgreSQL so a crashed branch resumes where it died.
 
 ### Default workflow
 The built-in workflow (`builtin:coding`) that reproduces the legacy pipeline verbatim: six columns whose ids equal the legacy enum values, with traits matching legacy semantics (`triage`=intake, `todo`=hold+reset-on-entry, `in-progress`=wip+abort-on-exit+timing, `in-review`=merge-blocker+stall-detection+merge, `done`=complete, `archived`=archived). A null workflow selection resolves to it at read time. Non-editable, non-deletable.
 
 ### transitionPending
-A persisted crash-safe marker (`tasks.transitionPending`) written in the same transaction as a column change, recording the post-commit hooks (`hooksRemaining`) that still owe idempotent execution. Cleared once they complete. Recovery reads it exclusively from SQLite (the authoritative store); a crash mid-transition re-runs the idempotent hooks. A throwing or missing hook degrades (audit) and clears its entry — it never strands the card or wedges the task lock.
+A persisted crash-safe marker (`tasks.transitionPending`) written in the same PostgreSQL transaction as a column change, recording the post-commit hooks (`hooksRemaining`) that still owe idempotent execution. Cleared once they complete. Recovery reads it from the authoritative PostgreSQL task row; a crash mid-transition re-runs the idempotent hooks. A throwing or missing hook degrades (audit) and clears its entry — it never strands the card or wedges the task lock.
 
 ## Step inversion
 
