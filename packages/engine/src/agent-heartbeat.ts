@@ -29,7 +29,6 @@ import {
   evaluateImplementationTaskBind,
   resolvePersistAgentThinkingLog,
   resolveAgentMemoryInclusionMode,
-  FUSION_RUNTIME_SELF_AWARENESS,
   AWAITING_APPROVAL_PAUSE_REASON,
   rankAssignedTasksForWakeDelta,
   formatAssignedTasksWakeDeltaSection,
@@ -483,18 +482,14 @@ export {
   HEARTBEAT_NO_TASK_PROCEDURE,
 } from "./agent-heartbeat-prompts.js";
 import {
-  HEARTBEAT_CRITICAL_RULES,
   HEARTBEAT_SYSTEM_PROMPT,
   HEARTBEAT_NO_TASK_SYSTEM_PROMPT,
-  HEARTBEAT_SYSTEM_PROMPT_NO_TASK,
   HEARTBEAT_PROCEDURE_STRICT,
   HEARTBEAT_PROCEDURE_LITE,
   HEARTBEAT_PROCEDURE_OFF,
-  HEARTBEAT_PROCEDURE,
   HEARTBEAT_NO_TASK_PROCEDURE_STRICT,
   HEARTBEAT_NO_TASK_PROCEDURE_LITE,
   HEARTBEAT_NO_TASK_PROCEDURE_OFF,
-  HEARTBEAT_NO_TASK_PROCEDURE,
   renderHeartbeatNoTaskProcedure,
   renderHeartbeatNoTaskSystemPrompt,
 } from "./agent-heartbeat-prompts.js";

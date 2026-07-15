@@ -13,7 +13,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
@@ -94,7 +94,6 @@ import {
   resolveValidatorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
-import type { SkillSelectionContext } from "./skill-resolver.js";
 import { assertMcpResolutionSucceeded, resolveMcpServersForStore } from "./mcp-resolution.js";
 import { reviewStep, proseSignalsClearApproval, extractJsonObjectCandidates, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
@@ -285,12 +284,11 @@ export {
 } from "./executor/browser-probe.js";
 export type { AgentBrowserAvailabilityProbeResult } from "./executor/browser-probe.js";
 import {
-  AGENT_BROWSER_NAVIGATION_SKILL_ID,
   probeAgentBrowserAvailability,
   augmentSessionSkillsForBrowserStep,
   formatAgentBrowserAvailabilityLog,
 } from "./executor/browser-probe.js";
-import type { AgentBrowserAvailabilityProbeResult, AgentBrowserExec } from "./executor/browser-probe.js";
+import type { AgentBrowserExec } from "./executor/browser-probe.js";
 
 function mergeAdditionalSkillPaths(...pathGroups: Array<string[] | undefined>): string[] | undefined {
   const merged = Array.from(new Set(pathGroups.flatMap((paths) => paths ?? [])));
@@ -444,7 +442,6 @@ export {
 import {
   MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
   EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD,
-  buildExecuteRequeueLoopSignature,
   buildExecuteRequeueLoopHighWaterSignature,
   isInvalidAssistantContinuationErrorMessage,
   isTransientMissingTaskJsonError,
@@ -19083,4 +19080,3 @@ import {
   detectPseudoPause,
   detectReviewHandoffIntent,
 } from "./executor/pseudo-pause.js";
-import type { PseudoPauseResult } from "./executor/pseudo-pause.js";
