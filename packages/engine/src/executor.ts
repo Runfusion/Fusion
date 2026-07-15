@@ -8815,11 +8815,12 @@ export class TaskExecutor {
     this.clearPausedAborted(live.id);
     let resumeLive = live;
     if (live.paused === true && live.userPaused !== true) {
+      // FNXC:WorkflowMerge 2026-07-14-18:35: TaskDetail.pausedReason is string|undefined (not null). Persist clear via updateTask (store accepts null); in-memory resume snapshot uses undefined to satisfy the type.
       await this.store.updateTask(live.id, {
         paused: false,
         pausedReason: null,
       }, this.getRunContextFor(live.id));
-      resumeLive = { ...live, paused: false, pausedReason: null };
+      resumeLive = { ...live, paused: false, pausedReason: undefined };
     }
     if (hasNonTerminalWorkflowSteps(resumeLive) && await this.routeGraphFailureToExecutionResume(resumeLive, failedNode, "implementation-incomplete")) {
       return true;
