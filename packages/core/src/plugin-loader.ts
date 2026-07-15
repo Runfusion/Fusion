@@ -158,6 +158,8 @@ export interface PluginLoaderOptions {
   pluginDirs?: string[];
   /** npm prefix for resolving packages */
   npmPrefix?: string;
+  /** Persist started/stopped/error runtime state transitions (default true). */
+  persistRuntimeState?: boolean;
 }
 
 /**
@@ -212,6 +214,15 @@ export class PluginLoader extends EventEmitter<{
 
   constructor(private options: PluginLoaderOptions) {
     super();
+  }
+
+  private async updatePluginState(
+    pluginId: string,
+    state: PluginInstallation["state"],
+    error?: string,
+  ): Promise<void> {
+    if (this.options.persistRuntimeState === false) return;
+    await this.options.pluginStore.updatePluginState(pluginId, state, error);
   }
 
   private getProjectRoot(): string {
@@ -342,7 +353,7 @@ export class PluginLoader extends EventEmitter<{
 
         if (["blocked", "error", "unavailable"].includes(scanResult.verdict)) {
           const errorMessage = `Security scan ${scanResult.verdict}: ${scanResult.summary}`;
-          await this.options.pluginStore.updatePluginState(pluginId, "error", errorMessage);
+          await this.updatePluginState(pluginId, "error", errorMessage);
           this.emit("plugin:error", { pluginId, error: new Error(errorMessage) });
           throw new Error(errorMessage);
         }
@@ -388,7 +399,7 @@ export class PluginLoader extends EventEmitter<{
       if (schemaContract) await this.options.taskStore.runPluginSchemaInits([schemaContract]);
 
       // Update state to started
-      await this.options.pluginStore.updatePluginState(pluginId, "started");
+      await this.updatePluginState(pluginId, "started");
 
       // Update plugin state locally and store
       plugin.state = "started";
@@ -406,7 +417,7 @@ export class PluginLoader extends EventEmitter<{
         this.pluginRoots.delete(pluginId);
         this.pluginSchemaContracts.delete(pluginId);
         const errorMsg = loadErr instanceof Error ? loadErr.message : String(loadErr);
-        await this.options.pluginStore.updatePluginState(
+        await this.updatePluginState(
           pluginId,
           "error",
           `onLoad failed: ${errorMsg}`,
@@ -430,7 +441,7 @@ export class PluginLoader extends EventEmitter<{
 
       // Error isolation: set error state but don't crash
       const errorMsg = err instanceof Error ? err.message : String(err);
-      await this.options.pluginStore.updatePluginState(
+      await this.updatePluginState(
         pluginId,
         "error",
         errorMsg,
@@ -665,7 +676,7 @@ export class PluginLoader extends EventEmitter<{
         );
 
         // Update store state back to started
-        await this.options.pluginStore.updatePluginState(pluginId, "started");
+        await this.updatePluginState(pluginId, "started");
 
         this.log.warn(`Rollback successful for ${pluginId}`);
       } catch (rollbackErr) {
@@ -683,7 +694,7 @@ export class PluginLoader extends EventEmitter<{
         const rollbackError = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         const combinedError = `Reload failed and rollback failed: ${originalError}; ${rollbackError}`;
 
-        await this.options.pluginStore.updatePluginState(
+        await this.updatePluginState(
           pluginId,
           "error",
           combinedError,
@@ -892,8 +903,7 @@ export class PluginLoader extends EventEmitter<{
       this.log.error(`Error in onUnload for ${pluginId}:`, err);
     }
 
-    // Update state
-    await this.options.pluginStore.updatePluginState(pluginId, "stopped");
+    await this.updatePluginState(pluginId, "stopped");
 
     // Remove from loaded plugins
     this.plugins.delete(pluginId);
@@ -965,7 +975,7 @@ export class PluginLoader extends EventEmitter<{
 
         // Update plugin state to error
         try {
-          await this.options.pluginStore.updatePluginState(
+          await this.updatePluginState(
             pluginId,
             "error",
             err instanceof Error ? err.message : String(err),

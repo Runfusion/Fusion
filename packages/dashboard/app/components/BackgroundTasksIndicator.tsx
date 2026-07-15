@@ -1,11 +1,8 @@
 import "./BackgroundTasksIndicator.css";
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Lightbulb, Layers, Target, Terminal, Loader2, HelpCircle, X, Lock, AlertCircle } from "lucide-react";
+import { Lightbulb, Layers, Target, Terminal, Loader2, HelpCircle, X, AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AiSessionSummary } from "../api";
-import { useAiSessionSync } from "../hooks/useAiSessionSync";
-import { useConfirm } from "../hooks/useConfirm";
-import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface BackgroundTasksIndicatorProps {
   sessions: AiSessionSummary[];
@@ -32,15 +29,12 @@ export function BackgroundTasksIndicator({
   onDismissSession,
 }: BackgroundTasksIndicatorProps) {
   const { t } = useTranslation("app");
-  const { confirm } = useConfirm();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const previousSessionSignatureRef = useRef<Map<string, string>>(new Map());
   const clearUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { activeTabMap } = useAiSessionSync();
-  const localSessionTabId = useMemo(() => getSessionTabId(), []);
 
   // Type labels that are translatable
   const TYPE_LABELS = useMemo(
@@ -67,19 +61,19 @@ export function BackgroundTasksIndicator({
     return () => document.removeEventListener("mousedown", handler);
   }, [popoverOpen]);
 
-  // Animate per-item changes when session status/lock/timestamp changes.
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  No tab-ownership concept remains: AI interview sessions are multi-tab, so every session opens
+  directly with no "active in another tab" gate, confirm prompt, or lock badge. Item animation
+  keys off server-derived status/timestamp only.
+  */
+  // Animate per-item changes when session status/timestamp changes.
   useEffect(() => {
     const changed = new Set<string>();
     const nextSignature = new Map<string, string>();
 
     for (const session of sessions) {
-      const ownership = activeTabMap.get(session.id);
-      const signature = [
-        session.status,
-        session.updatedAt,
-        ownership?.tabId ?? session.lockedByTab ?? "",
-        ownership?.stale ? "stale" : "fresh",
-      ].join("|");
+      const signature = [session.status, session.updatedAt].join("|");
 
       const previous = previousSessionSignatureRef.current.get(session.id);
       if (previous && previous !== signature) {
@@ -112,7 +106,7 @@ export function BackgroundTasksIndicator({
         clearUpdatedTimerRef.current = null;
       }
     };
-  }, [activeTabMap, sessions]);
+  }, [sessions]);
 
   if (sessions.length === 0) return null;
 
@@ -148,11 +142,6 @@ export function BackgroundTasksIndicator({
               const isGenerating = session.status === "generating";
               const isAwaiting = session.status === "awaiting_input";
               const isError = session.status === "error";
-              const activeTab = activeTabMap.get(session.id);
-              const owningTabId = activeTab?.tabId ?? session.lockedByTab ?? null;
-              const activeElsewhere = Boolean(
-                owningTabId && owningTabId !== localSessionTabId && !activeTab?.stale,
-              );
               const isUpdated = recentlyUpdated.has(session.id);
 
               return (
@@ -166,17 +155,7 @@ export function BackgroundTasksIndicator({
                       : undefined,
                     transform: isUpdated ? "translateY(-1px)" : undefined,
                   }}
-                  onClick={async () => {
-                    if (activeElsewhere) {
-                      const shouldOpen = await confirm({
-                        title: t("backgroundTasks.confirmTitle", "Open Active Session"),
-                        message: t("backgroundTasks.confirmMessage", "This session is active in another tab. Open anyway?"),
-                      });
-                      if (!shouldOpen) {
-                        return;
-                      }
-                    }
-
+                  onClick={() => {
                     onOpenSession(session);
                     setPopoverOpen(false);
                   }}
@@ -193,8 +172,7 @@ export function BackgroundTasksIndicator({
                     <div className="background-tasks-indicator__session-meta">
                       {isError ? t("backgroundTasks.status.failed", "Failed") : TYPE_LABELS[session.type]}
                       {isGenerating && ` — ${t("backgroundTasks.status.generating", "generating...")}`}
-                      {isAwaiting && !activeElsewhere && ` — ${t("backgroundTasks.status.needsInput", "needs input")}`}
-                      {isAwaiting && activeElsewhere && ` — ${t("backgroundTasks.status.activeElsewhere", "active in another tab")}`}
+                      {isAwaiting && ` — ${t("backgroundTasks.status.needsInput", "needs input")}`}
                     </div>
                   </div>
                   {isGenerating && (
@@ -204,18 +182,11 @@ export function BackgroundTasksIndicator({
                       style={{ color: "var(--color-success)" }}
                     />
                   )}
-                  {isAwaiting && !activeElsewhere && (
+                  {isAwaiting && (
                     <HelpCircle
                       size={14}
                       className="background-tasks-indicator__session-icon"
                       style={{ color: "var(--triage)" }}
-                    />
-                  )}
-                  {isAwaiting && activeElsewhere && (
-                    <Lock
-                      size={14}
-                      className="background-tasks-indicator__session-icon"
-                      style={{ color: "var(--text-muted)" }}
                     />
                   )}
                   <button

@@ -15,7 +15,6 @@ function makeSession(overrides: Partial<AiSessionSummary> & Pick<AiSessionSummar
     status: overrides.status ?? "generating",
     title: overrides.title ?? overrides.id,
     projectId: overrides.projectId ?? null,
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
   };
 }

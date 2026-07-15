@@ -51,19 +51,16 @@ import {
   clearPlanningDescription,
 } from "../hooks/modalPersistence";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, Lock, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
-import { useSessionLock } from "../hooks/useSessionLock";
-import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 import { useToast } from "../hooks/useToast";
-import { getSessionTabId } from "../utils/getSessionTabId";
 
 const WARNING_ICON = "⚠️";
 
@@ -381,7 +378,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // identity change (e.g. typing into the textarea recreates loadSession) and
   // yanks the user back into the previous session's question view.
   const dismissedResumeRef = useRef<string | null>(null);
-  const [lockSessionId, setLockSessionId] = useState<string | null>(resumeSessionId ?? null);
 
   useEffect(() => {
     viewRef.current = view;
@@ -393,20 +389,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setAutoRetryAttempt(0);
     setIsAutoRetrying(false);
   }, []);
-  const sessionTabId = useMemo(() => getSessionTabId(), []);
-  const {
-    isLockedByOther,
-    takeControl,
-    isLoading: isLockLoading,
-  } = useSessionLock(isOpen ? lockSessionId : null);
-  const {
-    activeTabMap,
-    broadcastUpdate,
-    broadcastCompleted,
-    broadcastLock,
-    broadcastUnlock,
-    broadcastHeartbeat,
-  } = useAiSessionSync();
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  Planning Mode has no cross-tab coordination. The persisted session row is the single source
+  of truth: every tab may read and interact, the per-session SSE stream plus the global
+  ai_session:updated events (consumed by useBackgroundSessions) keep all tabs current, and the
+  server's generation-in-progress guard resolves concurrent writes. The former tab-lock
+  (useSessionLock, per-tab lock 409s, Take Control overlay) and BroadcastChannel tab-ownership sync
+  (useAiSessionSync broadcasts) were removed from planning.
+  */
   const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
   const [planningThinkingLevel, setPlanningThinkingLevel] = useState<ThinkingLevel | "">("");
@@ -421,7 +412,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     provider?: string;
     modelId?: string;
   }>({});
-  const trackedLockSessionRef = useRef<string | null>(null);
 
   // Sidebar list state
   const [planningSessions, setPlanningSessions] = useState<AiSessionSummary[]>([]);
@@ -602,11 +592,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // during normal generation.
   useEffect(() => {
     if (view.type !== "loading") return;
-    const sessionId = currentSessionIdRef.current;
-    if (!sessionId) return;
 
     let cancelled = false;
+    /*
+    FNXC:PlanningMultiTab 2026-07-14-00:00:
+    Resolve the session id inside each tick instead of at effect setup. The loading view can
+    begin before the session id exists (Start Planning resolves it async), and the removed
+    cross-tab lock state used to be the dependency that re-armed this effect afterwards. Reading
+    the ref per-tick keeps the poll armed for the whole loading window with no extra state.
+    */
     const tick = async () => {
+      const sessionId = currentSessionIdRef.current;
+      if (!sessionId) return;
       try {
         const session = await fetchAiSession(sessionId);
         if (cancelled || !session) return;
@@ -659,16 +656,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             };
           });
           setStreamingOutput("");
-          broadcastUpdate({
-            sessionId,
-            status: "error",
-            needsInput: false,
-            owningTabId: sessionTabId,
-            type: "planning",
-            title: initialPlan.trim() || undefined,
-            projectId: projectId ?? null,
-          });
-          broadcastCompleted({ sessionId, status: "error" });
         }
       } catch {
         // best-effort; keep polling
@@ -680,7 +667,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       cancelled = true;
       clearInterval(interval);
     };
-  }, [broadcastCompleted, broadcastUpdate, initialPlan, lockSessionId, projectId, resetPlanningAutoRetryBudget, sessionTabId, t, view.type]);
+  }, [projectId, resetPlanningAutoRetryBudget, t, view.type]);
 
   const resetDetailState = useCallback(() => {
     setInitialPlan("");
@@ -704,7 +691,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setPlanningDepth("medium");
     setCustomQuestionCount("");
     currentSessionIdRef.current = null;
-    setLockSessionId(null);
   }, [resetPlanningAutoRetryBudget]);
 
   const planningSelectionValue = getModelSelectionValue(planningModelProvider, planningModelId);
@@ -795,15 +781,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             streamingOutputRef.current = next;
             return next;
           });
-          broadcastUpdate({
-            sessionId,
-            status: "generating",
-            needsInput: false,
-            owningTabId: sessionTabId,
-            type: "planning",
-            title: initialPlan.trim() || undefined,
-            projectId: projectId ?? null,
-          });
         },
         onQuestion: (question) => {
           if (isStaleEvent()) return;
@@ -836,16 +813,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             session: { sessionId, currentQuestion: normalizedQuestion, summary: null },
           });
           setStreamingOutput("");
-
-          broadcastUpdate({
-            sessionId,
-            status: "awaiting_input",
-            needsInput: true,
-            owningTabId: sessionTabId,
-            type: "planning",
-            title: initialPlan.trim() || undefined,
-            projectId: projectId ?? null,
-          });
         },
         onSummary: (summary) => {
           if (isStaleEvent()) return;
@@ -874,16 +841,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
           setEditedSummary(normalizedSummary);
           setStreamingOutput("");
-
-          broadcastUpdate({
-            sessionId,
-            status: "complete",
-            needsInput: false,
-            owningTabId: sessionTabId,
-            type: "planning",
-            title: initialPlan.trim() || undefined,
-            projectId: projectId ?? null,
-          });
         },
         onError: (message) => {
           const errorMessage = message || t("planning.sessionFailed", "Session failed while contacting the AI.");
@@ -933,17 +890,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             });
             setStreamingOutput("");
             currentSessionIdRef.current = sessionId;
-
-            broadcastUpdate({
-              sessionId,
-              status: "error",
-              needsInput: false,
-              owningTabId: sessionTabId,
-              type: "planning",
-              title: initialPlan.trim() || undefined,
-              projectId: projectId ?? null,
-            });
-            broadcastCompleted({ sessionId, status: "error" });
           })();
         },
         onComplete: () => {
@@ -953,7 +899,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setIsRefiningSummary(false);
           refineSummaryInFlightRef.current = false;
           currentSessionIdRef.current = null;
-          broadcastCompleted({ sessionId, status: "complete" });
         },
         onConnectionStateChange: (state) => {
           setIsReconnecting(state === "reconnecting");
@@ -962,7 +907,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       streamConnectionRef.current = connection;
     },
-    [broadcastCompleted, broadcastUpdate, initialPlan, projectId, resetPlanningAutoRetryBudget, sessionTabId],
+    [projectId, resetPlanningAutoRetryBudget, t],
   );
 
   const startPlanningRetry = useCallback(
@@ -974,11 +919,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setView({ type: "loading" });
 
       currentSessionIdRef.current = retryTarget.sessionId;
-      setLockSessionId(retryTarget.sessionId);
       connectToPlanningStream(retryTarget.sessionId);
 
       try {
-        await retryPlanningSession(retryTarget.sessionId, projectId, sessionTabId);
+        await retryPlanningSession(retryTarget.sessionId, projectId);
       } catch (err) {
         let retryError: unknown = err;
         const retryErrorMessage = getErrorMessage(err) || "";
@@ -991,7 +935,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             }
 
             currentSessionIdRef.current = session.id;
-            setLockSessionId(session.id);
 
             if (session.status === "generating") {
               setStreamingOutput(session.thinkingOutput ?? "");
@@ -1065,7 +1008,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         planningAutoRetryInFlightRef.current = false;
       }
     },
-    [connectToPlanningStream, projectId, resetPlanningAutoRetryBudget, sessionTabId, t],
+    [connectToPlanningStream, projectId, resetPlanningAutoRetryBudget, t],
   );
 
   const startPlanningAutoRetry = useCallback(
@@ -1137,7 +1080,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       );
       draftSessionIdRef.current = null;
       currentSessionIdRef.current = sessionId;
-      setLockSessionId(sessionId);
       setSelectedSessionId(sessionId);
 
       connectToPlanningStream(sessionId);
@@ -1147,7 +1089,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setError(getErrorMessage(err) || t("planning.failedStartSession", "Failed to start planning session"));
       setView({ type: "initial" });
       currentSessionIdRef.current = null;
-      setLockSessionId(null);
     }
   }, [
     connectToPlanningStream,
@@ -1232,7 +1173,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         }
 
         currentSessionIdRef.current = sessionId;
-        setLockSessionId(sessionId);
         const parsedHistory = parseConversationHistory(session.conversationHistory);
         setConversationHistory(parsedHistory);
         setResponseHistory(
@@ -1330,7 +1270,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         }
       } catch (err) {
         currentSessionIdRef.current = sessionId;
-        setLockSessionId(sessionId);
         setError(null);
         setView({
           type: "error",
@@ -1614,7 +1553,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       // generating; for terminal sessions skip the cancel call.
       if (target && isActiveServerSession(target.status)) {
         try {
-          await cancelPlanning(sessionId, projectId, sessionTabId);
+          await cancelPlanning(sessionId, projectId);
         } catch {
           // best-effort
         }
@@ -1629,17 +1568,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         return;
       }
 
-      // Broadcast completion so sibling consumers (BackgroundTasksIndicator's
-      // useBackgroundSessions hook, other tabs) prune this session from their
-      // active lists. The server-side SSE delete event covers the in-flight
-      // path, but the cross-tab broadcast is what keeps the footer pill in
-      // lockstep when this modal initiates the delete.
-      broadcastCompleted({
-        sessionId,
-        status: "complete",
-        timestamp: Date.now(),
-      });
-
+      // The server-side ai_session:deleted SSE event prunes this session from
+      // every tab's useBackgroundSessions state; the local list update below
+      // just keeps this modal responsive without waiting for the event.
       setPlanningSessions((prev) => dedupeSessionsById(prev.filter((s) => s.id !== sessionId)));
 
       if (selectedSessionId === sessionId) {
@@ -1651,7 +1582,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       }
       setPendingDeleteId(null);
     },
-    [addToast, broadcastCompleted, planningSessions, projectId, refreshSessionsList, resetDetailState, selectedSessionId, sessionTabId],
+    [addToast, planningSessions, projectId, refreshSessionsList, resetDetailState, selectedSessionId],
   );
 
   const handleArchiveSession = useCallback(
@@ -1698,50 +1629,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       hasLoadedPersistedRef.current = false;
       setIsReconnecting(false);
       setIsRetrying(false);
-      setLockSessionId(null);
     }
   }, [isOpen]);
-
-  // Broadcast lock ownership transitions for cross-tab awareness.
-  useEffect(() => {
-    if (!isOpen) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
-      return;
-    }
-
-    if (lockSessionId && trackedLockSessionRef.current !== lockSessionId) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      }
-      broadcastLock(lockSessionId, sessionTabId);
-      trackedLockSessionRef.current = lockSessionId;
-      return;
-    }
-
-    if (!lockSessionId && trackedLockSessionRef.current) {
-      broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      trackedLockSessionRef.current = null;
-    }
-  }, [broadcastLock, broadcastUnlock, isOpen, lockSessionId, sessionTabId]);
-
-  // Emit heartbeat while this tab actively owns the current session lock.
-  useEffect(() => {
-    if (!isOpen || !lockSessionId || trackedLockSessionRef.current !== lockSessionId) {
-      return;
-    }
-
-    broadcastHeartbeat(sessionTabId);
-    const timer = setInterval(() => {
-      broadcastHeartbeat(sessionTabId);
-    }, 30_000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [broadcastHeartbeat, isOpen, lockSessionId, sessionTabId]);
 
   // Cleanup stream connection on unmount
   useEffect(() => {
@@ -1752,13 +1641,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       }
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
-
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
     };
-  }, [broadcastUnlock, sessionTabId]);
+  }, []);
 
   // Handle browser unload while modal is open
   useEffect(() => {
@@ -1905,14 +1789,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       try {
         // Submit response - AI will broadcast events via the already-connected stream
-        await respondToPlanning(sessionId, responses, projectId, sessionTabId);
+        await respondToPlanning(sessionId, responses, projectId);
         // Events (question/summary) will arrive via the existing SSE stream
       } catch (err) {
         setError(getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response"));
         setView({ type: "question", session });
       }
     },
-    [projectId, resetPlanningAutoRetryBudget, sessionTabId, view]
+    [projectId, resetPlanningAutoRetryBudget, view]
   );
 
   const handleRefineFurther = useCallback(async () => {
@@ -1923,7 +1807,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const { session, summary } = view;
     const sessionId = session.sessionId;
     currentSessionIdRef.current = sessionId;
-    setLockSessionId(sessionId);
 
     refineSummaryInFlightRef.current = true;
     setIsRefiningSummary(true);
@@ -1936,7 +1819,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     connectToPlanningStream(sessionId);
 
     try {
-      await respondToPlanning(sessionId, { refine: true }, projectId, sessionTabId);
+      await respondToPlanning(sessionId, { refine: true }, projectId);
     } catch (err) {
       const message = getErrorMessage(err) || t("planning.failedRefinePlan", "Failed to refine plan");
       if (/generation already in progress/i.test(message)) {
@@ -1949,7 +1832,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setError(message);
       setView({ type: "summary", session, summary: editedSummary ?? summary });
     }
-  }, [connectToPlanningStream, editedSummary, projectId, resetPlanningAutoRetryBudget, sessionTabId, view]);
+  }, [connectToPlanningStream, editedSummary, projectId, resetPlanningAutoRetryBudget, view]);
 
   const handleStopGeneration = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -1958,7 +1841,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     }
 
     try {
-      await stopPlanningGeneration(sessionId, projectId, sessionTabId);
+      await stopPlanningGeneration(sessionId, projectId);
     } catch {
       // best-effort; server-side timeout/stop event may have already fired
     }
@@ -1976,7 +1859,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       errorMessage: t("planning.generationStopped", "Generation stopped by user. You can retry or start a new session."),
     });
     setStreamingOutput("");
-  }, [projectId, sessionTabId]);
+  }, [projectId, t]);
 
   const handleRetryFromError = useCallback(async () => {
     if (view.type !== "error") {
@@ -2014,18 +1897,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       // only clear the active selection before closing; keep the sidebar row
       // in local state to match persisted server truth.
       setSelectedSessionId(null);
-      broadcastCompleted({
-        sessionId: completedSessionId,
-        status: "complete",
-        timestamp: Date.now(),
-      });
       handleClose();
     } catch (err) {
       setError(getErrorMessage(err) || t("planning.failedCreateTask", "Failed to create task"));
     } finally {
       setIsCreatingTask(false);
     }
-  }, [baseBranch, branchMode, branchName, broadcastCompleted, editedSummary, view, projectId, workflowId, onTaskCreated, handleClose]);
+  }, [baseBranch, branchMode, branchName, editedSummary, view, projectId, workflowId, onTaskCreated, handleClose]);
 
   const handleStartBreakdown = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -2037,7 +1915,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       const normalizedSummary = editedSummary ? normalizePlanningSummary(editedSummary) : undefined;
       const result = await startPlanningBreakdown(view.session.sessionId, normalizedSummary, projectId);
       const normalizedSubtasks = (Array.isArray(result.subtasks) ? result.subtasks : []).map(normalizeSubtaskItem);
-      setLockSessionId(result.sessionId);
       setView({
         type: "breakdown",
         sessionId: result.sessionId,
@@ -2084,11 +1961,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       // Server cleans up the planning session after task creation; mirror that
       // locally so reopen doesn't try to load a 404 and the footer count drops.
       setPlanningSessions((prev) => dedupeSessionsById(prev.filter((s) => s.id !== completedSessionId)));
-      broadcastCompleted({
-        sessionId: completedSessionId,
-        status: "complete",
-        timestamp: Date.now(),
-      });
       // Reset and close
       setInitialPlan("");
       setView({ type: "initial" });
@@ -2103,7 +1975,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setPlanningDepth("medium");
       setCustomQuestionCount("");
       currentSessionIdRef.current = null;
-      setLockSessionId(null);
       setSelectedSessionId(null);
       handleClose();
     } catch (err) {
@@ -2111,7 +1982,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       setIsCreatingFromBreakdown(false);
     }
-  }, [baseBranch, branchMode, branchName, broadcastCompleted, handleClose, view, onTasksCreated, projectId, workflowId]);
+  }, [baseBranch, branchMode, branchName, handleClose, view, onTasksCreated, projectId, workflowId]);
 
   /*
   FNXC:PlanningMode 2026-07-05-00:00:
@@ -2134,7 +2005,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setIsBackPending(true);
 
     try {
-      const rewound = await rewindPlanningSession(sessionId, projectId, sessionTabId);
+      const rewound = await rewindPlanningSession(sessionId, projectId);
       setResponseHistory(rewound.history.map((entry) => {
         if (entry.response && typeof entry.response === "object" && !Array.isArray(entry.response)) {
           return entry.response as QuestionResponse;
@@ -2164,7 +2035,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       setIsBackPending(false);
     }
-  }, [projectId, responseHistory.length, sessionTabId, view]);
+  }, [projectId, responseHistory.length, t, view]);
 
   const getProgress = () => {
     if (view.type === "question") {
@@ -2172,10 +2043,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     }
     return 3;
   };
-
-  const activeLockInfo = lockSessionId ? activeTabMap.get(lockSessionId) : null;
-  const activeRemoteTab = activeLockInfo && activeLockInfo.tabId !== sessionTabId;
-  const allowTakeover = isLockedByOther && (!activeRemoteTab || activeLockInfo.stale);
 
   /*
   FNXC:PlanningMode 2026-06-21-00:00:
@@ -2330,7 +2197,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                                 title: response.title,
                                 preview: content.length > 80 ? `${content.slice(0, 79).trimEnd()}…` : content,
                                 projectId: projectId ?? null,
-                                lockedByTab: null,
                                 updatedAt: new Date().toISOString(),
                                 archived: false,
                               };
@@ -2626,30 +2492,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           )}
           </div>
 
-          {isLockedByOther && (
-            <div className="session-lock-overlay" data-testid="session-lock-overlay">
-              <div className="session-lock-banner">
-                <Lock size={16} />
-                <span>
-                  {allowTakeover
-                    ? t("planning.sessionActiveOtherTab", "This session is active in another tab")
-                    : t("planning.sessionActiveOtherTabLive", "This session is active in another tab (live heartbeat)")}
-                </span>
-                {allowTakeover && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void takeControl();
-                    }}
-                    disabled={isLockLoading}
-                    className="btn btn-primary session-lock-take-control"
-                  >
-                    {isLockLoading ? t("planning.takingControl", "Taking control...") : t("planning.takeControl", "Take Control")}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

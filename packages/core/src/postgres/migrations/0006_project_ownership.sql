@@ -33,8 +33,18 @@ DECLARE
 BEGIN
   SELECT rolsuper INTO current_user_is_superuser FROM pg_roles WHERE rolname = current_user;
   IF current_user_is_superuser THEN
+    /*
+    FNXC:ProjectDataIsolation 2026-07-14-23:45:
+    PostgreSQL roles are cluster-wide while Gate databases apply this migration
+    concurrently. Advisory locks are database-local, so make CREATE ROLE itself
+    race-safe across databases by accepting the concurrent winner.
+    */
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
-      CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      BEGIN
+        CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      EXCEPTION
+        WHEN duplicate_object OR unique_violation THEN NULL;
+      END;
     END IF;
     EXECUTE format('GRANT fusion_runtime TO %I', current_user);
   END IF;

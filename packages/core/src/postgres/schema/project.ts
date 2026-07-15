@@ -1603,6 +1603,15 @@ export const aiSessions = projectSchema.table("ai_sessions", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  DEAD COLUMNS — no code reads or writes these. The per-tab session lock they backed was
+  removed when AI interview sessions became multi-tab (the persisted row is the shared source
+  of truth; any tab may read and interact). They are retained, nullable and always NULL, only
+  because dropping them is an irreversible migration that would break any still-installed
+  older binary, whose upsert names `locked_by_tab`/`locked_at` explicitly. Drop them (plus
+  `idxAiSessionsLock`) in a later migration once no such binary can reach this database.
+  */
   lockedByTab: text("locked_by_tab"),
   lockedAt: text("locked_at"),
   archived: integer("archived").default(0),

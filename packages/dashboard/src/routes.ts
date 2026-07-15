@@ -39,7 +39,7 @@ import {
 } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { verifyWebhookSignature } from "./github-webhooks.js";
-import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
+import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession, normalizePlanningSummaryPayload } from "./planning.js";
 import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
 import { getMissionInterviewSession, cleanupMissionInterviewSession } from "./mission-interview.js";
@@ -1049,23 +1049,6 @@ function replayBufferedSSE(
   return true;
 }
 
-async function checkSessionLock(
-  sessionId: string,
-  tabId: string | undefined,
-  store: AiSessionStore | undefined,
-): Promise<{ allowed: true } | { allowed: false; currentHolder: string | null }> {
-  if (!tabId || !store) {
-    return { allowed: true };
-  }
-
-  const result = await store.acquireLock(sessionId, tabId);
-  if (result.acquired) {
-    return { allowed: true };
-  }
-
-  return { allowed: false, currentHolder: result.currentHolder };
-}
-
 /**
  * Public API route entrypoint used by server.ts.
  *
@@ -1164,7 +1147,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   registerPlanningSubtaskRoutes(routeContext, {
     store,
     aiSessionStore,
-    checkSessionLock,
     parseLastEventId,
     replayBufferedSSE,
   });
@@ -4211,79 +4193,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.json({ archived: Number(after?.archived ?? 0) === 1 });
   });
 
-  router.post("/ai-sessions/:id/lock", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const session = await aiSessionStore.get(id);
-    if (!session) {
-      throw notFound("Session not found");
-    }
-
-    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
-    if (!tabId) {
-      throw badRequest("tabId is required");
-    }
-
-    const result = await aiSessionStore.acquireLock(id, tabId);
-    if (!result.acquired) {
-      res.json({ acquired: false, currentHolder: result.currentHolder });
-      return;
-    }
-
-    res.json({ acquired: true });
-  });
-
-  router.delete("/ai-sessions/:id/lock", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
-    if (!tabId) {
-      throw badRequest("tabId is required");
-    }
-
-    await aiSessionStore.releaseLock(id, tabId);
-    res.json({ success: true });
-  });
-
-  router.post("/ai-sessions/:id/lock/force", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const session = await aiSessionStore.get(id);
-    if (!session) {
-      throw notFound("Session not found");
-    }
-
-    const tabId = typeof req.body?.tabId === "string" ? req.body.tabId.trim() : "";
-    if (!tabId) {
-      throw badRequest("tabId is required");
-    }
-
-    await aiSessionStore.forceAcquireLock(id, tabId);
-    res.json({ success: true });
-  });
-
-  router.delete("/ai-sessions/:id/lock/beacon", async (req, res) => {
-    if (!aiSessionStore) {
-      throw notFound("AI sessions not available");
-    }
-
-    const { id } = req.params;
-    const tabId = typeof req.query.tabId === "string" ? req.query.tabId.trim() : "";
-    if (tabId) {
-      await aiSessionStore.releaseLock(id, tabId);
-    }
-
-    res.status(200).end();
-  });
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  The /ai-sessions/:id/lock, /lock/force, and /lock/beacon endpoints were removed along with
+  the whole per-tab session-lock machinery. AI interview sessions (planning, subtask, mission,
+  milestone) are multi-tab: the persisted session row is the shared source of truth and any
+  tab may read and interact.
+  */
 
   /**
    * POST /api/ai-sessions/:id/ping

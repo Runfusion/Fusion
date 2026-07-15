@@ -994,16 +994,15 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
       if (!sessionId || typeof sessionId !== "string") throw badRequest("sessionId is required");
       if (!responses || typeof responses !== "object") throw badRequest("responses is required and must be an object");
 
-      const { respondToAgentOnboarding, getAgentOnboardingSummary, getAgentOnboardingSession } = await import("../agent-onboarding.js");
-      await respondToAgentOnboarding(sessionId, responses);
-      const summary = getAgentOnboardingSummary(sessionId);
-      if (summary) {
-        res.json({ type: "complete", data: summary });
-        return;
-      }
-      const session = getAgentOnboardingSession(sessionId);
-      if (!session?.currentQuestion) throw badRequest("Session did not produce a question");
-      res.json({ type: "question", data: session.currentQuestion });
+      /*
+      FNXC:AgentOnboarding 2026-07-14-18:20:
+      respondToAgentOnboarding now returns the Planning Mode-shaped respond contract, including a
+      successful question payload when generation fails after an answer (so this route no longer
+      400s with "Session did not produce a question" while SSE drives retry).
+      */
+      const { respondToAgentOnboarding } = await import("../agent-onboarding.js");
+      const result = await respondToAgentOnboarding(sessionId, responses);
+      res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       if (err instanceof Error && err.name === "SessionNotFoundError") throw notFound(err.message);

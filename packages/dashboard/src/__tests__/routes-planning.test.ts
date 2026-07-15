@@ -2255,7 +2255,6 @@ describe("Planning Mode Routes", () => {
                     status: storedSession.status,
                     title: storedSession.title,
                     projectId: storedSession.projectId,
-                    lockedByTab: null,
                     updatedAt: storedSession.updatedAt,
                     archived: false,
                   },
@@ -2628,7 +2627,8 @@ describe("Planning Mode Routes", () => {
         const planningSessionId = await createCompletedPlanningSession();
 
         // Precondition: the completed planning session is persisted as history.
-        const persistedBefore = mockStore.get(planningSessionId);
+        // FNXC:PostgresPlanningPersistence 2026-07-14-19:56: Session-store reads are asynchronous after the PostgreSQL cutover; await the history precondition instead of asserting against the Promise wrapper.
+        const persistedBefore = await mockStore.get(planningSessionId);
         expect(persistedBefore).not.toBeNull();
         expect(persistedBefore?.type).toBe("planning");
         expect(persistedBefore?.status).toBe("complete");
@@ -2661,7 +2661,7 @@ describe("Planning Mode Routes", () => {
 
         // Regression assertion: the completed planning session row must survive
         // task creation so it remains listable/restorable in history.
-        const persistedAfter = mockStore.get(planningSessionId);
+        const persistedAfter = await mockStore.get(planningSessionId);
         expect(persistedAfter).not.toBeNull();
         expect(persistedAfter?.type).toBe("planning");
         expect(persistedAfter?.status).toBe("complete");
@@ -3638,8 +3638,12 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(res.body.type).toBe("question");
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock aiSessionStore that returns conflict on acquire
+    /*
+    FNXC:PlanningMultiTab 2026-07-14-00:00:
+    Planning routes are lock-free: a lock held by another tab must never block a respond.
+    Multiple tabs read and interact with the same DB-backed session.
+    */
+    it("ignores tab locks — respond succeeds even when another tab holds the session lock", async () => {
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-a" }),
         releaseLock: vi.fn(),
@@ -3658,8 +3662,8 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(startRes.status).toBe(201);
       const sessionId = startRes.body.sessionId;
 
-      // Respond with conflicting tabId - mock returns conflict
-      const conflictRes = await REQUEST(
+      // A stale tabId from an old client must be ignored, not 409'd.
+      const res = await REQUEST(
         app,
         "POST",
         "/api/planning/respond",
@@ -3667,11 +3671,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-a",
-      });
+      expect(res.status).toBe(200);
+      expect(res.body.type).toBe("question");
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 
@@ -3688,8 +3690,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(retrySpy).toHaveBeenCalled();
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock that returns conflict
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning retry is lock-free; another tab's lock never 409s.
+    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
+      const retrySpy = vi.spyOn(planningModule, "retrySession").mockResolvedValue();
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-x" }),
         releaseLock: vi.fn(),
@@ -3697,7 +3700,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
 
       const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
 
-      const conflictRes = await REQUEST(
+      const res = await REQUEST(
         app,
         "POST",
         "/api/planning/session-locked-retry/retry",
@@ -3705,11 +3708,10 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-x",
-      });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, sessionId: "session-locked-retry" });
+      expect(retrySpy).toHaveBeenCalled();
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 
@@ -3752,8 +3754,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
       expect(retrySpy).toHaveBeenCalled();
     });
 
-    it("preserves lock-conflict 409 semantics when task-lane is saturated", async () => {
-      // Create mock that returns conflict
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: subtask retry is lock-free; another tab's lock never 409s.
+    it("ignores tab locks — retry succeeds even when another tab holds the session lock", async () => {
+      const retrySpy = vi.spyOn(subtaskBreakdownModule, "retrySubtaskSession").mockResolvedValue();
       const mockAiSessionStore = {
         acquireLock: vi.fn().mockReturnValue({ acquired: false, currentHolder: "tab-locked" }),
         releaseLock: vi.fn(),
@@ -3761,7 +3764,7 @@ describe("Saturated-slot regression: utility AI routes", () => {
 
       const { app } = buildSaturatedApp({ aiSessionStore: mockAiSessionStore });
 
-      const conflictRes = await REQUEST(
+      const res = await REQUEST(
         app,
         "POST",
         "/api/subtasks/subtask-locked-retry/retry",
@@ -3769,11 +3772,9 @@ describe("Saturated-slot regression: utility AI routes", () => {
         { "Content-Type": "application/json" },
       );
 
-      expect(conflictRes.status).toBe(409);
-      expect(conflictRes.body).toEqual({
-        error: "Session locked by another tab",
-        lockedByTab: "tab-locked",
-      });
+      expect(res.status).toBe(200);
+      expect(retrySpy).toHaveBeenCalled();
+      expect(mockAiSessionStore.acquireLock).not.toHaveBeenCalled();
     });
   });
 });

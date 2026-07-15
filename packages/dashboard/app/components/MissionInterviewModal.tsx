@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningQuestion, ThinkingLevel } from "@fusion/core";
 import { getErrorMessage, THINKING_LEVELS } from "@fusion/core";
@@ -42,16 +42,13 @@ import {
   Plus,
   Trash2,
   RefreshCw,
-  Lock,
   Minimize2,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FloatingWindow } from "./FloatingWindow";
-import { useSessionLock } from "../hooks/useSessionLock";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { getSessionTabId } from "../utils/getSessionTabId";
 import "./MissionInterviewModal.css";
 
 // Helper functions for model selection
@@ -137,23 +134,15 @@ export function MissionInterviewModal({
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const streamErrorRecoverySeqRef = useRef(0);
-  const trackedLockSessionRef = useRef<string | null>(null);
-  const [lockSessionId, setLockSessionId] = useState<string | null>(resumeSessionId ?? null);
-  const sessionTabId = useMemo(() => getSessionTabId(), []);
   const canSendToBackground = showSendToBackgroundButton && view.type !== "initial";
-  const {
-    isLockedByOther,
-    takeControl,
-    isLoading: isLockLoading,
-  } = useSessionLock(isOpen ? lockSessionId : null);
-  const {
-    activeTabMap,
-    broadcastUpdate,
-    broadcastCompleted,
-    broadcastLock,
-    broadcastUnlock,
-    broadcastHeartbeat,
-  } = useAiSessionSync();
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  No tab lock: the persisted session row is the shared source of truth, so every tab may read
+  and interact with this interview. The lock overlay, Take Control affordance, ownership
+  broadcasts, heartbeat, and the "active in another tab" banner were removed; only
+  session-status sync remains.
+  */
+  const { broadcastUpdate, broadcastCompleted } = useAiSessionSync();
 
   // Model selection state
   const [modelProvider, setModelProvider] = useState<string | undefined>(undefined);
@@ -236,7 +225,6 @@ export function MissionInterviewModal({
             sessionId,
             status: "generating",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: "mission_interview",
             title: missionGoal.trim() || undefined,
             projectId: projectId ?? null,
@@ -254,7 +242,6 @@ export function MissionInterviewModal({
             sessionId,
             status: "awaiting_input",
             needsInput: true,
-            owningTabId: sessionTabId,
             type: "mission_interview",
             title: missionGoal.trim() || undefined,
             projectId: projectId ?? null,
@@ -273,7 +260,6 @@ export function MissionInterviewModal({
             sessionId,
             status: "complete",
             needsInput: false,
-            owningTabId: sessionTabId,
             type: "mission_interview",
             title: missionGoal.trim() || undefined,
             projectId: projectId ?? null,
@@ -321,7 +307,6 @@ export function MissionInterviewModal({
               if (session?.type === "mission_interview") {
                 restoreHistoryFromSession(session);
                 currentSessionIdRef.current = session.id;
-                setLockSessionId(session.id);
                 setHasProgress(true);
 
                 if (session.status === "generating") {
@@ -358,8 +343,7 @@ export function MissionInterviewModal({
                     sessionId: session.id,
                     status: "complete",
                     needsInput: false,
-                    owningTabId: sessionTabId,
-                    type: "mission_interview",
+                            type: "mission_interview",
                     title: missionGoal.trim() || undefined,
                     projectId: projectId ?? null,
                   });
@@ -389,8 +373,7 @@ export function MissionInterviewModal({
               sessionId,
               status: "error",
               needsInput: false,
-              owningTabId: sessionTabId,
-              type: "mission_interview",
+                type: "mission_interview",
               title: missionGoal.trim() || undefined,
               projectId: projectId ?? null,
             });
@@ -410,7 +393,7 @@ export function MissionInterviewModal({
 
       streamConnectionRef.current = connection;
     },
-    [broadcastCompleted, broadcastUpdate, missionGoal, projectId, sessionTabId],
+    [broadcastCompleted, broadcastUpdate, missionGoal, projectId],
   );
 
   const handleStartInterview = useCallback(
@@ -433,7 +416,6 @@ export function MissionInterviewModal({
           modelOverride,
         );
         currentSessionIdRef.current = sessionId;
-        setLockSessionId(sessionId);
         clearMissionGoal(projectId);
 
         connectToMissionInterviewStream(sessionId);
@@ -443,7 +425,6 @@ export function MissionInterviewModal({
         setError(getErrorMessage(err) || "Failed to start interview session");
         setView({ type: "initial" });
         currentSessionIdRef.current = null;
-        setLockSessionId(null);
       }
     },
     [connectToMissionInterviewStream, missionGoal, modelProvider, modelId, thinkingLevel, projectId]
@@ -486,7 +467,6 @@ export function MissionInterviewModal({
       hasAutoStartedRef.current = false;
       setIsReconnecting(false);
       setIsRetrying(false);
-      setLockSessionId(null);
     }
   }, [isOpen]);
 
@@ -507,7 +487,6 @@ export function MissionInterviewModal({
       } catch {
         setThinkingLevel("");
       }
-      setLockSessionId(session.id);
       setResponseHistory(
         parsedHistory
           .map((entry) => entry.response)
@@ -564,59 +543,13 @@ export function MissionInterviewModal({
     };
   }, [connectToMissionInterviewStream, isOpen, resumeSessionId, view.type, projectId]);
 
-  // Broadcast ownership transitions between tabs.
-  useEffect(() => {
-    if (!isOpen) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
-      return;
-    }
-
-    if (lockSessionId && trackedLockSessionRef.current !== lockSessionId) {
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      }
-      broadcastLock(lockSessionId, sessionTabId);
-      trackedLockSessionRef.current = lockSessionId;
-      return;
-    }
-
-    if (!lockSessionId && trackedLockSessionRef.current) {
-      broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-      trackedLockSessionRef.current = null;
-    }
-  }, [broadcastLock, broadcastUnlock, isOpen, lockSessionId, sessionTabId]);
-
-  // Keep heartbeat alive while this tab owns an active mission interview session.
-  useEffect(() => {
-    if (!isOpen || !lockSessionId || trackedLockSessionRef.current !== lockSessionId) {
-      return;
-    }
-
-    broadcastHeartbeat(sessionTabId);
-    const timer = setInterval(() => {
-      broadcastHeartbeat(sessionTabId);
-    }, 30_000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [broadcastHeartbeat, isOpen, lockSessionId, sessionTabId]);
-
   // Cleanup stream on unmount
   useEffect(() => {
     return () => {
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
-
-      if (trackedLockSessionRef.current) {
-        broadcastUnlock(trackedLockSessionRef.current, sessionTabId);
-        trackedLockSessionRef.current = null;
-      }
     };
-  }, [broadcastUnlock, sessionTabId]);
+  }, []);
 
   // Unload protection
   useEffect(() => {
@@ -693,7 +626,7 @@ export function MissionInterviewModal({
 
       try {
         connectToMissionInterviewStream(sessionId);
-        await respondToMissionInterview(sessionId, responses, projectId, sessionTabId);
+        await respondToMissionInterview(sessionId, responses, projectId);
         setHasProgress(true);
       } catch (err) {
         streamConnectionRef.current?.close();
@@ -702,7 +635,7 @@ export function MissionInterviewModal({
         setView({ type: "question", sessionId, question: view.question });
       }
     },
-    [view, projectId, sessionTabId, connectToMissionInterviewStream]
+    [view, projectId, connectToMissionInterviewStream]
   );
 
   const handleRetryFromError = useCallback(async () => {
@@ -719,8 +652,7 @@ export function MissionInterviewModal({
 
     try {
       currentSessionIdRef.current = retrySessionId;
-      setLockSessionId(retrySessionId);
-      await retryMissionInterviewSession(retrySessionId, projectId, sessionTabId);
+      await retryMissionInterviewSession(retrySessionId, projectId);
     } catch (err) {
       let retryError: unknown = err;
       const retryErrorMessage = getErrorMessage(err) || "";
@@ -743,7 +675,6 @@ export function MissionInterviewModal({
           );
 
           currentSessionIdRef.current = session.id;
-          setLockSessionId(session.id);
           setHasProgress(true);
 
           if (session.status === "generating") {
@@ -796,7 +727,7 @@ export function MissionInterviewModal({
     } finally {
       setIsRetrying(false);
     }
-  }, [connectToMissionInterviewStream, projectId, sessionTabId, view]);
+  }, [connectToMissionInterviewStream, projectId, view]);
 
   const handleApprovePlan = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -823,7 +754,6 @@ export function MissionInterviewModal({
       setHasProgress(false);
       setIsCreating(false);
       currentSessionIdRef.current = null;
-      setLockSessionId(null);
       onClose();
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to create mission");
@@ -837,11 +767,6 @@ export function MissionInterviewModal({
     }
     return 6;
   };
-
-  const activeLockInfo = lockSessionId ? activeTabMap.get(lockSessionId) : null;
-  const activeRemoteTab = activeLockInfo && activeLockInfo.tabId !== sessionTabId;
-  const activeInAnotherTab = Boolean(activeRemoteTab && !activeLockInfo.stale);
-  const allowTakeover = isLockedByOther && (!activeRemoteTab || activeLockInfo.stale);
 
   if (!isOpen) return null;
 
@@ -859,7 +784,7 @@ export function MissionInterviewModal({
     >
       {/*
         FNXC:MissionInterviewModal 2026-06-24-00:00:
-        The Plan Mission with AI workspace must be draggable and resizable on desktop by delegating geometry to FloatingWindow, while mobile keeps the existing full-screen/sheet-like mission interview flow. Keep one embedded mission header so close/send-to-background/session-lock controls do not duplicate FloatingWindow chrome.
+        The Plan Mission with AI workspace must be draggable and resizable on desktop by delegating geometry to FloatingWindow, while mobile keeps the existing full-screen/sheet-like mission interview flow. Keep one embedded mission header so close/send-to-background controls do not duplicate FloatingWindow chrome.
       */}
       <div className="modal modal-lg planning-modal mission-interview-modal">
         <div className="modal-header mission-interview-modal__drag-handle">
@@ -887,11 +812,6 @@ export function MissionInterviewModal({
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
           {isReconnecting && <div className="form-hint text-muted">{t("missions.reconnecting", "Reconnecting…")}</div>}
-          {activeInAnotherTab && (
-            <div className="form-hint text-muted" data-testid="session-active-another-tab-banner">
-              {t("missions.sessionActiveAnother", "Session is active in another tab.")}
-            </div>
-          )}
 
           {view.type === "initial" && (
             <div className="planning-initial">
@@ -1092,7 +1012,6 @@ export function MissionInterviewModal({
                 setEditedSummary(null);
                 setResponseHistory([]);
                 setConversationHistory([]);
-                setLockSessionId(null);
                 streamConnectionRef.current?.close();
                 streamConnectionRef.current = null;
               }}
@@ -1100,30 +1019,6 @@ export function MissionInterviewModal({
             />
           )}
 
-          {isLockedByOther && (
-            <div className="session-lock-overlay" data-testid="session-lock-overlay">
-              <div className="session-lock-banner">
-                <Lock size={16} />
-                <span>
-                  {allowTakeover
-                    ? t("missions.sessionActiveTab", "This session is active in another tab")
-                    : t("missions.sessionActiveHeartbeat", "This session is active in another tab (live heartbeat)")}
-                </span>
-                {allowTakeover && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void takeControl();
-                    }}
-                    disabled={isLockLoading}
-                    className="btn btn-primary session-lock-take-control"
-                  >
-                    {isLockLoading ? t("missions.takingControl", "Taking control...") : t("missions.takeControl", "Take Control")}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </FloatingWindow>

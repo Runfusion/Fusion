@@ -679,33 +679,6 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   padding: var(--space-xs) var(--space-sm);
 }
 
-.session-lock-overlay {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 20%;
-  z-index: 10;
-  backdrop-filter: blur(2px);
-}
-
-.session-lock-banner {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: var(--space-lg) var(--space-xl);
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  box-shadow: var(--shadow-md);
-}
-
-.session-lock-take-control {
-  margin-left: auto;
-}
-
 /* Initial View */
 .planning-initial {
   display: flex;

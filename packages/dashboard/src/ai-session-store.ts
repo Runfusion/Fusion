@@ -26,11 +26,6 @@ import {
   updateThinkingAsync,
   archiveAiSession,
   unarchiveAiSession,
-  acquireAiSessionLock,
-  releaseAiSessionLock,
-  forceAcquireAiSessionLock,
-  getAiSessionLockHolder,
-  releaseStaleAiSessionLocks,
   deleteAiSession,
   deleteAiSessionByIdAndType,
   recoverStaleAiSessions,
@@ -58,8 +53,6 @@ export interface AiSessionRow {
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
-  lockedByTab: string | null;
-  lockedAt: string | null;
   /** 1 if archived (hidden from planning sidebar), 0 otherwise. */
   archived?: number;
 }
@@ -72,7 +65,6 @@ export interface AiSessionSummary {
   title: string;
   preview?: string;
   projectId: string | null;
-  lockedByTab: string | null;
   updatedAt: string;
   archived?: boolean;
 }
@@ -308,7 +300,6 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       status: row.status as AiSessionStatus,
       title: row.title as string,
       projectId: (row.projectId as string | null) ?? null,
-      lockedByTab: (row.lockedByTab as string | null) ?? null,
       updatedAt: row.updatedAt as string,
       archived: Number(row.archived ?? 0) === 1,
     }));
@@ -361,40 +352,17 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     return listRecoverableAiSessions(this.dbAsync, projectId) as Promise<AiSessionRow[]>;
   }
 
-  async acquireLock(sessionId: string, tabId: string): Promise<{ acquired: boolean; currentHolder: string | null }> {
-    const result = await acquireAiSessionLock(this.dbAsync, sessionId, tabId);
-    if (result.acquired) {
-      const row = await this.get(sessionId);
-      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-    return result;
-  }
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  acquireLock / releaseLock / forceAcquireLock / getLockHolder / releaseStaleLocks were removed
+  here with the rest of the per-tab session lock. AI interview sessions are multi-tab: this
+  persisted row is the shared source of truth and every tab may read and interact. See the dead
+  `lockedByTab`/`lockedAt` columns in core's project schema for why they still exist in the DB.
 
-  async releaseLock(sessionId: string, tabId: string): Promise<boolean> {
-    const released = await releaseAiSessionLock(this.dbAsync, sessionId, tabId);
-    if (released) {
-      const row = await this.get(sessionId);
-      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-    return released;
-  }
-
-  async forceAcquireLock(sessionId: string, tabId: string): Promise<void> {
-    const changed = await forceAcquireAiSessionLock(this.dbAsync, sessionId, tabId);
-    if (changed) {
-      const row = await this.get(sessionId);
-      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-    return;
-  }
-
-  async getLockHolder(sessionId: string): Promise<{ tabId: string | null; lockedAt: string | null }> {
-    return getAiSessionLockHolder(this.dbAsync, sessionId);
-  }
-
-  async releaseStaleLocks(maxAgeMs = 30 * 60 * 1000): Promise<number> {
-    return releaseStaleAiSessionLocks(this.dbAsync, maxAgeMs);
-  }
+  FNXC:PostgresConflictResolution 2026-07-14-19:47:
+  Preserve main's lock-free multi-tab contract while keeping AI-session persistence PostgreSQL-only.
+  Resolving the storage cutover must not restore the deleted lock API or SQLite summary fields.
+  */
 
   /**
    * Delete a session by ID. Emits `ai_session:deleted`.
@@ -473,14 +441,12 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     this.stopScheduledCleanup();
 
     const runCleanup = () => {
-      try {
-        this.cleanupStaleSessions(ttlMs);
-      } catch (error) {
+      void this.cleanupStaleSessions(ttlMs).catch((error) => {
         diagnostics.errorFromException("Scheduled cleanup failed", error, {
           ttlMs,
           operation: "scheduled-cleanup",
         });
-      }
+      });
     };
 
     this.cleanupTimer = setInterval(runCleanup, cleanupIntervalMs);
@@ -586,12 +552,9 @@ function toSidebarSummaryAsync(row: Record<string, unknown>): AiSessionSummary {
       projectId: (row.projectId as string | null) ?? null,
       createdAt: "",
       updatedAt: row.updatedAt as string,
-      lockedByTab: (row.lockedByTab as string | null) ?? null,
-      lockedAt: null,
       archived: typeof row.archived === "number" ? row.archived : 0,
     }),
     projectId: (row.projectId as string | null) ?? null,
-    lockedByTab: (row.lockedByTab as string | null) ?? null,
     updatedAt: row.updatedAt as string,
     archived: Number(row.archived ?? 0) === 1,
   };
@@ -605,18 +568,11 @@ function toSummary(session: AiSessionRow, updatedAt: string): AiSessionSummary {
     title: session.title,
     preview: extractDraftPreview(session),
     projectId: session.projectId,
-    lockedByTab: session.lockedByTab ?? null,
     updatedAt,
     archived: Number(session.archived ?? 0) === 1,
   };
 }
 
-/**
- * Lighter-weight summary builder for `listAll` rows that don't carry every
- * column of `AiSessionRow`. Keeps the same preview-derivation behavior as
- * `toSummary` (drafts only) without forcing the bulk-list query to SELECT
- * conversationHistory / thinkingOutput / etc.
- */
 function extractDraftPreview(session: AiSessionRow): string | undefined {
   if (session.type !== "planning" || session.status !== "draft") return undefined;
   if (!session.inputPayload) return undefined;

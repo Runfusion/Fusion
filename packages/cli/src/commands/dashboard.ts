@@ -984,9 +984,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // FNXC:PostgresCutover 2026-07-05-12:00: non-cwd project stores must boot
   // through the PostgreSQL startup factory; bare `new TaskStore` throws in
   // backend mode (SQLite runtime removed under VAL-REMOVAL-005). Stores are
-  // cached for the TUI process lifetime; pools are released at process exit.
+  // cached for the dashboard process lifetime and explicitly closed during
+  // dashboard disposal/shutdown.
   const projectStores = new Map<string, TaskStore>();
-  const projectStoreBackendShutdowns = new Map<string, () => Promise<void>>();
+  const projectStoreShutdowns = new Map<string, () => Promise<void>>();
+  let projectStoresClosePromise: Promise<void> | undefined;
   async function getProjectStore(projectPath: string): Promise<TaskStore> {
     const cached = projectStores.get(projectPath);
     if (cached) return cached;
@@ -997,10 +999,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     } else {
       const boot = await createTaskStoreForBackend({ rootDir: projectPath });
       projectStore = boot.taskStore;
-      projectStoreBackendShutdowns.set(projectPath, boot.shutdown);
+      projectStoreShutdowns.set(projectPath, boot.shutdown);
     }
     projectStores.set(projectPath, projectStore);
     return projectStore;
+  }
+  async function closeProjectStores(): Promise<void> {
+    projectStoresClosePromise ??= (async () => {
+      const stores = Array.from(projectStores.entries()).filter(([, projectStore]) => projectStore !== store);
+      projectStores.clear();
+      const shutdowns = new Map(projectStoreShutdowns);
+      projectStoreShutdowns.clear();
+      await Promise.allSettled(stores.map(async ([projectPath, projectStore]) => {
+        const shutdown = shutdowns.get(projectPath);
+        if (shutdown) {
+          await shutdown();
+        } else {
+          await projectStore.close();
+        }
+      }));
+    })();
+    await projectStoresClosePromise;
   }
 
   // ── U11: resolve per-task workflow column flags for the TUI (flag-ON only) ──
@@ -1146,17 +1165,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     handler: (...args: any[]) => void;
   }> = [];
   const disposeCallbacks: Array<() => Promise<void> | void> = [];
-  /*
-  FNXC:PostgresDashboardLifecycle 2026-07-14-18:05:
-  TUI per-project stores own independent startup-factory pools. Dispose every non-cwd boot exactly once; the main dashboard boot remains owned by dashboardBackendShutdown.
-  */
-  disposeCallbacks.push(async () => {
-    for (const [projectPath, backendShutdown] of projectStoreBackendShutdowns) {
-      projectStoreBackendShutdowns.delete(projectPath);
-      projectStores.delete(projectPath);
-      await backendShutdown().catch(() => undefined);
-    }
-  });
   let disposed = false;
   let shutdownInProgress = false;
 
@@ -1826,6 +1834,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   >();
   const getProjectScopedPluginSkills = async (rootDir: string, resolvedProjectStore?: TaskStore): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
     const normalizedRootDir = pathResolve(rootDir);
+    /*
+     * FNXC:PluginSkillsPostgres 2026-07-14-23:45:
+     * Skill discovery must use the backend-aware project store resolved by the
+     * dashboard route. Direct PluginStore/TaskStore construction enters the
+     * removed SQLite runtime under PostgreSQL (VAL-REMOVAL-005).
+     */
     const targetStore = resolvedProjectStore ?? (normalizedRootDir === pathResolve(store.getRootDir()) ? store : undefined);
     if (!targetStore) return [];
     const stateStore = targetStore.getPluginStore();
@@ -1860,7 +1874,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       const scopedPluginStore = targetStore.getPluginStore();
-      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: targetStore });
+      const scopedPluginLoader = new PluginLoader({
+        pluginStore: scopedPluginStore,
+        taskStore: targetStore,
+        persistRuntimeState: false,
+      });
       try {
         await scopedPluginStore.init();
         const { errors } = await scopedPluginLoader.loadAllPlugins();
@@ -1939,6 +1957,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       await dashboardBackendShutdown!().catch(() => undefined);
     });
   }
+  /*
+  FNXC:PostgresConflictResolution 2026-07-14-19:47:
+  Preserve main's project-store reuse while awaiting every factory-owned shutdown through dashboard's single disposal chain. PostgreSQL-only startup has no layerless fallback, and direct signal handlers must not close the same stores a second time.
+  */
+  disposeCallbacks.push(async () => {
+    await closeProjectStores();
+  });
 
   // ── createServer: deferred until engine is conditionally started ────
   //

@@ -42,6 +42,10 @@ const { mockSuperviseSpawn } = vi.hoisted(() => ({
   })),
 }));
 
+const { mockCreateSkillsAdapter } = vi.hoisted(() => ({
+  mockCreateSkillsAdapter: vi.fn().mockReturnValue(undefined),
+}));
+
 /*
 FNXC:SystemPanel 2026-07-12-14:35:
 Fake attached child for runDashboardSupervised: the supervisor now uses a
@@ -180,6 +184,7 @@ function makeMockStore() {
     updateTask: vi.fn().mockResolvedValue({}),
     getRootDir: vi.fn().mockReturnValue("/tmp/test"),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
+    getAsyncLayer: vi.fn().mockReturnValue(null),
     getGlobalSettingsStore: vi.fn(() => ({
       getSettings: mockGlobalSettingsGetSettings,
       updateSettings: mockGlobalSettingsUpdateSettings,
@@ -264,6 +269,8 @@ vi.mock("@fusion/core", async (importOriginal) => {
     return {
       loadPlugin: vi.fn().mockResolvedValue(undefined),
       loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
+      getPluginSkills: vi.fn().mockReturnValue([]),
+      stopAllPlugins: vi.fn().mockResolvedValue(undefined),
       stopPlugin: vi.fn().mockResolvedValue(undefined),
       reloadPlugin: vi.fn().mockResolvedValue(undefined),
       getPluginRoutes: vi.fn().mockReturnValue([]),
@@ -425,7 +432,7 @@ resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved
     getPrMergeStatus: mockGetPrMergeStatus,
     mergePr: mockMergePr,
   })),
-  createSkillsAdapter: vi.fn().mockReturnValue(undefined),
+  createSkillsAdapter: mockCreateSkillsAdapter,
   getCliPackageVersion: mockGetCliPackageVersion,
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
@@ -914,6 +921,54 @@ async function runDashboard(...args: Parameters<typeof runDashboardImpl>): Retur
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
+
+describe("runDashboard — project-scoped plugin skills", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reuses a backend-aware project store instead of constructing a SQLite PluginStore", async () => {
+    vi.stubEnv("FUSION_NO_EMBEDDED_PG", "1");
+    try {
+      const dashboard = await runDashboard(0, { open: false });
+
+      const adapterOptions = mockCreateSkillsAdapter.mock.calls.at(-1)?.[0] as
+        | { getPluginSkills?: (rootDir: string, resolvedProjectStore?: ReturnType<typeof makeMockStore>) => Promise<unknown[]> }
+        | undefined;
+      expect(adapterOptions?.getPluginSkills).toBeTypeOf("function");
+
+      const { PluginLoader, PluginStore, TaskStore } = await import("@fusion/core");
+      const scopedStore = makeMockStore();
+      vi.mocked(scopedStore.getPluginStore().listPlugins).mockResolvedValue([
+        { id: "enabled-plugin", updatedAt: "2026-07-14T00:00:00.000Z" },
+      ]);
+      const taskStoreConstructor = vi.mocked(TaskStore);
+      taskStoreConstructor.mockClear();
+      const pluginStoreConstructor = vi.mocked(PluginStore);
+      pluginStoreConstructor.mockClear();
+      const pluginLoaderConstructor = vi.mocked(PluginLoader);
+      pluginLoaderConstructor.mockClear();
+
+      await expect(adapterOptions!.getPluginSkills!("/tmp/other-project", scopedStore)).resolves.toEqual([]);
+      expect(pluginStoreConstructor).not.toHaveBeenCalled();
+      expect(taskStoreConstructor).not.toHaveBeenCalled();
+      expect(pluginLoaderConstructor).toHaveBeenCalledWith({
+        pluginStore: scopedStore.getPluginStore(),
+        taskStore: scopedStore,
+        persistRuntimeState: false,
+      });
+      const scopedPluginLoader = pluginLoaderConstructor.mock.results.at(-1)?.value as {
+        stopAllPlugins: ReturnType<typeof vi.fn>;
+      };
+      expect(scopedPluginLoader.stopAllPlugins).toHaveBeenCalledWith();
+
+      dashboard.dispose();
+      expect(scopedStore.close).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("runDashboard — startup model sync", () => {
   beforeEach(() => {

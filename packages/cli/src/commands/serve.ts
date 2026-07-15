@@ -868,7 +868,15 @@ export async function runServe(
       }
 
       const scopedPluginStore = targetStore.getPluginStore();
-      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: targetStore });
+      /*
+       * FNXC:PluginSkillsPostgres 2026-07-14-17:47:
+       * Request-scoped skill discovery is read-only across every CLI server surface. Loading and stopping plugins here must not rewrite durable runtime state for the target project.
+       */
+      const scopedPluginLoader = new PluginLoader({
+        pluginStore: scopedPluginStore,
+        taskStore: targetStore,
+        persistRuntimeState: false,
+      });
       try {
         await scopedPluginStore.init();
         const { errors } = await scopedPluginLoader.loadAllPlugins();

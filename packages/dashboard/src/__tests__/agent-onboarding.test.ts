@@ -509,6 +509,75 @@ describe("agent-onboarding", () => {
     );
   });
 
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Same invariant as Planning Mode's answered-question fix: once an answer is accepted the
+  session is no longer awaiting input. currentQuestion must clear immediately (so the SSE
+  catch-up path cannot re-emit the answered question) and retry after a failed turn must ask
+  the next question instead of re-asking the answered one.
+
+  FNXC:AgentOnboarding 2026-07-14-18:20:
+  Generation failure after an answer must still resolve a successful respond payload (the
+  answered question) instead of throwing — the route used to 400 with "Session did not produce
+  a question", which bounced the client out of SSE-driven retry.
+  */
+  it("clears the answered question during generation and retries with the next-question prompt", async () => {
+    const promptCalls: string[] = [];
+    const messages: Array<{ role: string; content: string }> = [];
+    const answeredQuestion = { id: "goal", type: "text" as const, question: "What is the agent's goal?" };
+    mockCreateFnAgent.mockResolvedValue({
+      session: {
+        state: { messages },
+        prompt: vi.fn(async (message: string) => {
+          promptCalls.push(message);
+          if (promptCalls.length === 1) {
+            messages.push({
+              role: "assistant",
+              content: JSON.stringify({
+                type: "question",
+                data: answeredQuestion,
+              }),
+            });
+            return;
+          }
+          if (promptCalls.length === 2) {
+            throw new Error("provider exploded");
+          }
+          messages.push({
+            role: "assistant",
+            content: JSON.stringify({
+              type: "question",
+              data: { id: "scope", type: "text", question: "What is in scope?" },
+            }),
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "answered-question invariant", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    await waitFor(() => Boolean(getAgentOnboardingSession(sessionId)?.currentQuestion));
+
+    const result = await respondToAgentOnboarding(sessionId, { goal: "Keep CI green" });
+
+    // Successful respond contract even on generation failure (Planning Mode parity).
+    expect(result).toEqual({ type: "question", data: answeredQuestion });
+
+    const session = getAgentOnboardingSession(sessionId);
+    expect(session?.error).toMatch(/provider exploded/);
+    // Regression: the answered question used to linger here and get re-emitted/re-asked.
+    expect(session?.currentQuestion).toBeUndefined();
+
+    await retryAgentOnboardingSession(sessionId);
+    expect(promptCalls[2]).toContain("ask the next best onboarding question");
+    expect(promptCalls[2]).not.toContain("continue from the last question");
+    expect(getAgentOnboardingSession(sessionId)?.currentQuestion?.id).toBe("scope");
+  });
+
   it("cancels session and subsequent access fails", async () => {
     mockCreateFnAgent.mockResolvedValueOnce(
       createMockAgent([
