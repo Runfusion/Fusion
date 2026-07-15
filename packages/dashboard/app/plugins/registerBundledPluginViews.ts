@@ -81,6 +81,23 @@ async function loadLinearImportView(): Promise<{ default: PluginViewComponent }>
   return { default: component as PluginViewComponent };
 }
 
+/*
+FNXC:Quality 2026-07-14-21:50:
+Static host registry for Quality hub. Literal import() so Vite can code-split;
+do not use @vite-ignore (reports footgun).
+*/
+async function loadQualityView(): Promise<{ default: PluginViewComponent }> {
+  const moduleId = "@fusion-plugin-examples/quality/dashboard-view";
+  const exportName = "QualityDashboardView";
+  const mod = await import("@fusion-plugin-examples/quality/dashboard-view") as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
+  const component = mod[exportName];
+  if (!component) {
+    console.warn(`[plugin-views] Missing export ${exportName} from ${moduleId}`);
+    return { default: createMissingPluginView(moduleId, exportName) };
+  }
+  return { default: component as PluginViewComponent };
+}
+
 export function registerBundledPluginViews(): void {
   if (registered) return;
   registered = true;
@@ -113,6 +130,12 @@ export function registerBundledPluginViews(): void {
     "fusion-plugin-linear-import",
     "linear-import",
     lazy(loadLinearImportView),
+  );
+
+  registerPluginView(
+    "fusion-plugin-quality",
+    "quality",
+    lazy(loadQualityView),
   );
 }
 
