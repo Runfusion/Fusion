@@ -13,6 +13,7 @@
  *   - Graceful shutdown of all engines via `stopAll()`
  */
 
+import { resolve as pathResolve } from "node:path";
 import type {
   CentralCore,
   TaskStore,
@@ -47,8 +48,16 @@ export interface EngineManagerOptions {
   prReconcileGithubOps?: ProjectEngineOptions["prReconcileGithubOps"];
   getTaskMergeBlocker?: ProjectEngineOptions["getTaskMergeBlocker"];
   onInsightRunProcessed?: ProjectEngineOptions["onInsightRunProcessed"];
-  // FNXC:SqliteFinalRemoval 2026-06-26-11:20: shared TaskStore from the central
-  // backend boot so all engines reuse one connection pool (no second embedded PG).
+  /**
+   * FNXC:SqliteFinalRemoval 2026-06-26-11:20: shared TaskStore from the central
+   * backend boot so engines reuse one connection pool (no second embedded PG).
+   *
+   * FNXC:FasterStartup 2026-07-14-23:55:
+   * Inject only for the project whose resolved working directory matches this
+   * store's rootDir. Multi-project engines must factory-boot (or receive) their
+   * own bound store — a cwd-partitioned TaskStore must never back a different
+   * project root. Callers may still pass per-call overrides via ensureEngine.
+   */
   externalTaskStore?: ProjectEngineOptions["externalTaskStore"];
 }
 
@@ -469,7 +478,7 @@ export class ProjectEngineManager {
     }
 
     const runtimeConfig = await this.buildRuntimeConfig(project);
-    const engineOptions = this.buildEngineOptions(project, overrides);
+    const engineOptions = this.buildEngineOptions(project, runtimeConfig.workingDirectory, overrides);
 
     // Acquire the per-machine singleton guard before spinning up any engine
     // subsystems. This prevents two fusion processes from running engines for
@@ -548,8 +557,20 @@ export class ProjectEngineManager {
 
   private buildEngineOptions(
     project: RegisteredProject,
+    workingDirectory: string,
     overrides?: Partial<ProjectEngineOptions>,
   ): ProjectEngineOptions {
+    /*
+    FNXC:FasterStartup 2026-07-14-23:55:
+    Share the CLI-booted TaskStore only when the engine's working directory is
+    the same project root as the store. Path equality uses path.resolve so
+    trailing-slash / relative differences do not double-boot the cwd engine.
+    */
+    const sharedStore = this.options.externalTaskStore;
+    const shareForThisProject = Boolean(
+      sharedStore
+      && pathResolve(sharedStore.getRootDir()) === pathResolve(workingDirectory),
+    );
     return {
       projectId: project.id,
       cliPackageVersion: this.options.cliPackageVersion,
@@ -561,10 +582,7 @@ export class ProjectEngineManager {
       prReconcileGithubOps: this.options.prReconcileGithubOps,
       getTaskMergeBlocker: this.options.getTaskMergeBlocker,
       onInsightRunProcessed: this.options.onInsightRunProcessed,
-      // FNXC:SqliteFinalRemoval 2026-06-26-11:20: forward the shared external
-      // TaskStore so engines reuse the central boot's connection pool instead
-      // of starting a second embedded PostgreSQL on the same data dir.
-      ...(this.options.externalTaskStore ? { externalTaskStore: this.options.externalTaskStore } : {}),
+      ...(shareForThisProject && sharedStore ? { externalTaskStore: sharedStore } : {}),
       ...overrides,
     };
   }

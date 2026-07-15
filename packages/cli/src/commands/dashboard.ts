@@ -108,6 +108,7 @@ import { registerCustomProviders, reregisterCustomProviders } from "./custom-pro
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 import { DASHBOARD_STARTUP_STATUS, runTuiStartupPrelude } from "./dashboard-startup-chain.js";
+import { phaseTime } from "../startup-phase.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
@@ -885,7 +886,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // existing store.close() (which closes the AsyncDataLayer) plus the
   // dashboardBackendShutdown
   // registered below for embedded-cluster teardown.
-  const dashboardBackendBoot = await createTaskStoreForBackend({ rootDir: cwd });
+  /*
+  FNXC:FasterStartup 2026-07-14-23:55:
+  Phase timing is permanent and cheap. Factory wall time (embedded PG, schema,
+  optional SQLite migrate) is the first large bucket after the PostgreSQL cutover.
+  */
+  const logPhase = (message: string, scope = "dashboard") => logSink.log(message, scope);
+  const dashboardBackendBoot = await phaseTime(
+    "backend.factory",
+    () => createTaskStoreForBackend({ rootDir: cwd }),
+    logPhase,
+  );
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Dashboard runtime storage is
   // PostgreSQL-only; factory failure is surfaced instead of creating a dead store.
   store = dashboardBackendBoot.taskStore;
@@ -926,42 +937,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       })()
     : undefined;
 
-  // Phase timing instrumentation — each step logs its wall-clock duration so
-  // we can see at-a-glance which startup phase is the actual bottleneck.
-  // Cheap enough (microsecond reads, one log per phase) to leave on
-  // permanently; lands in the dashboard log buffer and can be diffed across
-  // restarts to spot regressions.
-  const phaseTime = async <T>(label: string, fn: () => Promise<T> | T): Promise<T> => {
-    const t0 = Date.now();
-    try {
-      return await fn();
-    } finally {
-      logSink.log(`startup phase ${label}: ${Date.now() - t0}ms`, "dashboard");
-    }
-  };
-
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Initialize the PostgreSQL-backed
-  // store and satellite adapters in dependency order so each receives the live
-  // AsyncDataLayer before watchers and engines begin dispatching work.
-  await phaseTime("store.init", () => store.init());
-  await phaseTime("automationStore.init", () => automationStore.init());
+  // store and satellite adapters so each receives the live AsyncDataLayer before
+  // watchers and engines begin dispatching work.
+  /*
+  FNXC:FasterStartup 2026-07-14-23:55:
+  After store.init(), automation / plugin / agent satellite inits are independent
+  of each other and run in parallel. watch() still follows so filesystem events
+  do not race half-initialized satellites.
+  */
+  await phaseTime("store.init", () => store.init(), logPhase);
   const pluginStore = store.getPluginStore();
-  await phaseTime("pluginStore.init", () => pluginStore.init());
-
-  // FNXC:PhysicalDeleteSqliteClass 2026-06-26-15:10:
-  // Propagate the backend mode (asyncLayer) from the resolved TaskStore so
-  // AgentStore does not construct a SQLite file under PostgreSQL. Without
-  // this, AgentStore falls into the legacy SQLite path in backend mode and
-  // throws "SQLite Database is not available in backend mode" the first time
-  // any getter touches `this.db`. Mirrors the AutomationStore fix on line ~893
-  // (VAL-CROSS-008 dashboard boot on embedded PostgreSQL). The `?? undefined`
-  // coerces `AsyncDataLayer | null` to the optional option shape.
   agentStore = new AgentStore({ rootDir: store.getFusionDir(), asyncLayer: dashboardLayer });
   if (tui) tui.setLoadingStatus(DASHBOARD_STARTUP_STATUS.initializingAgentStore);
-  await phaseTime("agentStore.init", () => agentStore!.init());
+  await phaseTime("satellites.init", () => Promise.all([
+    automationStore.init(),
+    pluginStore.init(),
+    agentStore!.init(),
+  ]), logPhase);
   // store.watch() is filesystem-watcher setup — no DB schema work, safe to
   // overlap with anything coming after.
-  await phaseTime("store.watch", () => store.watch());
+  await phaseTime("store.watch", () => store.watch(), logPhase);
   if (tui) tui.setLoadingStatus(DASHBOARD_STARTUP_STATUS.startingAgents);
 
   // Set up database health check for diagnostics
@@ -1667,64 +1663,50 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       agentDir,
       settingsManager: createReadOnlyProviderSettingsView(cwd, agentDir) as unknown as SettingsManager,
     });
-    const resolvedPaths = await phaseTime("packageManager.resolve", () => packageManager!.resolve());
+    const resolvedPaths = await phaseTime("packageManager.resolve", () => packageManager!.resolve(), logPhase);
     const packageExtensionPaths = resolvedPaths.extensions
       .filter((r) => r.enabled)
       .map((r) => r.path);
 
-    const claudeCliPaths = await (async () => {
-      try {
-        const globalSettings = await store.getGlobalSettingsStore().getSettings();
-        const result = resolveClaudeCliExtensionPaths(globalSettings);
-        setCachedClaudeCliResolution(result.resolution);
-        if (result.warning) {
-          console.warn(`[extensions] pi-claude-cli: ${result.warning}`);
-        }
-        return result.paths;
-      } catch (err) {
-        console.warn(
-          `[extensions] Unable to evaluate useClaudeCli setting: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        setCachedClaudeCliResolution(null);
-        return [];
+    /*
+    FNXC:FasterStartup 2026-07-14-23:55:
+    Claude / Droid / Llama extension toggles all read the same global settings
+    document. One getSettings() replaces three sequential store reads on the
+    dashboard extension critical path.
+    */
+    let claudeCliPaths: string[] = [];
+    let droidCliPaths: string[] = [];
+    let llamaCppPaths: string[] = [];
+    try {
+      const globalSettings = await store.getGlobalSettingsStore().getSettings();
+      const claude = resolveClaudeCliExtensionPaths(globalSettings);
+      setCachedClaudeCliResolution(claude.resolution);
+      if (claude.warning) {
+        console.warn(`[extensions] pi-claude-cli: ${claude.warning}`);
       }
-    })();
+      claudeCliPaths = claude.paths;
 
-    const droidCliPaths = await (async () => {
-      try {
-        const globalSettings = await store.getGlobalSettingsStore().getSettings();
-        const result = resolveDroidCliExtensionPaths(globalSettings);
-        setCachedDroidCliResolution(result.resolution);
-        if (result.warning) {
-          console.warn(`[extensions] droid-cli: ${result.warning}`);
-        }
-        return result.paths;
-      } catch (err) {
-        console.warn(
-          `[extensions] Unable to evaluate useDroidCli setting: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        setCachedDroidCliResolution(null);
-        return [];
+      const droid = resolveDroidCliExtensionPaths(globalSettings);
+      setCachedDroidCliResolution(droid.resolution);
+      if (droid.warning) {
+        console.warn(`[extensions] droid-cli: ${droid.warning}`);
       }
-    })();
+      droidCliPaths = droid.paths;
 
-    const llamaCppPaths = await (async () => {
-      try {
-        const globalSettings = await store.getGlobalSettingsStore().getSettings();
-        const result = resolveLlamaCppExtensionPaths(globalSettings);
-        setCachedLlamaCppResolution(result.resolution);
-        if (result.warning) {
-          console.warn(`[extensions] llama-cpp: ${result.warning}`);
-        }
-        return result.paths;
-      } catch (err) {
-        console.warn(
-          `[extensions] Unable to evaluate useLlamaCpp setting: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        setCachedLlamaCppResolution(null);
-        return [];
+      const llama = resolveLlamaCppExtensionPaths(globalSettings);
+      setCachedLlamaCppResolution(llama.resolution);
+      if (llama.warning) {
+        console.warn(`[extensions] llama-cpp: ${llama.warning}`);
       }
-    })();
+      llamaCppPaths = llama.paths;
+    } catch (err) {
+      console.warn(
+        `[extensions] Unable to evaluate CLI extension settings: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      setCachedClaudeCliResolution(null);
+      setCachedDroidCliResolution(null);
+      setCachedLlamaCppResolution(null);
+    }
 
     // Always inject the cli's own extension (`@runfusion/fusion`) so its
     // `fn_*` tools register globally even when the user hasn't run
@@ -1752,7 +1734,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       ],
       cwd,
       join(cwd, ".fusion", "disabled-auto-extension-discovery"),
-    ));
+    ), logPhase);
 
     for (const { path, error } of extensionsResult.errors) {
       logSink.log(`Failed to load ${path}: ${error}`, "extensions");
@@ -1984,7 +1966,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     //
     const githubClient = new GitHubClient();
 
-    const centralCoreForEngine = await phaseTime("centralCore.init (await)", () => centralCoreInitPromise!);
+    const centralCoreForEngine = await phaseTime("centralCore.init (await)", () => centralCoreInitPromise!, logPhase);
 
     try {
       registerGithubTrackingHook?.();
@@ -1995,6 +1977,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const resolvedCliPackageVersion = getCliPackageVersion(import.meta.url);
     const cliPackageVersion = isUnresolvedCliPackageVersion(resolvedCliPackageVersion) ? undefined : resolvedCliPackageVersion;
 
+    /*
+    FNXC:FasterStartup 2026-07-14-23:55:
+    Serve parity: inject the dashboard-booted TaskStore so ensureEngine(cwd)
+    reuses the same PostgreSQL pool instead of factory-booting a second store.
+    ProjectEngineManager only applies this store when the project's working
+    directory matches the store root (multi-project safety).
+    */
     const engineManager = new ProjectEngineManager(centralCoreForEngine, {
       cliPackageVersion,
       getMergeStrategy,
@@ -2005,6 +1994,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       prNodeGithubOps: createPrNodeGithubOps(githubClient),
       prReconcileGithubOps: createPrReconcileGithubOps(githubClient),
       getTaskMergeBlocker,
+      externalTaskStore: store,
     });
 
     // Start engines for all registered projects in the background. The
@@ -2069,7 +2059,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           logSink.warn(`Failed to start peer exchange service: ${message}`, "dashboard");
         }
       })(),
-    ]));
+    ]), logPhase);
 
     logSink.log(
       `hybrid executor gate: enabled=${hybridGate.enabled} reason=${hybridGate.reason}`,
@@ -2084,7 +2074,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           const x = new HybridExecutor(centralCoreForEngine);
           await x.initialize();
           return x;
-        });
+        }, logPhase);
         hybridExecutor = he;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -2109,13 +2099,19 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // duplicate-runtime issue that previously made this 7s+ is gone (see
     // hybrid-executor-gate change), so warmup typically runs in ~3-5s with
     // engineManager.startAll() already in flight in parallel.
+    //
+    // FNXC:FasterStartup 2026-07-14-23:55: Do not reintroduce Promise.race with
+    // a deadline. Defer non-route-critical work inside ProjectEngine.start instead.
     const cwdEngine = cwdRegistered
-      ? await phaseTime("engine: ensureEngine(cwd)", () =>
-          engineManager.ensureEngine(cwdRegistered.id).catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            logSink.warn(`Failed to warm cwd project engine: ${message}`, "engine");
-            return undefined;
-          }),
+      ? await phaseTime(
+          "engine: ensureEngine(cwd)",
+          () =>
+            engineManager.ensureEngine(cwdRegistered.id).catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              logSink.warn(`Failed to warm cwd project engine: ${message}`, "engine");
+              return undefined;
+            }),
+          logPhase,
         )
       : undefined;
 
@@ -2138,7 +2134,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     // Ensure plugin loading has completed before pluginLoader is handed off
     // to createServer — routes derived from getPluginRoutes() rely on it.
-    await phaseTime("pluginLoadingPromise (await)", () => pluginLoadingPromise);
+    await phaseTime("pluginLoadingPromise (await)", () => pluginLoadingPromise, logPhase);
 
     // ── CLI Agent Executor: hub resolver + session transport ─────────────
     //
@@ -2479,7 +2475,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
     // Ensure plugin loading has completed before pluginLoader is handed off
     // to createServer — routes derived from getPluginRoutes() rely on it.
-    await phaseTime("pluginLoadingPromise (await)", () => pluginLoadingPromise);
+    await phaseTime("pluginLoadingPromise (await)", () => pluginLoadingPromise, logPhase);
 
     // UI-only mode: no engine, pass individual proxy objects to createServer.
     //
