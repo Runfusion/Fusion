@@ -770,6 +770,9 @@ Bundled workspace plugin pattern:
 <!-- FNXC:BundledPlugins 2026-07-13-00:00: FN-7936 requires `@runfusion/fusion` bundled plugin backend outputs to be install-self-contained. The CLI bundler resolves plugin-sdk runtime re-exports from `@fusion/core` through `plugin-sdk-core-runtime-shim.ts`, so `packages/cli/dist/plugins/<id>/bundled.js` must not ship private `@fusion/*` runtime specifiers that npm installs cannot resolve. -->
 Bundled `bundled.js` outputs must be self-contained at runtime. Do not leave private workspace package imports such as `@fusion/core` in emitted bundled plugin code; `@fusion/plugin-sdk` core runtime re-exports are resolved through the CLI runtime shim during packaging.
 
+<!-- FNXC:BundledPlugins 2026-07-14-12:00: FN-7955 requires runtime-read bundled plugin assets to be self-contained too. esbuild only inlines statically imported code, so package-local files read from disk, including Compound Engineering `src/skills/<id>/SKILL.md` bodies, must be copied by `bundlePluginEntry()` into the matching `packages/cli/dist/plugins/<id>/skills/` tree before publishing. -->
+If a bundled plugin reads package-local files at runtime, stage those assets explicitly during CLI packaging. `bundlePluginEntry()` copies any committed `src/skills/` directory into `dist/plugins/<id>/skills/`; use the same pattern for similar runtime-read assets instead of assuming esbuild will include files that are never imported.
+
 ### Bundled plugin build-freshness guard
 
 <!-- FNXC:BundledPlugins 2026-06-17-22:31: Bundled plugins can load gitignored compiled artifacts before source during workspace/dev resolution, so plugin authors need a documented recovery path when the generic freshness guard detects stale dist output. -->

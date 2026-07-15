@@ -196,6 +196,20 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     logLevel: "warning",
   });
 
+  const skillsSourceDir = join(srcDir, "src", "skills");
+  if (existsSync(skillsSourceDir)) {
+    const skillsDestDir = join(destDir, "skills");
+    /*
+     * FNXC:BundledPlugins 2026-07-14-12:00:
+     * FN-7955 / issue #2094 requires plugin-local runtime-read assets to ship with @runfusion/fusion. esbuild bundle:true only inlines statically imported JS/TS, so files read from disk through resolveBundledSkillsRoot() or PluginSkillContribution.skillFiles, such as nested SKILL.md files under src/skills, must be explicitly staged into dist/plugins/<id>/skills/ or the published npm tarball silently contains zero skill bodies.
+     */
+    cpSync(skillsSourceDir, skillsDestDir, { recursive: true });
+    if (!existsSync(skillsDestDir)) {
+      throw new Error(`[tsup] Missing staged skills for ${pluginId}: expected ${skillsDestDir}`);
+    }
+    console.log(`Staged plugin skills for ${pluginId} to dist/plugins/${pluginId}/skills`);
+  }
+
   if (withMcpAsset) {
     const mcpServerAsset = join(srcDir, "src", "mcp-schema-server.cjs");
     if (!existsSync(mcpServerAsset)) {
