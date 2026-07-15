@@ -198,6 +198,47 @@ vi.mock("../FileBrowser", () => ({
 describe("SettingsModal", () => {
   installSettingsModalEnv();
 
+  const deepwikiServer = {
+    name: "deepwiki",
+    transport: "stdio" as const,
+    command: "npx",
+    args: ["-y", "mcp-remote", "https://mcp.deepwiki.com/sse"],
+  };
+
+  it("binds Global MCP controls to raw global settings instead of the merged project value", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      mcpServers: { enabled: true, servers: [deepwikiServer] },
+    });
+    mockFetchSettingsByScope.mockResolvedValue({
+      global: { ...defaultSettings, mcpServers: { enabled: false, servers: [] } },
+      project: { mcpServers: { enabled: true, servers: [deepwikiServer] } },
+    });
+
+    renderModal({ initialSection: "global-mcp", projectId: "proj-1" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i })).not.toBeChecked();
+    expect(screen.queryByTestId("mcp-server-row-deepwiki")).not.toBeInTheDocument();
+  });
+
+  it("binds Project MCP controls to raw project settings", async () => {
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      mcpServers: { enabled: true, servers: [deepwikiServer] },
+    });
+    mockFetchSettingsByScope.mockResolvedValue({
+      global: { ...defaultSettings, mcpServers: { enabled: false, servers: [] } },
+      project: { mcpServers: { enabled: true, servers: [deepwikiServer] } },
+    });
+
+    renderModal({ initialSection: "mcp", projectId: "proj-1" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i })).toBeChecked();
+    expect(await screen.findByTestId("mcp-server-row-deepwiki")).toHaveTextContent("project local");
+  });
+
   it("applies keyboard CSS variables when mobile keyboard is open", async () => {
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOpen: true,

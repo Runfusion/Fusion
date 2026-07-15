@@ -15,7 +15,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
-import { splitSettingsSave, MODEL_LANE_KEYS } from "../components/settings/save-split";
+import { resolveScopedMcpSettings, splitSettingsSave, MODEL_LANE_KEYS } from "../components/settings/save-split";
 
 // Sanity-anchor the scope of the concrete keys this test relies on, so the
 // assertions below remain meaningful if core's catalog ever shifts.
@@ -44,6 +44,29 @@ describe("scope anchors", () => {
     for (const key of MODEL_LANE_KEYS) {
       expect(isProjectSettingsKey(key)).toBe(true);
     }
+  });
+});
+
+describe("resolveScopedMcpSettings", () => {
+  const globalServer = { name: "global-docs", transport: "stdio", command: "global-mcp" } as const;
+  const projectServer = { name: "deepwiki", transport: "stdio", command: "project-mcp" } as const;
+  const scopedSettings = {
+    global: { mcpServers: { enabled: false, servers: [globalServer] } },
+    project: { mcpServers: { enabled: true, servers: [projectServer] } },
+  } as never;
+
+  it("shows raw global MCP state instead of the merged project-effective state", () => {
+    expect(resolveScopedMcpSettings("global", scopedSettings)).toEqual({
+      enabled: false,
+      servers: [globalServer],
+    });
+  });
+
+  it("shows raw project MCP state without duplicating inherited global servers", () => {
+    expect(resolveScopedMcpSettings("project", scopedSettings)).toEqual({
+      enabled: true,
+      servers: [projectServer],
+    });
   });
 });
 

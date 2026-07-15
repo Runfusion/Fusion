@@ -26,7 +26,7 @@
  * the actual `updateGlobalSettings`/`updateSettings` writes.
  */
 import { isGlobalSettingsKey, isProjectSettingsKey } from "@fusion/core";
-import type { GlobalSettings, Settings } from "@fusion/core";
+import type { GlobalSettings, McpServersSettings, Settings } from "@fusion/core";
 
 /**
  * Project-scoped model-override keys whose overrides track inheritance
@@ -232,6 +232,30 @@ export interface SaveSplitInput {
 export interface SaveSplitResult {
   globalPatch: Partial<GlobalSettings>;
   projectPatch: Partial<Settings>;
+}
+
+export type McpSettingsScope = "global" | "project";
+export type ScopedSettingsValues = { global: GlobalSettings; project: Partial<Settings> };
+
+/**
+ * Return the raw MCP value owned by one settings scope.
+ *
+ * SettingsModal's general form is project-effective, so reading `form.mcpServers`
+ * from the Global MCP section can incorrectly render a project override as a
+ * global value. MCP is intentionally dual-scoped; its editor must bind to the
+ * raw scoped values returned by `/api/settings/scopes`.
+ */
+export function resolveScopedMcpSettings(
+  scope: McpSettingsScope,
+  scopedSettings: ScopedSettingsValues | null,
+): McpServersSettings {
+  const value = scope === "global"
+    ? scopedSettings?.global.mcpServers
+    : scopedSettings?.project.mcpServers;
+  return {
+    enabled: value?.enabled === true,
+    servers: Array.isArray(value?.servers) ? value.servers : [],
+  };
 }
 
 function hasOwn(obj: object | null | undefined, key: string): boolean {

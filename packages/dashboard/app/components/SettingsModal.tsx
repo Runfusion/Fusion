@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import { Globe, Folder, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
   getErrorMessage,
@@ -10,7 +10,7 @@ import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } fro
 import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
-import { splitSettingsSave } from "./settings/save-split";
+import { resolveScopedMcpSettings, splitSettingsSave, type McpSettingsScope } from "./settings/save-split";
 import {
   ALL_PROJECT_RESET_KEYS,
   getResetIneligibleReason,
@@ -1045,6 +1045,30 @@ export function SettingsModal({
   const [globalGitlabSettings, setGlobalGitlabSettings] = useState<GlobalGitlabSettings | null>(null);
   // Track initial scoped values for null-as-delete semantics on project overrides
   const [initialScopedValues, setInitialScopedValues] = useState<{ global: GlobalSettings; project: Partial<Settings> } | null>(null);
+  const mcpFormForScope = useCallback((scope: McpSettingsScope): Settings => ({
+    ...form,
+    mcpServers: resolveScopedMcpSettings(scope, scopedSettings),
+  }), [form, scopedSettings]);
+  const setMcpFormForScope = useCallback((scope: McpSettingsScope): Dispatch<SetStateAction<Settings>> => (update) => {
+    setScopedSettings((current) => {
+      if (!current) return current;
+      const currentForm = {
+        ...form,
+        mcpServers: resolveScopedMcpSettings(scope, current),
+      };
+      const nextForm = typeof update === "function" ? update(currentForm) : update;
+      if (scope === "global") {
+        return {
+          ...current,
+          global: { ...current.global, mcpServers: nextForm.mcpServers },
+        };
+      }
+      return {
+        ...current,
+        project: { ...current.project, mcpServers: nextForm.mcpServers },
+      };
+    });
+  }, [form]);
   // Find the first non-group-header section for visibility fallback handling
   const firstNonHeaderSection = SETTINGS_SECTIONS.find((s) => !s.isGroupHeader);
   const [activeSection, setActiveSection] = useState<SectionId>(() => {
@@ -3079,6 +3103,11 @@ export function SettingsModal({
         worktreeCopyFiles: normalizedWorktreeCopyFiles.length > 0 || initialScopedValues?.project?.worktreeCopyFiles !== undefined
           ? normalizedWorktreeCopyFiles
           : undefined,
+        mcpServers: activeSection === "global-mcp"
+          ? resolveScopedMcpSettings("global", scopedSettings)
+          : activeSection === "mcp"
+            ? resolveScopedMcpSettings("project", scopedSettings)
+            : form.mcpServers,
         experimentalFeatures: normalizeExperimentalFeaturesForSave(form.experimentalFeatures),
       };
 
@@ -3133,7 +3162,7 @@ export function SettingsModal({
     } finally {
       setIsSaving(false);
     }
-  }, [form, globalGitlabSettings, globalMaxConcurrent, prefixError, presetDraft, initialValues, initialScopedValues, onClose, addToast, projectId, activeSection, isSaving, t]);
+  }, [form, globalGitlabSettings, globalMaxConcurrent, prefixError, presetDraft, initialValues, initialScopedValues, scopedSettings, onClose, addToast, projectId, activeSection, isSaving, t]);
 
   /*
   FNXC:SettingsReset 2026-07-04-00:25:
@@ -3505,8 +3534,8 @@ export function SettingsModal({
         return (
           <GlobalMcpSection
             scopeBanner={renderScopeBanner()}
-            form={form}
-            setForm={setForm}
+            form={mcpFormForScope("global")}
+            setForm={setMcpFormForScope("global")}
             projectId={projectId}
             addToast={addToast}
           />
@@ -3515,8 +3544,8 @@ export function SettingsModal({
         return (
           <ProjectMcpSection
             scopeBanner={renderScopeBanner()}
-            form={form}
-            setForm={setForm}
+            form={mcpFormForScope("project")}
+            setForm={setMcpFormForScope("project")}
             globalSettings={scopedSettings?.global ?? null}
             projectId={projectId}
             addToast={addToast}
