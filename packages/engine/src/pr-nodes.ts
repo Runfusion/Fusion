@@ -216,6 +216,11 @@ export function buildRespondCallback(
   getStore: () => PrNodeStore,
   ops: PrRespondGithubOps,
   audit?: PrNodeDeps["audit"],
+  /*
+   * FNXC:GrokCliRouting 2026-07-15-09:58:
+   * Forward the engine PluginRunner into the PR-response agent runner so grok-cli/no-key models use the same plugin-runtime path as chat/executor/merge.
+   */
+  pluginRunner?: import("./plugin-runner.js").PluginRunner,
 ): NonNullable<PrNodeDeps["respond"]> {
   const gitOps = makePrResponseGitOps(ops.getCwd);
   return async ({ entity }) => {
@@ -243,7 +248,7 @@ export function buildRespondCallback(
 
     const taskId = ops.getTaskId(entity);
     const cwd = ops.getCwd(entity);
-    const runAgent = makePrResponseAgentRunner(settings, taskId, cwd, fullStore);
+    const runAgent = makePrResponseAgentRunner(settings, taskId, cwd, fullStore, pluginRunner);
 
     const result = await runPrResponseRun({
       entity,
@@ -276,12 +281,20 @@ export type { PrReviewThread, PrPushResult };
  * GitHub ops. Used by the runtime/executor wiring so the CLI layer stays free of
  * any store reference and the engine never imports the dashboard client.
  */
-export function buildPrNodeDeps(getStore: () => PrNodeStore, ops: PrNodeGithubOps): PrNodeDeps {
+export function buildPrNodeDeps(
+  getStore: () => PrNodeStore,
+  ops: PrNodeGithubOps,
+  /*
+   * FNXC:GrokCliRouting 2026-07-15-09:58:
+   * Optional PluginRunner from the in-process runtime so PR-respond sessions can resolve grok-cli via getRuntimeById("grok").
+   */
+  pluginRunner?: import("./plugin-runner.js").PluginRunner,
+): PrNodeDeps {
   // U5: when the CLI injects `respondOps`, build the real review-response run
   // callback here (the engine binds the store + audit). An explicit `respond`
   // takes precedence (tests/specialized wiring); absent both → inert default.
   const respond = ops.respond
-    ?? (ops.respondOps ? buildRespondCallback(getStore, ops.respondOps, ops.audit) : undefined);
+    ?? (ops.respondOps ? buildRespondCallback(getStore, ops.respondOps, ops.audit, pluginRunner) : undefined);
   return {
     getStore,
     resolvePrSource: ops.resolvePrSource,

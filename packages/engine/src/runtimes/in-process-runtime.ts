@@ -723,8 +723,12 @@ export class InProcessRuntime
         // GitHub ops (createPr/mergePr/respond) + the engine-owned store. The CLI
         // layer never holds a store reference; the engine binds it here. Absent
         // ops → undefined → the pr-* node kinds fail closed.
+        /*
+         * FNXC:GrokCliRouting 2026-07-15-09:58:
+         * Thread this.pluginRunner into buildPrNodeDeps so pr-respond agent sessions share chat/executor Grok CLI plugin-runtime injection.
+         */
         prNodes: prNodeGithubOps
-          ? buildPrNodeDeps(() => this.taskStore, prNodeGithubOps)
+          ? buildPrNodeDeps(() => this.taskStore, prNodeGithubOps, this.pluginRunner)
           : undefined,
         onSliceComplete: (slice) => {
           void this.scheduler.onSliceComplete(slice);

@@ -71,6 +71,7 @@ self-healing — a real import cycle. Importing from the predicate module breaks
 import { isRepoLanded } from "./workspace-land-predicate.js";
 import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./already-merged-detector.js";
 import { getTaskCompletionBlockerForStore } from "./task-completion.js";
+import { shouldReclaimWedgedMerge } from "./merge-reclaim-policy.js";
 
 export const COMPLETED_BLOCKED_PAUSE_REASON = "completed-work-blocked";
 import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
@@ -1911,28 +1912,57 @@ export class SelfHealingManager {
     }
   }
 
-  private async isActiveMergeWedged(taskId: string, timeoutMs: number): Promise<boolean> {
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return false;
-    const activeId = this.options.getActiveMergeTaskId?.() ?? null;
-    if (activeId !== taskId) return false;
-
+  private async measureActiveMergeSilenceMs(taskId: string): Promise<number | null> {
     const now = Date.now();
     const lastMergerMs = await this.getLastMergerAgentActivityMs(taskId);
-    if (lastMergerMs != null) {
-      return now - lastMergerMs >= timeoutMs;
-    }
+    if (lastMergerMs != null) return now - lastMergerMs;
     const startedAt = this.options.getActiveMergeStartedAtMs?.() ?? null;
     if (startedAt != null && Number.isFinite(startedAt) && startedAt > 0) {
-      return now - startedAt >= timeoutMs;
+      return now - startedAt;
     }
-    return false;
+    return null;
+  }
+
+  /*
+  FNXC:MergeQueue 2026-07-15-10:05:
+  Status-aware silence reclaim via shouldReclaimWedgedMerge: reviewing reclaims after stuckTimeout;
+  merging* requires a higher silence floor so monorepo single-bash verify is not false-reclaimed;
+  null/other with live owner reclaims as a dead pump.
+  */
+  private async isActiveMergeWedged(
+    taskId: string,
+    timeoutMs: number,
+    status?: string | null,
+  ): Promise<{ wedged: boolean; silenceMs: number | null }> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { wedged: false, silenceMs: null };
+    const activeId = this.options.getActiveMergeTaskId?.() ?? null;
+    if (activeId !== taskId) return { wedged: false, silenceMs: null };
+
+    const silenceMs = await this.measureActiveMergeSilenceMs(taskId);
+    if (silenceMs == null) return { wedged: false, silenceMs: null };
+
+    let resolvedStatus = status;
+    if (resolvedStatus === undefined) {
+      const task = await this.store.getTask(taskId).catch(() => null);
+      resolvedStatus = task?.status ?? null;
+    }
+
+    return {
+      wedged: shouldReclaimWedgedMerge({
+        status: resolvedStatus,
+        silenceMs,
+        stuckTimeoutMs: timeoutMs,
+      }),
+      silenceMs,
+    };
   }
 
   private async isPastInterruptedMergeGraceAsync(task: Task, timeoutMs: number): Promise<boolean> {
     const activeId = this.options.getActiveMergeTaskId?.() ?? null;
     if (activeId === task.id) {
-      // Live owner: require merger silence / claim-age, not updatedAt (overseer noise).
-      return this.isActiveMergeWedged(task.id, timeoutMs);
+      // Live owner: status-aware merger silence / claim-age, not updatedAt (overseer noise).
+      const { wedged } = await this.isActiveMergeWedged(task.id, timeoutMs, task.status);
+      return wedged;
     }
     return this.isPastInterruptedMergeGrace(task, timeoutMs);
   }
@@ -3024,16 +3054,23 @@ export class SelfHealingManager {
       const activeId = this.options.getActiveMergeTaskId?.() ?? null;
       if (!activeId) return 0;
 
-      if (!(await this.isActiveMergeWedged(activeId, timeoutMs))) {
+      const task = await this.store.getTask(activeId).catch(() => null);
+      const { wedged, silenceMs } = await this.isActiveMergeWedged(activeId, timeoutMs, task?.status ?? null);
+      if (!wedged) {
         return 0;
       }
 
-      const task = await this.store.getTask(activeId).catch(() => null);
       if (task?.paused) {
         // Pause should already abort; if identity remains, force-clear the lane.
         const aborted = this.options.abortActiveMerge?.(activeId, "wedged-active-merge-while-paused") ?? false;
         if (aborted) {
           log.warn(`Force-aborted wedged active merge ${activeId} that remained after pause`);
+          await this.emitWedgedActiveMergeAudit(activeId, {
+            reason: "wedged-active-merge-while-paused",
+            silenceMs,
+            limitMs: timeoutMs,
+            status: task.status ?? null,
+          });
           return 1;
         }
         return 0;
@@ -3043,6 +3080,13 @@ export class SelfHealingManager {
         const aborted = this.options.abortActiveMerge?.(activeId, "wedged-active-merge-left-in-review") ?? false;
         if (aborted) {
           log.warn(`Force-aborted wedged active merge ${activeId}: task column is ${task.column}`);
+          await this.emitWedgedActiveMergeAudit(activeId, {
+            reason: "wedged-active-merge-left-in-review",
+            silenceMs,
+            limitMs: timeoutMs,
+            status: task.status ?? null,
+            column: task.column,
+          });
           return 1;
         }
         return 0;
@@ -3062,6 +3106,12 @@ export class SelfHealingManager {
           )
           .catch(() => undefined);
       }
+      await this.emitWedgedActiveMergeAudit(activeId, {
+        reason: "wedged-active-merge-no-merger-progress",
+        silenceMs,
+        limitMs: timeoutMs,
+        status: task?.status ?? null,
+      });
       if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === "in-review") {
         try {
           this.options.enqueueMerge?.(activeId);
@@ -3076,6 +3126,41 @@ export class SelfHealingManager {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Wedged active merge recovery failed: ${errorMessage}`);
       return 0;
+    }
+  }
+
+  private async emitWedgedActiveMergeAudit(
+    taskId: string,
+    metadata: {
+      reason: string;
+      silenceMs: number | null;
+      limitMs: number;
+      status: string | null;
+      column?: string;
+    },
+  ): Promise<void> {
+    try {
+      await this.store.recordRunAuditEvent({
+        taskId,
+        agentId: "self-healing",
+        runId: generateSyntheticRunId("wedged-active-merge", taskId),
+        domain: "database",
+        // Ids/outcomes-only: reason enum-ish string, silence/limit counts, status — never prose/prompt.
+        mutationType: "task:reconcile-wedged-active-merge",
+        target: taskId,
+        metadata: {
+          taskId,
+          reason: metadata.reason,
+          silenceMs: metadata.silenceMs ?? undefined,
+          limitMs: metadata.limitMs,
+          status: metadata.status,
+          column: metadata.column,
+        },
+      });
+    } catch (err: unknown) {
+      log.warn(
+        `Failed to audit wedged active merge reclaim for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

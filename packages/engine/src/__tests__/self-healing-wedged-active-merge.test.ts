@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
+import { DEFAULT_MERGING_PHASE_SILENCE_FLOOR_MS } from "../merge-reclaim-policy.js";
 
 /*
-FNXC:MergeQueue 2026-07-15-09:50:
-Self-healing must reclaim a wedged in-process active merge when the AI merge review pass hangs (status=reviewing / merger agent silence) so the single-flight pump is not stuck with no merging badge on the board.
+FNXC:MergeQueue 2026-07-15-10:05:
+Self-healing must reclaim a wedged in-process active merge when the AI merge review pass hangs
+(status=reviewing / merger agent silence) without false-reclaiming a live merging-phase long bash.
 */
 
 function createTask(id: string, overrides: Record<string, unknown> = {}) {
@@ -28,12 +30,14 @@ describe("SelfHealingManager wedged active merge recovery", () => {
   let tasks: Map<string, Record<string, unknown>>;
   let store: TaskStore;
   let agentLogs: Array<{ agent?: string; timestamp?: string; type?: string; text?: string }>;
+  let auditEvents: Array<Record<string, unknown>>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
     tasks = new Map();
     agentLogs = [];
+    auditEvents = [];
 
     const wedged = createTask("FN-WEDGE");
     tasks.set("FN-WEDGE", wedged);
@@ -58,6 +62,9 @@ describe("SelfHealingManager wedged active merge recovery", () => {
       }),
       logEntry: vi.fn().mockResolvedValue(undefined),
       getAgentLogs: vi.fn().mockImplementation(async () => agentLogs),
+      recordRunAuditEvent: vi.fn().mockImplementation(async (event: Record<string, unknown>) => {
+        auditEvents.push(event);
+      }),
       getCompletionHandoffAcceptedMarker: vi.fn().mockReturnValue(null),
       parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     } as unknown as TaskStore;
@@ -85,8 +92,8 @@ describe("SelfHealingManager wedged active merge recovery", () => {
     manager.stop();
   });
 
-  it("reclaims active merge after merger agent silence past stuck timeout", async () => {
-    // Last merger activity 30 minutes ago; stuck timeout is 15 minutes.
+  it("reclaims reviewing after merger agent silence past stuck timeout and emits audit", async () => {
+    // Last merger activity 30 minutes ago; stuck timeout is 15 minutes; status=reviewing.
     agentLogs = [
       { agent: "merger", timestamp: "2026-01-01T00:30:00.000Z", type: "tool", text: "fn_task_show" },
       { agent: "executor", timestamp: "2026-01-01T00:59:00.000Z", type: "text", text: "noise" },
@@ -113,6 +120,63 @@ describe("SelfHealingManager wedged active merge recovery", () => {
       "FN-WEDGE",
       expect.stringContaining("wedged active merge reclaimed"),
     );
+    expect(auditEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          taskId: "FN-WEDGE",
+          mutationType: "task:reconcile-wedged-active-merge",
+          metadata: expect.objectContaining({
+            taskId: "FN-WEDGE",
+            reason: "wedged-active-merge-no-merger-progress",
+            limitMs: 15 * 60_000,
+            status: "reviewing",
+          }),
+        }),
+      ]),
+    );
+    manager.stop();
+  });
+
+  it("does not false-reclaim merging-phase silence at stuckTimeout alone", async () => {
+    tasks.set("FN-WEDGE", createTask("FN-WEDGE", { status: "merging" }));
+    // Silence = 30m > stuck 15m but < 45m floor
+    agentLogs = [
+      { agent: "merger", timestamp: "2026-01-01T00:30:00.000Z", type: "tool", text: "bash" },
+    ];
+    const abortActiveMerge = vi.fn().mockReturnValue(true);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getActiveMergeTaskId: () => "FN-WEDGE",
+      getActiveMergeStartedAtMs: () => Date.parse("2026-01-01T00:00:00.000Z"),
+      abortActiveMerge,
+    });
+
+    const recovered = await manager.recoverWedgedActiveMerge();
+    expect(recovered).toBe(0);
+    expect(abortActiveMerge).not.toHaveBeenCalled();
+    manager.stop();
+  });
+
+  it("reclaims merging-phase only after the higher silence floor", async () => {
+    tasks.set("FN-WEDGE", createTask("FN-WEDGE", { status: "merging" }));
+    // System time 01:00; silence from 00:00 => 60m > 45m floor
+    agentLogs = [
+      { agent: "merger", timestamp: "2026-01-01T00:00:00.000Z", type: "tool", text: "bash" },
+    ];
+    expect(DEFAULT_MERGING_PHASE_SILENCE_FLOOR_MS).toBe(45 * 60_000);
+    const abortActiveMerge = vi.fn().mockReturnValue(true);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getActiveMergeTaskId: () => "FN-WEDGE",
+      getActiveMergeStartedAtMs: () => Date.parse("2026-01-01T00:00:00.000Z"),
+      abortActiveMerge,
+      enqueueMerge: vi.fn().mockReturnValue(true),
+      clearMergeActive: vi.fn(),
+    });
+
+    const recovered = await manager.recoverWedgedActiveMerge();
+    expect(recovered).toBe(1);
+    expect(abortActiveMerge).toHaveBeenCalled();
     manager.stop();
   });
 
@@ -139,7 +203,8 @@ describe("SelfHealingManager wedged active merge recovery", () => {
     manager.stop();
   });
 
-  it("reclaims when agent logs are empty but claim wall-clock exceeds stuck timeout", async () => {
+  it("reclaims when agent logs are empty but claim wall-clock exceeds stuck timeout (dead pump)", async () => {
+    tasks.set("FN-WEDGE", createTask("FN-WEDGE", { status: null }));
     agentLogs = [];
     const abortActiveMerge = vi.fn().mockReturnValue(true);
     const manager = new SelfHealingManager(store, {

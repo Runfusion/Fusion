@@ -66,6 +66,7 @@ import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
+import { canStartNextMergeBody } from "./merge-reclaim-policy.js";
 import {
   registerProjectVerificationLimit,
   unregisterProjectVerificationLimit,
@@ -462,6 +463,11 @@ export class ProjectEngine {
   private activeMergeTaskId: string | null = null;
   /** Wall-clock when `activeMergeTaskId` was claimed; self-healing uses this when agent logs are silent. */
   private activeMergeStartedAtMs: number | null = null;
+  /*
+  FNXC:MergeQueue 2026-07-15-10:05:
+  Tracks the underlying merge body promise (not the abort race). After force-abort the race rejects so drain can continue, but the orphan body may still be mid-tool. The next claim waits for this latch so two runAiMerge/land paths cannot advance main concurrently.
+  */
+  private mergeBodyInFlight: Promise<unknown> | null = null;
   private mergeAbortController: AbortController | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private autostashSweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -645,6 +651,58 @@ export class ProjectEngine {
       this.activeMergeTaskId = null;
       this.activeMergeStartedAtMs = null;
     }
+  }
+
+  /*
+  FNXC:MergeQueue 2026-07-15-10:05:
+  Bound how long drain waits for an orphan body after abort. If the agent ignores abort forever, a hard settle timeout releases the latch so the board does not stay permanently blocked — last-resort only; prefer clean body settle. Overridable in tests via mergeBodySettleTimeoutMs.
+  */
+  private mergeBodySettleTimeoutMs = 60_000;
+
+  private trackMergeBody<T>(body: Promise<T>): Promise<T> {
+    const tracked = body.finally(() => {
+      if (this.mergeBodyInFlight === tracked) {
+        this.mergeBodyInFlight = null;
+      }
+    });
+    this.mergeBodyInFlight = tracked;
+    return tracked;
+  }
+
+  private async awaitPriorMergeBodySettle(): Promise<void> {
+    const prior = this.mergeBodyInFlight;
+    if (canStartNextMergeBody(prior)) return;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = this.mergeBodySettleTimeoutMs;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+      timeoutHandle.unref?.();
+    });
+    try {
+      const winner = await Promise.race([
+        prior!.then(() => "settled" as const).catch(() => "settled" as const),
+        timeout,
+      ]);
+      if (winner === "timeout") {
+        runtimeLog.warn(
+          `Prior merge body did not settle within ${timeoutMs}ms after abort — releasing latch for next generation`,
+        );
+        if (this.mergeBodyInFlight === prior) {
+          this.mergeBodyInFlight = null;
+        }
+      }
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
+  /**
+   * Race a merge body with abort, while tracking the underlying body so the next
+   * generation cannot start until the orphan work settles.
+   */
+  private runAbortableMergeBody<T>(bodyFactory: () => Promise<T>, signal: AbortSignal, taskId: string): Promise<T> {
+    const body = this.trackMergeBody(bodyFactory());
+    return this.raceMergeWithAbort(body, signal, taskId);
   }
 
   /*
@@ -1078,6 +1136,7 @@ export class ProjectEngine {
     this.mergeAbortController = null;
     this.activeMergeTaskId = null;
     this.activeMergeStartedAtMs = null;
+    this.mergeBodyInFlight = null;
     this.pausedReviewTaskIds.clear();
 
     const queuedTaskIds = [...this.mergeQueue];
@@ -2772,6 +2831,10 @@ export class ProjectEngine {
               investigative-only; systemPrompt is the advisor contract; user
               batch is the session-update delta only.
               */
+              /*
+              FNXC:GrokCliRouting 2026-07-15-09:58:
+              Session-advisor createResolvedAgentSession must forward the engine PluginRunner so grok-cli advisor models use the same no-visible-key CLI runtime path as chat/executor/merge.
+              */
               const { session } = await createResolvedAgentSession({
                 sessionPurpose: "reviewer",
                 cwd: String(cwd),
@@ -2780,6 +2843,7 @@ export class ProjectEngine {
                 defaultProvider: model.provider,
                 defaultModelId: model.modelId,
                 settings,
+                pluginRunner: this.getPluginRunner(),
               });
               try {
                 await session.prompt(user);
@@ -3409,14 +3473,26 @@ export class ProjectEngine {
           const mergeCandidate = await store.getTask(taskId).catch(() => null);
           const routeWorkspaceDirect = !!mergeCandidate && isWorkspaceTask(mergeCandidate);
 
+          // FNXC:MergeQueue 2026-07-15-10:05: Wait for any orphan body from a prior abort race before claiming the next generation.
+          await this.awaitPriorMergeBodySettle();
+
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge && !routeWorkspaceDirect) {
-            this.claimActiveMerge(taskId);
+            /*
+            FNXC:MergeQueue 2026-07-15-10:05:
+            PR merge dispatch shares the single-flight pump. Race the PR body with abort so pause/reclaim unblocks drainMergeQueue even when processPullRequestMerge ignores cooperative abort.
+            */
+            const abortSignal = this.claimActiveMerge(taskId);
             runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
-            const result = await this.options.processPullRequestMerge(
-              store,
-              cwd,
+            const result = await this.runAbortableMergeBody(
+              () =>
+                this.options.processPullRequestMerge!(
+                  store,
+                  cwd,
+                  taskId,
+                  (this.runtime as any).worktreePool,
+                ),
+              abortSignal,
               taskId,
-              (this.runtime as any).worktreePool,
             );
             if (result === "merged") {
               runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
@@ -3482,8 +3558,10 @@ export class ProjectEngine {
               /*
               FNXC:MergeQueue 2026-07-15-09:41:
               Always race the merge body with the pause/cancel abort signal. Cooperative abort inside runAiMerge is best-effort; without this outer race a wedged agent tool parks drainMergeQueue forever (no merging badge board-wide).
+              FNXC:MergeQueue 2026-07-15-10:05:
+              Track the underlying body so abort-race reject does not allow a concurrent second generation while orphan work still runs.
               */
-              return this.raceMergeWithAbort((async () => {
+              return this.runAbortableMergeBody(async () => {
               // FNXC:Workspace 2026-06-21-23:40 (Phase C U1, KTD2):
               // Engine merge dispatch door. A workspace-mode task (non-empty
               // `workspaceWorktrees`) routes to the per-repo merge loop
@@ -3566,7 +3644,7 @@ export class ProjectEngine {
                 allowDirtyLocalCheckoutSync: settings.merger?.allowDirtyLocalCheckoutSync === true,
               };
               return runAiMerge(store, cwd, taskId, mergeOptionsWithSettings);
-              })(), abortSignal, taskId);
+              }, abortSignal, taskId);
             };
 
             let result: MergeResult;

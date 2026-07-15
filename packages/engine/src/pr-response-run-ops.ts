@@ -88,6 +88,11 @@ export function makePrResponseAgentRunner(
   taskId: string,
   cwd: string,
   store?: TaskStore,
+  /*
+   * FNXC:GrokCliRouting 2026-07-15-09:58:
+   * PR-response createResolvedAgentSession must share chat/executor plugin-runtime injection so grok-cli/no-key merger models resolve via getRuntimeById("grok") instead of dual-remediation error or pi fallthrough.
+   */
+  pluginRunner?: import("./plugin-runner.js").PluginRunner,
 ): (input: {
   prompt: string;
   systemPrompt: string;
@@ -115,6 +120,7 @@ export function makePrResponseAgentRunner(
     ].join("\n");
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
+      pluginRunner,
       cwd,
       systemPrompt: fullSystem,
       tools: "coding",
