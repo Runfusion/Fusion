@@ -9748,7 +9748,23 @@ export class TaskExecutor {
     return true;
   }
 
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-15-03:50:
+  Structural cleanup for scheduler pre-held global slots: every execute() exit path
+  (early return, throw, graph-owned, legacy handoff) must leave no unclaimed registration.
+  take() removes the registration so a successful claim+release is a no-op here; early
+  returns that never take() release the underlying semaphore. New early-return paths
+  cannot reintroduce permanent capacity leaks without bypassing this wrapper.
+  */
   async execute(task: Task): Promise<void> {
+    try {
+      await this.executeCore(task);
+    } finally {
+      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+    }
+  }
+
+  private async executeCore(task: Task): Promise<void> {
     this.completionFinalizedTaskIds.delete(task.id);
     await this.clearStalePauseAbortBeforeDispatch(task);
     // Workflow graph interpreter routing (cutover M-C): graph-selected tasks
@@ -12652,7 +12668,9 @@ export class TaskExecutor {
 
       /*
       FNXC:GlobalConcurrencyControls 2026-07-15-02:55:
-      Belt-and-suspenders for graph→legacy pre-held handoff: if execute entered the main try and returned before runWithExecutorSemaphore take()d the registration (e.g. unmet deps, early preflight returns), release the reserved global slot. No-op when take already consumed the registration or no pre-held slot existed.
+      Belt-and-suspenders for graph→legacy pre-held handoff inside the lock-claimed try:
+      release any still-registered slot before lock/executing cleanup. execute()'s outer
+      finally also drops (no-op once take/drop already cleared the registration).
       */
       dropPreHeldExecutorSlot(task.id, this.options.semaphore);
 

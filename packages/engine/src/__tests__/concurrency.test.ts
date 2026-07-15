@@ -485,6 +485,35 @@ describe("AgentSemaphore", () => {
     clearPreHeldExecutorSlotsForTests();
   });
 
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-15-03:50:
+  Scheduler hold/release: tryAcquire + register before the column move; if the move fails the
+  prep release() lambda must dropPreHeldExecutorSlot so activeCount returns to zero. Without
+  that cleanup a failed dispatch permanently shrinks global capacity.
+  */
+  it("releases pre-held semaphore when scheduler dispatch prep release() runs (move failure)", () => {
+    clearPreHeldExecutorSlotsForTests();
+    const sem = new AgentSemaphore(2);
+    expect(sem.tryAcquire()).toBe(true);
+    registerPreHeldExecutorSlot("FN-MOVE-FAIL");
+    expect(hasPreHeldExecutorSlot("FN-MOVE-FAIL")).toBe(true);
+    expect(sem.activeCount).toBe(1);
+
+    // Mirrors scheduler.ts prep.release() after a failed/aborted hold release.
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      dropPreHeldExecutorSlot("FN-MOVE-FAIL", sem);
+    };
+    release();
+    release(); // idempotent
+
+    expect(hasPreHeldExecutorSlot("FN-MOVE-FAIL")).toBe(false);
+    expect(sem.activeCount).toBe(0);
+    clearPreHeldExecutorSlotsForTests();
+  });
+
   it("recovers idle semaphore leaks only after a stable persisted-idle window", async () => {
     const sem = new AgentSemaphore(2);
     await sem.acquire();

@@ -21,10 +21,16 @@ export const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
 /*
 FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
 Operators reported live running-agent counts above the global concurrency cap (e.g. 5 running with cap 4). Live utilization counts every top-level slot holder (in-progress, planning triage, active in-review), but the scheduler only preflighted capacity and acquired the shared semaphore later inside the executor — so a card could sit in-progress (and count as running) while triage still saw free semaphore slots and filled the rest of the cap. Pre-held executor slots close that gap: tryAcquire before todo→in-progress, keep the slot until the executor/graph run claims and releases it, and admit triage against max(semaphore.activeCount, live running count).
+
+FNXC:GlobalConcurrencyControls 2026-07-15-03:50:
+Hard invariant: registerPreHeldExecutorSlot may only run immediately after a successful semaphore.tryAcquire() for that same task, and every registration must later be either take()d (caller releases the semaphore) or drop()d (releases the semaphore). The Set is process-local soft state decoupled from activeCount except via this discipline — acquire-without-register or register-without-acquire desyncs capacity accounting.
 */
 const preHeldExecutorSlots = new Set<string>();
 
-/** Register a semaphore slot already acquired for a task that is about to enter (or just entered) in-progress. */
+/**
+ * Register a semaphore slot that was **just** acquired via `tryAcquire` for a task about to enter in-progress.
+ * Must not be called without a matching prior acquire; pair with take() or drop().
+ */
 export function registerPreHeldExecutorSlot(taskId: string): void {
   preHeldExecutorSlots.add(taskId);
 }

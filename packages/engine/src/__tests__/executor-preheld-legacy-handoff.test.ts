@@ -24,6 +24,10 @@ FNXC:GlobalConcurrencyControls 2026-07-15-03:10:
 Also cover authoritative dispatch rejection: a thrown callback exits execute() before the
 accept-path drop and before the main try/finally, so the re-registered slot would leak
 unless drop runs in the catch-before-rethrow path.
+
+FNXC:GlobalConcurrencyControls 2026-07-15-03:50:
+execute() now wraps executeCore in try/finally that always dropPreHeldExecutorSlot, so
+even paths that omit an explicit drop still free capacity on exit.
 */
 
 const now = "2026-07-15T00:00:00.000Z";
