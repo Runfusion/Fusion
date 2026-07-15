@@ -9,6 +9,7 @@ import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import * as schema from "../../postgres/schema/index.js";
 import type { ArchivedTaskEntry } from "../../types.js";
 import { insertTaskRow } from "../../task-store/async-persistence.js";
+import { getLiveTaskColumn } from "../../task-store/async-comments-attachments.js";
 import {
   archiveParentTaskWithLineageGate,
   deleteArchivedTaskEntry,
@@ -60,6 +61,12 @@ pgDescribe("archive project isolation", () => {
     await insertTaskRow(projectB, task("project B"), { lineageId: "lineage-b" });
     await expect(archiveParentTaskWithLineageGate(projectA, id, entry("project A"), { now }))
       .resolves.toEqual({ archived: true });
+    /*
+    FNXC:ArchiveProjectIsolation 2026-07-14-21:48:
+    Comment, log, document, and artifact state gates must distinguish duplicate task IDs by project. Project A is archived here while project B remains live, making an unscoped first-row lookup observably wrong.
+    */
+    await expect(getLiveTaskColumn(h.layer().db, id, projectA.projectId)).resolves.toBe("archived");
+    await expect(getLiveTaskColumn(h.layer().db, id, projectB.projectId)).resolves.toBe("todo");
     await expect(archiveParentTaskWithLineageGate(projectB, id, entry("project B"), { now }))
       .resolves.toEqual({ archived: true });
 

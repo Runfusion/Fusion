@@ -53,10 +53,10 @@ import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
  *      AND <ACTIVE_TASKS_WHERE>
  */
 /*
-FNXC:ArchiveProjectIsolation 2026-07-14-16:20:
-Lineage IDs are project-local. Every lineage gate and rewrite must include the task partition so archiving or deleting a parent cannot inspect or detach a same-ID child owned by another project; unbound compatibility callers stay inside the legacy quarantine.
+FNXC:ArchiveProjectIsolation 2026-07-14-21:48:
+Task and lineage IDs are project-local. Archive, lineage, comment, document, artifact, and log gates share this partition resolver so same-ID rows cannot be read or mutated across projects; unbound compatibility callers remain confined to the explicit legacy quarantine.
 */
-function projectPartition(projectId?: string): string {
+export function projectPartition(projectId?: string): string {
   return projectId?.trim() || "__legacy_unscoped__";
 }
 

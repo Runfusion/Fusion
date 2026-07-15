@@ -19,7 +19,7 @@ import {generateTaskLineageId} from "../task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync} from "../task-store/async-persistence.js";
-import {findLiveLineageChildren as findLiveLineageChildrenAsync, removeLineageReferences} from "../task-store/async-lifecycle.js";
+import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async-lifecycle.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async-archive-lineage.js";
 import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-archive-db.js";
 
@@ -266,6 +266,13 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
       const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
       let task: Task;
       if (entry) {
+        /*
+        FNXC:ArchiveRestore 2026-07-14-21:48:
+        A cold snapshot may outlive a missing project.tasks row after cleanup or partial legacy archival. Rebuild that row through the canonical snapshot restoration path before restoreTaskFromArchive consumes the snapshot; an existing live or tombstoned row keeps the established in-place restore path.
+        */
+        if (!liveRow) {
+          await store.restoreFromArchive(entry);
+        }
         await restoreTaskFromArchive(layer, entry);
         task = await store.getTask(id);
       } else if (liveRow && liveRow.deletedAt == null) {
@@ -300,7 +307,7 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
           updatedAt: now,
         })
         .where(and(
-          eq(schema.project.tasks.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
+          eq(schema.project.tasks.projectId, projectPartition(layer.projectId)),
           eq(schema.project.tasks.id, id),
         ));
 

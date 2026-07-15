@@ -21,7 +21,8 @@ import type {TaskDocumentRow} from "../task-store/row-types.js";
 
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
     if (store.backendMode) {
-      const state = await getLiveTaskColumn(store.asyncLayer!.db, id);
+      const layer = store.asyncLayer!;
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }

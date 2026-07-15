@@ -32,20 +32,12 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
-import { findLiveLineageChildren, removeLineageReferences } from "./async-lifecycle.js";
+import { findLiveLineageChildren, projectPartition, removeLineageReferences } from "./async-lifecycle.js";
 import {
   softDeleteTaskRowInTransaction,
   readTaskRowInTransaction,
 } from "./async-persistence.js";
 import type { ArchivedTaskEntry } from "../types.js";
-
-/*
-FNXC:ArchiveProjectIsolation 2026-07-14-16:20:
-Archive snapshots and their live task rows share one PostgreSQL database across projects, while task IDs are only unique inside a project. Every archive, restore, soft-delete, and lineage transaction must therefore use the bound project partition; unbound compatibility callers are confined to the explicit legacy quarantine rather than becoming cross-project readers or writers.
-*/
-function projectPartition(projectId?: string): string {
-  return projectId?.trim() || "__legacy_unscoped__";
-}
 
 /**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-07:05:

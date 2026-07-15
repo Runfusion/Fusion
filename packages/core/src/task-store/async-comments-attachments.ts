@@ -30,6 +30,7 @@ import { randomUUID } from "node:crypto";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
+import { projectPartition } from "./async-lifecycle.js";
 import type {
   Artifact,
   ArtifactCreateInput,
@@ -112,15 +113,19 @@ function rowToArtifact(row: ArtifactRow): Artifact {
 export async function getLiveTaskColumn(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
+  projectId?: string,
 ): Promise<string | null> {
   /*
-  FNXC:PostgresArchiveSafety 2026-07-14-17:38:
-  PostgreSQL async log, comment, document, and artifact paths must distinguish an archived or soft-deleted parent from a missing task so every mutation rejects the retained record as read-only while live read surfaces hide its children.
+  FNXC:PostgresArchiveSafety 2026-07-14-21:48:
+  PostgreSQL async log, comment, document, and artifact paths must distinguish an archived or soft-deleted parent from a missing task within the bound project. Task IDs repeat across projects, so the state gate must never borrow another project's live or archived row.
   */
   const rows = await db
     .select({ column: schema.project.tasks.column, deletedAt: schema.project.tasks.deletedAt })
     .from(schema.project.tasks)
-    .where(eq(schema.project.tasks.id, taskId))
+    .where(and(
+      eq(schema.project.tasks.projectId, projectPartition(projectId)),
+      eq(schema.project.tasks.id, taskId),
+    ))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -141,9 +146,10 @@ export async function getTaskDocument(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
   key: string,
+  projectId?: string,
 ): Promise<TaskDocument | null> {
   // Gate on the parent task being live.
-  const column = await getLiveTaskColumn(db, taskId);
+  const column = await getLiveTaskColumn(db, taskId, projectId);
   if (column === null || column === "archived") return null;
 
   const rows = await db
@@ -181,7 +187,7 @@ export async function upsertTaskDocument(
 ): Promise<TaskDocument> {
   return layer.transactionImmediate(async (tx) => {
     // Gate: reject writes against archived/soft-deleted/absent tasks.
-    const column = await getLiveTaskColumn(tx, taskId);
+    const column = await getLiveTaskColumn(tx, taskId, layer.projectId);
     if (column === "archived") {
       throw new Error(`Task ${taskId} is archived — documents are read-only`);
     }
@@ -275,8 +281,9 @@ export async function upsertTaskDocument(
 export async function listTaskDocuments(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
+  projectId?: string,
 ): Promise<TaskDocument[]> {
-  const column = await getLiveTaskColumn(db, taskId);
+  const column = await getLiveTaskColumn(db, taskId, projectId);
   if (column === null || column === "archived") return [];
 
   const rows = await db
@@ -294,8 +301,9 @@ export async function getTaskDocumentRevisions(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
   key: string,
+  projectId?: string,
 ): Promise<TaskDocumentRevisionRow[]> {
-  const column = await getLiveTaskColumn(db, taskId);
+  const column = await getLiveTaskColumn(db, taskId, projectId);
   if (column === null || column === "archived") return [];
 
   const rows = await db
@@ -331,7 +339,7 @@ export async function deleteTaskDocument(
   key: string,
 ): Promise<void> {
   return layer.transactionImmediate(async (tx) => {
-    const state = await getLiveTaskColumn(tx, taskId);
+    const state = await getLiveTaskColumn(tx, taskId, layer.projectId);
     if (state === "archived") throw new Error(`Task ${taskId} is archived — documents are read-only`);
     if (state === null) throw new Error(`Task ${taskId} not found`);
     const existing = await tx
@@ -391,7 +399,7 @@ export async function insertArtifactRow(
   return layer.transactionImmediate(async (tx) => {
     // Gate: if taskId is set, the parent must be live.
     if (input.taskId) {
-      const column = await getLiveTaskColumn(tx, input.taskId);
+      const column = await getLiveTaskColumn(tx, input.taskId, layer.projectId);
       if (column === "archived") {
         throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
       }
@@ -448,7 +456,7 @@ export async function updateArtifactRow(
       throw new Error(`Artifact ${id} not found`);
     }
     if (existing.taskId) {
-      const column = await getLiveTaskColumn(tx, existing.taskId);
+      const column = await getLiveTaskColumn(tx, existing.taskId, layer.projectId);
       if (column === "archived") {
         throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
       }
@@ -504,8 +512,9 @@ export async function getArtifact(
 export async function getArtifacts(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
+  projectId?: string,
 ): Promise<Artifact[]> {
-  const column = await getLiveTaskColumn(db, taskId);
+  const column = await getLiveTaskColumn(db, taskId, projectId);
   if (column === null || column === "archived") return [];
 
   const rows = await db

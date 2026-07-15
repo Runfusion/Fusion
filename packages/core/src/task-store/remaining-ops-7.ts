@@ -624,7 +624,8 @@ export async function addSteeringCommentImpl(store: TaskStore, id: string, text:
 
 export async function updateTaskCommentImpl(store: TaskStore, id: string, commentId: string, text: string): Promise<Task> {
     if (store.backendMode) {
-      const state = await getLiveTaskColumn(store.asyncLayer!.db, id);
+      const layer = store.asyncLayer!;
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -657,7 +658,8 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
 
 export async function deleteTaskCommentImpl(store: TaskStore, id: string, commentId: string): Promise<Task> {
     if (store.backendMode) {
-      const state = await getLiveTaskColumn(store.asyncLayer!.db, id);
+      const layer = store.asyncLayer!;
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -798,7 +800,7 @@ export async function updateArtifactImpl(store: TaskStore, id: string, updates: 
 export async function getArtifactsImpl(store: TaskStore, taskId: string): Promise<Artifact[]> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getArtifactsAsync(layer.db, taskId);
+      return getArtifactsAsync(layer.db, taskId, layer.projectId);
     }
     if (!store.hasActiveTask(taskId)) {
       return [];
@@ -813,7 +815,7 @@ export async function getArtifactsImpl(store: TaskStore, taskId: string): Promis
 export async function getTaskDocumentsImpl(store: TaskStore, taskId: string): Promise<TaskDocument[]> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return listTaskDocumentsAsync(layer.db, taskId);
+      return listTaskDocumentsAsync(layer.db, taskId, layer.projectId);
     }
     if (!store.hasActiveTask(taskId)) {
       return [];
@@ -828,7 +830,7 @@ export async function getTaskDocumentsImpl(store: TaskStore, taskId: string): Pr
 export async function getTaskDocumentImpl(store: TaskStore, taskId: string, key: string): Promise<TaskDocument | null> {
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return getTaskDocumentAsync(layer.db, taskId, key);
+      return getTaskDocumentAsync(layer.db, taskId, key, layer.projectId);
     }
     if (!store.hasActiveTask(taskId)) {
       return null;
@@ -855,7 +857,7 @@ export async function getTaskDocumentRevisionsImpl(store: TaskStore,
     */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key);
+      const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key, layer.projectId);
       const sorted = [...rows].sort((a, b) => b.revision - a.revision);
       const mapped = sorted.map((row) => store.rowToTaskDocumentRevision(row));
       return options?.limit !== undefined ? mapped.slice(0, Math.max(0, options.limit)) : mapped;

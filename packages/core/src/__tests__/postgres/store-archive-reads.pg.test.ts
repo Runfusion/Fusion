@@ -3,11 +3,14 @@
  * PostgreSQL cold storage is part of the public TaskStore read model. After a real archiveTask call, includeArchived list/search and task detail must read the archive snapshot, while active-only reads must continue to exclude it. Merged pagination is applied after active and archived results are composed so page boundaries cannot silently drop cold-storage tasks.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { and, eq } from "drizzle-orm";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
+import * as schema from "../../postgres/schema/index.js";
+import { findArchivedTaskEntry } from "../../task-store/async-archive-lineage.js";
 
 pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -120,5 +123,44 @@ pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
       "FN-211",
       "FN-209",
     ]);
+  });
+
+  /*
+  FNXC:ArchiveRestore 2026-07-14-21:48:
+  Cold storage is sufficient to reconstruct a task whose project.tasks row was removed by cleanup. Unarchive must materialize the snapshot before consuming it, while the pre-existing live archived-row path remains supported without requiring a snapshot.
+  */
+  it("rebuilds a missing live row before consuming its archive snapshot", async () => {
+    const store = h.store();
+    const task = await store.createTaskWithReservedId(
+      { description: "restore from snapshot only", column: "done" },
+      { taskId: "FN-301", applyDefaultWorkflowSteps: false },
+    );
+    await store.archiveTask(task.id, { cleanup: false });
+    expect(await findArchivedTaskEntry(h.layer().db, task.id, h.layer().projectId)).toBeDefined();
+
+    await h.adminDb()
+      .delete(schema.project.tasks)
+      .where(and(
+        eq(schema.project.tasks.projectId, h.layer().projectId ?? "__legacy_unscoped__"),
+        eq(schema.project.tasks.id, task.id),
+      ));
+
+    const restored = await store.unarchiveTask(task.id);
+    expect(restored.id).toBe(task.id);
+    expect(restored.description).toBe("restore from snapshot only");
+    expect(restored.column).toBe("todo");
+    expect(await findArchivedTaskEntry(h.layer().db, task.id, h.layer().projectId)).toBeUndefined();
+  });
+
+  it("keeps the existing live archived-row unarchive path", async () => {
+    const store = h.store();
+    const task = await store.createTaskWithReservedId(
+      { description: "live archived row", column: "archived" },
+      { taskId: "FN-302", applyDefaultWorkflowSteps: false },
+    );
+
+    const restored = await store.unarchiveTask(task.id);
+    expect(restored.id).toBe(task.id);
+    expect(restored.column).toBe("todo");
   });
 });
