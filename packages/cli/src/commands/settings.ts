@@ -381,6 +381,11 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
    * Bare `fn settings set <project-only-key> <value>` must call resolveProject() so
    * default-project and CWD-registered project detection can satisfy project-only keys.
    * Only surface the project-only error when that resolution fails.
+   *
+   * FNXC:CliSettings 2026-07-14-18:35:
+   * Do not swallow unexpected resolveProject failures (DB/registry/IO). Map only
+   * missing-project style errors to the generic project-only CLI message; re-surface
+   * other err.message values so operators can diagnose real infrastructure failures.
    */
   let projectContext: Awaited<ReturnType<typeof resolveProject>> | undefined;
   if (projectName) {
@@ -388,8 +393,17 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
   } else if (isProjectOnlySetting(validKey)) {
     try {
       projectContext = await resolveProject();
-    } catch {
-      console.error(`Error: Setting "${key}" is project-only. Use --project or run from a project directory.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Missing-project messages from resolveProject (CWD / no default project).
+      const isMissingProject =
+        /no fusion project found/i.test(message) ||
+        /use --project or run from a project directory/i.test(message);
+      if (isMissingProject) {
+        console.error(`Error: Setting "${key}" is project-only. Use --project or run from a project directory.`);
+      } else {
+        console.error(`Error: ${message}`);
+      }
       process.exit(1);
       return;
     }

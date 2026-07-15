@@ -307,6 +307,17 @@ describe("settings commands", () => {
     expect(updateSettings).toHaveBeenCalledWith({ maxConcurrent: 4 });
   });
 
+  it("surfaces unexpected resolveProject errors for project-only settings without --project", async () => {
+    vi.mocked(resolveProject).mockRejectedValue(new Error("central registry unavailable"));
+
+    await expect(runSettingsSet("maxConcurrent", "4")).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith("Error: central registry unavailable");
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      'Error: Setting "maxConcurrent" is project-only. Use --project or run from a project directory.',
+    );
+    expect(resolveProject).toHaveBeenCalledWith();
+  });
+
   it("rejects setting a moved key (runStepsInNewSessions) and prints the workflow-settings redirect hint", async () => {
     const updateSettings = vi.fn();
     vi.mocked(resolveProject).mockResolvedValue({
