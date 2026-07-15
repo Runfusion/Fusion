@@ -373,8 +373,6 @@ function persistMissionSession(session: MissionInterviewSession, status: "genera
     projectId: session.projectId,
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
-    lockedByTab: null,
-    lockedAt: null,
   };
   _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
 }

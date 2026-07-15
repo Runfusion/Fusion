@@ -97,10 +97,8 @@ function buildMissionSession(overrides: Record<string, unknown> = {}) {
     thinkingOutput: "Continuing...",
     error: null,
     projectId: null,
-    lockedByTab: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    lockedAt: null,
     ...overrides,
   };
 }
@@ -233,9 +231,15 @@ describe("MissionInterviewModal", () => {
     expect(mobileBlock).toContain("display: none;");
   });
 
-  it("shows lock overlay and allows take-control", async () => {
-    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
-    mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  Mission interviews are multi-tab: this tab must never acquire a lock, never render a lock
+  overlay or "active in another tab" banner, and must stay interactive even when another tab
+  is using the same session.
+  */
+  it("never acquires a tab lock and renders no lock overlay", async () => {
+    // A rejecting lock API would surface an overlay if any legacy lock path survived.
+    mockAcquireSessionLock.mockResolvedValue({ acquired: false, currentHolder: "tab-other" });
 
     renderModal();
 
@@ -245,18 +249,14 @@ describe("MissionInterviewModal", () => {
     fireEvent.click(screen.getByText("Start Interview"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("session-lock-overlay")).toBeInTheDocument();
+      expect(mockStartMissionInterview).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByText("Take Control"));
-
-    await waitFor(() => {
-      expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("mission-session-1", "tab-self");
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-active-another-tab-banner")).not.toBeInTheDocument();
+    expect(screen.queryByText("Take Control")).not.toBeInTheDocument();
+    expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+    expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
   });
 
   it("shows reconnecting indicator without clearing current question", async () => {
@@ -542,7 +542,7 @@ describe("MissionInterviewModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => {
-      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined, expect.any(String));
+      expect(mockRetryMissionInterviewSession).toHaveBeenCalledWith("mission-session-1", undefined);
     });
     await waitFor(() => {
       expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
@@ -612,7 +612,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         expect.objectContaining({ scope: "mvp", _comment: "Optimize for launch speed" }),
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -648,7 +647,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Start with discovery instead" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -689,7 +687,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Define a custom scope" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -728,7 +725,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { scope: "mvp" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -772,7 +768,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Add field research first" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -813,7 +808,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { _other: "Ask customers first" },
         undefined,
-        expect.any(String),
       );
     });
   });
@@ -856,7 +850,6 @@ describe("MissionInterviewModal", () => {
         "mission-session-1",
         { priorities: ["speed"], _other: "Preserve operator review" },
         undefined,
-        expect.any(String),
       );
     });
   });

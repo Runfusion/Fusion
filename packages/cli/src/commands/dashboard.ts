@@ -990,8 +990,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // FNXC:PostgresCutover 2026-07-05-12:00: non-cwd project stores must boot
   // through the PostgreSQL startup factory; bare `new TaskStore` throws in
   // backend mode (SQLite runtime removed under VAL-REMOVAL-005). Stores are
-  // cached for the TUI process lifetime; pools are released at process exit.
+  // cached for the dashboard process lifetime and explicitly closed during
+  // dashboard disposal/shutdown.
   const projectStores = new Map<string, TaskStore>();
+  const projectStoreShutdowns = new Map<string, () => Promise<void>>();
+  let projectStoresClosePromise: Promise<void> | undefined;
   async function getProjectStore(projectPath: string): Promise<TaskStore> {
     const cached = projectStores.get(projectPath);
     if (cached) return cached;
@@ -1003,6 +1006,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       const boot = await createTaskStoreForBackend({ rootDir: projectPath });
       if (boot) {
         projectStore = boot.taskStore;
+        projectStoreShutdowns.set(projectPath, boot.shutdown);
       } else {
         projectStore = new TaskStore(projectPath);
         await projectStore.init();
@@ -1010,6 +1014,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     }
     projectStores.set(projectPath, projectStore);
     return projectStore;
+  }
+  async function closeProjectStores(): Promise<void> {
+    projectStoresClosePromise ??= (async () => {
+      const stores = Array.from(projectStores.entries()).filter(([, projectStore]) => projectStore !== store);
+      projectStores.clear();
+      const shutdowns = new Map(projectStoreShutdowns);
+      projectStoreShutdowns.clear();
+      await Promise.allSettled(stores.map(async ([projectPath, projectStore]) => {
+        const shutdown = shutdowns.get(projectPath);
+        if (shutdown) {
+          await shutdown();
+        } else {
+          await projectStore.close();
+        }
+      }));
+    })();
+    await projectStoresClosePromise;
   }
 
   // ── U11: resolve per-task workflow column flags for the TUI (flag-ON only) ──
@@ -1831,6 +1852,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   >();
   const getProjectScopedPluginSkills = async (rootDir: string, resolvedProjectStore?: TaskStore): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
     const normalizedRootDir = pathResolve(rootDir);
+    /*
+     * FNXC:PluginSkillsPostgres 2026-07-14-23:45:
+     * Skill discovery must use the backend-aware project store resolved by the
+     * dashboard route. Direct PluginStore/TaskStore construction enters the
+     * removed SQLite runtime under PostgreSQL (VAL-REMOVAL-005).
+     */
     const targetStore = resolvedProjectStore ?? (normalizedRootDir === pathResolve(store.getRootDir()) ? store : undefined);
     if (!targetStore) return [];
     const stateStore = targetStore.getPluginStore();
@@ -1865,7 +1892,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       const scopedPluginStore = targetStore.getPluginStore();
-      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: targetStore });
+      const scopedPluginLoader = new PluginLoader({
+        pluginStore: scopedPluginStore,
+        taskStore: targetStore,
+        persistRuntimeState: false,
+      });
       try {
         await scopedPluginStore.init();
         const { errors } = await scopedPluginLoader.loadAllPlugins();
@@ -1935,6 +1966,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       void dashboardBackendShutdown!().catch(() => undefined);
     });
   }
+  disposeCallbacks.push(() => {
+    void closeProjectStores();
+  });
 
   // ── createServer: deferred until engine is conditionally started ────
   //
@@ -2297,6 +2331,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         closeCentralCoreBestEffort(centralCoreForEngine, `shutdown (${signal})`),
       );
 
+      await timeShutdownStep("closeProjectStores", () => closeProjectStores());
       store.close();
       process.exit(shutdownExitCode);
     };
@@ -2630,6 +2665,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         );
       }
 
+      await timeShutdownStep("closeProjectStores", () => closeProjectStores());
       store.close();
       process.exit(shutdownExitCode);
     };

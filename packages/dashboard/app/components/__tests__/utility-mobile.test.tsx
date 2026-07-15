@@ -74,7 +74,6 @@ describe("Utility component mobile adaptations", () => {
         status: "generating",
         title: "Refine onboarding flow",
         projectId: "proj-1",
-        lockedByTab: null,
         updatedAt: new Date().toISOString(),
       },
     ];
@@ -100,7 +99,6 @@ describe("Utility component mobile adaptations", () => {
         status: "awaiting_input",
         title: "Break down API tasks",
         projectId: "proj-1",
-        lockedByTab: null,
         updatedAt: new Date().toISOString(),
       },
     ];
@@ -144,7 +142,6 @@ describe("Utility component mobile adaptations", () => {
         status: "awaiting_input",
         title: "Plan milestone scope",
         projectId: "proj-1",
-        lockedByTab: null,
         updatedAt: new Date().toISOString(),
       },
     ];
@@ -174,7 +171,6 @@ describe("Utility component mobile adaptations", () => {
         status: "error",
         title: "Plan slice scope",
         projectId: "proj-1",
-        lockedByTab: null,
         updatedAt: new Date().toISOString(),
       },
     ];

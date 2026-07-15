@@ -11,7 +11,6 @@ function buildSession(overrides: Partial<AiSessionSummary>): AiSessionSummary {
     status: overrides.status ?? "awaiting_input",
     title: overrides.title ?? "Draft implementation plan",
     projectId: overrides.projectId ?? "proj-1",
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
   };
 }
@@ -368,7 +367,6 @@ function buildCliSession(overrides: Partial<AiSessionSummary>): AiSessionSummary
     status: overrides.status ?? "waiting_on_input",
     title: overrides.title ?? "Implement FN-1",
     projectId: overrides.projectId ?? "proj-1",
-    lockedByTab: null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
     cliVariant: overrides.cliVariant,
     cliSessionId: Object.prototype.hasOwnProperty.call(overrides, "cliSessionId") ? overrides.cliSessionId : "cli-1",

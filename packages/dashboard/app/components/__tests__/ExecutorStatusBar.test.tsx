@@ -102,7 +102,6 @@ function makeBackgroundSession(id: string, status: AiSessionSummary["status"]): 
     status,
     title: `Background ${id}`,
     projectId: "project-1",
-    lockedByTab: null,
     updatedAt: "2026-07-03T12:00:00.000Z",
   };
 }

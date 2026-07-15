@@ -788,8 +788,6 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     projectId: session.projectId ?? null,
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
-    lockedByTab: null,
-    lockedAt: null,
   };
   _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
 }
@@ -827,7 +825,13 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     throw new Error("Invalid session timestamps");
   }
 
-  const currentQuestion = row.currentQuestion
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Only an awaiting_input row has a live question. Rows persisted while generating/error by
+  pre-fix builds still carry the already-answered question; restoring it would let the SSE
+  catch-up path re-emit it and re-trigger the answered-question retry loop after a restart.
+  */
+  const currentQuestion = row.status === "awaiting_input" && row.currentQuestion
     ? (safeParseJson<PlanningQuestion | null>(row.currentQuestion, null, {
         throwOnError: true,
         fieldName: "currentQuestion",
@@ -2567,15 +2571,18 @@ function formatRefineRequestForAgent(summary: PlanningSummary): string {
   ].join("\n\n");
 }
 
+/*
+FNXC:PlanningRetry 2026-07-14-00:00:
+currentQuestion is cleared once an answer is accepted, so a duplicate re-submit during the
+in-flight generation is detected against the last history entry (the turn being generated)
+instead of the now-cleared currentQuestion.
+*/
 function didSubmitSameAnswer(
   session: Session,
   responses: Record<string, unknown>,
 ): boolean {
-  if (!session.currentQuestion) {
-    return false;
-  }
   const lastEntry = session.history[session.history.length - 1];
-  if (!lastEntry || lastEntry.question.id !== session.currentQuestion.id) {
+  if (!lastEntry) {
     return false;
   }
   return JSON.stringify(lastEntry.response) === JSON.stringify(responses);
@@ -2606,6 +2613,21 @@ export async function submitResponse(
     throw new GenerationInProgressError("Generation already in progress");
   }
 
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Reported bug: planning got stuck cycling retry/regeneration after the user had already answered.
+  Root cause: session.currentQuestion kept the just-answered question all through the next
+  generation, and the SSE stream route's catch-up path re-emits currentQuestion to every fresh
+  connection. Each FN-7946 auto-retry opens a fresh SSE connection, so the client was handed the
+  already-answered question again, which reset the bounded auto-retry budget and re-showed a
+  stale question — an unbounded retry/regenerate loop. Invariant: currentQuestion is only set
+  while the session is genuinely awaiting user input; it is cleared the moment an answer is
+  accepted (below), on retry (retrySession), and never restored from non-awaiting_input rows
+  (buildSessionFromRow). answeredQuestion preserves the legacy 200 response body for the
+  generation-error case so the modal's submit path keeps its existing SSE-driven recovery.
+  */
+  let answeredQuestion: PlanningQuestion | undefined;
+
   if (!session.currentQuestion) {
     if (!isRefineRequest(responses) || !session.summary) {
       throw new InvalidSessionStateError("No active question in session");
@@ -2632,6 +2654,7 @@ export async function submitResponse(
     Persist the user's answered planning turn before the agent generates the next question or errors. AiSessionStore snapshots happen inside continueAgentConversation, so history must already include the submitted answer for retry replay and SQLite round-trip tests to observe durable state.
     */
     session.history.push(historyEntry);
+    answeredQuestion = currentQuestion;
 
     if (isDeepeningCheckpointQuestion(currentQuestion)) {
       const pendingSummary = session.pendingSummary;
@@ -2648,6 +2671,8 @@ export async function submitResponse(
           throw new InvalidSessionStateError("Select a topic to explore or proceed to the final plan");
         }
         session.pendingSummary = undefined;
+        // FNXC:PlanningRetry 2026-07-14-00:00: answer accepted — the checkpoint is no longer awaiting input.
+        session.currentQuestion = undefined;
         persistSession(session, "generating");
         if (!session.agent) {
           await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
@@ -2655,6 +2680,8 @@ export async function submitResponse(
         await continueAgentConversation(session, formatDeepeningRequestForAgent(decision, pendingSummary));
       }
     } else {
+      // FNXC:PlanningRetry 2026-07-14-00:00: answer accepted — clear before generating so SSE catch-up cannot re-emit the answered question.
+      session.currentQuestion = undefined;
       persistSession(session, "generating");
 
       if (!session.agent) {
@@ -2672,6 +2699,18 @@ export async function submitResponse(
   }
   if (session.currentQuestion) {
     return { type: "question", data: session.currentQuestion };
+  }
+
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  Generation failed after the answer was accepted (session.error was set and broadcast via SSE).
+  Historically this path returned the answered question with a 200 because currentQuestion was
+  never cleared; the modal ignores the body and lets the SSE error drive auto-retry. Preserve
+  that contract explicitly instead of throwing a 400 that would bounce the client back to the
+  already-answered question view.
+  */
+  if (session.error && answeredQuestion) {
+    return { type: "question", data: answeredQuestion };
   }
 
   // Should not reach here, but handle gracefully
@@ -2707,6 +2746,14 @@ export async function retrySession(
   session.error = undefined;
   session.summary = undefined;
   session.pendingSummary = undefined;
+  /*
+  FNXC:PlanningRetry 2026-07-14-00:00:
+  A retry regenerates the last turn, so no question is awaiting input. Clearing here also
+  scrubs stale answered questions persisted by pre-fix builds; without this, the fresh SSE
+  connection the retry path opens would be handed the answered question by the stream route's
+  catch-up emit, resetting the FN-7946 auto-retry budget and looping forever.
+  */
+  session.currentQuestion = undefined;
   session.updatedAt = new Date();
   persistSession(session, "generating");
 

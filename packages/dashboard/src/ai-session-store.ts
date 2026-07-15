@@ -26,11 +26,6 @@ import {
   updateThinkingAsync,
   archiveAiSession,
   unarchiveAiSession,
-  acquireAiSessionLock,
-  releaseAiSessionLock,
-  forceAcquireAiSessionLock,
-  getAiSessionLockHolder,
-  releaseStaleAiSessionLocks,
   deleteAiSession,
   deleteAiSessionByIdAndType,
   recoverStaleAiSessions,
@@ -58,8 +53,6 @@ export interface AiSessionRow {
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
-  lockedByTab: string | null;
-  lockedAt: string | null;
   /** 1 if archived (hidden from planning sidebar), 0 otherwise. */
   archived?: number;
 }
@@ -79,7 +72,6 @@ export interface AiSessionSummary {
    */
   preview?: string;
   projectId: string | null;
-  lockedByTab: string | null;
   updatedAt: string;
   archived?: boolean;
 }
@@ -212,8 +204,8 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
     this.db
       .prepare(
-        `INSERT INTO ai_sessions (id, type, status, title, inputPayload, conversationHistory, currentQuestion, result, thinkingOutput, error, projectId, createdAt, updatedAt, lockedByTab, lockedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+        `INSERT INTO ai_sessions (id, type, status, title, inputPayload, conversationHistory, currentQuestion, result, thinkingOutput, error, projectId, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            status = excluded.status,
            title = excluded.title,
@@ -563,7 +555,6 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
         status: row.status as AiSessionStatus,
         title: row.title as string,
         projectId: (row.projectId as string | null) ?? null,
-        lockedByTab: (row.lockedByTab as string | null) ?? null,
         updatedAt: row.updatedAt as string,
         archived: Number(row.archived ?? 0) === 1,
       }));
@@ -571,7 +562,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     if (projectId) {
       return this.db
         .prepare(
-          `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+          `SELECT id, type, status, title, projectId, updatedAt, archived FROM ai_sessions
            WHERE status IN ('generating', 'awaiting_input', 'error')
              AND COALESCE(archived, 0) = 0
              AND projectId = ?
@@ -581,7 +572,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     }
     return this.db
       .prepare(
-        `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+        `SELECT id, type, status, title, projectId, updatedAt, archived FROM ai_sessions
          WHERE status IN ('generating', 'awaiting_input', 'error')
            AND COALESCE(archived, 0) = 0
          ORDER BY updatedAt DESC`,
@@ -613,7 +604,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
         : "WHERE projectId = ? AND COALESCE(archived, 0) = 0";
       const rows = this.db
         .prepare(
-          `SELECT id, type, status, title, inputPayload, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+          `SELECT id, type, status, title, inputPayload, projectId, updatedAt, archived FROM ai_sessions
            ${where}
            ORDER BY updatedAt DESC`,
         )
@@ -622,7 +613,7 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     }
     const rows = this.db
       .prepare(
-        `SELECT id, type, status, title, inputPayload, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+        `SELECT id, type, status, title, inputPayload, projectId, updatedAt, archived FROM ai_sessions
          ${archivedClause}
          ORDER BY updatedAt DESC`,
       )
@@ -716,150 +707,13 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
       .all() as unknown as AiSessionRow[];
   }
 
-  async acquireLock(sessionId: string, tabId: string): Promise<{ acquired: boolean; currentHolder: string | null }> {
-    if (this.backendMode) {
-      const result = await acquireAiSessionLock(this.dbAsync, sessionId, tabId);
-      if (result.acquired) {
-        const row = await this.get(sessionId);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return result;
-    }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET lockedByTab = ?, lockedAt = ?
-         WHERE id = ? AND (lockedByTab IS NULL OR lockedByTab = ?)`,
-      )
-      .run(tabId, now, sessionId, tabId) as { changes?: number };
-
-    const acquired = Number(result.changes ?? 0) > 0;
-    if (acquired) {
-      const row = await this.get(sessionId);
-      if (row) {
-        this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return { acquired: true, currentHolder: null };
-    }
-
-    const holder = this.db
-      .prepare("SELECT lockedByTab FROM ai_sessions WHERE id = ?")
-      .get(sessionId) as { lockedByTab: string | null } | undefined;
-
-    return {
-      acquired: false,
-      currentHolder: holder?.lockedByTab ?? null,
-    };
-  }
-
-  async releaseLock(sessionId: string, tabId: string): Promise<boolean> {
-    if (this.backendMode) {
-      const released = await releaseAiSessionLock(this.dbAsync, sessionId, tabId);
-      if (released) {
-        const row = await this.get(sessionId);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return released;
-    }
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET lockedByTab = NULL, lockedAt = NULL
-         WHERE id = ? AND lockedByTab = ?`,
-      )
-      .run(sessionId, tabId) as { changes?: number };
-
-    const released = Number(result.changes ?? 0) > 0;
-    if (!released) {
-      return false;
-    }
-
-    const row = await this.get(sessionId);
-    if (row) {
-      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-
-    return true;
-  }
-
-  async forceAcquireLock(sessionId: string, tabId: string): Promise<void> {
-    if (this.backendMode) {
-      const changed = await forceAcquireAiSessionLock(this.dbAsync, sessionId, tabId);
-      if (changed) {
-        const row = await this.get(sessionId);
-        if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-      return;
-    }
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET lockedByTab = ?, lockedAt = ?
-         WHERE id = ?`,
-      )
-      .run(tabId, now, sessionId) as { changes?: number };
-
-    if (Number(result.changes ?? 0) === 0) {
-      return;
-    }
-
-    const row = await this.get(sessionId);
-    if (row) {
-      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-    }
-  }
-
-  async getLockHolder(sessionId: string): Promise<{ tabId: string | null; lockedAt: string | null }> {
-    if (this.backendMode) {
-      return getAiSessionLockHolder(this.dbAsync, sessionId);
-    }
-    const row = this.db
-      .prepare("SELECT lockedByTab, lockedAt FROM ai_sessions WHERE id = ?")
-      .get(sessionId) as { lockedByTab: string | null; lockedAt: string | null } | undefined;
-
-    return {
-      tabId: row?.lockedByTab ?? null,
-      lockedAt: row?.lockedAt ?? null,
-    };
-  }
-
-  async releaseStaleLocks(maxAgeMs = 30 * 60 * 1000): Promise<number> {
-    if (this.backendMode) {
-      return releaseStaleAiSessionLocks(this.dbAsync, maxAgeMs);
-    }
-    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
-    const staleRows = this.db
-      .prepare(
-        `SELECT id FROM ai_sessions
-         WHERE lockedByTab IS NOT NULL
-           AND lockedAt < ?`,
-      )
-      .all(cutoff) as Array<{ id: string }>;
-
-    if (staleRows.length === 0) {
-      return 0;
-    }
-
-    const result = this.db
-      .prepare(
-        `UPDATE ai_sessions
-         SET lockedByTab = NULL, lockedAt = NULL
-         WHERE lockedByTab IS NOT NULL
-           AND lockedAt < ?`,
-      )
-      .run(cutoff) as { changes?: number };
-
-    for (const rowInfo of staleRows) {
-      const row = await this.get(rowInfo.id);
-      if (row) {
-        this.emit("ai_session:updated", toSummary(row, row.updatedAt));
-      }
-    }
-
-    return Number(result.changes ?? 0);
-  }
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  acquireLock / releaseLock / forceAcquireLock / getLockHolder / releaseStaleLocks were removed
+  here with the rest of the per-tab session lock. AI interview sessions are multi-tab: this
+  persisted row is the shared source of truth and every tab may read and interact. See the dead
+  `lockedByTab`/`lockedAt` columns in core's project schema for why they still exist in the DB.
+  */
 
   /**
    * Delete a session by ID. Emits `ai_session:deleted`.
@@ -1179,12 +1033,9 @@ function toSidebarSummaryAsync(row: Record<string, unknown>): AiSessionSummary {
       projectId: (row.projectId as string | null) ?? null,
       createdAt: "",
       updatedAt: row.updatedAt as string,
-      lockedByTab: (row.lockedByTab as string | null) ?? null,
-      lockedAt: null,
       archived: typeof row.archived === "number" ? row.archived : 0,
     }),
     projectId: (row.projectId as string | null) ?? null,
-    lockedByTab: (row.lockedByTab as string | null) ?? null,
     updatedAt: row.updatedAt as string,
     archived: Number(row.archived ?? 0) === 1,
   };
@@ -1198,7 +1049,6 @@ function toSummary(session: AiSessionRow, updatedAt: string): AiSessionSummary {
     title: session.title,
     preview: extractDraftPreview(session),
     projectId: session.projectId,
-    lockedByTab: session.lockedByTab ?? null,
     updatedAt,
     archived: Number(session.archived ?? 0) === 1,
   };
@@ -1227,8 +1077,6 @@ function toSidebarSummary(
     projectId: row.projectId ?? null,
     createdAt: "",
     updatedAt: row.updatedAt,
-    lockedByTab: row.lockedByTab ?? null,
-    lockedAt: row.lockedAt ?? null,
     archived: row.archived,
   };
   return {
@@ -1238,7 +1086,6 @@ function toSidebarSummary(
     title: row.title,
     preview: extractDraftPreview(previewSource),
     projectId: row.projectId ?? null,
-    lockedByTab: row.lockedByTab ?? null,
     updatedAt: row.updatedAt,
     archived: Number(row.archived ?? 0) === 1,
   };

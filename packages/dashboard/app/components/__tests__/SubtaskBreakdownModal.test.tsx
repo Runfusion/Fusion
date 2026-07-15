@@ -258,25 +258,27 @@ describe("SubtaskBreakdownModal", () => {
     expect(mockStartSubtaskBreakdown).not.toHaveBeenCalled();
   });
 
-  it("shows lock overlay and allows take-control", async () => {
-    window.sessionStorage.setItem("fusion-tab-id", "tab-self");
-    mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+  /*
+  FNXC:PlanningMultiTab 2026-07-14-00:00:
+  Subtask breakdowns are multi-tab: this tab must never acquire a lock, never render a lock
+  overlay or "active in another tab" banner, and must stay interactive even when another tab
+  is using the same session.
+  */
+  it("never acquires a tab lock and renders no lock overlay", async () => {
+    // A rejecting lock API would surface an overlay if any legacy lock path survived.
+    mockAcquireSessionLock.mockResolvedValue({ acquired: false, currentHolder: "tab-other" });
 
     renderModal();
 
     await waitFor(() => {
-      expect(screen.getByTestId("session-lock-overlay")).toBeInTheDocument();
+      expect(mockStartSubtaskBreakdown).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByText("Take Control"));
-
-    await waitFor(() => {
-      expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("session-123", "tab-self");
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByTestId("session-lock-overlay")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-active-another-tab-banner")).not.toBeInTheDocument();
+    expect(screen.queryByText("Take Control")).not.toBeInTheDocument();
+    expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+    expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
   });
 
   it("hides send to background button in initial state", () => {
@@ -815,7 +817,7 @@ describe("SubtaskBreakdownModal", () => {
       fireEvent.click(retryButton);
 
       await waitFor(() => {
-        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined);
       });
       expect(mockConnectSubtaskStream).toHaveBeenCalledTimes(2);
     });
@@ -844,10 +846,8 @@ describe("SubtaskBreakdownModal", () => {
         thinkingOutput: "Still generating...",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       renderModal();
@@ -860,7 +860,7 @@ describe("SubtaskBreakdownModal", () => {
       fireEvent.click(retryButton);
 
       await waitFor(() => {
-        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockRetrySubtaskSession).toHaveBeenCalledWith("session-123", undefined);
         expect(mockFetchAiSession).toHaveBeenCalledWith("session-123");
       });
       expect(await screen.findByText("AI is generating subtasks...")).toBeInTheDocument();

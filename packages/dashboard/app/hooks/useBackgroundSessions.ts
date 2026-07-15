@@ -8,7 +8,6 @@ import {
   type AiSessionSummary,
 } from "../api";
 import { useAiSessionSync } from "./useAiSessionSync";
-import { getSessionTabId } from "../utils/getSessionTabId";
 import { subscribeSse } from "../sse-bus";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 
@@ -169,7 +168,6 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
           status: syncState.status,
           title: title ?? "AI Session",
           projectId: syncState.projectId ?? existing?.projectId ?? projectId ?? null,
-          lockedByTab: syncState.owningTabId ?? existing?.lockedByTab ?? null,
           updatedAt: syncState.updatedAt ?? existing?.updatedAt ?? new Date(incomingTimestamp).toISOString(),
         };
 
@@ -180,7 +178,6 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
           previous.title !== nextSession.title ||
           previous.type !== nextSession.type ||
           previous.projectId !== nextSession.projectId ||
-          previous.lockedByTab !== nextSession.lockedByTab ||
           previous.updatedAt !== nextSession.updatedAt;
 
         if (hasChanged) {
@@ -255,7 +252,6 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
           type: updated.type,
           title: updated.title,
           projectId: updated.projectId,
-          owningTabId: updated.lockedByTab,
           updatedAt: updated.updatedAt,
           timestamp: eventTimestamp,
         });
@@ -335,41 +331,31 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
     // Find the session to determine its type
     const session = sessions.find((s) => s.id === id);
     const sessionType = session?.type;
-    const sessionTabId = getSessionTabId();
 
-    // Cancel the session based on its type to ensure proper cleanup.
-    // Pass tabId for lock-aware cancellation; if locked by another tab the API
-    // returns 409 — we still proceed to DELETE below, which has no lock check,
-    // because the user explicitly chose to dismiss. The dismissal tombstone
-    // recorded below prevents stale sync/SSE updates from resurrecting it.
+    // Cancel the session based on its type to ensure proper cleanup. Cancellation
+    // is best-effort: a failure still proceeds to the DELETE below because the
+    // user explicitly chose to dismiss. The dismissal tombstone recorded below
+    // prevents stale sync/SSE updates from resurrecting it.
     let cancelFailed = false;
 
     if (sessionType === "planning") {
+      // FNXC:PlanningMultiTab 2026-07-14-00:00: planning routes are lock-free; no tabId needed.
       try {
-        await cancelPlanning(id, projectId, sessionTabId);
-      } catch (err: unknown) {
+        await cancelPlanning(id, projectId);
+      } catch {
         cancelFailed = true;
-        if (err instanceof Error && err.message.includes("locked")) {
-          console.warn(`[useBackgroundSessions] Forcing dismiss of planning session ${id} despite lock by another tab`);
-        }
       }
     } else if (sessionType === "subtask") {
       try {
-        await cancelSubtaskBreakdown(id, projectId, sessionTabId);
-      } catch (err: unknown) {
+        await cancelSubtaskBreakdown(id, projectId);
+      } catch {
         cancelFailed = true;
-        if (err instanceof Error && err.message.includes("locked")) {
-          console.warn(`[useBackgroundSessions] Forcing dismiss of subtask session ${id} despite lock by another tab`);
-        }
       }
     } else if (sessionType === "mission_interview") {
       try {
-        await cancelMissionInterview(id, projectId, sessionTabId);
-      } catch (err: unknown) {
+        await cancelMissionInterview(id, projectId);
+      } catch {
         cancelFailed = true;
-        if (err instanceof Error && err.message.includes("locked")) {
-          console.warn(`[useBackgroundSessions] Forcing dismiss of mission interview session ${id} despite lock by another tab`);
-        }
       }
     }
 

@@ -73,7 +73,6 @@ function buildSession(overrides: Partial<AiSessionSummary> = {}): AiSessionSumma
     status: overrides.status ?? "awaiting_input",
     title: overrides.title ?? "Draft implementation plan",
     projectId: overrides.projectId ?? "proj-1",
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? "2026-06-25T00:00:00.000Z",
     ...overrides,
   };

@@ -20,7 +20,6 @@ type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSession
 interface PlanningSubtaskRouteDeps {
   store: TaskStore;
   aiSessionStore?: AiSessionStore;
-  checkSessionLock: (sessionId: string, tabId: string | undefined, store: AiSessionStore | undefined) => Promise<{ allowed: true } | { allowed: false; currentHolder: string | null | undefined }>;
   parseLastEventId: (req: import("express").Request) => number | undefined;
   replayBufferedSSE: (res: import("express").Response, bufferedEvents: SessionBufferedEvent[]) => boolean;
 }
@@ -48,7 +47,7 @@ function rethrowPlanningWorkflowCreateError(
 
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
   const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
-  const { aiSessionStore, checkSessionLock, parseLastEventId, replayBufferedSSE } = deps;
+  const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
   // UTILITY PATH: Planning and subtask session routes are on a separate control-plane lane.
@@ -409,19 +408,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
   router.post("/subtasks/cancel", async (req, res) => {
     try {
-      const { sessionId, tabId } = req.body;
+      const { sessionId } = req.body;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { cancelSubtaskSession } = await import("../subtask-breakdown.js");
@@ -444,25 +433,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Retry a failed subtask breakdown session.
    *
    * UTILITY PATH: This route is independent of task-lane saturation.
-   * Session-lock 409 with { error, lockedByTab } is preserved.
+   * Lock-free (see FNXC:PlanningMultiTab on /planning/respond).
    */
   router.post("/subtasks/:sessionId/retry", async (req, res) => {
     try {
       const { sessionId } = req.params;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -839,11 +816,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Returns: { type: "question" | "complete", data: PlanningQuestion | PlanningSummary }
    *
    * UTILITY PATH: This route is independent of task-lane saturation.
-   * Session-lock 409 with { error, lockedByTab } is preserved (multi-tab coordination, not saturation).
+   *
+   * FNXC:PlanningMultiTab 2026-07-14-00:00:
+   * Planning routes are deliberately lock-free. Multiple tabs may read and interact with the
+   * same planning session; the persisted session row plus the activeGenerations guard in
+   * planning.ts (409 GenerationInProgressError) are the only coordination. The former
+   * per-tab session lock (checkSessionLock / lock-conflict 409s) was removed entirely.
    */
   router.post("/planning/respond", async (req, res) => {
     try {
-      const { sessionId, responses, tabId } = req.body;
+      const { sessionId, responses } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
@@ -851,16 +833,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       if (!responses || typeof responses !== "object") {
         throw badRequest("responses is required and must be an object");
-      }
-
-      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -897,18 +869,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
-      }
-
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const { rewindSession } = await import("../planning.js");
@@ -938,25 +898,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    * Retry a failed planning session.
    *
    * UTILITY PATH: This route is independent of task-lane saturation.
-   * Session-lock 409 with { error, lockedByTab } is preserved.
+   * Lock-free like all /planning/* routes (see FNXC:PlanningMultiTab on /planning/respond).
    */
   router.post("/planning/:sessionId/retry", async (req, res) => {
     try {
       const { sessionId } = req.params;
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -985,18 +933,6 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("sessionId is required");
       }
 
-      const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
-        ? req.body.tabId.trim()
-        : undefined;
-      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
-      }
-
       const { stopGeneration } = await import("../planning.js");
       const stopped = stopGeneration(sessionId);
       if (!stopped) {
@@ -1019,20 +955,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/cancel", async (req, res) => {
     try {
-      const { sessionId, tabId } = req.body;
+      const { sessionId } = req.body;
 
       if (!sessionId || typeof sessionId !== "string") {
         throw badRequest("sessionId is required");
-      }
-
-      const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
-      if (!lockCheck.allowed) {
-        res.status(409).json({
-          error: "Session locked by another tab",
-          lockedByTab: lockCheck.currentHolder,
-        });
-        return;
       }
 
       const { cancelSession, SessionNotFoundError: _SessionNotFoundError2 } = await import("../planning.js");

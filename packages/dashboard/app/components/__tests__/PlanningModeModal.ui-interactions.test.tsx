@@ -29,8 +29,6 @@ import userEvent from "@testing-library/user-event";
 import * as api from "../../api";
 import { PlanningModeModal } from "../PlanningModeModal";
 import { TaskDetailModal } from "../TaskDetailModal";
-import { useSessionLock } from "../../hooks/useSessionLock";
-import { getSessionTabId } from "../../utils/getSessionTabId";
 import type { MergeResult } from "@fusion/core";
 import {
   mockStartPlanning,
@@ -798,7 +796,6 @@ describe("PlanningModeModal", () => {
           title: "Existing session",
           preview: "An existing planning session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: new Date().toISOString(),
           archived: false,
         },

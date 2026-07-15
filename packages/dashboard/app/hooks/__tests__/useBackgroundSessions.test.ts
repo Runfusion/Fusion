@@ -35,7 +35,6 @@ function makeSession(overrides: Partial<apiModule.AiSessionSummary> & Pick<apiMo
     status: overrides.status ?? "generating",
     title: overrides.title ?? overrides.id,
     projectId: overrides.projectId ?? null,
-    lockedByTab: overrides.lockedByTab ?? null,
     updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
   };
 }
@@ -299,15 +298,16 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("planning-session");
     });
 
-    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined, expect.any(String));
+    // FNXC:PlanningMultiTab 2026-07-14-00:00: planning cancellation is lock-free — no tabId argument.
+    expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-session");
   });
 
-  it("force-dismisses a planning session even when cancellation is lock-conflicted", async () => {
+  it("force-dismisses a planning session even when cancellation fails", async () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "planning-locked", status: "generating", type: "planning" }),
     ]);
-    mockCancelPlanning.mockRejectedValueOnce(new Error("locked by another tab"));
+    mockCancelPlanning.mockRejectedValueOnce(new Error("cancel failed"));
 
     const { result } = renderHook(() => useBackgroundSessions());
 
@@ -602,7 +602,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("subtask-session");
     });
 
-    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined, expect.any(String));
+    expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("subtask-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("subtask-session");
   });
 
@@ -621,7 +621,7 @@ describe("useBackgroundSessions", () => {
       await result.current.dismissSession("interview-session");
     });
 
-    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined, expect.any(String));
+    expect(mockCancelMissionInterview).toHaveBeenCalledWith("interview-session", undefined);
     expect(mockDeleteAiSession).toHaveBeenCalledWith("interview-session");
   });
 

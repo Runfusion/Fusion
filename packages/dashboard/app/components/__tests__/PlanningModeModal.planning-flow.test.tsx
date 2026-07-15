@@ -11,15 +11,12 @@ import { act, render, renderHook, screen, fireEvent, waitFor, within } from "@te
 import * as api from "../../api";
 import { PlanningModeModal, dedupeSessionsById } from "../PlanningModeModal";
 import { TaskDetailModal } from "../TaskDetailModal";
-import { useSessionLock } from "../../hooks/useSessionLock";
-import { getSessionTabId } from "../../utils/getSessionTabId";
 import {
   PLANNING_DEEPEN_CHECKPOINT_ID,
   PLANNING_DEEPEN_CHECKPOINT_QUESTION,
   PLANNING_DEEPEN_PROCEED_OPTION_ID,
 } from "@fusion/core";
 import type { MergeResult, PlanningQuestion } from "@fusion/core";
-const mockUseAiSessionSync = vi.fn();
 
 import {
   mockStartPlanning,
@@ -131,10 +128,6 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (...args: any[]) => mockUseMobileKeyboard(...args),
 }));
 
-vi.mock("../../hooks/useAiSessionSync", () => ({
-  useAiSessionSync: (...args: any[]) => mockUseAiSessionSync(...args),
-}));
-
 describe("PlanningModeModal", () => {
   const mockOnClose = vi.fn();
   const mockOnTaskCreated = vi.fn();
@@ -186,14 +179,6 @@ describe("PlanningModeModal", () => {
     mockRewindPlanningSession.mockReset();
     mockUpdatePlanningSessionDraft.mockResolvedValue({ ok: true });
     mockStopPlanningGeneration.mockResolvedValue({ success: true });
-    mockUseAiSessionSync.mockReturnValue({
-      activeTabMap: new Map(),
-      broadcastUpdate: vi.fn(),
-      broadcastCompleted: vi.fn(),
-      broadcastLock: vi.fn(),
-      broadcastUnlock: vi.fn(),
-      broadcastHeartbeat: vi.fn(),
-    });
 
     // Default: simulate receiving a question after a brief delay
     mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
@@ -325,7 +310,6 @@ describe("PlanningModeModal", () => {
             _other: "Explore rollout risk",
           },
           undefined,
-          expect.any(String),
         );
       });
 
@@ -361,7 +345,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
           undefined,
-          expect.any(String),
         );
       });
 
@@ -447,9 +430,16 @@ describe("PlanningModeModal", () => {
       });
     });
 
-    it("shows locked overlay and allows take-control", async () => {
+    /*
+    FNXC:PlanningMultiTab 2026-07-14-00:00:
+    Planning has no cross-tab locking. Even when another tab is using the same session, this
+    tab must never call the lock API, never render a lock overlay, and must remain fully
+    interactive — the persisted session row is the shared source of truth.
+    */
+    it("never acquires a tab lock and stays interactive even when another tab uses the session", async () => {
       window.sessionStorage.setItem("fusion-tab-id", "tab-self");
-      mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
+      // If any legacy lock path survived, this rejection would surface an overlay.
+      mockAcquireSessionLock.mockResolvedValue({ acquired: false, currentHolder: "tab-other" });
 
       render(
         <PlanningModeModal
@@ -467,67 +457,27 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
-        expect(screen.getByTestId("session-lock-overlay")).toBeDefined();
+        expect(screen.getByText("What is the scope?")).toBeDefined();
       });
 
-      await act(async () => {
-        fireEvent.click(screen.getByText("Take Control"));
-      });
+      expect(screen.queryByTestId("session-lock-overlay")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Take Control" })).toBeNull();
+      expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+      expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByText("Small"));
+      fireEvent.click(screen.getByText("Continue"));
 
       await waitFor(() => {
-        expect(mockForceAcquireSessionLock).toHaveBeenCalledWith("session-123", "tab-self");
-      });
-
-      await waitFor(() => {
-        expect(screen.queryByTestId("session-lock-overlay")).toBeNull();
+        expect(mockRespondToPlanning).toHaveBeenCalledWith(
+          "session-123",
+          { "q-scope": "small" },
+          undefined,
+        );
       });
     });
 
-    it("does not render duplicate inline lock text while takeover overlay handles lock state", async () => {
-      window.sessionStorage.setItem("fusion-tab-id", "tab-self");
-      mockAcquireSessionLock.mockResolvedValueOnce({ acquired: false, currentHolder: "tab-other" });
-      mockUseAiSessionSync.mockReturnValueOnce({
-        activeTabMap: new Map([
-          [
-            "session-123",
-            {
-              tabId: "tab-other",
-              stale: false,
-            },
-          ],
-        ]),
-        broadcastUpdate: vi.fn(),
-        broadcastCompleted: vi.fn(),
-        broadcastLock: vi.fn(),
-        broadcastUnlock: vi.fn(),
-        broadcastHeartbeat: vi.fn(),
-      });
-
-      render(
-        <PlanningModeModal
-          isOpen={true}
-          onClose={mockOnClose}
-          onTaskCreated={mockOnTaskCreated}
-          onTasksCreated={vi.fn()}
-          tasks={mockTasks}
-        />,
-      );
-
-      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
-        target: { value: "Build auth system" },
-      });
-      fireEvent.click(screen.getByText("Start Planning"));
-
-      await waitFor(() => {
-        expect(screen.getByTestId("session-lock-overlay")).toBeDefined();
-      });
-
-      expect(screen.getByText("This session is active in another tab")).toBeDefined();
-      expect(screen.queryByText("Session is active in another tab.")).toBeNull();
-      expect(screen.getByRole("button", { name: "Take Control" })).toBeDefined();
-    });
-
-    it("allows normal question interaction when lock is acquired", async () => {
+    it("allows normal question interaction", async () => {
       window.sessionStorage.setItem("fusion-tab-id", "tab-self");
 
       render(
@@ -562,7 +512,6 @@ describe("PlanningModeModal", () => {
             "session-123",
             { "q-scope": "small" },
             undefined,
-            "tab-self",
           );
         },
         // waitFor's private 1s default (independent of vitest testTimeout) has
@@ -608,7 +557,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { _other: "Make this a design spike" },
           undefined,
-          "tab-self",
         );
       });
     });
@@ -651,7 +599,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { "q-scope": "small" },
           undefined,
-          "tab-self",
         );
       });
     });
@@ -709,7 +656,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { _other: "Challenge the premise" },
           undefined,
-          "tab-self",
         );
       });
     });
@@ -767,7 +713,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { "q-priorities": ["speed"], _other: "Preserve operator control" },
           undefined,
-          "tab-self",
         );
       });
     });
@@ -833,7 +778,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { _other: "Ask a different scoping question" },
           undefined,
-          "tab-self",
         );
       });
     });
@@ -892,7 +836,6 @@ describe("PlanningModeModal", () => {
           "session-123",
           { "q-confirm-scope": false, _comment: "Keep the planner moving" },
           undefined,
-          "tab-self",
         );
       });
     });
@@ -930,7 +873,7 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
       await waitFor(() => {
-        expect(mockStopPlanningGeneration).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+        expect(mockStopPlanningGeneration).toHaveBeenCalledWith("session-123", undefined);
       });
       expect(closeSpy).toHaveBeenCalled();
       await waitFor(() => {
@@ -963,10 +906,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Rate limit exceeded",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1034,10 +975,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Temporary failure",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1079,10 +1018,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
@@ -1118,10 +1055,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Temporary failure",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1191,10 +1126,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Temporary failure",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       try {
@@ -1265,10 +1198,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: "Watchdog aborted a stalled turn",
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       try {
@@ -1337,10 +1268,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "Still thinking...",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -1393,10 +1322,8 @@ describe("PlanningModeModal", () => {
         thinkingOutput: "",
         error: null,
         projectId: null,
-        lockedByTab: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
-        lockedAt: null,
       });
 
       render(
@@ -2170,7 +2097,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Completed planning session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2181,7 +2107,6 @@ describe("PlanningModeModal", () => {
           title: "New planning session",
           preview: "Draft plan from history",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -2285,7 +2210,7 @@ describe("PlanningModeModal", () => {
       );
 
       await waitFor(() => {
-        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-error-1", undefined, expect.any(String));
+        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-error-1", undefined);
       });
       expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
       expect(screen.queryByRole("alert")).toBeNull();
@@ -2300,7 +2225,6 @@ describe("PlanningModeModal", () => {
           status: "error",
           title: "Sidebar errored session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2340,7 +2264,7 @@ describe("PlanningModeModal", () => {
 
       await waitFor(() => {
         expect(mockFetchAiSession).toHaveBeenCalledWith("session-sidebar-error");
-        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-sidebar-error", undefined, expect.any(String));
+        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-sidebar-error", undefined);
       });
       expect(screen.getByText("Retrying… (attempt 1 of 3)")).toBeDefined();
       expect(screen.queryByRole("alert")).toBeNull();
@@ -2355,7 +2279,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Malformed result session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2416,7 +2339,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Reopen recover session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2530,7 +2452,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Sidebar deleted session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -2577,7 +2498,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Resume-to-task",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -3282,7 +3202,6 @@ describe("PlanningModeModal", () => {
           "session-complete-refine",
           { refine: true },
           undefined,
-          expect.any(String),
         );
       });
 
@@ -3366,7 +3285,6 @@ describe("PlanningModeModal", () => {
         `session-complete-refine-${viewportMode}`,
         { refine: true },
         undefined,
-        expect.any(String),
       );
 
       await waitFor(() => {
@@ -3871,7 +3789,7 @@ describe("PlanningModeModal", () => {
       expect(screen.getByTestId("conversation-history")).toBeDefined();
       expect(screen.getByText("What is the scope?")).toBeDefined();
       expect(screen.getByText("Medium")).toBeDefined();
-      expect(mockRewindPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
+      expect(mockRewindPlanningSession).toHaveBeenCalledWith("session-123", undefined);
     });
 
     it("stays on the question form and surfaces an error when the rewind request fails", async () => {
@@ -3929,7 +3847,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Duplicate session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -3959,7 +3876,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Duplicate session",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         });
@@ -3978,7 +3894,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Delete me",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -4016,7 +3931,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "Still here",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-01T00:00:00.000Z",
           archived: false,
         },
@@ -4061,7 +3975,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "older",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-01T00:00:00.000Z",
             archived: false,
           },
@@ -4071,7 +3984,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "peer",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-02T00:00:00.000Z",
             archived: false,
           },
@@ -4081,7 +3993,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "newer",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-03T00:00:00.000Z",
             archived: false,
           },
@@ -4091,7 +4002,6 @@ describe("PlanningModeModal", () => {
             status: "complete",
             title: "tie-first",
             projectId: null,
-            lockedByTab: null,
             updatedAt: "2026-01-02T00:00:00.000Z",
             archived: false,
           },
@@ -4103,7 +4013,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "newer",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-03T00:00:00.000Z",
           archived: false,
         },
@@ -4113,7 +4022,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "peer",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
@@ -4123,7 +4031,6 @@ describe("PlanningModeModal", () => {
           status: "complete",
           title: "tie-first",
           projectId: null,
-          lockedByTab: null,
           updatedAt: "2026-01-02T00:00:00.000Z",
           archived: false,
         },
