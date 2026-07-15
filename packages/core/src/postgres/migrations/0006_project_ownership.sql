@@ -33,9 +33,11 @@ DECLARE
 BEGIN
   SELECT rolsuper INTO current_user_is_superuser FROM pg_roles WHERE rolname = current_user;
   IF current_user_is_superuser THEN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fusion_runtime') THEN
+    BEGIN
       CREATE ROLE fusion_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-    END IF;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN
+      NULL; -- concurrent test database setup created the role first; safe to skip
+    END;
     EXECUTE format('GRANT fusion_runtime TO %I', current_user);
   END IF;
 END $$;
