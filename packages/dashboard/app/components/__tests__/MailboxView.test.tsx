@@ -25,7 +25,7 @@ vi.mock("../../api", () => ({
   fetchApprovals: vi.fn(),
   fetchApprovalDetail: vi.fn(),
   decideApproval: vi.fn(),
-  artifactMediaUrl: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}` : ""}`),
+  artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}&` : "?"}fn_token=daemon-token`),
 }));
 
 vi.mock("../../hooks/useViewportMode", () => {
@@ -840,8 +840,8 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-message-body")).toHaveTextContent(artifactMessage.content);
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
-      expect(screen.getByRole("img", { name: "Mailbox Screenshot" })).toHaveAttribute("src", "/api/artifacts/art-mailbox-image/media?projectId=project-a");
-      expect(screen.getByRole("link", { name: "Open artifact: Mailbox Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-mailbox-image/media?projectId=project-a");
+      expect(screen.getByRole("img", { name: "Mailbox Screenshot" })).toHaveAttribute("src", "/api/artifacts/art-mailbox-image/media?projectId=project-a&fn_token=daemon-token");
+      expect(screen.getByRole("link", { name: "Open artifact: Mailbox Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-mailbox-image/media?projectId=project-a&fn_token=daemon-token");
       expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
     });
 
@@ -936,7 +936,7 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument();
       expect(screen.getByTestId("mailbox-artifact-attachment")).toBeInTheDocument();
-      expect(screen.getByRole("img", { name: "Thread Image" })).toHaveAttribute("src", "/api/artifacts/art-thread-image/media");
+      expect(screen.getByRole("img", { name: "Thread Image" })).toHaveAttribute("src", "/api/artifacts/art-thread-image/media?fn_token=daemon-token");
       expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
     });
 

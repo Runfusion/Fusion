@@ -1737,12 +1737,23 @@ export async function fetchArtifacts(
   return api<ArtifactWithTask[]>(withProjectId(path, projectId));
 }
 
+/*
+FNXC:ArtifactRegistry 2026-07-15-12:00:
+Keep artifactMediaUrl token-free so fetch callers and script-capable HTML previews can authenticate via Authorization without putting the daemon token into a URL that executable artifact content could read.
+
+FNXC:ArtifactMediaAuth 2026-07-15-14:24:
+Main previously always-tokenized this helper for browser-native media loads. FN-7976 supersedes that by splitting tokenized element/link loads into artifactMediaUrlWithToken while this base URL stays clean for header-auth fetch and HTML blob previews.
+*/
 export function artifactMediaUrl(id: string, projectId?: string): string {
-  /*
-   * FNXC:ArtifactMediaAuth 2026-07-15-14:24:
-   * Artifact previews and links use browser-native navigation, which cannot send the bearer header used by fetch. Reuse appendTokenQuery so authenticated media loads while its dashboard-owned URL guard prevents leaking the daemon token cross-origin.
-   */
-  return appendTokenQuery(buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId)));
+  return buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId));
+}
+
+/*
+FNXC:ArtifactRegistry 2026-07-15-12:00:
+Artifact media element loads and link navigations cannot attach an Authorization header, so authenticated daemon media routes require the dashboard-owned fn_token query fallback. Keep artifactMediaUrl token-free for fetch callers and script-capable HTML previews; consumers that hand the URL to an img, video, audio, iframe, or anchor must use this helper unless executable content could read the URL.
+*/
+export function artifactMediaUrlWithToken(id: string, projectId?: string): string {
+  return appendTokenQuery(artifactMediaUrl(id, projectId));
 }
 
 /*

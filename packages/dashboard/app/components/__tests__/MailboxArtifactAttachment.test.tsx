@@ -1,13 +1,13 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MailboxArtifactAttachment } from "../MailboxArtifactAttachment";
-import { artifactMediaUrl } from "../../api";
+import { artifactMediaUrlWithToken } from "../../api";
 
 vi.mock("../../api", () => ({
-  artifactMediaUrl: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}` : ""}`),
+  artifactMediaUrlWithToken: vi.fn((id: string, projectId?: string) => `/api/artifacts/${id}/media${projectId ? `?projectId=${projectId}&` : "?"}fn_token=daemon-token`),
 }));
 
-const mockArtifactMediaUrl = vi.mocked(artifactMediaUrl);
+const mockArtifactMediaUrlWithToken = vi.mocked(artifactMediaUrlWithToken);
 
 describe("MailboxArtifactAttachment", () => {
   it("renders image artifacts inline with the project-scoped media URL", () => {
@@ -21,10 +21,10 @@ describe("MailboxArtifactAttachment", () => {
       />,
     );
 
-    expect(mockArtifactMediaUrl).toHaveBeenCalledWith("art-image", "proj-1");
+    expect(mockArtifactMediaUrlWithToken).toHaveBeenCalledWith("art-image", "proj-1");
     const image = screen.getByRole("img", { name: "Screenshot" });
-    expect(image).toHaveAttribute("src", "/api/artifacts/art-image/media?projectId=proj-1");
-    expect(screen.getByRole("link", { name: "Open artifact: Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-image/media?projectId=proj-1");
+    expect(image).toHaveAttribute("src", "/api/artifacts/art-image/media?projectId=proj-1&fn_token=daemon-token");
+    expect(screen.getByRole("link", { name: "Open artifact: Screenshot" })).toHaveAttribute("href", "/api/artifacts/art-image/media?projectId=proj-1&fn_token=daemon-token");
   });
 
   it("renders a View task affordance when task metadata and a handler are present", () => {
@@ -66,17 +66,17 @@ describe("MailboxArtifactAttachment", () => {
     render(<MailboxArtifactAttachment artifactId={`art-${artifactType}`} artifactType={artifactType} title={title} />);
 
     expect(screen.queryByRole("img")).toBeNull();
-    expect(screen.getByRole("link", { name: `Open artifact: ${title}` })).toHaveAttribute("href", `/api/artifacts/art-${artifactType}/media`);
+    expect(screen.getByRole("link", { name: `Open artifact: ${title}` })).toHaveAttribute("href", `/api/artifacts/art-${artifactType}/media?fn_token=daemon-token`);
   });
 
   it("renders controls media and an open link for video and audio artifacts", () => {
     const { rerender, container } = render(<MailboxArtifactAttachment artifactId="art-video" artifactType="video" title="Clip" />);
-    expect(container.querySelector("video[controls]")).toHaveAttribute("src", "/api/artifacts/art-video/media");
-    expect(screen.getByRole("link", { name: "Open artifact: Clip" })).toHaveAttribute("href", "/api/artifacts/art-video/media");
+    expect(container.querySelector("video[controls]")).toHaveAttribute("src", "/api/artifacts/art-video/media?fn_token=daemon-token");
+    expect(screen.getByRole("link", { name: "Open artifact: Clip" })).toHaveAttribute("href", "/api/artifacts/art-video/media?fn_token=daemon-token");
 
     rerender(<MailboxArtifactAttachment artifactId="art-audio" artifactType="audio" title="Recording" />);
-    expect(container.querySelector("audio[controls]")).toHaveAttribute("src", "/api/artifacts/art-audio/media");
-    expect(screen.getByRole("link", { name: "Open artifact: Recording" })).toHaveAttribute("href", "/api/artifacts/art-audio/media");
+    expect(container.querySelector("audio[controls]")).toHaveAttribute("src", "/api/artifacts/art-audio/media?fn_token=daemon-token");
+    expect(screen.getByRole("link", { name: "Open artifact: Recording" })).toHaveAttribute("href", "/api/artifacts/art-audio/media?fn_token=daemon-token");
   });
 
   it("renders nothing when artifactId metadata is missing", () => {
@@ -92,7 +92,7 @@ describe("MailboxArtifactAttachment", () => {
     fireEvent.error(screen.getByRole("img", { name: "Broken screenshot" }));
 
     expect(screen.queryByRole("img", { name: "Broken screenshot" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Open artifact: Broken screenshot" })).toHaveAttribute("href", "/api/artifacts/art-broken/media");
+    expect(screen.getByRole("link", { name: "Open artifact: Broken screenshot" })).toHaveAttribute("href", "/api/artifacts/art-broken/media?fn_token=daemon-token");
     expect(screen.getByTestId("mailbox-artifact-view-task")).toBeInTheDocument();
   });
 });

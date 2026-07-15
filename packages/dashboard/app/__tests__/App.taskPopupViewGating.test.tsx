@@ -99,15 +99,19 @@ describe("App task popup view gating", () => {
     expect(screen.getByTestId("floating-window-body-task-detail-FN-7944-board")).toHaveTextContent("FN-7944-board");
   });
 
-  it("does not render popups opened away from Board/List when attachment is enabled", () => {
+  it("keeps Mailbox and other non-board/list popups visible when attachment is enabled", () => {
     render(
       <PopupGateHarness
         taskView="command-center"
         taskPopupsBoardListOnly
-        entries={[{ task: task("FN-7944-command"), originTaskView: "command-center" }]}
+        entries={[
+          { task: task("FN-7976-mailbox") },
+          { task: task("FN-7976-command"), originTaskView: "command-center" },
+        ]}
       />,
     );
 
-    expectNoTaskPopupShell("FN-7944-command");
+    expect(screen.getByTestId("floating-window-task-detail-FN-7976-mailbox")).toBeInTheDocument();
+    expect(screen.getByTestId("floating-window-task-detail-FN-7976-command")).toBeInTheDocument();
   });
 });

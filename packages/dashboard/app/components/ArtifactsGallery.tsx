@@ -18,7 +18,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ArtifactWithTask } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { artifactMediaUrl, fetchArtifact, updateArtifact } from "../api";
+import { artifactMediaUrl, artifactMediaUrlWithToken, fetchArtifact, updateArtifact } from "../api";
+import { withTokenHeader } from "../auth";
 import { FileEditor } from "./FileEditor";
 import { FloatingWindow } from "./FloatingWindow";
 
@@ -270,7 +271,7 @@ interface TileProps {
 
 function VisualTile({ artifact, category, projectId, t, onOpen }: TileProps) {
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -379,7 +380,7 @@ function AudioRow({ artifact, projectId, t, onOpenTask }: RowProps) {
         )}
         <span className="artifacts-gallery-row-meta">{formatTimestamp(artifact.createdAt)}</span>
       </div>
-      <audio className="artifacts-gallery-audio" controls src={artifactMediaUrl(artifact.id, projectId)} aria-label={t("documents.artifactAudioLabel", "Audio artifact: {{title}}", { title })} />
+      <audio className="artifacts-gallery-audio" controls src={artifactMediaUrlWithToken(artifact.id, projectId)} aria-label={t("documents.artifactAudioLabel", "Audio artifact: {{title}}", { title })} />
     </article>
   );
 }
@@ -403,7 +404,7 @@ function FileRow({ artifact, projectId, t, onOpenTask }: RowProps) {
       </div>
       <a
         className="btn btn-sm artifacts-gallery-row-download"
-        href={artifactMediaUrl(artifact.id, projectId)}
+        href={artifactMediaUrlWithToken(artifact.id, projectId)}
         target="_blank"
         rel="noreferrer"
         data-testid="artifact-other-link"
@@ -509,7 +510,7 @@ function ViewerMeta({ artifact, t, onOpenTask }: { artifact: ArtifactWithTask; t
 
 function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps) {
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -545,7 +546,7 @@ function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayP
 
 function PdfViewer({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps) {
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
@@ -590,6 +591,8 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
   const [detail, setDetail] = useState<Artifact | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [htmlPreviewUrl, setHtmlPreviewUrl] = useState<string | null>(null);
+  const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -620,6 +623,43 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
   HTML, and Edit still opens the shared FileEditor.
   */
   const isHtml = (detail?.mimeType ?? artifact.mimeType)?.toLowerCase().split(";", 1)[0] === "text/html";
+
+  useEffect(() => {
+    if (!detail?.uri || !isHtml || !renderMarkdown) {
+      setHtmlPreviewUrl(null);
+      setHtmlPreviewError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    setHtmlPreviewUrl(null);
+    setHtmlPreviewError(null);
+
+    /*
+    FNXC:ArtifactRegistry 2026-07-15-14:45:
+    File-backed HTML previews need authenticated media access, but allow-scripts content can read a tokenized iframe URL and exfiltrate it. Fetch with the Authorization header and hand the sandboxed iframe a revocable blob URL so the bearer token never reaches executable artifact content.
+    */
+    void fetch(artifactMediaUrl(artifact.id, projectId), {
+      headers: withTokenHeader(),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Unable to load HTML preview (${response.status})`);
+        objectUrl = URL.createObjectURL(await response.blob());
+        if (!controller.signal.aborted) setHtmlPreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setHtmlPreviewError(error instanceof Error ? error.message : String(error));
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [artifact.id, detail?.uri, isHtml, projectId, renderMarkdown]);
 
   const startEditing = () => {
     setDraft(content);
@@ -695,16 +735,22 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
             />
           </div>
         ) : isHtml && renderMarkdown ? (
-          <iframe
-            className="artifacts-gallery-viewer-html"
-            sandbox="allow-scripts"
-            title={title}
-            {...(detail.uri ? { src: artifactMediaUrl(artifact.id, projectId) } : { srcDoc: content })}
-          />
+          detail.uri && !htmlPreviewUrl ? (
+            <p className="artifacts-gallery-viewer-loading">
+              {htmlPreviewError ?? t("documents.loadingArtifact", "Loading artifact…")}
+            </p>
+          ) : (
+            <iframe
+              className="artifacts-gallery-viewer-html"
+              sandbox="allow-scripts"
+              title={title}
+              {...(detail.uri ? { src: htmlPreviewUrl! } : { srcDoc: content })}
+            />
+          )
         ) : detail.uri ? (
           <p className="artifacts-gallery-viewer-loading">
             {t("documents.binaryDocArtifact", "This document is stored as a file.")}{" "}
-            <a href={artifactMediaUrl(artifact.id, projectId)} target="_blank" rel="noreferrer">
+            <a href={artifactMediaUrlWithToken(artifact.id, projectId)} target="_blank" rel="noreferrer">
               {t("documents.openArtifactMedia", "Open artifact media")}
             </a>
           </p>

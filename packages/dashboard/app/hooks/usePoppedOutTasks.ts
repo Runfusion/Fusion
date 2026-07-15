@@ -1,6 +1,6 @@
 /*
-FNXC:FloatingWindow 2026-06-24-00:00:
-Popped-out task-detail windows — movable, resizable, non-blocking FloatingWindows. Each entry is a task snapshot; several can be open at once. Snapshots survive a tasks revalidation (rendering prefers the live row by id). Pop-out dedupes by task id. Extracted from AppInner.
+FNXC:FloatingWindow 2026-07-15-14:55:
+Popped-out task-detail windows are movable, resizable, non-blocking FloatingWindows. Each entry is a task snapshot; several can be open at once. Reopening an id replaces its snapshot and origin so a stale or previously view-gated entry becomes current and visible. Extracted from AppInner.
 */
 
 import { useCallback, useMemo, useState } from "react";
@@ -23,7 +23,14 @@ export function usePoppedOutTasks(): UsePoppedOutTasksResult {
   const [entries, setEntries] = useState<PoppedOutTaskEntry[]>([]);
 
   const popOut = useCallback((task: Task | TaskDetail, originTaskView?: TaskView) => {
-    setEntries((current) => (current.some((entry) => entry.task.id === task.id) ? current : [...current, { task, originTaskView }]));
+    setEntries((current) => {
+      const existingIndex = current.findIndex((entry) => entry.task.id === task.id);
+      if (existingIndex === -1) return [...current, { task, originTaskView }];
+
+      const upgraded = [...current];
+      upgraded[existingIndex] = { task, originTaskView };
+      return upgraded;
+    });
   }, []);
 
   const close = useCallback((taskId: string) => {
@@ -31,8 +38,8 @@ export function usePoppedOutTasks(): UsePoppedOutTasksResult {
   }, []);
 
   /*
-  FNXC:TaskPopupViewGating 2026-07-13-00:00:
-  Popups store the TaskView where they were opened so the opt-in view gate can attach each modal to its originating Board/List surface. The snapshot stays in hook state while hidden; callers that only need legacy task snapshots can keep reading `tasks`.
+  FNXC:TaskPopupViewGating 2026-07-15-14:55:
+  Popups store their opening view so the opt-in gate can attach Board/List popups to that surface. Reopening a duplicate id updates this origin and its snapshot; callers that only need task snapshots can keep reading `tasks`.
   */
   const tasks = useMemo(() => entries.map((entry) => entry.task), [entries]);
 

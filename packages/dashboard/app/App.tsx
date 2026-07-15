@@ -224,13 +224,18 @@ export interface DashboardShortcutPopupHandlers {
   closeTerminal: () => void;
 }
 
+/*
+FNXC:TaskPopupViewGating 2026-07-15-14:55:
+The board/list-only preference attaches only popups opened from Board or List. Mailbox and Documents have no board/list origin, so their explicit View task actions must remain visible on every surface rather than creating an invisible FloatingWindow.
+*/
 export function isTaskPopupVisibleForView(options: {
   taskPopupsBoardListOnly: boolean;
   taskView: TaskView;
   originTaskView?: TaskView;
 }): boolean {
   if (!options.taskPopupsBoardListOnly) return true;
-  return (options.originTaskView === "board" || options.originTaskView === "list") && options.originTaskView === options.taskView;
+  if (options.originTaskView !== "board" && options.originTaskView !== "list") return true;
+  return options.originTaskView === options.taskView;
 }
 
 /*
@@ -688,8 +693,8 @@ function AppInner() {
     originTaskView,
   }), [taskPopupsBoardListOnly, taskView]);
   /*
-  FNXC:TaskPopupViewGating 2026-07-13-00:00:
-  Default-off preserves today's globally visible task popups. When enabled, a popup is render-attached to the Board/List view where it was opened: switching views unmounts the FloatingWindow without clearing the hook snapshot, and returning to that same view remounts it with the shared persisted geometry.
+  FNXC:TaskPopupViewGating 2026-07-15-14:55:
+  Default-off preserves globally visible task popups. When enabled, only Board/List-origin popups are render-attached to their originating view; Mailbox, Documents, and other non-task-view opens remain visible so their View task actions always open a usable window.
   */
   const visiblePoppedOutTaskEntries = useMemo(
     () => poppedOutTaskEntries.filter((entry) => taskPopupsVisibleOnCurrentView(entry.originTaskView)),
@@ -1834,8 +1839,8 @@ function AppInner() {
       FNXC:TaskPopupLayer 2026-07-04-18:36:
       Ordinary task-detail popups belong to the board/task-detail layer, not the global floating-utility stack. Pass the task-detail layer so board/right-dock task opens preserve the visible board context while utility windows keep the higher app-wide raise/focus contract.
 
-      FNXC:TaskPopupViewGating 2026-07-13-00:00:
-      Rendering uses visible entries only; the source hook keeps hidden popup snapshots mounted in React state rather than clearing them on view change. This distinction lets the opt-in setting attach each popup to its originating Board/List view while default-off continues to render all open popups globally.
+      FNXC:TaskPopupViewGating 2026-07-15-14:55:
+      Rendering uses visible entries only; the source hook keeps Board/List-hidden snapshots in React state rather than clearing them on view change. Non-board/list opens stay visible even with the opt-in setting, preserving Mailbox and Documents View task behavior.
       */}
       {visiblePoppedOutTaskEntries.map(({ task: snapshot }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;

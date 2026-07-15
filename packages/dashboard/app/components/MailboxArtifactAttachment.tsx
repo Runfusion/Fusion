@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, type ReactNode } from "react";
 import type { ArtifactType } from "@fusion/core";
-import { artifactMediaUrl } from "../api";
+import { artifactMediaUrlWithToken } from "../api";
 
 export interface MailboxArtifactAttachmentProps {
   artifactId?: unknown;
@@ -24,7 +24,7 @@ function readArtifactType(value: unknown): ArtifactType | "unknown" {
 
 /**
  * FNXC:ArtifactRegistry 2026-07-12-00:00:
- * Artifact-registration mail messages must expose the artifact announced by message.metadata. Render image artifacts inline, keep every type reachable through artifactMediaUrl(projectId-aware), and render nothing when metadata has no artifactId so ordinary messages keep their exact layout.
+ * Artifact-registration mail messages must expose the artifact announced by message.metadata. Render image artifacts inline, keep every type reachable through the authenticated project-aware media URL, and render nothing when metadata has no artifactId so ordinary messages keep their exact layout.
  *
  * FNXC:ArtifactRegistry 2026-07-12-00:00:
  * Artifact-registration mail messages must also expose the producing task when message.metadata.taskId is paired with an onOpenTask handler. Render no task affordance when either side is absent so artifact-only and ordinary messages do not gain empty shells.
@@ -44,7 +44,7 @@ export const MailboxArtifactAttachment = memo(function MailboxArtifactAttachment
   const mediaMimeType = readString(mimeType);
   const task = readString(taskId);
   const [imageFailed, setImageFailed] = useState(false);
-  const mediaUrl = useMemo(() => id ? artifactMediaUrl(id, projectId) : "", [id, projectId]);
+  const mediaUrl = useMemo(() => id ? artifactMediaUrlWithToken(id, projectId) : "", [id, projectId]);
 
   if (!id) return null;
 

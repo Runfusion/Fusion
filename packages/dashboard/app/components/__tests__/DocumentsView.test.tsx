@@ -18,6 +18,7 @@ vi.mock("../../api", () => ({
   putTaskDocument: vi.fn(),
   saveWorkspaceFileContent: vi.fn(),
   artifactMediaUrl: vi.fn((id: string) => `/api/artifacts/${id}/media`),
+  artifactMediaUrlWithToken: vi.fn((id: string) => `/api/artifacts/${id}/media?fn_token=daemon-token`),
 }));
 
 /*
@@ -404,6 +405,11 @@ describe("DocumentsView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<h1>Login mock</h1>", { status: 200 })));
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:artifact-html-preview"),
+      revokeObjectURL: vi.fn(),
+    });
     window.innerWidth = 1200;
     setupHookDefaults();
     mockFetchWorkspaceFileContent.mockResolvedValue({
@@ -415,6 +421,7 @@ describe("DocumentsView", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     window.innerWidth = originalInnerWidth;
     document.getSelection()?.removeAllRanges();
   });
@@ -679,7 +686,7 @@ describe("DocumentsView", () => {
     const imageEntry = screen.getByRole("button", { name: "Open KB-001 artifact Task screenshot" });
     fireEvent.click(imageEntry);
     expect(imageEntry).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("img", { name: "Task screenshot" })).toHaveAttribute("src", "/api/artifacts/task-artifact-image/media");
+    expect(screen.getByRole("img", { name: "Task screenshot" })).toHaveAttribute("src", "/api/artifacts/task-artifact-image/media?fn_token=daemon-token");
 
     fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
     expect(screen.getByText("Alpha document content")).toBeInTheDocument();
@@ -690,11 +697,11 @@ describe("DocumentsView", () => {
     expect((await screen.findAllByText((_, element) => element?.textContent === "Fetched artifact markdown")).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Open KB-ARTIFACTS artifact Task report PDF" }));
-    expect(screen.getByTitle("PDF artifact: Task report PDF")).toHaveAttribute("src", "/api/artifacts/task-artifact-pdf/media");
-    expect(screen.getByRole("link", { name: /open in new tab/i })).toHaveAttribute("href", "/api/artifacts/task-artifact-pdf/media");
+    expect(screen.getByTitle("PDF artifact: Task report PDF")).toHaveAttribute("src", "/api/artifacts/task-artifact-pdf/media?fn_token=daemon-token");
+    expect(screen.getByRole("link", { name: /open in new tab/i })).toHaveAttribute("href", "/api/artifacts/task-artifact-pdf/media?fn_token=daemon-token");
 
     fireEvent.click(screen.getByRole("button", { name: "Open KB-ARTIFACTS artifact Task binary bundle" }));
-    expect(screen.getByTestId("task-artifact-open-link")).toHaveAttribute("href", "/api/artifacts/task-artifact-other/media");
+    expect(screen.getByTestId("task-artifact-open-link")).toHaveAttribute("href", "/api/artifacts/task-artifact-other/media?fn_token=daemon-token");
   });
 
   it("renders video audio and html task artifact selections in the right pane", async () => {
@@ -916,12 +923,12 @@ describe("DocumentsView", () => {
     fireEvent.click(artifactsTab);
 
     expect(screen.getByRole("tab", { name: /show artifacts/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
+    expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
     expect(screen.getByRole("button", { name: "Expand Image artifact" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand Video artifact" })).toBeInTheDocument();
     expect(screen.getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
     expect(screen.getByLabelText("Audio artifact: Audio artifact").tagName).toBe("AUDIO");
-    expect(screen.getByTestId("artifact-other-link")).toHaveAttribute("href", "/api/artifacts/artifact-other/media");
+    expect(screen.getByTestId("artifact-other-link")).toHaveAttribute("href", "/api/artifacts/artifact-other/media?fn_token=daemon-token");
 
     // Category chips render for every present category with counts (All = total).
     const filter = screen.getByRole("group", { name: /filter artifacts by category/i });
@@ -971,7 +978,7 @@ describe("DocumentsView", () => {
     */
     fireEvent.click(screen.getByRole("button", { name: "Expand Image artifact" }));
     let dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
-    expect(within(dialog).getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
+    expect(within(dialog).getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media?fn_token=daemon-token");
     expect(screen.getByTestId("floating-window-artifact-media-artifact-image")).toBeInTheDocument();
     expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
 
@@ -1081,12 +1088,13 @@ describe("DocumentsView", () => {
   FNXC:ArtifactsGallery 2026-07-11-10:20:
   HTML doc artifacts must open as LIVE sandboxed previews by default (agents deliver interactive mockups as text/html documents), with a Source toggle for the raw markup.
   */
-  it("renders HTML doc artifacts as a sandboxed live preview with a source toggle", async () => {
+  it("renders file-backed HTML previews token-free while keeping scripts sandboxed", async () => {
     const htmlArtifact: ArtifactWithTask = {
       id: "artifact-html",
       type: "document",
       title: "Login mockup",
       mimeType: "text/html",
+      uri: "artifacts/login.html",
       content: "<h1>Login mock</h1>",
       authorId: "design-agent",
       authorType: "agent",
@@ -1113,13 +1121,14 @@ describe("DocumentsView", () => {
       const iframe = document.querySelector(".artifacts-gallery-viewer-html");
       expect(iframe).toBeInTheDocument();
       expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
-      expect(iframe).toHaveAttribute("srcdoc", "<h1>Login mock</h1>");
+      expect(iframe).toHaveAttribute("src", "blob:artifact-html-preview");
+      expect(iframe?.getAttribute("src")).not.toContain("fn_token");
     });
 
     // The toggle shows the CURRENT mode (matching the Markdown/Plain convention): "Preview" while previewing.
     fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
     expect(document.querySelector(".artifacts-gallery-viewer-html")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("<h1>Login mock</h1>")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Open artifact media" })).toHaveAttribute("href", "/api/artifacts/artifact-html/media?fn_token=daemon-token");
   });
 
   /*
@@ -1156,7 +1165,7 @@ describe("DocumentsView", () => {
     // The FloatingWindow portals to document.body, so query the document rather than the render container.
     const iframe = document.querySelector(".artifacts-gallery-viewer-pdf");
     expect(iframe).toBeInTheDocument();
-    expect(iframe).toHaveAttribute("src", "/api/artifacts/artifact-pdf/media");
+    expect(iframe).toHaveAttribute("src", "/api/artifacts/artifact-pdf/media?fn_token=daemon-token");
     expect(iframe).toHaveAttribute("title", "Spec export");
 
     fireEvent.keyDown(document, { key: "Escape" });

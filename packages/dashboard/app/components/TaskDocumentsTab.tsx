@@ -13,7 +13,7 @@ import {
   fetchTaskDocumentRevisions,
   putTaskDocument,
   deleteTaskDocument,
-  artifactMediaUrl,
+  artifactMediaUrlWithToken,
 } from "../api";
 import { useArtifacts } from "../hooks/useArtifacts";
 import { LoadingSpinner } from "./LoadingSpinner";
@@ -82,7 +82,7 @@ interface TaskArtifactCardProps {
 
 function TaskArtifactCard({ artifact, projectId, onExpandImage }: TaskArtifactCardProps) {
   const { t } = useTranslation("app");
-  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const mediaUrl = artifactMediaUrlWithToken(artifact.id, projectId);
   const typeLabel = getArtifactTypeLabel(t, artifact.type);
   const preview = artifact.content ? getContentPreview(artifact.content, 320) : artifact.description;
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
@@ -721,7 +721,7 @@ export function TaskDocumentsTab({
             <div className="documents-artifact-lightbox-media-frame">
               <img
                 className="documents-artifact-lightbox-media"
-                src={artifactMediaUrl(lightboxArtifact.id, projectId)}
+                src={artifactMediaUrlWithToken(lightboxArtifact.id, projectId)}
                 alt={lightboxArtifact.title || t("documents.untitledArtifact", "Untitled artifact")}
               />
             </div>
