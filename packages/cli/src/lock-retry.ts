@@ -2,21 +2,13 @@
  * FNXC:CliBoardMutation 2026-07-09-00:00:
  * `fn task show`/`fn task move` (FN-7731, upstream #1976) open a `TaskStore`
  * and call `getTask`/`moveTask` exactly once. If the engine or another agent
- * holds a SQLite writer lock on `.fusion/fusion.db` at that instant, the
- * call surfaces a raw `database is locked` error (or appears to hang until
- * the DB layer's own bounded `busy_timeout`/lock-recovery window in
- * packages/core/src/db.ts — DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5s plus a short
- * lock-recovery retry — finally gives up). That DB-level bound already
- * prevents an unbounded hang at the SQLite layer, but it does not retry
- * across separate `better-sqlite3`/node:sqlite statement calls, so a single
- * unlucky read/write at the CLI surface still fails outright even though
- * the lock typically clears within a second or two of normal engine
- * activity.
+ * can collide with another PostgreSQL transaction. Serialization failures,
+ * deadlocks, and lock-not-available errors are transient and should receive a
+ * bounded command-level retry rather than surfacing immediately.
  *
  * This module adds a CLI-level retry ABOVE that bound: it retries a thunk
- * only when the error is classified as a SQLite lock error (reusing
- * `@fusion/core`'s `isSqliteLockError`, the same classifier the DB layer's
- * own `runWithLockRecovery` uses, so CLI and DB lock detection never drift),
+ * only when the error is classified as PostgreSQL contention. The legacy
+ * SQLite classifier remains accepted for isolated compatibility tests,
  * with exponential backoff capped by a total wall-clock deadline. Non-lock
  * errors (not-found, invalid column, etc.) propagate immediately — they are
  * never retried. On deadline exhaustion the command fails fast with a
@@ -75,6 +67,16 @@ export interface RetryOnLockContext {
   action: string;
 }
 
+function isRetryableDatabaseContention(error: unknown): boolean {
+  if (isSqliteLockError(error)) return true;
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  // PostgreSQL: serialization_failure, deadlock_detected, lock_not_available.
+  if (candidate.code === "40001" || candidate.code === "40P01" || candidate.code === "55P03") return true;
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+  return message.includes("could not serialize access") || message.includes("deadlock detected") || message.includes("lock not available");
+}
+
 /**
  * Run `operation`, retrying with bounded exponential backoff ONLY when the
  * thrown error is a SQLite lock error (`isSqliteLockError`). Any other
@@ -94,7 +96,7 @@ export async function retryOnLock<T>(
     try {
       return await operation();
     } catch (error) {
-      if (!isSqliteLockError(error)) {
+      if (!isRetryableDatabaseContention(error)) {
         throw error;
       }
 
@@ -102,7 +104,7 @@ export async function retryOnLock<T>(
       if (now >= deadline) {
         throw new LockRetryExhaustedError(
           `Timed out after ${totalMs}ms waiting to ${context.action} for ${context.id}: ` +
-            `the board database stayed locked (the engine or another agent is writing). ` +
+            `the board database stayed contended (the engine or another agent is writing). ` +
             `Retry the command, or raise the bound via FUSION_CLI_LOCK_RETRY_MS.`,
           error,
         );

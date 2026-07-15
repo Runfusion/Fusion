@@ -46,13 +46,11 @@ vi.mock("@fusion/core", () => {
 
 // ── Mock project-context ─────────────────────────────────────────────
 
-vi.mock("../project-context.js", () => ({
-  resolveProject: vi.fn().mockResolvedValue({
-    projectId: "test-project",
-    projectPath: "/tmp/test-project",
-    projectName: "test-project",
-    isRegistered: true,
-    store: {},
+vi.mock("../../project-context.js", () => ({
+  resolveAgentStoreBase: vi.fn().mockResolvedValue({
+    rootDir: "/tmp/test-project",
+    asyncLayer: {},
+    cleanup: vi.fn(async () => undefined),
   }),
 }));
 

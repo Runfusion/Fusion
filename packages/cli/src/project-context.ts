@@ -5,7 +5,7 @@
  * for operating on tasks across multiple registered projects.
  */
 
-import { TaskStore, createTaskStoreForBackend, type AsyncDataLayer, type RegisteredProject, CentralCore, GlobalSettingsStore, isValidSqliteDatabaseFile } from "@fusion/core";
+import { createTaskStoreForBackend, type AsyncDataLayer, type RegisteredProject, type TaskStore, CentralCore, GlobalSettingsStore, hasProjectIdentity, isValidSqliteDatabaseFile } from "@fusion/core";
 import { resolve, dirname, basename } from "node:path";
 
 /** Project context for CLI operations */
@@ -24,6 +24,36 @@ export interface ProjectContext {
 
 /** Cache of TaskStore instances by project ID to avoid re-initialization */
 const storeCache = new Map<string, TaskStore>();
+interface ProjectStoreOwner {
+  backendShutdown: () => Promise<void>;
+  central?: CentralCore;
+  closePromise?: Promise<void>;
+}
+const storeOwners = new WeakMap<TaskStore, ProjectStoreOwner>();
+const closedProjectStores = new WeakSet<TaskStore>();
+
+async function closeOwnedProjectStore(store: TaskStore): Promise<void> {
+  if (closedProjectStores.has(store)) return;
+  const owner = storeOwners.get(store);
+  if (!owner) {
+    await store.close().catch(() => undefined);
+    closedProjectStores.add(store);
+    return;
+  }
+  if (!owner.closePromise) {
+    /*
+    FNXC:PostgresCliLifecycle 2026-07-14-19:10:
+    A layerless CentralCore can own the embedded postmaster that a subsequently-created project TaskStore only observes. Teardown must therefore close the TaskStore pool first and stop the retained CentralCore/postmaster second, with one shared promise making concurrent command cleanup exactly-once.
+    */
+    owner.closePromise = (async () => {
+      await owner.backendShutdown().catch(() => undefined);
+      await owner.central?.close().catch(() => undefined);
+    })();
+  }
+  await owner.closePromise;
+  storeOwners.delete(store);
+  closedProjectStores.add(store);
+}
 
 /**
  * Resolve a project from explicit name flag, default project, or CWD detection.
@@ -31,7 +61,8 @@ const storeCache = new Map<string, TaskStore>();
  * Resolution order:
  * 1. If `projectNameFlag` provided: look up by name (case-insensitive) or ID (exact)
  * 2. Else if default project set in global settings: use that project
- * 3. Else: auto-detect from CWD by finding nearest `.fusion/fusion.db`
+ * 3. Else: auto-detect from CWD using `.fusion/project.json` (or a legacy
+ *    SQLite database only as migration input)
  *
  * @param projectNameFlag - Optional explicit project name/ID from --project flag
  * @param cwd - Current working directory for CWD detection (default: process.cwd())
@@ -45,6 +76,7 @@ export async function resolveProject(
 ): Promise<ProjectContext> {
   const central = new CentralCore(globalDir);
   await central.init();
+  let centralRetained = false;
 
   try {
     let project: RegisteredProject | undefined;
@@ -88,6 +120,12 @@ export async function resolveProject(
       // For unregistered projects, use the path as the project ID
       const projectId = isRegistered ? detected.id : detected.path;
 
+      const owner = storeOwners.get(store);
+      if (owner && !owner.central) {
+        owner.central = central;
+        centralRetained = true;
+      }
+
       return {
         projectId,
         projectPath: detected.path,
@@ -98,6 +136,11 @@ export async function resolveProject(
     }
 
     const store = await getStoreForProject(project.id, project.path, globalDir);
+    const owner = storeOwners.get(store);
+    if (owner && !owner.central) {
+      owner.central = central;
+      centralRetained = true;
+    }
 
     return {
       projectId: project.id,
@@ -107,7 +150,7 @@ export async function resolveProject(
       store,
     };
   } finally {
-    await central.close();
+    if (!centralRetained) await central.close();
   }
 }
 
@@ -170,7 +213,7 @@ export async function clearDefaultProject(globalDir?: string): Promise<void> {
 
 /**
  * Detect a project from the current working directory by walking up
- * the directory tree looking for `.fusion/fusion.db`.
+ * the directory tree looking for a PostgreSQL-era project identity marker.
  *
  * @param cwd - Starting directory (typically process.cwd())
  * @param central - Initialized CentralCore instance
@@ -185,9 +228,11 @@ export async function detectProjectFromCwd(
 
   // Walk up the directory tree
   while (true) {
-    // Check for fn database
-    const kbPath = resolve(currentDir, ".fusion", "fusion.db");
-    if (isValidSqliteDatabaseFile(kbPath)) {
+    // FNXC:ProjectIdentityMarker 2026-07-14-17:20: CWD discovery is marker-first;
+    // an openable fusion.db remains recognized only to migrate older projects.
+    const fusionDir = resolve(currentDir, ".fusion");
+    const legacyDbPath = resolve(fusionDir, "fusion.db");
+    if (hasProjectIdentity(fusionDir) || isValidSqliteDatabaseFile(legacyDbPath)) {
       // Found a fn project - check if it's registered
       const project = await central.getProjectByPath(currentDir);
       if (project) {
@@ -271,8 +316,12 @@ export async function getStoreForProject(
 /**
  * Clear the store cache. Useful for testing or memory management.
  */
-export function clearStoreCache(): void {
+export async function clearStoreCache(): Promise<void> {
+  const stores = [...storeCache.values()];
   storeCache.clear();
+  await Promise.allSettled(stores.map(async (store) => {
+    await closeOwnedProjectStore(store);
+  }));
 }
 
 export async function createLocalStore(
@@ -281,20 +330,15 @@ export async function createLocalStore(
 ): Promise<TaskStore> {
   // FNXC:PostgresCutover 2026-07-04: route through createTaskStoreForBackend so
   // standalone CLI commands (and resolveProject().store) boot PostgreSQL instead
-  // of the removed SQLite runtime. The factory returns null only on the
-  // FUSION_NO_EMBEDDED_PG=1 opt-out; in that case fall back to the legacy
-  // TaskStore, which still needs an explicit init().
+  // of the removed SQLite runtime.
   // FNXC:PostgresCutover 2026-07-05-12:00: exported so CLI command
   // catch-fallbacks (task/pr/backup/memory-backup/branch-group/mcp) boot their
   // cwd-rooted store through the same factory instead of constructing a legacy
   // SQLite TaskStore directly (its runtime throws in backend mode).
   const boot = await createTaskStoreForBackend({ rootDir: projectPath, globalSettingsDir });
-  if (boot) {
-    return boot.taskStore;
-  }
-  const store = new TaskStore(projectPath, globalSettingsDir);
-  await store.init();
-  return store;
+  /* FNXC:PostgresCliLifecycle 2026-07-14-18:07: CLI project contexts return only TaskStore, so retain the factory owner handle in a WeakMap and release it whenever closeProjectStore closes that context. */
+  storeOwners.set(boot.taskStore, { backendShutdown: boot.shutdown });
+  return boot.taskStore;
 }
 
 /**
@@ -336,18 +380,24 @@ export async function getStore(
  * must construct AgentStore in backend mode so agent data lives in PostgreSQL,
  * not the removed SQLite runtime (VAL-REMOVAL-005). The asyncLayer is borrowed
  * from the resolved project's TaskStore (same connection pool), mirroring the
- * extension.ts getAgentStore injection. When no project resolves (unregistered
- * cwd) the layer is null and AgentStore falls back to its layerless path.
+ * extension.ts getAgentStore injection. Resolution and PostgreSQL failures are
+ * surfaced to the command; a layerless SQLite AgentStore is never constructed.
  */
 export async function resolveAgentStoreBase(
   projectName?: string,
-): Promise<{ rootDir: string; asyncLayer: AsyncDataLayer | null }> {
-  try {
-    const context = await resolveProject(projectName);
-    return { rootDir: context.projectPath, asyncLayer: context.store.getAsyncLayer() };
-  } catch {
-    return { rootDir: process.cwd(), asyncLayer: null };
+): Promise<{ rootDir: string; asyncLayer: AsyncDataLayer; cleanup: () => Promise<void> }> {
+  /* FNXC:PostgresCliLifecycle 2026-07-14-19:10: Agent, message, and chat commands must surface project/PostgreSQL resolution failures and borrow a non-null layer only while retaining an explicit asynchronous owner cleanup. */
+  const context = await resolveProject(projectName);
+  const asyncLayer = context.store.getAsyncLayer();
+  if (!asyncLayer) {
+    await closeProjectStore(context);
+    throw new Error(`PostgreSQL AsyncDataLayer unavailable for ${context.projectPath}`);
   }
+  return {
+    rootDir: context.projectPath,
+    asyncLayer,
+    cleanup: () => closeProjectStore(context),
+  };
 }
 
 /**
@@ -366,15 +416,10 @@ export async function resolveAgentStoreBase(
  * another in-process caller already holds/closed the same cached instance.
  */
 export async function closeProjectStore(context: ProjectContext): Promise<void> {
-  try {
-    await context.store.close();
-  } catch {
-    // Best-effort: an already-closed store (or one closed by a concurrent
-    // in-process caller) must not throw here.
-  }
   if (storeCache.get(context.projectId) === context.store) {
     storeCache.delete(context.projectId);
   }
+  await closeOwnedProjectStore(context.store);
 }
 
 /**

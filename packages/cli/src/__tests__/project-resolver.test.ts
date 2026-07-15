@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, statSync } from "node:fs";
-import { TaskStore } from "@fusion/core";
+import { TaskStore, createTaskStoreForBackend } from "@fusion/core";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
   const mock = vi.fn(function () {});
@@ -17,8 +17,9 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
   return mock;
 }
 
-const { mockIsValidSqliteDatabaseFile } = vi.hoisted(() => ({
+const { mockIsValidSqliteDatabaseFile, mockHasProjectIdentity } = vi.hoisted(() => ({
   mockIsValidSqliteDatabaseFile: vi.fn(),
+  mockHasProjectIdentity: vi.fn(),
 }));
 
 // Mock fs module
@@ -29,6 +30,10 @@ vi.mock("node:fs", () => ({
 
 // Mock @fusion/core
 vi.mock("@fusion/core", async () => {
+  const TaskStoreMock = makeConstructibleMock(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    listTasks: vi.fn().mockResolvedValue([]),
+  }));
   return {
     CentralCore: class MockCentralCore {
       init = vi.fn().mockResolvedValue(undefined);
@@ -56,9 +61,14 @@ vi.mock("@fusion/core", async () => {
     },
     isValidSqliteDatabaseFile: (...args: Parameters<typeof mockIsValidSqliteDatabaseFile>) =>
       mockIsValidSqliteDatabaseFile(...args),
-    TaskStore: makeConstructibleMock(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      listTasks: vi.fn().mockResolvedValue([]),
+    hasProjectIdentity: (...args: Parameters<typeof mockHasProjectIdentity>) =>
+      mockHasProjectIdentity(...args),
+    TaskStore: TaskStoreMock,
+    createTaskStoreForBackend: vi.fn(async () => ({
+      taskStore: new TaskStoreMock(),
+      asyncLayer: {},
+      backend: { mode: "embedded" },
+      shutdown: vi.fn().mockResolvedValue(undefined),
     })),
     readProjectIdentity: vi.fn().mockReturnValue(undefined),
     writeProjectIdentity: vi.fn(),
@@ -97,6 +107,8 @@ const {
   suggestProjectName,
   resolveAbsolutePath,
   formatLastActivity,
+  getProjectsWithStatus,
+  getProjectTaskCounts,
   resetProjectResolution,
 } = projectResolver;
 
@@ -105,6 +117,7 @@ describe("Project Resolver", () => {
     vi.clearAllMocks();
     resetProjectResolution();
     mockIsValidSqliteDatabaseFile.mockReturnValue(false);
+    mockHasProjectIdentity.mockReturnValue(false);
     vi.mocked(TaskStore).mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
       listTasks: vi.fn().mockResolvedValue([]),
@@ -116,6 +129,13 @@ describe("Project Resolver", () => {
   });
 
   describe("findKbDir", () => {
+    it("finds a PostgreSQL-era project identity marker without SQLite", () => {
+      mockHasProjectIdentity.mockImplementation((path) => String(path) === "/project/.fusion");
+
+      expect(findKbDir("/project/src")).toBe("/project");
+      expect(mockIsValidSqliteDatabaseFile).not.toHaveBeenCalledWith("/project/.fusion/fusion.db");
+    });
+
     it("should find .fusion directory in current path", () => {
       mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/project/.fusion/fusion.db");
 
@@ -139,6 +159,50 @@ describe("Project Resolver", () => {
       mockIsValidSqliteDatabaseFile.mockReturnValue(false);
       const result = findKbDir("/project");
       expect(result).toBeNull();
+    });
+  });
+
+  describe("PostgreSQL project status reads", () => {
+    const project = {
+      id: "proj_1234567890abcdef",
+      name: "alpha",
+      path: "/projects/alpha",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    it("boots and releases an owned PostgreSQL store for aggregate status", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const listTasks = vi.fn().mockResolvedValue([{ column: "todo" }, { column: "done" }]);
+      const central = await getCentralCore();
+      vi.mocked(central.listProjects).mockResolvedValue([project] as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks } as never,
+        shutdown,
+      } as never);
+
+      const result = await getProjectsWithStatus();
+
+      expect(result).toEqual([{ project, runtimeStatus: "not_started", taskCount: 2 }]);
+      expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: project.path, projectId: project.id });
+      expect(shutdown).toHaveBeenCalledOnce();
+    });
+
+    it("boots and releases an owned PostgreSQL store for one-shot column counts", async () => {
+      const shutdown = vi.fn().mockResolvedValue(undefined);
+      const listTasks = vi.fn().mockResolvedValue([{ column: "todo" }, { column: "todo" }, { column: "done" }]);
+      const central = await getCentralCore();
+      vi.mocked(central.getProject).mockResolvedValue(project as never);
+      vi.mocked(createTaskStoreForBackend).mockResolvedValueOnce({
+        taskStore: { listTasks } as never,
+        shutdown,
+      } as never);
+
+      await expect(getProjectTaskCounts(project.id)).resolves.toEqual({ todo: 2, done: 1 });
+      expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: project.path, projectId: project.id });
+      expect(shutdown).toHaveBeenCalledOnce();
     });
   });
 
@@ -212,7 +276,7 @@ describe("Project Resolver", () => {
       expect(resolved.projectId).toBe("proj_123");
       expect(resolved.name).toBe("alpha");
       expect(resolved.directory).toBe("/workspace/alpha");
-      expect(resolved.store.init).toHaveBeenCalledOnce();
+      expect(resolved.store).toBeDefined();
     });
 
     it("should throw NOT_FOUND if --project project not found", async () => {

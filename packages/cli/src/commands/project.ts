@@ -13,8 +13,10 @@
 import {
   CentralCore,
   GlobalSettingsStore,
-  TaskStore,
+  type TaskStore,
   createTaskStoreForBackend,
+  hasProjectIdentity,
+  isValidSqliteDatabaseFile,
   ensureMemoryFileWithBackend,
   type RegisteredProject,
   type IsolationMode,
@@ -148,14 +150,8 @@ async function getTaskCounts(projectPath: string): Promise<TaskCountSummary> {
   let backendShutdown: (() => Promise<void>) | undefined;
   try {
     const boot = await createTaskStoreForBackend({ rootDir: projectPath });
-    if (boot) {
-      store = boot.taskStore;
-      backendShutdown = boot.shutdown;
-    } else {
-      // Legacy SQLite opt-out (FUSION_NO_EMBEDDED_PG=1): byte-identical legacy path.
-      store = new TaskStore(projectPath);
-      await store.init();
-    }
+    store = boot.taskStore;
+    backendShutdown = boot.shutdown;
     const resolvedStore = store;
     const tasks = await retryOnLock(
       () => resolvedStore.listTasks({ slim: true }),
@@ -350,8 +346,9 @@ export async function runProjectAdd(
       }
 
       // Check for .fusion directory
-      const kbDbPath = resolve(absolutePath, ".fusion", "fusion.db");
-      if (!existsSync(kbDbPath) && !options.force) {
+      const fusionDir = resolve(absolutePath, ".fusion");
+      const legacyDbPath = resolve(fusionDir, "fusion.db");
+      if (!hasProjectIdentity(fusionDir) && !isValidSqliteDatabaseFile(legacyDbPath) && !options.force) {
         console.log(`\n  No fn project found at ${formatDisplayPath(absolutePath)}`);
         const init = await rl.question("  Initialize fn here first? [Y/n] ");
         rl.close();
@@ -362,7 +359,7 @@ export async function runProjectAdd(
           // startup factory; bare `new TaskStore` throws in backend mode. The
           // boot shutdown releases the pool for this one-shot init.
           const boot = await createTaskStoreForBackend({ rootDir: absolutePath });
-          const store = boot ? boot.taskStore : new TaskStore(absolutePath);
+          const store = boot.taskStore;
           await store.init();
           // FNXC:CliBoardMutation 2026-07-09-00:00: FN-7740 — this init-only
           // store was never closed, leaking a handle for the rest of the
@@ -373,7 +370,7 @@ export async function runProjectAdd(
           } catch {
             // Best-effort.
           }
-          if (boot) await boot.shutdown().catch(() => {});
+          await boot.shutdown().catch(() => {});
           console.log(`  ✓ Initialized fn at ${absolutePath}`);
         } else {
           console.log("\n  Cancelled. Run `fn init` to initialize a project first.\n");
@@ -417,8 +414,9 @@ export async function runProjectAdd(
     }
 
     // Check for .fusion directory
-    const kbDbPath = resolve(absolutePath, ".fusion", "fusion.db");
-    if (!existsSync(kbDbPath) && !options.force) {
+    const fusionDir = resolve(absolutePath, ".fusion");
+    const legacyDbPath = resolve(fusionDir, "fusion.db");
+    if (!hasProjectIdentity(fusionDir) && !isValidSqliteDatabaseFile(legacyDbPath) && !options.force) {
       console.error(`\n  ✗ No fn project found at ${formatDisplayPath(absolutePath)}`);
       console.error("  Run `fn init` first to initialize the project.\n");
       process.exit(1);
@@ -439,7 +437,7 @@ export async function runProjectAdd(
       process.exit(1);
     }
 
-    const identity = existsSync(kbDbPath) ? readProjectIdentity(join(absolutePath, ".fusion")) : null;
+    const identity = readProjectIdentity(fusionDir);
     const ensured = await central.ensureProjectForPath({
       path: absolutePath,
       identity: identity ?? undefined,

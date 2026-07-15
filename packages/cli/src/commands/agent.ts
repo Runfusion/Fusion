@@ -9,11 +9,17 @@ import { resolveAgentStoreBase } from "../project-context.js";
  * the resolved project store so AgentStore runs in backend mode (the SQLite
  * runtime was removed under VAL-REMOVAL-005), mirroring extension.ts getAgentStore.
  */
-async function createAgentStore(projectName?: string): Promise<AgentStore> {
-  const { rootDir, asyncLayer } = await resolveAgentStoreBase(projectName);
-  const agentStore = new AgentStore({ rootDir: rootDir + "/.fusion", asyncLayer: asyncLayer ?? undefined });
-  await agentStore.init();
-  return agentStore;
+async function createAgentStore(projectName?: string): Promise<{ store: AgentStore; cleanup: () => Promise<void> }> {
+  const base = await resolveAgentStoreBase(projectName);
+  const agentStore = new AgentStore({ rootDir: base.rootDir + "/.fusion", asyncLayer: base.asyncLayer });
+  try {
+    await agentStore.init();
+    return { store: agentStore, cleanup: base.cleanup };
+  } catch (error) {
+    closeAgentStoreSafely(agentStore);
+    await base.cleanup();
+    throw error;
+  }
 }
 
 /**
@@ -117,10 +123,12 @@ async function withBoundedTimeout<T>(
  * assigned to a task. Skills are resolved by `buildSessionSkillContext`.
  */
 export async function runAgentStop(id: string, projectName?: string): Promise<void> {
-  const agentStore = await createAgentStore(projectName);
+  const owned = await createAgentStore(projectName);
+  const agentStore = owned.store;
 
-  function exitWithStore(code: number): never {
+  async function exitWithStore(code: number): Promise<never> {
     closeAgentStoreSafely(agentStore);
+    await owned.cleanup();
     return process.exit(code);
   }
 
@@ -128,7 +136,7 @@ export async function runAgentStop(id: string, projectName?: string): Promise<vo
     const agent = await agentStore.getAgent(id);
     if (!agent) {
       console.error(`Agent ${id} not found`);
-      exitWithStore(1);
+      return await exitWithStore(1);
     }
 
     // Already paused — nothing to do
@@ -136,7 +144,6 @@ export async function runAgentStop(id: string, projectName?: string): Promise<vo
       console.log();
       console.log(`  Agent ${id} is already paused`);
       console.log();
-      closeAgentStoreSafely(agentStore);
       return;
     }
 
@@ -144,23 +151,25 @@ export async function runAgentStop(id: string, projectName?: string): Promise<vo
     const validTargets = AGENT_VALID_TRANSITIONS[agent.state as AgentState];
     if (!validTargets || !validTargets.includes("paused")) {
       console.error(`Cannot stop agent ${id} — current state '${agent.state}' cannot transition to 'paused'`);
-      exitWithStore(1);
+      return await exitWithStore(1);
     }
 
     try {
       await withBoundedTimeout(() => agentStore.updateAgentState(id, "paused"), { id, action: "stop (transition to paused)" });
     } catch (err) {
       console.error(`Failed to stop agent ${id}: ${err instanceof Error ? err.message : String(err)}`);
-      exitWithStore(1);
+      return await exitWithStore(1);
     }
 
     console.log();
     console.log(`  ✓ Agent ${id} stopped`);
     console.log();
-    closeAgentStoreSafely(agentStore);
   } catch (err) {
     closeAgentStoreSafely(agentStore);
     throw err;
+  } finally {
+    closeAgentStoreSafely(agentStore);
+    await owned.cleanup();
   }
 }
 
@@ -169,10 +178,12 @@ export async function runAgentStop(id: string, projectName?: string): Promise<vo
  * Transitions state from paused to active.
  */
 export async function runAgentStart(id: string, projectName?: string): Promise<void> {
-  const agentStore = await createAgentStore(projectName);
+  const owned = await createAgentStore(projectName);
+  const agentStore = owned.store;
 
-  function exitWithStore(code: number): never {
+  async function exitWithStore(code: number): Promise<never> {
     closeAgentStoreSafely(agentStore);
+    await owned.cleanup();
     return process.exit(code);
   }
 
@@ -180,7 +191,7 @@ export async function runAgentStart(id: string, projectName?: string): Promise<v
     const agent = await agentStore.getAgent(id);
     if (!agent) {
       console.error(`Agent ${id} not found`);
-      exitWithStore(1);
+      return await exitWithStore(1);
     }
 
     // Already active/running — nothing to do
@@ -188,7 +199,6 @@ export async function runAgentStart(id: string, projectName?: string): Promise<v
       console.log();
       console.log(`  Agent ${id} is already running (${agent.state})`);
       console.log();
-      closeAgentStoreSafely(agentStore);
       return;
     }
 
@@ -196,22 +206,24 @@ export async function runAgentStart(id: string, projectName?: string): Promise<v
     const validTargets = AGENT_VALID_TRANSITIONS[agent.state as AgentState];
     if (!validTargets || !validTargets.includes("active")) {
       console.error(`Cannot start agent ${id} — current state '${agent.state}' cannot transition to 'active'`);
-      exitWithStore(1);
+      return await exitWithStore(1);
     }
 
     try {
       await withBoundedTimeout(() => agentStore.updateAgentState(id, "active"), { id, action: "start (transition to active)" });
     } catch (err) {
       console.error(`Failed to start agent ${id}: ${err instanceof Error ? err.message : String(err)}`);
-      exitWithStore(1);
+      return await exitWithStore(1);
     }
 
     console.log();
     console.log(`  ✓ Agent ${id} started`);
     console.log();
-    closeAgentStoreSafely(agentStore);
   } catch (err) {
     closeAgentStoreSafely(agentStore);
     throw err;
+  } finally {
+    closeAgentStoreSafely(agentStore);
+    await owned.cleanup();
   }
 }

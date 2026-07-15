@@ -25,8 +25,15 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
   return mock;
 }
 
-const { taskStoreInstances, mockListProjects, mockGetProjectHealth, mockGetSettings, isSqliteLockErrorMock } = vi.hoisted(() => ({
-  taskStoreInstances: [] as Array<{ path: string; init: ReturnType<typeof import("vitest").vi.fn>; listTasks: ReturnType<typeof import("vitest").vi.fn>; close: ReturnType<typeof import("vitest").vi.fn> }>,
+const { taskStoreInstances, makeTaskStore, mockListProjects, mockGetProjectHealth, mockGetSettings, isSqliteLockErrorMock } = vi.hoisted(() => {
+  const instances: Array<{ path: string; init: ReturnType<typeof vi.fn>; listTasks: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> = [];
+  return {
+  taskStoreInstances: instances,
+  makeTaskStore: (path: string) => {
+    const instance = { path, init: vi.fn().mockResolvedValue(undefined), listTasks: vi.fn().mockResolvedValue([]), close: vi.fn().mockResolvedValue(undefined) };
+    instances.push(instance);
+    return instance;
+  },
   mockListProjects: vi.fn(),
   mockGetProjectHealth: vi.fn(),
   mockGetSettings: vi.fn(),
@@ -34,11 +41,15 @@ const { taskStoreInstances, mockListProjects, mockGetProjectHealth, mockGetSetti
     const message = error instanceof Error ? error.message : String(error);
     return /database is locked|SQLITE_BUSY/i.test(message);
   }),
-}));
+  };
+});
 
 vi.mock("@fusion/core", () => ({
   // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async ({ rootDir }: { rootDir: string }) => ({
+    taskStore: makeTaskStore(rootDir),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+  })),
   CentralCore: makeConstructibleMock(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
@@ -50,20 +61,13 @@ vi.mock("@fusion/core", () => ({
     init: vi.fn().mockResolvedValue(undefined),
     getSettings: mockGetSettings,
   })),
-  TaskStore: makeConstructibleMock((path: string) => {
-    const instance = {
-      path,
-      init: vi.fn().mockResolvedValue(undefined),
-      listTasks: vi.fn().mockResolvedValue([]),
-      close: vi.fn().mockResolvedValue(undefined),
-    };
-    taskStoreInstances.push(instance);
-    return instance;
-  }),
+  TaskStore: makeConstructibleMock(makeTaskStore),
   countRunningAgentTasks: () => 0,
   ensureMemoryFileWithBackend: vi.fn(),
   readProjectIdentity: vi.fn().mockReturnValue(undefined),
   writeProjectIdentity: vi.fn(),
+  hasProjectIdentity: vi.fn(() => false),
+  isValidSqliteDatabaseFile: vi.fn(() => false),
   isSqliteLockError: isSqliteLockErrorMock,
   COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
   COLUMN_LABELS: {

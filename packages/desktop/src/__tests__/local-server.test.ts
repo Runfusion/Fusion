@@ -41,7 +41,6 @@ const mocks = vi.hoisted(() => {
     getPluginSchemaInitHooks: vi.fn(() => []),
   };
   const runPluginSchemaInits = vi.fn(async () => undefined);
-  const database = { runPluginSchemaInits };
   const PluginLoader = vi.fn(function () {
     return pluginLoaderInstance;
   });
@@ -59,8 +58,10 @@ const mocks = vi.hoisted(() => {
     watch: vi.fn(async () => undefined),
     close: vi.fn(),
     getPluginStore: vi.fn(() => pluginStoreInstance),
-    getDatabase: vi.fn(() => database),
+    runPluginSchemaInits,
+    getAsyncLayer: vi.fn(() => ({ projectId: "project-1" } as never)),
   };
+  const backendShutdown = vi.fn(async () => store.close());
   const centralCore = {
     init: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -88,7 +89,7 @@ const mocks = vi.hoisted(() => {
     watch = store.watch;
     close = store.close;
     getPluginStore = store.getPluginStore;
-    getDatabase = store.getDatabase;
+    getAsyncLayer = store.getAsyncLayer;
   }
 
   const server = Object.assign(new SimpleEmitter(), {
@@ -121,6 +122,8 @@ const mocks = vi.hoisted(() => {
 
   return {
     TaskStore,
+    createTaskStoreForBackend: vi.fn(async () => ({ taskStore: store, shutdown: backendShutdown })),
+    backendShutdown,
     CentralCore,
     PluginLoader,
     ProjectEngineManager,
@@ -143,6 +146,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@fusion/core", () => ({
   TaskStore: mocks.TaskStore,
+  createTaskStoreForBackend: mocks.createTaskStoreForBackend,
   CentralCore: mocks.CentralCore,
   PluginLoader: mocks.PluginLoader,
   ensureBundledPluginInstalled: mocks.ensureBundledPluginInstalled,
@@ -175,6 +179,7 @@ describe("DesktopLocalServerManager", () => {
     expect(manager.getPort()).toBe(4545);
     expect(manager.getState().status).toBe("ready");
     expect(mocks.engineManager.startAll).toHaveBeenCalledTimes(1);
+    expect(mocks.CentralCore).toHaveBeenCalledWith(undefined, { asyncLayer: mocks.store.getAsyncLayer() });
     // No auto-registration of the runtime root; the primary engine is the first existing project.
     expect(mocks.centralCore.registerProject).not.toHaveBeenCalled();
     expect(mocks.engineManager.ensureEngine).toHaveBeenCalledWith("project-1");
@@ -298,6 +303,9 @@ describe("DesktopLocalServerManager", () => {
   it("wires PluginStore + PluginLoader into createServer (FN-7623)", async () => {
     const { DesktopLocalServerManager } = await import("../local-server.ts");
     const manager = new DesktopLocalServerManager("/repo");
+    mocks.pluginLoaderInstance.getPluginSchemaInitHooks.mockReturnValueOnce([
+      { pluginId: "fusion-plugin-even-realities-glasses", hook: vi.fn() },
+    ]);
 
     await manager.start();
 
@@ -307,6 +315,9 @@ describe("DesktopLocalServerManager", () => {
       expect.objectContaining({ pluginStore: mocks.pluginStoreInstance, taskStore: expect.anything() }),
     );
     expect(mocks.pluginLoaderInstance.loadAllPlugins).toHaveBeenCalledTimes(1);
+    expect(mocks.runPluginSchemaInits).toHaveBeenCalledWith([
+      expect.objectContaining({ pluginId: "fusion-plugin-even-realities-glasses" }),
+    ]);
     expect(mocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

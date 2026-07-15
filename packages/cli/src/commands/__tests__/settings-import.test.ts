@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { TaskStore, importSettings, readExportFile, validateImportData } from "@fusion/core";
+import { createTaskStoreForBackend, importSettings, readExportFile, validateImportData } from "@fusion/core";
 import { resolveProject } from "../../project-context.js";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
@@ -33,7 +33,10 @@ vi.mock("node:fs", () => ({
 // `TaskStore` needs a `close()` so the close-before-exit path is exercised.
 vi.mock("@fusion/core", () => ({
   // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async () => ({
+    taskStore: { init: mockStoreInit, close: mockStoreClose },
+    shutdown: vi.fn(async () => mockStoreClose()),
+  })),
   TaskStore: makeConstructibleMock(() => ({
     init: mockStoreInit,
     close: mockStoreClose,
@@ -239,7 +242,7 @@ describe("runSettingsImport", () => {
     await runSettingsImport("./settings.json", { projectName: "alpha", yes: true });
 
     expect(resolveProject).toHaveBeenCalledWith("alpha");
-    expect(TaskStore).toHaveBeenCalledWith("/tmp/demo");
-    expect(mockStoreInit).toHaveBeenCalledOnce();
+    expect(createTaskStoreForBackend).toHaveBeenCalledWith({ rootDir: "/tmp/demo" });
+    expect(mockStoreInit).not.toHaveBeenCalled();
   });
 });

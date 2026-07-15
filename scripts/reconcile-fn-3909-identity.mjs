@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { openBackend } from "./lib/backend-db.mjs";
 import process from "node:process";
 
 export const TASK_ID = "FN-3909";
@@ -163,16 +164,15 @@ export async function runReconciliation({ store, projectRoot, dryRun = true } = 
 export async function main(argv = process.argv.slice(2), deps = {}) {
   const dryRun = !argv.includes("--apply");
   const projectRoot = path.resolve(readFlagValue(argv, "--project-root") ?? process.cwd());
-  const store = deps.store ?? (await (async () => {
-    const { TaskStore } = await import("../packages/core/dist/index.js");
-    const taskStore = new TaskStore(projectRoot);
-    await taskStore.init();
-    return taskStore;
-  })());
-
-  const result = await runReconciliation({ store, projectRoot, dryRun });
-  console.log(JSON.stringify(result, null, 2));
-  return result;
+  const backend = deps.store ? undefined : await openBackend(projectRoot);
+  try {
+    /* FNXC:PostgresOperationalScripts 2026-07-14-18:18: Historical reconciliation utilities must mutate the live PostgreSQL task store, never a stale local SQLite file. */
+    const result = await runReconciliation({ store: deps.store ?? backend.store, projectRoot, dryRun });
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  } finally {
+    await backend?.shutdown();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

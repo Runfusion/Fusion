@@ -29,7 +29,7 @@ const { mockGetAgent, mockUpdateAgentState, mockInit, mockClose, mockResolveProj
   mockInit: vi.fn().mockResolvedValue(undefined),
   mockClose: vi.fn(),
   mockResolveProjectPathOnly: vi.fn().mockResolvedValue("/tmp/test-project"),
-  mockResolveAgentStoreBase: vi.fn(async () => ({ rootDir: "/tmp/test-project", asyncLayer: null })),
+  mockResolveAgentStoreBase: vi.fn(async () => ({ rootDir: "/tmp/test-project", asyncLayer: {}, cleanup: vi.fn(async () => undefined) })),
 }));
 
 // AgentStore mock — vi.fn() with mockImplementation works with `new` in vitest.

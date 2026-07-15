@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { tsImport } from "tsx/esm/api";
+import { openBackend } from "./lib/backend-db.mjs";
 
 export function composeTransitionEvidence({
   mergeRetries,
@@ -48,15 +48,10 @@ function getBranchDisposition() {
   return "not present locally or on origin refs";
 }
 
-async function loadTaskStore() {
-  const moduleUrl = new globalThis.URL("../packages/core/src/store.ts", import.meta.url).href;
-  const mod = await tsImport(moduleUrl, import.meta.url);
-  return mod.TaskStore;
-}
-
 export async function runBackfill() {
-  const TaskStore = await loadTaskStore();
-  const store = new TaskStore(process.cwd());
+  /* FNXC:PostgresOperationalScripts 2026-07-14-18:20: Evidence backfills must write through the authoritative PostgreSQL TaskStore and close its backend lifecycle. */
+  const backend = await openBackend(process.cwd());
+  const store = backend.store;
   try {
     const targetTask = await store.getTask("FN-4441");
     const preResolution = await store.getTaskDocument("FN-4450", "resolution");
@@ -116,7 +111,7 @@ export async function runBackfill() {
 
     return { writeResult, readBack };
   } finally {
-    await store.close();
+    await backend.shutdown();
   }
 }
 

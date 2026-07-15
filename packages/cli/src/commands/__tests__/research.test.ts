@@ -70,7 +70,7 @@ vi.mock("@fusion/core", () => ({
   TaskStore: makeConstructibleMock(() => storeMock),
   // FNXC:PostgresCutover 2026-07-10: getStore() consults the PG startup factory
   // first; null routes the test through the legacy `new TaskStore` mock path.
-  createTaskStoreForBackend: vi.fn(async () => null),
+  createTaskStoreForBackend: vi.fn(async () => ({ taskStore: storeMock, shutdown: async () => storeMock.close() })),
   ResearchStore: MockResearchStore,
   resolveResearchSettings: resolveResearchSettingsMock,
   RESEARCH_RUN_STATUSES: ["queued", "running", "cancelling", "retry_waiting", "completed", "failed", "cancelled", "timed_out", "retry_exhausted"],
