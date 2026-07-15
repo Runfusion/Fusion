@@ -41,6 +41,8 @@ export type {
   PluginOnLoad,
   PluginOnUnload,
   PluginOnSchemaInit,
+  PluginOnPostgresSchemaInit,
+  PluginPostgresSchemaDefinition,
   PluginOnTaskCreated,
   PluginOnTaskMoved,
   PluginOnTaskCompleted,

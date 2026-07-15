@@ -31,59 +31,26 @@ vi.mock("../connection.js", () => {
   return { WhatsAppConnection: ctor };
 });
 
-import plugin, { ensureSchema, getDedupeRetentionDays, markProcessed, splitMessageForWhatsapp, wasProcessed } from "../index.js";
+import plugin, { getDedupeRetentionDays, splitMessageForWhatsapp } from "../index.js";
 import { WhatsAppConnection } from "../connection.js";
-
-function createInMemoryDb() {
-  const dedupe = new Map<string, { sender: string; receivedAt: string }>();
-
-  return {
-    exec(_sql: string) {},
-    prepare(sql: string) {
-      return {
-        get: (...args: unknown[]) => {
-          if (sql.includes("FROM whatsapp_chat_dedupe") && sql.includes("messageId = ?")) {
-            const row = dedupe.get(args[0] as string);
-            return row ? { found: 1, ...row } : undefined;
-          }
-          return undefined;
-        },
-        run: (...args: unknown[]) => {
-          if (sql.includes("INSERT OR IGNORE INTO whatsapp_chat_dedupe")) {
-            if (dedupe.has(args[0] as string)) return { changes: 0 };
-            dedupe.set(args[0] as string, {
-              sender: args[1] as string,
-              receivedAt: args[2] as string,
-            });
-            return { changes: 1 };
-          }
-          if (sql.includes("INSERT INTO whatsapp_chat_dedupe")) {
-            dedupe.set(args[0] as string, {
-              sender: args[1] as string,
-              receivedAt: args[2] as string,
-            });
-            return { changes: 1 };
-          }
-          if (sql.includes("DELETE FROM whatsapp_chat_dedupe WHERE receivedAt < ?")) {
-            const cutoff = args[0] as string;
-            for (const [id, row] of dedupe.entries()) {
-              if (row.receivedAt < cutoff) dedupe.delete(id);
-            }
-          }
-        },
-      };
-    },
-    _dedupe: dedupe,
-  };
-}
+import { createWhatsAppPersistence } from "../persistence.js";
 
 describe("whatsapp plugin", () => {
   beforeEach(() => {
     connectionInstances.length = 0;
     vi.clearAllMocks();
   });
-  it("registers schema init hook", () => {
-    expect(plugin.hooks?.onSchemaInit).toBeDefined();
+  it("leaves schema creation to the registered PostgreSQL startup hook", () => {
+    /* FNXC:WhatsAppPostgresPersistence 2026-07-14-18:05: Runtime hooks no longer expose SQLite DDL; the core migration connection owns the registered WhatsApp PostgreSQL schema hook. */
+    expect(plugin.hooks?.onSchemaInit).toBeUndefined();
+  });
+
+  it("fails closed without a project-bound AsyncDataLayer", () => {
+    const ctx = (layer: unknown) => ({
+      taskStore: { getAsyncLayer: () => layer },
+    }) as unknown as PluginContext;
+    expect(() => createWhatsAppPersistence(ctx(null))).toThrow("requires a PostgreSQL AsyncDataLayer");
+    expect(() => createWhatsAppPersistence(ctx({ projectId: "" }))).toThrow("project-bound");
   });
 
   it("registers pairing routes", () => {
@@ -115,7 +82,6 @@ describe("whatsapp plugin", () => {
 
 describe("multi-project isolation", () => {
   it("keeps project contexts isolated with shared plugin id", async () => {
-    const db = createInMemoryDb();
     const makeCtx = (rootDir: string): PluginContext => ({
       pluginId: "fusion-plugin-whatsapp-chat",
       settings: {},
@@ -128,9 +94,7 @@ describe("multi-project isolation", () => {
       emitEvent: vi.fn(),
       taskStore: {
         getRootDir: () => rootDir,
-        getPluginStore: () => ({
-          db,
-        }),
+        getAsyncLayer: () => ({ projectId: rootDir }),
       } as unknown as PluginContext["taskStore"],
     });
 
@@ -173,48 +137,7 @@ describe("multi-project isolation", () => {
   });
 });
 
-describe("markProcessed retention", () => {
-  it("prunes rows older than retention and keeps recent rows", () => {
-    const db = createInMemoryDb();
-    ensureSchema(db as any);
-    const now = Date.now();
-
-    db.prepare("INSERT INTO whatsapp_chat_dedupe(messageId, sender, receivedAt) VALUES(?, ?, ?)").run(
-      "old-id",
-      "sender",
-      new Date(now - 30 * 86_400_000).toISOString(),
-    );
-    db.prepare("INSERT INTO whatsapp_chat_dedupe(messageId, sender, receivedAt) VALUES(?, ?, ?)").run(
-      "recent-id",
-      "sender",
-      new Date(now - 3_600_000).toISOString(),
-    );
-
-    markProcessed(db as any, "new-id", "sender", 7);
-
-    const oldRow = db.prepare("SELECT 1 as found FROM whatsapp_chat_dedupe WHERE messageId = ?").get("old-id") as { found?: number } | undefined;
-    const recentRow = db.prepare("SELECT 1 as found FROM whatsapp_chat_dedupe WHERE messageId = ?").get("recent-id") as { found?: number } | undefined;
-    expect(Boolean(oldRow?.found)).toBe(false);
-    expect(Boolean(recentRow?.found)).toBe(true);
-    expect(wasProcessed(db as any, "new-id")).toBe(true);
-  });
-
-  it("keeps entries inside retention window", () => {
-    const db = createInMemoryDb();
-    ensureSchema(db as any);
-
-    db.prepare("INSERT INTO whatsapp_chat_dedupe(messageId, sender, receivedAt) VALUES(?, ?, ?)").run(
-      "one-day-old-id",
-      "sender",
-      new Date(Date.now() - 86_400_000).toISOString(),
-    );
-
-    markProcessed(db as any, "new-id", "sender", 7);
-
-    const oneDayOld = db.prepare("SELECT 1 as found FROM whatsapp_chat_dedupe WHERE messageId = ?").get("one-day-old-id") as { found?: number } | undefined;
-    expect(Boolean(oneDayOld?.found)).toBe(true);
-  });
-
+describe("dedupe retention settings", () => {
   it("parses dedupeRetentionDays safely", () => {
     expect(getDedupeRetentionDays({})).toBe(7);
     expect(getDedupeRetentionDays({ dedupeRetentionDays: undefined })).toBe(7);

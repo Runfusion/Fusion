@@ -3,9 +3,8 @@ import type { Database } from "@fusion/core";
 /**
  * Idempotent DDL for the Compound Engineering plugin-local tables (U5).
  *
- * Wired via `hooks.onSchemaInit` and run against the same DB that route
- * handlers reach through `ctx.taskStore.getDatabase()` (the sanctioned
- * plugin-table access path; `PluginContext` exposes no `db` handle and the
+ * Wired via `hooks.onSchemaInit` and materialized in the same PostgreSQL schema
+ * that route handlers access through `ctx.taskStore.getAsyncLayer()`; the
  * loader `emitEvent` is a logging stub — see the U5 storage/event seam note).
  *
  * `ce_sessions` is the no-silent-loss core: every interactive stage session is

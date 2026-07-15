@@ -1,71 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { pruneMissing, readSnapshot, writeSnapshot } from "../notifications/store.js";
+import { changedSnapshotRows, missingSnapshotIds } from "../notifications/store.js";
+import type { SnapshotRow } from "../notifications/types.js";
 
-function createDb() {
-  const table = new Map<string, { taskId: string; lastColumn: string; updatedAt: string }>();
-  return {
-    exec: (_sql: string) => undefined,
-    prepare: (sql: string) => ({
-      all: () => (sql.startsWith("SELECT") ? [...table.values()] : []),
-      run: (...args: unknown[]) => {
-        if (sql.startsWith("INSERT OR REPLACE")) {
-          const [taskId, lastColumn, updatedAt] = args as [string, string, string];
-          table.set(taskId, { taskId, lastColumn, updatedAt });
-          return { changes: 1 };
-        }
-        if (sql === "DELETE FROM even_realities_seen_tasks") {
-          const changes = table.size;
-          table.clear();
-          return { changes };
-        }
-        if (sql.startsWith("DELETE FROM even_realities_seen_tasks WHERE taskId NOT IN")) {
-          const ids = new Set(args as string[]);
-          let changes = 0;
-          for (const key of [...table.keys()]) {
-            if (!ids.has(key)) {
-              table.delete(key);
-              changes += 1;
-            }
-          }
-          return { changes };
-        }
-        return { changes: 0 };
-      },
-      get: () => undefined,
-    }),
-  };
-}
-
-describe("notification store", () => {
-  it("reads and writes snapshot rows", () => {
-    const db = createDb();
-    writeSnapshot(db as never, [
-      { taskId: "FN-1", lastColumn: "todo", updatedAt: "2026-01-01T00:00:00.000Z" },
-      { taskId: "FN-2", lastColumn: "in-review", updatedAt: "2026-01-01T00:00:01.000Z" },
-    ]);
-
-    const snapshot = readSnapshot(db as never);
-    expect(snapshot.size).toBe(2);
-    expect(snapshot.get("FN-2")?.lastColumn).toBe("in-review");
+describe("notification snapshot deltas", () => {
+  const row = (taskId: string, lastColumn: SnapshotRow["lastColumn"], updatedAt: string): SnapshotRow => ({
+    taskId,
+    lastColumn,
+    updatedAt,
   });
 
-  it("prunes missing rows and returns deleted count", () => {
-    const db = createDb();
-    writeSnapshot(db as never, [
-      { taskId: "FN-1", lastColumn: "todo", updatedAt: "2026-01-01T00:00:00.000Z" },
-      { taskId: "FN-2", lastColumn: "in-review", updatedAt: "2026-01-01T00:00:01.000Z" },
+  it("does not rewrite unchanged snapshot rows", () => {
+    /* FNXC:EvenRealitiesPostgres 2026-07-14-17:55: An unchanged notifier poll performs no snapshot upsert; only new, moved, or updated tasks are written. */
+    const existing = new Map([
+      ["FN-1", row("FN-1", "todo", "2026-01-01T00:00:00.000Z")],
+      ["FN-2", row("FN-2", "in-review", "2026-01-01T00:00:01.000Z")],
     ]);
-
-    const deleted = pruneMissing(db as never, new Set(["FN-2"]));
-    expect(deleted).toBe(1);
-    expect(readSnapshot(db as never).has("FN-1")).toBe(false);
+    expect(changedSnapshotRows(existing, [...existing.values()])).toEqual([]);
+    expect(changedSnapshotRows(existing, [
+      row("FN-1", "in-progress", "2026-01-01T00:00:02.000Z"),
+      row("FN-3", "todo", "2026-01-01T00:00:03.000Z"),
+    ]).map(({ taskId }) => taskId)).toEqual(["FN-1", "FN-3"]);
   });
 
-  it("handles empty present set", () => {
-    const db = createDb();
-    writeSnapshot(db as never, [{ taskId: "FN-1", lastColumn: "todo", updatedAt: "2026-01-01T00:00:00.000Z" }]);
-    const deleted = pruneMissing(db as never, new Set());
-    expect(deleted).toBe(1);
-    expect(readSnapshot(db as never).size).toBe(0);
+  it("derives a bounded delete set from the prior snapshot", () => {
+    const existing = new Map([
+      ["FN-1", row("FN-1", "todo", "2026-01-01T00:00:00.000Z")],
+      ["FN-2", row("FN-2", "todo", "2026-01-01T00:00:00.000Z")],
+    ]);
+    expect(missingSnapshotIds(existing, new Set(["FN-2", "FN-3"]))).toEqual(["FN-1"]);
   });
 });

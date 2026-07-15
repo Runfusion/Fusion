@@ -3,13 +3,12 @@ import type { FusionPlugin, PluginContext, PluginRouteDefinition, PluginRouteRes
 import { WhatsAppConnection } from "./connection.js";
 import { generateReply } from "./reply.js";
 import { createWhatsAppPersistence } from "./persistence.js";
-export { claimMessage, loadHistory, saveHistory, wasProcessed, markProcessed } from "./persistence.js";
-export type { ChatTurn, PluginDb } from "./persistence.js";
+export type { ChatTurn } from "./persistence.js";
 
 const DEFAULT_HISTORY_TURN_LIMIT = 40;
 const DEFAULT_DEDUPE_RETENTION_DAYS = 7;
 
-import type { ChatTurn, PluginDb } from "./persistence.js";
+import type { ChatTurn } from "./persistence.js";
 
 const settingsSchema: Record<string, PluginSettingSchema> = {
   pairingMode: {
@@ -78,36 +77,6 @@ export function getDedupeRetentionDays(settings: Record<string, unknown>): numbe
 
 export function splitMessageForWhatsapp(text: string): string[] {
   return WhatsAppConnection.splitMessageForWhatsapp(text);
-}
-
-export function ensureSchema(db: PluginDb): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS whatsapp_chat_sessions (
-      sender TEXT PRIMARY KEY,
-      history TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS whatsapp_chat_dedupe (
-      messageId TEXT PRIMARY KEY,
-      sender TEXT NOT NULL,
-      receivedAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS whatsapp_auth_creds (
-      id TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS whatsapp_auth_keys (
-      category TEXT NOT NULL,
-      keyId TEXT NOT NULL,
-      value TEXT NOT NULL,
-      updatedAt TEXT NOT NULL,
-      PRIMARY KEY (category, keyId)
-    );
-  `);
 }
 
 function getConnectionOrResponse(ctx: PluginContext): { connection?: WhatsAppConnection; error?: PluginRouteResponse } {
@@ -188,9 +157,6 @@ const plugin: FusionPlugin = definePlugin({
   state: "installed",
   routes,
   hooks: {
-    onSchemaInit: (db) => {
-      ensureSchema(db as PluginDb);
-    },
     onLoad: async (ctx) => {
       const persistence = createWhatsAppPersistence(ctx);
       const connection = new WhatsAppConnection(ctx, plugin.manifest.version, generateReply, persistence);

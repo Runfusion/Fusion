@@ -980,6 +980,9 @@ importers:
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.0)(better-sqlite3@12.9.0)(pg@8.22.0)(postgres@3.4.9)
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
