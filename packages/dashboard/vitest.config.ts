@@ -337,6 +337,17 @@ const quarantinedDashboardTests: string[] = [
   RuntimeFallbackBadge.test.tsx never finishes collecting/running under vitest (process hangs until watchdog) and wedges any backfill batch that includes it. Quarantine lockstep with scripts/lib/test-quarantine.json; rescue requires root-cause of the collection hang (not timeout appeasement).
   */
   "app/components/__tests__/RuntimeFallbackBadge.test.tsx",
+  // FNXC:DashboardTests 2026-07-14-22:15: VAL-REMOVAL-005 — API backfill suites still boot sync SQLite Database via TaskStore.init; quarantine until PG harness conversion (ledger lockstep).
+  "src/__tests__/chat-project-services.test.ts",
+  "src/__tests__/planning-generation-cancellation.test.ts",
+  "src/__tests__/process-lifecycle.test.ts",
+  "src/__tests__/register-signal-routes.test.ts",
+  "src/__tests__/routes-agent-prompt-sizes-integration.test.ts",
+  "src/__tests__/routes-remote-access.test.ts",
+  "src/__tests__/routes-system.test.ts",
+  "src/routes/__tests__/register-settings-memory-worktrunk.test.ts",
+  "src/routes/__tests__/tasks-overseer-controls.test.ts",
+  "src/routes/__tests__/workflow-validate-route.test.ts",
 ];
 
 const qualityApiTests = [
