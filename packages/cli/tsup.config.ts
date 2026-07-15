@@ -66,7 +66,7 @@ const compoundEngineeringPluginSrc = join(__dirname, "..", "..", "plugins", "fus
 const compoundEngineeringPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-compound-engineering");
 const linearImportPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-linear-import");
 const linearImportPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-linear-import");
-const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.ts");
+const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.mjs");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
