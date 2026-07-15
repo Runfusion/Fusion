@@ -1,7 +1,7 @@
 # Plan: Mesh → Shared Postgres Multi-Node
 
-**Date:** 2026-07-15  
-**Branch:** `feature/migrate-mesh`  
+**Date:** 2026-07-15
+**Branch:** `feature/migrate-mesh`
 **Status:** Implementation in progress (S1–S3 landed)
 
 ## Context
