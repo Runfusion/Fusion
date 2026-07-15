@@ -58,6 +58,8 @@ function createMockCentralCore(projects: RegisteredProject[]): CentralCore {
     ),
     updateProject: vi.fn().mockResolvedValue(undefined),
     updateProjectHealth: vi.fn().mockResolvedValue(undefined),
+    stopDiscovery: vi.fn(),
+    markLocalNodeOffline: vi.fn().mockResolvedValue(undefined),
     resolveLocalProjectWorkingDirectory: vi
       .fn()
       .mockImplementation((projectId: string) => Promise.resolve(`/mapped/${projectId}`)),
@@ -266,6 +268,19 @@ describe("ProjectEngineManager", () => {
       expect(engineA.stop).toHaveBeenCalledOnce();
       expect(engineB.stop).toHaveBeenCalledOnce();
       expect(manager.getAllEngines().size).toBe(0);
+    });
+
+    it("persists the local node offline before engine backends stop", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+      await manager.startAll();
+      const engineA = manager.getEngine("proj_aaa")!;
+
+      await manager.stopAll();
+
+      expect(centralCore.markLocalNodeOffline).toHaveBeenCalledTimes(1);
+      const offlineOrder = (centralCore.markLocalNodeOffline as unknown as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const engineStopOrder = (engineA.stop as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      expect(offlineOrder).toBeLessThan(engineStopOrder);
     });
 
     it("stopAll frees residual slots from each stopped project scope", async () => {

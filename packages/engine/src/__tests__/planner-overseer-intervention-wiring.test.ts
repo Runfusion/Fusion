@@ -128,7 +128,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     await monitor.observeTask(task, "autonomous");
     await monitor.observeTask(task, "autonomous");
 
-    let timeline = getPlannerInterventionTimeline(store, task.id);
+    let timeline = await getPlannerInterventionTimeline(store, task.id);
     expect(timeline).toHaveLength(1);
     expect(timeline[0].action).toBe("observe");
     expect(timeline[0].stage).toBe("executor");
@@ -137,7 +137,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     const pausedTask = { ...task, paused: true, pausedReason: "manual test pause" } as Task;
     await monitor.observeTask(pausedTask, "autonomous");
 
-    timeline = getPlannerInterventionTimeline(store, task.id);
+    timeline = await getPlannerInterventionTimeline(store, task.id);
     expect(timeline).toHaveLength(2);
     expect(timeline[0].action).toBe("observe"); // newest-first
   });
@@ -147,7 +147,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     const { monitor } = wireRealEngineOverseer(store);
     const result = await monitor.observeTask(task, "off");
     expect(result).toBeNull();
-    expect(getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
+    expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
   });
 
   it("failed executor with no error source dispatches retry_step and emits a retry entry with attemptCount/attemptLimit", async () => {
@@ -158,7 +158,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     const decision = await controller.tick(task);
     expect(decision?.action).toBe("retry_step");
 
-    const timeline = getPlannerInterventionTimeline(store, task.id);
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
     const retryEntry = timeline.find((e) => e.action === "retry");
     expect(retryEntry).toBeTruthy();
     expect(retryEntry?.stage).toBe("executor");
@@ -181,7 +181,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     const decision = await controller.tick(task);
     expect(decision?.action).toBe("request_targeted_fix");
 
-    const timeline = getPlannerInterventionTimeline(store, task.id);
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
     const fixEntry = timeline.find((e) => e.action === "request-fix");
     expect(fixEntry).toBeTruthy();
     expect(fixEntry?.attemptCount).toBe(1);
@@ -197,7 +197,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     const decision = await controller.tick(task);
     expect(decision?.action).toBe("inject_guidance");
 
-    const timeline = getPlannerInterventionTimeline(store, task.id);
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
     const steeringEntry = timeline.find((e) => e.action === "inject-guidance");
     expect(steeringEntry).toBeTruthy();
     expect(steeringEntry?.stage).toBe("reviewer");
@@ -219,7 +219,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     expect(secondDecision?.action).toBe("none");
     expect(secondDecision?.requiresConfirmation).toBe(false);
 
-    const timeline = getPlannerInterventionTimeline(store, task.id);
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
     expect(timeline.filter((e) => e.action === "request-confirmation")).toHaveLength(0);
     expect(controller.getPendingConfirmations(task.id)).toHaveLength(0);
 
@@ -249,7 +249,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     emitEscalation(task.id, exhaustedDecision);
     emitEscalation(task.id, exhaustedDecision);
 
-    const timeline = getPlannerInterventionTimeline(store, task.id);
+    const timeline = await getPlannerInterventionTimeline(store, task.id);
     const escalations = timeline.filter((e) => e.action === "escalate");
     expect(escalations).toHaveLength(1);
     expect(escalations[0].outcome).toBe("failed");
@@ -262,7 +262,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     // Level "off": monitor records nothing (mirrors the poll's `continue` before ever calling tick()).
     const result = await monitor.observeTask(task, "off");
     expect(result).toBeNull();
-    expect(getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
+    expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
 
     // Human-control withheld (userPaused) — tick() must short-circuit before
     // any confirmation classification/dispatch, so no intervention entry is
@@ -271,7 +271,7 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     const pausedTask = { ...task, userPaused: true } as Task;
     const decision = await controller.tick(pausedTask);
     expect(decision).toBeNull();
-    expect(getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
+    expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
   });
 
   it("a store/façade failure during observation emission never throws out of observeTask (best-effort contract)", async () => {

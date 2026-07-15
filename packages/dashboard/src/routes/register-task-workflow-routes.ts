@@ -714,18 +714,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const limit = parseMergeAdvanceLimit(req.query.limit);
       const storeWithRunAudit = scopedStore as TaskStore & {
-        getRunAuditEvents?: (filters: {
+        getRunAuditEventsAsync: (filters: {
           taskId?: string;
           domain?: "database" | "git" | "filesystem" | "sandbox";
           mutationType?: string;
           limit?: number;
-        }) => RunAuditEvent[];
+        }) => Promise<RunAuditEvent[]>;
       };
-      if (typeof storeWithRunAudit.getRunAuditEvents !== "function") {
-        throw notFound("run-audit unavailable");
-      }
 
-      const advanceEvents = storeWithRunAudit.getRunAuditEvents({
+      const advanceEvents = await storeWithRunAudit.getRunAuditEventsAsync({
         domain: "git",
         mutationType: "merge:integration-ref-advance",
         limit,
@@ -739,7 +736,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
 
         let userCheckout: MergeAdvanceEvent["userCheckout"] = null;
-        const stateEvents = storeWithRunAudit.getRunAuditEvents({
+        const stateEvents = await storeWithRunAudit.getRunAuditEventsAsync({
           taskId: extracted.taskId,
           domain: "git",
           mutationType: "merge:integration-worktree-state",
@@ -755,7 +752,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // so a `synced-with-pop-conflict` (carrying patchPath) surfaces to
         // the dashboard banner even when the sync ran slightly after the
         // advance event was recorded.
-        const autoSyncEvents = storeWithRunAudit.getRunAuditEvents({
+        const autoSyncEvents = await storeWithRunAudit.getRunAuditEventsAsync({
           taskId: extracted.taskId,
           domain: "git",
           mutationType: "merge:auto-sync",
@@ -3045,7 +3042,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // "no event yet" response for a nonexistent task ID.
       await scopedStore.getTask(taskId);
 
-      const [latest] = scopedStore.getRunAuditEvents({
+      const [latest] = await scopedStore.getRunAuditEventsAsync({
         taskId,
         mutationType: "session:runtime-resolved",
         limit: 1,
@@ -3300,7 +3297,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       await scopedStore.getTask(req.params.id);
-      const entries = getPlannerInterventionTimeline(scopedStore, req.params.id);
+      const entries = await getPlannerInterventionTimeline(scopedStore, req.params.id);
       res.json({ entries });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

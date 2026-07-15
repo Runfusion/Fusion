@@ -446,6 +446,7 @@ const activeGenerations = new Map<string, ActivePlanningGeneration>();
 /** Optional store for persisting session state across reloads/browsers. */
 let _aiSessionStore: AiSessionStore | undefined;
 let _aiSessionDeletedListener: ((sessionId: string) => void) | undefined;
+const sessionPersistenceQueues = new Map<string, Promise<void>>();
 
 function isTaskPriority(value: unknown): value is TaskPriority {
   return typeof value === "string" && (TASK_PRIORITIES as readonly string[]).includes(value);
@@ -763,9 +764,10 @@ function cleanupInMemorySession(sessionId: string): boolean {
   return true;
 }
 
-/** Persist the current session state to SQLite (no-op if store not wired). */
-function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error" | "draft", error?: string): void {
-  if (!_aiSessionStore) return;
+/** Persist the current session state to PostgreSQL (no-op if store not wired). */
+function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error" | "draft", error?: string): Promise<void> {
+  const store = _aiSessionStore;
+  if (!store) return Promise.resolve();
   const row: AiSessionRow = {
     id: session.id,
     type: "planning",
@@ -789,7 +791,23 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
+  /*
+  FNXC:PostgresPlanningPersistence 2026-07-14-19:56:
+  PostgreSQL writes are asynchronous, so rapid generating→awaiting_input transitions must be serialized per session. The request that creates the first question awaits the final queued write; otherwise an earlier generating upsert can land last and return stale state to another tab.
+  */
+  const previous = sessionPersistenceQueues.get(session.id) ?? Promise.resolve();
+  const queued = previous.then(
+    () => store.upsert(row),
+    () => store.upsert(row),
+  );
+  const bestEffort = queued.catch(() => undefined);
+  sessionPersistenceQueues.set(session.id, bestEffort);
+  void bestEffort.then(() => {
+    if (sessionPersistenceQueues.get(session.id) === bestEffort) {
+      sessionPersistenceQueues.delete(session.id);
+    }
+  });
+  return bestEffort;
 }
 
 /** Persist only thinking output (debounced). */
@@ -798,10 +816,32 @@ function persistThinking(sessionId: string, thinkingOutput: string): void {
   _aiSessionStore.updateThinking(sessionId, thinkingOutput);
 }
 
-/** Remove session from persistence. */
-function unpersistSession(sessionId: string): void {
-  if (!_aiSessionStore) return;
-  void _aiSessionStore.delete(sessionId);
+/** Remove session from persistence after every older write for the session. */
+function unpersistSession(sessionId: string): Promise<void> {
+  const store = _aiSessionStore;
+  if (!store) return Promise.resolve();
+
+  /*
+  FNXC:PostgresPlanningPersistence 2026-07-14-21:20:
+  Session deletion shares the per-session persistence queue with upserts. A delete that overtakes an upsert after its tombstone check can otherwise allow that older write to recreate a cancelled or cleaned-up planning session.
+  */
+  const previous = sessionPersistenceQueues.get(sessionId) ?? Promise.resolve();
+  const queued = previous.then(
+    () => store.delete(sessionId),
+    () => store.delete(sessionId),
+  );
+  /*
+  FNXC:PostgresPlanningPersistence 2026-07-14-21:46:
+  Session deletion is an authoritative operation, so callers must observe a PostgreSQL delete failure instead of reporting successful cleanup while the persisted row remains. The queue retains a handled promise so later operations can proceed, but this deletion call returns the original rejection.
+  */
+  const bestEffort = queued.catch(() => undefined);
+  sessionPersistenceQueues.set(sessionId, bestEffort);
+  void bestEffort.then(() => {
+    if (sessionPersistenceQueues.get(sessionId) === bestEffort) {
+      sessionPersistenceQueues.delete(sessionId);
+    }
+  });
+  return queued;
 }
 
 /** Release in-memory planning runtime state while keeping persisted history. */
@@ -1234,7 +1274,7 @@ export async function createSession(
 
   session.currentQuestion = firstQuestion;
   session.updatedAt = new Date();
-  persistSession(session, "awaiting_input");
+  await persistSession(session, "awaiting_input");
 
   return { sessionId, firstQuestion };
 }
@@ -3012,7 +3052,7 @@ export async function cancelSession(sessionId: string): Promise<void> {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
 
-  unpersistSession(sessionId);
+  await unpersistSession(sessionId);
 }
 
 /**
@@ -3231,9 +3271,9 @@ export function mergePlanningSubtaskDrafts(
 /**
  * Cleanup a session and remove its persisted row.
  */
-export function cleanupSession(sessionId: string): void {
+export async function cleanupSession(sessionId: string): Promise<void> {
   cleanupInMemorySession(sessionId);
-  unpersistSession(sessionId);
+  await unpersistSession(sessionId);
 }
 
 /**
@@ -3245,6 +3285,7 @@ export function __resetPlanningState(): void {
     cleanupInMemorySession(id);
   }
   sessions.clear();
+  sessionPersistenceQueues.clear();
   rateLimits.clear();
   planningStreamManager.reset();
   activeGenerations.clear();

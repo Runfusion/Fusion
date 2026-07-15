@@ -59,10 +59,9 @@ export { GitHubPollingService, type GitHubPollingServiceOptions, type TaskWatchI
 export { GitHubIssueCommentService, DEFAULT_COMMENT_TEMPLATE } from "./github-issue-comment.js";
 export { GitHubSourceIssueCloseService } from "./github-source-issue-close.js";
 export {
-  upsertKnowledgePage,
-  queryKnowledgePages,
-  getKnowledgePage,
-  countKnowledgePages,
+  upsertKnowledgePageAsync,
+  queryKnowledgePagesAsync,
+  countKnowledgePagesAsync,
   refreshKnowledgeForTask,
   renderTaskPage,
   buildSearchText,

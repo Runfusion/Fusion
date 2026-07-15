@@ -9,6 +9,7 @@ import {
 import { ApiError, badRequest } from "../api-error.js";
 import { emitApprovalSseEvent } from "../sse.js";
 import type { ApiRoutesContext } from "./types.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 const DEFAULT_ACTOR: ApprovalRequestActorSnapshot = {
   actorId: "user",
@@ -30,8 +31,8 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const worktrunkSettings = settings.worktrunk ?? {};
-      const layer = scopedStore.getAsyncLayer();
-      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+      const layer = requireAsyncLayer(scopedStore, "Worktrunk approval store");
+      const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
 
       try {
         const resolved = await resolveWorktrunkBinary({ settings: worktrunkSettings });
@@ -82,8 +83,8 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const worktrunkSettings = settings.worktrunk ?? {};
-      const layer2 = scopedStore.getAsyncLayer();
-      const approvalStore = new ApprovalRequestStore(layer2 ? null : scopedStore.getDatabase(), { asyncLayer: layer2 });
+      const layer2 = requireAsyncLayer(scopedStore, "Worktrunk approval store");
+      const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer2 });
 
       try {
         const resolved = await resolveWorktrunkBinary({ settings: worktrunkSettings });

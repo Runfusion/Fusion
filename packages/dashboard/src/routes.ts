@@ -4282,12 +4282,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw notFound("Session not found");
     }
 
-    await aiSessionStore.delete(id);
-
+    let deletedByPlanningCleanup = false;
     try {
-      if (await getPlanningSession(id)) cleanupPlanningSession(id);
+      if (await getPlanningSession(id)) {
+        await cleanupPlanningSession(id);
+        deletedByPlanningCleanup = true;
+      }
     } catch {
       // Session may not belong to planning or may already be cleaned up.
+    }
+
+    if (!deletedByPlanningCleanup) {
+      await aiSessionStore.delete(id);
     }
 
     try {
@@ -4717,13 +4723,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const shouldClose = !options?.centralCore;
       const detector = new FirstRunDetector(central.getGlobalDir());
       const detectedProjects = await detector.detectExistingProjects(process.cwd());
-      let state = await detector.detectFirstRunState();
+      let state: "fresh-install" | "setup-wizard" | "normal-operation" = detectedProjects.length > 0
+        ? "setup-wizard"
+        : "fresh-install";
       let projects: Array<{ id: string; name: string; path: string }> = [];
+      let centralBackendAvailable = false;
 
       try {
         if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
           await central.init();
         }
+        centralBackendAvailable = true;
         state = await detector.detectFirstRunState(central);
         projects = await central.listProjects();
       } catch (error) {
@@ -4739,7 +4749,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       res.json({
         state,
         detectedProjects,
-        hasCentralDb: detector.hasCentralDb(),
+        // FNXC:PostgresProjectDiscovery 2026-07-14-17:30: Report PostgreSQL
+        // central-registry availability, never legacy fusion-central.db presence.
+        hasCentralDb: centralBackendAvailable,
         registeredProjects: projects.map((p) => ({
           id: p.id,
           name: p.name,
