@@ -14,6 +14,8 @@ import {
   summarizeCommitBody,
   sanitizeCommitSubject,
   sanitizeTitle,
+  deriveFallbackTaskTitle,
+  FALLBACK_TASK_TITLE,
   MAX_COMMIT_SUBJECT_LENGTH,
   checkRateLimit,
   getRateLimitResetTime,
@@ -455,6 +457,46 @@ describe("ai-summarize", () => {
       const long = "x".repeat(100);
       const out = sanitizeTitle(long)!;
       expect(out.length).toBe(MAX_TITLE_LENGTH);
+    });
+  });
+
+  describe("deriveFallbackTaskTitle", () => {
+    it("derives a deterministic title from a normal description", () => {
+      expect(deriveFallbackTaskTitle("Fix blank task titles after triage failure."))
+        .toBe("Fix blank task titles after triage failure");
+    });
+
+    it("strips common markdown heading and list prefixes", () => {
+      expect(deriveFallbackTaskTitle("### Restore workflow selection state\n\nDetails follow."))
+        .toBe("Restore workflow selection state");
+      expect(deriveFallbackTaskTitle("- Add a retry budget for planning failures"))
+        .toBe("Add a retry budget for planning failures");
+      expect(deriveFallbackTaskTitle("1. Backfill failed task titles"))
+        .toBe("Backfill failed task titles");
+      expect(deriveFallbackTaskTitle("[ ] Cover blank-title failures"))
+        .toBe("Cover blank-title failures");
+    });
+
+    it("truncates long descriptions at a word boundary", () => {
+      const title = deriveFallbackTaskTitle(
+        "Fix permanently blank orphaned task titles when planner model selection fails terminally",
+      );
+      expect(title).toBe("Fix permanently blank orphaned task titles when planner");
+      expect(title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH);
+    });
+
+    it("returns the generic fallback for empty or whitespace-only inputs", () => {
+      expect(deriveFallbackTaskTitle("")).toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle("   \n\t  ")).toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle(null)).toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle(undefined)).toBe(FALLBACK_TASK_TITLE);
+    });
+
+    it("returns the generic fallback when sanitization rejects the text", () => {
+      expect(deriveFallbackTaskTitle("Created task **FN-3058** with the full spec"))
+        .toBe(FALLBACK_TASK_TITLE);
+      expect(deriveFallbackTaskTitle("- ( )"))
+        .toBe(FALLBACK_TASK_TITLE);
     });
   });
 

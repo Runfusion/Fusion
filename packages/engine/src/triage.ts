@@ -38,6 +38,7 @@ import {
   extractEffectiveWriteScopeFromPrompt,
   MAX_TASK_LIST_TEXT_CHARS,
   upsertWorkflowStepResult,
+  deriveFallbackTaskTitle,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -931,6 +932,24 @@ export class TriageProcessor {
     }
   }
 
+  private async backfillBlankTitleAfterTerminalTriageFailure(task: Task): Promise<void> {
+    /*
+    FNXC:TriageTitleFallback 2026-07-14-00:00:
+    Agent-created tasks may begin triage with a blank title because fn_task_create only accepts a description. Terminal planner failures must keep their original failed/error state, but they should best-effort derive a deterministic non-LLM title so dashboard and CLI rows are not permanently invisible.
+    */
+    try {
+      const current = await this.store.getTask(task.id);
+      if (current.title?.trim()) {
+        return;
+      }
+      const fallbackTitle = deriveFallbackTaskTitle(current.description || task.description);
+      await this.store.updateTask(task.id, { title: fallbackTitle });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      planLog.warn(`${task.id}: failed to backfill blank title after terminal triage failure: ${msg}`);
+    }
+  }
+
   /**
    * Specify a triage task by spawning an AI agent to generate a PROMPT.md.
    *
@@ -1459,6 +1478,7 @@ export class TriageProcessor {
               recoveryRetryCount: null,
               nextRecoveryAt: null,
             });
+            await this.backfillBlankTitleAfterTerminalTriageFailure(task);
             return;
           }
 
@@ -1549,6 +1569,7 @@ export class TriageProcessor {
             const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
             planLog.warn(`${task.id}: failed to persist planner fallback exhaustion: ${msg}`);
           });
+          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err);
           return;
         } else if (isOperatorActionableAgentError(errorMessage) && !isTransientError(errorMessage)) {
@@ -1574,6 +1595,7 @@ export class TriageProcessor {
             const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
             planLog.warn(`${task.id}: failed to park operator-actionable specification failure: ${msg}`);
           });
+          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         } else if (isTransientError(errorMessage)) {
@@ -1620,6 +1642,7 @@ export class TriageProcessor {
             const msg = err instanceof Error ? err.message : String(err);
             planLog.warn(`${task.id}: failed to persist transient-error retries-exhausted state: ${msg}`);
           });
+          await this.backfillBlankTitleAfterTerminalTriageFailure(task);
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         }

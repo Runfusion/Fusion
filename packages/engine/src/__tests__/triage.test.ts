@@ -4752,6 +4752,215 @@ describe("taskCreate tool model inheritance", () => {
         nextRecoveryAt: expect.any(String),
       }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({ status: "failed" }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({
+        title: expect.any(String),
+      }));
+    });
+
+    it("backfills blank titles when deterministic validation retries are exhausted", async () => {
+      const task = {
+        id: "FN-7961-DETERMINISTIC",
+        title: "",
+        description: "Backfill blank titles after deterministic prompt validation failure",
+        column: "triage",
+        recoveryRetryCount: 3,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockResolvedValue({
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      const expectedError = "Specification failed deterministic validation after 3 retries (PROMPT.md file not found or empty). Retry after adjusting the task prompt or model.";
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", {
+        status: "failed",
+        error: expectedError,
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", {
+        title: "Backfill blank titles after deterministic prompt",
+      });
+    });
+
+    it("backfills blank titles when planner model fallback is exhausted", async () => {
+      const task = {
+        id: "FN-7961-MODEL",
+        title: "",
+        description: "Repair blank title rows after planner model fallback exhaustion",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockResolvedValue({
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn(),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      });
+      const { ModelFallbackExhaustedError, promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ModelFallbackExhaustedError({
+          primaryModel: "openai/gpt-4o",
+          fallbackModel: "anthropic/claude-3-5-haiku-20241022",
+          triggerPoint: "prompt-time",
+          attempts: 2,
+          underlyingReason: "model unavailable",
+        }),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-MODEL", expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("Triage failed: unable to select a usable model after 2 attempts"),
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-MODEL", {
+        title: "Repair blank title rows after planner model fallback",
+      });
+    });
+
+    it("backfills blank titles when operator-actionable provider failures park planning", async () => {
+      const task = {
+        id: "FN-7961-OPERATOR",
+        title: "",
+        description: "Show failed tasks when provider credentials are unavailable",
+        column: "triage",
+        status: "planning",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error("No API key for provider: anthropic"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-OPERATOR", {
+        status: "failed",
+        error: "Specification failed: No API key for provider: anthropic",
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-OPERATOR", {
+        title: "Show failed tasks when provider credentials are unavailable",
+      });
+    });
+
+    it("backfills blank titles when transient retries are exhausted", async () => {
+      const task = {
+        id: "FN-7961-TRANSIENT",
+        title: "",
+        description: "Identify failed rows after exhausted transient planning retries",
+        column: "triage",
+        status: "planning",
+        recoveryRetryCount: 3,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error("connection reset"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", {
+        error: "Specification failed after 3 transient errors: connection reset",
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", {
+        title: "Identify failed rows after exhausted transient planning",
+      });
+    });
+
+    it("does not overwrite an existing title during terminal fallback exhaustion", async () => {
+      const task = {
+        id: "FN-7961-EXISTING",
+        title: "Existing operator title",
+        description: "This description would otherwise become the fallback title",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockResolvedValue({
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn(),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      });
+      const { ModelFallbackExhaustedError, promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new ModelFallbackExhaustedError({
+          primaryModel: "openai/gpt-4o",
+          triggerPoint: "prompt-time",
+          attempts: 1,
+          underlyingReason: "model not found",
+        }),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-EXISTING", expect.objectContaining({
+        status: "failed",
+        recoveryRetryCount: null,
+        nextRecoveryAt: null,
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-7961-EXISTING", expect.objectContaining({
+        title: expect.any(String),
+      }));
     });
   });
 

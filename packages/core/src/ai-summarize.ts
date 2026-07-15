@@ -56,6 +56,9 @@ export const MAX_TITLE_LENGTH = 60;
 /** Maximum merge commit summary length in characters */
 export const MAX_MERGE_COMMIT_SUMMARY_LENGTH = 300;
 
+/** Safe generic fallback when deterministic title derivation cannot keep useful description text. */
+export const FALLBACK_TASK_TITLE = "Untitled task";
+
 /** Rate limit: max requests per IP per hour */
 export const MAX_REQUESTS_PER_HOUR = 10;
 
@@ -957,6 +960,45 @@ export function sanitizeTitle(raw: string | undefined | null): string | null {
     title = title.slice(0, MAX_TITLE_LENGTH).trim();
   }
   return title || null;
+}
+
+function stripLeadingDescriptionMarkdown(text: string): string {
+  return text
+    .replace(/^\s{0,3}#{1,6}\s+/, "")
+    .replace(/^\s{0,3}>\s?/, "")
+    .replace(/^\s{0,3}(?:[-*+]\s+|\d+[.)]\s+|\[[ xX]\]\s+)/, "")
+    .trim();
+}
+
+function truncateTitleAtWordBoundary(text: string): string {
+  if (text.length <= MAX_TITLE_LENGTH) {
+    return text;
+  }
+  const capped = text.slice(0, MAX_TITLE_LENGTH).trim();
+  const boundary = capped.search(/\s+\S*$/);
+  const candidate = boundary > Math.floor(MAX_TITLE_LENGTH * 0.5)
+    ? capped.slice(0, boundary).trim()
+    : capped;
+  return stripDanglingTail(stripEmptyPlaceholders(candidate)) || capped;
+}
+
+/**
+ * Derive a deterministic, model-independent title from task description text.
+ *
+ * FNXC:TriageTitleFallback 2026-07-14-00:00:
+ * Terminal triage/specification failures can happen before PROMPT.md title finalization, especially when model selection is unavailable. This helper must never call an LLM; it gives failed agent-created rows a stable visible title while preserving the original failure state and any existing non-empty title chosen elsewhere.
+ */
+export function deriveFallbackTaskTitle(description: string | undefined | null): string {
+  const firstMeaningfulLine = (description ?? "")
+    .split(/\r?\n/)
+    .map(stripLeadingDescriptionMarkdown)
+    .find((line) => line.length > 0);
+  if (!firstMeaningfulLine) {
+    return FALLBACK_TASK_TITLE;
+  }
+
+  const truncated = truncateTitleAtWordBoundary(firstMeaningfulLine);
+  return sanitizeTitle(truncated) ?? FALLBACK_TASK_TITLE;
 }
 
 // ── Test Helpers ───────────────────────────────────────────────────────────
