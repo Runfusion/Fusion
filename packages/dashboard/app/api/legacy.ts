@@ -3384,7 +3384,7 @@ export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string; thinkingLevel?: ThinkingLevel },
-  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number; clarificationEnabled?: boolean },
   existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
@@ -3396,6 +3396,7 @@ export function startPlanningStreaming(
       thinkingLevel: modelOverride?.thinkingLevel,
       planningDepth: planningOptions?.planningDepth,
       customQuestionCount: planningOptions?.customQuestionCount,
+      clarificationEnabled: planningOptions?.clarificationEnabled,
       ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });

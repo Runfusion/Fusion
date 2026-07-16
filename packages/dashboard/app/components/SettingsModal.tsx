@@ -1168,6 +1168,7 @@ export function SettingsModal({
     includeTaskIdInCommit: true,
     worktreeInitCommand: "",
     ntfyEnabled: false,
+    agentClarificationEnabled: false,
     ntfyTopic: undefined,
     ntfyAccessToken: undefined,
     failureNotificationMode: "sticky-only",

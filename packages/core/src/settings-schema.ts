@@ -135,6 +135,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   fallbackThinkingLevel: undefined,
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
+  // FNXC:AgentClarification 2026-07-16-12:00: Planner clarification pauses are opt-in; disabled planners must complete a summary instead of waiting for proactive answers.
+  agentClarificationEnabled: false,
   ntfyTopic: undefined,
   ntfyBaseUrl: undefined,
   ntfyAccessToken: undefined,

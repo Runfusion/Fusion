@@ -210,8 +210,9 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     mergeTask: vi.fn(),
     archiveTask: vi.fn(),
     unarchiveTask: vi.fn(),
-    getSettings: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main" }),
-    getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main" }),
+    // Existing planning-route scenarios exercise the enabled checkpoint flow; explicit disabled cases override this default.
+    getSettings: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main", agentClarificationEnabled: true }),
+    getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: false, defaultBranch: "main", agentClarificationEnabled: true }),
     updateSettings: vi.fn(),
     updateGlobalSettings: vi.fn(),
     getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
@@ -3547,9 +3548,11 @@ describe("Saturated-slot regression: utility AI routes", () => {
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 0, // SATURATED: zero task slots available
         promptOverrides: {},
+        agentClarificationEnabled: true,
       }),
       getSettingsFast: vi.fn().mockResolvedValue({
         maxConcurrent: 0,
+        agentClarificationEnabled: true,
       }),
       ...overrides,
     } as Partial<TaskStore>);

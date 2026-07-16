@@ -1,5 +1,6 @@
 import {
   DEFAULT_TASK_PRIORITY,
+  MessageStore,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
   THINKING_LEVELS,
@@ -14,6 +15,7 @@ import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
+import { requireAsyncLayer } from "../require-async-layer.js";
 
 type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
 
@@ -48,6 +50,28 @@ function rethrowPlanningWorkflowCreateError(
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
   const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
   const { aiSessionStore, parseLastEventId, replayBufferedSSE } = deps;
+  const messageStoreCache = new Map<string, MessageStore>();
+  const getPlanningMessageStore = async (req: import("express").Request): Promise<MessageStore | undefined> => {
+    try {
+      const { store: scopedStore, engine } = await getProjectContext(req);
+      const runtimeStore = engine?.getMessageStore();
+      if (runtimeStore) return runtimeStore;
+      const rootDir = scopedStore.getRootDir();
+      const cached = messageStoreCache.get(rootDir);
+      if (cached) return cached;
+      const created = new MessageStore(null, { asyncLayer: requireAsyncLayer(scopedStore, "Planning MessageStore") });
+      messageStoreCache.set(rootDir, created);
+      return created;
+    } catch (error) {
+      planningLogger.warn("Planning mailbox unavailable; continuing without inbox delivery", { error: String(error) });
+      return undefined;
+    }
+  };
+  const planningRuntime = async (req: import("express").Request, settings: Awaited<ReturnType<TaskStore["getSettings"]>>) => ({
+    clarificationEnabled: settings.agentClarificationEnabled === true,
+    ntfyConfig: { enabled: settings.ntfyEnabled ?? false, topic: settings.ntfyTopic, ntfyBaseUrl: settings.ntfyBaseUrl, dashboardHost: settings.ntfyDashboardHost, events: settings.ntfyEvents },
+    messageStore: await getPlanningMessageStore(req),
+  });
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
   // UTILITY PATH: Planning and subtask session routes are on a separate control-plane lane.
@@ -497,6 +521,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
+      /*
+      FNXC:AgentClarification 2026-07-16-16:10:
+      The legacy synchronous planning-start endpoint can emit the initial proactive question too.
+      Attach live notification and mailbox dependencies here so it follows the same setting-gated
+      hold and delivery contract as streaming Planning Mode.
+      */
+      const runtime = await planningRuntime(req, settings);
 
       const { createSession, RateLimitError: _RateLimitError } = await import("../planning.js");
       const result = await createSession(
@@ -508,6 +539,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         planningDepth,
         customQuestionCount,
         ctx.options?.pluginRunner as SkillPluginRunner,
+        runtime,
       );
       res.status(201).json(result);
     } catch (err: unknown) {
@@ -615,6 +647,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         customQuestionCount,
         existingSessionId,
         thinkingLevel,
+        clarificationEnabled,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -645,6 +678,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
       }
 
+      if (clarificationEnabled !== undefined && typeof clarificationEnabled !== "boolean") {
+        throw badRequest("clarificationEnabled must be a boolean when provided");
+      }
+
       if (existingSessionId !== undefined && typeof existingSessionId !== "string") {
         throw badRequest("existingSessionId must be a string when provided");
       }
@@ -658,6 +695,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
+      const resolvedClarificationEnabled = clarificationEnabled ?? settings.agentClarificationEnabled ?? false;
+      const runtime = await planningRuntime(req, settings);
+      runtime.clarificationEnabled = resolvedClarificationEnabled;
 
       // Resolve planning model using canonical lane hierarchy:
       // 1. Request body planning override
@@ -708,6 +748,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             validatedThinkingLevel,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
+            runtime,
           );
         } else {
           await startExistingSession(
@@ -718,6 +759,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             resolvedPlanningModelId,
             settings.promptOverrides,
             ctx.options?.pluginRunner as SkillPluginRunner,
+            undefined,
+            runtime,
           );
         }
         res.status(201).json({ sessionId: existingSessionId });
@@ -727,12 +770,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
       const planningOptions = {
         projectId,
-        ntfyConfig: {
-          enabled: settings.ntfyEnabled ?? false,
-          topic: settings.ntfyTopic,
-          dashboardHost: settings.ntfyDashboardHost,
-          events: settings.ntfyEvents,
-        },
+        ...runtime,
         planningDepth,
         customQuestionCount,
         pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
@@ -837,7 +875,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const { submitResponse, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("../planning.js");
+      const { submitResponse, attachPlanningRuntime, SessionNotFoundError: _SessionNotFoundError, InvalidSessionStateError: _InvalidSessionStateError } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       const result = await submitResponse(
         sessionId,
         responses,
@@ -871,7 +910,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const { rewindSession } = await import("../planning.js");
+      const { rewindSession, attachPlanningRuntime } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       const rewound = await rewindSession(
         sessionId,
         scopedStore.getRootDir(),
@@ -909,7 +949,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const { retrySession } = await import("../planning.js");
+      const { retrySession, attachPlanningRuntime } = await import("../planning.js");
+      await attachPlanningRuntime(sessionId, await planningRuntime(req, settings));
       await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides, scopedStore);
       res.json({ success: true, sessionId });
     } catch (err: unknown) {

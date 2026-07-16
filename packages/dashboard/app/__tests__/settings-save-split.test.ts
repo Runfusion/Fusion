@@ -77,6 +77,19 @@ describe("resolveScopedMcpSettings", () => {
   });
 });
 
+describe("agent clarification notification ownership", () => {
+  it("persists the Notifications setting through the section save split", () => {
+    const result = splitSettingsSave({
+      payload: { agentClarificationEnabled: true },
+      initialValues: { agentClarificationEnabled: false } as never,
+      initialScopedValues: { global: { agentClarificationEnabled: false }, project: {} } as never,
+      activeSection: "notifications",
+    });
+
+    expect(result.globalPatch).toEqual({ agentClarificationEnabled: true });
+  });
+});
+
 describe("splitSettingsSave", () => {
   it("routes one global + one project edit into the right patches", () => {
     const initialValues = { language: "en", maxConcurrent: 2 } as never;

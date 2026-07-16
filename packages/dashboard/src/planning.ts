@@ -20,8 +20,10 @@ import type {
   TaskStore,
   NtfyNotificationEvent,
   ThinkingLevel,
+  MessageStore,
 } from "@fusion/core";
 import {
+  DASHBOARD_USER_ID,
   DEFAULT_TASK_PRIORITY,
   PLANNING_DEEPEN_CHECKPOINT_ID,
   PLANNING_DEEPEN_CHECKPOINT_QUESTION,
@@ -62,12 +64,19 @@ const PLANNING_NO_AMBIENT_TASK_ID = "";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 type SkillPluginRunner = Parameters<typeof buildSessionSkillContextSync>[3];
+type AgentMessage = {
+  role: string;
+  content?: string | Array<{ type: string; text?: string; thinking?: string }>;
+};
 
 const PLANNING_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 type PlanningMcpServers = Awaited<ReturnType<typeof resolveMcpServersForStore>>["servers"];
 type PlanningSessionOptions = {
   projectId?: string;
   ntfyConfig?: PlanningNtfyConfig;
+  clarificationEnabled?: boolean;
+  /** Runtime-only mailbox dependency; never serialize this store. */
+  messageStore?: MessageStore;
   planningDepth?: PlanningDepth;
   customQuestionCount?: number;
   pluginRunner?: SkillPluginRunner;
@@ -291,6 +300,8 @@ export const DRAFT_PLACEHOLDER_TITLE = "New planning session";
  */
 export interface DraftInputPayload {
   initialPlan?: string;
+  clarificationEnabled?: boolean;
+  lastMailboxNotifiedQuestionKey?: string;
   modelProvider?: string;
   modelId?: string;
   thinkingLevel?: ThinkingLevel;
@@ -382,9 +393,15 @@ interface Session {
   /** Plan text the current title was summarized from; lets startExistingSession skip a redundant re-summarize when blur/close already covered the final text. */
   draftSummarizedFor?: string;
   ntfyConfig?: PlanningNtfyConfig;
+  /** Persisted per-session override for proactive AI clarification checkpoints. */
+  clarificationEnabled?: boolean;
+  /** Runtime-only mailbox dependency, attached by the current route. */
+  messageStore?: MessageStore;
   autoMerge?: boolean;
   /** Last planning question notified via ntfy, keyed as `${sessionId}:${questionId}` for dedupe across reconnect/replay. */
   lastNotifiedQuestionKey?: string;
+  /** Durable fast-path marker; the inbox lookup remains authoritative after a crash. */
+  lastMailboxNotifiedQuestionKey?: string;
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
@@ -792,6 +809,10 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.draftThinkingLevel ? { thinkingLevel: session.draftThinkingLevel } : {}),
       ...(session.draftSummarizedFor ? { summarizedFor: session.draftSummarizedFor } : {}),
       ...(session.pendingSummary ? { pendingSummary: session.pendingSummary } : {}),
+      ...(typeof session.clarificationEnabled === "boolean"
+        ? { clarificationEnabled: session.clarificationEnabled }
+        : {}),
+      ...(session.lastMailboxNotifiedQuestionKey ? { lastMailboxNotifiedQuestionKey: session.lastMailboxNotifiedQuestionKey } : {}),
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -899,6 +920,12 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     draftModelId: payload.modelId,
     draftThinkingLevel: thinkingLevel,
     draftSummarizedFor: payload.summarizedFor,
+    clarificationEnabled: typeof payload.clarificationEnabled === "boolean"
+      ? payload.clarificationEnabled
+      : undefined,
+    lastMailboxNotifiedQuestionKey: typeof payload.lastMailboxNotifiedQuestionKey === "string"
+      ? payload.lastMailboxNotifiedQuestionKey
+      : undefined,
     history: safeParseJson<PlanningHistoryEntry[]>(
       row.conversationHistory,
       [],
@@ -1193,6 +1220,7 @@ export async function createSession(
   planningDepth?: PlanningDepth,
   customQuestionCount?: number,
   pluginRunner?: SkillPluginRunner,
+  options?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled">,
 ): Promise<{ sessionId: string; firstQuestion: PlanningQuestion }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -1225,6 +1253,9 @@ export async function createSession(
     store,
     rootDir,
     pluginRunner,
+    clarificationEnabled: options?.clarificationEnabled === true,
+    ntfyConfig: options?.ntfyConfig,
+    messageStore: options?.messageStore,
   };
 
   sessions.set(sessionId, session);
@@ -1282,11 +1313,32 @@ export async function createSession(
   session.updatedAt = new Date();
 
   // Send initial plan to get first question from AI
-  const firstQuestion = await getFirstQuestionFromAgent(session, initialPlan);
+  const firstResponse = await getFirstQuestionFromAgent(session, initialPlan);
 
+  if (firstResponse.type === "complete") {
+    const firstQuestion = setPendingSummaryCheckpoint(session, normalizePlanningSummaryPayload(firstResponse.data, {
+      title: session.title || session.initialPlan,
+      description: session.initialPlan,
+    }));
+    return { sessionId, firstQuestion };
+  }
+
+  if (!session.clarificationEnabled) {
+    try {
+      const firstQuestion = await continueToSummaryAfterSuppressedQuestion(session);
+      return { sessionId, firstQuestion };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSessionError(session, message);
+      throw error;
+    }
+  }
+
+  const firstQuestion = firstResponse.data;
   session.currentQuestion = firstQuestion;
   session.updatedAt = new Date();
   await persistSession(session, "awaiting_input");
+  void maybeNotifyPlanningAwaitingInput(session, firstQuestion, true);
 
   return { sessionId, firstQuestion };
 }
@@ -1299,7 +1351,7 @@ export async function createSession(
 async function getFirstQuestionFromAgent(
   session: Session,
   message: string
-): Promise<PlanningQuestion> {
+): Promise<PlanningResponse> {
   if (!session.agent) {
     throw new InvalidSessionStateError("AI agent not initialized");
   }
@@ -1422,15 +1474,44 @@ async function getFirstQuestionFromAgent(
     throw new Error(`Failed to get first question from AI: ${errorMessage}`);
   }
 
-  if (parsed.type === "complete") {
-    const summary = normalizePlanningSummaryPayload(parsed.data, {
-      title: session.title || session.initialPlan,
-      description: session.initialPlan,
-    });
-    return setPendingSummaryCheckpoint(session, summary);
-  }
+  return parsed;
+}
 
-  return parsed.data;
+/**
+ * FNXC:AgentClarification 2026-07-16-13:00:
+ * Disabled clarification must never leave a proactive question parked. One
+ * bounded follow-up requests the protocol's complete payload, then hands it
+ * to the existing deepening checkpoint; malformed/question follow-ups fail
+ * visibly instead of creating a prompt loop.
+ */
+async function continueToSummaryAfterSuppressedQuestion(
+  session: Session,
+  abortSignal?: AbortSignal,
+): Promise<PlanningQuestion> {
+  if (!session.agent) throw new InvalidSessionStateError("Planning session has no AI agent");
+  await (session.agent.session.prompt as (input: string, options?: { signal?: AbortSignal }) => Promise<void>)(
+    'Clarification is disabled. Return ONLY the final {"type":"complete","data":...} JSON summary; do not ask another question.',
+    { signal: abortSignal },
+  );
+  const followUp = (session.agent.session.state.messages as AgentMessage[])
+    .filter((message) => message.role === "assistant")
+    .pop();
+  const followUpText = typeof followUp?.content === "string"
+    ? followUp.content
+    : Array.isArray(followUp?.content)
+      ? followUp.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string")
+        .map((block) => block.text)
+        .join("")
+      : "";
+  const complete = parseAgentResponse(followUpText);
+  if (complete.type !== "complete") {
+    throw new Error("Clarification-disabled follow-up did not produce a summary");
+  }
+  return setPendingSummaryCheckpoint(session, normalizePlanningSummaryPayload(complete.data, {
+    title: session.title || session.initialPlan,
+    description: session.initialPlan,
+  }));
 }
 
 export async function createDraftSession(
@@ -1470,6 +1551,9 @@ export async function createDraftSession(
     draftModelProvider: hasModelOverride ? modelProvider : undefined,
     draftModelId: hasModelOverride ? modelId : undefined,
     draftThinkingLevel: thinkingLevel,
+    // Draft creation has no resolved settings context; startExistingSession
+    // applies the request override/global default before generation begins.
+    clarificationEnabled: undefined,
     history: [],
     thinkingOutput: "",
     lastGeneratedThinking: "",
@@ -1563,6 +1647,7 @@ export async function startExistingSession(
   thinkingLevelOrPromptOverrides?: ThinkingLevel | PromptOverrideMap,
   promptOverridesOrPluginRunner?: PromptOverrideMap | SkillPluginRunner,
   pluginRunnerMaybe?: SkillPluginRunner,
+  runtimeOptions?: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled">,
 ): Promise<void> {
   const thinkingLevel = isThinkingLevel(thinkingLevelOrPromptOverrides) ? thinkingLevelOrPromptOverrides : undefined;
   const promptOverrides = isThinkingLevel(thinkingLevelOrPromptOverrides)
@@ -1651,6 +1736,11 @@ export async function startExistingSession(
   }
 
   session.draftThinkingLevel = thinkingLevel ?? persistedThinkingLevel;
+  if (runtimeOptions) {
+    session.clarificationEnabled = runtimeOptions.clarificationEnabled === true;
+    session.ntfyConfig = runtimeOptions.ntfyConfig;
+    session.messageStore = runtimeOptions.messageStore;
+  }
   persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
     session.pluginRunner = pluginRunner;
@@ -1719,6 +1809,8 @@ export async function createSessionWithAgent(
           ntfyBaseUrl: options.ntfyConfig.ntfyBaseUrl,
         }
       : undefined,
+    clarificationEnabled: options?.clarificationEnabled === true,
+    messageStore: options?.messageStore,
     history: [],
     thinkingOutput: "",
     lastGeneratedThinking: "",
@@ -1975,49 +2067,65 @@ async function ensureSessionAgent(
   });
 }
 
-async function maybeNotifyPlanningAwaitingInput(session: Session, question: PlanningQuestion): Promise<void> {
-  const config = session.ntfyConfig;
-  if (!config?.enabled || !config.topic) {
-    return;
+async function maybeNotifyPlanningAwaitingInput(
+  session: Session,
+  question: PlanningQuestion,
+  proactiveClarification = false,
+): Promise<void> {
+  const questionKey = `${session.id}:${question.id}`;
+
+  /*
+  FNXC:AgentClarification 2026-07-16-12:00:
+  Proactive planner questions use an inbox message independently of ntfy. The
+  inbox lookup is authoritative because a process can die after sendMessage but
+  before the persisted marker write; ntfy remains best-effort and separately deduped.
+  */
+  if (proactiveClarification && session.clarificationEnabled && session.messageStore
+    && session.lastMailboxNotifiedQuestionKey !== questionKey) {
+    try {
+      const inbox = await session.messageStore.getInbox(DASHBOARD_USER_ID, "user", { type: "system" });
+      const delivered = inbox.some((message) => message.metadata?.kind === "planning-clarification"
+        && message.metadata?.sessionId === session.id && message.metadata?.questionId === question.id);
+      if (!delivered) {
+        await session.messageStore.sendMessage({
+          fromType: "system",
+          toType: "user",
+          toId: DASHBOARD_USER_ID,
+          type: "system",
+          content: `Planning needs your answer in the planner chat: ${question.question}`,
+          metadata: { kind: "planning-clarification", sessionId: session.id, questionId: question.id },
+        });
+      }
+      session.lastMailboxNotifiedQuestionKey = questionKey;
+      await persistSession(session, "awaiting_input");
+    } catch (error) {
+      diagnostics.warn("Failed to deliver planning clarification mailbox message", {
+        sessionId: session.id, questionId: question.id,
+        error: error instanceof Error ? error.message : String(error), operation: "planning-clarification-mailbox",
+      });
+    }
   }
+
+  // Summary deepening checkpoints retain their existing ntfy behavior regardless
+  // of the clarification preference; only proactive questions are setting-gated.
+  if (proactiveClarification && !session.clarificationEnabled) return;
+  const config = session.ntfyConfig;
+  if (!config?.enabled || !config.topic) return;
 
   await ensureNtfyHelpersReady();
   const eventEnabled = planningNtfyHelpers?.isNtfyEventEnabled
     ? planningNtfyHelpers.isNtfyEventEnabled(config.events, "planning-awaiting-input")
     : (config.events ? config.events.includes("planning-awaiting-input") : true);
-  if (!eventEnabled) {
-    return;
-  }
-
-  const questionKey = `${session.id}:${question.id}`;
-  if (session.lastNotifiedQuestionKey === questionKey) {
-    return;
-  }
+  if (!eventEnabled || session.lastNotifiedQuestionKey === questionKey) return;
   session.lastNotifiedQuestionKey = questionKey;
-
-  if (!planningNtfyHelpers) {
-    return;
-  }
-
+  if (!planningNtfyHelpers) return;
   try {
-    const clickUrl = planningNtfyHelpers.buildNtfyClickUrl({
-      dashboardHost: config.dashboardHost,
-      projectId: session.projectId,
-    });
-    await planningNtfyHelpers.sendNtfyNotification({
-      ntfyBaseUrl: config.ntfyBaseUrl,
-      topic: config.topic,
-      title: "Planning needs your input",
-      message: `Planning mode is waiting for input: ${question.question}`,
-      priority: "high",
-      clickUrl,
-    });
+    const clickUrl = planningNtfyHelpers.buildNtfyClickUrl({ dashboardHost: config.dashboardHost, projectId: session.projectId });
+    await planningNtfyHelpers.sendNtfyNotification({ ntfyBaseUrl: config.ntfyBaseUrl, topic: config.topic,
+      title: "Planning needs your input", message: `Planning mode is waiting for input: ${question.question}`, priority: "high", clickUrl });
   } catch (error) {
     diagnostics.warn("Failed to deliver planning awaiting-input ntfy notification", {
-      sessionId: session.id,
-      questionId: question.id,
-      error: error instanceof Error ? error.message : String(error),
-      operation: "planning-notify-awaiting-input",
+      sessionId: session.id, questionId: question.id, error: error instanceof Error ? error.message : String(error), operation: "planning-notify-awaiting-input",
     });
   }
 }
@@ -2374,12 +2482,17 @@ async function continueAgentConversation(session: Session, message: string): Pro
         session.error = undefined;
         session.lastGeneratedThinking = session.thinkingOutput;
         session.updatedAt = new Date();
+        if (!session.clarificationEnabled) {
+          try {
+            await continueToSummaryAfterSuppressedQuestion(session, abortSignal);
+          } catch (error) {
+            setSessionError(session, error instanceof Error ? error.message : String(error));
+          }
+          return;
+        }
         persistSession(session, "awaiting_input");
-        void maybeNotifyPlanningAwaitingInput(session, parsed.data);
-        planningStreamManager.broadcast(session.id, {
-          type: "question",
-          data: parsed.data,
-        });
+        void maybeNotifyPlanningAwaitingInput(session, parsed.data, true);
+        planningStreamManager.broadcast(session.id, { type: "question", data: parsed.data });
       } else if (parsed.type === "complete") {
         const summary = normalizePlanningSummaryPayload(parsed.data, {
           title: session.title || session.initialPlan,
@@ -3071,6 +3184,25 @@ export async function cancelSession(sessionId: string): Promise<void> {
 /**
  * Get session details.
  */
+/** Attach live-only route dependencies after session rehydration. */
+export async function attachPlanningRuntime(
+  sessionId: string,
+  options: Pick<PlanningSessionOptions, "ntfyConfig" | "messageStore" | "clarificationEnabled">,
+): Promise<void> {
+  const session = await getSession(sessionId);
+  /*
+  FNXC:AgentClarification 2026-07-16-16:15:
+  The following mutator owns the authoritative missing-session error. Runtime
+  attachment is best-effort so restored live sessions receive current ntfy and
+  mailbox dependencies without changing existing route error semantics.
+  */
+  if (!session) return;
+  session.ntfyConfig = options.ntfyConfig;
+  session.messageStore = options.messageStore;
+  // Persisted session choice wins on resumed sessions; route defaults only fill old rows.
+  if (session.clarificationEnabled === undefined) session.clarificationEnabled = options.clarificationEnabled === true;
+}
+
 export async function getSession(sessionId: string): Promise<Session | undefined> {
   const inMemory = sessions.get(sessionId);
   if (inMemory) {

@@ -2479,6 +2479,12 @@ export interface GlobalSettings {
   /** When true, enables ntfy.sh push notifications for task completion and failures.
    *  Requires ntfyTopic to be set. Default: false. */
   ntfyEnabled?: boolean;
+  /**
+   * FNXC:AgentClarification 2026-07-16-12:00:
+   * Controls proactive planner clarification checkpoints. Disabled sessions re-prompt
+   * for a final summary; enabled sessions hold for input and notify via ntfy/mailbox.
+   */
+  agentClarificationEnabled?: boolean;
   /** ntfy.sh topic name for push notifications. When set along with ntfyEnabled,
    *  notifications are sent to {ntfyBaseUrl}/{topic} (default: https://ntfy.sh/{topic})
    *  when tasks complete or fail. */

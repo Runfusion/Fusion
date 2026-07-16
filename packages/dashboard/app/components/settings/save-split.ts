@@ -110,6 +110,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   ]),
   notifications: new Set([
     "ntfyEnabled",
+    "agentClarificationEnabled",
     "ntfyTopic",
     "ntfyBaseUrl",
     "ntfyAccessToken",
