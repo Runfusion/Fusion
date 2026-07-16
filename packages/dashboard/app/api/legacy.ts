@@ -89,6 +89,8 @@ import type {
   WorkflowSettingRejection,
   CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
+// Consumers import backfill report types from the legacy API barrel.
+export type { CommitAssociationDiffBackfillReport };
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { PlannerOverseerRuntimeSnapshot } from "@fusion/core";
 import type { PlannerInterventionEntry } from "@fusion/core";
@@ -120,11 +122,16 @@ export {
   checkForUpdates,
   withProjectId,
 } from "./health.js";
-export type {
+import type {
   DashboardHealthResponse,
   EngineStatusResponse,
   UpdateCheckResponse,
 } from "./health.js";
+export type {
+  DashboardHealthResponse,
+  EngineStatusResponse,
+  UpdateCheckResponse,
+};
 
 export {
   fetchTasks,
@@ -138,6 +145,22 @@ export {
   batchUpdateTaskModels,
   moveTask,
   DuplicateCandidatesError,
+} from "./tasks.js";
+import type {
+  DeleteTaskOptions,
+  ArchiveTaskOptions,
+  TaskRuntimeFallbackResponse,
+  UpdateTaskReviewRequest,
+  TaskReviewResponse,
+  RefreshTaskReviewResponse,
+  SelectedReviewItem,
+  ReviseTaskReviewResponse,
+  AddressPrFeedbackResponse,
+  DuplicateMatch,
+  CreateTaskRequestOptions,
+  BranchSelectionInput,
+  CreateTaskInput,
+  RepairOverlapBlockerResult,
 } from "./tasks.js";
 export type {
   DeleteTaskOptions,
@@ -154,13 +177,14 @@ export type {
   BranchSelectionInput,
   CreateTaskInput,
   RepairOverlapBlockerResult,
-} from "./tasks.js";
+};
 import { api, ApiRequestError, buildApiUrl, looksLikeHtml, proxyApi } from "./client.js";
 import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
 
-// Re-export skills types for use by hooks and components
-export type {
+// Import + re-export skills types so legacy monofile bodies can reference them
+// while hooks/components keep stable import paths via this barrel.
+import type {
   DiscoveredSkill,
   CatalogEntry,
   CatalogFetchResult,
@@ -169,6 +193,15 @@ export type {
   SkillFileEntry,
   SkillFileContent,
 } from "@fusion/dashboard";
+export type {
+  DiscoveredSkill,
+  CatalogEntry,
+  CatalogFetchResult,
+  ToggleSkillResult,
+  SkillContent,
+  SkillFileEntry,
+  SkillFileContent,
+};
 
 /** Resolved trait flags for a board column (subset the client cares about). */
 export interface BoardWorkflowColumnFlags {
