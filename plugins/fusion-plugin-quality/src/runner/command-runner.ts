@@ -13,12 +13,16 @@ Store mutations are async (PostgreSQL AsyncDataLayer). Never assume a sync SQLit
 FNXC:Quality 2026-07-16-09:20:
 PR #2230 review: register a cancel slot BEFORE the running write so cancel mid-await
 still kills the eventual process; finalizeRun so a late cancel is not overwritten.
+
+FNXC:Quality 2026-07-16-10:55:
+Always wrap supervisors in ActiveQualityRun (Signals-only kill) for tsc; delete the
+active slot in finally so rejected store writes cannot leak supervisors.
 */
 
 const HARD_TIMEOUT_MS = 1_800_000;
 
 type ActiveQualityRun = {
-  kill: (signal?: NodeJS.Signals | number) => void;
+  kill: (signal?: NodeJS.Signals) => void;
 };
 
 const activeQualityRuns = new Map<string, ActiveQualityRun>();
@@ -81,20 +85,19 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
   const startedAt = new Date().toISOString();
   const key = activeRunKey(projectId, runId);
 
-  /*
-  Cancel slot must exist before the awaited running write. A cancel in that
-  window sets a flag (and later kills the real supervisor once registered).
-  */
   let cancelRequested = false;
   let supervised: ReturnType<typeof superviseSpawn> | undefined;
-  activeQualityRuns.set(key, {
-    kill: (signal) => {
-      cancelRequested = true;
-      supervised?.kill(signal);
-    },
-  });
 
-  await store.updateRun(projectId, runId, { status: "running", startedAt });
+  const setActiveKill = (kill: (signal?: NodeJS.Signals) => void) => {
+    activeQualityRuns.set(key, { kill });
+  };
+
+  setActiveKill((signal) => {
+    cancelRequested = true;
+    if (supervised) {
+      supervised.kill(signal);
+    }
+  });
 
   let stdout = "";
   let stderr = "";
@@ -104,6 +107,8 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
   let errorMessage: string | null = null;
 
   try {
+    await store.updateRun(projectId, runId, { status: "running", startedAt });
+
     if (cancelRequested) {
       status = "cancelled";
       errorMessage = "Cancelled by operator";
@@ -113,7 +118,10 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
         shell: opts.shell !== false,
         env: process.env,
       });
-      activeQualityRuns.set(key, supervised);
+      setActiveKill((signal) => {
+        cancelRequested = true;
+        supervised?.kill(signal);
+      });
 
       if (cancelRequested) {
         supervised.kill("SIGTERM");
@@ -162,27 +170,25 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
         status = "failed";
       }
     }
-  } catch (err) {
-    status = "error";
-    errorMessage = err instanceof Error ? err.message : String(err);
-  }
 
-  const finishedAt = new Date().toISOString();
-  const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
-  const updated = await store.finalizeRun(projectId, runId, {
-    status,
-    exitCode,
-    errorMessage,
-    finishedAt,
-    durationMs,
-    stdout,
-    stderr,
-  });
-  if (!updated) {
-    throw new Error(`Quality run ${runId} missing after execution`);
+    const finishedAt = new Date().toISOString();
+    const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
+    const updated = await store.finalizeRun(projectId, runId, {
+      status,
+      exitCode,
+      errorMessage,
+      finishedAt,
+      durationMs,
+      stdout,
+      stderr,
+    });
+    if (!updated) {
+      throw new Error(`Quality run ${runId} missing after execution`);
+    }
+    return updated;
+  } finally {
+    activeQualityRuns.delete(key);
   }
-  activeQualityRuns.delete(key);
-  return updated;
 }
 
 export function defaultTimeoutMs(verificationCommandTimeoutMs?: number): number {

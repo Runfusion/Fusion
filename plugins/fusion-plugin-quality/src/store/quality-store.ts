@@ -166,32 +166,51 @@ export class QualityStore implements QualityStoreApi {
   }
 
   async updateRun(projectId: string, id: string, patch: QualityRunPatch): Promise<TestRun | null> {
+    /*
+    FNXC:Quality 2026-07-16-10:55:
+    One conditional UPDATE so SQLite tests match AsyncQualityStore sticky
+    terminal status (cancel cannot be overwritten by a late mark-running).
+    */
     const existing = await this.getRun(projectId, id);
     if (!existing) return null;
     const now = new Date().toISOString();
+    const nextStatus = patch.status ?? existing.status;
+    const exitCode = patch.exitCode !== undefined ? patch.exitCode : (existing.exitCode ?? null);
+    const nextError =
+      patch.errorMessage !== undefined ? patch.errorMessage : (existing.errorMessage ?? null);
+    const startedAt = patch.startedAt !== undefined ? patch.startedAt : (existing.startedAt ?? null);
+    const finishedAt =
+      patch.finishedAt !== undefined ? patch.finishedAt : (existing.finishedAt ?? null);
+    const durationMs =
+      patch.durationMs !== undefined ? patch.durationMs : (existing.durationMs ?? null);
+    const stdout = patch.stdout !== undefined ? patch.stdout : existing.stdout;
+    const stderr = patch.stderr !== undefined ? patch.stderr : existing.stderr;
     this.db
       .prepare(
         `UPDATE quality_test_runs SET
-          status = ?,
+          status = CASE
+            WHEN status IN ('cancelled', 'passed', 'failed', 'timed_out', 'error') THEN status
+            ELSE ?
+          END,
           exit_code = ?,
-          error_message = ?,
-          started_at = ?,
-          finished_at = ?,
-          duration_ms = ?,
+          error_message = CASE WHEN status = 'cancelled' THEN error_message ELSE ? END,
+          started_at = COALESCE(started_at, ?),
+          finished_at = COALESCE(?, finished_at),
+          duration_ms = COALESCE(?, duration_ms),
           stdout = ?,
           stderr = ?,
           updated_at = ?
         WHERE id = ? AND project_id = ?`,
       )
       .run(
-        patch.status ?? existing.status,
-        patch.exitCode !== undefined ? patch.exitCode : (existing.exitCode ?? null),
-        patch.errorMessage !== undefined ? patch.errorMessage : (existing.errorMessage ?? null),
-        patch.startedAt !== undefined ? patch.startedAt : (existing.startedAt ?? null),
-        patch.finishedAt !== undefined ? patch.finishedAt : (existing.finishedAt ?? null),
-        patch.durationMs !== undefined ? patch.durationMs : (existing.durationMs ?? null),
-        patch.stdout !== undefined ? patch.stdout : existing.stdout,
-        patch.stderr !== undefined ? patch.stderr : existing.stderr,
+        nextStatus,
+        exitCode,
+        nextError,
+        startedAt,
+        finishedAt,
+        durationMs,
+        stdout,
+        stderr,
         now,
         id,
         projectId,
@@ -200,15 +219,6 @@ export class QualityStore implements QualityStoreApi {
   }
 
   async finalizeRun(projectId: string, id: string, patch: QualityRunPatch): Promise<TestRun | null> {
-    const existing = await this.getRun(projectId, id);
-    if (!existing) return null;
-    if (existing.status === "cancelled") {
-      return this.updateRun(projectId, id, {
-        ...patch,
-        status: "cancelled",
-        errorMessage: existing.errorMessage ?? "Cancelled by operator",
-      });
-    }
     return this.updateRun(projectId, id, patch);
   }
 

@@ -263,41 +263,15 @@ export class AsyncQualityStore implements QualityStoreApi {
   }
 
   async updateRun(projectId: string, id: string, patch: QualityRunPatch): Promise<TestRun | null> {
+    /*
+    FNXC:Quality 2026-07-16-10:55:
+    Terminal statuses (especially cancelled) must not be overwritten by a stale
+    read-modify-write. SQL CASE keeps cancelled/passed/failed/etc. sticky so a
+    concurrent cancel cannot be clobbered by mark-running or other patches.
+    */
     const existing = await this.getRun(projectId, id);
     if (!existing) return null;
     const pid = this.projectId;
-    const now = new Date().toISOString();
-    const status = patch.status ?? existing.status;
-    const exitCode = patch.exitCode !== undefined ? patch.exitCode : (existing.exitCode ?? null);
-    const errorMessage =
-      patch.errorMessage !== undefined ? patch.errorMessage : (existing.errorMessage ?? null);
-    const startedAt = patch.startedAt !== undefined ? patch.startedAt : (existing.startedAt ?? null);
-    const finishedAt =
-      patch.finishedAt !== undefined ? patch.finishedAt : (existing.finishedAt ?? null);
-    const durationMs =
-      patch.durationMs !== undefined ? patch.durationMs : (existing.durationMs ?? null);
-    const stdout = patch.stdout !== undefined ? patch.stdout : existing.stdout;
-    const stderr = patch.stderr !== undefined ? patch.stderr : existing.stderr;
-    await this.layer.db.execute(sql`
-      UPDATE project.quality_test_runs SET
-        status = ${status},
-        exit_code = ${exitCode},
-        error_message = ${errorMessage},
-        started_at = ${startedAt},
-        finished_at = ${finishedAt},
-        duration_ms = ${durationMs},
-        stdout = ${stdout},
-        stderr = ${stderr},
-        updated_at = ${now}
-      WHERE project_id = ${pid} AND id = ${id}
-    `);
-    return this.getRun(pid, id);
-  }
-
-  async finalizeRun(projectId: string, id: string, patch: QualityRunPatch): Promise<TestRun | null> {
-    const pid = this.assertProject(projectId);
-    const existing = await this.getRun(pid, id);
-    if (!existing) return null;
     const now = new Date().toISOString();
     const nextStatus = patch.status ?? existing.status;
     const exitCode = patch.exitCode !== undefined ? patch.exitCode : (existing.exitCode ?? null);
@@ -310,15 +284,17 @@ export class AsyncQualityStore implements QualityStoreApi {
       patch.durationMs !== undefined ? patch.durationMs : (existing.durationMs ?? null);
     const stdout = patch.stdout !== undefined ? patch.stdout : existing.stdout;
     const stderr = patch.stderr !== undefined ? patch.stderr : existing.stderr;
-    /*
-    Preserve cancelled: if the row is already cancelled, keep status + error_message.
-    Still attach logs/timing so operators can inspect output from a cancelled run.
-    */
     await this.layer.db.execute(sql`
       UPDATE project.quality_test_runs SET
-        status = CASE WHEN status = 'cancelled' THEN status ELSE ${nextStatus} END,
+        status = CASE
+          WHEN status IN ('cancelled', 'passed', 'failed', 'timed_out', 'error') THEN status
+          ELSE ${nextStatus}
+        END,
         exit_code = ${exitCode},
-        error_message = CASE WHEN status = 'cancelled' THEN error_message ELSE ${nextError} END,
+        error_message = CASE
+          WHEN status = 'cancelled' THEN error_message
+          ELSE ${nextError}
+        END,
         started_at = COALESCE(started_at, ${startedAt}),
         finished_at = COALESCE(${finishedAt}, finished_at),
         duration_ms = COALESCE(${durationMs}, duration_ms),
@@ -328,6 +304,11 @@ export class AsyncQualityStore implements QualityStoreApi {
       WHERE project_id = ${pid} AND id = ${id}
     `);
     return this.getRun(pid, id);
+  }
+
+  async finalizeRun(projectId: string, id: string, patch: QualityRunPatch): Promise<TestRun | null> {
+    // Same sticky-terminal semantics as updateRun (single conditional UPDATE).
+    return this.updateRun(projectId, id, patch);
   }
 
   async pruneRuns(projectId: string, retention: number): Promise<number> {

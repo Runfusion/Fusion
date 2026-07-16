@@ -301,12 +301,17 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
       createElement(
         "div",
         { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        /*
+        FNXC:Quality 2026-07-16-10:55:
+        Run controls stay enabled without a live worktree. The server creates a
+        temporary QA checkout for done/cleaned-up tasks (same as preview Start).
+        */
         createElement(
           "button",
           {
             type: "button",
             className: "btn btn-sm",
-            disabled: busy || !worktree,
+            disabled: busy,
             onClick: () => void startRun("file-scoped"),
           },
           "File-scoped",
@@ -316,7 +321,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
           {
             type: "button",
             className: "btn btn-sm",
-            disabled: busy || !worktree,
+            disabled: busy,
             onClick: () => void startRun("verify-fast"),
           },
           "verify:fast",
@@ -326,7 +331,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
           {
             type: "button",
             className: "btn btn-sm",
-            disabled: busy || !worktree,
+            disabled: busy,
             onClick: () => void startRun("test-gate"),
           },
           "test:gate",
@@ -336,7 +341,7 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
           {
             type: "button",
             className: "btn btn-sm",
-            disabled: busy || !worktree,
+            disabled: busy,
             onClick: () => void startRun("project-test"),
           },
           "Project test",
