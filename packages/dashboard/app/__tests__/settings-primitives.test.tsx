@@ -38,6 +38,98 @@ describe("SettingsFieldRow", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Required");
   });
 
+  /*
+  FNXC:SettingsHelp 2026-07-15-21:10:
+  Help is deferred behind a "?" beside the label, so these pin the parts that are easy to break silently:
+   - the trigger exists and toggles (click is the ONLY interaction a touch device has — a hover-only tip is invisible on mobile, and this suite runs in jsdom where hover cannot be simulated anyway);
+   - the copy stays in the DOM and reachable via `aria-describedby` while closed, because deferring it visually must not remove it from assistive tech, in-page find, or the settings search index;
+   - the error band is NOT deferred.
+  */
+  it("puts help behind a trigger that toggles on click", () => {
+    render(
+      <SettingsFieldRow htmlFor="theme" label="Theme" help="Pick a theme">
+        <input aria-label="control" />
+      </SettingsFieldRow>,
+    );
+    const trigger = screen.getByRole("button", { name: "Show help" });
+    const tip = trigger.closest(".settings-help")!;
+
+    expect(tip).toHaveAttribute("data-open", "false");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(trigger);
+    expect(tip).toHaveAttribute("data-open", "true");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(trigger);
+    expect(tip).toHaveAttribute("data-open", "false");
+  });
+
+  it("keeps help copy in the accessibility tree while collapsed", () => {
+    render(
+      <SettingsFieldRow htmlFor="theme" label="Theme" help="Pick a theme">
+        <input aria-label="control" />
+      </SettingsFieldRow>,
+    );
+    const trigger = screen.getByRole("button", { name: "Show help" });
+    const describedBy = trigger.getAttribute("aria-describedby")!;
+    const bubble = document.getElementById(describedBy);
+
+    // Present and readable even though the row is collapsed — not display:none.
+    expect(bubble).not.toBeNull();
+    expect(bubble).toHaveTextContent("Pick a theme");
+    expect(screen.getByText("Pick a theme")).toBeInTheDocument();
+  });
+
+  it("closes an open tip on Escape", () => {
+    render(
+      <SettingsFieldRow htmlFor="theme" label="Theme" help="Pick a theme">
+        <input aria-label="control" />
+      </SettingsFieldRow>,
+    );
+    const trigger = screen.getByRole("button", { name: "Show help" });
+    fireEvent.click(trigger);
+    expect(trigger.closest(".settings-help")).toHaveAttribute("data-open", "true");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(trigger.closest(".settings-help")).toHaveAttribute("data-open", "false");
+  });
+
+  it("closes an open tip when pointing elsewhere, so a tap on mobile cannot strand it", () => {
+    render(
+      <SettingsFieldRow htmlFor="theme" label="Theme" help="Pick a theme">
+        <input aria-label="control" />
+      </SettingsFieldRow>,
+    );
+    const trigger = screen.getByRole("button", { name: "Show help" });
+    fireEvent.click(trigger);
+    expect(trigger.closest(".settings-help")).toHaveAttribute("data-open", "true");
+
+    fireEvent.pointerDown(document.body);
+    expect(trigger.closest(".settings-help")).toHaveAttribute("data-open", "false");
+  });
+
+  it("renders no help trigger when a row has no help", () => {
+    render(
+      <SettingsFieldRow htmlFor="theme" label="Theme">
+        <input aria-label="control" />
+      </SettingsFieldRow>,
+    );
+    expect(screen.queryByRole("button", { name: "Show help" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the error band inline rather than behind the help trigger", () => {
+    render(
+      <SettingsFieldRow htmlFor="theme" label="Theme" help="Pick a theme" error="Required">
+        <input aria-label="control" />
+      </SettingsFieldRow>,
+    );
+    // A validation message the operator must go looking for is one they will not see.
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Required");
+    expect(alert.closest(".settings-help")).toBeNull();
+  });
+
   it("renders a scope badge when scope is set", () => {
     render(
       <SettingsFieldRow label="Theme" scope="global">

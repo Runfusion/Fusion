@@ -2,8 +2,12 @@
  * SettingsFieldRow — the base layout primitive every typed settings row composes
  * (U8 / KTD-10). It owns nothing about the control itself: callers pass the
  * control as `children` and this row handles the surrounding chrome — label,
- * scope badge (global/project), help text, error band, and an optional
- * "reset to default" clear affordance.
+ * scope badge (global/project), a help affordance (SettingsHelpTip), an error
+ * band, and an optional "reset to default" clear affordance.
+ *
+ * The error band stays inline and is never deferred behind the help tip: a
+ * validation message the operator has to go looking for is a message they will
+ * not see.
  *
  * Strings are pre-translated by callers (the descriptor carries label/help), so
  * this primitive hardcodes no user-facing copy. The only intrinsic string is the
@@ -14,6 +18,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { RotateCcw } from "lucide-react";
 import { useIsSettingHighlighted } from "./SettingsSearchHighlightContext";
+import { SettingsHelpTip } from "./SettingsHelpTip";
 import "./SettingsFieldRow.css";
 
 /** Which authority level a setting is being edited at. `undefined` renders no
@@ -87,6 +92,12 @@ export function SettingsFieldRow({
     </div>
   );
 
+  /*
+  FNXC:SettingsHelp 2026-07-15-21:10:
+  Help lives behind a "?" beside the label rather than as a paragraph under the control. Rendering every description inline turned dense sections into walls of prose and is what pushed Merge to invent its own "More details" disclosure; one affordance on the shared row replaces that per-section improvisation.
+  The tip sits AFTER the scope badge so the label line reads "Name [scope] ?" — name first, then its qualifiers.
+  The copy itself is not hidden: SettingsHelpTip keeps it in the DOM and in the accessibility tree, so search still matches on help text and assistive tech still reaches it.
+  */
   const labelAndScope = (
     <>
       <label className="settings-field-row-label" htmlFor={htmlFor}>
@@ -100,6 +111,7 @@ export function SettingsFieldRow({
           {scope}
         </span>
       )}
+      {help && <SettingsHelpTip settingKey={htmlFor}>{help}</SettingsHelpTip>}
     </>
   );
 
@@ -117,7 +129,6 @@ export function SettingsFieldRow({
         {labelAndScope}
       </div>
       {!inlineControl && control}
-      {help && <p className="settings-field-row-help">{help}</p>}
       {error && (
         <p className="settings-field-row-error" role="alert">
           {error}

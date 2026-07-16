@@ -1013,12 +1013,33 @@ Declarations mirror `.settings-field-row-label` — one contract, expressed at w
 /*
 FNXC:SettingsStyling 2026-07-15-20:30:
 Bespoke help text (`<small>` inside a form-group) matches `.settings-field-row-help`: same rung, same colour, same measure. Without this a bespoke row's help sat at 12px/1.4 beside a migrated row's at 12.8px/1.5 — close enough to look like a rendering glitch rather than a choice.
+Still applies to the copy that legitimately stays inline: validation messages (`.field-error`) and the explanatory blurbs that describe a whole block rather than one control.
 */
 .settings-content .form-group small,
 .settings-content .form-group .form-text {
   font-size: var(--font-size-xs);
   line-height: 1.5;
   color: var(--text-muted);
+}
+
+/*
+FNXC:SettingsHelp 2026-07-15-21:40:
+The label line for a row that is NOT on the shared primitive, so its help can hang off a "?" exactly like a migrated row's.
+A bespoke row is `<label>` + control + `<small>`; the tip has to sit beside the label, and it cannot go INSIDE the `<label>` — a nested button would both swallow the label's click-to-focus and put an interactive element inside a label, which is invalid. This wrapper puts them on one line as siblings instead.
+Mirrors `.settings-field-row-head` (same gap, same wrap) so the two idioms produce an identical label line.
+*/
+.settings-field-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+/* The label inside the wrapper must not also claim the row's full width, or the tip wraps to its own line. */
+.settings-content .form-group .settings-field-label-row label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 0;
 }
 
 .settings-content .checkbox-label {
