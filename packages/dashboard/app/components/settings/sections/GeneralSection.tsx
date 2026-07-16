@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type WorkflowDefinition } from "@fusion/core";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -19,7 +19,6 @@ import type { ToastType } from "../../../hooks/useToast";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
 export interface GeneralSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     projectId?: string;
     addToast: (message: string, type?: ToastType) => void;
     prefixError: string | null;
@@ -35,7 +34,7 @@ Plain settings rows render through the shared primitives instead of hand-rolled 
 Every key here is project-scoped (DEFAULT_PROJECT_SETTINGS), which the per-row badge states: the nav already labels the section "Project General", but the badge is what distinguishes these from the global-tier settings an operator sees one section away.
 Rows that stay bespoke are the ones a single-string descriptor cannot carry without rewording the copy — help built from `t()` fragments interleaved with `<code>` (ephemeral agents, completion documentation) — plus the custom widgets and editors: the workflow pickers, the built-in workflow enablement list, the tracking-repo selects, the GitLab disclosure, and the Clear-local-data button.
 */
-export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast, prefixError, setPrefixError, projectTrackingRepoOptions, projectTrackingRepoLoading, projectTrackingRepoError, onQuickChatButtonModeChange, }: GeneralSectionProps) {
+export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, projectTrackingRepoOptions, projectTrackingRepoLoading, projectTrackingRepoError, onQuickChatButtonModeChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
     useEffect(() => {
@@ -128,7 +127,6 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         window.location.reload();
     };
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.general.general", "General")}</h4>
       {/*
         FNXC:SettingsGeneral 2026-07-15-17:35:

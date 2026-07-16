@@ -68,4 +68,28 @@ export const notificationsSearchEntries: SettingsSearchEntry[] = [
     */
     keywords: ["slack", "discord", "payload", "webhook"],
   },
+  {
+    sectionId: "notifications",
+    key: "ntfyBaseUrl",
+    labelKey: "settings.notifications.customNtfyServerURLOptional",
+    labelFallback: "Custom ntfy server URL (optional)",
+    helpKey: "settings.notifications.leaveBlankToKeepTheDefaultServerHttps",
+    helpFallback:
+      " Leave blank to keep the default server: https://ntfy.sh. Custom servers must use http:// or https://. No default — unset. ",
+    keywords: ["self-hosted", "custom server"],
+  },
+  {
+    sectionId: "notifications",
+    key: "ntfyAccessToken",
+    labelKey: "settings.notifications.accessTokenOptional",
+    labelFallback: "Access token (optional)",
+    helpKey: "settings.notifications.leaveBlankToPublishWithoutAuthenticationWhenSet",
+    helpFallback:
+      " Leave blank to publish without authentication. When set, Fusion sends an Authorization Bearer header with ntfy requests. No default — unset. ",
+    /*
+    FNXC:SettingsSearch 2026-07-15-18:52:
+    Only the label and help are indexed — never the stored value. The index is a module-scope constant of static copy, so a secret cannot reach it.
+    */
+    keywords: ["auth", "bearer", "credential", "secret"],
+  },
 ];

@@ -193,6 +193,57 @@ describe("SettingsTextRow", () => {
     expect(typeof onChange.mock.calls[0][0]).toBe("string");
   });
 
+  /*
+  FNXC:SettingsSecurity 2026-07-15-18:52:
+  Masking is asserted, not assumed. This primitive hardcoded `type="text"`, which is why every token row (ntfy access token, GitHub/GitLab tokens, Cloudflare tunnel token) had to stay hand-rolled to avoid rendering a stored secret in plain text.
+  A regression here would not throw and would not look broken in review — the field simply renders the token — so it is pinned by a test rather than left to a reviewer noticing a missing prop.
+  */
+  it("defaults to a text input", () => {
+    render(<SettingsTextRow descriptor={descriptor} value="Ada" onChange={() => {}} />);
+    expect(screen.getByRole("textbox")).toHaveAttribute("type", "text");
+  });
+
+  it("masks a password row and suppresses autofill by default", () => {
+    render(
+      <SettingsTextRow
+        descriptor={{ key: "apiToken", label: "API token", type: "password" }}
+        value="tk_secret"
+        onChange={() => {}}
+      />,
+    );
+    // A password input is deliberately not exposed with the textbox role.
+    const input = document.querySelector("#apiToken") as HTMLInputElement;
+    expect(input).toHaveAttribute("type", "password");
+    expect(input).toHaveValue("tk_secret");
+    // Without this a browser offers to save the operator's API token.
+    expect(input).toHaveAttribute("autocomplete", "off");
+  });
+
+  it("lets a descriptor override autocomplete on a password row", () => {
+    render(
+      <SettingsTextRow
+        descriptor={{ key: "apiToken", label: "API token", type: "password", autoComplete: "new-password" }}
+        value=""
+        onChange={() => {}}
+      />,
+    );
+    expect(document.querySelector("#apiToken")).toHaveAttribute("autocomplete", "new-password");
+  });
+
+  it("renders a url row without forcing autocomplete off", () => {
+    render(
+      <SettingsTextRow
+        descriptor={{ key: "baseUrl", label: "Base URL", type: "url" }}
+        value="https://ntfy.sh"
+        onChange={() => {}}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveAttribute("type", "url");
+    // autocomplete suppression is a secret-bearing concern, not a URL one.
+    expect(input).not.toHaveAttribute("autocomplete");
+  });
+
   it("emits null when cleared", () => {
     const onChange = vi.fn();
     render(<SettingsTextRow descriptor={descriptor} value="Ada" onChange={onChange} clearable />);

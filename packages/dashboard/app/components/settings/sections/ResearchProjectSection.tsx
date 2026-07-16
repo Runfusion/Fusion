@@ -1,9 +1,7 @@
-import type { ReactNode } from "react";
 import type { SectionBaseProps } from "./context";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { useTranslation } from "react-i18next";
 export interface ResearchProjectSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     researchLimitError: string | null;
 }
 /*
@@ -19,12 +17,11 @@ The descriptor key is the dotted path `researchSettings.enabled`, not the bare `
 FNXC:SettingsStyling 2026-07-15-17:35:
 Two groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the Enabled Sources grid pairs an always-on locked Web Search row with a checkbox grid carrying inline per-source default hints, and the limits grid lays four numeric fields plus a shared validation error out side by side (`settings-research-limit-field`).
 */
-export function ResearchProjectSection({ scopeBanner, form, setForm, researchLimitError }: ResearchProjectSectionProps) {
+export function ResearchProjectSection({ form, setForm, researchLimitError }: ResearchProjectSectionProps) {
     const { t } = useTranslation("app");
     const limits = form.researchSettings?.limits;
     const sources = form.researchSettings?.enabledSources;
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.researchProject.projectResearchSettings", "Project Research Settings")}</h4>
       <SettingsToggleRow
         descriptor={{

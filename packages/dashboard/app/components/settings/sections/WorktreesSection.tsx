@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { GitRemoteDetailed } from "../../../api";
 import type { useWorktrunkInstallStatus } from "../../../hooks/useWorktrunkInstallStatus";
@@ -8,7 +7,6 @@ import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import type { SectionBaseProps, SettingsFormState } from "./context";
 export interface WorktreesSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     gitRemotes: GitRemoteDetailed[];
     worktrunkInstall: ReturnType<typeof useWorktrunkInstallStatus>;
     worktrunkInstallVerified: boolean;
@@ -33,11 +31,10 @@ Four groups deliberately keep their bespoke markup because they are not plain la
 - `executorAllowSiblingBranchRename` and `worktreeRebaseRemote` compose their help from several `t()` fragments interleaved with `<code>` elements; a descriptor `help` is a single string, and flattening that copy would reword operator-facing text.
 - The whole worktrunk block edits one nested `worktrunk` object (not a top-level settings key), carries `<code>`-bearing help, cross-field disabled logic, and an install affordance.
 */
-export function WorktreesSection({ scopeBanner, form, setForm, gitRemotes, worktrunkInstall, worktrunkInstallVerified, onOpenWorktreesDirPicker, onWorktreeCopyFileChange, onRemoveWorktreeCopyFile, onAddWorktreeCopyFile, onOpenWorktreeCopyFilePicker, onOpenApprovals, }: WorktreesSectionProps) {
+export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, worktrunkInstallVerified, onOpenWorktreesDirPicker, onWorktreeCopyFileChange, onRemoveWorktreeCopyFile, onAddWorktreeCopyFile, onOpenWorktreeCopyFilePicker, onOpenApprovals, }: WorktreesSectionProps) {
     const { t } = useTranslation("app");
     const worktreeCopyFileRows = (form.worktreeCopyFiles?.length ?? 0) > 0 ? form.worktreeCopyFiles ?? [] : [""];
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.worktrees.worktrees", "Worktrees")}</h4>
       {/* FNXC:Worktrees 2026-07-15-17:35: An emptied Max Worktrees stores `undefined`, not 0 or "", so the key is absent from the settings blob and the scheduler falls back to the schema default of 4 rather than capping concurrency at nothing. */}
       <SettingsNumberRow

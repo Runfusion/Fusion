@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ModelPreset, Settings } from "@fusion/core";
@@ -131,14 +130,13 @@ export class WorkflowLaneFlushRejection extends Error {
     }
 }
 export interface ProjectModelsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     models: ProjectModelsSectionModelProps;
     projectId?: string;
     addToast: (message: string, type?: ToastType) => void;
     onOpenWorkflowSettings?: () => void;
     registerWorkflowLaneSaver?: (saver: SectionSaveHandler | null) => void;
 }
-export function ProjectModelsSection({ scopeBanner, form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
+export function ProjectModelsSection({ form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
     const { t } = useTranslation("app");
     const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
     const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
@@ -399,7 +397,6 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         setForm((f) => ({ ...f, chatNewSessionMode: undefined, chatDefaultKind: undefined, chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState));
     };
     return (<>
-      {scopeBanner}
 
       {/* --- Token Cap --- */}
       <h4 className="settings-section-heading">{t("settings.projectModels.tokenCap", "Token Cap")}</h4>

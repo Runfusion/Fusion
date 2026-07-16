@@ -774,7 +774,7 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       expect(screen.queryByText(/^Version\s+/)).not.toBeInTheDocument();
-      await settingsModalUser.click(screen.getByText("Scheduling & Capacity"));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
       expect(await screen.findByLabelText("Max Concurrent Tasks")).toBeInTheDocument();
       expect(addToast).not.toHaveBeenCalled();
     });

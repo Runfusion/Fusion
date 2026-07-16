@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { MemoryBackendCapabilities, MemoryBackendStatus, MemoryFileInfo, MemoryRetrievalTestResult, } from "../../../api";
@@ -49,10 +48,9 @@ export interface MemorySectionMemoryProps {
     onSaveMemory: () => void;
 }
 export interface MemorySectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     memory: MemorySectionMemoryProps;
 }
-export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySectionProps) {
+export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
     const { t } = useTranslation("app");
     const { memoryCapabilities: capabilities, memoryBackendStatus: backendStatus, memoryBackendLoading: backendLoading, memoryBackendError: backendError, memoryFiles, selectedMemoryPath, setSelectedMemoryPath, memoryContent, setMemoryContent, memoryLoading, memoryDirty, setMemoryDirty, memoryTestQuery, setMemoryTestQuery, memoryTestLoading, memoryTestResult, qmdInstallLoading, dreamRunning, memoryCompactLoading, onInstallQmd, onTestMemoryRetrieval, onDreamNow, onCompactMemory, onSaveMemory, } = memory;
     // Determine if editing is allowed
@@ -67,7 +65,6 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
         dreams: "Dreams",
     };
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.memory.memory", "Memory")}</h4>
       <div className="form-group">
         <small className="settings-muted">{t("settings.memory.memoryLivesIn", " Memory lives in ")}<code>.fusion/memory/</code>{t("settings.memory.agentsSearchWithQmdFirstFallBackTo", ". Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed. ")}</small>

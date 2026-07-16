@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { BackupListResponse } from "../../../api";
 import { SettingsToggleRow } from "../SettingsToggleRow";
@@ -8,7 +7,6 @@ import { SettingsTextRow } from "../SettingsTextRow";
 import type { SectionBaseProps } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 export interface BackupsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     backupInfo: BackupListResponse | null;
     backupLoading: boolean;
     onBackupNow: () => void;
@@ -18,10 +16,9 @@ FNXC:SettingsBackups 2026-07-15-17:35:
 Every schedule/retention/directory row is gated on its own `*Enabled` toggle: the cron, retention count, and target directory only describe an automatic backup that is actually scheduled, so they are disabled rather than hidden — an operator turning backups on needs to see the values that will take effect.
 Per-row validation (cron shape, 1-100 retention range, `..` traversal) rides the primitive's `error` band instead of a trailing `field-error` small, so an invalid value reports against the control that owns it.
 */
-export function BackupsSection({ scopeBanner, form, setForm, backupInfo, backupLoading, onBackupNow }: BackupsSectionProps) {
+export function BackupsSection({ form, setForm, backupInfo, backupLoading, onBackupNow }: BackupsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.backups.databaseBackups", "Database Backups")}</h4>
       <SettingsToggleRow
         descriptor={{

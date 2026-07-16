@@ -141,12 +141,12 @@ afterEach(() => {
 
 describe("MCP Settings UI", () => {
   it("renders global and project MCP section affordances without a new lazy view", async () => {
-    render(<GlobalMcpSection scopeBanner={<div>Global scope</div>} form={{} as Settings} setForm={vi.fn()} addToast={vi.fn()} />);
+    render(<GlobalMcpSection form={{} as Settings} setForm={vi.fn()} addToast={vi.fn()} />);
     expect(await screen.findByTestId("mcp-servers-card-global")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Add server/i })).toBeInTheDocument();
     cleanup();
 
-    render(<ProjectMcpSection scopeBanner={<div>Project scope</div>} form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
+    render(<ProjectMcpSection form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
     expect(await screen.findByTestId("mcp-servers-card-project")).toBeInTheDocument();
     expect(screen.getByText("No MCP servers configured.")).toBeInTheDocument();
   });
@@ -252,13 +252,13 @@ describe("MCP Settings UI", () => {
 
   it("renders discovered MCP regions in both global and project cards", async () => {
     mockFetch({}, { global: discoveredResponse("global"), project: discoveredResponse("project") });
-    render(<GlobalMcpSection scopeBanner={<div>Global scope</div>} form={{} as Settings} setForm={vi.fn()} addToast={vi.fn()} />);
+    render(<GlobalMcpSection form={{} as Settings} setForm={vi.fn()} addToast={vi.fn()} />);
     const globalDiscovery = await screen.findByTestId("mcp-discovery-global");
     expect(within(globalDiscovery).getByText("Discovered on this machine")).toBeInTheDocument();
     expect(within(globalDiscovery).getByText("global-plain")).toBeInTheDocument();
     cleanup();
 
-    render(<ProjectMcpSection scopeBanner={<div>Project scope</div>} form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
+    render(<ProjectMcpSection form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
     const projectDiscovery = await screen.findByTestId("mcp-discovery-project");
     expect(within(projectDiscovery).getByText("VS Code project")).toBeInTheDocument();
     expect(within(projectDiscovery).getByText("project source: skipped malformed config")).toBeInTheDocument();

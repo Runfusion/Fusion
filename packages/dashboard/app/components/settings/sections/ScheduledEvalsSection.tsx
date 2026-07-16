@@ -1,13 +1,10 @@
-import type { ReactNode } from "react";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
-export interface ScheduledEvalsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
-}
+export type ScheduledEvalsSectionProps = SectionBaseProps;
 /*
 FNXC:SettingsScope 2026-07-15-17:35:
 Eval scheduling is project-scoped (`evalSettings` in DEFAULT_PROJECT_SETTINGS): each project schedules its own runs against its own validator lane, so nothing here travels between projects.
@@ -18,12 +15,11 @@ Descriptor keys are dotted paths (`evalSettings.enabled`) because the six contro
 FNXC:ScheduledEvals 2026-07-15-17:35:
 Interval, follow-up policy, and retention are disabled while scheduling is off, but provider and model deliberately are not: they are inherited-lane overrides an operator can stage before ever enabling runs.
 */
-export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledEvalsSectionProps) {
+export function ScheduledEvalsSection({ form, setForm }: ScheduledEvalsSectionProps) {
     const { t } = useTranslation("app");
     const evalSettings = form.evalSettings ?? {};
     const isScheduledEvalEnabled = evalSettings.enabled ?? false;
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.scheduledEvals.scheduledEvals", "Scheduled Evals")}</h4>
       <SettingsToggleRow
         descriptor={{

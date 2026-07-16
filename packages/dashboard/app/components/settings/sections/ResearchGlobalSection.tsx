@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { Settings } from "@fusion/core";
 import type { AuthProvider } from "../../../api";
 import type { SectionId } from "../../SettingsModal";
@@ -7,7 +6,6 @@ import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { useTranslation } from "react-i18next";
 export interface ResearchGlobalSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     authProviders: AuthProvider[];
     onNavigateToSection: (section: SectionId) => void;
 }
@@ -21,7 +19,7 @@ Every migrated key here is global (`DEFAULT_GLOBAL_SETTINGS`): a search provider
 FNXC:SettingsStyling 2026-07-15-17:35:
 Four groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the built-in/external provider radio and its `<details>` disclosure, the limits grid (`settings-research-limit-field`), the Enabled Sources grid pairing an always-on locked Web Search row with per-source inline hints, and the two credential empty-state notes that carry navigation buttons.
 */
-export function ResearchGlobalSection({ scopeBanner, form, setForm, authProviders, onNavigateToSection, }: ResearchGlobalSectionProps) {
+export function ResearchGlobalSection({ form, setForm, authProviders, onNavigateToSection, }: ResearchGlobalSectionProps) {
     const { t } = useTranslation("app");
     const resolvedProvider = form.researchGlobalWebSearchProvider ??
         form.researchGlobalDefaults?.searchProvider ??
@@ -45,7 +43,6 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
         }));
     };
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.researchGlobal.researchDefaults", "Research Defaults")}</h4>
       <div className="form-group settings-research-provider-group">
         <label htmlFor="research-global-provider-builtin" className="checkbox-label">

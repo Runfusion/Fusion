@@ -571,30 +571,31 @@ describe("SettingsModal mobile adaptations", () => {
     expect(controls.length).toBeGreaterThan(0);
   });
 
-  it("shows scope indicators and updates scope banner across sections", async () => {
+  /*
+  FNXC:SettingsScope 2026-07-15-18:52:
+  Scope is communicated per ROW, not by a section banner. The banner claimed one scope for a whole section, which was frequently false — Appearance is a "global" nav entry whose task-presentation toggles are all project-scoped — so it is removed and each row states its own scope.
+  This test kept the surviving requirement (an operator can tell what a setting's scope is) and re-pointed it at the mechanism that now carries it: the nav scope icons plus the per-row badges. The old assertions on `.settings-scope-project` / `.settings-scope-global` banner elements went with the banner.
+  */
+  it("shows scope on nav items and per-row badges rather than a section banner", async () => {
     const user = userEvent.setup();
-    const { container, getByText, getAllByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    const { container, getByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    // Authentication is first with no scope banner by default - click the Project-scoped General section
     expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
-    await user.click(getByText("General · Project"));
-
-    // Verify project scope banner contains icon elements (SVG from Lucide, not emoji)
-    const projectBanner = container.querySelector(".settings-scope-project");
-    expect(projectBanner).toBeTruthy();
-    const projectBannerIcon = projectBanner!.querySelector(".settings-scope-icon svg");
-    expect(projectBannerIcon).toBeTruthy();
-    expect(getByText("These settings only affect this project.")).toBeTruthy();
 
     await user.click(getByText("Appearance"));
 
-    // Verify global scope banner contains icon elements (SVG from Lucide, not emoji)
-    const globalBanner = container.querySelector(".settings-scope-global");
-    expect(globalBanner).toBeTruthy();
-    const globalBannerIcon = globalBanner!.querySelector(".settings-scope-icon svg");
-    expect(globalBannerIcon).toBeTruthy();
-    expect(getByText("These settings are shared across all your Fusion projects.")).toBeTruthy();
+    // The banner is gone for good — it asserted a single scope for a section
+    // that genuinely mixes them.
+    expect(container.querySelector(".settings-scope-banner")).toBeNull();
+    expect(container.querySelector(".settings-scope-project")).toBeNull();
+    expect(container.querySelector(".settings-scope-global")).toBeNull();
+
+    // Appearance is exactly the mixed case: global theme controls above,
+    // project-scoped task-presentation toggles below, each badged for itself.
+    const badges = container.querySelectorAll('[data-testid="settings-field-row-scope"]');
+    expect(badges.length).toBeGreaterThan(0);
+    expect(Array.from(badges).map((b) => b.textContent)).toContain("project");
   });
 
   it("renders separate Anthropic Authentication controls on mobile", async () => {
@@ -675,8 +676,6 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-section-heading", "padding: var(--space-md) 0 var(--space-sm);");
     expectMobileRule(css, ".settings-section-heading", "margin: 0 0 var(--space-sm);");
     expectMobileRule(css, ".settings-scope-icon", "margin-right: 0;");
-    expectMobileRule(css, ".settings-scope-banner", "margin: 0 var(--space-sm) var(--space-xs);");
-    expectMobileRule(css, ".settings-scope-banner", "padding: var(--space-xs) var(--space-sm);");
     expectMobileRule(css, ".settings-empty-state", "padding: var(--space-sm);");
     expectMobileRule(css, ".settings-description", "padding: 0 var(--space-sm);");
     expectMobileRule(css, ".theme-selector", "padding: 0 var(--space-sm) var(--space-sm);");

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { THINKING_LEVELS } from "@fusion/core";
 import type { Settings, ThinkingLevel } from "@fusion/core";
@@ -18,7 +17,6 @@ function fromCommaSeparatedInput(value: string): string[] {
     return value.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
 }
 export interface GlobalModelsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     availableModels: ModelInfo[];
     modelsLoading: boolean;
     /** Global model lanes (i.e. MODEL_LANES without the `default` lane). */
@@ -33,13 +31,12 @@ export interface GlobalModelsSectionProps extends SectionBaseProps {
     addToast: (message: string, type?: ToastType) => void;
     projectId?: string;
 }
-export function GlobalModelsSection({ scopeBanner, form, setForm, availableModels, modelsLoading, globalModelLanes, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, addToast, projectId, }: GlobalModelsSectionProps) {
+export function GlobalModelsSection({ form, setForm, availableModels, modelsLoading, globalModelLanes, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, addToast, projectId, }: GlobalModelsSectionProps) {
     const { t } = useTranslation("app");
     const selectedValue = form.defaultProvider && form.defaultModelId
         ? `${form.defaultProvider}/${form.defaultModelId}`
         : "";
     return (<>
-      {scopeBanner}
 
       {/* --- Default Model --- */}
       <h4 className="settings-section-heading">{t("settings.globalModels.defaultModel", "Default Model")}</h4>

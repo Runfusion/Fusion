@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsToggleRow } from "../SettingsToggleRow";
@@ -8,12 +7,9 @@ import type { SettingsFormState, SetSettingsForm } from "./context";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const AUTO_ARCHIVE_DEFAULT_AFTER_DAYS = 2;
 export interface SchedulingSectionProps {
-    scopeBanner: ReactNode;
     form: SettingsFormState;
     setForm: SetSettingsForm;
-    globalMaxConcurrent: number | undefined;
     concurrencyLoading?: boolean;
-    onGlobalMaxConcurrentChange: (value: number | undefined) => void;
     onOverlapIgnorePathChange: (index: number, value: string) => void;
     onOpenOverlapPathPicker: (index: number) => void;
     onRemoveOverlapIgnorePath: (index: number) => void;
@@ -21,65 +17,21 @@ export interface SchedulingSectionProps {
     onOpenWorkflowSettings?: () => void;
 }
 /*
-FNXC:SettingsScopeGrouping 2026-06-25-10:42:
-Mobile settings must make clear which controls are global (all projects) vs project-scoped; group scheduling fields under labeled Global/This-project subheadings with a scope badge so operators don't mistake the global concurrency cap for a per-project setting.
-*/
-interface ScopeGroupHeaderProps {
-    title: string;
-    caption: string;
-    badgeLabel: string;
-    scope: "global" | "project";
-}
-function ScopeGroupHeader({ title, caption, badgeLabel, scope }: ScopeGroupHeaderProps) {
-    return (<div className="settings-scope-group">
-      <div className="settings-scope-group-header">
-        <h5 className="settings-section-heading">{title}</h5>
-        <span className={`settings-scope-badge settings-scope-badge--${scope}`}>{badgeLabel}</span>
-      </div>
-      <small className="settings-scope-caption">{caption}</small>
-    </div>);
-}
-/*
 FNXC:SettingsStyling 2026-07-15-17:35:
 The plain label+control+help rows here render through the shared settings primitives instead of hand-rolled `form-group` + `checkbox-label` + `form-text text-muted` markup, so their labels, help copy, and padding come from the one settings type scale. `.form-group` itself stays untouched and global — 35 non-settings files style forms with it, so settings migrate off it rather than restyle it underneath the rest of the dashboard.
 
-FNXC:SettingsScope 2026-07-15-17:35:
-Every migrated `form.*` key in this section is project-scoped (`DEFAULT_PROJECT_SETTINGS`): concurrency, timeouts, staleness, archiving, and overlap policy all describe one project's scheduling posture. The per-row badges restate what the ScopeGroupHeader above them says, because settings search can land an operator on a single control with no section chrome in view.
-`globalMaxConcurrent` is the one exception and deliberately carries NO badge — see the row.
+FNXC:SettingsScope 2026-07-15-18:52:
+This section is single-scope: every key here is project-scoped (`DEFAULT_PROJECT_SETTINGS`) — concurrency, timeouts, staleness, archiving, and overlap policy all describe one project's scheduling posture.
+The machine-wide cap (`globalMaxConcurrent`) moved to SchedulingGlobalSection, and the `ScopeGroupHeader` chrome that used to separate the two authority levels went with it. Mixing scopes in one section meant the answer to "does this affect my other projects?" depended on which subheading you had scrolled past, and a search result landing mid-section shows no subheading at all.
+Rows keep their per-row `scope` badge even though the section is now uniformly project-scoped: search can land an operator on a single control with no section chrome in view, so the badge is the only scope signal at that moment.
 
 FNXC:SettingsStyling 2026-07-15-17:35:
-Two groups deliberately keep their bespoke markup because they are not plain label+control+help rows:
-- The `overlapIgnorePaths` allowlist is a repeating row editor with per-row Browse/Remove buttons, and its help interleaves `t()` fragments with `<code>` elements.
-- `ScopeGroupHeader` is section chrome (heading + scope badge + caption), not a settings control.
+The `overlapIgnorePaths` allowlist deliberately keeps its bespoke markup: it is a repeating row editor with per-row Browse/Remove buttons, and its help interleaves `t()` fragments with `<code>` elements, which a single-string descriptor `help` cannot express.
 */
-export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurrent, concurrencyLoading = false, onGlobalMaxConcurrentChange, onOverlapIgnorePathChange, onOpenOverlapPathPicker, onRemoveOverlapIgnorePath, onAddOverlapIgnorePath, onOpenWorkflowSettings, }: SchedulingSectionProps) {
+export function SchedulingSection({ form, setForm, concurrencyLoading = false, onOverlapIgnorePathChange, onOpenOverlapPathPicker, onRemoveOverlapIgnorePath, onAddOverlapIgnorePath, onOpenWorkflowSettings, }: SchedulingSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.scheduling.scheduling", "Scheduling")}</h4>
-      {/*
-      FNXC:SettingsConcurrency 2026-06-22-20:18:
-      Concurrency inputs represent live project/global limits. Keep them disabled while their actual values are still loading so users cannot edit a blank fallback and accidentally overwrite the resolved limits.
-      */}
-      <ScopeGroupHeader scope="global" title={t("settings.scheduling.scopeGlobalTitle", "Global — applies to all projects")} caption={t("settings.scheduling.scopeGlobalCaption", "Shared by every project on this machine.")} badgeLabel={t("settings.scheduling.scopeBadgeGlobal", "Global")}/>
-      {/*
-      FNXC:SettingsScope 2026-07-15-17:35:
-      No scope badge on purpose. This row is the one place the schema and the UI genuinely disagree: `globalMaxConcurrent` lives in `DEFAULT_PROJECT_SETTINGS` (settings-schema.ts:359), but it is read and written through the dedicated global-concurrency endpoint (hence the prop rather than `form`) and is presented under the Global ScopeGroupHeader. Stamping "project" would contradict the header directly above it; stamping "global" would contradict the schema. The group header stays the single source of scope for this control.
-      */}
-      <SettingsNumberRow
-        descriptor={{
-          key: "globalMaxConcurrent",
-          label: t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent"),
-          help: t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects. Default: 4."),
-          min: 0,
-          max: 10000,
-          disabled: concurrencyLoading,
-        }}
-        value={globalMaxConcurrent ?? null}
-        onChange={(v) => onGlobalMaxConcurrentChange(v ?? undefined)}
-      />
-      <div className="settings-section-divider"/>
-      <ScopeGroupHeader scope="project" title={t("settings.scheduling.scopeProjectTitle", "This project")} caption={t("settings.scheduling.scopeProjectCaption", "Only affects the currently selected project.")} badgeLabel={t("settings.scheduling.scopeBadgeProject", "Project")}/>
       <SettingsNumberRow
         descriptor={{
           key: "maxConcurrent",
@@ -355,7 +307,12 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
         <div className="settings-overlap-ignore-list">
           {(form.overlapIgnorePaths && form.overlapIgnorePaths.length > 0 ? form.overlapIgnorePaths : [""]).map((path, index) => (<div key={`overlap-ignore-${index}`} className="settings-overlap-ignore-row">
               <div className="settings-overlap-ignore-path-controls">
-                <input type="text" value={path} placeholder={t("settings.scheduling.docs", "docs/")} onChange={(e) => onOverlapIgnorePathChange(index, e.target.value)}/>
+                {/*
+                FNXC:SettingsStyling 2026-07-15-18:52:
+                Carries `.input` even though this row stays bespoke. Without a class it was a bare input inside `.form-group`, which styles its children `8px 12px` at 14px — while every other settings control (`.input`, and the shared row primitives that now name it) renders `6px 10px` at 13px. It was the one visibly mismatched text field left in Settings.
+                The global `.form-group input` rule is deliberately not touched: 35 non-settings files depend on it. Naming the standard class on this input is the settings-local fix.
+                */}
+                <input className="input" type="text" value={path} placeholder={t("settings.scheduling.docs", "docs/")} onChange={(e) => onOverlapIgnorePathChange(index, e.target.value)}/>
                 <button type="button" className="btn btn-sm" onClick={() => onOpenOverlapPathPicker(index)} aria-label={`Browse path for ignored overlap entry ${index + 1}`}>{t("settings.scheduling.browse", " Browse ")}</button>
               </div>
               <button type="button" className="btn btn-sm" onClick={() => onRemoveOverlapIgnorePath(index)} disabled={(form.overlapIgnorePaths ?? []).length === 0 && index === 0}>{t("settings.scheduling.remove", " Remove ")}</button>

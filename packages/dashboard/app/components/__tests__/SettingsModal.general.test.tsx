@@ -647,27 +647,36 @@ describe("SettingsModal", () => {
   });
 
   describe("deferred settings fetches", () => {
-    it("does not fetch global concurrency until Scheduling is selected", async () => {
+    /*
+    FNXC:SettingsConcurrency 2026-07-15-18:52:
+    `/Scheduling/` now matches two nav buttons — the section split into a Global/Project pair — so the selector names the exact one. The deferral requirement is unchanged: the global-concurrency endpoint is not hit until a scheduling section is opened.
+    */
+    it("does not fetch global concurrency until a Scheduling section is selected", async () => {
       renderModal();
       await waitForSettingsModalReady();
 
       expect(mockFetchGlobalConcurrency).not.toHaveBeenCalled();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Scheduling/ }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
 
       await waitFor(() => {
         expect(mockFetchGlobalConcurrency).toHaveBeenCalledTimes(1);
       });
     });
 
+    /*
+    FNXC:SettingsConcurrency 2026-07-15-18:52:
+    The invariant is unchanged — a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback. Only its surface moved: the global cap now lives in its own section, so the assertion follows it across both halves of the pair rather than reading them all off one screen.
+    */
     it("disables concurrency inputs until their actual values load", async () => {
       mockFetchGlobalConcurrency.mockReturnValue(new Promise(() => {}));
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Scheduling/ }));
-
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
       expect(screen.getByLabelText("Global Max Concurrent")).toBeDisabled();
+
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
       expect(screen.getByLabelText("Max Concurrent Tasks")).toBeDisabled();
       expect(screen.getByLabelText("Max Triage Concurrent")).toBeDisabled();
     });

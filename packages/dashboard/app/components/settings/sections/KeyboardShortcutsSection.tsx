@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { SectionBaseProps } from "./context";
 import { ShortcutCaptureInput } from "./ShortcutCaptureInput";
@@ -12,9 +11,7 @@ import {
   type DashboardShortcutAction,
 } from "../../../utils/keyboardShortcuts";
 
-export interface KeyboardShortcutsSectionProps extends SectionBaseProps {
-  scopeBanner: ReactNode;
-}
+export type KeyboardShortcutsSectionProps = SectionBaseProps;
 
 /*
 FNXC:DashboardShortcuts 2026-07-04-00:00:
@@ -23,7 +20,7 @@ FN-7553 promotes keyboard shortcuts from two bare inputs buried in Global Genera
 FNXC:SettingsStyling 2026-07-15-17:35:
 This section stays off the shared settings row primitives, unlike its neighbors. It renders no plain setting: every row is a ShortcutCaptureInput bound to one action inside the single `dashboardKeyboardShortcuts` map, and its per-row `small` carries live capture validation (`normalizeKeyboardShortcut` errors) rather than static help copy. A descriptor row keys on a settings field name and there is no field per shortcut — so there is nothing here for a toggle/text/select row to own, and no `.search.ts` sibling. Shortcut discovery is served by the nav entry's `searchableText` in SettingsModal instead.
 */
-export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: KeyboardShortcutsSectionProps) {
+export function KeyboardShortcutsSection({ form, setForm }: KeyboardShortcutsSectionProps) {
   const { t } = useTranslation("app");
   const shortcutValues = resolveDashboardKeyboardShortcuts(form.dashboardKeyboardShortcuts);
   const shortcutValidationMessage = describeShortcutValidation(shortcutValues);
@@ -38,7 +35,6 @@ export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: Keyboar
 
   return (
     <>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.keyboardShortcuts.title", "Keyboard Shortcuts")}</h4>
       <p className="settings-description">{t("settings.keyboardShortcuts.hint", "Configure global dashboard shortcuts. Click Record and press a combination, or type one manually. Shortcuts are ignored while typing in inputs, editors, chat composers, and terminal fields. Leave blank to disable an action.")}</p>
       <div className="form-group settings-keyboard-shortcuts" data-testid="keyboard-shortcuts-settings">

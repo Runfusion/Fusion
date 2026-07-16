@@ -45,6 +45,7 @@ import { PromptsSection } from "./settings/sections/PromptsSection";
 import { GeneralSection } from "./settings/sections/GeneralSection";
 import { ProjectModelsSection, WorkflowLaneFlushRejection } from "./settings/sections/ProjectModelsSection";
 import { SchedulingSection } from "./settings/sections/SchedulingSection";
+import { SchedulingGlobalSection } from "./settings/sections/SchedulingGlobalSection";
 import { ScheduledEvalsSection } from "./settings/sections/ScheduledEvalsSection";
 import { NodeRoutingSection } from "./settings/sections/NodeRoutingSection";
 import { WorktreesSection } from "./settings/sections/WorktreesSection";
@@ -559,7 +560,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "research-project", label: "Research · Project", labelKey: "settings.nav.researchProject", scope: "project", searchableText: ["project research", "research runs", "citations", "search limits", "fetch synthesis"] },
 
   { id: "__automation_header", label: "Automation", labelKey: "settings.nav.automationHeader", scope: undefined, isGroupHeader: true },
-  { id: "scheduling", label: "Scheduling & Capacity", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
+  /*
+  FNXC:SettingsNavigation 2026-07-15-18:52:
+  Scheduling is split into a Global/Project pair rather than one section holding both authority levels behind in-section subheadings. The machine-wide concurrency cap and a project's scheduling posture are different questions, and a search result landing mid-section showed no subheading to disambiguate them.
+  */
+  { id: "scheduling-global", label: "Scheduling · Global", labelKey: "settings.nav.schedulingGlobal", scope: "global", searchableText: ["global max concurrent", "concurrency cap", "all projects", "machine wide", "parallel agents", "scheduler"] },
+  { id: "scheduling", label: "Scheduling · Project", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
   { id: "scheduled-evals", label: "Scheduled Evals", labelKey: "settings.nav.scheduledEvals", scope: "project", searchableText: ["scheduled evals", "evaluation schedule", "eval runs", "quality jobs"] },
 
   { id: "__integrations_header", label: "Integrations", labelKey: "settings.nav.integrationsHeader", scope: undefined, isGroupHeader: true },
@@ -1650,8 +1656,13 @@ export function SettingsModal({
     void refreshSettingsForm(true);
   }, [addToast, projectId]);
 
+  /*
+  FNXC:SettingsConcurrency 2026-07-15-18:52:
+  Fetches for EITHER scheduling section. `scheduling-global` renders the cap itself, and `scheduling` (project) gates its own concurrency inputs on this load — the FN-era invariant that a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback.
+  Gating on `"scheduling"` alone (the id before the Global/Project split) would leave the global cap's own section waiting on a fetch that never fires, disabling the only control it renders.
+  */
   useEffect(() => {
-    if (activeSection !== "scheduling" || hasFetchedGlobalConcurrencyRef.current) {
+    if ((activeSection !== "scheduling" && activeSection !== "scheduling-global") || hasFetchedGlobalConcurrencyRef.current) {
       return;
     }
 
@@ -3569,40 +3580,13 @@ export function SettingsModal({
     }
   }, [addToast, projectId]);
 
-  /** Render a scope indicator banner for the current section with theme-aware Lucide icons */
-  const renderScopeBanner = () => {
-    if (activeSectionScope === "global") {
-      return (
-        <div className="settings-scope-banner settings-scope-global">
-          <span className="settings-scope-icon"><Globe size={14} /></span>
-          <span>{t("settings.scope.globalBanner", "These settings are shared across all your Fusion projects.")}</span>
-        </div>
-      );
-    }
-    if (activeSectionScope === "project") {
-      return (
-        <div className="settings-scope-banner settings-scope-project">
-          <span className="settings-scope-icon"><Folder size={14} /></span>
-          <span>{t("settings.scope.projectBanner", "These settings only affect this project.")}</span>
-        </div>
-      );
-    }
-    return null;
-  };
-
   const renderSectionFields = () => {
     switch (activeSection) {
       case "cli-agents":
-        return (
-          <>
-            {renderScopeBanner()}
-            <CliAgentsSettingsSection projectId={projectId} addToast={addToast} />
-          </>
-        );
+        return <CliAgentsSettingsSection projectId={projectId} addToast={addToast} />;
       case "general":
         return (
           <GeneralSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             projectId={projectId}
@@ -3618,7 +3602,6 @@ export function SettingsModal({
       case "global-general":
         return (
           <GlobalGeneralSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             globalSettings={globalGitlabSettings}
@@ -3638,7 +3621,6 @@ export function SettingsModal({
       case "keyboard-shortcuts":
         return (
           <KeyboardShortcutsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3646,7 +3628,6 @@ export function SettingsModal({
       case "global-models":
         return (
           <GlobalModelsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             availableModels={availableModels}
@@ -3665,11 +3646,10 @@ export function SettingsModal({
         );
 
       case "secrets":
-        return <SecretsSection scopeBanner={renderScopeBanner()} addToast={addToast} />;
+        return <SecretsSection addToast={addToast} />;
       case "global-mcp":
         return (
           <GlobalMcpSection
-            scopeBanner={renderScopeBanner()}
             form={mcpFormForScope("global")}
             setForm={setMcpFormForScope("global")}
             projectId={projectId}
@@ -3679,7 +3659,6 @@ export function SettingsModal({
       case "mcp":
         return (
           <ProjectMcpSection
-            scopeBanner={renderScopeBanner()}
             form={mcpFormForScope("project")}
             setForm={setMcpFormForScope("project")}
             globalSettings={scopedSettings?.global ?? null}
@@ -3691,7 +3670,6 @@ export function SettingsModal({
       case "project-models":
         return (
           <ProjectModelsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             projectId={projectId}
@@ -3725,7 +3703,6 @@ export function SettingsModal({
       case "appearance":
         return (
           <AppearanceSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             themeMode={themeMode}
@@ -3741,18 +3718,23 @@ export function SettingsModal({
             setSessionBannersHidden={setSessionBannersHidden}
           />
         );
-      case "scheduling":
+      case "scheduling-global":
         return (
-          <SchedulingSection
-            scopeBanner={renderScopeBanner()}
-            form={form}
-            setForm={setForm}
+          <SchedulingGlobalSection
             globalMaxConcurrent={globalMaxConcurrent}
-            concurrencyLoading={activeSection === "scheduling" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
+            concurrencyLoading={activeSection === "scheduling-global" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
             onGlobalMaxConcurrentChange={(value) => {
               globalConcurrencyDirtyRef.current = true;
               setGlobalMaxConcurrent(value);
             }}
+          />
+        );
+      case "scheduling":
+        return (
+          <SchedulingSection
+            form={form}
+            setForm={setForm}
+            concurrencyLoading={activeSection === "scheduling" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
             onOverlapIgnorePathChange={handleOverlapIgnorePathChange}
             onOpenOverlapPathPicker={openOverlapPathPicker}
             onRemoveOverlapIgnorePath={handleRemoveOverlapIgnorePath}
@@ -3763,7 +3745,6 @@ export function SettingsModal({
       case "scheduled-evals":
         return (
           <ScheduledEvalsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3771,7 +3752,6 @@ export function SettingsModal({
       case "node-routing":
         return (
           <NodeRoutingSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             nodes={nodes}
@@ -3780,7 +3760,6 @@ export function SettingsModal({
       case "worktrees":
         return (
           <WorktreesSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             gitRemotes={gitRemotes}
@@ -3797,7 +3776,6 @@ export function SettingsModal({
       case "commands":
         return (
           <CommandsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3805,7 +3783,6 @@ export function SettingsModal({
       case "merge":
         return (
           <MergeSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             integrationBranchOptions={integrationBranchOptions}
@@ -3819,7 +3796,6 @@ export function SettingsModal({
       case "agent-permissions":
         return (
           <AgentPermissionsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3827,7 +3803,6 @@ export function SettingsModal({
       case "memory":
         return (
           <MemorySection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             memory={{
@@ -3861,7 +3836,6 @@ export function SettingsModal({
       case "research-global":
         return (
           <ResearchGlobalSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             authProviders={authProviders}
@@ -3871,7 +3845,6 @@ export function SettingsModal({
       case "research-project":
         return (
           <ResearchProjectSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             researchLimitError={researchLimitError}
@@ -3880,7 +3853,6 @@ export function SettingsModal({
       case "experimental":
         return (
           <ExperimentalSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             knownFeatures={KNOWN_EXPERIMENTAL_FEATURES}
@@ -3893,7 +3865,6 @@ export function SettingsModal({
       case "backups":
         return (
           <BackupsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             backupInfo={backupInfo}
@@ -3904,7 +3875,6 @@ export function SettingsModal({
       case "notifications":
         return (
           <NotificationsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             testNotificationLoading={testNotificationLoading}
@@ -3915,7 +3885,6 @@ export function SettingsModal({
       case "node-sync":
         return (
           <NodeSyncSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3923,7 +3892,6 @@ export function SettingsModal({
       case "remote":
         return (
           <RemoteSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             remote={{
@@ -3953,7 +3921,6 @@ export function SettingsModal({
       case "prompts":
         return (
           <PromptsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             onOpenWorkflowSettings={onOpenWorkflowSettings}
@@ -3962,7 +3929,6 @@ export function SettingsModal({
       case "plugins":
         return (
           <PluginsSection
-            scopeBanner={renderScopeBanner()}
             projectId={projectId}
             addToast={addToast}
             activePluginsSubsection={activePluginsSubsection}

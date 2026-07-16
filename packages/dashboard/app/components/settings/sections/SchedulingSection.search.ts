@@ -10,15 +10,6 @@ import type { SettingsSearchEntry } from "../search/types";
 export const schedulingSearchEntries: SettingsSearchEntry[] = [
   {
     sectionId: "scheduling",
-    key: "globalMaxConcurrent",
-    labelKey: "settings.scheduling.globalMaxConcurrent",
-    labelFallback: "Global Max Concurrent",
-    helpKey: "settings.scheduling.maximumConcurrentAgentsAcrossAllProjects",
-    helpFallback: "Maximum concurrent agents across all projects. Default: 4.",
-    keywords: ["parallelism", "capacity", "machine wide", "cap"],
-  },
-  {
-    sectionId: "scheduling",
     key: "maxConcurrent",
     labelKey: "settings.scheduling.maxConcurrentTasks",
     labelFallback: "Max Concurrent Tasks",

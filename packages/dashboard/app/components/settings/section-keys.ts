@@ -181,6 +181,12 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
  * is disabled for these with a documented reason (surfaced in the dialog).
  */
 export const EXCLUDED_RESET_SECTIONS: Record<string, string> = {
+  /*
+  FNXC:SettingsReset 2026-07-15-18:52:
+  scheduling-global owns exactly one control (`globalMaxConcurrent`), and it is not a settings-blob key: it is read and written through the dedicated global-concurrency endpoint, so per-menu reset has nothing here to reset.
+  Listed explicitly rather than left to the unknown-id fallback: an unregistered id is reset-ineligible with NO reason, which renders the dialog without telling the operator why the button is unavailable.
+  */
+  "scheduling-global": "The global concurrency cap is managed by the global-concurrency endpoint, not the settings form.",
   secrets: "Secrets are managed by the Secrets store, not the settings form.",
   "global-mcp": "MCP servers are managed by their own add/edit/remove flow.",
   mcp: "MCP servers are managed by their own add/edit/remove flow.",

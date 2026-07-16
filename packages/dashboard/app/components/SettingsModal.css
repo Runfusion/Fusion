@@ -960,7 +960,7 @@ The simplified Settings surface needs one consistent reading rhythm across legac
   padding: var(--space-lg) calc(var(--space-xl) + var(--space-sm)) calc(var(--space-xl) + var(--space-md));
 }
 
-.settings-content > :is(.settings-scope-banner, .settings-gitlab-disclosure) {
+.settings-content > .settings-gitlab-disclosure {
   margin-inline: 0;
 }
 
@@ -995,10 +995,19 @@ The simplified Settings surface needs one consistent reading rhythm across legac
   line-height: 1.35;
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-18:52:
+Every text-entry control in Settings resolves to ONE appearance, whatever markup it sits in.
+The dashboard ships two competing input treatments: `.input`/`.select` (6px 10px at 13px) and the global `.form-group input` rule (`var(--space-sm) var(--space-md)` = 8px 12px at 14px). A control's padding therefore depended on whether an ancestor happened to be a `.form-group` — and because `.form-group input` (0,1,1) out-specifies `.input` (0,1,0), adding the standard class to a control inside one did nothing. Migrated rows sit outside `.form-group` and got 6px 10px; the bespoke rows still inside one got 8px 12px, side by side in the same section.
+Normalized here rather than by editing the global `.form-group` rule, which 35 non-settings files depend on: this selector is already settings-scoped and already targets exactly the right set (form-group children AND `.input`/`.select`/`.form-input`), so it is the one place that can reconcile them without reaching outside Settings.
+Values intentionally mirror `.input` in styles.css — it is the dashboard-wide control appearance across ~300 call sites, so Settings matches the rest of the app rather than inventing a third treatment. If `.input` is ever tokenized, this pairs with it.
+*/
 .settings-content .form-group :is(input:not([type="checkbox"]), select, textarea),
 .settings-content :is(.input, .select, .form-input) {
   min-height: 38px;
   box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 13px;
 }
 
 .settings-content :is(.form-group small, .settings-description, .settings-section-description) {
@@ -1242,28 +1251,6 @@ Settings section headings should preserve hierarchy through spacing and type onl
 }
 
 /* Scope banner above section content */
-.settings-scope-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-xl);
-  margin: 0 var(--space-xl) var(--space-xs);
-  font-size: var(--font-size-xs);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-}
-.settings-scope-global {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-info) 40%, transparent);
-}
-.settings-scope-project {
-  background: color-mix(in srgb, var(--color-success) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-success) 40%, transparent);
-}
-.settings-scope-mixed {
-  background: color-mix(in srgb, var(--triage) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--triage) 40%, transparent);
-}
 
 /* Helper note styling for Settings sections — aligns with form-group horizontal gutters */
 .settings-note {
@@ -1676,7 +1663,7 @@ FN-7453 keeps GitLab's enable switch visible while hiding noisy URL/token fields
 FNXC:SettingsLayout 2026-07-10-12:20:
 First-run review video showed the GitLab Configuration box (and its right-flushed "Enable GitLab integration" checkbox) leaking past the alignment line of every other General control, reading as overflow at the panel/viewport edge.
 Root cause: settings controls get their horizontal gutter from the base `.form-group { padding: 0 var(--space-xl) }`, but this disclosure is a direct `.settings-content` child that carried no gutter of its own, so its bordered box spanned the full content width.
-Fix the invariant: bordered boxes that are direct settings-content children align their OUTER edge to the form-group gutter via horizontal margins (same convention as `.settings-scope-banner`), desktop `var(--space-xl)` and mobile `var(--space-sm)` to mirror the mobile `.form-group` gutter below.
+Fix the invariant: bordered boxes that are direct settings-content children align their OUTER edge to the form-group gutter via horizontal margins, desktop `var(--space-xl)` and mobile `var(--space-sm)` to mirror the mobile `.form-group` gutter below.
 */
 .settings-gitlab-disclosure {
   display: flex;
@@ -2731,10 +2718,6 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     padding: 0;
   }
 
-  .settings-scope-banner {
-    margin: 0 var(--space-sm) var(--space-xs);
-    padding: var(--space-xs) var(--space-sm);
-  }
 
   .memory-editor-frame {
     min-height: 65vh;

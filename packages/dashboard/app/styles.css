@@ -1780,28 +1780,6 @@ FN-7825 makes .settings-navigation the sole owner of Settings rail width and rem
 }
 
 /* Scope banner above section content */
-.settings-scope-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-xl);
-  margin: 0 var(--space-xl) var(--space-xs);
-  font-size: 12px;
-  border-radius: var(--radius);
-  color: var(--text-muted);
-}
-.settings-scope-global {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-info) 40%, transparent);
-}
-.settings-scope-project {
-  background: color-mix(in srgb, var(--color-success) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-success) 40%, transparent);
-}
-.settings-scope-mixed {
-  background: color-mix(in srgb, var(--triage) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--triage) 40%, transparent);
-}
 
 /* Helper note styling for Settings sections — aligns with form-group horizontal gutters */
 .settings-note {
@@ -3812,10 +3790,6 @@ Toast text must contrast its status background across every dashboard theme and 
 
   .form-group {
     padding: 0 14px;
-  }
-
-  .settings-scope-banner {
-    padding: var(--space-sm) var(--space-lg);
   }
 
   .settings-empty-state {

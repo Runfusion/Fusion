@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Globe, CheckCircle, AlertTriangle } from "lucide-react";
 import { updateRemoteSettings, startRemoteTunnel, stopRemoteTunnel, killExternalTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteUrl, fetchRemoteQr, type RemoteSettings, type RemoteStatus, } from "../../../api";
 import type { ToastType } from "../../../hooks/useToast";
 import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import type { SectionBaseProps, SettingsFormState } from "./context";
 export interface RemoteSectionData {
@@ -51,7 +51,6 @@ export interface RemoteSectionData {
     setRemoteQrSvg: (value: string | null) => void;
 }
 export interface RemoteSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     remote: RemoteSectionData;
 }
 /*
@@ -69,7 +68,7 @@ Deliberately NOT migrated, and why:
 - The named-tunnel trio (`remoteCloudflareTunnelName`/`TunnelToken`/`IngressUrl`) stays whole inside that disclosure: `remoteCloudflareTunnelToken` is type="password" and SettingsTextRow hard-codes type="text", which would render the tunnel token UNMASKED. Splitting the other two out would strand the token alone.
 - The Auth Links block (`remoteAuthLinkTokenType` select) stays with the buttons and URL/QR output it configures; it is also local UI state, not a settings key.
 */
-export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSectionProps) {
+export function RemoteSection({ form, setForm, remote }: RemoteSectionProps) {
     const { t } = useTranslation("app");
     const { projectId, addToast, remoteStatus, externalTunnel, tunnelShareLink, remoteBusyAction, cloudflaredInstalling, cloudflaredInstallError, cloudflaredManualInstallCommand, cloudflaredMacFallbackCommand, handleInstallCloudflared, runRemoteAction, remoteShortLivedToken, setRemoteShortLivedToken, remoteAuthLinkTokenType, setRemoteAuthLinkTokenType, remoteUrlPreview, setRemoteUrlPreview, remoteQrSvg, setRemoteQrSvg, } = remote;
     const remoteForm = form as Record<string, unknown>;
@@ -101,7 +100,6 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
         };
     };
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.remote.remoteAccess", "Remote Access")}</h4>
       <div className={`remote-status-bar remote-status-bar--${statusColor}`}>
         <span className={`remote-status-dot remote-status-dot--${statusColor}`}/>
@@ -232,13 +230,44 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
                     });
                 }}>
                 <summary>{t("settings.remote.advancedNamedTunnel", "Advanced (Named Tunnel)")}</summary>
+                {/*
+                FNXC:SettingsSecurity 2026-07-15-18:52:
+                The tunnel token renders through `type: "password"` (masked, `autocomplete="off"` by default). Before the descriptor carried `type`, the shared row would have rendered it in plain text, which is why this whole trio stayed hand-rolled.
+                `remoteCloudflareIngressUrl` keeps `type: "text"` even though it holds a URL: it was a text input before, and promoting it to `type="url"` would attach native URL validation and switch the mobile keyboard — a behavior change disguised as a refactor. The placeholder already communicates the format.
+                These rows carry no help text of their own; the descriptor omits `help` rather than inventing copy.
+                */}
                 {!(remoteForm.remoteCloudflareQuickTunnel ?? true) ? (<div className="remote-cf-advanced-fields">
-                    <label htmlFor="remoteCloudflareTunnelName">{t("settings.remote.tunnelName", "Tunnel name")}</label>
-                    <input id="remoteCloudflareTunnelName" type="text" placeholder={t("settings.remote.tunnelName", "Tunnel name")} value={String(remoteForm.remoteCloudflareTunnelName ?? "")} onChange={(e) => setForm((f) => ({ ...f, remoteCloudflareTunnelName: e.target.value } as SettingsFormState))}/>
-                    <label htmlFor="remoteCloudflareTunnelToken">{t("settings.remote.tunnelToken", "Tunnel token")}</label>
-                    <input id="remoteCloudflareTunnelToken" type="password" placeholder={t("settings.remote.tunnelToken", "Tunnel token")} value={String(remoteForm.remoteCloudflareTunnelToken ?? "")} onChange={(e) => setForm((f) => ({ ...f, remoteCloudflareTunnelToken: e.target.value } as SettingsFormState))}/>
-                    <label htmlFor="remoteCloudflareIngressUrl">{t("settings.remote.ingressURL", "Ingress URL")}</label>
-                    <input id="remoteCloudflareIngressUrl" type="text" placeholder={t("settings.remote.httpsYourDomainExample", "https://your-domain.example")} value={String(remoteForm.remoteCloudflareIngressUrl ?? "")} onChange={(e) => setForm((f) => ({ ...f, remoteCloudflareIngressUrl: e.target.value } as SettingsFormState))}/>
+                    <SettingsTextRow
+                      descriptor={{
+                        key: "remoteCloudflareTunnelName",
+                        label: t("settings.remote.tunnelName", "Tunnel name"),
+                        placeholder: t("settings.remote.tunnelName", "Tunnel name"),
+                        scope: "global",
+                      }}
+                      value={String(remoteForm.remoteCloudflareTunnelName ?? "")}
+                      onChange={(v) => setForm((f) => ({ ...f, remoteCloudflareTunnelName: v ?? "" } as SettingsFormState))}
+                    />
+                    <SettingsTextRow
+                      descriptor={{
+                        key: "remoteCloudflareTunnelToken",
+                        label: t("settings.remote.tunnelToken", "Tunnel token"),
+                        placeholder: t("settings.remote.tunnelToken", "Tunnel token"),
+                        type: "password",
+                        scope: "global",
+                      }}
+                      value={String(remoteForm.remoteCloudflareTunnelToken ?? "")}
+                      onChange={(v) => setForm((f) => ({ ...f, remoteCloudflareTunnelToken: v ?? "" } as SettingsFormState))}
+                    />
+                    <SettingsTextRow
+                      descriptor={{
+                        key: "remoteCloudflareIngressUrl",
+                        label: t("settings.remote.ingressURL", "Ingress URL"),
+                        placeholder: t("settings.remote.httpsYourDomainExample", "https://your-domain.example"),
+                        scope: "global",
+                      }}
+                      value={String(remoteForm.remoteCloudflareIngressUrl ?? "")}
+                      onChange={(v) => setForm((f) => ({ ...f, remoteCloudflareIngressUrl: v ?? "" } as SettingsFormState))}
+                    />
                   </div>) : null}
               </details>
         </div>)}

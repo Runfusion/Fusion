@@ -57,4 +57,26 @@ export const remoteSearchEntries: SettingsSearchEntry[] = [
     */
     keywords: ["cloudflared", "autostart", "reconnect", "persist tunnel"],
   },
+  {
+    sectionId: "remote",
+    key: "remoteCloudflareTunnelName",
+    labelKey: "settings.remote.tunnelName",
+    labelFallback: "Tunnel name",
+    keywords: ["cloudflare", "named tunnel", "cloudflared"],
+  },
+  {
+    sectionId: "remote",
+    key: "remoteCloudflareTunnelToken",
+    labelKey: "settings.remote.tunnelToken",
+    labelFallback: "Tunnel token",
+    // Label/help only; the token's value never enters the index.
+    keywords: ["cloudflare", "named tunnel", "credential", "secret"],
+  },
+  {
+    sectionId: "remote",
+    key: "remoteCloudflareIngressUrl",
+    labelKey: "settings.remote.ingressURL",
+    labelFallback: "Ingress URL",
+    keywords: ["cloudflare", "named tunnel", "hostname", "domain"],
+  },
 ];

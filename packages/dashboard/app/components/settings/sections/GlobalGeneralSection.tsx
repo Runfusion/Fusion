@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { GlobalSettings } from "@fusion/core";
 import { resolvePersistAgentThinkingLog } from "@fusion/core";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
@@ -8,7 +7,6 @@ import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
 export interface GlobalGeneralSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     globalSettings: Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType"> | null;
     onGlobalGitlabSettingsChange: (patch: Partial<Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType">>) => void;
     globalTrackingRepoOptions: TrackingRepoOption[];
@@ -21,11 +19,10 @@ Plain settings rows render through the shared primitives rather than hand-rolled
 The migrated keys are all global-tier (DEFAULT_GLOBAL_SETTINGS), so each carries a "global" badge stating that it travels between projects.
 Rows that stay bespoke are the ones whose copy a single-string descriptor cannot carry without rewording it: the `fn` binary check, the update-check toggle, and the thinking-log group all build label or help from `t()` fragments interleaved with `<code>` tags. The thinking-log pair additionally shares ONE help string across two checkboxes, which no per-row descriptor models. The tracking-repo select, the GitLab disclosure, and CliBinaryPanel are custom widgets.
 */
-export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSettings, onGlobalGitlabSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: GlobalGeneralSectionProps) {
+export function GlobalGeneralSection({ form, setForm, globalSettings, onGlobalGitlabSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: GlobalGeneralSectionProps) {
     const { t } = useTranslation("app");
     const globalGitlab = globalSettings ?? form;
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.globalGeneral.general", "General")}</h4>
       <div className="form-group">
         <label htmlFor="globalGithubTrackingDefaultRepo">{t("settings.globalGeneral.globalDefaultTrackingRepo", "Global default tracking repo")}</label>

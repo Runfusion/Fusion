@@ -23,6 +23,7 @@ import { remoteSearchEntries } from "../sections/RemoteSection.search";
 import { researchGlobalSearchEntries } from "../sections/ResearchGlobalSection.search";
 import { researchProjectSearchEntries } from "../sections/ResearchProjectSection.search";
 import { scheduledEvalsSearchEntries } from "../sections/ScheduledEvalsSection.search";
+import { schedulingGlobalSearchEntries } from "../sections/SchedulingGlobalSection.search";
 import { schedulingSearchEntries } from "../sections/SchedulingSection.search";
 import { worktreesSearchEntries } from "../sections/WorktreesSection.search";
 
@@ -47,6 +48,7 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
   ...researchGlobalSearchEntries,
   ...researchProjectSearchEntries,
   ...scheduledEvalsSearchEntries,
+  ...schedulingGlobalSearchEntries,
   ...schedulingSearchEntries,
   ...worktreesSearchEntries,
 ];

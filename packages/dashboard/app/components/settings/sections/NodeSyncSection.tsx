@@ -1,11 +1,8 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
-export interface NodeSyncSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
-}
+export type NodeSyncSectionProps = SectionBaseProps;
 /*
 FNXC:SettingsScope 2026-07-15-17:35:
 Every sync setting here is global (DEFAULT_GLOBAL_SETTINGS): sync is a property of this node's relationship to its peers, not of any one project, so the badges read "global" even though the operator reached them from a project.
@@ -13,10 +10,9 @@ Every sync setting here is global (DEFAULT_GLOBAL_SETTINGS): sync is a property 
 FNXC:NodeSync 2026-07-15-17:35:
 The auth/interval/conflict rows stay gated behind settingsSyncEnabled. Credential sync in particular must not be reachable — even to read — while sync is off, so the gate is conditional rendering rather than a disabled row.
 */
-export function NodeSyncSection({ scopeBanner, form, setForm }: NodeSyncSectionProps) {
+export function NodeSyncSection({ form, setForm }: NodeSyncSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.nodeSync.nodeSync", "Node Sync")}</h4>
       <SettingsToggleRow
         descriptor={{

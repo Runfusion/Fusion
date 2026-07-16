@@ -39,6 +39,8 @@ const EXPECTED_KEY_OWNING_SECTIONS: Record<string, "global" | "project"> = {
 };
 
 const EXPECTED_EXCLUDED_SECTIONS = [
+  // Owns one control, and it is not a settings-blob key (global-concurrency endpoint).
+  "scheduling-global",
   "secrets",
   "global-mcp",
   "mcp",

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { NodeInfo } from "../../../api";
 import { NodeHealthDot } from "../../NodeHealthDot";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -14,7 +13,6 @@ function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error
     return t("settings.nodeRouting.statusOffline", "Offline");
 }
 export interface NodeRoutingSectionProps {
-    scopeBanner: ReactNode;
     form: SettingsFormState;
     setForm: SetSettingsForm;
     nodes: NodeInfo[];
@@ -23,10 +21,9 @@ export interface NodeRoutingSectionProps {
 FNXC:SettingsScope 2026-07-15-17:35:
 Both routing settings are project-scoped (DEFAULT_PROJECT_SETTINGS), which is what the note below already tells the operator in prose; the per-row scope badge is the machine-readable form of that same claim.
 */
-export function NodeRoutingSection({ scopeBanner, form, setForm, nodes }: NodeRoutingSectionProps) {
+export function NodeRoutingSection({ form, setForm, nodes }: NodeRoutingSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.nodeRouting.nodeRouting", "Node Routing")}</h4>
       <p className="settings-section-description">{t("settings.nodeRouting.configureHowTasksAreRoutedToExecutionNodes", "Configure how tasks are routed to execution nodes.")}</p>
       <p className="settings-node-routing-note">{t("settings.nodeRouting.theseSettingsApplyAtTheProjectLevel", "These settings apply at the project level.")}</p>

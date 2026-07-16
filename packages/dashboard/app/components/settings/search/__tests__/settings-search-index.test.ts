@@ -53,6 +53,7 @@ const SECTION_FILE_TO_ID: Record<string, string> = {
   "ResearchGlobalSection.tsx": "research-global",
   "ResearchProjectSection.tsx": "research-project",
   "ScheduledEvalsSection.tsx": "scheduled-evals",
+  "SchedulingGlobalSection.tsx": "scheduling-global",
   "SchedulingSection.tsx": "scheduling",
   "WorktreesSection.tsx": "worktrees",
 };

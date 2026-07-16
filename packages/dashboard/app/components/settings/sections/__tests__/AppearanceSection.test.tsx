@@ -32,7 +32,6 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}) {
 
   render(
     <AppearanceSection
-      scopeBanner={<div data-testid="scope-banner" />}
       form={form}
       setForm={setForm}
       themeMode="dark"

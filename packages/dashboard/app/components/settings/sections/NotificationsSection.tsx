@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { NtfyNotificationEvent } from "@fusion/core";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -46,7 +45,6 @@ export const NOTIFICATION_EVENT_OPTIONS: Array<{
 ];
 export type TestNotificationProvider = "ntfy" | "webhook" | "ntfy-message" | "ntfy-room";
 export interface NotificationsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     testNotificationLoading: Record<string, boolean>;
     testNotificationResult: Record<string, {
         status: "success" | "error";
@@ -65,13 +63,12 @@ FNXC:SettingsStyling 2026-07-15-17:35:
 Deliberately NOT migrated, and why — each is a real behavior/copy constraint, not an oversight:
 - The ntfy/webhook `Enable` checkboxes stay in `.notification-provider-header`, a flex space-between card header pairing a provider title with its switch. That is a card header, not a plain label→control row.
 - `ntfyTopic`'s help embeds an ntfy.sh anchor, and the primitives take `help` as a pre-translated string; migrating would silently drop the link.
-- `ntfyBaseUrl` (type="url") and `ntfyAccessToken` / named-tunnel tokens (type="password") cannot migrate: SettingsTextRow hard-codes type="text", so an access token would render UNMASKED. They also live inside the Advanced disclosure.
+- (Resolved 2026-07-15-18:52) `ntfyBaseUrl`/`ntfyAccessToken` previously could not migrate because SettingsTextRow hardcoded type="text" and would have rendered the access token UNMASKED. The descriptor now carries `type`, so both are migrated inside the Advanced disclosure, with the token masked and `autocomplete="off"` by default.
 - The `ntfyEvents` / `webhookEvents` grids are per-event checkbox lists with their own descriptions, not single controls.
 */
-export function NotificationsSection({ scopeBanner, form, setForm, testNotificationLoading, testNotificationResult, onTestProviderNotification, }: NotificationsSectionProps) {
+export function NotificationsSection({ form, setForm, testNotificationLoading, testNotificationResult, onTestProviderNotification, }: NotificationsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.notifications.notifications", "Notifications")}</h4>
 
       <div className="notification-provider-card">
@@ -139,19 +136,36 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
               {form.ntfyTopic && !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic) && (<small className="field-error">{t("settings.notifications.topicMustBe164AlphanumericHyphenOr", " Topic must be 1\u201364 alphanumeric, hyphen, or underscore characters ")}</small>)}
               <details className="ntfy-advanced-disclosure">
                 <summary>{t("settings.notifications.advanced", "Advanced")}</summary>
+                {/*
+                FNXC:SettingsSecurity 2026-07-15-18:52:
+                The access token renders through `type: "password"` so it stays masked, and inherits the primitive's `autocomplete="off"` default so a browser never offers to save it \u2014 the same guarantees the hand-rolled input carried before it moved onto the shared row.
+                The disclosure stays: these are the rarely-touched ntfy overrides, and a descriptor's help renders unconditionally, so flattening them into the section body would push the common case (topic) below a wall of prose.
+                */}
                 <div className="ntfy-advanced-content">
-                  <label htmlFor="ntfyBaseUrl">{t("settings.notifications.customNtfyServerURLOptional", "Custom ntfy server URL (optional)")}</label>
-                  <input id="ntfyBaseUrl" type="url" placeholder={t("settings.notifications.httpsNtfySh", "https://ntfy.sh")} value={form.ntfyBaseUrl || ""} onChange={(e) => {
-                const value = e.target.value;
-                setForm((f) => ({ ...f, ntfyBaseUrl: value || undefined }));
-            }}/>
-                  <small>{t("settings.notifications.leaveBlankToKeepTheDefaultServerHttps", " Leave blank to keep the default server: https://ntfy.sh. Custom servers must use http:// or https://. No default \u2014 unset. ")}</small>
-                  <label htmlFor="ntfyAccessToken">{t("settings.notifications.accessTokenOptional", "Access token (optional)")}</label>
-                  <input id="ntfyAccessToken" type="password" autoComplete="off" placeholder={t("settings.notifications.tk", "tk_...")} value={form.ntfyAccessToken || ""} onChange={(e) => {
-                const value = e.target.value;
-                setForm((f) => ({ ...f, ntfyAccessToken: value || undefined }));
-            }}/>
-                  <small>{t("settings.notifications.leaveBlankToPublishWithoutAuthenticationWhenSet", " Leave blank to publish without authentication. When set, Fusion sends an Authorization Bearer header with ntfy requests. No default \u2014 unset. ")}</small>
+                  <SettingsTextRow
+                    descriptor={{
+                      key: "ntfyBaseUrl",
+                      label: t("settings.notifications.customNtfyServerURLOptional", "Custom ntfy server URL (optional)"),
+                      help: t("settings.notifications.leaveBlankToKeepTheDefaultServerHttps", " Leave blank to keep the default server: https://ntfy.sh. Custom servers must use http:// or https://. No default \u2014 unset. "),
+                      placeholder: t("settings.notifications.httpsNtfySh", "https://ntfy.sh"),
+                      type: "url",
+                      scope: "global",
+                    }}
+                    value={form.ntfyBaseUrl ?? null}
+                    onChange={(v) => setForm((f) => ({ ...f, ntfyBaseUrl: v || undefined }))}
+                  />
+                  <SettingsTextRow
+                    descriptor={{
+                      key: "ntfyAccessToken",
+                      label: t("settings.notifications.accessTokenOptional", "Access token (optional)"),
+                      help: t("settings.notifications.leaveBlankToPublishWithoutAuthenticationWhenSet", " Leave blank to publish without authentication. When set, Fusion sends an Authorization Bearer header with ntfy requests. No default \u2014 unset. "),
+                      placeholder: t("settings.notifications.tk", "tk_..."),
+                      type: "password",
+                      scope: "global",
+                    }}
+                    value={form.ntfyAccessToken ?? null}
+                    onChange={(v) => setForm((f) => ({ ...f, ntfyAccessToken: v || undefined }))}
+                  />
                 </div>
               </details>
             </div>

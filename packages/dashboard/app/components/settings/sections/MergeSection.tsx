@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Settings } from "@fusion/core";
@@ -70,7 +69,6 @@ Most of this section deliberately keeps its bespoke markup, because Merge is not
 - The legacy auto-merge stamp cleanup panel is a report-and-trigger card, not a setting.
 */
 export interface MergeSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     integrationBranchOptions: string[];
     integrationBranchCustomMode: boolean;
     setIntegrationBranchCustomMode: (value: boolean) => void;
@@ -79,7 +77,7 @@ export interface MergeSectionProps extends SectionBaseProps {
     gitRemoteOptions?: string[];
     projectId?: string;
 }
-export function MergeSection({ scopeBanner, form, setForm, integrationBranchOptions, integrationBranchCustomMode, setIntegrationBranchCustomMode, onOpenWorkflowSettings, gitRemoteOptions = [], projectId, }: MergeSectionProps) {
+export function MergeSection({ form, setForm, integrationBranchOptions, integrationBranchCustomMode, setIntegrationBranchCustomMode, onOpenWorkflowSettings, gitRemoteOptions = [], projectId, }: MergeSectionProps) {
     const { t } = useTranslation("app");
     const pushTarget = parsePushRemoteSetting(form.pushRemote);
     const [pushBranchOptions, setPushBranchOptions] = useState<string[]>([]);
@@ -140,7 +138,6 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
         }
     };
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.merge.merge", "Merge")}</h4>
       <div className="form-group">
         <label htmlFor="autoMerge" className="checkbox-label">
