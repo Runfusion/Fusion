@@ -52,7 +52,7 @@ function createMockSession(reviewText: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedPromptWithFallback.mockImplementation(async (session, prompt, options) => {
+  mockedPromptWithFallback.mockImplementation(async (session: any, prompt: any, options: any) => {
     if (typeof session.prompt === "function") {
       if (options == null) {
         await session.prompt(prompt);
@@ -490,6 +490,104 @@ describe("reviewStep — spec review type", () => {
 
     expect(capturedPrompt).not.toContain("git diff");
     expect(capturedPrompt).not.toContain("abc123");
+  });
+});
+
+/*
+FNXC:TriagePlanReviewConvergence 2026-07-16-19:40:
+Prove the spec-gate convergence block is wired through reviewStep -> buildReviewRequest. We drive
+the real (module-private) request builder by capturing the prompt string handed to the mocked
+session, exactly like the "spec review type" tests above — no test-only export is needed because
+the request text is observable at the session seam.
+*/
+describe("reviewStep — spec convergence wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function captureReviewPrompt(): { getPrompt: () => string } {
+    const state = { prompt: "" };
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockImplementation(async (prompt: string) => {
+          state.prompt = prompt;
+        }),
+        subscribe: vi.fn().mockImplementation((cb: any) => {
+          cb({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "### Verdict: APPROVE\n### Summary\nOK" },
+          });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+    return { getPrompt: () => state.prompt };
+  }
+
+  it("omits the convergence block for spec reviews on attempt <= 1 or undefined", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+      undefined,
+      { priorSpecReviewFeedback: "prior REVISE text", specReviewAttempt: 1 },
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
+    expect(cap.getPrompt()).not.toContain("prior REVISE text");
+  });
+
+  it("omits the convergence block for spec reviews when convergence fields are absent", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
+  });
+
+  it("includes the convergence block + prior feedback + verify-your-own-miss wording at attempt 2", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+      undefined,
+      { priorSpecReviewFeedback: "PRIOR-REVISE-MARKER: fix the missing Surface Enumeration", specReviewAttempt: 2 },
+    );
+    const prompt = cap.getPrompt();
+    expect(prompt).toContain("## Convergence — Plan Review attempt 2");
+    expect(prompt).toContain("PRIOR-REVISE-MARKER: fix the missing Surface Enumeration");
+    expect(prompt).toContain("VERIFY each issue you raised previously was addressed");
+    expect(prompt).toContain("that is your own earlier miss");
+    // Attempt 2 must NOT yet ratchet severity.
+    expect(prompt).not.toContain("Severity ratchet (attempt 3+)");
+  });
+
+  it("adds the severity ratchet at attempt >= 3", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 0, "Spec Review", "spec", "# Task: FN-CONV",
+      undefined,
+      { priorSpecReviewFeedback: "prior text", specReviewAttempt: 3 },
+    );
+    const prompt = cap.getPrompt();
+    expect(prompt).toContain("## Convergence — Plan Review attempt 3");
+    expect(prompt).toContain("Severity ratchet (attempt 3+)");
+  });
+
+  it("never includes the convergence block for code reviews even when convergence fields are passed", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 1, "Code Review", "code", "# prompt", "abc123",
+      { priorSpecReviewFeedback: "prior text", specReviewAttempt: 3 } as any,
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
+  });
+
+  it("never includes the convergence block for plan reviews even when convergence fields are passed", async () => {
+    const cap = captureReviewPrompt();
+    await reviewStep(
+      "/tmp/worktree", "FN-CONV", 1, "Plan Review", "plan", "# prompt",
+      undefined,
+      { priorSpecReviewFeedback: "prior text", specReviewAttempt: 3 } as any,
+    );
+    expect(cap.getPrompt()).not.toContain("## Convergence — Plan Review attempt");
   });
 });
 

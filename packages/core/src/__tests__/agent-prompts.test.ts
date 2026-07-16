@@ -71,6 +71,21 @@ describe("resolveAgentPrompt", () => {
     expect(result).toContain("concrete PROMPT.md edit");
   });
 
+  // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new triage-side planner sections.
+  it("includes the front-loaded File Scope and Storage architecture sections in the triage prompt", () => {
+    const result = resolveAgentPrompt("triage");
+    expect(result).toContain("## File Scope — front-load surface enumeration");
+    expect(result).toContain("## Storage architecture");
+  });
+
+  // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new reviewer-side spec convergence sections.
+  it("includes Spec Altitude and re-review convergence sections in the reviewer prompt", () => {
+    const result = resolveAgentPrompt("reviewer");
+    expect(result).toContain("## Spec Altitude");
+    expect(result).toContain("Converging on re-review");
+    expect(result).toContain("Severity ratchet at attempt 3+");
+  });
+
   it("returns the correct built-in prompt for merger when no config provided", () => {
     const result = resolveAgentPrompt("merger");
     expect(result).toBeTruthy();

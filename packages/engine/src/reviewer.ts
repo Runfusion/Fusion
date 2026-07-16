@@ -132,6 +132,18 @@ export interface ReviewOptions {
   pluginRunner?: import("./plugin-runner.js").PluginRunner;
   /** Allow this reviewer to fix in-scope findings in the same session before returning its final verdict. */
   allowInlineFixes?: boolean;
+  /*
+  FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+  Spec-gate-only convergence context. The triage Plan Review gate feeds the reviewer its OWN
+  prior REVISE feedback plus the 1-based replan attempt so a re-review VERIFIES its earlier
+  issues were addressed instead of surfacing a fresh, deeper blocking issue every cycle
+  (whack-a-mole/goalpost movement burned all 8 replans on FN-7996/FN-8105/FN-8108). Only
+  injected when reviewType === "spec" and attempt > 1; CODE review and normal PLAN review are
+  unaffected because these fields stay undefined on those paths.
+  */
+  priorSpecReviewFeedback?: string;
+  /** 1-based current Plan Review attempt (= (task.planReviewReplanCount ?? 0) + 1). Spec gate only. */
+  specReviewAttempt?: number;
   /**
    * Fired immediately after the reviewer's `AgentSession` is created. The
    * caller can register the session in a per-task subagent map so that the
@@ -220,8 +232,13 @@ export async function reviewStep(
     && reviewType !== "code"
     && Boolean(options.store && options.taskId);
 
+  // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: spec-gate-only convergence context (see ReviewOptions).
+  const specConvergence: SpecReviewConvergence | undefined =
+    reviewType === "spec"
+      ? { priorFeedback: options.priorSpecReviewFeedback, attempt: options.specReviewAttempt }
+      : undefined;
   let request = buildReviewRequest(
-    taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
+    taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments, specConvergence,
   );
   if (options.allowInlineFixes === true) {
     /*
@@ -561,8 +578,10 @@ export async function reviewStep(
         }
 
         reviewText = "";
+        // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: reuse the single `specConvergence`
+        // computed above so the context-limit retry carries byte-identical spec convergence context.
         let reducedRequest = buildReducedReviewRequest(
-          taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
+          taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments, specConvergence,
         );
         if (options.allowInlineFixes === true) {
           reducedRequest = appendSameSessionFixPolicy(reducedRequest, reviewType, canWritePromptInline);
@@ -827,6 +846,19 @@ function buildReducedTaskPromptSummary(promptContent: string): string {
   return sections.join("\n\n").trim();
 }
 
+/*
+FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+Spec-gate-only convergence context threaded into the review request. `priorFeedback` is the
+reviewer's own most recent Plan Review REVISE text; `attempt` is the 1-based replan attempt.
+Present only for reviewType === "spec"; drives the per-attempt convergence + severity-ratchet
+block injected into the request so the re-review confirms prior issues rather than moving the
+goalposts each cycle.
+*/
+interface SpecReviewConvergence {
+  priorFeedback?: string;
+  attempt?: number;
+}
+
 function buildReducedReviewRequest(
   taskId: string,
   stepNumber: number,
@@ -836,6 +868,7 @@ function buildReducedReviewRequest(
   cwd: string,
   baseline?: string,
   userComments?: TaskComment[],
+  specConvergence?: SpecReviewConvergence,
 ): string {
   /*
   FNXC:AgentSteering 2026-06-30-17:09:
@@ -851,6 +884,7 @@ function buildReducedReviewRequest(
     cwd,
     baseline,
     userComments,
+    specConvergence,
   );
 }
 
@@ -863,6 +897,7 @@ function buildReviewRequest(
   cwd: string,
   baseline?: string,
   userComments?: TaskComment[],
+  specConvergence?: SpecReviewConvergence,
 ): string {
   const parts = [
     `Review request for task ${taskId}, Step ${stepNumber}: ${stepName}`,
@@ -901,6 +936,43 @@ function buildReviewRequest(
       "- When you REVISE, list each blocking fix as a concrete edit the planner can apply to this PROMPT.md (section + what to add/change). Do not request a full rewrite unless the approach is fundamentally wrong (RETHINK).",
       "- If same-session PROMPT.md repair is available and a fix is local, apply it and APPROVE rather than bouncing to another replan cycle.",
     );
+
+    /*
+    FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+    On replan attempt > 1 the reviewer is re-reviewing a spec IT already rejected. Feed it the
+    prior REVISE text and attempt number so it verifies those issues were addressed instead of
+    surfacing a fresh deeper issue each cycle (the whack-a-mole that burned all 8 replans on
+    FN-7996/FN-8105/FN-8108). At attempt >= 3, ratchet severity: gate only on delivery-blocking
+    `critical` issues so a spec that is executable (executor + code review are later gates) does
+    not loop on wording nits.
+    */
+    const specAttempt = specConvergence?.attempt ?? 0;
+    if (specAttempt > 1) {
+      parts.push(
+        "",
+        `## Convergence — Plan Review attempt ${specAttempt}`,
+        `You (the reviewer) already reviewed an earlier version of this spec; the planner has since revised the PROMPT.md above. This is attempt ${specAttempt}.`,
+        "- VERIFY each issue you raised previously was addressed. REVISE only if (a) a PRIOR blocking issue is still unresolved, or (b) this revision introduced a GENUINELY NEW problem.",
+        "- Do NOT introduce a new blocking issue that ALSO applied to the version you previously reviewed — that is your own earlier miss; record it under **Suggestions**, not REVISE.",
+      );
+      const priorFeedback = specConvergence?.priorFeedback?.trim();
+      if (priorFeedback) {
+        parts.push(
+          "",
+          "Your prior Plan Review feedback (confirm each item is resolved):",
+          "```",
+          priorFeedback,
+          "```",
+        );
+      }
+      if (specAttempt >= 3) {
+        parts.push(
+          "",
+          "### Severity ratchet (attempt 3+)",
+          "Gate ONLY on `critical` (delivery-blocking) issues. Downgrade lone `important`/`minor` spec-wording nits to **Suggestions** and APPROVE. Rationale: the executor and downstream code review are later gates; a spec need not be perfect to be executable.",
+        );
+      }
+    }
 
     // Add user comment coverage check for spec reviews
     if (userComments && userComments.length > 0) {

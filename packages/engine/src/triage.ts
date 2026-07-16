@@ -2365,6 +2365,26 @@ export class TriageProcessor {
     instead of step-checkbox language that does not match this gate. Inline PROMPT.md
     repair remains allowed so the reviewer can fix-and-APPROVE instead of REVISE-looping.
     */
+    /*
+    FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+    Feed the spec reviewer its OWN latest Plan Review REVISE feedback plus the 1-based replan
+    attempt so a re-review verifies prior issues were addressed instead of surfacing a fresh,
+    deeper blocking issue each cycle. Prior feedback is the authoritative REVISE text stored in
+    workflowStepResults (same source blockAfterPlanReviewRevise / the replan seed use); attempt
+    is (planReviewReplanCount ?? 0) + 1. Both are spec-gate-only reviewer inputs — omitting them
+    on attempt 1 (or a fresh task) leaves the reviewer's cold-review behavior unchanged.
+    */
+    const priorPlanReviewRevise = [...(latestTaskForReview.workflowStepResults || [])]
+      .reverse()
+      .find(
+        (result) =>
+          result.workflowStepId === PLAN_REVIEW_GROUP_ID
+          && result.verdict === "REVISE"
+          && Boolean((result.output || result.notes)?.trim()),
+      );
+    const priorSpecReviewFeedback = (priorPlanReviewRevise?.output || priorPlanReviewRevise?.notes)?.trim() || undefined;
+    const specReviewAttempt = (task.planReviewReplanCount ?? 0) + 1;
+
     let reviewFailure: unknown;
     const review = await reviewStep(
       this.rootDir,
@@ -2385,6 +2405,9 @@ export class TriageProcessor {
         agentStore: this.options.agentStore,
         pluginRunner: this.options.pluginRunner,
         allowInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false,
+        // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: spec-gate-only convergence inputs (see derivation above).
+        priorSpecReviewFeedback,
+        specReviewAttempt,
         onSessionCreated: (session) => this.registerSubagentSession(task.id, session),
         onSessionEnded: (session) => this.unregisterSubagentSession(task.id, session),
       },
