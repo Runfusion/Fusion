@@ -30,6 +30,13 @@ Fallback model lanes must be configurable in all Settings surfaces: General uses
 FNXC:Settings-ThinkingLevel 2026-07-10-12:08:
 Workflow fallback lanes may expose an inline thinking selector only when the active workflow declares the matching companion setting, while the title-summarizer fallback uses project-scoped keys below. Reset must clear both the model pair and the thinking companion; undeclared rows intentionally render no orphan thinking shell.
 */
+/*
+FNXC:SettingsModels 2026-07-16-09:30:
+Order matters: each fallback lane is listed IMMEDIATELY AFTER the primary lane it backs, because
+the render (`workflowModelPairs.map`) preserves this array order and the operator asked for each
+type's fallback to sit directly below its main model — Plan/Triage → its fallback, then Executor
+(no fallback), then Reviewer → its fallback. Do not regroup all fallbacks at the end.
+*/
 const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
     {
         id: "planning",
@@ -38,6 +45,14 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         thinkingId: "planningThinkingLevel",
         label: "Plan/Triage Model",
         help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the workflow default.",
+    },
+    {
+        id: "planning-fallback",
+        providerId: "planningFallbackProvider",
+        modelId: "planningFallbackModelId",
+        thinkingId: "planningFallbackThinkingLevel",
+        label: "Planning Fallback Model",
+        help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
     },
     {
         id: "execution",
@@ -54,14 +69,6 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         thinkingId: "validatorThinkingLevel",
         label: "Reviewer Model",
         help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
-    },
-    {
-        id: "planning-fallback",
-        providerId: "planningFallbackProvider",
-        modelId: "planningFallbackModelId",
-        thinkingId: "planningFallbackThinkingLevel",
-        label: "Planning Fallback Model",
-        help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
     },
     {
         id: "validator-fallback",
@@ -431,6 +438,56 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           {projectModelLanes.map(renderProjectLane)}
         </>)}
 
+      {/* --- Default workflow model lanes --- */}
+      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>
+      <p className="settings-description">
+        {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " These project overrides apply to the active default workflow. ")}</p>
+      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
+          {workflowModelPairs.map((pair) => {
+                const value = modelPairValue(effectiveWorkflowValues, pair);
+                const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
+                const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
+                const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
+                    ? workflowPending[pair.providerId] !== null
+                    : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
+                        || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)));
+                const thinkingCustomized = pair.thinkingId
+                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.thinkingId)
+                        ? workflowPending[pair.thinkingId] !== null
+                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
+                    : false;
+                const customized = modelCustomized || thinkingCustomized;
+                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined);
+                return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
+                <div className="settings-model-lane-label-row">
+                  <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
+                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set for this project workflow" : "Inherited from workflow defaults"}>
+                    {customized ? "Override (Project)" : "Inherited (Workflow)"}
+                  </span>
+                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
+                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
+                </div>
+                <div className="settings-model-lane-control-row">
+                  <div className="settings-model-lane-control-main">
+                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
+                  </div>
+                  {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+                </div>
+                {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
+              </div>);
+            })}
+          {onOpenWorkflowSettings ? (<div className="settings-model-lane-actions" aria-label={t("settings.projectModels.defaultWorkflowModelLaneActions", "Default workflow model lane actions")}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenWorkflowSettings}>{t("settings.projectModels.advancedWorkflowPolicy", " Advanced workflow policy ")}</button>
+            </div>) : null}
+        </>)}
+
+      {/*
+        FNXC:SettingsModels 2026-07-16-09:30:
+        Chat renders BELOW the workflow model lanes (operator request: workflow model selection above
+        the chat model selection). Workflow lanes are the primary per-role model choices; the Direct-chat
+        default is a secondary preference, so it now follows them instead of sitting between the project
+        Model Lanes and the workflow lanes.
+      */}
       {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
       <p className="settings-description">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</p>
@@ -493,49 +550,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           </div>
           <small>{agents.length === 0 && !agentsLoading ? t("settings.projectModels.chatDefaultAgentEmpty", "No agents are available for this project yet.") : t("settings.projectModels.chatDefaultAgentHelp", "Agent-mode New Chat starts a Direct chat with the selected durable agent.")}</small>
         </div>)}
-
-      {/* --- Default workflow model lanes --- */}
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>
-      <p className="settings-description">
-        {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " These project overrides apply to the active default workflow. ")}</p>
-      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
-          {workflowModelPairs.map((pair) => {
-                const value = modelPairValue(effectiveWorkflowValues, pair);
-                const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
-                const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
-                const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
-                    ? workflowPending[pair.providerId] !== null
-                    : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
-                        || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)));
-                const thinkingCustomized = pair.thinkingId
-                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.thinkingId)
-                        ? workflowPending[pair.thinkingId] !== null
-                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
-                    : false;
-                const customized = modelCustomized || thinkingCustomized;
-                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined);
-                return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
-                <div className="settings-model-lane-label-row">
-                  <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
-                  <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set for this project workflow" : "Inherited from workflow defaults"}>
-                    {customized ? "Override (Project)" : "Inherited (Workflow)"}
-                  </span>
-                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
-                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
-                </div>
-                <div className="settings-model-lane-control-row">
-                  <div className="settings-model-lane-control-main">
-                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
-                  </div>
-                  {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
-                </div>
-                {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
-              </div>);
-            })}
-          {onOpenWorkflowSettings ? (<div className="settings-model-lane-actions" aria-label={t("settings.projectModels.defaultWorkflowModelLaneActions", "Default workflow model lane actions")}>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenWorkflowSettings}>{t("settings.projectModels.advancedWorkflowPolicy", " Advanced workflow policy ")}</button>
-            </div>) : null}
-        </>)}
 
       {/* --- Model Presets --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelPresets", "Model Presets")}</h4>
