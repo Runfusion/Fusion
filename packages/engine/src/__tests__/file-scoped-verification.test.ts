@@ -86,7 +86,7 @@ describe("deriveFileScopedPnpmTestCommand", () => {
     });
     const result = deriveFileScopedPnpmTestCommand("/tmp/root", "main", "fusion/fn-1");
     expect(result).toBe(
-      `pnpm --filter "@fusion/engine" exec vitest run "src/__tests__/foo.test.ts" --silent=passed-only --reporter=dot`,
+      `pnpm --filter '@fusion/engine' exec vitest run 'src/__tests__/foo.test.ts' --silent=passed-only --reporter=dot`,
     );
   });
 
@@ -96,8 +96,8 @@ describe("deriveFileScopedPnpmTestCommand", () => {
       existingTestFiles: ["packages/engine/src/__tests__/foo.test.ts"],
     });
     const result = deriveFileScopedPnpmTestCommand("/tmp/root", "main", "fusion/fn-1");
-    expect(result).toContain(`--filter "@fusion/engine"`);
-    expect(result).toContain(`"src/__tests__/foo.test.ts"`);
+    expect(result).toContain(`--filter '@fusion/engine'`);
+    expect(result).toContain(`'src/__tests__/foo.test.ts'`);
   });
 
   it("maps a changed source file to a sibling .test file", () => {
@@ -106,7 +106,7 @@ describe("deriveFileScopedPnpmTestCommand", () => {
       existingTestFiles: ["packages/engine/src/bar.test.ts"],
     });
     const result = deriveFileScopedPnpmTestCommand("/tmp/root", "main", "fusion/fn-1");
-    expect(result).toContain(`"src/bar.test.ts"`);
+    expect(result).toContain(`'src/bar.test.ts'`);
   });
 
   it("excludes a changed source file with no co-located test", () => {
@@ -141,9 +141,9 @@ describe("deriveFileScopedPnpmTestCommand", () => {
     expect(result).toContain(" && ");
     // Package roots are sorted, so dashboard precedes engine.
     expect(result).toBe(
-      `pnpm --filter "@fusion/dashboard" exec vitest run "src/__tests__/b.test.ts" --silent=passed-only --reporter=dot` +
+      `pnpm --filter '@fusion/dashboard' exec vitest run 'src/__tests__/b.test.ts' --silent=passed-only --reporter=dot` +
         ` && ` +
-        `pnpm --filter "@fusion/engine" exec vitest run "src/__tests__/a.test.ts" --silent=passed-only --reporter=dot`,
+        `pnpm --filter '@fusion/engine' exec vitest run 'src/__tests__/a.test.ts' --silent=passed-only --reporter=dot`,
     );
   });
 
@@ -153,7 +153,7 @@ describe("deriveFileScopedPnpmTestCommand", () => {
       existingTestFiles: ["packages/engine/src/__tests__/foo.test.ts"],
     });
     const result = deriveFileScopedPnpmTestCommand("/tmp/root", "main", "fusion/fn-1");
-    const occurrences = (result ?? "").split(`"src/__tests__/foo.test.ts"`).length - 1;
+    const occurrences = (result ?? "").split(`'src/__tests__/foo.test.ts'`).length - 1;
     expect(occurrences).toBe(1);
   });
 
@@ -199,7 +199,7 @@ describe("inferDefaultTestCommand — scopeToChangedFiles", () => {
     );
     expect(result?.testSource).toBe("inferred-scoped");
     expect(result?.command).toBe(
-      `pnpm --filter "@fusion/engine" exec vitest run "src/__tests__/foo.test.ts" --silent=passed-only --reporter=dot`,
+      `pnpm --filter '@fusion/engine' exec vitest run 'src/__tests__/foo.test.ts' --silent=passed-only --reporter=dot`,
     );
   });
 
@@ -251,6 +251,6 @@ describe("inferDefaultTestCommand — scopeToChangedFiles", () => {
       true,
     );
     expect(result?.testSource).toBe("inferred-scoped");
-    expect(result?.command).toContain(`exec vitest run "src/__tests__/foo.test.ts"`);
+    expect(result?.command).toContain(`exec vitest run 'src/__tests__/foo.test.ts'`);
   });
 });

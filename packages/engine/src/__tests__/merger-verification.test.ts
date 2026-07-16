@@ -2987,10 +2987,10 @@ describe("inferDefaultTestCommand — pnpm workspace scoping", () => {
     });
 
     const result = inferDefaultTestCommand("/tmp/root", undefined, undefined, "main", "fusion/fn-123");
-    expect(result?.command).toBe(`pnpm --filter "@fusion/dashboard...^" test`);
+    expect(result?.command).toBe(`pnpm --filter '@fusion/dashboard...^' test`);
     expect(result?.testSource).toBe("inferred-scoped");
     expect(mockedExecSync).toHaveBeenCalledWith(
-      'git diff --name-only "main"..."fusion/fn-123"',
+      "git diff --name-only 'main'...'fusion/fn-123'",
       expect.objectContaining({ cwd: "/tmp/root", encoding: "utf-8" }),
     );
   });
