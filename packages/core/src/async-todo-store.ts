@@ -183,11 +183,14 @@ export async function createTodoItem(
   handle: QueryHandle,
   item: { id: string; listId: string; text: string; completed: boolean; completedAt: string | null; sortOrder: number | undefined; createdAt: string; updatedAt: string },
 ): Promise<TodoItem> {
-  // FNXC:MultiProjectIsolation 2026-07-15-23:40: existence check only — the item's
-  // project_id partition is assigned by the fusion_assign_project_id trigger from the
-  // session GUC, matching the list's partition, so the composite FK always holds.
+  // FNXC:MultiProjectIsolation 2026-07-16-00:10: read the parent list's project_id
+  // partition (NOT owner_project_id) so the item explicitly inherits it. The ambient
+  // fusion.project_id GUC is not guaranteed to match the list's partition — unbound or
+  // RLS-bypass handles can read a list from any partition, and letting the trigger stamp
+  // the GUC would put the item in a different partition and break the composite
+  // (project_id, list_id) FK with SQLSTATE 23503.
   const listRows = await handle
-    .select({ id: schema.project.todoLists.id })
+    .select({ id: schema.project.todoLists.id, projectId: schema.project.todoLists.projectId })
     .from(schema.project.todoLists)
     .where(eq(schema.project.todoLists.id, item.listId))
     .limit(1);
@@ -201,6 +204,10 @@ export async function createTodoItem(
     sortOrder = (maxRows[0]?.maxSortOrder ?? -1) + 1;
   }
   await handle.insert(schema.project.todoItems).values({
+    // FNXC:MultiProjectIsolation 2026-07-16-00:10: explicit non-blank project_id is safe —
+    // the assign trigger only rewrites blanks, and RLS WITH CHECK holds because a bound
+    // session can only have read a parent list from its own partition.
+    projectId: listRows[0].projectId,
     id: item.id,
     listId: item.listId,
     text: item.text,

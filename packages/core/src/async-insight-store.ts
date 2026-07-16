@@ -317,15 +317,24 @@ export async function appendInsightRunEvent(
   let seq = 1;
   const createdAt = new Date().toISOString();
   await layer.transactionImmediate(async (tx) => {
-    // FNXC:MultiProjectIsolation 2026-07-15-23:40: existence check only — the child's
-    // project_id partition is assigned by the fusion_assign_project_id trigger from the
-    // session GUC, matching the parent run's partition, so the composite FK always holds.
+    // FNXC:MultiProjectIsolation 2026-07-16-09:10: read the parent run's PARTITION column
+    // (projectId, not ownerProjectId) and stamp it explicitly on the child event insert.
+    // The ambient fusion.project_id GUC is not guaranteed to match the parent's partition —
+    // unbound/bypass handles (tests, admin, maintenance) would otherwise get the trigger's
+    // default (__legacy_unscoped__ or another ambient partition) and fail the composite
+    // (project_id, run_id) FK with SQLSTATE 23503. The trigger only rewrites blank values,
+    // so an explicit non-blank project_id is preserved, and RLS WITH CHECK still passes for
+    // bound sessions (they can only read their own partition's parent run anyway).
     const runRows = await tx
-      .select({ id: schema.project.projectInsightRuns.id })
+      .select({
+        id: schema.project.projectInsightRuns.id,
+        projectId: schema.project.projectInsightRuns.projectId,
+      })
       .from(schema.project.projectInsightRuns)
       .where(eq(schema.project.projectInsightRuns.id, input.runId))
       .limit(1);
     if (!runRows[0]) throw new Error(`Insight run not found: ${input.runId}`);
+    const parentPartitionId = runRows[0].projectId as string;
     const seqRows = await tx
       .select({ nextSeq: sql<number>`coalesce(max(${schema.project.projectInsightRunEvents.seq}), 0) + 1` })
       .from(schema.project.projectInsightRunEvents)
@@ -333,6 +342,7 @@ export async function appendInsightRunEvent(
     seq = Number(seqRows[0]?.nextSeq ?? 1);
     await tx.insert(schema.project.projectInsightRunEvents).values({
       id: input.id,
+      projectId: parentPartitionId,
       runId: input.runId,
       seq,
       type: input.type,
