@@ -1,0 +1,40 @@
+{
+  "name": "@fusion-plugin-examples/quality",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Quality hub and Task QA surfaces for Fusion",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./dashboard-view": {
+      "types": "./src/dashboard-view.tsx",
+      "import": "./src/dashboard-view.tsx"
+    },
+    "./qa-tab": {
+      "types": "./src/qa-tab.tsx",
+      "import": "./src/qa-tab.tsx"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "pretest": "node ../../scripts/ensure-test-artifacts.mjs",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*",
+    "lucide-react": "^0.542.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.5.2",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  }
+}

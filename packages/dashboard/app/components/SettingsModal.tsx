@@ -592,6 +592,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   todoView: "Todo List",
   researchView: "Research View",
   evalsView: "Evals View",
+  qualityPlugin: "Quality Plugin",
   goalsView: "Goals View",
   /* FNXC:QuickAddSubtaskFlag 2026-06-21-00:00: The AI subtask-breakdown quick-add affordance is exposed only through this default-off experimental flag so missing settings keep every quick-add Subtask button hidden. */
   subtaskBreakdown: "Subtask Breakdown",

@@ -107,6 +107,7 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-omp-runtime",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-compound-engineering",
+  "fusion-plugin-quality",
 ]);
 
 function extractBundledPluginId(pathInput: string): string | null {

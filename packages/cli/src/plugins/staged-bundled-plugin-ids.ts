@@ -23,4 +23,5 @@ export const ALL_STAGED_BUNDLED_IDS = [
   "fusion-plugin-reports",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-linear-import",
+  "fusion-plugin-quality",
 ] as const;

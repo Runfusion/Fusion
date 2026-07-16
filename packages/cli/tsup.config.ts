@@ -64,6 +64,8 @@ const cliPrintingPressPluginSrc = join(__dirname, "..", "..", "plugins", "fusion
 const cliPrintingPressPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-cli-printing-press");
 const compoundEngineeringPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-compound-engineering");
 const compoundEngineeringPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-compound-engineering");
+const qualityPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-quality");
+const qualityPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-quality");
 const linearImportPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-linear-import");
 const linearImportPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-linear-import");
 const pluginSdkCoreRuntimeShim = join(__dirname, "src", "plugin-sdk-core-runtime-shim.mjs");
@@ -507,6 +509,12 @@ const cliBuildConfig = {
       pluginId: "fusion-plugin-linear-import",
       srcDir: linearImportPluginSrc,
       destDir: linearImportPluginDest,
+    });
+
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-quality",
+      srcDir: qualityPluginSrc,
+      destDir: qualityPluginDest,
     });
 
     await bundlePluginEntry({

@@ -177,6 +177,18 @@ export const BUILTIN_PLUGINS: BuiltinPlugin[] = [
     path: "./plugins/fusion-plugin-compound-engineering",
   },
   /*
+  FNXC:Quality 2026-07-14-21:50:
+  Quality is a bundled first-party plugin (Task QA tab + Quality hub). Register in Plugin Manager
+  so operators can enable/manage it like other built-in integrations.
+  */
+  {
+    id: "fusion-plugin-quality",
+    name: "Quality",
+    description: "Task QA tab and Quality hub: preview servers, test runs, reports, screenshots, and suggested cases.",
+    category: "integration",
+    path: "./plugins/fusion-plugin-quality",
+  },
+  /*
    * FNXC:PluginManager 2026-07-02-17:56:
    * FN-7454 keeps Linear Import in the built-in catalog because FN-7443 shipped the plugin package, registry entry, and dashboard view, but users still could not install or manage it from Plugin Manager without this bundled-plugin registration.
    */

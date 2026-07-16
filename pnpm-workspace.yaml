@@ -45,4 +45,5 @@ packages:
   - "plugins/fusion-plugin-even-realities-glasses"
   - "plugins/fusion-plugin-reports"
   - "plugins/fusion-plugin-compound-engineering"
+  - "plugins/fusion-plugin-quality"
   - "plugins/fusion-plugin-linear-import"

@@ -161,6 +161,18 @@ export default defineConfig({
         __dirname,
         "../../plugins/fusion-plugin-linear-import/src/index.ts",
       ),
+      "@fusion-plugin-examples/quality/dashboard-view": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-quality/src/dashboard-view.tsx",
+      ),
+      "@fusion-plugin-examples/quality/qa-tab": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-quality/src/qa-tab.tsx",
+      ),
+      "@fusion-plugin-examples/quality": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-quality/src/index.ts",
+      ),
     },
   },
   optimizeDeps: {

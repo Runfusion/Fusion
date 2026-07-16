@@ -2,7 +2,11 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
-import { resolvePluginSlotComponent, type PluginSlotHostActions } from "../plugins/pluginSlotRegistry";
+import {
+  resolvePluginSlotComponent,
+  type PluginSlotHostActions,
+  type PluginSlotTaskContext,
+} from "../plugins/pluginSlotRegistry";
 import "./PluginSlot.css";
 
 interface PluginSlotProps {
@@ -16,6 +20,10 @@ interface PluginSlotProps {
   renderPlaceholder?: boolean;
   /** Optional host-controlled callbacks that slot components can call */
   actions?: PluginSlotHostActions;
+  /** Optional task context for task-detail-tab and similar surfaces */
+  context?: PluginSlotTaskContext;
+  taskId?: string;
+  worktree?: string;
 }
 
 function PluginSlotMissingComponent({ slotId, pluginId }: { slotId: string; pluginId: string }): ReactNode {
@@ -41,7 +49,16 @@ function PluginSlotMissingComponent({ slotId, pluginId }: { slotId: string; plug
 /**
  * Renders plugin slot registrations for a host surface.
  */
-export function PluginSlot({ slotId, projectId, pluginIds, renderPlaceholder = true, actions }: PluginSlotProps): ReactNode {
+export function PluginSlot({
+  slotId,
+  projectId,
+  pluginIds,
+  renderPlaceholder = true,
+  actions,
+  context,
+  taskId,
+  worktree,
+}: PluginSlotProps): ReactNode {
   const { getSlotsForId, loading, error } = usePluginUiSlots(projectId);
 
   if (loading || error || !slotId) {
@@ -56,6 +73,13 @@ export function PluginSlot({ slotId, projectId, pluginIds, renderPlaceholder = t
     return null;
   }
 
+  const resolvedContext: PluginSlotTaskContext = {
+    ...context,
+    projectId: context?.projectId ?? projectId,
+    taskId: context?.taskId ?? taskId,
+    worktree: context?.worktree ?? worktree,
+  };
+
   return (
     <ErrorBoundary level="page">
       <>
@@ -64,7 +88,17 @@ export function PluginSlot({ slotId, projectId, pluginIds, renderPlaceholder = t
           const SlotComponent = resolvePluginSlotComponent(entry);
 
           if (SlotComponent) {
-            return <SlotComponent key={key} entry={entry} actions={actions} />;
+            return (
+              <SlotComponent
+                key={key}
+                entry={entry}
+                actions={actions}
+                context={resolvedContext}
+                taskId={resolvedContext.taskId}
+                worktree={resolvedContext.worktree}
+                projectId={resolvedContext.projectId}
+              />
+            );
           }
 
           if (!renderPlaceholder) {

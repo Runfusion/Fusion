@@ -5103,10 +5103,24 @@ export function TaskDetailContent({
             />
           ) : activePluginTab ? (
             <div className="detail-section">
+              {/*
+              FNXC:Quality 2026-07-14-21:50:
+              Pass task context into plugin task-detail tabs so Quality QA (and future tabs)
+              can scope worktree runs, preview servers, and suggestions without URL scraping.
+              */}
               <PluginSlot
                 slotId="task-detail-tab"
                 projectId={projectId}
                 pluginIds={[activePluginTab.entry.pluginId]}
+                taskId={task.id}
+                worktree={typeof task.worktree === "string" ? task.worktree : undefined}
+                context={{
+                  taskId: task.id,
+                  projectId,
+                  worktree: typeof task.worktree === "string" ? task.worktree : undefined,
+                  title: task.title,
+                  modifiedFiles: Array.isArray(task.modifiedFiles) ? task.modifiedFiles : undefined,
+                }}
               />
             </div>
           ) : activeTab === "stats" ? (

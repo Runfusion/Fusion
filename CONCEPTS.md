@@ -224,6 +224,24 @@ The server-derived `canInstall` flag for a Plugin Registry Entry. `canInstall: t
 ### Workflow Extension
 A plugin-contributed workflow capability registered through the engine rather than hardcoded into core workflow logic: column metadata, movement policies, column work engines, workflow node handlers, task verdict providers, or merge-routing facts. A Workflow Extension is opt-in by workflow metadata and must degrade or park by an explicit fallback policy when its plugin is disabled or missing, preserving the Default workflow baseline when no extension is active.
 
+### Quality Hub
+The project-wide Quality plugin dashboard destination (left sidebar on desktop; More sheet on mobile) for test dashboards, test plans, orchestrated test runs, and read-only CI status. Quality Hub runs are advisory visualization/orchestration — they do not redefine or replace the Merge Gate.
+
+### Test Plan (Quality)
+A project-scoped, ordered list of allowlisted verification presets (and optional browser/agent QA references) owned by the Quality plugin. Distinct from agent planning sessions or mission planning artifacts; operators author and run these from the Quality Hub.
+
+### Test Run (Quality)
+A single supervised execution of a Quality preset or plan step, with lifecycle status (queued → running → passed|failed|timed_out|cancelled|error), cwd policy, truncated logs, and optional task/plan linkage. Separate from engine `fn_run_verification` runs, though it may orchestrate the same underlying commands.
+
+### Task QA Tab
+A task-detail plugin tab (`task-detail-tab`) for human-friendly task quality work: start a task-scoped preview/test server, run targeted tests and view reports, browse screenshots/visual evidence (task artifacts and design-preview), review suggested test cases, see PR check status, and hand off into browser-verification / agent QA. Complements the Quality Hub with worktree-local verification rather than replacing workflow review/merge.
+
+### Task Preview Server
+A Quality/Dev-Server–backed process started for a single Task’s worktree so operators can exercise the change in a browser. Distinct from the project-level Dev Server view: same process safety rules (supervised spawn, free port, never 4040), but session identity and default cwd are task-scoped.
+
+### Suggested Test Cases (Quality)
+An advisory checklist of what to verify for a Task, generated from the task prompt, file scope/modified files, and optional AI enrichment. Not a merge gate and not a substitute for automated tests; operators tick, copy, or run related targeted tests from the Task QA Tab.
+
 ## Workflow columns & traits
 
 *Controlled by the default-on `experimentalFeatures.workflowColumns` flag. With an explicit flag-off override, the legacy fixed pipeline (the closed column enum + `VALID_TRANSITIONS`) is authoritative and unchanged.*
