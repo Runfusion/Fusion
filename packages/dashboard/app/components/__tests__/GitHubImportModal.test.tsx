@@ -229,6 +229,121 @@ describe("GitHubImportModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /Select pull request #81/i }));
   };
 
+  describe("PR checks refresh", () => {
+    const pullOne = mockPulls[0];
+    const pullTwo = mockPulls[1];
+    const initialDetail = {
+      checks: [{ name: "build", status: "in_progress" }],
+      comments: [{ author: "octocat", body: "Pending build comment", createdAt: "2026-07-16T00:00:00Z", authorIsBot: false }],
+    };
+    const refreshedDetail = {
+      checks: [{ name: "build", status: "completed", conclusion: "success" }],
+      comments: [{ author: "octocat", body: "Build passed comment", createdAt: "2026-07-16T00:01:00Z", authorIsBot: false }],
+    };
+
+    const renderPullPreview = async (presentation: "modal" | "embedded" = "modal") => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([{ name: "origin", owner: "owner", repo: "repo", url: "" }]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([pullOne, pullTwo]);
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" presentation={presentation} />);
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      await screen.findByText("Test PR");
+    };
+
+    it.each(["modal", "embedded"] as const)("renders a reachable refresh button in %s presentation", async (presentation) => {
+      await renderPullPreview(presentation);
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+
+      expect(await screen.findByTestId("github-import-pr-checks-refresh")).toHaveAccessibleName("Refresh checks");
+    });
+
+    it("keeps the checks heading responsive at the mobile breakpoint", () => {
+      const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+      expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.github-import-pr-checks__heading-row\s*\{[\s\S]*flex-wrap: wrap;/);
+    });
+
+    it("bypasses cached detail on refresh and caches the refreshed checks and comments", async () => {
+      vi.mocked(apiFetchGitHubPullDetail)
+        .mockResolvedValueOnce(initialDetail)
+        .mockResolvedValueOnce({ comments: [], checks: [] })
+        .mockResolvedValueOnce(refreshedDetail);
+      await renderPullPreview();
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      expect(await screen.findByText("Pending build comment")).toBeTruthy();
+      expect(apiFetchGitHubPullDetail).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #2/i }));
+      await screen.findByTestId("github-import-pr-checks-empty");
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      expect(await screen.findByText("Pending build comment")).toBeTruthy();
+      expect(apiFetchGitHubPullDetail).toHaveBeenCalledTimes(2);
+
+      fireEvent.click(screen.getByTestId("github-import-pr-checks-refresh"));
+      expect(await screen.findByText("Build passed comment")).toBeTruthy();
+      expect(screen.getByText("success")).toBeTruthy();
+      expect(apiFetchGitHubPullDetail).toHaveBeenCalledTimes(3);
+
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #2/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      expect(await screen.findByText("Build passed comment")).toBeTruthy();
+      expect(apiFetchGitHubPullDetail).toHaveBeenCalledTimes(3);
+    });
+
+    it("disables refresh with a spinner while loading, then surfaces errors and permits retry", async () => {
+      let resolveRefresh!: (detail: typeof refreshedDetail) => void;
+      vi.mocked(apiFetchGitHubPullDetail)
+        .mockResolvedValueOnce(initialDetail)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }))
+        .mockRejectedValueOnce(new Error("GitHub checks unavailable"))
+        .mockResolvedValueOnce(refreshedDetail);
+      await renderPullPreview();
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      await screen.findByText("Pending build comment");
+
+      const refresh = screen.getByTestId("github-import-pr-checks-refresh");
+      fireEvent.click(refresh);
+      expect(refresh).toBeDisabled();
+      expect(refresh.querySelector(".spin")).toBeTruthy();
+      await act(async () => { resolveRefresh(refreshedDetail); });
+      await screen.findByText("Build passed comment");
+      expect(refresh).not.toBeDisabled();
+
+      fireEvent.click(refresh);
+      expect(await screen.findByTestId("github-import-pr-checks-error")).toHaveTextContent("GitHub checks unavailable");
+      expect(refresh).not.toBeDisabled();
+      fireEvent.click(refresh);
+      expect(await screen.findByText("Build passed comment")).toBeTruthy();
+    });
+
+    it("drops a stale refresh response from state and cache", async () => {
+      let resolveStaleRefresh!: (detail: typeof initialDetail) => void;
+      vi.mocked(apiFetchGitHubPullDetail)
+        .mockResolvedValueOnce(initialDetail)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleRefresh = resolve; }))
+        .mockResolvedValueOnce(refreshedDetail)
+        .mockResolvedValueOnce({ checks: [{ name: "fresh", status: "completed", conclusion: "success" }], comments: [{ author: "octocat", body: "Fresh reselected comment", createdAt: "2026-07-16T00:02:00Z", authorIsBot: false }] });
+      await renderPullPreview();
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      await screen.findByText("Pending build comment");
+      fireEvent.click(screen.getByTestId("github-import-pr-checks-refresh"));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #2/i }));
+      expect(await screen.findByText("Build passed comment")).toBeTruthy();
+
+      await act(async () => { resolveStaleRefresh(initialDetail); });
+      expect(screen.getByText("Build passed comment")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
+      expect(await screen.findByText("Fresh reselected comment")).toBeTruthy();
+      expect(apiFetchGitHubPullDetail).toHaveBeenCalledTimes(4);
+    });
+
+    it("does not render a refresh shell without a selected PR or on the issues tab", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([{ name: "origin", owner: "owner", repo: "repo", url: "" }]);
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+      expect(screen.queryByTestId("github-import-pr-checks-refresh")).toBeNull();
+      await screen.findByRole("tab", { name: "Issues" });
+      expect(screen.queryByTestId("github-import-pr-checks-refresh")).toBeNull();
+    });
+  });
+
   describe("failed PR check fix tasks", () => {
     const checkVariants = [
       { name: "failure", status: "completed", conclusion: "failure", detailsUrl: "https://github.com/owner/repo/runs/1" },

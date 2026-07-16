@@ -297,6 +297,9 @@ const SETTINGS_NAV_MAX_WIDTH = 420;
 /*
 FNXC:SettingsSimplification 2026-07-10-23:24:
 Settings opens in a focused mode that omits specialist integration, runtime, diagnostics, and infrastructure sections. The Advanced settings switch restores every section, applies consistently to desktop navigation, mobile navigation, and search, and persists only as a browser-local display preference so it never changes or exports project settings.
+
+FNXC:SettingsNavigation 2026-07-16-12:00:
+FN-8128 returns CLI Binary to the default Settings view. It is deliberately absent from this Advanced-only set so desktop navigation, the mobile picker, and search expose binary install and diagnostic controls without requiring the browser-local Advanced preference.
 */
 const ADVANCED_SETTINGS_SECTION_IDS = new Set([
   "node-sync",
@@ -318,7 +321,6 @@ const ADVANCED_SETTINGS_SECTION_IDS = new Set([
   "mcp",
   "prompts",
   "plugins",
-  "cli-binary",
 ]);
 
 function readAdvancedSettingsPreference(): boolean {
@@ -462,12 +464,23 @@ function resolveMaxAutoMergeRetriesForSettingsForm(settings?: { maxAutoMergeRetr
   return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 3;
 }
 
+/** FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: zero is an intentional project setting that disables retries/backoff, so do not use a truthy fallback when normalizing the form. */
+function resolveNonNegativeExecutorToolFailureSetting(value: unknown, fallback: number): number {
+  const configured = Number(value);
+  return Number.isFinite(configured) && configured >= 0 ? Math.floor(configured) : fallback;
+}
+
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "__preferences_header", label: "Preferences", labelKey: "settings.nav.preferencesHeader", scope: undefined, isGroupHeader: true },
   { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "task popup", "task popups", "board list popups", "popup view attachment", "open tasks as popups", "quick chat"] },
   { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", labelKey: "settings.nav.keyboardShortcuts", scope: "global", searchableText: ["keyboard shortcuts", "hotkeys", "quick chat shortcut", "terminal shortcut", "open files", "open settings", "command center", "new task shortcut", "record shortcut"] },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global", searchableText: ["ntfy", "webhook", "events", "failure notifications", "sticky", "toast"] },
   { id: "global-general", label: "General · Global", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs"] },
+  /*
+  FNXC:SettingsNavigation 2026-07-16-12:00:
+  FN-8128 keeps the `fn` binary panel as a dedicated section rather than re-inlining machine plumbing at the top of General · Global, while restoring it to the default-visible Global group. Operators need installation, version, path, and diagnostic controls in Basic mode when setup or repair is needed.
+  */
+  { id: "cli-binary", label: "CLI Binary", labelKey: "settings.nav.cliBinary", scope: "global", searchableText: ["fn binary", "cli", "install", "version", "path", "upgrade", "homebrew", "binary check"] },
 
   { id: "__project_header", label: "Project", labelKey: "settings.nav.projectHeader", scope: undefined, isGroupHeader: true },
   /*
@@ -483,9 +496,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "__ai_header", label: "AI & Models", labelKey: "settings.nav.aiHeader", scope: undefined, isGroupHeader: true },
   /*
   FNXC:SettingsNavigation 2026-07-16-01:30:
-  Authentication leads the AI & Models group, and Settings still opens on it.
-  It is a provider-credentials screen, so it belongs with the model settings it gates rather than under Integrations (where it sat among MCP/Plugins/runtimes) or floating above the groups as a special case — connecting a provider and choosing its models are one task, done in that order.
+  Authentication leads the AI & Models group. It is a provider-credentials screen, so it belongs with the model settings it gates rather than under Integrations (where it sat among MCP/Plugins/runtimes) or floating above the groups as a special case — connecting a provider and choosing its models are one task, done in that order.
   First within the group because nothing else in AI & Models can be configured until it is done: with no provider connected there are no models to pick.
+
+  FNXC:SettingsNavigation 2026-07-16-13:40:
+  FN-8130 changes the Settings landing surface from Authentication to Appearance. Authentication remains first within its own AI & Models group, but the always-visible global Preferences section is the default instead.
   */
   { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
   { id: "global-models", label: "Models · Global", labelKey: "settings.nav.globalModels", scope: "global", searchableText: ["global models", "model presets", "favorite providers", "model pricing overrides", "LiteLLM pricing", "token pricing", "translate", "translation model", "import translation model", "import auto-translation model"] },
@@ -636,11 +651,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 
   { id: "__advanced_header", label: "Advanced", labelKey: "settings.nav.advancedHeader", scope: undefined, isGroupHeader: true },
   { id: "experimental", label: "Experimental Features", labelKey: "settings.nav.experimental", scope: "global", searchableText: ["feature flags", "experiments", "research view", "evals view", "sandbox", "subtask breakdown"] },
-  /*
-  FNXC:SettingsNavigation 2026-07-16-01:00:
-  Last entry in the nav, and advanced-only. The `fn` binary panel used to render at the TOP of "General · Global", so machine plumbing was the first thing an operator saw on opening Settings. It is install/version/path maintenance touched once or when something breaks — the definition of what the Advanced switch hides.
-  */
-  { id: "cli-binary", label: "CLI Binary", labelKey: "settings.nav.cliBinary", scope: "global", searchableText: ["fn binary", "cli", "install", "version", "path", "upgrade", "homebrew", "binary check"] },
 ];
 
 // FNXC:SettingsNavigation 2026-07-04-00:00: sectionId -> owning group label ("Global"/"Runtimes"/"Project"),
@@ -773,10 +783,12 @@ export type SectionId = SettingsSection["id"] | LegacySectionId;
 
 /*
 FNXC:SettingsNavigation 2026-07-16-01:00:
-Settings opens on Authentication. It is the section an operator actually needs first — nothing else in the product works until a provider is connected, and the dashboard's own empty state points here ("Set one up in Settings → AI Setup"). The previous landing section was "General · Global", a page of app preferences (and, until this change, the `fn` binary panel) that nobody opens Settings to find.
-It is also always visible: Authentication is not behind the Advanced switch, so the default landing section cannot be one the operator has hidden.
+Authentication was the previous Settings landing section because a provider connection gates model configuration. It remains first within AI & Models, but no longer determines the modal default.
+
+FNXC:SettingsNavigation 2026-07-16-13:40:
+FN-8130 requires Settings to open on Appearance, the global Preferences section, when no explicit initialSection is supplied. Appearance is always visible — it is not behind the Advanced switch — so the default can never land on a section hidden from the operator's navigation.
 */
-const DEFAULT_SETTINGS_SECTION: SectionId = "authentication";
+const DEFAULT_SETTINGS_SECTION: SectionId = "appearance";
 
 type PluginsSubsectionId = "fusion-plugins" | "pi-extensions";
 
@@ -788,7 +800,7 @@ interface SettingsModalProps {
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
   projectId?: string;
-  /** Optional section to show when the modal first opens. Defaults to the global General section. */
+  /** Optional section to show when the modal first opens. Defaults to the global Appearance section. */
   initialSection?: SectionId;
   /** Current theme mode */
   themeMode?: ThemeMode;
@@ -1125,6 +1137,9 @@ export function SettingsModal({
     planApprovalMode: "auto-approve-all",
     mergeStrategy: "direct",
     maxAutoMergeRetries: 3,
+    executorToolFailureRetryCount: 2,
+    executorToolFailureRetryBackoffMs: 2000,
+    executorToolFailureThreshold: 3,
     mergeIntegrationWorktree: "reuse-task-worktree",
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
@@ -1706,6 +1721,9 @@ export function SettingsModal({
           mergeIntegrationWorktree: normalizeMergeIntegrationWorktreeMode(s.mergeIntegrationWorktree),
           mergeAdvanceAutoSync: normalizeMergeAdvanceAutoSyncMode(s.mergeAdvanceAutoSync),
           maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(s),
+          executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryCount, 2),
+          executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryBackoffMs, 2000),
+          executorToolFailureThreshold: Math.max(1, Math.floor(Number(s.executorToolFailureThreshold ?? 3) || 3)),
           worktreeCopyFiles: Array.isArray(s.worktreeCopyFiles) ? s.worktreeCopyFiles : [],
         };
         setForm(normalizedSettings);
@@ -3319,6 +3337,9 @@ export function SettingsModal({
           onFailure: form.worktrunk?.onFailure ?? "fail",
         },
         maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(form),
+        executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(form.executorToolFailureRetryCount, 2),
+        executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(form.executorToolFailureRetryBackoffMs, 2000),
+        executorToolFailureThreshold: Math.max(1, Math.floor(Number(form.executorToolFailureThreshold ?? 3) || 3)),
         taskPrefix: form.taskPrefix?.trim() || undefined,
         githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
         /*

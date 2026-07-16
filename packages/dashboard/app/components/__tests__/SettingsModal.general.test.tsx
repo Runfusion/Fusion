@@ -285,10 +285,12 @@ describe("SettingsModal", () => {
 
   /*
   FNXC:SettingsNavigation 2026-07-16-01:10:
-  Settings opens on Authentication, not "General · Global". Nothing else in the product works until a provider is connected — the dashboard's own empty state sends operators to Settings for exactly this — whereas the old landing section was app preferences nobody opens Settings to find.
-  Authentication is also not behind the Advanced switch, so the landing section can never be one the operator has hidden; that is asserted here rather than left implicit.
+  Authentication was the previous default; FN-8130 requires Settings to open on Appearance, the global Preferences section, when no explicit initialSection is supplied.
+
+  FNXC:SettingsNavigation 2026-07-16-13:40:
+  Appearance is not behind the Advanced switch, so the landing section can never be one the operator has hidden; that is asserted here rather than left implicit.
   */
-  it("defaults to the Authentication section when no initialSection is provided", async () => {
+  it("defaults to the Appearance section when no initialSection is provided", async () => {
     render(
       <SettingsModal
         onClose={noop}
@@ -297,14 +299,13 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     /*
     FNXC:SettingsNavigation 2026-07-16-01:30:
-    Asserts the landing section is REACHABLE, not that it is first in the nav: Authentication leads the AI & Models group (it belongs with the model settings it gates), so nav position is a layout choice that may move again.
-    What must hold is that the section Settings opens on is never one the Advanced switch hides — otherwise a default-configured operator lands on a section their own nav does not list.
+    The test asserts a reachable concrete landing surface rather than nav position. Appearance is in the Preferences group, and its placement may change, but the section Settings opens on must never be one the Advanced switch hides.
     */
     expect(screen.getByRole("checkbox", { name: "Advanced settings" })).not.toBeChecked();
-    expect(screen.getByRole("button", { name: /^Authentication$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Appearance$/ })).toBeInTheDocument();
   });
 
   /*

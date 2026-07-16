@@ -1675,9 +1675,12 @@ describe("SettingsModal", () => {
         expect(screen.queryByRole("button", { name: /Research · Global/i })).not.toBeInTheDocument();
         /*
         FNXC:SettingsNavigation 2026-07-16-01:10:
-        The fallback lands on Authentication, which is the first selectable section and where Settings opens. This asserted "General" back when that was the default landing section; the requirement is unchanged — an unreachable section falls back to the first selectable one — only which section that is has moved.
+        Authentication was the previous default landing section. The fallback requirement is unchanged: an unreachable section falls back to the configured default when it is selectable.
+
+        FNXC:SettingsNavigation 2026-07-16-13:40:
+        FN-8130 makes Appearance the configured default and the first selectable Preferences section, so feature-gated research settings fall back there.
         */
-        expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
       });
 
       it("hides scheduled evals nav item when experimentalFeatures.evalsView is disabled", async () => {
@@ -1714,8 +1717,8 @@ describe("SettingsModal", () => {
         await waitForSettingsModalReady();
 
         expect(screen.queryByRole("button", { name: /Scheduled Evals/i })).not.toBeInTheDocument();
-        // FNXC:SettingsNavigation 2026-07-16-01:10: falls back to Authentication — now the first selectable section and where Settings opens. Same requirement, different landing section.
-        expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
+        // FNXC:SettingsNavigation 2026-07-16-13:40: FN-8130 falls back to Appearance, the configured default and first selectable Preferences section.
+        expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
       });
     });
 

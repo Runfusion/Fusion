@@ -2884,6 +2884,28 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     margin: 0 var(--space-sm) var(--space-sm);
   }
 
+  /*
+  FNXC:SettingsLayout 2026-07-16-12:34:
+  On mobile, auth-panel provider cards and their hint and group-label siblings must share the
+  Authentication section header's left edge. Remove the stacked panel/card horizontal inset only
+  inside .auth-panel-body so Custom Provider cards outside the panel keep their existing gutter.
+  */
+  .auth-panel-body {
+    padding-inline: 0;
+  }
+
+  .auth-panel-body .auth-section-hint {
+    margin: 0 0 var(--space-sm);
+  }
+
+  .auth-panel-body .auth-group-label {
+    padding: 0;
+  }
+
+  .auth-panel-body .auth-provider-card {
+    margin: 0 0 var(--space-sm);
+  }
+
   .auth-provider-header {
     flex-wrap: wrap;
     padding: var(--space-sm);

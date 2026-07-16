@@ -1021,6 +1021,12 @@ export {
   DEFAULT_STALE_MERGING_MIN_AGE_MS,
   DEFAULT_MAX_AUTO_MERGE_RETRIES,
   resolveMaxAutoMergeRetries,
+  DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES,
+  DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS,
+  CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD,
+  resolveMaxConsecutiveToolFailureRetries,
+  resolveConsecutiveToolFailureRetryBackoffMs,
+  resolveConsecutiveToolFailureThreshold,
 } from "./in-review-stall.js";
 export type { InReviewStallSignal, InReviewStallCode, ProviderErrorClassification } from "./in-review-stall.js";
 export {
@@ -1357,8 +1363,17 @@ export {
   syncBackupAutomation,
   syncBackupRoutine,
   BACKUP_SCHEDULE_NAME,
+  resolveBackendConnectionString,
 } from "./backup.js";
 export type { BackupInfo, BackupOptions, BackupFileInfo, BackupPairInfo } from "./backup.js";
+export {
+  registerEmbeddedRuntimeUrl,
+  releaseEmbeddedRuntimeLease,
+  invalidateEmbeddedRuntimeUrl,
+  getActiveEmbeddedRuntimeUrl,
+  clearActiveEmbeddedRuntimeUrl,
+} from "./postgres/active-backend-registry.js";
+export type { EmbeddedRuntimeLease } from "./postgres/active-backend-registry.js";
 export {
   MemoryBackupManager,
   createMemoryBackupManager,

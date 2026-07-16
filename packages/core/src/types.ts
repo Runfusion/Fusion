@@ -1613,6 +1613,15 @@ export interface Task {
    *  and by successful forward progress; capped by the executor before terminal
    *  `status:"failed"` is recorded to preserve the FN-5704 anti-loop exemption. */
   graphResumeRetryCount?: number | null;
+  /**
+   * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+   * FN-7996 persists the bounded same-model retry budget for consecutive terminal tool errors. The executor atomically claims it per run cursor so concurrent failures cannot exceed the configured cap.
+   */
+  consecutiveToolFailureRetryCount?: number | null;
+  /** Agent-log boundary captured at executor-run start; only later terminal outcomes qualify. */
+  toolFailureDetectorLogCursor?: number | null;
+  /** Durable compare-and-set marker which permits one exhaustion audit per retry window. */
+  toolFailureRetryExhaustedAuditEmitted?: boolean | null;
   /** Branch tip SHA snapshot captured at the last reclaim/unpause attempt used
    *  by resume-limbo detection to determine whether commits advanced. */
   resumeLimboTipSha?: string;
@@ -3036,6 +3045,13 @@ export interface ProjectSettings {
   /** Maximum number of concurrent AI agents across all activity types
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
+  /**
+   * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+   * Bounded same-model retry before the executor terminal park. Tool markers are ignored, terminal tool_error counts, tool_result resets; per-run cursor claims prevent concurrent over-retry and count 0 preserves prior behavior. Values are floored and the backoff timer is unref'd. FN-7998 consumes this stable policy shape for escalation.
+   */
+  executorToolFailureRetryCount?: number;
+  executorToolFailureRetryBackoffMs?: number;
+  executorToolFailureThreshold?: number;
   /**
    * FNXC:VerificationConcurrency 2026-07-15-03:35:
    * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   __clearExtensionStoreBootStateForTesting,
+  __getStoreForTesting,
   __peekCachedStoreForTesting,
+  __setExtensionStoreBootFactoryForTesting,
   clampImportBrowseLimit,
   clearHostTaskStores,
+  closeCachedStores,
   raceWithTimeoutAndAbort,
   resolveExtensionToolTimeoutMs,
   setHostTaskStore,
@@ -18,7 +21,8 @@ FNXC:MergeQueue 2026-07-15-11:28:
 Host extension research tools are off; budgets cover remaining long host tools only.
 */
 
-afterEach(() => {
+afterEach(async () => {
+  await closeCachedStores();
   __clearExtensionStoreBootStateForTesting();
   clearHostTaskStores();
   vi.restoreAllMocks();
@@ -62,6 +66,88 @@ describe("setHostTaskStore", () => {
     expect(__peekCachedStoreForTesting(root)).toBe(fakeStore);
     clearHostTaskStores(root);
     expect(__peekCachedStoreForTesting(root)).toBeUndefined();
+  });
+});
+
+describe("extension TaskStore resolution", () => {
+  const root = "/tmp/fusion-extension-store-resolution";
+
+  const bootResult = (store: import("@fusion/core").TaskStore) => ({
+    taskStore: store,
+    shutdown: vi.fn(async () => {}),
+  }) as Awaited<ReturnType<typeof import("@fusion/core").createTaskStoreForBackend>>;
+
+  it("shares the host-injected store with a separately evaluated host extension", async () => {
+    /*
+    FNXC:ExtensionStoreRegistry 2026-07-16-15:20:
+    Pi can evaluate the extension separately from the daemon's CLI import. This reproduces the FN-8140 no-host-cache symptom without starting embedded PostgreSQL: a separate copy must see the host store and never invoke its controllable wedged cold boot.
+    */
+    const hostStore = { id: "host-store" } as unknown as import("@fusion/core").TaskStore;
+    setHostTaskStore(root, hostStore);
+
+    vi.resetModules();
+    const isolated = await import("../extension.js");
+    const neverSettles = vi.fn(() => new Promise<never>(() => {}));
+    isolated.__setExtensionStoreBootFactoryForTesting(neverSettles as typeof import("@fusion/core").createTaskStoreForBackend);
+
+    await expect(isolated.__getStoreForTesting(root, 25)).resolves.toBe(hostStore);
+    expect(neverSettles).not.toHaveBeenCalled();
+  });
+
+  it("boots a healthy cold cache once and coalesces concurrent callers", async () => {
+    const store = { id: "cold-store" } as unknown as import("@fusion/core").TaskStore;
+    let resolveBoot: ((value: Awaited<ReturnType<typeof import("@fusion/core").createTaskStoreForBackend>>) => void) | undefined;
+    const factory = vi.fn(() => new Promise<Awaited<ReturnType<typeof import("@fusion/core").createTaskStoreForBackend>>>((resolve) => {
+      resolveBoot = resolve;
+    }));
+    __setExtensionStoreBootFactoryForTesting(factory as typeof import("@fusion/core").createTaskStoreForBackend);
+
+    const first = __getStoreForTesting(`${root}-cold`, 100);
+    const second = __getStoreForTesting(`${root}-cold`, 100);
+    expect(factory).toHaveBeenCalledOnce();
+    resolveBoot!(bootResult(store));
+
+    await expect(Promise.all([first, second])).resolves.toEqual([store, store]);
+  });
+
+  it("does not overwrite a host store injected while a cold boot is inflight", async () => {
+    const coldStore = { id: "cold-store" } as unknown as import("@fusion/core").TaskStore;
+    const hostStore = { id: "late-host-store" } as unknown as import("@fusion/core").TaskStore;
+    let resolveBoot: ((value: Awaited<ReturnType<typeof import("@fusion/core").createTaskStoreForBackend>>) => void) | undefined;
+    const shutdown = vi.fn(async () => {});
+    __setExtensionStoreBootFactoryForTesting((() => new Promise((resolve) => {
+      resolveBoot = resolve;
+    })) as typeof import("@fusion/core").createTaskStoreForBackend);
+    const inflightRoot = `${root}-late-host`;
+
+    const waiting = __getStoreForTesting(inflightRoot, 100);
+    setHostTaskStore(inflightRoot, hostStore);
+    resolveBoot!({ taskStore: coldStore, shutdown } as Awaited<ReturnType<typeof import("@fusion/core").createTaskStoreForBackend>>);
+
+    await expect(waiting).resolves.toBe(hostStore);
+    expect(__peekCachedStoreForTesting(inflightRoot)).toBe(hostStore);
+    expect(shutdown).toHaveBeenCalledOnce();
+  });
+
+  it("fails a controllable wedged cold boot at the bounded caller budget", async () => {
+    const factory = vi.fn(() => new Promise<never>(() => {}));
+    __setExtensionStoreBootFactoryForTesting(factory as typeof import("@fusion/core").createTaskStoreForBackend);
+    const wedgedRoot = `${root}-wedged`;
+
+    await expect(__getStoreForTesting(wedgedRoot, 20)).rejects.toThrow(/timed out after 20ms/);
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("applies cooldown after a hard cold-boot failure", async () => {
+    const factory = vi.fn(async () => {
+      throw new Error("backend unavailable");
+    });
+    __setExtensionStoreBootFactoryForTesting(factory as typeof import("@fusion/core").createTaskStoreForBackend);
+    const failedRoot = `${root}-failed`;
+
+    await expect(__getStoreForTesting(failedRoot, 100)).rejects.toThrow("backend unavailable");
+    await expect(__getStoreForTesting(failedRoot, 100)).rejects.toThrow(/recently failed/);
+    expect(factory).toHaveBeenCalledOnce();
   });
 });
 

@@ -386,6 +386,8 @@ export default defineConfig({
             // The strict marker parser now receives valid FN ids, so this file is intentionally unquarantined.
             // FNXC:PgMigrationQuarantine 2026-07-16-11:58:
             // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
+            // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
+            // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
             "src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
             "src/__tests__/reliability-interactions/merge-runner-spawn-enoent-prevention.test.ts",
             "src/__tests__/reliability-interactions/meta-chain-auto-close.test.ts",

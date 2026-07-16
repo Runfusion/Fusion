@@ -230,19 +230,38 @@ interface CachedStoreEntry {
   readonly external?: boolean;
 }
 
+/*
+FNXC:ExtensionStoreRegistry 2026-07-16-15:20:
+Agent-read tools loaded through Pi's additionalExtensionPaths can be evaluated as a different ESM module instance from the CLI host that called setHostTaskStore. Keep cache, inflight, and cooldown state in one process registry so fn_list_agents and fn_agent_show reuse the host pool instead of opening a second backend that can wedge on schema/pool contention for 30 seconds.
+*/
+interface ExtensionStoreState {
+  readonly cache: Map<string, CachedStoreEntry>;
+  readonly bootInflight: Map<string, Promise<TaskStore>>;
+  readonly bootFailureCooldown: Map<string, { untilMs: number; error: string }>;
+}
+
+const extensionStoreStateKey = Symbol.for("@runfusion/fusion/extension-store-state");
+const extensionStoreGlobal = globalThis as typeof globalThis & { [key: symbol]: ExtensionStoreState | undefined };
+const extensionStoreState = extensionStoreGlobal[extensionStoreStateKey] ?? {
+  cache: new Map<string, CachedStoreEntry>(),
+  bootInflight: new Map<string, Promise<TaskStore>>(),
+  bootFailureCooldown: new Map<string, { untilMs: number; error: string }>(),
+};
+extensionStoreGlobal[extensionStoreStateKey] = extensionStoreState;
+
 /** Cache stores per project root to avoid re-booting the backend on every tool call. */
-const storeCache = new Map<string, CachedStoreEntry>();
+const storeCache = extensionStoreState.cache;
 /*
 FNXC:MergeQueue 2026-07-15-11:08:
 Concurrent first-call fn_* tools must share one boot promise. Without this, two parallel cache misses each call createTaskStoreForBackend and contend on fusion:schema-applier advisory locks / pool setup — the pattern behind wedged fn_task_show during AI merge.
 */
-const storeBootInflight = new Map<string, Promise<TaskStore>>();
+const storeBootInflight = extensionStoreState.bootInflight;
 /*
 FNXC:MergeQueue 2026-07-15-11:20:
 After a hard boot failure, brief cooldown prevents stampede re-boots against a broken backend.
 Timeout alone does not set cooldown — the orphan inflight may still succeed and populate storeCache.
 */
-const storeBootFailureCooldown = new Map<string, { untilMs: number; error: string }>();
+const storeBootFailureCooldown = extensionStoreState.bootFailureCooldown;
 const BOOT_FAILURE_COOLDOWN_MS = 5_000;
 /*
 FNXC:MergeQueue 2026-07-15-11:08:
@@ -441,7 +460,13 @@ export function wrapExtensionToolExecute<TArgs extends unknown[], TResult>(
 FNXC:MergeQueue 2026-07-15-11:40:
 When dashboard/serve/daemon injects the live engine TaskStore via setHostTaskStore, getStore must never call createTaskStoreForBackend for that project root — dual-boot was the FN-7956 hang class (second pool + schema advisory lock). CLI one-shot sessions without a host store still boot a short-lived cache entry.
 */
-async function getStore(cwd: string, signal?: AbortSignal): Promise<TaskStore> {
+let extensionStoreBootFactory: typeof createTaskStoreForBackend = createTaskStoreForBackend;
+
+async function getStore(
+  cwd: string,
+  signal?: AbortSignal,
+  bootTimeoutMs = EXTENSION_STORE_BOOT_TIMEOUT_MS,
+): Promise<TaskStore> {
   const projectRoot = resolveProjectRoot(cwd);
   const existing = storeCache.get(projectRoot);
   if (existing) return existing.store;
@@ -470,7 +495,7 @@ async function getStore(cwd: string, signal?: AbortSignal): Promise<TaskStore> {
     */
     inflight = (async () => {
       try {
-        const boot = await createTaskStoreForBackend({ rootDir: projectRoot });
+        const boot = await extensionStoreBootFactory({ rootDir: projectRoot });
         storeBootFailureCooldown.delete(projectRoot);
         // Do not overwrite a host-injected external store that landed while we were booting.
         const raced = storeCache.get(projectRoot);
@@ -499,7 +524,7 @@ async function getStore(cwd: string, signal?: AbortSignal): Promise<TaskStore> {
   try {
     return await raceWithTimeoutAndAbort(
       inflight,
-      EXTENSION_STORE_BOOT_TIMEOUT_MS,
+      bootTimeoutMs,
       effectiveSignal,
       "fn extension TaskStore boot",
     );
@@ -564,6 +589,17 @@ export function __peekCachedStoreForTesting(projectRoot: string): TaskStore | un
 export function __clearExtensionStoreBootStateForTesting(): void {
   storeBootInflight.clear();
   storeBootFailureCooldown.clear();
+  extensionStoreBootFactory = createTaskStoreForBackend;
+}
+
+/** @internal Test-only: control cold-cache boot without starting embedded PostgreSQL. */
+export function __setExtensionStoreBootFactoryForTesting(factory?: typeof createTaskStoreForBackend): void {
+  extensionStoreBootFactory = factory ?? createTaskStoreForBackend;
+}
+
+/** @internal Test-only: exercise the same cache/inflight resolution seam with a bounded test budget. */
+export function __getStoreForTesting(cwd: string, bootTimeoutMs = EXTENSION_STORE_BOOT_TIMEOUT_MS): Promise<TaskStore> {
+  return getStore(cwd, undefined, bootTimeoutMs);
 }
 
 /**

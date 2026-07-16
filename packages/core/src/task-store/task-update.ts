@@ -365,6 +365,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.graphResumeRetryCount !== undefined) {
         task.graphResumeRetryCount = updates.graphResumeRetryCount;
       }
+      if (updates.consecutiveToolFailureRetryCount === null) task.consecutiveToolFailureRetryCount = null;
+      else if (updates.consecutiveToolFailureRetryCount !== undefined) task.consecutiveToolFailureRetryCount = updates.consecutiveToolFailureRetryCount;
+      if (updates.toolFailureDetectorLogCursor === null) task.toolFailureDetectorLogCursor = null;
+      else if (updates.toolFailureDetectorLogCursor !== undefined) task.toolFailureDetectorLogCursor = updates.toolFailureDetectorLogCursor;
+      if (updates.toolFailureRetryExhaustedAuditEmitted === null) task.toolFailureRetryExhaustedAuditEmitted = null;
+      else if (updates.toolFailureRetryExhaustedAuditEmitted !== undefined) task.toolFailureRetryExhaustedAuditEmitted = updates.toolFailureRetryExhaustedAuditEmitted;
       if (updates.resumeLimboTipSha === null) {
         task.resumeLimboTipSha = undefined;
       } else if (updates.resumeLimboTipSha !== undefined) {

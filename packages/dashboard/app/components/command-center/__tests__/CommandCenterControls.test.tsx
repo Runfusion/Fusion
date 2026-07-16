@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CommandCenterControls } from "../CommandCenterControls";
 import { ConfirmDialogProvider } from "../../../hooks/useConfirm";
 
@@ -34,17 +34,19 @@ const defaultSettings = {
 };
 
 function renderControls(projectId = "proj_123") {
+  const onColorThemeChange = vi.fn();
   render(
     <ConfirmDialogProvider>
       <CommandCenterControls
         projectId={projectId}
         colorTheme="default"
         themeMode="dark"
-        onColorThemeChange={vi.fn()}
+        onColorThemeChange={onColorThemeChange}
         onThemeModeChange={vi.fn()}
       />
     </ConfirmDialogProvider>,
   );
+  return { onColorThemeChange };
 }
 
 function mockGlobalConcurrency(overrides: Partial<{
@@ -83,6 +85,18 @@ describe("CommandCenterControls concurrency markers", () => {
   afterEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
+  });
+
+  it("keeps the Theme card's compact dropdown interactive", () => {
+    const { onColorThemeChange } = renderControls();
+    const themeCard = screen.getByTestId("cc-controls-theme");
+    const trigger = screen.getByRole("button", { name: "Fusion Legacy" });
+
+    expect(themeCard).toContainElement(trigger);
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "Ocean" }));
+
+    expect(onColorThemeChange).toHaveBeenCalledWith("ocean");
   });
 
   // FNXC:GlobalConcurrencyControls 2026-07-15-12:00: FN-8007 requires dashboard markers to use the exact native-thumb coordinate system when the expanded range max exceeds the persisted cap.

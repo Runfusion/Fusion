@@ -54,6 +54,9 @@ describe("buildManualRetryResetPatch", () => {
       expect(patch[key]).toBe(0);
     }
     expect(patch.graphResumeRetryCount).toBe(0);
+    expect(patch.consecutiveToolFailureRetryCount).toBe(0);
+    expect(patch.toolFailureDetectorLogCursor).toBeNull();
+    expect(patch.toolFailureRetryExhaustedAuditEmitted).toBe(false);
   });
 
   it("includes all retry-summary counters in the reset key list", () => {

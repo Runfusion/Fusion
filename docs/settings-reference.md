@@ -673,6 +673,9 @@ GitLab configuration examples: leave both URL fields blank for GitLab.com (`http
 | `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
 | `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
 | `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
+
+Database backups work with both external PostgreSQL and Fusion's default embedded PostgreSQL deployment. `fn backup` and the built-in **Database Backup** cron/routine use `pg_dump` and `pg_restore`; install PostgreSQL client tools or configure their paths so both executables are available on `PATH`. They are not bundled with `embedded-postgres`.
+
 | `memoryBackupEnabled` | `boolean` | `false` | Enable scheduled memory backups. |
 | `memoryBackupSchedule` | `string` | `"0 3 * * *"` | Memory backup cron schedule. |
 | `memoryBackupRetention` | `number` | `14` | Number of memory backups to retain. |
@@ -1743,3 +1746,13 @@ Hard cap → pause with `pausedReason: "token_budget_exceeded"`. Soft cap → on
 ## Model presets
 
 Standardize executor/validator pairs; auto-selectable by task size (Small → Budget, Medium → Normal, Large → Complex).
+
+### Executor consecutive tool-failure retry
+
+| Setting | Type/default | Behavior |
+| --- | --- | --- |
+| `executorToolFailureRetryCount` | integer, `2` | Same-model retries before terminal executor parking; `0` disables this policy entirely. |
+| `executorToolFailureRetryBackoffMs` | integer, `2000` | Unref'd delay before the rerun. |
+| `executorToolFailureThreshold` | integer, `3` | Consecutive terminal tool failures required to qualify. |
+
+Values are project-scoped and finite values are floored; count/backoff must be at least `0`, and threshold at least `1`, otherwise their defaults apply. The executor evaluates this bounded policy before its terminal graph-failure park: it counts `tool_error` completion entries, resets only on `tool_result`, and ignores `tool` invocation markers. The detector is scoped to the current executor-run agent-log cursor. Its project-scoped atomic claim prevents concurrent retries and classifies cursor mismatch before an exhausted cap so stale handlers do not park newer work. The exhausted audit is compare-and-set deduplicated while the terminal park remains idempotent. FN-7998 may extend this same-model foundation with escalation.

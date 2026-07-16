@@ -105,8 +105,13 @@ stacking is mirrored; behavior and the real @media rules are untouched.
     margin-left: 0;
   }
 
+  /*
+  FNXC:ActivityFeedMobile 2026-07-16-00:00:
+  FN-8122 keeps the narrow right-dock Activity Log aligned with the mobile modal so
+  wrapped entries retain a larger right inset when the container, not viewport, is narrow.
+  */
   .activity-log-modal--embedded .activity-log-content {
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-md) var(--space-xl);
   }
 
   .activity-log-modal--embedded .activity-log-entry-header {

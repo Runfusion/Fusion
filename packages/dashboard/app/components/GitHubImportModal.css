@@ -1081,6 +1081,27 @@ Checks + Comments sections live below the PR body in the scrollable preview pane
   color: var(--text-muted);
 }
 
+/*
+FNXC:GitHubImport 2026-07-16-19:00:
+FN-8137 keeps the PR checks refresh control in the section heading so changing CI state is discoverable without competing with individual check actions.
+*/
+.github-import-pr-checks__heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.github-import-pr-checks__heading-row .preview-section-heading {
+  margin-bottom: 0;
+}
+
+.github-import-pr-checks-refresh {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
 .preview-detail-loading {
   display: flex;
   align-items: center;
@@ -1673,6 +1694,14 @@ Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge
 
   .github-import-gitlab__workspace {
     grid-template-columns: 1fr;
+  }
+
+  .github-import-pr-checks__heading-row {
+    flex-wrap: wrap;
+  }
+
+  .github-import-pr-checks__heading-row .preview-section-heading {
+    flex: 1 1 auto;
   }
 
   .github-import-pr-check-row {

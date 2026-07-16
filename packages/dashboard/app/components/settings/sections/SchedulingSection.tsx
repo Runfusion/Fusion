@@ -33,6 +33,10 @@ export function SchedulingSection({ form, setForm, concurrencyLoading = false, o
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.scheduling.scheduling", "Scheduling")}</h4>
+      {/* FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: project controls tune the bounded same-model retry before terminal executor parking; values floor to core's resolver contract. */}
+      <SettingsNumberRow descriptor={{ key: "executorToolFailureRetryCount", label: t("settings.scheduling.executorToolFailureRetryCount", "Executor tool-failure retries"), help: t("settings.scheduling.executorToolFailureRetryCountHelp", "Same-model retries after consecutive tool-call failures. Set 0 to disable. Default: 2."), scope: "project", min: 0, step: 1 }} value={form.executorToolFailureRetryCount ?? 2} onChange={(v) => setForm((f) => ({ ...f, executorToolFailureRetryCount: Math.max(0, Math.floor(v ?? 2)) } as SettingsFormState))} />
+      <SettingsNumberRow descriptor={{ key: "executorToolFailureRetryBackoffMs", label: t("settings.scheduling.executorToolFailureRetryBackoffMs", "Tool-failure retry backoff (ms)"), help: t("settings.scheduling.executorToolFailureRetryBackoffMsHelp", "Unref'd wait before retrying. Default: 2000."), scope: "project", min: 0, step: 1 }} value={form.executorToolFailureRetryBackoffMs ?? 2000} onChange={(v) => setForm((f) => ({ ...f, executorToolFailureRetryBackoffMs: Math.max(0, Math.floor(v ?? 2000)) } as SettingsFormState))} />
+      <SettingsNumberRow descriptor={{ key: "executorToolFailureThreshold", label: t("settings.scheduling.executorToolFailureThreshold", "Consecutive tool failures"), help: t("settings.scheduling.executorToolFailureThresholdHelp", "Terminal tool errors required before retrying. Default: 3."), scope: "project", min: 1, step: 1 }} value={form.executorToolFailureThreshold ?? 3} onChange={(v) => setForm((f) => ({ ...f, executorToolFailureThreshold: Math.max(1, Math.floor(v ?? 3)) } as SettingsFormState))} />
       <SettingsNumberRow
         descriptor={{
           key: "maxConcurrent",

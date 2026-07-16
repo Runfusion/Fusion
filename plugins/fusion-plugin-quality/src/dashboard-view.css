@@ -172,3 +172,32 @@ or bare h2/table inline styles.
 .quality-header-actions {
   display: contents;
 }
+
+/*
+FNXC:Quality 2026-07-16-12:45:
+FN-8131: On mobile, Quality's wide preset and refresh action cluster must give the title its own full-width row and wrap below it instead of shrinking the title to a `Q…` ellipsis or clipping buttons. This mirrors InsightsView FN-7830 while preserving the shared desktop header clamp.
+*/
+@media (max-width: 768px), (max-height: 480px) {
+  .quality-view .view-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+  }
+
+  .quality-view .view-header__title {
+    flex: 1 0 100%;
+    min-width: 100%;
+  }
+
+  .quality-view .view-header__title span {
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .quality-view .view-header__actions {
+    justify-content: flex-start;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+  }
+}

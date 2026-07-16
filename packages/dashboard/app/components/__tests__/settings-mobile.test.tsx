@@ -402,6 +402,34 @@ describe("SettingsModal mobile adaptations", () => {
     expect(queryByText("Settings Section", { selector: "label" })).toBeNull();
   });
 
+  /*
+  FNXC:SettingsNavigation 2026-07-16-13:40:
+  FN-8130 requires the mobile section picker and rendered content to start on Appearance when no explicit initialSection is supplied. Appearance is global and not Advanced-gated, so it remains selectable in the default visibility state.
+  */
+  it("defaults the mobile section picker to Appearance", async () => {
+    mockSettingsViewport(true);
+    const { getByLabelText, getByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    expect(getByLabelText("Settings Section")).toHaveValue("appearance");
+    expect(getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+  });
+
+  it("keeps CLI Binary reachable from the Basic-mode mobile picker", async () => {
+    localStorage.removeItem("fusion:settings:show-advanced");
+    mockSettingsViewport(true);
+    const user = userEvent.setup();
+    const { container, getByLabelText, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const picker = getByLabelText("Settings Section") as HTMLSelectElement;
+    expect(Array.from(picker.options).map((option) => option.value)).toContain("cli-binary");
+
+    await user.selectOptions(picker, "cli-binary");
+    expect(await findByText(/Installing the global CLI lets you run fn and fusion/)).toBeTruthy();
+    expect(container.querySelector(".cli-binary-panel")).toBeTruthy();
+  });
+
   it("excludes research sections from mobile picker when researchView is disabled", async () => {
     mockSettingsViewport(true);
     const user = userEvent.setup();
@@ -575,10 +603,10 @@ describe("SettingsModal mobile adaptations", () => {
 
     /*
     FNXC:SettingsNavigation 2026-07-16-01:10:
-    Settings opens on Authentication, which renders provider cards rather than form
-    controls, so this navigates to a section that has some. The nav label is
-    "General · Project" now that the Global/Project pair is disambiguated — plain
-    "General" no longer matches any element.
+    Authentication was the previous default and renders provider cards rather than form controls. FN-8130 defaults Settings to Appearance, but this test deliberately navigates to a section with generic form controls.
+
+    FNXC:SettingsNavigation 2026-07-16-13:40:
+    The nav label is "General · Project" now that the Global/Project pair is disambiguated — plain "General" no longer matches any element.
     */
     const generalTabs = await findAllByText("General · Project");
     await user.click(generalTabs[0]);
@@ -594,12 +622,12 @@ describe("SettingsModal mobile adaptations", () => {
   */
   it("shows scope on nav items and per-row badges rather than a section banner", async () => {
     const user = userEvent.setup();
-    const { container, getByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    const { container, getByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
 
-    await user.click(getByText("Appearance"));
+    await user.click(getByRole("button", { name: /Appearance$/ }));
 
     // The banner is gone for good — it asserted a single scope for a section
     // that genuinely mixes them.
@@ -768,9 +796,12 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-modal .settings-modal-version", "white-space: nowrap;");
     expect(css).toContain(".settings-modal .modal-header {\n    padding-block: var(--space-sm);");
     expectMobileRule(css, ".auth-provider-row", "padding: var(--space-sm);");
-    expectMobileRule(css, ".auth-section-hint", "margin: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".auth-panel-body", "padding-inline: 0;");
+    expectMobileRule(css, ".auth-panel-body .auth-section-hint", "margin: 0 0 var(--space-sm);");
     expectMobileRule(css, ".auth-section-hint", "padding: var(--space-sm);");
-    expectMobileRule(css, ".auth-group-label", "padding: 0 var(--space-sm);");
+    expectMobileRule(css, ".auth-panel-body .auth-group-label", "padding: 0;");
+    expectMobileRule(css, ".auth-panel-body .auth-provider-card", "margin: 0 0 var(--space-sm);");
+    // Custom Provider cards render outside .auth-panel-body and retain their mobile gutter.
     expectMobileRule(css, ".auth-provider-card", "margin: 0 var(--space-sm) var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header", "padding: var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section)", "margin-left: auto;");

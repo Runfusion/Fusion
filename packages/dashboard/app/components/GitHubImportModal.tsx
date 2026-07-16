@@ -497,6 +497,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   The PR preview pane shows the full comment thread + per-check status for the SELECTED PR only.
   `gh pr list` returns just comment COUNT + no per-check detail, so the full thread/checks are fetched ON SELECTION via apiFetchGitHubPullDetail — never for the whole list (too expensive).
   Detail is cached by PR number in a ref so re-selecting a PR does not refetch; the body renders immediately while checks/comments stream in (loading/error tracked separately, never blocking the body).
+
+  FNXC:GitHubImport 2026-07-16-19:00:
+  FN-8137 adds an explicit force-refresh path for changing GitHub CI and comments. It evicts only the selected PR cache entry before refetching while normal selection remains cache-first.
   */
   const pullDetailCacheRef = useRef<Map<number, GitHubPullDetail>>(new Map());
   const [pullDetail, setPullDetail] = useState<GitHubPullDetail | null>(null);
@@ -1129,17 +1132,17 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     }
   }, [activeTab, selectedIssueNumber, selectedPullNumber, issues, pulls, owner, repo, projectId, onImport, returnToIssueListAfterSuccess]);
 
-  /*
-  FNXC:GitHubImport 2026-06-23-01:00:
-  Fetch the selected PR's detail (comments + checks) on selection. Serves from the per-number cache on re-select; otherwise fetches and caches.
-  Body render is never blocked on this — the body shows immediately and checks/comments populate when this resolves.
-  */
-  useEffect(() => {
+  const fetchPullDetail = useCallback((force: boolean) => {
+    const requestId = ++pullDetailRequestRef.current;
     if (activeTab !== "pulls" || selectedPullNumber === null || !owner.trim() || !repo.trim()) {
       setPullDetail(null);
       setPullDetailLoading(false);
       setPullDetailError(null);
       return;
+    }
+
+    if (force) {
+      pullDetailCacheRef.current.delete(selectedPullNumber);
     }
 
     const cached = pullDetailCacheRef.current.get(selectedPullNumber);
@@ -1150,15 +1153,15 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       return;
     }
 
-    const requestId = ++pullDetailRequestRef.current;
     setPullDetail(null);
     setPullDetailLoading(true);
     setPullDetailError(null);
 
     apiFetchGitHubPullDetail(`${owner.trim()}/${repo.trim()}`, selectedPullNumber)
       .then((detail) => {
-        pullDetailCacheRef.current.set(selectedPullNumber, detail);
+        // FNXC:GitHubImport 2026-07-16-19:00: FN-8137 requires stale detail requests to be unable to poison the cache as well as the currently visible checks and comments.
         if (pullDetailRequestRef.current !== requestId) return;
+        pullDetailCacheRef.current.set(selectedPullNumber, detail);
         setPullDetail(detail);
         setPullDetailLoading(false);
       })
@@ -1168,6 +1171,20 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         setPullDetailLoading(false);
       });
   }, [activeTab, selectedPullNumber, owner, repo]);
+
+  /*
+  FNXC:GitHubImport 2026-06-23-01:00:
+  Fetch the selected PR's detail (comments + checks) on selection. Serves from the per-number cache on re-select; otherwise fetches and caches.
+  Body render is never blocked on this — the body shows immediately and checks/comments populate when this resolves.
+  */
+  useEffect(() => {
+    fetchPullDetail(false);
+  }, [fetchPullDetail]);
+
+  const handleRefreshChecks = useCallback(() => {
+    if (selectedPullNumber === null || pullDetailLoading) return;
+    fetchPullDetail(true);
+  }, [fetchPullDetail, pullDetailLoading, selectedPullNumber]);
 
   /*
   FNXC:GitHubImport 2026-06-23-03:15:
@@ -2001,7 +2018,20 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     Check status maps to a theme-token pill class (success/failure/pending/neutral); the rollup conclusion is preferred over the in-progress status for color.
                     */}
                     <div className="github-import-pr-checks" data-testid="github-import-pr-checks">
-                      <h5 className="preview-section-heading">{t("git.checksHeading", "Checks")}</h5>
+                      <div className="github-import-pr-checks__heading-row">
+                        <h5 className="preview-section-heading">{t("git.checksHeading", "Checks")}</h5>
+                        <button
+                          type="button"
+                          className="btn btn-icon github-import-pr-checks-refresh"
+                          data-testid="github-import-pr-checks-refresh"
+                          aria-label={t("git.refreshChecksAria", "Refresh checks")}
+                          title={t("git.refreshChecks", "Refresh checks")}
+                          disabled={pullDetailLoading}
+                          onClick={handleRefreshChecks}
+                        >
+                          {pullDetailLoading ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
+                        </button>
+                      </div>
                       {pullDetailLoading ? (
                         <div className="preview-detail-loading" data-testid="github-import-pr-checks-loading">
                           <Loader2 size={14} className="spin" aria-hidden="true" />
