@@ -202,7 +202,8 @@ vi.mock("../FileBrowser", () => ({
 }));
 
 describe("SettingsModal", () => {
-  installSettingsModalEnv();
+  // Keep Advanced off by default so disclosure default/persist tests stay truthful.
+  installSettingsModalEnv({ advancedSettings: false });
 
   afterEach(() => {
     viewportMode = "mobile";

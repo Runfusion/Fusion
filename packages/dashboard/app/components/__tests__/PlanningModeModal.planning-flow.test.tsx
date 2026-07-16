@@ -67,6 +67,7 @@ const mockAddToast = vi.fn();
 const mockCopyTextToClipboard = vi.fn();
 
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: mockAddToast,
     removeToast: vi.fn(),

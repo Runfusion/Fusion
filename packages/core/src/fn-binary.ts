@@ -13,9 +13,16 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { posix, win32 } from "node:path";
+
+/*
+FNXC:FnBinaryProbe 2026-07-15-10:05:
+Native/bundled `fn` installs (e.g. ~/.local/share/fusion/fn) are multi‑MB binaries.
+resolveShimTargets must never readFileSync the whole file then regex‑scan it — that hung detectFnBinary for ~77s on a real host and timed out the default vitest suite.
+Only open small text shims (shebang / cmd/ps1 wrappers), capped to a few KB.
+*/
 
 interface ProbeResult {
   exitCode: number | null;
@@ -33,6 +40,13 @@ function runProbe(command: string, args: string[], timeoutMs: number): Promise<P
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (result: ProbeResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     // Run probes from the OS temp directory so a buggy CLI version (older
     // `runfusion.ai` releases initialise an engine — and a fresh
     // `.fusion/<project>/.fusion/` tree — even on `--version`) cannot leave
@@ -42,18 +56,22 @@ function runProbe(command: string, args: string[], timeoutMs: number): Promise<P
       shell: false,
       cwd: tmpdir(),
     });
+    /*
+    FNXC:FnBinaryProbe 2026-07-15-10:05:
+    Always settle the probe on timeout even if SIGKILL does not promptly emit close —
+    otherwise detectFnBinary can hang past vitest's default 15s and leave orphan children.
+    */
     const timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
+      finish({ exitCode: null, stdout, stderr: stderr || "probe timed out" });
     }, timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
     child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
     child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ exitCode: null, stdout, stderr: stderr || err.message });
+      finish({ exitCode: null, stdout, stderr: stderr || err.message });
     });
     child.on("close", (exitCode) => {
-      clearTimeout(timer);
-      resolve({ exitCode, stdout, stderr });
+      finish({ exitCode, stdout, stderr });
     });
   });
 }
@@ -145,13 +163,49 @@ function readPackageVersionFromPath(startPath: string): string | undefined {
   return undefined;
 }
 
+/** Max bytes to read when sniffing npm/cmd/ps1 shims for package paths. */
+const SHIM_READ_MAX_BYTES = 16_384;
+
+function isLikelyTextShim(resolvedPath: string, size: number): boolean {
+  /*
+  FNXC:FnBinaryProbe 2026-07-15-10:05:
+  Windows npm shims are .cmd/.ps1 text; POSIX shims are small scripts with a shebang.
+  Skip Mach-O/ELF/PE binaries and any file larger than SHIM_READ_MAX_BYTES before reading.
+  */
+  if (size <= 0 || size > SHIM_READ_MAX_BYTES) return false;
+  const lower = resolvedPath.toLowerCase();
+  if (lower.endsWith(".cmd") || lower.endsWith(".bat") || lower.endsWith(".ps1")) {
+    return true;
+  }
+  try {
+    // Read only a tiny head — never the whole path before classification.
+    const fdContents = readFileSync(resolvedPath, { encoding: "utf-8", flag: "r" });
+    const head = fdContents.slice(0, 64);
+    // Shebang scripts only; refuse binary garbage that would thrash the regex.
+    return head.startsWith("#!") || /^@?ECHO\s/i.test(head) || head.includes("node_modules");
+  } catch {
+    return false;
+  }
+}
+
 function resolveShimTargets(resolvedPath: string): string[] {
+  let size = 0;
+  try {
+    const st = statSync(resolvedPath);
+    if (!st.isFile()) return [];
+    size = st.size;
+  } catch {
+    return [];
+  }
+  if (!isLikelyTextShim(resolvedPath, size)) return [];
+
   const pathApi = getPathApi(resolvedPath);
   const basedir = pathApi.dirname(resolvedPath);
   let contents: string;
 
   try {
-    contents = readFileSync(resolvedPath, "utf-8");
+    // Size already gated by SHIM_READ_MAX_BYTES; still slice as a hard ceiling.
+    contents = readFileSync(resolvedPath, { encoding: "utf-8", flag: "r" }).slice(0, SHIM_READ_MAX_BYTES);
   } catch {
     return [];
   }

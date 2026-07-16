@@ -134,7 +134,12 @@ describe("ProjectEngine soft-delete merge interruption", () => {
     expect(privateEngine.activeMergeSession).toBeNull();
     expect(privateEngine.mergeAbortController).toBeNull();
     expect(privateEngine.mergeActive.has("FN-TEST-1")).toBe(false);
-    expect(logSpy).toHaveBeenCalledWith("Soft-deleted task interrupting active merge: FN-TEST-1");
+    /*
+    FNXC:EngineTests 2026-07-15-11:50:
+    Soft-delete merge interrupt logs through abortActiveMerge with a shared reason tag
+    (`task-soft-deleted`), not a separate "Soft-deleted task interrupting..." line.
+    */
+    expect(logSpy).toHaveBeenCalledWith("Aborting active merge for FN-TEST-1 (task-soft-deleted)");
 
     await engine.stop();
   });

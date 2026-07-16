@@ -12,6 +12,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@fusion/core")>();
   return {
     ...actual,
+    createTaskStoreForBackend: vi.fn(async () => null),
     TaskStore: vi.fn(function TaskStore() {
       return {
         init: vi.fn(),

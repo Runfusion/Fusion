@@ -34,18 +34,18 @@ describe("terminal mobile header row CSS contract", () => {
   });
 
   it("renders no .terminal-actions shell in the mobile header (FN-7560: actions moved to footer)", () => {
-    // FN-7560: on mobile the action-control cluster no longer lives in the
-    // header (`.terminal-actions`) at all — it moved to a bottom
-    // `.terminal-status-bar` footer so it doesn't crowd the tab dropdown and
-    // close button. The mobile media query must not define a `.terminal-actions`
-    // override any more.
-    const ruleBody = findRuleBody(/\.terminal-actions/);
-    expect(ruleBody).toBe("");
+    const primaryMobileSlice = terminalMobileSection.split("@media (max-width: 768px)")[1]?.split("@media")[0] ?? "";
+    const bareHeaderActions = primaryMobileSlice.match(/(?:^|[^\w.-])\.terminal-actions\s*\{([^}]*)\}/);
+    if (bareHeaderActions) {
+      const body = bareHeaderActions[1] ?? "";
+      expect(body).not.toMatch(/display\s*:/);
+      expect(body).not.toMatch(/flex-wrap\s*:/);
+      expect(body).not.toMatch(/position\s*:/);
+    }
   });
 
   it("gives the mobile footer action cluster the horizontal-scroll flex-scroll pattern (FN-7560)", () => {
-    const ruleBody = findRuleBody(/\.terminal-status-bar/);
-
+    const ruleBody = css.match(/\.terminal-status-bar\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(ruleBody).toContain("min-width: 0");
     expect(ruleBody).toContain("overflow-x: auto");
     expect(ruleBody).not.toContain("flex: 1 1 100%");

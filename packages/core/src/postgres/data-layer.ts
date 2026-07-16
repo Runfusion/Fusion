@@ -399,6 +399,21 @@ export function projectTable(tableName: string): SQL {
  * candidate scan, and the search scans — see the FNXC:MultiProjectIsolation
  * markers in the task-store helpers.
  */
+/*
+FNXC:ProjectDataIsolation 2026-07-14-18:30:
+Migration 0006 forces every project-owned write through fusion_assign_project_id, which rewrites NULL/empty project_id to current_setting('fusion.project_id') or the explicit __legacy_unscoped__ quarantine. Application reads that still filter project_id = '' never see those rows. Normalize empty/missing bindings to the same sentinel used by the trigger so write+read paths stay lockstep for unbound compatibility stores and bound runtimes alike.
+*/
+export const LEGACY_UNSCOPED_PROJECT_ID = "__legacy_unscoped__";
+
+/**
+ * FNXC:ProjectDataIsolation 2026-07-14-18:30:
+ * Resolve the ownership partition written/read for a project-scoped row. Empty, null, and whitespace map to {@link LEGACY_UNSCOPED_PROJECT_ID} so application code matches the 0006 insert trigger instead of silently partitioning writes and reads differently.
+ */
+export function projectOwnershipPartition(projectId?: string | null): string {
+  const trimmed = projectId?.trim();
+  return trimmed || LEGACY_UNSCOPED_PROJECT_ID;
+}
+
 export function taskProjectScope(layer: Pick<AsyncDataLayer, "projectId">): SQL | undefined {
   return layer.projectId ? eq(schema.project.tasks.projectId, layer.projectId) : undefined;
 }

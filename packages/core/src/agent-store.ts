@@ -3212,7 +3212,7 @@ export class AgentStore extends EventEmitter {
     // FNXC:SqliteFinalRemoval 2026-06-25-23:40:
     // Backend mode: delegate to async Drizzle writeAgent helper.
     if (this.backendMode) {
-      await writeAgentAsync(this.asyncLayer!.db, agent);
+      await writeAgentAsync(this.asyncLayer!.db, agent, this.asyncLayer!.projectId);
       return;
     }
     const data: AgentData = {

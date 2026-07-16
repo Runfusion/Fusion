@@ -134,6 +134,13 @@ vi.mock("lucide-react", () => ({
   Bell: () => null,
   // FNXC:PlannerOversight 2026-07-04-19:00: FN-7545 mobile oversight overflow-menu trigger icon.
   MoreVertical: (props: any) => React.createElement("svg", { "data-testid": "more-vertical-icon", ...props }),
+  /*
+  FNXC:DashboardTests 2026-07-15-11:55:
+  Session-advisor toggle on TaskDetailContent uses Eye/EyeOff; missing exports break every
+  TaskDetailModal suite that mounts the session-advisor control (including oversight-mobile).
+  */
+  Eye: (props: any) => React.createElement("svg", { "data-testid": "eye-icon", ...props }),
+  EyeOff: (props: any) => React.createElement("svg", { "data-testid": "eye-off-icon", ...props }),
   // FNXC:Test 2026-07-05-11:20: FN-7579 added "ask-user"/"exit-gate" workflow node types to
   // WorkflowNodeTypes.tsx (HelpCircle, DoorOpen), which WorkflowNodeEditor/WorkflowResultsTab
   // import transitively behind TaskDetailModal's lazy workflow surfaces. The explicit mock list

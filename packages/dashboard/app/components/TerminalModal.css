@@ -1363,7 +1363,7 @@ The shortcut bar (modifier keys + arrow keys) must sit on ONE line, not stack in
   min-width: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
 }
 
 .terminal-custom-shortcuts__summary code {

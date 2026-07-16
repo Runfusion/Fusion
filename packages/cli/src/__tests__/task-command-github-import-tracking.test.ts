@@ -8,6 +8,7 @@ vi.mock("@fusion/core", async (importActual) => {
   const actual = await importActual<typeof import("@fusion/core")>();
   return {
     ...actual,
+    createTaskStoreForBackend: vi.fn(async () => null),
     TaskStore: taskStoreCtorMock,
   };
 });
@@ -31,6 +32,7 @@ vi.mock("../project-context.js", () => ({
       // best-effort, mirrors production closeProjectStore
     }
   }),
+  createLocalStore: vi.fn(async () => new (taskStoreCtorMock as unknown as new () => unknown)()),
   asLocalProjectContext: vi.fn((store: unknown) => ({
     projectId: process.cwd(),
     projectPath: process.cwd(),

@@ -104,9 +104,11 @@ export default function setup(): () => Promise<void> {
     } catch {
       // Ignore — cleanup below is best-effort and uses an absolute path.
     }
-    // FN-6360: macOS can report transient EBUSY/ENOTEMPTY while SQLite WALs or
-    // redirected temp dirs are still closing. Retry boundedly so a brief busy-fd
-    // race does not leak the per-invocation fusion-test-workers-* root.
+    /*
+    FNXC:TestIsolation 2026-07-14-21:40:
+    Prefer injectable in-process removeWorkerRootWithRetry so unit tests can assert EBUSY/ENOTEMPTY retry semantics via __setWorkerRootRmSyncForTests.
+    Dashboard hang root causes were open SSE/undici handles (fixed via __resetSseBus + quarantines), not rmSync itself — restore sync cleanup for deterministic isolation and test hooks.
+    */
     removeWorkerRootWithRetry(workerRoot);
     removeLegacyTopLevelHomeRoots();
   };

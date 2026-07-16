@@ -920,6 +920,17 @@ Sizes name the shared scale (label = xs, section = 2xs) so results read as the s
   min-width: 0;
 }
 
+/*
+FNXC:SettingsResearch 2026-07-14-19:45:
+Source options stack the control label and default-state hint so hints stay visible without joining the checkbox accessible name.
+*/
+.settings-research-source-option {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  min-width: 0;
+}
+
 .settings-research-limits-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

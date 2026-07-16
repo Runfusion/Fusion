@@ -11,6 +11,7 @@ import { CostBadgeProvider } from "../../context/CostBadgeContext";
 // (PlanningModeModal.*.test.tsx) already do to avoid a widespread
 // "useToast must be used within ToastProvider" failure across this file.
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),

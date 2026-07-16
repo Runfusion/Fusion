@@ -1388,7 +1388,7 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   align-items: center;
   justify-content: space-between;
   gap: var(--space-xs);
-  margin-top: var(--space-2xs);
+  margin-top: var(--space-xs);
 }
 
 .chat-message-time-row .chat-message-time {
@@ -1531,7 +1531,7 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
 .chat-message-time {
   font-size: var(--font-size-xs);
   color: var(--text-dim);
-  margin-top: var(--space-2xs);
+  margin-top: var(--space-xs);
 }
 
 .chat-message-thinking {
@@ -2116,7 +2116,7 @@ Thinking-section text uses the defined muted text token across all themes. The m
   display: flex;
   gap: var(--space-xs);
   margin-bottom: var(--space-sm);
-  padding: var(--space-2xs);
+  padding: var(--space-xs);
   background: var(--surface-secondary);
   border-radius: var(--radius-md);
 }

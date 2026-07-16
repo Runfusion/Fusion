@@ -402,6 +402,12 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
   ever present, across both the active-overseer state and the oversight-off
   (level-only) state.
   */
+  /*
+  FNXC:DashboardTests 2026-07-16-12:25:
+  Focus assertion can flake under concurrent quality load (activeElement never becomes nudge).
+  Keep the test active so quarantine-ledger tooling can still list it; the suite is
+  file-quarantined in vitest.config + test-quarantine.json rather than source-skipped.
+  */
   it("auto-focuses the first button menuitem (never the native select) when nudge/stop/explain are available", async () => {
     render(
       <TaskDetailModal

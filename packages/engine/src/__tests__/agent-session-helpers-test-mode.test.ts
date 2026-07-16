@@ -114,9 +114,13 @@ describe("agent-session-helpers test mode overrides", () => {
       provider: "openai",
       modelId: "gpt-4.1",
     });
+    /*
+    FNXC:AgentHeartbeat 2026-07-14-18:35:
+    Durable-agent heartbeats prefer a complete agent runtime assignment over shared project execution defaults.
+    */
     expect(resolveHeartbeatSessionModels(settings, assignedAgentRuntimeConfig)).toEqual({
-      defaultProvider: "openai",
-      defaultModelId: "gpt-4.1",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
       fallbackProvider: undefined,
       fallbackModelId: undefined,
     });

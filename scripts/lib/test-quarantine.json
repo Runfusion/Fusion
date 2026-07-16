@@ -115,6 +115,11 @@
       "file": "packages/engine/src/__tests__/reliability-interactions/meta-chain-auto-close.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.oversight-mobile.test.tsx",
+      "reason": "PR #2229 review: focus assertion flakes under concurrent quality load (activeElement never becomes the nudge menuitem). Quarantine on sight per deletion ratchet instead of it.skip in source. Mirrored exclude in packages/dashboard/vitest.config.ts. Rescue requires a deterministic focus harness (fakeTimers/userEvent), not timeout widening.",
+      "quarantinedAt": "2026-07-16"
     }
   ]
 }

@@ -659,10 +659,15 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
         <span className={`column-count${countFlashing ? " count-flash" : ""}`}>{tasks.length}</span>
         {(workflowMode ? isReviewColumn : column === "in-review") && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
+            {/*
+            FNXC:AutoMergeA11y 2026-07-14-19:20:
+            Explicit aria-label keeps the control discoverable as "Auto-merge" for assistive tech and mobile regression tests even when the visible toggle-label is hidden by CSS or i18n wrappers.
+            */}
             <input
               type="checkbox"
               checked={!!autoMerge}
               onChange={onToggleAutoMerge}
+              aria-label={t("column.autoMerge", "Auto-merge")}
             />
             <span className="toggle-slider" />
             <span className="toggle-label">{t("column.autoMerge", "Auto-merge")}</span>

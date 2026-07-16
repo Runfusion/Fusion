@@ -10,6 +10,7 @@ import { TaskCard } from "../TaskCard";
 
 // FNXC:TaskCardTestHarness 2026-07-11-00:00: RuntimeFallbackBadge calls useToast directly, so isolated TaskCard mobile renders need the hook mocked unless wrapped in ToastProvider.
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock("../../hooks/useToast", () => ({
 }));
 
 vi.mock("../../api", () => ({
+  fetchWorkflowSettingValues: vi.fn(async () => ({ stored: {}, effective: {}, orphaned: [] })),
   fetchTaskDetail: vi.fn(),
   uploadAttachment: vi.fn(),
   fetchMission: vi.fn(),

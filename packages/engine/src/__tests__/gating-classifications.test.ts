@@ -154,6 +154,7 @@ describe("gating-classifications parity", () => {
         "fn_task_get",
         "fn_task_list",
         "fn_task_log",
+        "fn_task_logs_read",
         "fn_task_search",
         "fn_task_show",
         "fn_trait_list",

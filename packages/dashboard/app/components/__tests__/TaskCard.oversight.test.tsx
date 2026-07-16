@@ -75,6 +75,7 @@ embeds RuntimeFallbackBadge and this file renders <TaskCard> outside a ToastProv
 to avoid "useToast must be used within ToastProvider", matching the TaskCard.test.tsx pattern.
 */
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),

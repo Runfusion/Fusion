@@ -3225,51 +3225,58 @@ describe("executeHeartbeat", () => {
       expect(callArgs.systemPrompt).toContain("fn_task_log");
       expect(callArgs.systemPrompt).toContain("fn_task_document_write");
       expect(callArgs.tools).toBe("coding");
+      /*
+      FNXC:TaskAgentLog 2026-07-16-08:05:
+      Heartbeat customTools include FN-8058 fn_task_logs_read after fn_task_log so durable agents can read agent-log.jsonl. Count stays exact so new tools fail loudly.
+      */
       // fn_artifact_register/list/view, agent config/provisioning, goals/evaluations/identity,
-      // task read discovery, workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(41);
-      expect(callArgs.customTools![0]!.name).toBe("fn_task_create");
-      expect(callArgs.customTools![1]!.name).toBe("fn_task_log");
-      expect(callArgs.customTools![2]!.name).toBe("fn_task_document_write");
-      expect(callArgs.customTools![3]!.name).toBe("fn_task_document_read");
-      expect(callArgs.customTools![4]!.name).toBe("fn_artifact_register");
-      expect(callArgs.customTools![5]!.name).toBe("fn_artifact_list");
-      expect(callArgs.customTools![6]!.name).toBe("fn_artifact_view");
-      expect(callArgs.customTools![7]!.name).toBe("fn_list_agents");
-      expect(callArgs.customTools![8]!.name).toBe("fn_delegate_task");
-      expect(callArgs.customTools![9]!.name).toBe("fn_get_agent_config");
-      expect(callArgs.customTools![10]!.name).toBe("fn_update_agent_config");
-      expect(callArgs.customTools![11]!.name).toBe("fn_agent_create");
-      expect(callArgs.customTools![12]!.name).toBe("fn_agent_delete");
-      expect(callArgs.customTools![13]!.name).toBe("fn_goal_list");
-      expect(callArgs.customTools![14]!.name).toBe("fn_goal_show");
-      expect(callArgs.customTools![15]!.name).toBe("fn_read_evaluations");
-      expect(callArgs.customTools![16]!.name).toBe("fn_update_identity");
-      expect(callArgs.customTools![17]!.name).toBe("fn_task_list");
-      expect(callArgs.customTools![18]!.name).toBe("fn_task_show");
-      expect(callArgs.customTools![19]!.name).toBe("fn_task_search");
-      expect(callArgs.customTools![20]!.name).toBe("fn_workflow_list");
-      expect(callArgs.customTools![21]!.name).toBe("fn_workflow_get");
-      expect(callArgs.customTools![22]!.name).toBe("fn_workflow_validate");
-      expect(callArgs.customTools![23]!.name).toBe("fn_workflow_create");
-      expect(callArgs.customTools![24]!.name).toBe("fn_workflow_update");
-      expect(callArgs.customTools![25]!.name).toBe("fn_workflow_delete");
-      expect(callArgs.customTools![26]!.name).toBe("fn_workflow_settings");
-      expect(callArgs.customTools![27]!.name).toBe("fn_trait_list");
-      expect(callArgs.customTools![28]!.name).toBe("fn_ask_question");
-      expect(callArgs.customTools![29]!.name).toBe("fn_research_run");
-      expect(callArgs.customTools![30]!.name).toBe("fn_research_list");
-      expect(callArgs.customTools![31]!.name).toBe("fn_research_get");
-      expect(callArgs.customTools![32]!.name).toBe("fn_research_cancel");
-      expect(callArgs.customTools![33]!.name).toBe("fn_research_retry");
-      expect(callArgs.customTools![34]!.name).toBe("fn_workflow_select");
-      expect(callArgs.customTools![35]!.name).toBe("fn_task_promote");
-      expect(callArgs.customTools![36]!.name).toBe("fn_web_fetch");
-      expect(callArgs.customTools![37]!.name).toBe("fn_memory_search");
-      expect(callArgs.customTools![38]!.name).toBe("fn_memory_get");
-      expect(callArgs.customTools![39]!.name).toBe("fn_memory_append");
-      // fn_heartbeat_done is last (terminal tool)
-      expect(callArgs.customTools![40]!.name).toBe("fn_heartbeat_done");
+      // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
+      expect(callArgs.customTools).toHaveLength(42);
+      expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
+        "fn_task_create",
+        "fn_task_log",
+        "fn_task_logs_read",
+        "fn_task_document_write",
+        "fn_task_document_read",
+        "fn_artifact_register",
+        "fn_artifact_list",
+        "fn_artifact_view",
+        "fn_list_agents",
+        "fn_delegate_task",
+        "fn_get_agent_config",
+        "fn_update_agent_config",
+        "fn_agent_create",
+        "fn_agent_delete",
+        "fn_goal_list",
+        "fn_goal_show",
+        "fn_read_evaluations",
+        "fn_update_identity",
+        "fn_task_list",
+        "fn_task_show",
+        "fn_task_search",
+        "fn_workflow_list",
+        "fn_workflow_get",
+        "fn_workflow_validate",
+        "fn_workflow_create",
+        "fn_workflow_update",
+        "fn_workflow_delete",
+        "fn_workflow_settings",
+        "fn_trait_list",
+        "fn_ask_question",
+        "fn_research_run",
+        "fn_research_list",
+        "fn_research_get",
+        "fn_research_cancel",
+        "fn_research_retry",
+        "fn_workflow_select",
+        "fn_task_promote",
+        "fn_web_fetch",
+        "fn_memory_search",
+        "fn_memory_get",
+        "fn_memory_append",
+        // fn_heartbeat_done is last (terminal tool)
+        "fn_heartbeat_done",
+      ]);
     });
 
     it("loads workspace memory into system prompt and identity snapshot when inline memory is empty", async () => {

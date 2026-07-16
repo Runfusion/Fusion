@@ -960,6 +960,7 @@ export const researchRuns = projectSchema.table("research_runs", {
 ]);
 
 export const researchExports = projectSchema.table("research_exports", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").primaryKey(),
   runId: text("run_id").notNull(),
   format: text("format").notNull(),
@@ -972,6 +973,7 @@ export const researchExports = projectSchema.table("research_exports", {
 ]);
 
 export const researchRunEvents = projectSchema.table("research_run_events", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").primaryKey(),
   runId: text("run_id").notNull(),
   seq: integer("seq").notNull(),
@@ -1013,6 +1015,7 @@ export const experimentSessions = projectSchema.table("experiment_sessions", {
 ]);
 
 export const experimentSessionRecords = projectSchema.table("experiment_session_records", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   id: text("id").primaryKey(),
   sessionId: text("session_id").notNull(),
   segment: integer("segment").notNull(),

@@ -21,6 +21,7 @@ ActiveAgentsPanel embeds RuntimeFallbackBadge and this file renders it outside a
 the hook to avoid "useToast must be used within ToastProvider", matching the TaskCard.test.tsx pattern.
 */
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),

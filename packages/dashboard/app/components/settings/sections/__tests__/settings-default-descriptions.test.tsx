@@ -317,8 +317,11 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   engineActiveSinceMs: "internal engine bookkeeping timestamp",
   engineActivationGraceMs: "internal engine tuning constant, no UI field",
   reliabilityStatsResetAt: "internal engine bookkeeping timestamp",
-  // FNXC:SettingsDefaults 2026-07-15-23:18: FN-8038 classifies PostgreSQL migration
-  // bookkeeping as engine-managed records, not user-editable Settings descriptions.
+  /*
+  FNXC:SettingsDefaults 2026-07-16-12:25:
+  Single allowlist entry per key (noDuplicateObjectKeys). FN-8038 classifies PostgreSQL
+  migration bookkeeping as engine-managed records, not user-editable Settings descriptions.
+  */
   sqliteMigrationNotice: "startup-factory-managed PostgreSQL migration banner record, not a plain description field",
   postgresMigrationInboxMessageSentAt: "engine-written PostgreSQL migration inbox completion-message marker, not a plain description field",
   dashboardCurrentNodeId: "dashboard session/PWA restore state, not a setting field",

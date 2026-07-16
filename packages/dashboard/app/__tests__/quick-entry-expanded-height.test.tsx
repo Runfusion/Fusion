@@ -46,25 +46,10 @@ vi.mock("../api", () => ({
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
 }));
 
-// Mock lucide-react icons
-vi.mock("lucide-react", () => ({
-  Link: () => null,
-  Paperclip: () => null,
-  Brain: () => null,
-  Lightbulb: () => null,
-  ListTree: () => null,
-  Sparkles: () => null,
-  Save: () => null,
-  X: () => null,
-  ChevronDown: () => null,
-  ChevronUp: () => null,
-  ChevronRight: () => null,
-  Bot: () => null,
-  Server: () => null,
-  Flag: () => null,
-  Maximize2: () => null,
-  Minimize2: () => null,
-}));
+vi.mock("lucide-react", async (importOriginal) => {
+  const { createLucideMock } = await import("../test/mockLucide");
+  return createLucideMock(() => importOriginal() as Promise<Record<string, unknown>>);
+});
 
 vi.mock("../components/ModelSelectionModal", () => ({
   ModelSelectionModal: () => null,

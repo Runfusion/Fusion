@@ -70,6 +70,8 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     const missionStore = {
       getFeatureByTaskId: vi.fn(() => feature),
       listAssertionsForFeature: vi.fn(() => []),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(async () => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
       updateFeatureStatus: vi.fn(),
       getSlice: vi.fn(() => ({ id: "SL-001", milestoneId: "MS-001", status: "active" })),
       getMilestone: vi.fn(() => ({ id: "MS-001", missionId: "M-001" })),
@@ -103,6 +105,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
     };
     const taskStore = {
       getTask: vi.fn(async () => ({ id: "FN-001", column: "done" })),
@@ -136,6 +139,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
     };
     const taskStore = {
       getTask: vi.fn(async () => ({ id: "FN-001", column: "done" })),
@@ -173,6 +177,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
     };
     const taskStore = {
       getTask: vi.fn(async () => ({ id: "FN-001", column: "done" })),
@@ -230,6 +235,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
       setFeatureCurrentTaskRunId: vi.fn(),
       getFailuresForRun: vi.fn(() => []),
     };
@@ -299,6 +305,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       transitionLoopState: vi.fn(),
       // FNXC:MissionReconcile 2026-07-07-08:21 real MissionStore method (mission-store.ts:3185); recoverActiveMissions calls it per slice and aborts recovery if missing — stub even when supersession isn't exercised.
       reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 0, featureIds: [] as string[] })),
+      listFeatures: vi.fn(async () => [feature]),
       setFeatureCurrentTaskRunId: vi.fn(),
       getFailuresForRun: vi.fn(() => []),
     };

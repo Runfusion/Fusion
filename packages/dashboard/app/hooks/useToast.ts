@@ -61,3 +61,11 @@ export function useToast(): ToastContextValue {
   if (!ctx) throw new Error("useToast must be used within ToastProvider");
   return ctx;
 }
+
+/*
+FNXC:ToastProvider 2026-07-14-19:25:
+Board-card decorations such as RuntimeFallbackBadge may mount outside a full app shell (unit/harness tests and optional plugin surfaces). Optional toast access lets those leaves skip toasting instead of throwing and blanking the board via ErrorBoundary.
+*/
+export function useOptionalToast(): ToastContextValue | null {
+  return useContext(ToastContext);
+}

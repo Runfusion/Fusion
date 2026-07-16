@@ -35,6 +35,7 @@ vi.mock("../../hooks/useTaskDiffStats", () => ({
   useTaskDiffStats: () => ({ stats: null, loading: false }),
 }));
 vi.mock("../../hooks/useToast", () => ({
+  useOptionalToast: () => null,
   useToast: () => ({
     addToast: vi.fn(),
     removeToast: vi.fn(),

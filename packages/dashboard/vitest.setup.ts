@@ -210,7 +210,7 @@ beforeEach(() => {
 });
 
 // Clean up after each test
-afterEach(() => {
+afterEach(async () => {
   // Close all lingering EventSource instances
   for (const instance of MockEventSource.instances) {
     instance.close();
@@ -218,6 +218,40 @@ afterEach(() => {
   MockEventSource.instances = [];
   delete (globalThis as any).EventSource;
   clearDaemonAuthEnv();
+  /*
+  FNXC:DashboardTests 2026-07-14-20:50:
+  sse-bus keeps heartbeat/reconnect/keepalive timers on shared channels. Tests that open subscribeSse without fully unsubscribing leave those timers alive; after a large backfill shard the process never exits (shard 2 hang). Always reset the bus after each file/test so active-lane quality runs can terminate.
+  */
+  try {
+    const { __resetSseBus } = await import("./app/sse-bus");
+    __resetSseBus();
+  } catch {
+    // sse-bus may be unavailable in pure CSS/unit modules that never touch the dashboard app graph.
+  }
+});
+
+afterAll(async () => {
+  /*
+  FNXC:DashboardTests 2026-07-14-21:20:
+  File-level cleanup: reset SSE again and clear fake timers so thread/fork workers do not retain intervals after the last test of a backfill file (shard-2 hang canary).
+  */
+  try {
+    /*
+    FNXC:DashboardTests 2026-07-16-12:30:
+    clearAllTimers must run while fake timers are still active; useRealTimers first
+    leaves scheduled fake timers uncleared and can retain open handles across files.
+    */
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  } catch {
+    // ignore
+  }
+  try {
+    const { __resetSseBus } = await import("./app/sse-bus");
+    __resetSseBus();
+  } catch {
+    // ignore
+  }
 });
 
 export { MockEventSource };

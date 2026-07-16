@@ -2812,6 +2812,7 @@ describe("App view switching", () => {
     fireEvent.click(screen.getByTestId("create-task-INS-1"));
 
     await waitFor(() => {
+      // FNXC:InsightsTaskCreate 2026-07-14-19:40: createTask no longer hard-codes column triage; intake column comes from the active workflow defaults.
       expect(mockCreateTask).toHaveBeenCalledWith({
         title: "Task from insight",
         description: "Use this insight as a task description",
