@@ -6717,7 +6717,8 @@
       "keepsProgressMovingBySwitchingToFusionApos": " keeps progress moving by switching to Fusion&apos;s built-in worktree backend. ",
       "limitsTotalGitWorktreesIncludingInReviewTasks": "Limits total git worktrees including in-review tasks. Default: 4.",
       "maxWorktrees": "Max Worktrees",
-      "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup",
+      "offByDefaultOptInWhenEnabledCompleted": "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming.",
+      "recycleNotApplicableWithTaskIdNaming": "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.",
       "openApprovals": "Open Approvals",
       "optionalLeaveBlankToAutoResolveFusionWill": "Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.",
       "optionalSupports": " Optional. Supports ",
@@ -6747,8 +6748,8 @@
       "worktreesPickerNote": "Navigate to the folder where Fusion should create task worktrees, then select the current directory.",
       "showWorktreeGroupingHelp": "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.",
       "copyFilesHelp": "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).",
-      "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names",
-      "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. Default: random."
+      "namingStyleNotApplicableWhenRecycling": "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.",
+      "howToNameFreshWorktreeDirectories": "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random."
     },
     "fileBrowser": {
       "currentDirectory": "Current directory:",

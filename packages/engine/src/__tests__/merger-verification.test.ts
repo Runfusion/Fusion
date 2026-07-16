@@ -105,7 +105,20 @@ vi.mock("node:child_process", async () => {
       });
     });
 
-  return { execSync: execSyncFn, exec: execFn, execFile: execFileFn, spawn: spawnFn };
+  // execFileSync(file, args, opts) — same shell-equivalent reassembly so
+  // getBranchChangedFiles argv-form git calls reuse mockedExecSync fixtures.
+  const execFileSyncFn = vi.fn((file: any, args?: any, opts?: any) => {
+    const cmd = [file, ...(Array.isArray(args) ? args : [])].join(" ");
+    return execSyncFn(cmd, opts);
+  });
+
+  return {
+    execSync: execSyncFn,
+    execFileSync: execFileSyncFn,
+    exec: execFn,
+    execFile: execFileFn,
+    spawn: spawnFn,
+  };
 });
 
 vi.mock("node:fs", () => ({
@@ -3128,7 +3141,8 @@ describe("getBranchChangedFiles", () => {
   });
 
   it("returns changed files from git diff output", () => {
-    mockedExecSync.mockReturnValue("packages/dashboard/src/a.ts\npackages/dashboard/src/b.ts\n" as any);
+    // NUL-delimited (-z) output from git diff --name-only
+    mockedExecSync.mockReturnValue("packages/dashboard/src/a.ts\0packages/dashboard/src/b.ts\0" as any);
     const files = getBranchChangedFiles("/repo", "main", "fusion/fn-123");
     expect(files).toEqual(["packages/dashboard/src/a.ts", "packages/dashboard/src/b.ts"]);
   });
@@ -3139,8 +3153,8 @@ describe("getBranchChangedFiles", () => {
     expect(files).toEqual([]);
   });
 
-  it("filters out empty lines", () => {
-    mockedExecSync.mockReturnValue("\npackages/engine/src/merger.ts\n\n" as any);
+  it("filters out empty segments", () => {
+    mockedExecSync.mockReturnValue("\0packages/engine/src/merger.ts\0\0" as any);
     const files = getBranchChangedFiles("/repo", "main", "fusion/fn-123");
     expect(files).toEqual(["packages/engine/src/merger.ts"]);
   });

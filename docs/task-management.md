@@ -355,6 +355,10 @@ Auto-completion/finalization remains owned by existing recovery passes:
 5. **done** — merged/finalized
 6. **archived** — preserved history, optionally cleaned from filesystem
 
+### Archive worktree cleanup
+
+Archiving a single-repository task synchronously removes its git worktree before branch and task-metadata cleanup. This applies to random and pinned (`task-id`/`task-title`) names, including `fn_task_archive` and direct CLI archive commands that run without an executor. A host-scoped filesystem reservation serializes a successor's deterministic-path acquisition with archival disposal; if removal fails, the reservation is quarantined so the next acquisition can reconcile the orphan instead of colliding with it. `archive({ cleanup: false })` intentionally retains the worktree. Workspace tasks' per-repository `workspaceWorktrees` are not removed by this lifecycle yet.
+
 Board ordering behavior:
 - `todo` mirrors scheduler dispatch order: priority first (`urgent` → `low`), then oldest `createdAt` within a priority tier, then task ID as deterministic tie-break.
 - `triage`, `in-progress`, and `in-review` remain priority-first with task-ID tie-breaks (`in-review` still pins merge-active statuses above non-merging tasks).

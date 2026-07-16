@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { loadAllAppCss, loadAllAppCssBaseOnly, loadStylesCss } from "../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly, loadStylesCss, loadThemeDataCss } from "../test/cssFixture";
 import { render, screen, act } from "@testing-library/react";
 import { QuickEntryBox } from "../components/QuickEntryBox";
 import type { Task } from "@fusion/core";
@@ -99,6 +99,8 @@ vi.mock("lucide-react", () => ({
   Zap: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
+  Eye: () => null,
+  EyeOff: () => null,
 }));
 
 vi.mock("../components/ModelSelectionModal", () => ({
@@ -176,9 +178,9 @@ describe("quick-entry action row height parity (FN-7680)", () => {
       /\.quick-entry-actions \.btn,\s*\n\s*\.quick-entry-actions \.wf-optional-steps-dropdown-trigger\s*\{[^}]*min-height:\s*([^;]+);/,
     );
     expect(match).not.toBeNull();
-    // Not the mobile touch-target literal (calc(var(--space-2xl) + var(--space-xs)));
-    // this must be a distinct desktop-width value declared outside any @media block.
-    expect(match![1].trim()).toBe("calc(var(--space-xl) + var(--space-xs))");
+    // Not the mobile pinned token; this must be a distinct desktop-width value
+    // declared outside any @media block.
+    expect(match![1].trim()).toBe("var(--quick-entry-action-row-height-desktop)");
   });
 
   it("keeps the existing ≤768px touch-target min-height block applying to all .quick-entry-actions .btn (including Save)", () => {
@@ -196,7 +198,51 @@ describe("quick-entry action row height parity (FN-7680)", () => {
       /\.quick-entry-actions \.btn,\s*\n\s*\.quick-entry-actions \.wf-optional-steps-dropdown-trigger\s*\{[^}]*min-height:\s*([^;]+);/,
     );
     expect(mobileBlockMatch).not.toBeNull();
-    expect(mobileBlockMatch![1].trim()).toBe("calc(var(--space-2xl) + var(--space-xs))");
+    expect(mobileBlockMatch![1].trim()).toBe("var(--quick-entry-action-row-height-mobile)");
+  });
+
+  it("pins desktop and mobile action-row heights outside the shadcn spacing scale", () => {
+    const baseOnlyCss = loadAllAppCssBaseOnly();
+    const stylesCss = loadStylesCss();
+    const themeDataCss = loadThemeDataCss();
+
+    const desktopRule = baseOnlyCss.match(
+      /\.quick-entry-actions \.btn,\s*\n\s*\.quick-entry-actions \.wf-optional-steps-dropdown-trigger\s*\{[^}]*min-height:\s*([^;]+);/,
+    );
+    expect(desktopRule?.[1].trim()).toBe("var(--quick-entry-action-row-height-desktop)");
+
+    const allCss = loadAllAppCss();
+    const mobileSectionStart = allCss.indexOf("Quick Entry Mobile Touch + Overflow Fixes");
+    const mobileSection = allCss.slice(mobileSectionStart, mobileSectionStart + 1600);
+    const mobileRule = mobileSection.match(
+      /\.quick-entry-actions \.btn,\s*\n\s*\.quick-entry-actions \.wf-optional-steps-dropdown-trigger\s*\{[^}]*min-height:\s*([^;]+);/,
+    );
+    expect(mobileRule?.[1].trim()).toBe("var(--quick-entry-action-row-height-mobile)");
+
+    const rootBlock = stylesCss.match(/:root\s*\{([\s\S]*?)\n\}/);
+    expect(rootBlock).not.toBeNull();
+    for (const [token, literal] of [
+      ["--quick-entry-action-row-height-desktop", "28px"],
+      ["--quick-entry-action-row-height-mobile", "36px"],
+    ]) {
+      const declaration = rootBlock![1].match(new RegExp(`${token}:\\s*([^;]+);`));
+      expect(declaration?.[1].trim()).toBe(literal);
+      expect(declaration?.[1]).not.toContain("calc(");
+      expect(declaration?.[1]).not.toContain("var(--space");
+      expect(themeDataCss).not.toContain(token);
+    }
+
+    // Whole-file token scan covers each base selector and its light companion
+    // rules, preventing a variant-specific override from reintroducing drift.
+    for (const theme of [
+      "shadcn", "shadcn-ember", "shadcn-custom", "shadcn-blue", "shadcn-green",
+      "shadcn-red", "shadcn-purple", "shadcn-pink", "shadcn-orange", "shadcn-yellow",
+      "shadcn-mono-red", "shadcn-mono-blue", "shadcn-mono-green", "shadcn-mono-purple",
+      "shadcn-mono-pink", "shadcn-mono-orange", "shadcn-mono-yellow", "shadcn-black",
+      "shadcn-gray", "shadcn-gray-blue",
+    ]) {
+      expect(themeDataCss).toContain(`[data-color-theme="${theme}"]`);
+    }
   });
 
   it("does not modify the shared global .btn, .btn-sm, .btn-icon, .btn-task-create, or .dep-trigger rules in styles.css", () => {

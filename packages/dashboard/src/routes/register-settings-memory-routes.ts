@@ -28,6 +28,8 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
+  isRecycleWorktreeNamingConflict,
+  RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE,
   scheduleQmdProjectMemoryRefresh,
   searchProjectMemory,
   syncBackupRoutine,
@@ -699,6 +701,25 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         }
       }
 
+      // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: recycleWorktrees and worktreeNaming:"task-id" are mutually
+      // exclusive. Validate the RESOLVED next state (current merged with this partial patch) so a clean 400 is
+      // returned before the store backstop throws. Only fetch current settings when one of the two fields moves.
+      if (
+        Object.prototype.hasOwnProperty.call(clientSettings, "recycleWorktrees")
+        || Object.prototype.hasOwnProperty.call(clientSettings, "worktreeNaming")
+      ) {
+        const currentForWorktreeCheck = await scopedStore.getSettings();
+        const nextRecycle = Object.prototype.hasOwnProperty.call(clientSettings, "recycleWorktrees")
+          ? clientSettings.recycleWorktrees
+          : currentForWorktreeCheck.recycleWorktrees;
+        const nextNaming = Object.prototype.hasOwnProperty.call(clientSettings, "worktreeNaming")
+          ? clientSettings.worktreeNaming
+          : currentForWorktreeCheck.worktreeNaming;
+        if (isRecycleWorktreeNamingConflict({ recycleWorktrees: nextRecycle, worktreeNaming: nextNaming })) {
+          throw badRequest(RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE);
+        }
+      }
+
       if (clientSettings.worktrunk?.enabled === true) {
         const currentSettings = await scopedStore.getSettings();
         const nextWorktrunkSettings = resolveWorktrunkSettings(
@@ -744,10 +765,17 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = typeof (err instanceof Error ? err.message : String(err)) === "string" && (
-        (err instanceof Error ? err.message : String(err)).includes("modelPresets") || (err instanceof Error ? err.message : String(err)).includes("must include both provider and modelId")
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      // FNXC:TaskPinnedWorktrees 2026-07-16-12:30: the recycleWorktrees/worktreeNaming mutual-exclusion
+      // backstop lives in store.updateSettings, so it can fire for edge cases the route pre-check misses
+      // (e.g. a null-clear that resolves to a conflicting fallback). Classify it as a 400 client error here
+      // alongside the other validation messages so it never surfaces as a 500.
+      const status = (
+        errorMessage.includes("modelPresets")
+        || errorMessage.includes("must include both provider and modelId")
+        || errorMessage.includes("mutually exclusive")
       ) ? 400 : 500;
-      throw new ApiError(status, err instanceof Error ? err.message : String(err));
+      throw new ApiError(status, errorMessage);
     }
   });
 

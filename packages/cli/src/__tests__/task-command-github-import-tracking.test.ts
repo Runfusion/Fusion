@@ -59,6 +59,7 @@ vi.mock("@fusion/dashboard", () => ({
 }));
 
 vi.mock("@fusion/engine", () => ({
+  installBaselineArchiveWorktreeDisposer: vi.fn(),
   createFnAgent: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),

@@ -14,6 +14,36 @@ import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {toJson} from "../db-helpers.js";
 import {getErrorMessage} from "../error-message.js";
+import {getArchiveWorktreeDisposer} from "../archive-worktree-disposer.js";
+import {acquireWorktreePathReservation, canonicalizeWorktreePath} from "../worktree-path-reservation.js";
+import {basename, join, resolve} from "node:path";
+import {homedir} from "node:os";
+
+function resolveArchiveWorktreesDir(store: TaskStore, configured?: string): string {
+  const value = configured?.replace(/^~(?=$|[\\/])/, homedir()).replaceAll("{repo}", basename(store.rootDir));
+  return value ? resolve(store.rootDir, value) : join(store.rootDir, ".worktrees");
+}
+
+export async function disposeArchivedWorktree(store: TaskStore, task: Task): Promise<void> {
+  if (!task.worktree) return;
+  const settings = await store.getSettings();
+  const canonical = await canonicalizeWorktreePath(task.worktree);
+  if (canonical === await canonicalizeWorktreePath(store.rootDir)) return;
+  const reservation = await acquireWorktreePathReservation({canonicalPath: canonical, worktreesDir: resolveArchiveWorktreesDir(store, settings.worktreesDir), rootDir: store.rootDir});
+  try {
+    const disposer = getArchiveWorktreeDisposer(store);
+    if (!disposer) {
+      /* FNXC:WorkflowLifecycle 2026-07-16-10:00: A non-root archived worktree without a store-scoped engine disposer must be loud rather than silently leaked by an executor-less archive surface. */
+      storeLog.warn("archive-worktree-disposer-missing", {taskId: task.id, worktreePath: canonical});
+      return;
+    }
+    try { await disposer(task, reservation); }
+    catch (error) {
+      await reservation.quarantine(getErrorMessage(error));
+      storeLog.warn("Archive worktree disposal failed; reservation quarantined", {taskId: task.id, worktreePath: canonical, error: getErrorMessage(error)});
+    }
+  } finally { if (reservation.state === "held") await reservation.release(); }
+}
 
 function scheduleDeleteBranchCleanup(store: TaskStore, task: Task): void {
     /*
@@ -248,6 +278,13 @@ export async function archiveTaskImpl(store: TaskStore, id: string, optionsOrCle
         return task;
       }
 
+      /*
+      FNXC:WorkflowLifecycle 2026-07-16-10:00:
+      Pinned paths must be reserved before destructive archive cleanup and held
+      until the awaited engine disposer finishes. The disposer is store-scoped
+      so executor-less fn/CLI archives cannot silently leak a worktree.
+      */
+      await disposeArchivedWorktree(store, task);
       const cleanedBranches = await store.cleanupBranchForTask(task);
       if (cleanedBranches.length > 0) {
         task.log.push({

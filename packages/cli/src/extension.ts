@@ -53,6 +53,7 @@ import {
   type FinalizePlanOverride,
   fetchWebContent,
   assertNoSecretPlaintext,
+  installBaselineArchiveWorktreeDisposer,
   emitGoalRetrievalAudit,
   createWorkflowAuthoringTools,
   workflowListParams,
@@ -503,6 +504,7 @@ async function getStore(
           await boot.shutdown().catch(() => undefined);
           return raced.store;
         }
+        installBaselineArchiveWorktreeDisposer(boot.taskStore, {rootDir: projectRoot, getSettings: () => boot.taskStore.getSettings()});
         storeCache.set(projectRoot, { store: boot.taskStore, shutdown: boot.shutdown });
         return boot.taskStore;
       } catch (error) {
@@ -550,6 +552,8 @@ async function getStore(
  * The entry is external: closeCachedStores / clearHostTaskStores will not shut it down — the host owns lifecycle.
  */
 export function setHostTaskStore(projectRoot: string, store: TaskStore): void {
+  // FNXC:WorkflowLifecycle 2026-07-16-10:00: Install before caching an injected host store because getStore returns cached stores without a construction pass; this preserves executor-less archive cleanup during host startup.
+  installBaselineArchiveWorktreeDisposer(store, {rootDir: projectRoot, getSettings: () => store.getSettings()});
   const canonical = resolveProjectRoot(projectRoot);
   storeCache.set(canonical, { store, external: true });
   storeBootInflight.delete(canonical);

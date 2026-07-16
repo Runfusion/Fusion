@@ -305,11 +305,15 @@ while guaranteeing IDENTICAL resolved height across Save, workflow trigger,
 Attach, GitHub toggle, Fast, Priority, Deps, Subtask, and the optional-steps
 trigger — not merely all-at-least-28px. Applies at both this desktop rule and
 the mobile touch-target block below (FN-5751: never a breakpoint-only fix).
+
+FNXC:QuickAddActionRow 2026-07-16-14:00:
+FN-8147 replaces the spacing-derived fixed height with a pinned literal root
+token so every shadcn theme retains the default 28px desktop control height.
 */
 .quick-entry-actions .btn,
 .quick-entry-actions .wf-optional-steps-dropdown-trigger {
-  min-height: calc(var(--space-xl) + var(--space-xs));
-  max-height: calc(var(--space-xl) + var(--space-xs));
+  min-height: var(--quick-entry-action-row-height-desktop);
+  max-height: var(--quick-entry-action-row-height-desktop);
   line-height: var(--line-height-tight);
   align-items: center;
   overflow: hidden;
@@ -385,7 +389,7 @@ FNXC:QuickAddWorkflow 2026-07-08-00:00:
 FN-7677 — the workflow trigger shares `.btn.btn-sm.dep-trigger` classes with other surfaces (InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm), but the shared `.dep-trigger, .inline-create-model-trigger` rule in styles.css sets `padding: 3px 8px`, overriding `.btn-sm`'s `padding: 4px 10px` and making this trigger ~2px shorter than its Save/Fast/Subtask `.btn.btn-sm` siblings in `.quick-entry-actions`. Re-assert `.btn-sm`'s own padding value scoped to this selector only (do not touch the shared global `.dep-trigger` rule — other surfaces still depend on its 3px/8px sizing) so the quick-add action row reads as one uniform height.
 
 FNXC:QuickAddWorkflow 2026-07-08-09:30:
-FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules, so the `4px 10px` literal is replaced with `var(--space-sm) var(--space-md)` (vertical then horizontal). Height parity is unaffected: box height for this trigger is governed by the FN-7680 `.quick-entry-actions .btn, .quick-entry-actions .wf-optional-steps-dropdown-trigger { min-height: calc(var(--space-xl) + var(--space-xs)); }` normalization (desktop and the matching mobile block), not by this element's own padding — the padding only controls internal content spacing and stays at or below that min-height.
+FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules, so the `4px 10px` literal is replaced with `var(--space-sm) var(--space-md)` (vertical then horizontal). Height parity is unaffected: box height for this trigger is governed by the FN-7680/FN-8147 `.quick-entry-actions .btn, .quick-entry-actions .wf-optional-steps-dropdown-trigger { min-height: var(--quick-entry-action-row-height-desktop); }` normalization (desktop and the matching mobile block), not by this element's own padding — the padding only controls internal content spacing and stays at or below that min-height.
 */
 .quick-entry-workflow-trigger {
   display: inline-flex;
@@ -767,9 +771,9 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
   .quick-entry-actions .btn,
   .quick-entry-actions .wf-optional-steps-dropdown-trigger {
     /* FNXC:WorkflowOptionalSteps 2026-06-25-00:00: The optional-steps trigger is not a `.btn`, so opt it into the same mobile quick-entry touch-target contract as the surrounding action buttons without adding a wrapper that could leave an empty shell for zero-step workflows. */
-    /* FNXC:QuickAddActionRow 2026-07-08-10:15: FN-7683 — mirror the desktop upgrade: a bare min-height floor cannot equalize a variant (e.g. Save's text+icon content) that naturally resolves taller than the touch-target height. Pair min-height with an equal max-height plus centered, tokenized line-height so every control lands on the SAME resolved touch-target height at this breakpoint, not merely >= it. */
-    min-height: calc(var(--space-2xl) + var(--space-xs));
-    max-height: calc(var(--space-2xl) + var(--space-xs));
+    /* FNXC:QuickAddActionRow 2026-07-16-14:00: FN-7683's fixed-height mobile contract remains intact; FN-8147 uses the pinned literal root token so shadcn's tighter spacing cannot shrink its 36px touch target. */
+    min-height: var(--quick-entry-action-row-height-mobile);
+    max-height: var(--quick-entry-action-row-height-mobile);
     line-height: var(--line-height-tight);
     align-items: center;
     overflow: hidden;

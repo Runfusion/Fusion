@@ -1136,6 +1136,8 @@ export {
   genericCliAdapter,
   type CliAdapterDescriptor,
 } from "./cli-agent/adapters/index.js";
+export { installBaselineArchiveWorktreeDisposer } from "./archive-worktree-disposer-install.js";
+
 // CLI Agent Executor — task ↔ session orchestration (U7).
 export {
   CliTaskSession,

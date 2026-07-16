@@ -22,6 +22,7 @@ import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync} from ".
 import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async-lifecycle.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async-archive-lineage.js";
 import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-archive-db.js";
+import {disposeArchivedWorktree} from "./archive-lifecycle.js";
 
 export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
     const settings = await store.getSettingsFast();
@@ -190,6 +191,13 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     // File-system cleanup if requested.
     const dir = store.taskDir(id);
     if (cleanup) {
+      /*
+      FNXC:WorkflowLifecycle 2026-07-16-10:00:
+      PostgreSQL must accept the lineage-child gate before destructive cleanup.
+      A rejected archive leaves its live task and pinned worktree untouched;
+      successful archives still await disposal before publishing the move event.
+      */
+      await disposeArchivedWorktree(store, task);
       await store.cleanupBranchForTask(task);
       const { rm } = await import("node:fs/promises");
       await rm(dir, { recursive: true, force: true });

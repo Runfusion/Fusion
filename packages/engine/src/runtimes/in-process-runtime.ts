@@ -1387,6 +1387,7 @@ export class InProcessRuntime
       if (this.executor) {
         try {
           await this.executor.abortAllInFlight("engine stop");
+          this.executor.disposeArchiveWorktreeDisposer();
           runtimeLog.log("Aborted in-flight executor AI sessions");
         } catch (err) {
           runtimeLog.warn(`Failed to abort in-flight executor AI sessions: ${err}`);

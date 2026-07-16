@@ -177,6 +177,51 @@ describe("register-settings-memory-routes worktrunk gate", () => {
     expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects recycleWorktrees + worktreeNaming:task-id together (mutually exclusive) with 400", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { recycleWorktrees: true, worktreeNaming: "task-id" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects worktreeNaming:task-id when recycleWorktrees is already enabled in stored settings", async () => {
+    const { app, scopedStore } = createApp();
+    // Current stored settings already have recycling on; a partial patch that only flips naming must still be rejected.
+    scopedStore.getSettings.mockResolvedValueOnce({ worktrunk: { enabled: false }, recycleWorktrees: true } as any);
+
+    const res = await patchSettings(app, { worktreeNaming: "task-id" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+    expect(scopedStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("accepts worktreeNaming:task-id when recycling is off", async () => {
+    const { app, scopedStore } = createApp();
+
+    const res = await patchSettings(app, { worktreeNaming: "task-id" });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.updateSettings).toHaveBeenCalledWith({ worktreeNaming: "task-id" });
+  });
+
+  it("maps the store backstop 'mutually exclusive' error to 400 (not 500)", async () => {
+    const { app, scopedStore } = createApp();
+    // A patch that clears the pre-check's view (e.g. null-clear) but resolves to a conflict inside the store,
+    // where the mutual-exclusion backstop throws. The route must classify it as a 400 client error.
+    scopedStore.updateSettings.mockRejectedValueOnce(
+      new Error('recycleWorktrees and worktreeNaming:"task-id" are mutually exclusive: ...'),
+    );
+
+    const res = await patchSettings(app, { autoMerge: true });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+  });
+
   it("passes enabled plugin skills to memory dream processing", async () => {
     const pluginRunner = {
       getPluginSkills: vi.fn(() => [

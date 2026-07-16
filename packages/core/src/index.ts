@@ -544,6 +544,19 @@ export {
   type AgentMessage,
 } from "./ai-engine-loader.js";
 export {
+  registerArchiveWorktreeDisposer,
+  getArchiveWorktreeDisposer,
+  type ArchiveWorktreeDisposer,
+} from "./archive-worktree-disposer.js";
+export {
+  acquireWorktreePathReservation,
+  withWorktreePathReservation,
+  readWorktreePathReservation,
+  canonicalizeWorktreePath,
+  type WorktreePathReservation,
+  type WorktreePathReservationOptions,
+} from "./worktree-path-reservation.js";
+export {
   setRunningAgentCountSource,
   getRunningAgentCountSource,
   deriveRunningAgentCounts,
@@ -1153,6 +1166,9 @@ export {
   validateMcpServersSettings,
   validateMcpServersSettingsDetailed,
   validateUnavailableNodePolicy,
+  assertWorktreeNamingRecycleExclusive,
+  isRecycleWorktreeNamingConflict,
+  RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE,
 } from "./settings-validation.js";
 export type { McpValidationError, McpValidationResult } from "./settings-validation.js";
 

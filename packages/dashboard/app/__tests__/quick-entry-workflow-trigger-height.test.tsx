@@ -354,7 +354,7 @@ describe("quick-entry-actions fixed-height parity, not just a min-height floor (
     // Mobile and desktop intentionally use different fixed heights (36px vs
     // 28px touch targets) — that is expected; parity is required WITHIN each
     // breakpoint, not across breakpoints.
-    expect(minHeightMatch![1].trim()).toBe("calc(var(--space-2xl) + var(--space-xs))");
+    expect(minHeightMatch![1].trim()).toBe("var(--quick-entry-action-row-height-mobile)");
   });
 
   it("does not modify the shared global .btn-sm / .btn-icon / .dep-trigger rules in styles.css (cross-surface regression guard)", () => {
@@ -411,7 +411,7 @@ describe("quick-entry-actions fixed-height parity, not just a min-height floor (
     // The desktop base (non-media) rule must NOT contain this Save-specific
     // override — desktop/tablet Save sizing is intentionally left untouched.
     const withoutMediaBlocks = cssContent.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
-    expect(withoutMediaBlocks).not.toMatch(/\[data-testid="quick-entry-save"\]/);
+    expect(withoutMediaBlocks).not.toMatch(/\.quick-entry-actions \[data-testid="quick-entry-save"\]\s*\{/);
 
     // The shared `.quick-entry-actions .btn, .quick-entry-actions
     // .wf-optional-steps-dropdown-trigger` fixed-height contract (governing

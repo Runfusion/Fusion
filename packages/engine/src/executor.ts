@@ -135,6 +135,7 @@ import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./workspace-paths.j
 import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
 import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
+import {canonicalizeWorktreePath, registerArchiveWorktreeDisposer} from "@fusion/core";
 import {
   activeSessionRegistry,
   executingTaskLock,
@@ -1710,6 +1711,7 @@ export class TaskExecutor {
    *  this so a fast re-dispatch (task:moved → in-progress) awaits the prior
    *  session being fully reaped before creating/acquiring a new worktree. */
   private pendingTaskDisposals = new Map<string, Promise<void>>();
+  private unregisterArchiveWorktreeDisposer: (() => void) | undefined;
   /** Active agent sessions per task, used to terminate on pause and inject steering. */
   private activeSessions = new Map<string, ActiveExecutorSessionState>();
   /** Active step-session executors per task (mutually exclusive with activeSessions). */
@@ -2956,6 +2958,14 @@ export class TaskExecutor {
     private options: TaskExecutorOptions = {},
   ) {
     executorLog.log(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
+    /* FNXC:WorkflowLifecycle 2026-07-16-10:00: Executor replaces the baseline only for its own TaskStore, so archive awaits abort/sweep/removal before branch deletion without cross-store coupling. */
+    this.unregisterArchiveWorktreeDisposer = registerArchiveWorktreeDisposer(store, async (task) => {
+      if (!task.worktree || await canonicalizeWorktreePath(task.worktree) === await canonicalizeWorktreePath(this.rootDir)) return;
+      await this.awaitAbortInFlightTaskWork(task.id, "task archived");
+      for (const path of activeSessionRegistry.pathsForTask(task.id)) activeSessionRegistry.unregisterPath(path);
+      await this.removeOwnWorktreeWithReconcile({worktreePath: task.worktree, settings: await store.getSettings(), taskId: task.id, reason: RemovalReason.ExecutorDispose});
+      task.worktree = undefined;
+    });
 
     store.on("task:moved", ({ task, from, to, source }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
@@ -18107,6 +18117,12 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         worktreePath,
       ).catch(() => undefined);
     }
+  }
+
+  /** Remove only this executor's store-scoped archive disposer registration. */
+  disposeArchiveWorktreeDisposer(): void {
+    this.unregisterArchiveWorktreeDisposer?.();
+    this.unregisterArchiveWorktreeDisposer = undefined;
   }
 
   private async removeOwnWorktreeWithReconcile(input: {

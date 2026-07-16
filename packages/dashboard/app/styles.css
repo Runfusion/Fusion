@@ -146,6 +146,16 @@ html {
   --space-xl: 24px;
   --space-2xl: 32px;
 
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-14:00:
+  FN-8147 pins Quick Add action-row control heights to literal values rather than
+  deriving them from --space-* so shadcn's tighter spacing scale cannot shrink
+  composer controls. These match the default resolved heights: 28px desktop and
+  36px mobile.
+  */
+  --quick-entry-action-row-height-desktop: 28px;
+  --quick-entry-action-row-height-mobile: 36px;
+
   /* Border Radius Scale */
   --radius-sm: 4px;
   --radius-md: 8px;

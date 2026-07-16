@@ -1,7 +1,12 @@
 /**
  * FNXC:CodeOrganization 2026-07-16-00:30:
  * Pure git/test-output parse helpers peeled from merger.ts (string parsing only).
+ *
+ * FNXC:CodeOrganization 2026-07-16-14:00:
+ * Also hosts getBranchChangedFiles + quoteArg (shell-safe git name-only diff).
  */
+import { execFileSync } from "node:child_process";
+
 
 export function parseFailingFilesFromOutput(output: string): string[] {
   const paths = new Set<string>();
@@ -65,4 +70,34 @@ export function parseShortstatSummary(statsOutput: string): { filesChanged: numb
     insertions: insertionsMatch ? Number.parseInt(insertionsMatch[1], 10) : 0,
     deletions: deletionsMatch ? Number.parseInt(deletionsMatch[1], 10) : 0,
   };
+}
+
+export function quoteArg(value: string): string {
+  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+/**
+ * Get the set of files changed in the branch relative to the base branch.
+ * Uses `git diff --name-only -z <baseBranch>...HEAD` (three-dot range so it
+ * computes the diff from the merge-base, not the current HEAD of baseBranch).
+ *
+ * FNXC:CodeOrganization 2026-07-16-16:00:
+ * Invoke git via execFileSync argv (no shell) so branch names cannot break
+ * quoting on Windows cmd.exe, and parse NUL-delimited paths so whitespace/
+ * newlines in filenames are preserved. Empty array on git errors (unknown).
+ *
+ * @internal Exported for testing only.
+ */
+export function getBranchChangedFiles(rootDir: string, baseBranch: string, branch: string): string[] {
+  try {
+    const headRef = branch === "HEAD" ? "HEAD" : branch;
+    const output = execFileSync(
+      "git",
+      ["diff", "--name-only", "-z", `${baseBranch}...${headRef}`],
+      { cwd: rootDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    return String(output).split("\0").map((f) => f.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
 }

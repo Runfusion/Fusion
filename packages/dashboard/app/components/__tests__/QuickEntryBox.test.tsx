@@ -3538,7 +3538,7 @@ describe("QuickEntryBox", () => {
         QUICK_ENTRY_BOX_CSS,
         ".quick-entry-actions .btn,\n  .quick-entry-actions .wf-optional-steps-dropdown-trigger",
       );
-      expect(touchRule).toContain("min-height: calc(var(--space-2xl) + var(--space-xs))");
+      expect(touchRule).toContain("min-height: var(--quick-entry-action-row-height-mobile)");
     });
 
     it("shows and clears a Quick Add drop target only for file drags", () => {
@@ -4514,7 +4514,7 @@ describe("QuickEntryBox", () => {
       );
 
       expect(optionalTriggerRule).not.toBeNull();
-      expect(cssDeclarationValue(optionalTriggerRule!, "min-height")).toBe("calc(var(--space-2xl) + var(--space-xs))");
+      expect(cssDeclarationValue(optionalTriggerRule!, "min-height")).toBe("var(--quick-entry-action-row-height-mobile)");
     });
 
     it("keeps inline deps/models controls in touch-target button classes on mobile", () => {
