@@ -1,10 +1,13 @@
 /**
- * remaining-ops-3 operations.
+ * Task/PR/merge-queue row mappers and slim select serialization.
  *
  * FNXC:StoreModularization 2026-06-25-00:00:
  * Extracted from the monolithic packages/core/src/store.ts as a pure
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
+ *
+ * FNXC:CodeOrganization 2026-07-16-12:00:
+ * Renamed from remaining-ops-3.ts (domain name: row mappers + persist select).
  */
 import {TaskStore} from "../store.js";
 import {TaskDeletedError} from "./errors.js";
