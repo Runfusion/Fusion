@@ -123,6 +123,36 @@ describe("acquireTaskWorktree backend wiring", () => {
     );
   });
 
+  it("passes audit into worktrunk-to-native fallback collision recovery", async () => {
+    let nativeAddAttempts = 0;
+    execMock.mockImplementation((command: string) => {
+      if (command.includes('"wt" "switch" "--create"')) {
+        return Promise.reject({ stderr: "worktrunk create failed", status: 1 });
+      }
+      if (command.startsWith("git worktree add -b")) {
+        nativeAddAttempts += 1;
+        return nativeAddAttempts === 1
+          ? Promise.reject({ message: "branch collision", stderr: "fatal: a branch named 'fusion/fn-1' already exists" })
+          : Promise.resolve({ stdout: "", stderr: "" });
+      }
+      if (command === "git worktree list --porcelain") return Promise.resolve({ stdout: "worktree /repo\nbranch refs/heads/main\n", stderr: "" });
+      if (command.startsWith("git cherry")) return Promise.resolve({ stdout: "", stderr: "" });
+      return Promise.resolve({ stdout: "deadbeef\n", stderr: "" });
+    });
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+
+    await acquireTaskWorktree({
+      task: { ...task, executionStartBranch: "release" }, rootDir: "/repo", store,
+      settings: { worktreeNaming: "task-id", worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fallback-native" } } as any, audit: audit as any,
+    });
+
+    expect(nativeAddAttempts).toBe(2);
+    expect(audit.git).toHaveBeenCalledWith(expect.objectContaining({
+      type: "worktree:branch-collision-recovery",
+      metadata: expect.objectContaining({ taskId: "FN-1", disposition: "recreate-from-startpoint" }),
+    }));
+  });
+
   it("throws worktrunk_binary_missing with no binaryPath", async () => {
     await expect(
       acquireTaskWorktree({
@@ -167,6 +197,45 @@ describe("acquireTaskWorktree backend wiring", () => {
       exitCode: 17,
     });
     expect(execMock.mock.calls.some((call) => String(call[0]).includes(`"${explicitBinaryPath}" "switch" "--create"`))).toBe(true);
+  });
+
+  it("forwards canonical branch and pinned execution start point to an injected backend", async () => {
+    const create = vi.fn().mockResolvedValue({ path: "/tmp/backend", branch: "fusion/fn-1" });
+    const backend: WorktreeBackend = {
+      kind: "native", create, remove: vi.fn(), sync: vi.fn().mockResolvedValue({ skipped: true as const }), prune: vi.fn(),
+      resolveWorktreePath: vi.fn().mockResolvedValue("/tmp/backend"),
+    };
+
+    await acquireTaskWorktree({
+      task: { ...task, executionStartBranch: "release" }, rootDir: "/repo", store,
+      settings: { worktreeNaming: "task-id" } as any, backend,
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      branch: "fusion/fn-1", startPoint: "release", taskId: "FN-1",
+    }));
+  });
+
+  it("forwards canonical branch and pinned start point on pool fresh fallback", async () => {
+    const create = vi.fn().mockResolvedValue({ path: "/tmp/fresh", branch: "fusion/fn-1" });
+    const backend: WorktreeBackend = {
+      kind: "native", create, remove: vi.fn(), sync: vi.fn().mockResolvedValue({ skipped: true as const }), prune: vi.fn(),
+      resolveWorktreePath: vi.fn().mockResolvedValue("/tmp/fresh"),
+    };
+    const pool = {
+      acquire: vi.fn().mockReturnValue("/tmp/pooled"),
+      prepareForTask: vi.fn().mockRejectedValue(new Error("pool unavailable")),
+      release: vi.fn(),
+    };
+
+    await acquireTaskWorktree({
+      task: { ...task, executionStartBranch: "release" }, rootDir: "/repo", store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: true } as any, backend, pool: pool as any,
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      branch: "fusion/fn-1", startPoint: "release", taskId: "FN-1",
+    }));
   });
 
   it("uses explicit backend override", async () => {

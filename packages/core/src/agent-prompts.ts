@@ -314,6 +314,16 @@ If the requested outcome is only to decide, route, or coordinate work, include \
 ## Output
 Write PROMPT.md directly and stop. Do not call \`fn_review_spec()\`; workflow Plan Review is the single optional plan review gate before execution.`;
 
+/*
+FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+Planner-side convergence rules. `## File Scope — front-load surface enumeration` makes the
+planner grep ALL call-sites + persistence/backend paths BEFORE writing File Scope so Plan Review
+confirms coverage instead of surfacing a deeper missed surface each cycle (a top replan-loop
+cause). `## Storage architecture (ground truth)` encodes verified facts (Postgres-only store,
+no task-store/store.ts, tasks composite PK (project_id, id), migrations registered in
+schema-applier.ts) so the planner stops citing removed/nonexistent things and losing rounds to
+stale-codebase-fact rejections (FN-7996/FN-8105/FN-8108).
+*/
 const TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn", an AI-orchestrated task board.
 
 ## Your Role
@@ -527,6 +537,18 @@ tests. Manual verification is NOT a test.
 - If the project has no test framework, the Testing step must include setting one up
   as part of this task (not just skipping tests)
 
+## File Scope — front-load surface enumeration
+
+Before you write \`## File Scope\`, grep the codebase for ALL call-sites of every function/behavior you change AND every persistence/backend path involved (e.g. every store method, backend adapter, migration, and route that touches the data), and enumerate every one of them in the spec. Do not rely on Plan Review to discover missed surfaces incrementally — a spec that lists only the surface the operator pointed at drives the reviewer to surface a deeper missed surface each cycle, which is the main cause of Plan Review replan loops. List the grep-confirmed surfaces so the reviewer confirms coverage rather than hunting for gaps.
+
+## Storage architecture (ground truth — do not cite removed/nonexistent things)
+
+Verified facts about this codebase's storage — cite these correctly so Plan Review does not lose cycles rejecting stale claims:
+- The task store is **PostgreSQL-only**. The legacy SQLite runtime \`Database\` class was removed (\`packages/core/src/db.ts\`); production data access is the async Drizzle \`AsyncDataLayer\`. Do not spec against a SQLite runtime store.
+- There is **no** \`packages/core/src/task-store/store.ts\`. Do not cite it.
+- The \`tasks\` table uses a **composite primary key \`(project_id, id)\`** (\`packages/core/src/postgres/schema/project.ts\`). Task updates/scoping must never key by \`id\` alone — always include \`project_id\`.
+- New Postgres migrations must be **registered explicitly** in \`packages/core/src/postgres/schema-applier.ts\` (version constant + bookkeeping check); a \`.sql\` file dropped in the migrations dir that is not wired there silently never runs.
+
 ## Duplicate check
 Before writing a spec, first call \`fn_task_list\` to see active tasks, then call \`fn_task_search\` with 2-4 distinct keyword phrases from the task title and description (for example file paths, error symptoms, and symbol names).
 For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` to inspect details before deciding.
@@ -662,6 +684,17 @@ FNXC:PlanReviewReplan 2026-07-15-11:15:
 Built-in reviewer prompt includes Spec/Plan Review Convergence rules so REVISE stays
 blocking-only with surgical fix lists, reducing planner↔Plan-Review thrash (paired with
 triage seeding existing PROMPT.md on needs-replan and reviewType "spec" for the triage gate).
+
+FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+Spec gates looped to the 8-replan cap (FN-7996/FN-8105/FN-8108) because each cycle re-reviewed
+cold and surfaced a NEW, deeper blocking issue instead of confirming prior ones were fixed
+(goalpost movement/whack-a-mole), and reviewed at implementation altitude (demanding exact SQL,
+lock/CAS design, column mapping, field-level failure values against a *spec*). Three prompt
+rules address this: (1) "Converging on re-review" in `## Spec / Plan Review Convergence` —
+verify prior issues, don't REVISE for the reviewer's own earlier miss, and at attempt 3+ ratchet
+to critical-only; (2) `## Spec Altitude` extends the plan-altitude principle to the spec gate so
+implementation decisions are deferred to code review; the per-attempt prior-feedback + attempt
+number are threaded from triage via reviewStep/buildReviewRequest.
 */
 const REVIEWER_PROMPT_TEXT = `You are an independent code and plan reviewer.
 
@@ -801,6 +834,11 @@ When you must **REVISE**:
 - Do not demand a full rewrite unless the approach is fundamentally wrong (**RETHINK**).
 - Prefer fixing local PROMPT.md defects in-session when you have write tools, then **APPROVE**, instead of bouncing the task through another full replan cycle.
 
+**Converging on re-review (when the request includes your prior feedback + a Plan Review attempt number):**
+- This is a spec you already reviewed. VERIFY each issue you previously raised was addressed. REVISE only for (a) a PRIOR blocking issue still unresolved, or (b) a genuinely NEW problem THIS revision introduced.
+- Do NOT introduce a new blocking issue that ALSO applied to the version you previously reviewed — that is your own earlier miss. Record it under **Suggestions**, not REVISE.
+- **Severity ratchet at attempt 3+:** gate ONLY on \`critical\` (delivery-blocking) issues. Downgrade lone \`important\`/\`minor\` spec-wording nits to **Suggestions** and APPROVE. Rationale: the executor and downstream code review are later gates — a spec need not be perfect to be executable, only executable.
+
 ## Spec Review — Undersplit Task Detection
 
 When reviewing specs, assess whether the task should have been broken into subtasks. The bar for splitting is high — most tasks should remain whole. Coordination overhead (worktrees, dependency wiring, merge sequencing) is real, so splitting must clearly pay for itself.
@@ -840,6 +878,12 @@ not whether every function and parameter is listed.
 
 Good plan: identifies key behavioral changes, calls out risks, has a testing strategy.
 Do NOT demand function-level implementation checklists.
+
+## Spec Altitude
+
+Review specs at spec altitude — the same right-altitude principle as plan review. A spec must name the invariant/behavior, the affected surfaces, and the acceptance test. It does NOT have to pre-decide implementation.
+Do NOT REVISE a spec to demand exact SQL, lock/CAS protocol design, composite-PK column mapping, or field-level failure-state values — those are implementation decisions verified at code review, not spec gates.
+REVISE on those grounds ONLY when the spec's stated approach is provably impossible, or it omits a required surface or behavior (not merely its implementation detail).
 
 ## Test Quality Review
 

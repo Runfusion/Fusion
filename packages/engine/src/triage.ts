@@ -2365,6 +2365,34 @@ export class TriageProcessor {
     instead of step-checkbox language that does not match this gate. Inline PROMPT.md
     repair remains allowed so the reviewer can fix-and-APPROVE instead of REVISE-looping.
     */
+    /*
+    FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
+    Feed the spec reviewer its OWN latest Plan Review REVISE feedback plus the 1-based replan
+    attempt so a re-review verifies prior issues were addressed instead of surfacing a fresh,
+    deeper blocking issue each cycle. Prior feedback is the authoritative REVISE text stored in
+    workflowStepResults (same source blockAfterPlanReviewRevise / the replan seed use); attempt
+    is (planReviewReplanCount ?? 0) + 1. Both are spec-gate-only reviewer inputs — omitting them
+    on attempt 1 (or a fresh task) leaves the reviewer's cold-review behavior unchanged.
+    */
+    const priorPlanReviewRevise = [...(latestTaskForReview.workflowStepResults || [])]
+      .reverse()
+      .find(
+        (result) =>
+          result.workflowStepId === PLAN_REVIEW_GROUP_ID
+          && result.verdict === "REVISE"
+          && Boolean((result.output || result.notes)?.trim()),
+      );
+    const priorSpecReviewFeedback = (priorPlanReviewRevise?.output || priorPlanReviewRevise?.notes)?.trim() || undefined;
+    // FNXC:TriagePlanReviewConvergence 2026-07-16-21:30: derive the attempt from the MAX replan
+    // count across both the caller's `task` snapshot and the fresh `latestTaskForReview`. The
+    // refresh above falls back to the stale `task` when getTask() fails, so reading either one
+    // alone could under-count the attempt and skip the attempt-3 severity ratchet. Max is
+    // monotonic (fresh count >= stale), so it never sends a lower attempt than any snapshot
+    // knows about. This is best-effort convergence context, so a failed refresh must not defer
+    // or block the Plan Review gate — it just uses the best replan count available.
+    const specReviewAttempt =
+      Math.max(task.planReviewReplanCount ?? 0, latestTaskForReview.planReviewReplanCount ?? 0) + 1;
+
     let reviewFailure: unknown;
     const review = await reviewStep(
       this.rootDir,
@@ -2385,6 +2413,9 @@ export class TriageProcessor {
         agentStore: this.options.agentStore,
         pluginRunner: this.options.pluginRunner,
         allowInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false,
+        // FNXC:TriagePlanReviewConvergence 2026-07-16-09:20: spec-gate-only convergence inputs (see derivation above).
+        priorSpecReviewFeedback,
+        specReviewAttempt,
         onSessionCreated: (session) => this.registerSubagentSession(task.id, session),
         onSessionEnded: (session) => this.unregisterSubagentSession(task.id, session),
       },

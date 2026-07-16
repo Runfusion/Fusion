@@ -3,6 +3,7 @@ import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SettingsFormState, SetSettingsForm } from "./context";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -33,6 +34,15 @@ export function SchedulingSection({ form, setForm, concurrencyLoading = false, o
     const { t } = useTranslation("app");
     return (<>
       <h4 className="settings-section-heading">{t("settings.scheduling.scheduling", "Scheduling")}</h4>
+      {/* FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: project controls tune the bounded same-model retry before terminal executor parking; values floor to core's resolver contract. */}
+      <SettingsNumberRow descriptor={{ key: "executorToolFailureRetryCount", label: t("settings.scheduling.executorToolFailureRetryCount", "Executor tool-failure retries"), help: t("settings.scheduling.executorToolFailureRetryCountHelp", "Same-model retries after consecutive tool-call failures. Set 0 to disable. Default: 2."), scope: "project", min: 0, step: 1 }} value={form.executorToolFailureRetryCount ?? 2} onChange={(v) => setForm((f) => ({ ...f, executorToolFailureRetryCount: Math.max(0, Math.floor(v ?? 2)) } as SettingsFormState))} />
+      <SettingsNumberRow descriptor={{ key: "executorToolFailureRetryBackoffMs", label: t("settings.scheduling.executorToolFailureRetryBackoffMs", "Tool-failure retry backoff (ms)"), help: t("settings.scheduling.executorToolFailureRetryBackoffMsHelp", "Unref'd wait before retrying. Default: 2000."), scope: "project", min: 0, step: 1 }} value={form.executorToolFailureRetryBackoffMs ?? 2000} onChange={(v) => setForm((f) => ({ ...f, executorToolFailureRetryBackoffMs: Math.max(0, Math.floor(v ?? 2000)) } as SettingsFormState))} />
+      <SettingsNumberRow descriptor={{ key: "executorToolFailureThreshold", label: t("settings.scheduling.executorToolFailureThreshold", "Consecutive tool failures"), help: t("settings.scheduling.executorToolFailureThresholdHelp", "Terminal tool errors required before retrying. Default: 3."), scope: "project", min: 1, step: 1 }} value={form.executorToolFailureThreshold ?? 3} onChange={(v) => setForm((f) => ({ ...f, executorToolFailureThreshold: Math.max(1, Math.floor(v ?? 3)) } as SettingsFormState))} />
+      {/* FNXC:ExecutorEscalation 2026-07-16-21:00: Keep alternate model/node escalation opt-in and adjacent to its FN-7996 retry policy; a complete model pair or node id is required before the executor consumes its one extra attempt. */}
+      <SettingsToggleRow descriptor={{ key: "executorModelEscalationEnabled", label: t("settings.scheduling.executorModelEscalationEnabled", "Escalate after tool-failure retries"), help: t("settings.scheduling.executorModelEscalationEnabledHelp", "After same-model retries are exhausted, try one configured alternate model or node. Disabled by default."), scope: "project" }} value={form.executorModelEscalationEnabled === true} onChange={(value) => setForm((f) => ({ ...f, executorModelEscalationEnabled: value === true } as SettingsFormState))} />
+      <SettingsTextRow descriptor={{ key: "executorEscalationProvider", label: t("settings.scheduling.executorEscalationProvider", "Escalation provider"), help: t("settings.scheduling.executorEscalationProviderHelp", "Provider for the alternate model. Requires an alternate model ID."), scope: "project" }} value={form.executorEscalationProvider ?? ""} onChange={(value) => setForm((f) => ({ ...f, executorEscalationProvider: value ?? "" } as SettingsFormState))} />
+      <SettingsTextRow descriptor={{ key: "executorEscalationModelId", label: t("settings.scheduling.executorEscalationModelId", "Escalation model ID"), help: t("settings.scheduling.executorEscalationModelIdHelp", "Alternate model ID. Requires an escalation provider."), scope: "project" }} value={form.executorEscalationModelId ?? ""} onChange={(value) => setForm((f) => ({ ...f, executorEscalationModelId: value ?? "" } as SettingsFormState))} />
+      <SettingsTextRow descriptor={{ key: "executorEscalationNodeId", label: t("settings.scheduling.executorEscalationNodeId", "Escalation node ID"), help: t("settings.scheduling.executorEscalationNodeIdHelp", "Optional configured node; a node target re-enters scheduler routing."), scope: "project" }} value={form.executorEscalationNodeId ?? ""} onChange={(value) => setForm((f) => ({ ...f, executorEscalationNodeId: value ?? "" } as SettingsFormState))} />
       <SettingsNumberRow
         descriptor={{
           key: "maxConcurrent",

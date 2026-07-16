@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Gauge } from "lucide-react";
 import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics } from "@fusion/core";
-import { api, withProjectId } from "../../api/legacy";
+import { api, fetchCodebaseMetrics, withProjectId, type CodebaseMetrics } from "../../api/legacy";
+import { formatBytes } from "../../utils/formatBytes";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { TokensArea } from "./areas/TokensArea";
@@ -102,6 +103,7 @@ interface OverviewStatCard {
   label: string;
   value: string;
   subLabel?: string;
+  testId?: string;
 }
 
 /*
@@ -160,6 +162,7 @@ function OverviewTab({
   const signals = useAnalyticsArea<SignalsAnalytics>("/command-center/signals", range, { projectId });
   const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot | null>(null);
   const [liveSnapshotLoading, setLiveSnapshotLoading] = useState(true);
+  const [codebaseMetrics, setCodebaseMetrics] = useState<CodebaseMetrics | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +186,17 @@ function OverviewTab({
     return () => {
       cancelled = true;
     };
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCodebaseMetrics(null);
+    if (!projectId) return () => { cancelled = true; };
+    void fetchCodebaseMetrics(projectId).then(
+      (result) => { if (!cancelled) setCodebaseMetrics(result); },
+      () => { if (!cancelled) setCodebaseMetrics(null); },
+    );
+    return () => { cancelled = true; };
   }, [projectId]);
 
   const tokenTotal = tokens.data?.totals?.totalTokens ?? 0;
@@ -267,6 +281,42 @@ function OverviewTab({
       : `${tools.data.autonomyRatio.toFixed(1)}:1`
     : "—";
 
+  /*
+  FNXC:CommandCenter 2026-07-16-10:45:
+  Codebase tokens and Disk size are project-intrinsic local metrics, not agent-usage analytics. Keep their cards in loading, core-error, empty, and populated Overview branches so a new project can inspect its context and apparent footprint without sending code to a service.
+  */
+  const projectMetricCards: OverviewStatCard[] = [
+    {
+      id: "codebaseTokens",
+      testId: "cc-overview-codebase-tokens",
+      label: t("commandCenter.overview.codebaseTokens", "Codebase tokens"),
+      value: codebaseMetrics ? formatCount(codebaseMetrics.tokenEstimate) : "—",
+      subLabel: codebaseMetrics?.truncated
+        ? t("commandCenter.overview.metricsPartial", "Approx. (partial)")
+        : codebaseMetrics ? t("commandCenter.overview.codebaseTokensHint", "Local estimate calibrated to cl100k_base") : undefined,
+    },
+    {
+      id: "diskSize",
+      testId: "cc-overview-disk-size",
+      label: t("commandCenter.overview.diskSize", "Disk size"),
+      value: codebaseMetrics ? formatBytes(codebaseMetrics.diskBytes) : "—",
+      subLabel: codebaseMetrics?.truncated
+        ? t("commandCenter.overview.metricsPartial", "Approx. (partial)")
+        : codebaseMetrics ? t("commandCenter.overview.diskSizeHint", "Apparent local size") : undefined,
+    },
+  ];
+  const renderStatGrid = (items: OverviewStatCard[]) => (
+    <div className="cc-stat-grid">
+      {items.map((card) => (
+        <div key={card.id} className="card cc-stat-card" data-testid={card.testId ?? `command-center-stat-${card.id}`}>
+          <div className="cc-stat-label">{card.label}</div>
+          <div key={card.value} className={`cc-stat-value ${card.id === "tokens" ? "cc-token-count-live" : ""}`}>{card.value}</div>
+          {card.subLabel ? <span className="cc-stat-sub">{card.subLabel}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+
   const cards: OverviewStatCard[] = [
     {
       id: "tokens",
@@ -323,6 +373,7 @@ function OverviewTab({
     return (
       <div className="cc-overview">
         {controlsSection}
+        {renderStatGrid(projectMetricCards)}
         <div className="cc-loading" data-testid="command-center-overview-loading">
           <div className="cc-chart-skeleton" />
           <p><LoadingSpinner label={t("commandCenter.loading", "Loading dashboard...")} /></p>
@@ -336,6 +387,7 @@ function OverviewTab({
     return (
       <div className="cc-overview">
         {controlsSection}
+        {renderStatGrid(projectMetricCards)}
         <div className="cc-error" data-testid="command-center-overview-error" role="alert">
           <AlertCircle size={24} />
           <p>{coreError}</p>
@@ -349,6 +401,7 @@ function OverviewTab({
     return (
       <div className="cc-overview">
         {controlsSection}
+        {renderStatGrid(projectMetricCards)}
         <div className="cc-empty" data-testid="command-center-empty">
           <Gauge size={28} />
           <p>{t("commandCenter.empty", "No usage data yet. Run some agents to populate the Dashboard.")}</p>
@@ -361,15 +414,7 @@ function OverviewTab({
   return (
     <div className="cc-overview">
       {controlsSection}
-      <div className="cc-stat-grid">
-        {cards.map((card) => (
-          <div key={card.id} className="card cc-stat-card" data-testid={`command-center-stat-${card.id}`}>
-            <div className="cc-stat-label">{card.label}</div>
-            <div key={card.value} className={`cc-stat-value ${card.id === "tokens" ? "cc-token-count-live" : ""}`}>{card.value}</div>
-            {card.subLabel ? <span className="cc-stat-sub">{card.subLabel}</span> : null}
-          </div>
-        ))}
-      </div>
+      {renderStatGrid([...projectMetricCards, ...cards])}
       {/*
       FNXC:CommandCenter 2026-06-18-00:00:
       The Overview should feel like a living software factory, so the live strip now surfaces animated pulses for tasks in progress, agents working, open signals, and a compact throughput trend from existing activity analytics without adding a new endpoint.

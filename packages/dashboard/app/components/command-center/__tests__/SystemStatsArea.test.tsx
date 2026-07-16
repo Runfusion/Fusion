@@ -145,6 +145,14 @@ describe("SystemStatsArea", () => {
     expect(screen.getByTestId("cc-system-vitest-controls")).toHaveTextContent("Vitest Processes");
   });
 
+  it("renders granular sub-megabyte system measurements", async () => {
+    mockFetchSystemStats.mockResolvedValue(sampleStats({ systemStats: { external: 512 } }));
+
+    render(<SystemStatsArea />);
+
+    expect(await screen.findByTestId("cc-system-details-grid")).toHaveTextContent("512 B");
+  });
+
   it("renders the first-sample CPU state safely without NaN", async () => {
     mockFetchSystemStats.mockResolvedValue(sampleStats({ systemStats: { cpuPercent: null } }));
 

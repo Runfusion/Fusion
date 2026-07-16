@@ -55,6 +55,12 @@ import {
 } from "./connection.js";
 import { applySchemaBaseline } from "./schema-applier.js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
+import {
+  invalidateEmbeddedRuntimeUrl,
+  registerEmbeddedRuntimeUrl,
+  releaseEmbeddedRuntimeLease,
+  type EmbeddedRuntimeLease,
+} from "./active-backend-registry.js";
 import { runLoadedPluginSchemaInitHooks, type LoadedPluginSchemaContract } from "./plugin-schema-hook.js";
 import {
   lookupRegisteredProjectIdByPath,
@@ -76,6 +82,7 @@ import {
 type EmbeddedLifecycleLike = {
   start(): Promise<ResolvedBackend>;
   stop(): Promise<void>;
+  getOwnsProcess(): boolean;
 };
 
 const log = createLogger("startup-factory");
@@ -166,6 +173,35 @@ interface SchemaBackendBootResult {
   readonly backend: ResolvedBackend;
   readonly connections: PostgresConnections;
   readonly embeddedLifecycle: EmbeddedLifecycleLike | null;
+  readonly embeddedRuntimeLease: EmbeddedRuntimeLease | null;
+  readonly embeddedRuntimeUrl: string | null;
+  readonly embeddedOwnsProcess: boolean;
+}
+
+/**
+ * FNXC:PostgresBackup 2026-07-16-12:40:
+ * stop() only stops a postmaster owned by this lifecycle. Consequently owner
+ * teardown burns the URL generation for every joiner, while joiner teardown
+ * releases only its opaque lease. This keeps synchronous backup resolution
+ * aligned with physical cluster liveness without logging the credential URL.
+ */
+async function stopEmbeddedRuntime(
+  lifecycle: EmbeddedLifecycleLike | null,
+  lease: EmbeddedRuntimeLease | null,
+  runtimeUrl: string | null,
+  ownsProcess: boolean,
+): Promise<void> {
+  try {
+    await lifecycle?.stop();
+  } finally {
+    if (lease && runtimeUrl) {
+      if (ownsProcess) {
+        invalidateEmbeddedRuntimeUrl(runtimeUrl, lease);
+      } else {
+        releaseEmbeddedRuntimeLease(lease);
+      }
+    }
+  }
 }
 
 /**
@@ -189,6 +225,9 @@ async function bootSchemaBackend(
   }
 
   let embeddedLifecycle: EmbeddedLifecycleLike | null = null;
+  let embeddedRuntimeLease: EmbeddedRuntimeLease | null = null;
+  let embeddedRuntimeUrl: string | null = null;
+  let embeddedOwnsProcess = false;
   let resolvedBackend = backend;
   if (backend.mode === "embedded") {
     const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE } =
@@ -203,6 +242,13 @@ async function bootSchemaBackend(
     });
     try {
       resolvedBackend = await embeddedLifecycle.start();
+      if (resolvedBackend.runtimeUrl) {
+        embeddedRuntimeUrl = resolvedBackend.runtimeUrl;
+        embeddedOwnsProcess = embeddedLifecycle.getOwnsProcess();
+        embeddedRuntimeLease = registerEmbeddedRuntimeUrl(embeddedRuntimeUrl, {
+          ownsProcess: embeddedOwnsProcess,
+        });
+      }
     } catch (error) {
       await embeddedLifecycle.stop().catch(() => undefined);
       throw new Error(
@@ -230,10 +276,22 @@ async function bootSchemaBackend(
           bypassProjectIsolation,
         });
     await applySchemaBaseline(connections.migration);
-    return { backend: resolvedBackend, connections, embeddedLifecycle };
+    return {
+      backend: resolvedBackend,
+      connections,
+      embeddedLifecycle,
+      embeddedRuntimeLease,
+      embeddedRuntimeUrl,
+      embeddedOwnsProcess,
+    };
   } catch (error) {
     await connections?.close().catch(() => undefined);
-    await embeddedLifecycle?.stop().catch(() => undefined);
+    await stopEmbeddedRuntime(
+      embeddedLifecycle,
+      embeddedRuntimeLease,
+      embeddedRuntimeUrl,
+      embeddedOwnsProcess,
+    ).catch(() => undefined);
     throw error;
   }
 }
@@ -252,7 +310,14 @@ export async function createCentralBackendLayer(
   options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir"> = {},
 ): Promise<CentralBackendLayerResult> {
   const boot = await bootSchemaBackend(options, true);
-  const { backend: resolvedBackend, connections, embeddedLifecycle } = boot;
+  const {
+    backend: resolvedBackend,
+    connections,
+    embeddedLifecycle,
+    embeddedRuntimeLease,
+    embeddedRuntimeUrl,
+    embeddedOwnsProcess,
+  } = boot;
   try {
     /*
     FNXC:CentralPostgresCutover 2026-07-14-19:06:
@@ -301,12 +366,22 @@ export async function createCentralBackendLayer(
       releaseConnections,
       async shutdown(): Promise<void> {
         await releaseConnections();
-        await embeddedLifecycle?.stop().catch(() => undefined);
+        await stopEmbeddedRuntime(
+          embeddedLifecycle,
+          embeddedRuntimeLease,
+          embeddedRuntimeUrl,
+          embeddedOwnsProcess,
+        ).catch(() => undefined);
       },
     };
   } catch (error) {
     await connections.close().catch(() => undefined);
-    await embeddedLifecycle?.stop().catch(() => undefined);
+    await stopEmbeddedRuntime(
+      embeddedLifecycle,
+      embeddedRuntimeLease,
+      embeddedRuntimeUrl,
+      embeddedOwnsProcess,
+    ).catch(() => undefined);
     throw error;
   }
 }
@@ -444,7 +519,13 @@ export async function createTaskStoreForBackend(
     );
   }
   let { connections } = boot;
-  const { backend: resolvedBackend, embeddedLifecycle } = boot;
+  const {
+    backend: resolvedBackend,
+    embeddedLifecycle,
+    embeddedRuntimeLease,
+    embeddedRuntimeUrl,
+    embeddedOwnsProcess,
+  } = boot;
 
   /*
   FNXC:PostgresMigration 2026-07-10:
@@ -661,9 +742,12 @@ export async function createTaskStoreForBackend(
       }
     } catch (err) {
       await connections.close().catch(() => undefined);
-      if (embeddedLifecycle) {
-        await embeddedLifecycle.stop().catch(() => undefined);
-      }
+      await stopEmbeddedRuntime(
+        embeddedLifecycle,
+        embeddedRuntimeLease,
+        embeddedRuntimeUrl,
+        embeddedOwnsProcess,
+      ).catch(() => undefined);
       throw new Error(
         `startup-factory: SQLite → PostgreSQL first-boot auto-migration failed (refusing to boot an empty database over existing SQLite data; restore the retained backup and run 'fn db migrate' manually): ${
           err instanceof Error ? err.message : String(err)
@@ -751,9 +835,12 @@ export async function createTaskStoreForBackend(
     log.log(`startup phase backend.taskStore.construct: ${Date.now() - constructT0}ms`);
   } catch (err) {
     await asyncLayer.close().catch(() => undefined);
-    if (embeddedLifecycle) {
-      await embeddedLifecycle.stop().catch(() => undefined);
-    }
+    await stopEmbeddedRuntime(
+      embeddedLifecycle,
+      embeddedRuntimeLease,
+      embeddedRuntimeUrl,
+      embeddedOwnsProcess,
+    ).catch(() => undefined);
     throw new Error(
       `startup-factory: failed to construct PostgreSQL-backed TaskStore: ${
         err instanceof Error ? err.message : String(err)
@@ -829,7 +916,12 @@ export async function createTaskStoreForBackend(
       }
       if (shutdownEmbedded) {
         try {
-          await shutdownEmbedded.stop();
+          await stopEmbeddedRuntime(
+            shutdownEmbedded,
+            embeddedRuntimeLease,
+            embeddedRuntimeUrl,
+            embeddedOwnsProcess,
+          );
         } catch (err) {
           log.warn(`startup-factory: embedded PostgreSQL stop failed during shutdown: ${
             err instanceof Error ? err.message : String(err)

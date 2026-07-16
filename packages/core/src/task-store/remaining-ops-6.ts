@@ -624,7 +624,7 @@ export async function resetPromptCheckboxesImpl(store: TaskStore, dir: string): 
 
 export async function updateTaskImpl(store: TaskStore,
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:StateMachine 2026-07-07-12:00:
@@ -1338,4 +1338,67 @@ export async function getWorkflowWorkItemImpl(store: TaskStore, id: string): Pro
     }
     const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
     return row ? store.rowToWorkflowWorkItem(row) : null;
+}
+
+export type ToolFailureRetryClaim =
+  | { outcome: "claimed"; attempt: number }
+  | { outcome: "already-claimed-for-run" }
+  | { outcome: "exhausted" };
+
+/**
+ * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+ * PostgreSQL owns the durable per-run claim. The cursor predicate is deliberately
+ * evaluated before the cap after a miss: an older handler must never park a newer run.
+ */
+export async function claimNextToolFailureRetryImpl(
+  store: TaskStore,
+  taskId: string,
+  expectedCursor: number,
+  maxRetries: number,
+): Promise<ToolFailureRetryClaim> {
+  /*
+   * FNXC:ExecutorToolFailureRetry 2026-07-16-13:30:
+   * PostgreSQL is the only runtime TaskStore backend. Keep compatibility-mode
+   * stores on the legacy terminal-park path instead of throwing from a
+   * default-enabled retry policy: they have no durable atomic claim primitive.
+   */
+  if (!store.backendMode) return { outcome: "exhausted" };
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const rows = await layer.db.update(schema.project.tasks).set({
+    consecutiveToolFailureRetryCount: sql`coalesce(${schema.project.tasks.consecutiveToolFailureRetryCount}, 0) + 1`,
+    toolFailureDetectorLogCursor: null,
+    updatedAt: new Date().toISOString(),
+  }).where(and(
+    eq(schema.project.tasks.projectId, projectId),
+    eq(schema.project.tasks.id, taskId),
+    eq(schema.project.tasks.toolFailureDetectorLogCursor, expectedCursor),
+    sql`coalesce(${schema.project.tasks.consecutiveToolFailureRetryCount}, 0) < ${maxRetries}`,
+  )).returning({ attempt: schema.project.tasks.consecutiveToolFailureRetryCount });
+  if (rows.length > 0) return { outcome: "claimed", attempt: rows[0]!.attempt ?? 1 };
+  const [current] = await layer.db.select({
+    cursor: schema.project.tasks.toolFailureDetectorLogCursor,
+    count: schema.project.tasks.consecutiveToolFailureRetryCount,
+  }).from(schema.project.tasks).where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, taskId)));
+  // Cursor mismatch MUST win before cap: stale handlers silently defer to the newer run.
+  if (!current || current.cursor !== expectedCursor) return { outcome: "already-claimed-for-run" };
+  if ((current.count ?? 0) >= maxRetries) return { outcome: "exhausted" };
+  return { outcome: "already-claimed-for-run" };
+}
+
+/** CAS for the single exhaustion audit; terminal parking intentionally remains idempotent. */
+export async function markToolFailureRetryExhaustedAuditImpl(store: TaskStore, taskId: string): Promise<boolean> {
+  // FNXC:ExecutorToolFailureRetry 2026-07-16-13:30: non-PostgreSQL compatibility stores safely skip the deduplicated audit and retain legacy terminal parking.
+  if (!store.backendMode) return false;
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const rows = await layer.db.update(schema.project.tasks).set({
+    toolFailureRetryExhaustedAuditEmitted: 1,
+    updatedAt: new Date().toISOString(),
+  }).where(and(
+    eq(schema.project.tasks.projectId, projectId),
+    eq(schema.project.tasks.id, taskId),
+    sql`(${schema.project.tasks.toolFailureRetryExhaustedAuditEmitted} is null or ${schema.project.tasks.toolFailureRetryExhaustedAuditEmitted} = 0)`,
+  )).returning({ id: schema.project.tasks.id });
+  return rows.length > 0;
 }

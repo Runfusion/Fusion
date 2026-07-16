@@ -52,5 +52,8 @@ export default plugin;
 
 export { ensureQualitySchema, qualityPostgresSchema } from "./quality-schema.js";
 export { QualityStore } from "./store/quality-store.js";
+export { AsyncQualityStore } from "./store/async-quality-store.js";
+export { getQualityStore } from "./store/quality-store-provider.js";
+export type { QualityStoreApi } from "./store/quality-store-api.js";
 export { resolvePresetCommand, isQualityPresetId, listPresetCatalog } from "./runner/command-presets.js";
 export { buildHeuristicSuggestedCases } from "./suggestions/heuristic-cases.js";

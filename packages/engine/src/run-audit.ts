@@ -152,6 +152,7 @@ export type GitMutationType =
   | "worktree:stale-registration-detected"
   | "worktree:stale-registration-recovered"
   | "worktree:stale-registration-recovery-failed"
+  | "worktree:branch-collision-recovery"
   | "branch:create"
   | "branch:delete"
   | "branch:checkout"

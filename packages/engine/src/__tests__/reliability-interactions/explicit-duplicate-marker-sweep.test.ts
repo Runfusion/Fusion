@@ -15,6 +15,12 @@ async function createPromptTask(
   fx: ReliabilityFixture,
   input: { id: string; column: "triage" | "todo" | "in-review"; title?: string; prompt: string },
 ) {
+  /*
+  FNXC:ExplicitDuplicateMarkerSweep 2026-07-16-11:25:
+  The production marker parser intentionally accepts only canonical FN-#### ids.
+  Each test configures the PG fixture's taskPrefix to FN so allocated ids produce
+  a valid marker instead of DUPLICATE: KB-### and genuinely exercise deletion.
+  */
   const task = await fx.store.createTask({
     title: input.title ?? input.id,
     description: `${input.id} description`,
@@ -40,7 +46,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("resolves an FN-5217-style stuck marker task during maintenance", async () => {
-    const fx = await makeReliabilityFixture();
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -49,6 +55,10 @@ const canRun = hasGit && hasPg;
     await (fx.manager as any).runMaintenance();
 
     await expect(fx.store.getTask(duplicate.id)).rejects.toThrow(`Task ${duplicate.id} not found`);
+    const softDeletedDuplicate = await fx.store.getTask(duplicate.id, { includeDeleted: true });
+    expect(softDeletedDuplicate.deletedAt).toEqual(expect.any(String));
+    const liveTasks = await fx.store.listTasks({ includeArchived: false });
+    expect(liveTasks.map((task) => task.id)).not.toContain(duplicate.id);
     expect((await fx.store.getTask(canonical.id)).column).toBe("todo");
     const activity = await fx.store.getActivityLog({ type: "task:auto-archived-duplicate", limit: 20 });
     expect(activity.find((entry) => entry.taskId === duplicate.id)).toEqual(
@@ -59,7 +69,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("does not disturb unrelated in-review tasks when autoMerge is false", async () => {
-    const fx = await makeReliabilityFixture({ settings: { autoMerge: false } });
+    const fx = await makeReliabilityFixture({ settings: { autoMerge: false, taskPrefix: "FN" } });
     fixtures.push(fx);
 
     await fx.store.updateTask(fx.task.id, {
@@ -78,7 +88,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("leaves marker tasks alone when the canonical target is missing", async () => {
-    const fx = await makeReliabilityFixture();
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
     fixtures.push(fx);
 
     const duplicate = await createPromptTask(fx, { id: "FN-5301", column: "triage", prompt: "DUPLICATE: FN-9999\n" });
@@ -91,7 +101,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("leaves full specs untouched", async () => {
-    const fx = await makeReliabilityFixture();
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
     fixtures.push(fx);
 
     const duplicate = await createPromptTask(fx, { id: "FN-5302", column: "todo", prompt: FULL_SPEC });
@@ -102,7 +112,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("honors the disable flag", async () => {
-    const fx = await makeReliabilityFixture({ settings: { resolveExplicitDuplicateMarkerEnabled: false } as never });
+    const fx = await makeReliabilityFixture({ settings: { resolveExplicitDuplicateMarkerEnabled: false, taskPrefix: "FN" } as never });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -114,7 +124,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("caps work at 50 tasks per sweep", async () => {
-    const fx = await makeReliabilityFixture();
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -138,7 +148,7 @@ const canRun = hasGit && hasPg;
   }, 20_000);
 
   it("fails open when one delete throws and continues processing later tasks", async () => {
-    const fx = await makeReliabilityFixture();
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });

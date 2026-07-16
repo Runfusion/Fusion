@@ -17,6 +17,7 @@ import { Sparkline } from "../charts/Sparkline";
 import { LineChart, PieChart } from "../charts/recharts";
 import { AreaShell } from "./AreaShell";
 import { formatCount } from "./areaShared";
+import { formatBytes } from "../../../utils/formatBytes";
 import "./SystemStatsArea.css";
 
 type Severity = "normal" | "warning" | "critical";
@@ -36,13 +37,6 @@ const AGENT_STATES = ["idle", "active", "running", "error"] as const;
 FNXC:CommandCenter 2026-06-18-00:00:
 System telemetry now lives in the Command Center System area; it polls /api/system-stats (no new endpoint) and keeps a bounded rolling sample buffer to render live CPU/memory trend sparklines.
 */
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  const mb = bytes / (1024 * 1024);
-  if (mb < 1024) return `${mb.toFixed(0)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
-}
 
 function toPercent(used: number, total: number): string {
   if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return "—";

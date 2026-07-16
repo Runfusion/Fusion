@@ -133,6 +133,27 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
     expect(result.baseCommitSha).toBe(developTip);
   });
 
+  it("reconciles a sub-repo dangling collision branch from its resolved integration tip", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const repoA = fixture.repoPath("repo-a");
+    const mainTip = git(repoA, "git rev-parse main");
+    // Leave ambient HEAD on unrelated work to prove fresh acquisition uses the
+    // sub-repo integration branch, not whichever branch the root currently has checked out.
+    git(repoA, "git checkout -qb ambient-work");
+    git(repoA, "git commit --allow-empty -m 'chore: ambient work'");
+    git(repoA, "git branch fusion/fn-7 main");
+
+    const { store, current } = makeFakeStore(makeTask("FN-7"));
+    const result = await acquireWorkspaceRepoWorktree({
+      repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: current(), store,
+      settings: SETTINGS, registry: new ActiveSessionRegistry(),
+    });
+
+    expect(result.branch).toBe("fusion/fn-7");
+    expect(git(repoA, "git rev-parse fusion/fn-7")).toBe(mainTip);
+    expect(git(repoA, "git merge-base fusion/fn-7 main")).toBe(mainTip);
+  });
+
   it("installs the identity-guard hook so a commit on a non-fusion branch is rejected", async () => {
     fixture = await createWorkspaceFixture(["repo-a"]);
     const { store, current } = makeFakeStore(makeTask("FN-3"));

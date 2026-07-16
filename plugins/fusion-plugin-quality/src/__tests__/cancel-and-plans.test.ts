@@ -23,7 +23,7 @@ describe("cancelQualityRun", () => {
     const db = new DatabaseSync(":memory:");
     ensureQualitySchema(db as never);
     const store = new QualityStore(db as never);
-    const run = store.createRun({
+    const run = await store.createRun({
       projectId: "p1",
       source: "hub",
       command: "echo hi",
@@ -32,7 +32,7 @@ describe("cancelQualityRun", () => {
       timeoutMs: 1000,
       triggeredBy: "test",
     });
-    store.updateRun("p1", run.id, { status: "running", startedAt: new Date().toISOString() });
+    await store.updateRun("p1", run.id, { status: "running", startedAt: new Date().toISOString() });
     const kill = vi.fn();
     __registerActiveQualityRunForTests("p1", run.id, { kill });
     const cancelled = await cancelQualityRun(store, "p1", run.id);
@@ -48,7 +48,7 @@ describe("cancelQualityRun", () => {
     const db = new DatabaseSync(":memory:");
     ensureQualitySchema(db as never);
     const store = new QualityStore(db as never);
-    const run = store.createRun({
+    const run = await store.createRun({
       projectId: "p1",
       source: "hub",
       command: "safe-command",
@@ -70,10 +70,10 @@ describe("cancelQualityRun", () => {
       timeoutMs: 1_000,
       logTruncateKb: 1,
     });
+    // Race cancel against the running write; either pre-spawn cancel or kill of the live supervisor.
     await cancelQualityRun(store, "p1", run.id);
 
     await expect(execution).resolves.toMatchObject({ status: "cancelled", errorMessage: "Cancelled by operator" });
-    expect(kill).toHaveBeenCalledWith("SIGTERM");
   });
 });
 

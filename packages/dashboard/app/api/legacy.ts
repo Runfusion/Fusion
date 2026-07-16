@@ -2437,6 +2437,26 @@ export function apiImportGitHubPull(owner: string, repo: string, prNumber: numbe
   });
 }
 
+/**
+ * FNXC:GitHubImport 2026-07-16-18:05:
+ * Comment imports preserve the comment payload and issue/PR source context so the server can create a separately auditable resolve-feedback task without closing the detail window.
+ */
+export function apiImportGitHubComment(
+  params: {
+    owner: string;
+    repo: string;
+    number: number;
+    type: "issue" | "pull";
+    comment: Pick<GitHubCommentDetail, "author" | "body" | "createdAt">;
+  },
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId("/github/comments/import", projectId), {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 // --- GitLab Import API ---
 
 export interface GitLabImportItem {
@@ -6844,6 +6864,16 @@ export interface ProjectInfo {
 }
 
 /** Project health metrics */
+export interface CodebaseMetrics {
+  tokenEstimate: number;
+  sourceFileCount: number;
+  sourceByteCount: number;
+  diskBytes: number;
+  diskFileCount: number;
+  method: string;
+  truncated: boolean;
+}
+
 export interface ProjectHealth {
   projectId: string;
   status: "active" | "paused" | "errored" | "initializing";
@@ -7479,6 +7509,10 @@ export function removeProjectPathMapping(projectId: string, nodeId: string): Pro
 /** Fetch health metrics for a specific project */
 export function fetchProjectHealth(id: string): Promise<ProjectHealth> {
   return api<ProjectHealth>(`/projects/${encodeURIComponent(id)}/health`);
+}
+
+export function fetchCodebaseMetrics(id: string): Promise<CodebaseMetrics> {
+  return api<CodebaseMetrics>(`/projects/${encodeURIComponent(id)}/codebase-metrics`);
 }
 
 /** Fetch executor statistics for the status bar.

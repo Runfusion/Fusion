@@ -233,6 +233,50 @@ describe("Plan Review replan cap", () => {
     }));
   });
 
+  /*
+  FNXC:TriagePlanReviewConvergence 2026-07-16-19:40:
+  Prove the spec-gate convergence inputs are derived from the latest Plan Review REVISE and passed
+  to reviewStep: priorSpecReviewFeedback = latest REVISE output with a `|| notes` fallback (FIX B —
+  an empty-string output must fall through to notes, not be treated as present), and
+  specReviewAttempt = planReviewReplanCount + 1. `mockReviewStep.mock.calls[0][7]` is the options bag.
+  */
+  it("passes prior REVISE feedback (empty-output -> notes fallback) and attempt to reviewStep", async () => {
+    const rootDir = await createFixtureRoot();
+    roots.push(rootDir);
+    const task = createRetryTask({
+      id: "FN-REPLAN-CAP-CONVERGE",
+      planReviewReplanCount: 1,
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "failed",
+          verdict: "REVISE",
+          // Empty output must NOT win under `||`; notes is the real feedback.
+          output: "",
+          notes: "NOTES-FALLBACK-MARKER: add the missing Surface Enumeration section.",
+        },
+      ],
+    } as Partial<Task>);
+    const prompt = `# Task: ${task.id} - Existing draft\n\n## Mission\n\nOnly rewrite after reviewer feedback.\n`;
+    await writePrompt(rootDir, task.id, prompt);
+    const store = createStore(task);
+    mockReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "Approved.", summary: "Ready." });
+
+    await runGate(rootDir, task, store);
+
+    expect(mockReviewStep).toHaveBeenCalled();
+    const options = mockReviewStep.mock.calls[0][7] as {
+      priorSpecReviewFeedback?: string;
+      specReviewAttempt?: number;
+    };
+    expect(options.priorSpecReviewFeedback).toBe(
+      "NOTES-FALLBACK-MARKER: add the missing Surface Enumeration section.",
+    );
+    expect(options.specReviewAttempt).toBe(2);
+  });
+
   it("resets the replan counter when Plan Review passes", async () => {
     const rootDir = await createFixtureRoot();
     roots.push(rootDir);

@@ -7,6 +7,7 @@ export const MANUAL_RETRY_RESET_COUNTER_KEYS = [
   "resumeLimboCount",
   "executeRequeueLoopCount",
   "graphResumeRetryCount",
+  "consecutiveToolFailureRetryCount",
   "recoveryRetryCount",
   "taskDoneRetryCount",
   "worktreeSessionRetryCount",
@@ -42,6 +43,9 @@ export function buildAutoPauseClearPatch(
 export function buildManualRetryResetPatch(options?: { resetMergeRetries?: boolean }): Partial<Task> {
   const patch: Partial<Task> = {
     nextRecoveryAt: null as unknown as Task["nextRecoveryAt"],
+    executorEscalationAttempted: false,
+    toolFailureDetectorLogCursor: null,
+    toolFailureRetryExhaustedAuditEmitted: false,
   };
 
   for (const key of MANUAL_RETRY_RESET_COUNTER_KEYS) {

@@ -101,6 +101,22 @@ export type BranchConflictInspectionResult =
   | { kind: "reclaimable"; livePath: string; tipSha: string; taskAttributedCommitCount: number; strandedCommits: BranchConflictCommit[] }
   | { kind: "live-foreign"; livePath: string; error: BranchConflictError };
 
+/**
+ * FNXC:WorktreeAcquisition 2026-07-16-00:00:
+ * FN-8132 / #2232 needs a classifier for a bare `git worktree add -b` collision,
+ * where the requested path normally does not exist. Unlike inspectBranchConflict,
+ * this path must enumerate live worktrees before considering branch recovery:
+ * only exclusively task-attributed unique commits are reclaimable; any foreign or
+ * unattributed unique commit, including mixed history, remains protected.
+ */
+export type BareBranchCollisionInspectionResult =
+  | { kind: "missing" }
+  | { kind: "tip-already-merged"; tipSha: string; integrationRef: string }
+  | { kind: "fully-subsumed"; tipSha: string }
+  | { kind: "reclaimable"; tipSha: string; taskAttributedCommitCount: number; uniqueCommitCount: number }
+  | { kind: "foreign-unmerged"; tipSha: string; uniqueCommitCount: number; error: BranchConflictError }
+  | { kind: "live-foreign"; tipSha: string; error: BranchConflictError };
+
 interface UniqueBranchCommitListResult {
   commits: BranchConflictCommit[];
   mainRef: string;
@@ -929,6 +945,111 @@ async function isZeroUniqueCommitBranchViaPatchIdFallback(
   }
 
   return true;
+}
+
+/**
+ * Inspect a branch-name collision from `git worktree add -b` without requiring
+ * the requested destination path to exist. Existing callers must use
+ * inspectBranchConflict, whose missing-path short-circuit is intentionally kept.
+ */
+export async function inspectBareBranchCollision(
+  input: InspectBranchConflictInput,
+): Promise<BareBranchCollisionInspectionResult> {
+  const startPoint = input.startPoint ?? "HEAD";
+
+  try {
+    await runGit(input.repoDir, "git worktree prune");
+  } catch {
+    // Best-effort: the mapping check below still protects a registered live worktree.
+  }
+
+  try {
+    await revParse(input.repoDir, `refs/heads/${input.branchName}`);
+  } catch {
+    return { kind: "missing" };
+  }
+
+  let worktreeMap = await getWorktreeBranchMap(input.repoDir);
+  let livePath = worktreeMap.get(input.branchName);
+  if (livePath && !existsSync(livePath)) {
+    try {
+      await runGit(input.repoDir, "git worktree prune");
+    } catch {
+      // Best-effort: a still-present mapping is not considered live below.
+    }
+    worktreeMap = await getWorktreeBranchMap(input.repoDir);
+    livePath = worktreeMap.get(input.branchName);
+  }
+
+  const tipSha = await revParse(input.repoDir, input.branchName);
+  const uniqueCommitResult = await listUniqueBranchCommits(input.repoDir, startPoint, input.branchName);
+  const requestedIntegrationRef = input.integrationRef ?? await resolveIntegrationBranch(input.repoDir, undefined);
+  const integrationRef = await resolveBranchComparisonRef(input.repoDir, requestedIntegrationRef, input.branchName);
+
+  if (livePath && existsSync(livePath)) {
+    return {
+      kind: "live-foreign",
+      tipSha,
+      error: new BranchConflictError({
+        branchName: input.branchName,
+        conflictingWorktreePath: livePath,
+        existingTipSha: tipSha,
+        strandedCommits: uniqueCommitResult.commits,
+        startPoint: uniqueCommitResult.mainRef,
+        recommendedAction: "Inspect the live conflicting worktree before retrying.",
+      }),
+    };
+  }
+
+  if (await isAncestor(input.repoDir, tipSha, integrationRef)) {
+    return { kind: "tip-already-merged", tipSha, integrationRef };
+  }
+
+  const zeroUnique = uniqueCommitResult.commits.length === 0 && (
+    !uniqueCommitResult.degraded || await isZeroUniqueCommitBranchViaPatchIdFallback(
+      input.repoDir,
+      startPoint,
+      input.branchName,
+      uniqueCommitResult.mainRef,
+    )
+  );
+  if (zeroUnique) {
+    return { kind: "fully-subsumed", tipSha };
+  }
+
+  const attribution = await reportBranchAttribution(
+    input.repoDir,
+    input.branchName,
+    uniqueCommitResult.mainRef,
+    input.requestingTaskId,
+  );
+  const taskAttributedCommitCount = attribution.ownTrailed + attribution.ownUntrailed.length;
+  const foreignOrUnattributedCount = attribution.foreign.length + attribution.unattributed.length;
+  if (
+    taskAttributedCommitCount === uniqueCommitResult.commits.length
+    && foreignOrUnattributedCount === 0
+  ) {
+    return {
+      kind: "reclaimable",
+      tipSha,
+      taskAttributedCommitCount,
+      uniqueCommitCount: uniqueCommitResult.commits.length,
+    };
+  }
+
+  return {
+    kind: "foreign-unmerged",
+    tipSha,
+    uniqueCommitCount: uniqueCommitResult.commits.length,
+    error: new BranchConflictError({
+      branchName: input.branchName,
+      conflictingWorktreePath: input.conflictingWorktreePath,
+      existingTipSha: tipSha,
+      strandedCommits: uniqueCommitResult.commits,
+      startPoint: uniqueCommitResult.mainRef,
+      recommendedAction: "Preserve this unregistered branch and inspect its foreign or unattributed commits before retrying.",
+    }),
+  };
 }
 
 export async function inspectBranchConflict(

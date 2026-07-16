@@ -13,7 +13,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
@@ -5022,6 +5022,8 @@ export class TaskExecutor {
    *  steps, no review handoff) and hands control back to the graph runner.
    *  Doubles as the re-entrancy guard for graph routing. */
   private graphCompletionInterceptors = new Map<string, (info: { modifiedFiles: string[] }) => void>();
+  /** Per graph-run agent-log boundary; passed to failure handling rather than trusting stale task snapshots. */
+  private graphToolFailureRunCursors = new Map<string, number>();
 
   /** Step-inversion (KTD-2/KTD-8, U6/U8): graph-owned step-execute can pin
    *  step-session physics for workflows that need a hard per-step boundary
@@ -5145,6 +5147,16 @@ export class TaskExecutor {
       workflowGraphExecutor graduated from Experimental. Every task routes through the graph runner by default, and stale persisted experimentalFeatures.workflowGraphExecutor=false values are ignored so the product no longer has a user-facing or runtime graph-engine kill switch.
       */
       settings = { ...settings };
+      /*
+       * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
+       * Capture a count cursor without reading the task log. Failure handling receives this
+       * execution-local boundary, so a stale task snapshot cannot accidentally qualify an old run.
+       */
+      if (resolveMaxConsecutiveToolFailureRetries(settings) > 0) {
+        const cursor = await this.store.getAgentLogCount(task.id);
+        this.graphToolFailureRunCursors.set(task.id, cursor);
+        await this.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, this.getRunContextFor(task.id));
+      }
       let selection: { workflowId: string; stepIds: string[] } | undefined;
       if (
         typeof this.store.getTaskWorkflowSelectionAsync !== "function"
@@ -5406,8 +5418,8 @@ export class TaskExecutor {
         if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
           await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
         }
-        if ((live.graphResumeRetryCount ?? 0) !== 0) {
-          await this.store.updateTask(task.id, { graphResumeRetryCount: 0 }, this.getRunContextFor(task.id));
+        if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
+          await this.store.updateTask(task.id, { graphResumeRetryCount: 0, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, this.getRunContextFor(task.id));
         }
       }
       return true;
@@ -5442,6 +5454,7 @@ export class TaskExecutor {
         this.activeWorkflowGraphAbortControllers.delete(task.id);
       }
       this.graphRouting.delete(task.id);
+      this.graphToolFailureRunCursors.delete(task.id);
       // Clear per-run step-inversion pins (KTD-8: pinned only for the run's life).
       this.graphStepSessionPinned.delete(task.id);
       this.graphStepRunOnce.delete(task.id);
@@ -9081,6 +9094,24 @@ export class TaskExecutor {
     return true;
   }
 
+  private async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): Promise<boolean> {
+    if (cursor == null) return false;
+    const currentCount = await this.store.getAgentLogCount(taskId);
+    if (currentCount <= cursor) return false;
+    const entries = await this.store.getAgentLogs(taskId, { limit: currentCount - cursor });
+    let failures = 0;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const type = entries[index]!.type;
+      if (type === "tool_result") return false;
+      if (type === "tool_error") {
+        failures += 1;
+        if (failures >= threshold) return true;
+      }
+      // Invocation markers and non-completion entries intentionally do not reset the run.
+    }
+    return false;
+  }
+
   /** Terminal failure of a graph run: record the error and park the task in
    *  review so a human can act — never leave it invisible in in-progress. */
   private async handleGraphFailure(task: Task, result: WorkflowGraphTaskRunResult): Promise<void> {
@@ -9659,12 +9690,148 @@ export class TaskExecutor {
         return;
       }
       const message = `Workflow graph terminated with failure at node '${failedNode ?? "unknown"}'`;
+      const settings = await this.store.getSettings();
+      const maxToolFailureRetries = resolveMaxConsecutiveToolFailureRetries(settings);
+      const isExecuteFailure = failedNode === "execute" || failedNode?.endsWith(":step-execute") === true || failedNode === "step-execute";
+      if (maxToolFailureRetries > 0 && isExecuteFailure && !live.paused && !live.userPaused && !live.deletedAt && live.column === "in-progress") {
+        // Prefer the execution-local boundary; recovery paths refetch durable state rather than use the stale failure snapshot.
+        const cursor = this.graphToolFailureRunCursors.get(task.id) ?? (await this.store.getTask(task.id))?.toolFailureDetectorLogCursor;
+        const threshold = resolveConsecutiveToolFailureThreshold(settings);
+        if (await this.hasTrailingConsecutiveToolFailures(task.id, cursor, threshold)) {
+          const claim = await this.store.claimNextToolFailureRetry(task.id, cursor!, maxToolFailureRetries);
+          if (claim.outcome === "claimed") {
+            await this.store.updateTask(task.id, { status: null, error: null }, this.getRunContextFor(task.id));
+            await this.store.logEntry(task.id, `Consecutive tool-call failures — auto-retrying same model (${claim.attempt}/${maxToolFailureRetries}) instead of parking`, undefined, this.getRunContextFor(task.id));
+            await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempt: claim.attempt, maxAttempts: maxToolFailureRetries, consecutiveToolFailures: threshold, mode: "same-model" } });
+            const schedule = () => { void (async () => { const resume = await this.store.getTask(task.id); if (resume && !resume.deletedAt && !resume.paused && !resume.userPaused && resume.column === "in-progress") await this.execute(resume); })().catch((error) => executorLog.error(`${task.id}: tool-failure retry failed`, error)); };
+            const delay = resolveConsecutiveToolFailureRetryBackoffMs(settings);
+            setTimeout(schedule, delay).unref?.();
+            return;
+          }
+          if (claim.outcome === "already-claimed-for-run") { await this.store.getTask(task.id); return; }
+          /*
+          FNXC:ExecutorEscalation 2026-07-16-21:00:
+          FN-7998 inserts exactly one opt-in recovery between FN-7996 exhaustion and the unchanged terminal park. Refetch before writing so a pause, deletion, or later run cannot inherit a costly model/node override from this stale graph result.
+          */
+          const escalationTarget = resolveExecutorEscalationTarget(settings);
+          const hasModelTarget = escalationTarget.provider !== undefined && escalationTarget.modelId !== undefined;
+          const hasNodeTarget = escalationTarget.nodeId !== undefined;
+          let claimedEscalation = false;
+          let priorEscalationRetryCount = 0;
+          /*
+          FNXC:ExecutorEscalation 2026-07-16-22:30:
+          The one-shot latch is claimed under the TaskStore lock. Concurrent exhausted
+          graph handlers for the same detector cursor must not both schedule an alternate
+          run; a loser leaves the winner's in-progress row untouched.
+          */
+          await this.store.updateTaskAtomic(task.id, (current) => {
+            const ownsFailureRun = current.toolFailureDetectorLogCursor === cursor
+              && current.column === "in-progress"
+              && !current.paused
+              && !current.userPaused
+              && !current.deletedAt;
+            if (!ownsFailureRun || current.executorEscalationAttempted === true || !escalationTarget.enabled) return null;
+            claimedEscalation = true;
+            priorEscalationRetryCount = current.consecutiveToolFailureRetryCount ?? 0;
+            return {
+              ...(hasModelTarget ? { modelProvider: escalationTarget.provider, modelId: escalationTarget.modelId } : {}),
+              ...(hasNodeTarget ? { nodeId: escalationTarget.nodeId, column: "todo" as const } : {}),
+              executorEscalationAttempted: true,
+              /* FNXC:ExecutorEscalation 2026-07-16-22:40: Invalidate the exhausted run cursor before releasing the claim so concurrent stale handlers cannot park or audit the alternate execution; the alternate captures its own cursor at startup. */
+              toolFailureDetectorLogCursor: null,
+              status: null,
+              error: null,
+            };
+          }, this.getRunContextFor(task.id));
+          if (claimedEscalation) {
+            await this.store.logEntry(task.id, "Same-model retries exhausted — escalating to alternate model/node (one attempt) instead of parking", undefined, this.getRunContextFor(task.id));
+            await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-retry", task.id), domain: "database", mutationType: "task:execution-escalation-retry", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hasModelTarget, hasNodeTarget, priorConsecutiveToolFailureRetryCount: priorEscalationRetryCount } });
+            if (!hasNodeTarget) {
+              const scheduleEscalation = () => { void (async () => { const resumeTask = await this.store.getTask(task.id); if (resumeTask && !resumeTask.deletedAt && !resumeTask.paused && !resumeTask.userPaused && resumeTask.column === "in-progress") await this.execute(resumeTask); })().catch((error) => executorLog.error(`${task.id}: escalation retry failed`, error)); };
+              const handle = setTimeout(scheduleEscalation, resolveConsecutiveToolFailureRetryBackoffMs(settings));
+              handle.unref?.();
+            }
+            return;
+          }
+
+          /*
+          FNXC:ExecutorToolFailureRetry 2026-07-16-20:45:
+          Exhaustion belongs to the graph run that supplied `cursor`, not a later run
+          that may have begun while this handler awaited its durable claim. Revalidate
+          the cursor under TaskStore's per-task atomic lock while applying the terminal
+          state; only that successful CAS may emit the exhaustion audit. This keeps an
+          old terminal handler from parking a newer in-progress executor run.
+          */
+          let cursorOwnedTerminalPark = false;
+          let escalationAttemptFailed = false;
+          let escalationHadModelTarget = false;
+          let escalationHadNodeTarget = false;
+          await this.store.updateTaskAtomic(task.id, (current) => {
+            if (
+              current.toolFailureDetectorLogCursor !== cursor
+              || current.column !== "in-progress"
+              || current.paused
+              || current.userPaused
+              || current.deletedAt
+              || current.status !== null
+            ) {
+              return null;
+            }
+            cursorOwnedTerminalPark = true;
+            escalationAttemptFailed = current.executorEscalationAttempted === true;
+            escalationHadModelTarget = current.modelProvider != null && current.modelId != null;
+            escalationHadNodeTarget = current.nodeId != null;
+            return { error: message, status: "failed" };
+          }, this.getRunContextFor(task.id));
+          if (!cursorOwnedTerminalPark) return;
+          if (await this.store.markToolFailureRetryExhaustedAudit(task.id)) {
+            await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("tool-failure-retry-exhausted", task.id), domain: "database", mutationType: "task:execution-tool-failure-retry-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", attempts: maxToolFailureRetries, limit: maxToolFailureRetries, outcome: "terminal-park" } });
+          }
+          if (escalationAttemptFailed) {
+            await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
+          }
+          executorLog.warn(`${task.id}: ${message}`);
+          await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
+          await this.persistTokenUsage(task.id);
+          return;
+        }
+      }
+      if (live.executorEscalationAttempted === true) {
+        const failureCursor = task.toolFailureDetectorLogCursor;
+        let escalationTerminalParked = false;
+        let escalationHadModelTarget = false;
+        let escalationHadNodeTarget = false;
+        /*
+        FNXC:ExecutorEscalation 2026-07-16-22:35:
+        Once the durable escalation latch is set, every terminal failure of that
+        alternate run emits the exhaustion audit even if an operator disables the
+        setting mid-run. Cursor ownership prevents an old concurrent handler from
+        parking the newly scheduled alternate execution.
+        */
+        await this.store.updateTaskAtomic(task.id, (current) => {
+          if (
+            current.toolFailureDetectorLogCursor !== failureCursor
+            || current.column !== "in-progress"
+            || current.paused
+            || current.userPaused
+            || current.deletedAt
+            || current.status !== null
+          ) return null;
+          escalationTerminalParked = true;
+          escalationHadModelTarget = current.modelProvider != null && current.modelId != null;
+          escalationHadNodeTarget = current.nodeId != null;
+          return { error: message, status: "failed" };
+        }, this.getRunContextFor(task.id));
+        if (!escalationTerminalParked) return;
+        await this.store.recordRunAuditEvent?.({ taskId: task.id, agentId: "executor", runId: generateSyntheticRunId("escalation-exhausted", task.id), domain: "database", mutationType: "task:execution-escalation-exhausted", target: task.id, metadata: { taskId: task.id, nodeId: failedNode ?? "unknown", hadModelTarget: escalationHadModelTarget, hadNodeTarget: escalationHadNodeTarget } });
+      } else {
+        // status "failed" doubles as the self-healing exemption: review-task
+        // revival sweeps skip tasks carrying a non-null status, preventing the
+        // FN-5704-style loop of re-running the graph from scratch.
+        await this.store.updateTask(task.id, { error: message, status: "failed" }, this.getRunContextFor(task.id));
+      }
       executorLog.warn(`${task.id}: ${message}`);
       await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-      // status "failed" doubles as the self-healing exemption: review-task
-      // revival sweeps skip tasks carrying a non-null status, preventing the
-      // FN-5704-style loop of re-running the graph from scratch.
-      await this.store.updateTask(task.id, { error: message, status: "failed" }, this.getRunContextFor(task.id));
       await this.persistTokenUsage(task.id);
     } catch (err) {
       executorLog.error(
@@ -12240,6 +12407,13 @@ export class TaskExecutor {
         this.depAborted.delete(task.id);
         await this.handleDepAbortCleanup(task.id, worktreePath);
       } else if (isInvalidAssistantContinuationErrorMessage(errorMessage)) {
+        /*
+        FNXC:PostDoneContinuation 2026-07-16-11:57:
+        FN-8111 requires a completed task to win over stale-transcript retry handling. An assistant-last error after the task already reached in-review must signal completion and clear the watchdog rather than create a deferred retry that never dispatches.
+        */
+        if (await this.handleNonContinuableSessionError(task, taskDone, errorMessage)) {
+          return;
+        }
         /*
         FNXC:ExecutorSessionRecovery 2026-07-14-06:03:
         A stale assistant-last transcript gets a bounded fresh-session retry with the shared recovery backoff. The retry counter must survive the deferred move so repeated fresh-session failures eventually become a visible execution failure instead of cycling through Todo forever.

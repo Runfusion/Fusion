@@ -41,6 +41,9 @@ export interface InReviewStallContext {
 export const DEFAULT_STALE_MERGING_MIN_AGE_MS = 5 * 60_000;
 /** Historical default for the configurable auto-merge conflict retry cap. */
 export const DEFAULT_MAX_AUTO_MERGE_RETRIES = 3;
+export const DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES = 2;
+export const DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS = 2_000;
+export const CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD = 3;
 
 /**
  * FNXC:AutoMergeRetries 2026-06-17-04:20:
@@ -53,6 +56,52 @@ export function resolveMaxAutoMergeRetries(settings?: { maxAutoMergeRetries?: un
   }
   return DEFAULT_MAX_AUTO_MERGE_RETRIES;
 }
+
+/** FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: normalize the project policy identically in engine and settings UI; finite in-range fractions floor, invalid values retain safe defaults. */
+function resolveNonNegativeInteger(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && Math.floor(numeric) >= 0 ? Math.floor(numeric) : fallback;
+}
+export function resolveMaxConsecutiveToolFailureRetries(settings?: { executorToolFailureRetryCount?: unknown } | null): number {
+  return resolveNonNegativeInteger(settings?.executorToolFailureRetryCount, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES);
+}
+export function resolveConsecutiveToolFailureRetryBackoffMs(settings?: { executorToolFailureRetryBackoffMs?: unknown } | null): number {
+  return resolveNonNegativeInteger(settings?.executorToolFailureRetryBackoffMs, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS);
+}
+export function resolveConsecutiveToolFailureThreshold(settings?: { executorToolFailureThreshold?: unknown } | null): number {
+  const numeric = Number(settings?.executorToolFailureThreshold);
+  return Number.isFinite(numeric) && Math.floor(numeric) >= 1 ? Math.floor(numeric) : CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD;
+}
+
+export interface ExecutorEscalationTarget {
+  enabled: boolean;
+  provider?: string;
+  modelId?: string;
+  nodeId?: string;
+}
+
+/**
+ * FNXC:ExecutorEscalation 2026-07-16-21:00:
+ * Escalation remains opt-in and only accepts a complete model pair or a node target. Keeping this resolver in core makes engine and settings surfaces agree that incomplete targets silently preserve FN-7996 terminal behavior.
+ */
+export function resolveExecutorEscalationTarget(settings?: {
+  executorModelEscalationEnabled?: unknown;
+  executorEscalationProvider?: unknown;
+  executorEscalationModelId?: unknown;
+  executorEscalationNodeId?: unknown;
+} | null): ExecutorEscalationTarget {
+  const provider = typeof settings?.executorEscalationProvider === "string" ? settings.executorEscalationProvider.trim() : "";
+  const modelId = typeof settings?.executorEscalationModelId === "string" ? settings.executorEscalationModelId.trim() : "";
+  const nodeId = typeof settings?.executorEscalationNodeId === "string" ? settings.executorEscalationNodeId.trim() : "";
+  const hasModelTarget = Boolean(provider && modelId);
+  const hasNodeTarget = Boolean(nodeId);
+  return {
+    enabled: settings?.executorModelEscalationEnabled === true && (hasModelTarget || hasNodeTarget),
+    ...(hasModelTarget ? { provider, modelId } : {}),
+    ...(hasNodeTarget ? { nodeId } : {}),
+  };
+}
+
 export const IN_REVIEW_STALL_LOG_PREFIX = "In-review stall surfaced [";
 export const IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX = "In-review stall auto-disposed [";
 export const IN_REVIEW_STALL_TERMINAL_LOG_PREFIX = "In-review stall terminal disposed [";

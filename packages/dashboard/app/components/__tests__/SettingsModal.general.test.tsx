@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -42,6 +42,8 @@ import {
   mockFetchDashboardHealth,
   mockCheckForUpdates,
   mockInstallUpdate,
+  mockFetchSystemInfo,
+  mockRequestSystemRestart,
   mockFetchRemoteSettings,
   mockUpdateRemoteSettings,
   mockFetchRemoteStatus,
@@ -117,6 +119,8 @@ vi.mock("../../api", async (importOriginal) => {
     fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
     checkForUpdates: (...args: unknown[]) => mockCheckForUpdates(...args),
     installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
+    fetchSystemInfo: (...args: unknown[]) => mockFetchSystemInfo(...args),
+    requestSystemRestart: (...args: unknown[]) => mockRequestSystemRestart(...args),
     fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
     updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
     fetchRemoteStatus: (...args: unknown[]) => mockFetchRemoteStatus(...args),
@@ -151,11 +155,13 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: (...args: unknown[]) => mockConfirm(...args) }),
 }));
 
+let viewportMode: "mobile" | "desktop" = "mobile";
+
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  getViewportMode: () => "mobile",
-  isMobileViewport: () => true,
-  useViewportMode: () => "mobile",
+  getViewportMode: () => viewportMode,
+  isMobileViewport: () => viewportMode === "mobile",
+  useViewportMode: () => viewportMode,
 }));
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
@@ -198,6 +204,131 @@ vi.mock("../FileBrowser", () => ({
 describe("SettingsModal", () => {
   // Keep Advanced off by default so disclosure default/persist tests stay truthful.
   installSettingsModalEnv({ advancedSettings: false });
+
+  afterEach(() => {
+    viewportMode = "mobile";
+  });
+
+  const availableUpdate = {
+    currentVersion: "1.2.3",
+    latestVersion: "2.0.0",
+    updateAvailable: true,
+  };
+
+  async function renderUpdatedSettings() {
+    mockCheckForUpdates.mockResolvedValue(availableUpdate);
+    renderModal();
+    await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+    await screen.findByRole("button", { name: "Update now" });
+    await settingsModalUser.click(screen.getByRole("button", { name: "Update now" }));
+    return screen.findByRole("button", { name: "Restart Fusion" });
+  }
+
+  describe("update restart affordance", () => {
+    it("renders an enabled restart button after a successful update on desktop", async () => {
+      viewportMode = "desktop";
+
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeEnabled();
+      expect(restartButton).toHaveAccessibleName("Restart Fusion");
+    });
+
+    it("renders a wrapping, enabled restart control after a successful update on mobile", async () => {
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeEnabled();
+      expect(restartButton).toHaveAccessibleName("Restart Fusion");
+      expect(restartButton.closest(".settings-update-install-succeeded")).toBeInTheDocument();
+      expect(settingsModalCss).toMatch(/\.settings-modal \.settings-update-check\s*\{[^}]*flex-wrap: wrap;/s);
+    });
+
+    it("requests the supervised restart with the Settings update reason", async () => {
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(mockRequestSystemRestart).toHaveBeenCalledTimes(1);
+      expect(mockRequestSystemRestart).toHaveBeenCalledWith("settings-update");
+      expect(await screen.findByText(/Restarting… Your connection will close shortly/)).toBeInTheDocument();
+    });
+
+    it("keeps the restart button disabled with manual guidance when unsupported", async () => {
+      mockFetchSystemInfo.mockResolvedValue({ supervised: false, restartSupported: false });
+
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeDisabled();
+      expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+    });
+
+    it("keeps the restart button disabled while system information is loading", async () => {
+      mockFetchSystemInfo.mockReturnValue(new Promise(() => {}));
+
+      const restartButton = await renderUpdatedSettings();
+
+      expect(restartButton).toBeDisabled();
+    });
+
+    it("fails closed with manual guidance when system information cannot load", async () => {
+      mockFetchSystemInfo.mockRejectedValue(new Error("unavailable"));
+
+      const restartButton = await renderUpdatedSettings();
+
+      await waitFor(() => expect(restartButton).toBeDisabled());
+      expect(screen.getByText(/Needs a supervising parent/)).toBeInTheDocument();
+    });
+
+    it("disables the restart button and shows a spinner while scheduling", async () => {
+      mockRequestSystemRestart.mockReturnValue(new Promise(() => {}));
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(restartButton).toBeDisabled();
+      expect(within(restartButton).getByTestId("icon-refresh")).toHaveClass("spinning");
+    });
+
+    it("shows an inline error and allows retry when restart scheduling rejects", async () => {
+      mockRequestSystemRestart.mockRejectedValue(new Error("Restart unavailable"));
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(await screen.findByText("Restart unavailable")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    });
+
+    it("shows an inline error and allows retry when restart scheduling returns false", async () => {
+      mockRequestSystemRestart.mockResolvedValue({ scheduled: false });
+      const restartButton = await renderUpdatedSettings();
+
+      await settingsModalUser.click(restartButton);
+
+      expect(await screen.findByText(/Restart could not be scheduled/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Fusion" })).toBeEnabled();
+    });
+
+    it("keeps the retry path and hides restart when update installation fails", async () => {
+      mockInstallUpdate.mockResolvedValue({
+        currentVersion: "1.2.3",
+        latestVersion: "2.0.0",
+        updated: false,
+        error: "Install failed",
+      });
+      mockCheckForUpdates.mockResolvedValue(availableUpdate);
+      renderModal();
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByRole("button", { name: "Check for updates" }));
+      await screen.findByRole("button", { name: "Update now" });
+      await settingsModalUser.click(screen.getByRole("button", { name: "Update now" }));
+
+      expect(await screen.findByText(/Update failed: Install failed/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Restart Fusion" })).not.toBeInTheDocument();
+    });
+  });
 
   const deepwikiServer = {
     name: "deepwiki",
@@ -286,10 +417,12 @@ describe("SettingsModal", () => {
 
   /*
   FNXC:SettingsNavigation 2026-07-16-01:10:
-  Settings opens on Authentication, not "General · Global". Nothing else in the product works until a provider is connected — the dashboard's own empty state sends operators to Settings for exactly this — whereas the old landing section was app preferences nobody opens Settings to find.
-  Authentication is also not behind the Advanced switch, so the landing section can never be one the operator has hidden; that is asserted here rather than left implicit.
+  Authentication was the previous default; FN-8130 requires Settings to open on Appearance, the global Preferences section, when no explicit initialSection is supplied.
+
+  FNXC:SettingsNavigation 2026-07-16-13:40:
+  Appearance is not behind the Advanced switch, so the landing section can never be one the operator has hidden; that is asserted here rather than left implicit.
   */
-  it("defaults to the Authentication section when no initialSection is provided", async () => {
+  it("defaults to the Appearance section when no initialSection is provided", async () => {
     render(
       <SettingsModal
         onClose={noop}
@@ -298,14 +431,13 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     /*
     FNXC:SettingsNavigation 2026-07-16-01:30:
-    Asserts the landing section is REACHABLE, not that it is first in the nav: Authentication leads the AI & Models group (it belongs with the model settings it gates), so nav position is a layout choice that may move again.
-    What must hold is that the section Settings opens on is never one the Advanced switch hides — otherwise a default-configured operator lands on a section their own nav does not list.
+    The test asserts a reachable concrete landing surface rather than nav position. Appearance is in the Preferences group, and its placement may change, but the section Settings opens on must never be one the Advanced switch hides.
     */
     expect(screen.getByRole("checkbox", { name: "Advanced settings" })).not.toBeChecked();
-    expect(screen.getByRole("button", { name: /^Authentication$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Appearance$/ })).toBeInTheDocument();
   });
 
   /*

@@ -72,6 +72,10 @@ Version 0012 makes the persisted pin timestamp available on databases that
 already applied the baseline before Direct conversations can be pinned.
 */
 export const CHAT_SESSION_PINS_VERSION = "0012";
+/** FNXC:ExecutorToolFailureRetry 2026-07-16-12:00: upgrades existing PostgreSQL task rows before retry-state reads. */
+export const EXECUTOR_TOOL_FAILURE_RETRY_VERSION = "0013";
+/** FNXC:ExecutorEscalation 2026-07-16-21:00: Existing clusters need the durable single-shot latch before executor reads it during post-FN-7996 escalation. */
+export const EXECUTOR_ESCALATION_ATTEMPT_VERSION = "0014";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -137,6 +141,16 @@ const CHAT_SESSION_PINS_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0012_chat_session_pins.sql",
+);
+const EXECUTOR_TOOL_FAILURE_RETRY_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0013_executor_tool_failure_retry.sql",
+);
+const EXECUTOR_ESCALATION_ATTEMPT_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0014_executor_escalation_attempt.sql",
 );
 
 /**
@@ -219,6 +233,8 @@ export async function applySchemaBaseline(
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
     const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
     const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
+    const executorToolFailureRetryAlreadyApplied = applied.includes(EXECUTOR_TOOL_FAILURE_RETRY_VERSION);
+    const executorEscalationAttemptAlreadyApplied = applied.includes(EXECUTOR_ESCALATION_ATTEMPT_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -481,6 +497,24 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(chatSessionPinsSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_PINS_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!executorToolFailureRetryAlreadyApplied) {
+      const executorToolFailureRetrySql = await readFile(EXECUTOR_TOOL_FAILURE_RETRY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(executorToolFailureRetrySql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXECUTOR_TOOL_FAILURE_RETRY_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!executorEscalationAttemptAlreadyApplied) {
+      const executorEscalationAttemptSql = await readFile(EXECUTOR_ESCALATION_ATTEMPT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(executorEscalationAttemptSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXECUTOR_ESCALATION_ATTEMPT_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

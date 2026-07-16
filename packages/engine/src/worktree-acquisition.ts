@@ -302,7 +302,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         return created;
       } catch (error) {
         if (backend.kind === "worktrunk" && error instanceof WorktrunkOperationError) {
-          const nativeBackend = new NativeWorktreeBackend({ logger: logger ?? undefined });
+          // FNXC:WorktreeAcquisition 2026-07-16-00:00: FN-8132 requires native fallback collision dispositions to be audited just like direct native acquisition.
+          const nativeBackend = new NativeWorktreeBackend({ logger: logger ?? undefined, audit });
           const fallback = () => nativeBackend.create({
             rootDir,
             branch: createBranch,

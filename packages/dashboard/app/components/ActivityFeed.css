@@ -8,6 +8,17 @@
   padding: var(--space-md);
 }
 
+/*
+FNXC:ActivityFeedMobile 2026-07-16-00:00:
+FN-8122 requires standalone Activity Feed content to keep a larger, balanced horizontal
+inset on mobile so populated, loading, empty, and error states do not reach the viewport edge.
+*/
+@media (max-width: 768px) {
+  .activity-feed {
+    padding: var(--space-md) var(--space-lg);
+  }
+}
+
 .activity-feed-group {
   display: flex;
   flex-direction: column;

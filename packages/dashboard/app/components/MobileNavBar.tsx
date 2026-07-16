@@ -173,7 +173,18 @@ export function MobileNavBar({
   const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
   const [scripts, setScripts] = useState<Record<string, string>>({});
   const [scriptsLoading, setScriptsLoading] = useState(false);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const [hasSheetDragged, setHasSheetDragged] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const sheetDragRef = useRef<{
+    startY: number;
+    startedAt: number;
+    eligible: boolean;
+    startedOnHandle: boolean;
+  } | null>(null);
+  const dragOffsetRef = useRef(0);
 
   const scriptEntries = useMemo(
     () => Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)),
@@ -203,7 +214,83 @@ export function MobileNavBar({
     };
   }, [isScriptsSubmenuOpen, projectId]);
 
-  const closeMore = useCallback(() => setIsMoreOpen(false), []);
+  const resetSheetDrag = useCallback(() => {
+    sheetDragRef.current = null;
+    dragOffsetRef.current = 0;
+    setDragOffset(0);
+    setIsSheetDragging(false);
+  }, []);
+
+  const closeMore = useCallback(() => {
+    resetSheetDrag();
+    setHasSheetDragged(false);
+    setIsMoreOpen(false);
+  }, [resetSheetDrag]);
+
+  /*
+  FNXC:MobileNav 2026-07-16-12:00:
+  The mobile More drawer must dismiss when a user drags down from its top or grab handle.
+  Keep scrollTop===0 as the body-drag guard so a scrolled sheet retains normal interior
+  scrolling; the non-passive native listener can cancel iOS Safari and Android Chrome
+  overscroll only for that eligible downward dismissal gesture.
+  */
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (!isMoreOpen || !sheet) return;
+
+    const onTouchMove = (event: TouchEvent) => {
+      const drag = sheetDragRef.current;
+      const touch = event.touches[0];
+      if (!drag || !touch) return;
+
+      const offset = Math.max(0, touch.clientY - drag.startY);
+      const canDismiss = drag.eligible && (drag.startedOnHandle || sheet.scrollTop <= 0);
+      if (offset === 0 || !canDismiss) return;
+
+      event.preventDefault();
+      dragOffsetRef.current = offset;
+      setHasSheetDragged(true);
+      setIsSheetDragging(true);
+      setDragOffset(offset);
+    };
+
+    sheet.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => sheet.removeEventListener("touchmove", onTouchMove);
+  }, [isMoreOpen]);
+
+  const handleSheetTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const sheet = sheetRef.current;
+    const touch = event.touches[0];
+    if (!sheet || !touch) return;
+
+    const target = event.target instanceof Element ? event.target : null;
+    const startedOnHandle = Boolean(target?.closest(".mobile-more-sheet-handle"));
+    sheetDragRef.current = {
+      startY: touch.clientY,
+      startedAt: Date.now(),
+      eligible: startedOnHandle || sheet.scrollTop <= 0,
+      startedOnHandle,
+    };
+    dragOffsetRef.current = 0;
+    setDragOffset(0);
+    setIsSheetDragging(false);
+  }, []);
+
+  const finishSheetDrag = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const sheet = sheetRef.current;
+    const drag = sheetDragRef.current;
+    const touch = event.changedTouches[0];
+    const offset = dragOffsetRef.current;
+    const elapsed = drag ? Math.max(1, Date.now() - drag.startedAt) : 1;
+    const sheetHeight = sheet?.getBoundingClientRect().height ?? 0;
+    const dismissDistance = Math.max(100, sheetHeight / 4);
+    const shouldDismiss = Boolean(drag?.eligible && offset > 0 && (offset >= dismissDistance || offset / elapsed >= 0.6));
+
+    resetSheetDrag();
+    if (shouldDismiss && touch) {
+      closeMore();
+    }
+  }, [closeMore, resetSheetDrag]);
 
   const handleMoreAction = useCallback(
     (callback?: () => void) => {
@@ -218,13 +305,13 @@ export function MobileNavBar({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsMoreOpen(false);
+        closeMore();
       }
     };
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isMoreOpen]);
+  }, [closeMore, isMoreOpen]);
 
   useLayoutEffect(() => {
     const navEl = navRef.current;
@@ -492,8 +579,15 @@ export function MobileNavBar({
             className="mobile-more-sheet-backdrop"
             onClick={closeMore}
           />
-          <div className="mobile-more-sheet">
-            <div className="mobile-more-sheet-handle" />
+          <div
+            ref={sheetRef}
+            className={`mobile-more-sheet${isSheetDragging ? " mobile-more-sheet--dragging" : ""}${hasSheetDragged ? " mobile-more-sheet--gesture-ready" : ""}`}
+            style={{ transform: `translateY(${dragOffset}px)` }}
+            onTouchStart={handleSheetTouchStart}
+            onTouchEnd={finishSheetDrag}
+            onTouchCancel={resetSheetDrag}
+          >
+            <div className="mobile-more-sheet-handle" aria-hidden="true" />
             <div className="mobile-more-sheet-title">{t("nav.moreSheetTitle", "Navigate")}</div>
 
             {shellConnectionControl ? (

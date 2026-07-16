@@ -63,6 +63,8 @@ export const mockFetchProjects = vi.fn();
 export const mockFetchDashboardHealth = vi.fn();
 export const mockCheckForUpdates = vi.fn();
 export const mockInstallUpdate = vi.fn();
+export const mockFetchSystemInfo = vi.fn();
+export const mockRequestSystemRestart = vi.fn();
 export const mockFetchRemoteSettings = vi.fn();
 export const mockUpdateRemoteSettings = vi.fn();
 export const mockFetchRemoteStatus = vi.fn();
@@ -386,6 +388,8 @@ export function installSettingsModalEnv(options?: { advancedSettings?: boolean }
     mockFetchDashboardHealth.mockResolvedValue({ status: "ok", version: "1.2.3", uptime: 123 });
     mockCheckForUpdates.mockResolvedValue(undefined);
     mockInstallUpdate.mockResolvedValue({ currentVersion: "1.2.3", latestVersion: "2.0.0", updated: true });
+    mockFetchSystemInfo.mockResolvedValue({ supervised: true, restartSupported: true });
+    mockRequestSystemRestart.mockResolvedValue({ scheduled: true });
     mockFetchRemoteSettings.mockResolvedValue({
       settings: {
         remoteActiveProvider: null,

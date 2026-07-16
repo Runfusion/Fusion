@@ -26,6 +26,8 @@
 .settings-footer-help-btn {
   display: inline-flex;
   align-items: center;
+  /* These are <a> tags styled as .btn — .btn never resets link underline, so without this the browser's default underline paints under the icon+label box. */
+  text-decoration: none;
 }
 
 @media (max-width: 768px) {
@@ -373,17 +375,23 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
     min-width: max-content;
   }
 
+  /*
+  FNXC:SettingsUpdate 2026-07-16-00:00:
+  FN-8138 adds a restart control and manual-restart explanation after an update.
+  Let this inner result flow wrap on narrow screens while the existing footer rail
+  remains horizontally scrollable, so the new controls never create a clipped shell.
+  */
   .settings-modal .settings-update-check {
     align-items: center;
-    flex-wrap: nowrap;
-    row-gap: 0;
+    flex-wrap: wrap;
+    row-gap: var(--space-xs);
   }
 
   .settings-modal .settings-update-result {
     align-self: center;
     flex: 0 1 auto;
-    line-height: 1;
-    white-space: nowrap;
+    line-height: normal;
+    white-space: normal;
   }
 
   .settings-modal .settings-footer-help-btn {
@@ -404,6 +412,22 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
     flex-shrink: 0;
     line-height: 1;
     white-space: nowrap;
+  }
+
+  /*
+  FNXC:Settings 2026-07-16-00:20:
+  Help/Export/Import/Reset/Cancel/Save all share `.btn-sm`, which the global mobile
+  touch-target rule (`.btn:not(...):not(.btn-sm)...{min-height:36px}` in styles.css)
+  deliberately skips so dense table/card rows of small buttons stay compact. That
+  exclusion also caught this footer, so these rendered at their ~24px unpadded height
+  on mobile — visibly smaller and misaligned against the 36px auth Test/Disable buttons
+  sitting on the same screen. Re-apply the 36px touch target scoped to this footer only,
+  so the exclusion keeps holding everywhere else that intentionally wants compact `.btn-sm`.
+  */
+  .settings-modal .modal-actions-left .btn-sm,
+  .settings-modal .modal-actions-right .btn-sm,
+  .settings-modal .settings-footer-help-btn {
+    min-height: 36px;
   }
 }
 
@@ -497,6 +521,13 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
 
 .settings-update-now-btn svg.spinning {
   animation: settings-update-spin 1s linear infinite;
+}
+
+.settings-update-install-succeeded {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
 }
 
 .settings-update-install-status {
@@ -2875,6 +2906,28 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 
   .auth-provider-card {
     margin: 0 var(--space-sm) var(--space-sm);
+  }
+
+  /*
+  FNXC:SettingsLayout 2026-07-16-12:34:
+  On mobile, auth-panel provider cards and their hint and group-label siblings must share the
+  Authentication section header's left edge. Remove the stacked panel/card horizontal inset only
+  inside .auth-panel-body so Custom Provider cards outside the panel keep their existing gutter.
+  */
+  .auth-panel-body {
+    padding-inline: 0;
+  }
+
+  .auth-panel-body .auth-section-hint {
+    margin: 0 0 var(--space-sm);
+  }
+
+  .auth-panel-body .auth-group-label {
+    padding: 0;
+  }
+
+  .auth-panel-body .auth-provider-card {
+    margin: 0 0 var(--space-sm);
   }
 
   .auth-provider-header {

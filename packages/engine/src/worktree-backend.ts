@@ -12,7 +12,7 @@ import {
 } from "./active-session-registry.js";
 import type { RunAuditor } from "./run-audit.js";
 import { resolveTaskWorktreePath } from "./worktree-paths.js";
-import { inspectBranchConflict } from "./branch-conflicts.js";
+import { inspectBareBranchCollision, inspectBranchConflict } from "./branch-conflicts.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import { formatError } from "./logger.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
@@ -392,6 +392,25 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       });
       return { path: input.worktreePath, branch: branchName };
     };
+    const attachExistingBranch = async (): Promise<WorktreeCreateResult> => {
+      await execAsync(`git worktree add ${quoteShellArg(input.worktreePath)} ${quoteShellArg(input.branch)}`, {
+        cwd: input.rootDir,
+        encoding: "utf-8",
+        timeout: NATIVE_TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+      });
+      return { path: input.worktreePath, branch: input.branch };
+    };
+    const cleanupPartialCollisionRecovery = async () => {
+      await rm(input.worktreePath, { recursive: true, force: true }).catch(() => undefined);
+      await pruneWorktreeAdminEntries({
+        rootDir: input.rootDir,
+        auditor: this.deps.audit,
+        reason: "backend-branch-collision-recovery-failed",
+        target: input.worktreePath,
+        logger: this.deps.logger,
+      }).catch(() => undefined);
+    };
 
     let staleLockRecoveryAttempted = false;
     let staleRegistrationRecoveryAttempted = false;
@@ -518,6 +537,79 @@ export class NativeWorktreeBackend implements WorktreeBackend {
           target: input.worktreePath,
           metadata: { actions: recovery.actions, reason: recovery.reason ?? "unknown" },
         });
+      }
+
+      const isBareBranchCollision = /(?:a\s+)?branch named ["']?.+["']? already exists|branch ["']?.+["']? already exists/i.test(combinedErrorOutput);
+      if (isBareBranchCollision) {
+          /*
+           * FNXC:WorktreeAcquisition 2026-07-16-00:00:
+           * FN-8132 / #2232 recovers only a bare branch-name collision after the
+           * stale-lock and stale-registration ladder. A live foreign checkout still
+           * fails even when this target path is absent. Unregistered branches are
+           * attached only when every unique commit belongs to this task; merged or
+           * empty branches are recreated from the caller-pinned startPoint, while
+           * any foreign/unattributed (including mixed) history is never deleted.
+           */
+          const inspection = await inspectBareBranchCollision({
+            repoDir: input.rootDir,
+            branchName: input.branch,
+            conflictingWorktreePath: input.worktreePath,
+            requestingTaskId: input.taskId,
+            startPoint: input.startPoint,
+            integrationRef: await resolveIntegrationBranch(input.rootDir, undefined),
+          });
+          if (inspection.kind === "live-foreign") {
+            await this.deps.audit?.git({
+              type: "worktree:branch-collision-recovery",
+              target: input.worktreePath,
+              metadata: { taskId: input.taskId, disposition: "threw-live-foreign" },
+            });
+            throw inspection.error;
+          }
+          if (inspection.kind === "foreign-unmerged") {
+            await this.deps.audit?.git({
+              type: "worktree:branch-collision-recovery",
+              target: input.worktreePath,
+              metadata: { taskId: input.taskId, disposition: "refused-foreign-unmerged", uniqueCommitCount: inspection.uniqueCommitCount },
+            });
+            throw inspection.error;
+          }
+          if (inspection.kind === "reclaimable") {
+            try {
+              const created = await attachExistingBranch();
+              await installGuardOrCleanup(created.path);
+              await this.deps.audit?.git({
+                type: "worktree:branch-collision-recovery",
+                target: input.worktreePath,
+                metadata: { taskId: input.taskId, disposition: "reuse-existing-branch", uniqueCommitCount: inspection.uniqueCommitCount },
+              });
+              return created;
+            } catch (recoveryError) {
+              await cleanupPartialCollisionRecovery();
+              throw recoveryError;
+            }
+          }
+          if (inspection.kind === "tip-already-merged" || inspection.kind === "fully-subsumed") {
+            try {
+              await execAsync(`git branch -D ${quoteShellArg(input.branch)}`, {
+                cwd: input.rootDir,
+                encoding: "utf-8",
+                timeout: NATIVE_TIMEOUT_MS,
+                maxBuffer: MAX_BUFFER,
+              });
+              const created = await createWithBranch(input.branch);
+              await installGuardOrCleanup(created.path);
+              await this.deps.audit?.git({
+                type: "worktree:branch-collision-recovery",
+                target: input.worktreePath,
+                metadata: { taskId: input.taskId, disposition: "recreate-from-startpoint" },
+              });
+              return created;
+            } catch (recoveryError) {
+              await cleanupPartialCollisionRecovery();
+              throw recoveryError;
+            }
+          }
       }
 
       if (!input.allowSiblingBranchRename) {

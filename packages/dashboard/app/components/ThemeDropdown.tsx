@@ -17,6 +17,10 @@ interface ThemeDropdownProps {
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
 }
 
+export function resolveColorTheme(colorTheme: ColorTheme) {
+  return COLOR_THEMES.find((theme) => theme.value === colorTheme) ?? COLOR_THEMES[0];
+}
+
 function ThemeSwatch({ className }: { className: string }) {
   return (
     <span className={`theme-option-swatch ${className}`} aria-hidden="true">
@@ -47,10 +51,7 @@ export function ThemeDropdown({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  const currentTheme = useMemo(
-    () => COLOR_THEMES.find((theme) => theme.value === colorTheme) ?? COLOR_THEMES[0],
-    [colorTheme],
-  );
+  const currentTheme = useMemo(() => resolveColorTheme(colorTheme), [colorTheme]);
   const listboxId = "theme-dropdown-listbox";
 
   useEffect(() => {

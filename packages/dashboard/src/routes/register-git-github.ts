@@ -2101,10 +2101,14 @@ async function resolveImportedIssueTranslation(
   owner: string,
   repo: string,
   issue: { number: number; title: string; body: string | null; state: "open" | "closed" },
+  projectSettings: Awaited<ReturnType<TaskStore["getSettings"]>>,
 ): Promise<{ title: string; body: string } | null> {
   try {
-    const settings = await store.getSettings();
-    if (settings.githubImportAutoTranslate !== true) return null;
+    /*
+    FNXC:GitHubImportTranslate 2026-07-16-11:22:
+    FN-8115 passes request-scoped project settings from both import routes so translation and tracking share one project-settings read. FN-8112 first made the prior two-read test setup stable; this consolidation preserves its behavior without a second store lookup.
+    */
+    if (projectSettings.githubImportAutoTranslate !== true) return null;
 
     const { getCachedImportTranslation, resolveTargetLocale } = await import(
       "../import-translate-service.js"
@@ -2115,10 +2119,10 @@ async function resolveImportedIssueTranslation(
     Resolution therefore falls through to the global `language` setting server-side, which also fixes direct API callers and stale clients; the request locale stays as the last tier because `language` is itself unset when a surface browser-detects its locale.
     */
     const targetLocale = resolveTargetLocale(
-      settings.importTranslateTargetLocale,
+      projectSettings.importTranslateTargetLocale,
       // The panel forwards its active locale; a direct API caller may not.
       (req.body as { targetLocale?: unknown } | undefined)?.targetLocale,
-      settings.language,
+      projectSettings.language,
     );
     if (!targetLocale) return null;
 
@@ -2132,8 +2136,14 @@ async function resolveImportedIssueTranslation(
   }
 }
 
-async function resolveImportedIssueGithubTracking(store: TaskStore): Promise<{ enabled: true } | undefined> {
-  const projectSettings = await store.getSettings();
+async function resolveImportedIssueGithubTracking(
+  store: TaskStore,
+  projectSettings: Awaited<ReturnType<TaskStore["getSettings"]>>,
+): Promise<{ enabled: true } | undefined> {
+  /*
+  FNXC:GithubImportTracking 2026-07-16-11:22:
+  FN-8115 shares the import request's project settings with translation and tracking, removing duplicate project-store reads after FN-8112 stabilized the prior test setup. The global settings read remains distinct because tracking precedence still requires it.
+  */
   if (projectSettings.githubLinkImportedIssuesToTracking === true) {
     /*
     FNXC:GithubImportTracking 2026-07-01-00:00:
@@ -4086,12 +4096,20 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       Cache-read only: a miss imports the original rather than blocking the import on a fresh model call, because import must stay fast and must never fail because translation failed.
       The `Source: <url>` suffix is appended AFTER translation so the URL is never rewritten by the model.
       */
-      const translatedIssue = await resolveImportedIssueTranslation(req, scopedStore, owner, repo, issue);
+      const projectSettings = await scopedStore.getSettings();
+      const translatedIssue = await resolveImportedIssueTranslation(
+        req,
+        scopedStore,
+        owner,
+        repo,
+        issue,
+        projectSettings,
+      );
       const title = (translatedIssue?.title || issue.title).slice(0, 200);
       const body = (translatedIssue?.body ?? issue.body)?.trim() || "(no description)";
       const description = `${body}\n\nSource: ${sourceUrl}`;
 
-      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore);
+      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore, projectSettings);
       const source = buildGitHubIssueSource(owner, repo, issue);
       /*
       FNXC:Workflows 2026-07-05-00:00:
@@ -4313,7 +4331,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
       // Get existing tasks to check for duplicates
       const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false });
-      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore);
+      const projectSettings = await scopedStore.getSettings();
+      const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore, projectSettings);
 
       // Process issues sequentially with throttling
       const results: Array<{
@@ -4386,12 +4405,19 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         FNXC:GitHubImportTranslate 2026-07-15-09:30:
         Batch import carries translations exactly like single import (shared helper) — the requirement is about imported issues, not about which import button was used.
         */
-        const batchTranslation = await resolveImportedIssueTranslation(req, scopedStore, owner, repo, {
-          number: issue.number,
-          title: issue.title,
-          body: issue.body,
-          state: issue.state === "closed" ? "closed" : "open",
-        });
+        const batchTranslation = await resolveImportedIssueTranslation(
+          req,
+          scopedStore,
+          owner,
+          repo,
+          {
+            number: issue.number,
+            title: issue.title,
+            body: issue.body,
+            state: issue.state === "closed" ? "closed" : "open",
+          },
+          projectSettings,
+        );
         const title = (batchTranslation?.title || issue.title).slice(0, 200);
         const body = (batchTranslation?.body ?? issue.body)?.trim() || "(no description)";
         const description = `${body}\n\nSource: ${sourceUrl}`;
@@ -4761,10 +4787,13 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         }
       }
 
-      // Create the task with "Review PR:" prefix
-      const title = `Review PR #${pr.number}: ${pr.title.slice(0, 180)}`;
+      /*
+      FNXC:GitHubImport 2026-07-16-18:00:
+      PR imports are resolve-feedback work, so their executor prompt must explicitly cover reviewer feedback and failed CI while retaining URL, branch, and body provenance for deduplication and auditability.
+      */
+      const title = `Resolve feedback: PR #${pr.number} — ${pr.title.slice(0, 180)}`;
       const body = pr.body?.trim() || "(no description)";
-      const description = `Review and address any issues in this pull request.\n\nPR: ${sourceUrl}\nBranch: ${pr.headBranch} → ${pr.baseBranch}\n\n${body}`;
+      const description = `Resolve the pull request review feedback and address any failed CI checks.\n\nPR: ${sourceUrl}\nBranch: ${pr.headBranch} → ${pr.baseBranch}\n\n${body}`;
 
       // FNXC:Workflows 2026-07-05-00:00: FN-7611 — no workflowId here; let the store
       // resolve the project-default workflow's intake column (byte-identical "triage"
@@ -4791,6 +4820,45 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  /*
+  FNXC:GitHubImport 2026-07-16-18:00:
+  A reviewer or bot comment can become independent resolve-feedback work. Comments expose no stable source ID/URL, so repeated imports intentionally create separate tasks rather than applying PR-style deduplication.
+  */
+  router.post("/github/comments/import", async (req, res) => {
+    try {
+      const { owner, repo, number, type, comment } = req.body ?? {};
+      const author = comment?.author;
+      const body = comment?.body;
+
+      if (!owner || typeof owner !== "string" || !owner.trim()) throw badRequest("owner is required");
+      if (!repo || typeof repo !== "string" || !repo.trim()) throw badRequest("repo is required");
+      if (!Number.isInteger(number) || number < 1) throw badRequest("number is required and must be a positive number");
+      if (type !== "issue" && type !== "pull") throw badRequest("type must be 'issue' or 'pull'");
+      if (!author || typeof author !== "string" || !author.trim()) throw badRequest("comment.author is required");
+      if (!body || typeof body !== "string" || !body.trim()) throw badRequest("comment.body is required");
+      if (comment.createdAt !== undefined && (typeof comment.createdAt !== "string" || !comment.createdAt.trim())) {
+        throw badRequest("comment.createdAt must be a non-empty string when provided");
+      }
+      if (!isGhAuthenticated()) throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const sourceUrl = `https://github.com/${owner.trim()}/${repo.trim()}/${type === "pull" ? "pull" : "issues"}/${number}`;
+      const task = await scopedStore.createTask({
+        title: `Resolve feedback from @${author.trim()} on #${number}`,
+        description: `Resolve or address this feedback comment.\n\n> ${author.trim()}\n> ${body.trim().replace(/\n/g, "\n> ")}\n\nSource: ${sourceUrl}`,
+        dependencies: [],
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: { sourceUrl, number, type, commentAuthor: author.trim(), commentCreatedAt: comment.createdAt },
+        },
+      });
+      await scopedStore.logEntry(task.id, "Imported PR/issue comment from GitHub", sourceUrl);
+      res.status(201).json(task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
 
   /**
    * POST /api/github/webhooks
