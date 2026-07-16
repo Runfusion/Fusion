@@ -47,10 +47,16 @@ export function trackDeferredTaskCreatedWorkImpl(store: TaskStore, work: () => P
     });
 }
 
+/*
+FNXC:PostgresOnlyDataAccess 2026-07-16-10:20:
+Backend mode intentionally has no synchronous SQLite escape hatch. Name the
+AsyncDataLayer route and authoring guide in this failure so plugin authors fix
+the durable-data boundary rather than adding a backend-specific fallback.
+*/
 export function dbImpl(store: TaskStore): Database {
     if (store.backendMode) {
       throw new Error(
-        "TaskStore.db: SQLite Database is not available in backend mode (AsyncDataLayer injected)",
+        "TaskStore.db: SQLite Database is not available in backend mode (PostgreSQL/AsyncDataLayer injected). Use ctx.taskStore.getAsyncLayer() / an async store — see docs/PLUGIN_AUTHORING.md",
       );
     }
     if (!store._db) {

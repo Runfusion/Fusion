@@ -2478,9 +2478,10 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
 
   /**
-   * FNXC:AsyncDataLayer 2026-06-24-11:00: CONTRACT CHANGE (U4, VAL-DATA-001): Returns synchronous Database during migration (U12-U15).
-   * U15 flips to AsyncDataLayer. New code should target AsyncDataLayer (transactionImmediate, transaction, recordRunAuditEventWithinTransaction).
-   * Async foundation in packages/core/src/postgres/data-layer.ts preserves BEGIN IMMEDIATE atomicity (VAL-DATA-002/003) and no partial writes (VAL-DATA-004).
+   * FNXC:PostgresOnlyDataAccess 2026-07-16-10:20:
+   * This legacy synchronous SQLite accessor is unavailable in backend mode and
+   * must not be used by plugin, dashboard, engine, or feature data paths.
+   * Durable production access uses getAsyncLayer() and an async store.
    */
   getDatabase(): Database {
     return this.db;
@@ -2568,8 +2569,10 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return getPluginStoreImpl(this);
   }
   /**
-   * FNXC:PluginPostgresSchema 2026-07-14-17:25:
-   * Every host (engine, CLI, and desktop) uses this backend-aware schema entrypoint after loading plugins. PostgreSQL executes only registered PG-native hooks and fails on SQLite-only third-party hooks; legacy mode retains the existing Database runner.
+   * FNXC:PluginPostgresSchema 2026-07-16-00:00:
+   * FN-8104 retires the unreachable SQLite schema-init fallback that FN-8103
+   * temporarily allowlisted. Every host now invokes only the PostgreSQL
+   * AsyncDataLayer executor after loading plugins; SQLite-only hooks remain unsupported.
    */
   /** @internal Installed by the backend startup factory; never exposed through PluginContext. */
   setPluginPostgresSchemaExecutor(
@@ -2591,20 +2594,12 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
 
   async runPluginSchemaInits(hooks: LoadedPluginSchemaContract[]): Promise<void> {
-    if (this.backendMode) {
-      if (!this.getAsyncLayer()) throw new Error("backend TaskStore is missing its AsyncDataLayer");
-      assertLoadedPluginSchemaInitHooksSupported(hooks);
-      if (!this.pluginPostgresSchemaExecutor) {
-        throw new Error("backend TaskStore is missing its PostgreSQL plugin schema executor");
-      }
-      await this.pluginPostgresSchemaExecutor(hooks);
-      return;
+    if (!this.getAsyncLayer()) throw new Error("backend TaskStore is missing its AsyncDataLayer");
+    assertLoadedPluginSchemaInitHooksSupported(hooks);
+    if (!this.pluginPostgresSchemaExecutor) {
+      throw new Error("backend TaskStore is missing its PostgreSQL plugin schema executor");
     }
-    await this.getDatabase().runPluginSchemaInits(
-      hooks.flatMap((entry) => entry.legacyHook
-        ? [{ pluginId: entry.pluginId, hook: entry.legacyHook as PluginOnSchemaInit }]
-        : []),
-    );
+    await this.pluginPostgresSchemaExecutor(hooks);
   }
   public async isPluginInstalled(pluginId: string): Promise<boolean> {
     return isPluginInstalledImpl(this, pluginId);

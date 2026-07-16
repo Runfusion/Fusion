@@ -5335,56 +5335,25 @@ export class SelfHealingManager {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return { reconciled: 0 };
 
-      if (this.store.isBackendMode()) {
-        /*
-        FNXC:PostgresSoftDeleteRepair 2026-07-14-17:32:
-        PostgreSQL constraints do not prevent a soft-deleted task from drifting out of the archived column. Run the same per-row repair and durable audit contract as the legacy store instead of silently skipping the invariant.
-        */
-        const auditor = createRunAuditor(this.store, {
-          runId: generateSyntheticRunId("fn5566-soft-delete-column", "global"),
-          agentId: "self-healing",
-          phase: "reconcile-soft-delete-column-drift",
-        });
-        return this.store.reconcileSoftDeletedColumnDriftBackend(async (candidate) => {
-          await auditor.database({
-            type: "task:soft-delete-column-reconciled",
-            target: candidate.id,
-            metadata: { previousColumn: candidate.previousColumn },
-          });
-          log.log(`[self-heal] reconcile-soft-delete-column-drift: ${candidate.id} previous=${candidate.previousColumn} → archived`);
-        });
-      }
-
-      const db = this.store.getDatabase();
-      // FN-5147 invariant: only rows with deletedAt are eligible, so live
-      // in-review tasks (including autoMerge: false workflows) are never moved.
-      const candidates = db.prepare("SELECT id, \"column\" AS column FROM tasks WHERE deletedAt IS NOT NULL AND \"column\" != 'archived'").all() as Array<{ id: string; column: Task["column"] }>;
-      if (candidates.length === 0) return { reconciled: 0 };
-
-      let reconciled = 0;
-      const now = new Date().toISOString();
+      /*
+      FNXC:PostgresSoftDeleteRepair 2026-07-16-00:00:
+      FN-8104 retires the unreachable SQLite reconcile fallback that FN-8103
+      temporarily allowlisted. Production repair remains PostgreSQL-only while
+      preserving the per-row durable audit contract.
+      */
       const auditor = createRunAuditor(this.store, {
         runId: generateSyntheticRunId("fn5566-soft-delete-column", "global"),
         agentId: "self-healing",
         phase: "reconcile-soft-delete-column-drift",
       });
-
-      for (const candidate of candidates) {
-        db.prepare("UPDATE tasks SET \"column\" = 'archived', updatedAt = ? WHERE id = ?").run(now, candidate.id);
+      return this.store.reconcileSoftDeletedColumnDriftBackend(async (candidate) => {
         await auditor.database({
           type: "task:soft-delete-column-reconciled",
           target: candidate.id,
-          metadata: { previousColumn: candidate.column },
+          metadata: { previousColumn: candidate.previousColumn },
         });
-        log.log(`[self-heal] reconcile-soft-delete-column-drift: ${candidate.id} previous=${candidate.column} → archived`);
-        reconciled++;
-      }
-
-      if (reconciled > 0) {
-        db.bumpLastModified();
-      }
-
-      return { reconciled };
+        log.log(`[self-heal] reconcile-soft-delete-column-drift: ${candidate.id} previous=${candidate.previousColumn} → archived`);
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       log.warn(`reconcileSoftDeletedColumnDrift: failed: ${message}`);

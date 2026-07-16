@@ -850,12 +850,25 @@ when either layout wraps on mobile. Token-based spacing keeps it consistent with
   background: var(--surface);
 }
 
+/*
+FNXC:GitHubImport 2026-07-16-10:32:
+Issue/PR/GitLab rows are <button>s without a left radio control. Reset native button chrome so the
+row still reads as a list item (full width, left-aligned text, bottom border only).
+*/
 .issue-item {
   display: flex;
   align-items: flex-start;
   gap: var(--space-md);
+  width: 100%;
+  margin: 0;
   padding: var(--space-md);
+  border: none;
   border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition:
     background var(--transition-fast),
@@ -867,18 +880,7 @@ when either layout wraps on mobile. Token-based spacing keeps it consistent with
   border-bottom: none;
 }
 
-.issue-item input[type="radio"] {
-  margin-top: 2px;
-  flex-shrink: 0;
-  accent-color: var(--in-progress);
-}
-
-.issue-item.imported input[type="radio"] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.issue-item:hover:not(.imported) {
+.issue-item:hover:not(.imported):not(:disabled) {
   background: var(--card-hover);
 }
 
@@ -887,7 +889,8 @@ when either layout wraps on mobile. Token-based spacing keeps it consistent with
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--in-progress) 35%, transparent);
 }
 
-.issue-item.imported {
+.issue-item.imported,
+.issue-item:disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
@@ -1374,17 +1377,13 @@ counterpart added later cannot silently reintroduce the band.
   border-color: var(--border);
 }
 
-[data-theme="light"] .issue-item:hover:not(.imported) {
+[data-theme="light"] .issue-item:hover:not(.imported):not(:disabled) {
   background: var(--card-hover);
 }
 
 [data-theme="light"] .issue-item.selected {
   background: color-mix(in srgb, var(--in-progress) 8%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--in-progress) 30%, transparent);
-}
-
-[data-theme="light"] .issue-item.imported input[type="radio"] {
-  opacity: 0.4;
 }
 
 [data-theme="light"] .github-import-state {
@@ -1507,7 +1506,6 @@ counterpart added later cannot silently reintroduce the band.
 
   .imported-badge {
     align-self: flex-start;
-    margin-left: 28px;
   }
 
   .issues-list {

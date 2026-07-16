@@ -2,7 +2,7 @@
  * FNXC:PostgresSafeDefaults 2026-07-14-17:36:
  * PostgreSQL production paths must execute durable cleanup and safety invariants instead of returning empty safe defaults. This suite covers authoritative audit reads, deleted-branch reference cleanup, archived write rejection, and soft-delete column repair through the public TaskStore seams.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import { ChatStore } from "../../chat-store.js";
@@ -76,6 +76,18 @@ pgDescribe("TaskStore PostgreSQL safe-default removal", () => {
     })).rejects.toThrow(/archived.*read-only/);
     expect(await store.getTaskDocuments(task.id)).toEqual([]);
     expect(await store.getArtifacts(task.id)).toEqual([]);
+  });
+
+  it("runs plugin schema initialization through the PostgreSQL executor without opening SQLite", async () => {
+    const store = h.store();
+    const executor = vi.fn().mockResolvedValue(undefined);
+    const getDatabase = vi.spyOn(store, "getDatabase");
+    store.setPluginPostgresSchemaExecutor(executor);
+
+    await store.runPluginSchemaInits([]);
+
+    expect(executor).toHaveBeenCalledWith([]);
+    expect(getDatabase).not.toHaveBeenCalled();
   });
 
   it("repairs soft-deleted task column drift and audits the repaired row", async () => {

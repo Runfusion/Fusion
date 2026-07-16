@@ -13,6 +13,7 @@ function makeCtx(getSettings?: () => unknown) {
   return {
     taskStore: {
       getDatabase: () => db,
+      getAsyncLayer: () => ({ projectId: "proj-1", db: { execute: vi.fn().mockResolvedValue([]) } }),
       getSettings: getSettings ?? (() => Promise.resolve({})),
       getRootDir: () => "/tmp",
       getTask: vi.fn(),

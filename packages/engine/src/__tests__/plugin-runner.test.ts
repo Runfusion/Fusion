@@ -83,7 +83,6 @@ describe("PluginRunner", () => {
     on: ReturnType<typeof vi.fn>;
     off: ReturnType<typeof vi.fn>;
     getTask: ReturnType<typeof vi.fn>;
-    getDatabase: ReturnType<typeof vi.fn>;
     recordRunAuditEvent: ReturnType<typeof vi.fn>;
   };
   let pluginRunner: PluginRunner;
@@ -144,12 +143,10 @@ describe("PluginRunner", () => {
 
     const mockOn = vi.fn();
     const mockOff = vi.fn();
-    const mockRunPluginSchemaInits = vi.fn().mockResolvedValue(undefined);
     mockTaskStore = {
       on: mockOn,
       off: mockOff,
       getTask: vi.fn(),
-      getDatabase: vi.fn().mockReturnValue({ runPluginSchemaInits: mockRunPluginSchemaInits }),
       isBackendMode: vi.fn().mockReturnValue(false),
       recordRunAuditEvent: vi.fn(),
     };
@@ -193,15 +190,12 @@ describe("PluginRunner", () => {
       await pluginRunner.init();
 
       expect(mockPluginLoader.getPluginSchemaInitHooks).not.toHaveBeenCalled();
-      expect(mockTaskStore.getDatabase).not.toHaveBeenCalled();
     });
 
     it("should skip schema init execution when no hooks are registered", async () => {
       mockPluginLoader.getPluginSchemaInitHooks.mockReturnValue([]);
 
       await pluginRunner.init();
-
-      expect(mockTaskStore.getDatabase).not.toHaveBeenCalled();
     });
 
     it("should subscribe to plugin store events", async () => {
