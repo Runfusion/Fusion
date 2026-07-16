@@ -4141,11 +4141,17 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         githubImagePolicy(),
       );
       if (imageImport.attached > 0) {
-        await scopedStore.logEntry(
-          task.id,
-          `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitHub issue`,
-          sourceUrl,
-        );
+        try {
+          await scopedStore.logEntry(
+            task.id,
+            `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitHub issue`,
+            sourceUrl,
+          );
+        } catch (error) {
+          // FNXC:IssueImportAttachments 2026-07-15-14:10: Post-create audit
+          // telemetry is best-effort; never turn a stored task into a failed import.
+          console.warn(`[fusion:github-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       const importedTask = (await scopedStore.getTask(task.id)) ?? task;

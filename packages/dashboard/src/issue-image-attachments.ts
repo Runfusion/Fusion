@@ -25,6 +25,8 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES_PER_ISSUE = 10;
 
 const DOWNLOAD_TIMEOUT_MS = 15_000;
+const MAX_DOWNLOAD_REDIRECTS = 3;
+const IMAGE_DOWNLOAD_CONCURRENCY = 3;
 
 const EXT_BY_MIME: Record<string, string> = {
   "image/png": "png",
@@ -116,6 +118,12 @@ export function gitlabImagePolicy(options: { webBaseUrl: string; webUrl: string;
   }
   // "https://gitlab.com/ns/proj/-/issues/12" -> "https://gitlab.com/ns/proj"
   const projectBase = options.webUrl.split("/-/")[0]!.replace(/\/+$/u, "");
+  let projectOriginPath = "";
+  try {
+    projectOriginPath = new URL(projectBase).pathname.replace(/\/+$/u, "");
+  } catch {
+    projectOriginPath = "";
+  }
 
   return {
     resolve(raw: string): string | null {
@@ -132,9 +140,12 @@ export function gitlabImagePolicy(options: { webBaseUrl: string; webUrl: string;
       } catch {
         return null;
       }
-      if (resolved.protocol !== "https:") return null;
-      if (resolved.origin !== origin) return null;
-      if (!resolved.pathname.includes("/uploads/")) return null;
+      if (resolved.protocol !== "https:" || resolved.origin !== origin) return null;
+      // FNXC:IssueImportAttachments 2026-07-15-14:10: A project-relative
+      // upload must remain beneath the originating project after URL normalization.
+      const projectUpload = `${projectOriginPath}/uploads/`;
+      const instanceUpload = /^\/-\/project\/[^/]+\/uploads\//u;
+      if (!resolved.pathname.startsWith(projectUpload) && !instanceUpload.test(resolved.pathname)) return null;
       return resolved.toString();
     },
     async headers() {
@@ -168,7 +179,7 @@ export function extractIssueImageUrls(
 
   for (const body of list) {
     if (!body) continue;
-    const markdownImage = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
+    const markdownImage = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
     for (const match of body.matchAll(markdownImage)) push(match[1]!);
 
     const htmlImage = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
@@ -194,12 +205,26 @@ function filenameFor(url: string, mimeType: string, index: number): string {
 async function downloadImage(
   url: string,
   authHeaders: Record<string, string>,
+  policy: ImageImportPolicy,
 ): Promise<{ buffer: Buffer; mimeType: string } | null> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": "fn/1.0", ...authHeaders },
-    redirect: "follow",
-    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-  });
+  let currentUrl = url;
+  let response: Response | undefined;
+  for (let redirects = 0; redirects <= MAX_DOWNLOAD_REDIRECTS; redirects++) {
+    response = await fetch(currentUrl, {
+      headers: { "User-Agent": "fn/1.0", ...authHeaders },
+      redirect: "manual",
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!(response.status >= 300 && response.status < 400)) break;
+    const location = response.headers.get("location");
+    if (!location) throw new Error(`redirect ${response.status} without location`);
+    const approved = policy.resolve(new URL(location, currentUrl).toString());
+    // FNXC:IssueImportAttachments 2026-07-15-14:10: Every redirect is a new
+    // token-bearing request, so it must satisfy the forge policy before follow-up.
+    if (!approved) throw new Error("redirect target is outside the image policy");
+    currentUrl = approved;
+  }
+  if (!response || (response.status >= 300 && response.status < 400)) throw new Error("too many image redirects");
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -215,10 +240,27 @@ async function downloadImage(
     throw new Error(`image too large (${declaredLength} bytes)`);
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > MAX_IMAGE_BYTES) {
-    throw new Error(`image too large (${buffer.length} bytes)`);
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  if (response.body) {
+    const reader = response.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_IMAGE_BYTES) {
+        await reader.cancel();
+        throw new Error(`image too large (${bytes} bytes)`);
+      }
+      chunks.push(value);
+    }
+  } else {
+    const fallback = Buffer.from(await response.arrayBuffer());
+    bytes = fallback.length;
+    if (bytes > MAX_IMAGE_BYTES) throw new Error(`image too large (${bytes} bytes)`);
+    chunks.push(fallback);
   }
+  const buffer = Buffer.concat(chunks);
   return { buffer, mimeType };
 }
 
@@ -241,12 +283,12 @@ export async function importIssueImageAttachments(
   let attached = 0;
   let failed = 0;
 
-  for (const [index, url] of urls.entries()) {
+  const importOne = async (index: number, url: string) => {
     try {
-      const image = await downloadImage(url, authHeaders);
+      const image = await downloadImage(url, authHeaders, policy);
       if (!image) {
         failed++;
-        continue;
+        return;
       }
       await store.addAttachment(taskId, filenameFor(url, image.mimeType, index), image.buffer, image.mimeType);
       attached++;
@@ -256,7 +298,17 @@ export async function importIssueImageAttachments(
         `[fusion:issue-import] Skipping image ${url} for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  }
+  };
+
+  // FNXC:IssueImportAttachments 2026-07-15-14:10: Bound simultaneous remote
+  // work so ten slow screenshots cannot serialize an issue import for minutes.
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(IMAGE_DOWNLOAD_CONCURRENCY, urls.length) }, async () => {
+    while (nextIndex < urls.length) {
+      const index = nextIndex++;
+      await importOne(index, urls[index]!);
+    }
+  }));
 
   return { attached, failed };
 }

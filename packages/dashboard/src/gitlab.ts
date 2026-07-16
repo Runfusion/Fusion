@@ -255,11 +255,16 @@ export class GitLabClient {
   Returns bodies only — the caller needs image references, not authorship — and swallows nothing: the caller decides that a notes failure is non-fatal.
   */
   async listNotes(resource: "issues" | "merge_requests", project: string | number, iid: number): Promise<string[]> {
-    const raw = await this.request<unknown>(`projects/${encodeGitLabPathId(project)}/${resource}/${iid}/notes?per_page=100`);
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((note) => (note as { body?: unknown })?.body)
-      .filter((body): body is string => typeof body === "string");
+    const bodies: string[] = [];
+    for (let page = 1; ; page++) {
+      const raw = await this.request<unknown>(`projects/${encodeGitLabPathId(project)}/${resource}/${iid}/notes?per_page=100&page=${page}`);
+      if (!Array.isArray(raw) || raw.length === 0) break;
+      bodies.push(...raw
+        .map((note) => (note as { body?: unknown })?.body)
+        .filter((body): body is string => typeof body === "string"));
+      if (raw.length < 100) break;
+    }
+    return bodies;
   }
 
   /*

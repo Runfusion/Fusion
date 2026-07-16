@@ -143,6 +143,18 @@ describe("extractIssueImageUrls — GitLab policy", () => {
       extractIssueImageUrls(["desc", "note ![n](/uploads/note1/n.png)"], GL),
     ).toEqual(["https://gitlab.example.com/ns/proj/uploads/note1/n.png"]);
   });
+
+  it("rejects project-upload traversal after URL normalization", () => {
+    expect(
+      extractIssueImageUrls("![secret](/uploads/../../other-project/uploads/secret.png)", GL),
+    ).toEqual([]);
+  });
+
+  it("accepts single-quoted Markdown image titles", () => {
+    expect(extractIssueImageUrls("![shot](/uploads/a/bug.png 'repro')", GL)).toEqual([
+      "https://gitlab.example.com/ns/proj/uploads/a/bug.png",
+    ]);
+  });
 });
 
 describe("importIssueImageAttachments", () => {
@@ -237,6 +249,43 @@ describe("importIssueImageAttachments", () => {
       GH,
     );
     expect(result).toEqual({ attached: 0, failed: 1 });
+    expect(store.addAttachment).not.toHaveBeenCalled();
+  });
+
+  it("rejects redirects that leave the provider image policy before sending a second request", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, {
+        status: 302,
+        headers: { location: "https://evil.example.com/secret.png" },
+      })),
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(importIssueImageAttachments(store as never, "FN-1", "![shot](/uploads/a/bug.png)", GL))
+      .resolves.toEqual({ attached: 0, failed: 1 });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps a streamed response before buffering more than the attachment limit", async () => {
+    const oversized = new Uint8Array(5 * 1024 * 1024 + 1);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(oversized);
+          controller.close();
+        },
+      }), { headers: { "content-type": "image/png" } })),
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(importIssueImageAttachments(
+      store as never,
+      "FN-1",
+      "![shot](https://github.com/user-attachments/assets/abc-123)",
+      GH,
+    )).resolves.toEqual({ attached: 0, failed: 1 });
     expect(store.addAttachment).not.toHaveBeenCalled();
   });
 

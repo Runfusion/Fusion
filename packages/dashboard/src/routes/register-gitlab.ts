@@ -142,11 +142,17 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     }),
   );
   if (imageImport.attached > 0) {
-    await store.logEntry(
-      task.id,
-      `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitLab`,
-      args.item.webUrl,
-    );
+    try {
+      await store.logEntry(
+        task.id,
+        `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitLab`,
+        args.item.webUrl,
+      );
+    } catch (error) {
+      // FNXC:IssueImportAttachments 2026-07-15-14:10: The task and files are
+      // already durable; an audit-write failure must not make import retry collide.
+      console.warn(`[fusion:gitlab-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   return task;
