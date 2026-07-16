@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { DiscoveryConfig, DiscoveredNode } from "../types.js";
 
@@ -73,14 +74,14 @@ function createService(overrides: Record<string, unknown> = {}): Record<string, 
 
 describe("NodeDiscovery", () => {
   let browser: MockBrowser;
-  let publishService: { stop: ReturnType<typeof vi.fn> };
+  let publishService: EventEmitter & { stop: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
 
     browser = createMockBrowser();
-    publishService = { stop: vi.fn() };
+    publishService = Object.assign(new EventEmitter(), { stop: vi.fn() });
 
     publishMock.mockReturnValue(publishService);
     findMock.mockReturnValue(browser);
@@ -104,7 +105,7 @@ describe("NodeDiscovery", () => {
 
     expect(publishMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "Local Node",
+        name: "Local Node-_local_1",
         type: "fusion",
         protocol: "tcp",
         port: 4040,
@@ -127,7 +128,7 @@ describe("NodeDiscovery", () => {
 
     expect(publishMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: expect.any(String),
+      name: expect.stringMatching(/-_local_1$/),
       }),
     );
   });
@@ -279,6 +280,14 @@ describe("NodeDiscovery", () => {
 
     expect(() => discovery.start("node_local_1", "Local")).not.toThrow();
     expect(errorHandler).toHaveBeenCalledWith(error);
+  });
+
+  it("contains asynchronous broadcast collisions without an error listener", () => {
+    const discovery = new NodeDiscovery(defaultConfig({ broadcast: true }));
+
+    discovery.start("node_local_1", "Local");
+
+    expect(() => publishService.emit("error", new Error("Service name is already in use on the network"))).not.toThrow();
   });
 
   it("continues when listener startup throws and emits error", () => {

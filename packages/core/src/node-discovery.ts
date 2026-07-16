@@ -114,7 +114,14 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
 
     try {
       this.broadcastService = bonjour.publish({
-        name: nodeName.trim() || os.hostname(),
+        /*
+         * FNXC:NodeDiscovery 2026-07-15-18:05:
+         * Multiple local Fusion dashboards may share a friendly node name.
+         * DNS-SD requires each advertised service name to be unique, so retain
+         * the readable name while suffixing stable node identity to prevent an
+         * optional mDNS collision from disrupting the dashboard process.
+         */
+        name: `${nodeName.trim() || os.hostname()}-${nodeId.slice(-8)}`,
         type: serviceType.type,
         protocol: serviceType.protocol,
         port: this.config.port,
@@ -124,9 +131,9 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
           version: FUSION_VERSION,
         },
       });
+      this.broadcastService.on("error", this.onBroadcastError);
     } catch (error) {
-      this.warn("Failed to start mDNS broadcast", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to start mDNS broadcast", error);
     }
   }
 
@@ -136,10 +143,10 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
     }
 
     try {
+      this.broadcastService.off("error", this.onBroadcastError);
       this.broadcastService.stop?.();
     } catch (error) {
-      this.warn("Failed to stop mDNS broadcast", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to stop mDNS broadcast", error);
     } finally {
       this.broadcastService = null;
     }
@@ -161,8 +168,7 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
       this.browser.on("up", this.onServiceUp);
       this.browser.on("down", this.onServiceDown);
     } catch (error) {
-      this.warn("Failed to start mDNS listening", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to start mDNS listening", error);
     }
   }
 
@@ -178,8 +184,7 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
       browser.off("down", this.onServiceDown);
       browser.stop();
     } catch (error) {
-      this.warn("Failed to stop mDNS listening", error);
-      this.emit("error", this.asError(error));
+      this.reportError("Failed to stop mDNS listening", error);
     } finally {
       this.browser = null;
     }
@@ -250,6 +255,10 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
 
     this.discoveredNodes.delete(service.name);
     this.emit("node:lost", service.name);
+  };
+
+  private onBroadcastError = (error: unknown): void => {
+    this.reportError("mDNS broadcast failed", error);
   };
 
   private getBonjour(): Bonjour {
@@ -327,6 +336,16 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
     }
 
     console.warn(`[node-discovery] ${message}`);
+  }
+
+  private reportError(message: string, error: unknown): void {
+    this.warn(message, error);
+    // EventEmitter reserves "error" for fatal exceptions when nobody is
+    // listening. Discovery is optional, so preserve observability for callers
+    // that subscribe without allowing a network collision to crash the host.
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", this.asError(error));
+    }
   }
 
   private asError(error: unknown): Error {
