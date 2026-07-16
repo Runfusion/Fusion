@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
-import { Globe, Folder, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
+import { Globe, Folder, GitBranch, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
   getErrorMessage,
   resolveGitlabConfig,
@@ -46,6 +46,7 @@ import { GeneralSection } from "./settings/sections/GeneralSection";
 import { ProjectModelsSection, WorkflowLaneFlushRejection } from "./settings/sections/ProjectModelsSection";
 import { SchedulingSection } from "./settings/sections/SchedulingSection";
 import { SchedulingGlobalSection } from "./settings/sections/SchedulingGlobalSection";
+import { CliBinarySection } from "./settings/sections/CliBinarySection";
 import { ScheduledEvalsSection } from "./settings/sections/ScheduledEvalsSection";
 import { NodeRoutingSection } from "./settings/sections/NodeRoutingSection";
 import { WorktreesSection } from "./settings/sections/WorktreesSection";
@@ -293,6 +294,7 @@ const ADVANCED_SETTINGS_SECTION_IDS = new Set([
   "mcp",
   "prompts",
   "plugins",
+  "cli-binary",
 ]);
 
 function readAdvancedSettingsPreference(): boolean {
@@ -455,6 +457,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "merge", label: "Merge", labelKey: "settings.nav.merge", scope: "project", searchableText: ["auto merge", "AI merge", "merge strategy", "plan approval", "direct merge", "integration branch", "push after merge"] },
 
   { id: "__ai_header", label: "AI & Models", labelKey: "settings.nav.aiHeader", scope: undefined, isGroupHeader: true },
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:30:
+  Authentication leads the AI & Models group, and Settings still opens on it.
+  It is a provider-credentials screen, so it belongs with the model settings it gates rather than under Integrations (where it sat among MCP/Plugins/runtimes) or floating above the groups as a special case — connecting a provider and choosing its models are one task, done in that order.
+  First within the group because nothing else in AI & Models can be configured until it is done: with no provider connected there are no models to pick.
+  */
+  { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
   { id: "global-models", label: "Models · Global", labelKey: "settings.nav.globalModels", scope: "global", searchableText: ["global models", "model presets", "favorite providers", "model pricing overrides", "LiteLLM pricing", "token pricing", "translate", "translation model", "import translation model", "import auto-translation model"] },
   /**
    * FNXC:SettingsNavigation 2026-07-13-00:00:
@@ -577,9 +586,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   The two are adjacent and ordered global-then-project to match the inheritance they model — the global entry holds the fallbacks the project entry overrides — mirroring the MCP Servers pair directly below.
   The GitLab/GitHub keywords below were curated on the `general` and `merge` nav entries before their controls moved here; a keyword left behind would send an operator searching "gitlab token" to a section that no longer renders one. The translate keywords deliberately did NOT move: `githubImportAutoTranslate`/`importTranslateTargetLocale` are Import Tasks panel settings and stay in General.
   */
-  { id: "source-control-global", label: "Source Control · Global", labelKey: "settings.nav.sourceControlGlobal", scope: "global", searchableText: ["GitLab instance URL", "global tracking repo", "GitLab", "GitHub", "global GitLab token", "GitLab fallback", "source control", "forge"] },
-  { id: "source-control", label: "Source Control · Project", labelKey: "settings.nav.sourceControl", scope: "project", searchableText: ["GitHub tracking", "GitLab integration", "GitHub auth mode", "GitLab access token", "GitHub personal access token", "tracking repo", "source control", "forge", "gh cli", "issue tracking"] },
-  { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
+  { id: "source-control-global", label: "Source Control · Global", labelKey: "settings.nav.sourceControlGlobal", scope: "global", icon: GitBranch, searchableText: ["GitLab instance URL", "global tracking repo", "GitLab", "GitHub", "global GitLab token", "GitLab fallback", "source control", "forge"] },
+  { id: "source-control", label: "Source Control · Project", labelKey: "settings.nav.sourceControl", scope: "project", icon: GitBranch, searchableText: ["GitHub tracking", "GitLab integration", "GitHub auth mode", "GitLab access token", "GitHub personal access token", "tracking repo", "source control", "forge", "gh cli", "issue tracking"] },
   { id: "global-mcp", label: "MCP Servers · Global", labelKey: "settings.nav.globalMcp", scope: "global", searchableText: ["global MCP servers", "shared MCP", "user MCP", "tool servers"] },
   { id: "mcp", label: "MCP Servers · Project", labelKey: "settings.nav.mcp", scope: "project", searchableText: ["project MCP servers", "workspace MCP", "project tool servers", "mcp config"] },
   { id: "plugins", label: "Plugins", labelKey: "settings.nav.plugins", scope: "project", searchableText: ["Fusion plugins", "Pi extensions", "plugin manager", "extension marketplace"] },
@@ -600,6 +608,11 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 
   { id: "__advanced_header", label: "Advanced", labelKey: "settings.nav.advancedHeader", scope: undefined, isGroupHeader: true },
   { id: "experimental", label: "Experimental Features", labelKey: "settings.nav.experimental", scope: "global", searchableText: ["feature flags", "experiments", "research view", "evals view", "sandbox", "subtask breakdown"] },
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:00:
+  Last entry in the nav, and advanced-only. The `fn` binary panel used to render at the TOP of "General · Global", so machine plumbing was the first thing an operator saw on opening Settings. It is install/version/path maintenance touched once or when something breaks — the definition of what the Advanced switch hides.
+  */
+  { id: "cli-binary", label: "CLI Binary", labelKey: "settings.nav.cliBinary", scope: "global", searchableText: ["fn binary", "cli", "install", "version", "path", "upgrade", "homebrew", "binary check"] },
 ];
 
 // FNXC:SettingsNavigation 2026-07-04-00:00: sectionId -> owning group label ("Global"/"Runtimes"/"Project"),
@@ -729,7 +742,12 @@ function normalizeWorktreeCopyFilesForSave(paths?: string[]): string[] {
 type LegacySectionId = "pi-extensions";
 export type SectionId = SettingsSection["id"] | LegacySectionId;
 
-const DEFAULT_SETTINGS_SECTION: SectionId = "global-general";
+/*
+FNXC:SettingsNavigation 2026-07-16-01:00:
+Settings opens on Authentication. It is the section an operator actually needs first — nothing else in the product works until a provider is connected, and the dashboard's own empty state points here ("Set one up in Settings → AI Setup"). The previous landing section was "General · Global", a page of app preferences (and, until this change, the `fn` binary panel) that nobody opens Settings to find.
+It is also always visible: Authentication is not behind the Advanced switch, so the default landing section cannot be one the operator has hidden.
+*/
+const DEFAULT_SETTINGS_SECTION: SectionId = "authentication";
 
 type PluginsSubsectionId = "fusion-plugins" | "pi-extensions";
 
@@ -1183,6 +1201,8 @@ export function SettingsModal({
   The setting a search result asked to land on. Held here rather than in the sections because the modal owns both halves of the jump: it switches the active section AND scrolls to the row, and only the row itself knows how to flag the match (via SettingsSearchHighlightProvider).
   */
   const [highlightedSettingKey, setHighlightedSettingKey] = useState<string | null>(null);
+  /** Set when a search result drives the next section change; see the scroll-to-top effect. */
+  const settingsJumpPendingRef = useRef(false);
   const [showMobileSectionPicker, setShowMobileSectionPicker] = useState(() =>
     viewportMode === "mobile" ||
     (typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -1351,9 +1371,30 @@ export function SettingsModal({
   Landing a search result is two steps that cannot happen in one: switching section unmounts the old one and mounts the target, so the row does not exist in the DOM until React commits. The click sets section + key, and the effect below scrolls once the row is actually there.
   */
   const handleSettingsSearchResultSelect = useCallback((sectionId: string, key: string) => {
+    // Claims the upcoming section change so the scroll-to-top below yields to the
+    // jump; otherwise the row we just scrolled to would be scrolled away from.
+    settingsJumpPendingRef.current = true;
     setActiveSection(sectionId);
     setHighlightedSettingKey(key);
   }, []);
+
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:10:
+  Switching section starts you at the top of it.
+  Sections keep no scroll of their own, so the container's offset carried over: leaving a long section scrolled halfway (Scheduling, General) and picking a short one landed mid-content — on mobile, often past everything, on an apparently blank screen with no hint to scroll up.
+  Guarded by a ref rather than by reading `highlightedSettingKey`: a search jump also changes `activeSection`, and that key clears itself ~1.6s later, which would re-run this effect and yank the operator away from the row they had just jumped to. The ref is consumed once, so only the jump's own section change is exempt.
+  */
+  useEffect(() => {
+    if (settingsJumpPendingRef.current) {
+      settingsJumpPendingRef.current = false;
+      return;
+    }
+    /*
+    FNXC:SettingsNavigation 2026-07-16-01:10:
+    Assigns `scrollTop` rather than calling `scrollTo({top:0})`: jsdom implements the property but not the method, so the smarter-looking call throws "scrollTo is not a function" in component tests. The jump is instant either way — a section change is a context switch, not a movement the eye should follow.
+    */
+    if (settingsContentRef.current) settingsContentRef.current.scrollTop = 0;
+  }, [activeSection]);
 
   useEffect(() => {
     if (!highlightedSettingKey) return;
@@ -3890,6 +3931,8 @@ export function SettingsModal({
             researchLimitError={researchLimitError}
           />
         );
+      case "cli-binary":
+        return <CliBinarySection />;
       case "experimental":
         return (
           <ExperimentalSection
@@ -4276,10 +4319,27 @@ export function SettingsModal({
                             : undefined
                       }
                     >
-                      {section.scope === "global" && <Globe className="settings-scope-icon" aria-label={t("settings.nav.aria.global", "Global setting")} size={16} />}
-                      {section.scope === "project" && <Folder className="settings-scope-icon" aria-label={t("settings.nav.aria.project", "Project setting")} size={16} />}
-                      {section.icon && !section.scope && (
-                        <section.icon className="settings-scope-icon" aria-label={t("settings.nav.aria.global", "Global setting")} size={16} />
+                      {/*
+                      FNXC:SettingsNavigation 2026-07-16-01:30:
+                      A section's own icon wins over the generic scope glyph; the glyph is the fallback.
+                      Previously `icon` only rendered when `scope` was undefined, so any scoped section was forced to the globe/folder pair and could not identify itself — Source Control looked exactly like MCP Servers and Scheduling in the nav.
+                      Nothing is lost by yielding the glyph: these sections spell their tier out in the label ("Source Control · Global"), and the aria-label + tooltip below still announce it, so scope survives for assistive tech and hover.
+                      */}
+                      {section.icon ? (
+                        <section.icon
+                          className="settings-scope-icon"
+                          aria-label={
+                            section.scope === "project"
+                              ? t("settings.nav.aria.project", "Project setting")
+                              : t("settings.nav.aria.global", "Global setting")
+                          }
+                          size={16}
+                        />
+                      ) : (
+                        <>
+                          {section.scope === "global" && <Globe className="settings-scope-icon" aria-label={t("settings.nav.aria.global", "Global setting")} size={16} />}
+                          {section.scope === "project" && <Folder className="settings-scope-icon" aria-label={t("settings.nav.aria.project", "Project setting")} size={16} />}
+                        </>
                       )}
                       {t(section.labelKey, section.label)}
                     </button>

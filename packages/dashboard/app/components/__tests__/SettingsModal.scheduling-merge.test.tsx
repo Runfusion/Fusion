@@ -1661,7 +1661,11 @@ describe("SettingsModal", () => {
         await waitForSettingsModalReady();
 
         expect(screen.queryByRole("button", { name: /Research Defaults/i })).not.toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+        /*
+        FNXC:SettingsNavigation 2026-07-16-01:10:
+        The fallback lands on Authentication, which is the first selectable section and where Settings opens. This asserted "General" back when that was the default landing section; the requirement is unchanged — an unreachable section falls back to the first selectable one — only which section that is has moved.
+        */
+        expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
       });
 
       it("hides scheduled evals nav item when experimentalFeatures.evalsView is disabled", async () => {
@@ -1698,7 +1702,8 @@ describe("SettingsModal", () => {
         await waitForSettingsModalReady();
 
         expect(screen.queryByRole("button", { name: /Scheduled Evals/i })).not.toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+        // FNXC:SettingsNavigation 2026-07-16-01:10: falls back to Authentication — now the first selectable section and where Settings opens. Same requirement, different landing section.
+        expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
       });
     });
 
