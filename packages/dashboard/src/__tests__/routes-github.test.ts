@@ -1019,6 +1019,35 @@ describe("POST /github/issues/batch-import", () => {
     expect(detailSpy).not.toHaveBeenCalled();
   });
 
+  it("keeps the batch item successful when image attachment audit logging fails", async () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    vi.spyOn(GitHubClient.prototype, "fetchThrottled").mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...mockGitHubIssue(1),
+        body: "![shot](https://github.com/user-attachments/assets/abc-123)",
+        comments: 0,
+      },
+    } as Awaited<ReturnType<GitHubClient["fetchThrottled"]>>);
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png", "content-length": String(png.length) }),
+      arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+    });
+    (store.logEntry as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("audit unavailable"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/github/issues/batch-import", JSON.stringify({ owner: "owner", repo: "repo", issueNumbers: [1] }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].success).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Could not log image attachments"));
+  });
+
   it("fetches comments on the batch surface only when the issue has any", async () => {
     const png = Buffer.from("89504e470d0a1a0a", "hex");
     const detailSpy = vi.spyOn(GitHubClient.prototype, "getIssueDetail").mockResolvedValue({

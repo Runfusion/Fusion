@@ -4440,11 +4440,19 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
             githubImagePolicy({ token }),
           );
           if (batchImageImport.attached > 0) {
-            await scopedStore.logEntry(
-              task.id,
-              `Imported ${batchImageImport.attached} image attachment${batchImageImport.attached === 1 ? "" : "s"} from GitHub issue`,
-              sourceUrl,
-            );
+            /*
+            FNXC:GitHubImportAttachments 2026-07-15-14:18:
+            Attachment audit history is observability, not part of persistence. A failed log must not turn an already-created batch task into a reported failure that retries as a duplicate.
+            */
+            try {
+              await scopedStore.logEntry(
+                task.id,
+                `Imported ${batchImageImport.attached} image attachment${batchImageImport.attached === 1 ? "" : "s"} from GitHub issue`,
+                sourceUrl,
+              );
+            } catch (error) {
+              console.warn(`[fusion:github-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+            }
           }
 
           results.push({
