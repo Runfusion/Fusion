@@ -9,5 +9,9 @@ describe("fusion-plugin-quality manifest", () => {
     expect(plugin.uiSlots?.[0]?.slotId).toBe("task-detail-tab");
     expect(plugin.routes?.length).toBeGreaterThan(0);
     expect(plugin.hooks?.onSchemaInit).toBeTypeOf("function");
+    expect(plugin.hooks?.onPostgresSchemaInit?.()).toMatchObject({
+      version: 1,
+      tablePrefix: "quality_",
+    });
   });
 });

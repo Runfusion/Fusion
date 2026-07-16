@@ -1,4 +1,4 @@
-import type { Database } from "@fusion/core";
+import type { Database, PluginPostgresSchemaDefinition } from "@fusion/core";
 
 /*
 FNXC:Quality 2026-07-14-21:45:
@@ -60,3 +60,62 @@ export function ensureQualitySchema(db: Database): void {
     );
   `);
 }
+
+/**
+ * FNXC:QualityPostgres 2026-07-15-14:55:
+ * Quality remains available when Fusion uses the PostgreSQL-backed task store.
+ * The legacy SQLite hook above serves local DatabaseSync tests, while this
+ * declarative contract lets the host create the same project-scoped tables
+ * through its privileged PostgreSQL schema executor before plugin routes run.
+ */
+export const qualityPostgresSchema: PluginPostgresSchemaDefinition = {
+  version: 1,
+  tablePrefix: "quality_",
+  statements: [
+    `CREATE TABLE IF NOT EXISTS project.quality_test_runs (
+      project_id text NOT NULL,
+      id text NOT NULL,
+      task_id text,
+      plan_id text,
+      source text NOT NULL,
+      preset_id text,
+      command text NOT NULL,
+      cwd text NOT NULL,
+      cwd_kind text NOT NULL,
+      status text NOT NULL,
+      exit_code integer,
+      error_message text,
+      timeout_ms integer NOT NULL,
+      started_at text,
+      finished_at text,
+      duration_ms integer,
+      stdout text NOT NULL DEFAULT '',
+      stderr text NOT NULL DEFAULT '',
+      triggered_by text NOT NULL,
+      created_at text NOT NULL,
+      updated_at text NOT NULL,
+      PRIMARY KEY (project_id, id)
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_quality_test_runs_project_created ON project.quality_test_runs(project_id, created_at DESC, id)",
+    "CREATE INDEX IF NOT EXISTS idx_quality_test_runs_task_created ON project.quality_test_runs(project_id, task_id, created_at DESC, id)",
+    `CREATE TABLE IF NOT EXISTS project.quality_test_plans (
+      project_id text NOT NULL,
+      id text NOT NULL,
+      name text NOT NULL,
+      status text NOT NULL,
+      steps_json text NOT NULL DEFAULT '[]',
+      created_at text NOT NULL,
+      updated_at text NOT NULL,
+      PRIMARY KEY (project_id, id)
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_quality_test_plans_project ON project.quality_test_plans(project_id, status, updated_at DESC, id)",
+    `CREATE TABLE IF NOT EXISTS project.quality_suggested_cases (
+      project_id text NOT NULL,
+      task_id text NOT NULL,
+      cases_json text NOT NULL DEFAULT '[]',
+      generated_at text NOT NULL,
+      method text NOT NULL,
+      PRIMARY KEY (project_id, task_id)
+    )`,
+  ],
+};

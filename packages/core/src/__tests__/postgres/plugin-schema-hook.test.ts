@@ -31,7 +31,10 @@ function executedSql(execute: ReturnType<typeof vi.fn>): string {
 describe("PostgreSQL plugin schema registry", () => {
   /*
   FNXC:PluginPostgresSchema 2026-07-14-18:45:
-  Every bundled legacy onSchemaInit declaration requires a named PostgreSQL equivalent. Derive the declarations from the bundled plugin entrypoints so adding a hook cannot leave a second hardcoded inventory green after the cutover.
+  Every bundled legacy onSchemaInit declaration requires either a named default
+  PostgreSQL hook or a plugin-owned declarative PostgreSQL contract. Derive
+  declarations from entrypoints so adding a SQLite hook cannot bypass the
+  backend compatibility requirement.
   */
   it("registers every bundled plugin that declares onSchemaInit", () => {
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
@@ -43,13 +46,15 @@ describe("PostgreSQL plugin schema registry", () => {
         if (!/\bonSchemaInit\s*:/.test(source)) return [];
         const pluginId = source.match(/\bid\s*:\s*["']([^"']+)["']/)?.[1];
         if (!pluginId) throw new Error(`Bundled plugin ${entry.name} declares onSchemaInit without a literal manifest id`);
-        return [pluginId];
+        return [{ pluginId, hasDeclarativePostgresSchema: /\bonPostgresSchemaInit\s*:/.test(source) }];
       })
       .sort();
     const registered = new Set(DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS.map((hook) => hook.pluginId));
 
     expect(declaredLegacyHooks).not.toHaveLength(0);
-    expect(declaredLegacyHooks.filter((pluginId) => !registered.has(pluginId))).toEqual([]);
+    expect(declaredLegacyHooks.filter(({ pluginId, hasDeclarativePostgresSchema }) => (
+      !hasDeclarativePostgresSchema && !registered.has(pluginId)
+    ))).toEqual([]);
   });
 
   it("runs the registered PostgreSQL hook instead of the legacy callback", async () => {

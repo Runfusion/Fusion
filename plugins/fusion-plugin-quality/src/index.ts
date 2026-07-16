@@ -1,5 +1,5 @@
 import { definePlugin } from "@fusion/plugin-sdk";
-import { ensureQualitySchema } from "./quality-schema.js";
+import { ensureQualitySchema, qualityPostgresSchema } from "./quality-schema.js";
 import { createQualityRoutes } from "./routes/create-routes.js";
 import { settingsSchema } from "./settings.js";
 
@@ -23,6 +23,7 @@ const plugin = definePlugin({
   state: "installed",
   hooks: {
     onSchemaInit: ensureQualitySchema,
+    onPostgresSchemaInit: () => qualityPostgresSchema,
   },
   routes: createQualityRoutes(),
   dashboardViews: [
@@ -49,7 +50,7 @@ const plugin = definePlugin({
 
 export default plugin;
 
-export { ensureQualitySchema } from "./quality-schema.js";
+export { ensureQualitySchema, qualityPostgresSchema } from "./quality-schema.js";
 export { QualityStore } from "./store/quality-store.js";
 export { resolvePresetCommand, isQualityPresetId, listPresetCatalog } from "./runner/command-presets.js";
 export { buildHeuristicSuggestedCases } from "./suggestions/heuristic-cases.js";
