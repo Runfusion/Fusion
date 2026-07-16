@@ -197,7 +197,17 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
   max-height: 85vh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  transition: transform var(--transition-fast);
   animation: mobile-more-sheet-in 0.25s ease;
+}
+
+.mobile-more-sheet--gesture-ready {
+  animation: none;
+}
+
+.mobile-more-sheet--dragging {
+  transition: none;
 }
 
 @keyframes mobile-more-backdrop-in {
@@ -211,11 +221,21 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 }
 
 .mobile-more-sheet-handle {
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: calc(var(--space-xl) + var(--space-md));
+  min-height: calc(var(--space-xl) + var(--space-md));
+  margin: 0 auto var(--space-sm);
+}
+
+.mobile-more-sheet-handle::after {
+  width: 100%;
+  height: calc(var(--space-xs) / 2);
+  border-radius: var(--radius-sm);
   background: var(--border);
-  margin: 0 auto 12px;
+  content: "";
 }
 
 .mobile-more-sheet-title {

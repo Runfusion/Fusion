@@ -3,6 +3,10 @@ import type { Database, PluginPostgresSchemaDefinition } from "@fusion/core";
 /*
 FNXC:Quality 2026-07-14-21:45:
 Plugin-owned Quality tables via onSchemaInit. projectId on every row for multi-project isolation.
+
+FNXC:QualityPostgres 2026-07-16-09:03:
+ensureQualitySchema is SQLite/unit-test only. Production QA routes use
+qualityPostgresSchema + AsyncQualityStore; they never open TaskStore.db.
 */
 
 export function ensureQualitySchema(db: Database): void {

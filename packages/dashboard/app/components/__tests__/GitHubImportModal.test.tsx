@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { GitHubImportModal } from "../GitHubImportModal";
+import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
@@ -9,6 +10,7 @@ import {
   apiFetchGitHubIssueDetail,
   apiCloseGitHubIssue,
   apiImportGitHubPull,
+  apiImportGitHubComment,
   apiFetchGitLabProjectIssues,
   apiFetchGitLabGroupIssues,
   apiFetchGitLabMergeRequests,
@@ -17,6 +19,7 @@ import {
   apiImportGitLabMergeRequest,
   fetchSettings,
   fetchGitRemotes,
+  createTask,
   translateImportContent,
 } from "../../api";
 import type { Task } from "@fusion/core";
@@ -36,6 +39,7 @@ vi.mock("../../api", async (importOriginal) => {
     apiFetchGitHubIssueDetail: vi.fn(),
     apiCloseGitHubIssue: vi.fn(),
     apiImportGitHubPull: vi.fn(),
+    apiImportGitHubComment: vi.fn(),
     apiFetchGitLabProjectIssues: vi.fn(),
     apiFetchGitLabGroupIssues: vi.fn(),
     apiFetchGitLabMergeRequests: vi.fn(),
@@ -44,6 +48,7 @@ vi.mock("../../api", async (importOriginal) => {
     apiImportGitLabMergeRequest: vi.fn(),
     fetchSettings: vi.fn(),
     fetchGitRemotes: vi.fn(),
+    createTask: vi.fn(),
     translateImportContent: vi.fn(),
   };
 });
@@ -168,6 +173,7 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiFetchGitHubIssueDetail).mockReset();
     vi.mocked(apiCloseGitHubIssue).mockReset();
     vi.mocked(apiImportGitHubPull).mockReset();
+    vi.mocked(apiImportGitHubComment).mockReset();
     vi.mocked(apiFetchGitLabProjectIssues).mockReset();
     vi.mocked(apiFetchGitLabGroupIssues).mockReset();
     vi.mocked(apiFetchGitLabMergeRequests).mockReset();
@@ -175,6 +181,8 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiImportGitLabGroupIssue).mockReset();
     vi.mocked(apiImportGitLabMergeRequest).mockReset();
     vi.mocked(fetchSettings).mockReset();
+    vi.mocked(createTask).mockReset();
+    vi.mocked(createTask).mockResolvedValue(mockTask);
     vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true } as never);
     // Set default mock for apiFetchGitHubIssues to return empty array (prevents undefined issues state)
     vi.mocked(apiFetchGitHubIssues).mockResolvedValue([]);
@@ -182,6 +190,7 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiFetchGitHubPullDetail).mockResolvedValue({ comments: [], checks: [] });
     vi.mocked(apiFetchGitHubIssueDetail).mockResolvedValue({ comments: [] });
     vi.mocked(apiCloseGitHubIssue).mockResolvedValue(undefined);
+    vi.mocked(apiImportGitHubComment).mockResolvedValue(mockTask);
     vi.mocked(apiFetchGitLabProjectIssues).mockResolvedValue([]);
     vi.mocked(apiFetchGitLabGroupIssues).mockResolvedValue([]);
     vi.mocked(apiFetchGitLabMergeRequests).mockResolvedValue([]);
@@ -190,6 +199,150 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiImportGitLabMergeRequest).mockResolvedValue(mockTask);
     onClose.mockReset();
     onImport.mockReset();
+  });
+
+  /*
+   * FNXC:GitHubImport 2026-07-16-17:00:
+   * FN-8110's per-check repair action is exercised through the same selected-PR detail path in both modal and embedded presentations.
+   * The helper deliberately controls only the API seam so the tests cover the real row rendering and task callback behavior.
+   */
+  const renderSelectedPullChecks = async (
+    checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }>,
+    presentation: "modal" | "embedded" = "modal",
+    detailRequest: Promise<{ comments: []; checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }> }> = Promise.resolve({ comments: [], checks }),
+  ) => {
+    const pull = {
+      number: 81,
+      title: "Fixable PR",
+      body: "PR body",
+      html_url: "https://github.com/owner/repo/pull/81",
+      headBranch: "broken-build",
+      baseBranch: "main",
+    };
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([{ name: "origin", owner: "owner", repo: "repo", url: "" }]);
+    vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([pull]);
+    vi.mocked(apiFetchGitHubPullDetail).mockReturnValueOnce(detailRequest as never);
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" presentation={presentation} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+    await screen.findByText("Fixable PR");
+    fireEvent.click(screen.getByRole("button", { name: /Select pull request #81/i }));
+  };
+
+  describe("failed PR check fix tasks", () => {
+    const checkVariants = [
+      { name: "failure", status: "completed", conclusion: "failure", detailsUrl: "https://github.com/owner/repo/runs/1" },
+      { name: "success", status: "completed", conclusion: "success" },
+      { name: "pending", status: "in_progress" },
+      { name: "neutral", status: "completed", conclusion: "skipped" },
+    ];
+
+    it.each(["modal", "embedded"] as const)("creates a task from the failed row in %s presentation", async (presentation) => {
+      const createdTask = { ...mockTask, id: `FN-${presentation}` };
+      vi.mocked(createTask).mockResolvedValueOnce(createdTask);
+      await renderSelectedPullChecks(checkVariants, presentation);
+
+      const buttons = await screen.findAllByTestId("github-import-pr-check-fix-task");
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]).toHaveAccessibleName("Create fix task for failure");
+      fireEvent.click(buttons[0]);
+
+      await waitFor(() => {
+        expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Fix failing check "failure" on PR #81',
+          description: expect.stringContaining("Repository: owner/repo"),
+        }), "project-1");
+      });
+      const [{ description }] = vi.mocked(createTask).mock.calls[0];
+      expect(description).toContain("https://github.com/owner/repo/pull/81");
+      expect(description).toContain("broken-build → main");
+      expect(description).toContain("Failing check: failure");
+      expect(description).toContain("https://github.com/owner/repo/runs/1");
+      expect(await screen.findByTestId("github-import-pr-check-fix-task-toast")).toHaveTextContent("Fix task created");
+      expect(onImport).toHaveBeenCalledWith(createdTask);
+    });
+
+    it("renders the affordance only for failed variants and keeps mobile wrapping source coverage", async () => {
+      await renderSelectedPullChecks(checkVariants);
+      expect(await screen.findAllByTestId("github-import-pr-check-fix-task")).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Create fix task for failure" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Create fix task for success" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create fix task for pending" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create fix task for neutral" })).toBeNull();
+
+      const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+      expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.github-import-pr-check-row\s*\{[\s\S]*flex-wrap: wrap;/);
+      expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.github-import-pr-check-fix-task\s*\{[\s\S]*width: 100%;/);
+    });
+
+    it("keeps duplicate failed check rows independently actionable while creation is in flight", async () => {
+      let resolveFirstCreate!: (task: Task) => void;
+      vi.mocked(createTask)
+        .mockImplementationOnce(() => new Promise<Task>((resolve) => { resolveFirstCreate = resolve; }))
+        .mockResolvedValueOnce({ ...mockTask, id: "FN-second" });
+      await renderSelectedPullChecks([
+        { name: "duplicate", status: "completed", conclusion: "failure" },
+        { name: "duplicate", status: "completed", conclusion: "failure" },
+      ]);
+
+      const [first, second] = await screen.findAllByTestId("github-import-pr-check-fix-task");
+      fireEvent.click(first);
+      await waitFor(() => expect(first).toBeDisabled());
+      expect(first.querySelector(".spin")).toBeTruthy();
+      expect(second).not.toBeDisabled();
+      fireEvent.click(second);
+      expect(createTask).toHaveBeenCalledTimes(2);
+
+      await act(async () => { resolveFirstCreate(mockTask); });
+    });
+
+    it("surfaces create errors inline and permits retry", async () => {
+      vi.mocked(createTask)
+        .mockRejectedValueOnce(new Error("Task service unavailable"))
+        .mockResolvedValueOnce({ ...mockTask, id: "FN-retry" });
+      await renderSelectedPullChecks([{ name: "lint", status: "completed", conclusion: "failure" }]);
+
+      const button = await screen.findByTestId("github-import-pr-check-fix-task");
+      fireEvent.click(button);
+      expect(await screen.findByTestId("github-import-pr-check-fix-task-toast")).toHaveTextContent("Task service unavailable");
+      expect(button).not.toBeDisabled();
+      expect(onImport).not.toHaveBeenCalled();
+
+      fireEvent.click(button);
+      await waitFor(() => expect(onImport).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-retry" })));
+      expect(createTask).toHaveBeenCalledTimes(2);
+    });
+
+    it("emits no fix action while PR detail is loading, errored, empty, or has no failures", async () => {
+      let resolveDetail!: (detail: { comments: []; checks: [] }) => void;
+      const loadingDetail = new Promise<{ comments: []; checks: [] }>((resolve) => { resolveDetail = resolve; });
+      await renderSelectedPullChecks([], "modal", loadingDetail);
+      expect(await screen.findByTestId("github-import-pr-checks-loading")).toBeTruthy();
+      expect(screen.queryByTestId("github-import-pr-check-fix-task")).toBeNull();
+      await act(async () => { resolveDetail({ comments: [], checks: [] }); });
+      expect(await screen.findByTestId("github-import-pr-checks-empty")).toBeTruthy();
+      expect(screen.queryByTestId("github-import-pr-check-fix-task")).toBeNull();
+    });
+
+    it("emits no fix action for PR detail errors or populated non-failing checks", async () => {
+      vi.mocked(apiFetchGitHubPullDetail).mockRejectedValueOnce(new Error("Checks unavailable"));
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([{ name: "origin", owner: "owner", repo: "repo", url: "" }]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([{
+        number: 82, title: "No failures", body: "", html_url: "https://github.com/owner/repo/pull/82", headBranch: "feature", baseBranch: "main",
+      }]);
+      render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      await screen.findByText("No failures");
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #82/i }));
+      expect(await screen.findByTestId("github-import-pr-checks-error")).toHaveTextContent("Checks unavailable");
+      expect(screen.queryByTestId("github-import-pr-check-fix-task")).toBeNull();
+    });
+
+    it("emits no fix action for populated successful, pending, and neutral checks", async () => {
+      await renderSelectedPullChecks(checkVariants.slice(1));
+      expect(await screen.findByTestId("github-import-pr-checks")).toBeTruthy();
+      expect(screen.queryByTestId("github-import-pr-check-fix-task")).toBeNull();
+    });
   });
 
   it("renders when isOpen is true", async () => {
@@ -1155,6 +1308,58 @@ describe("GitHubImportModal", () => {
       expect(timeEl?.textContent?.length).toBeGreaterThan(0);
     });
 
+    /*
+    FNXC:GitHubImport 2026-07-16-18:20:
+    PR and issue comment threads share the same import affordance; this test protects the source context passed from each parent call site and confirms bot feedback remains actionable.
+    */
+    it("imports human and bot feedback from PR and issue comment threads", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValue(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValue([{ number: 21, title: "Feedback PR", body: "body", html_url: "https://github.com/owner/repo/pull/21", headBranch: "feature", baseBranch: "main" }]);
+      vi.mocked(apiFetchGitHubPullDetail).mockResolvedValue({ comments: [
+        { author: "reviewer", body: "Please test this", createdAt: "2026-07-16T00:00:00Z", authorIsBot: false },
+        { author: "github-actions[bot]", body: "CI failed", createdAt: "2026-07-16T01:00:00Z", authorIsBot: true },
+      ], checks: [] });
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /Select pull request #21/i }));
+      const prComments = await screen.findByTestId("github-import-pr-comments");
+      const prButtons = await within(prComments).findAllByTestId("github-import-comment-import");
+      expect(prButtons).toHaveLength(2);
+      fireEvent.click(prButtons[1]);
+      await waitFor(() => expect(vi.mocked(apiImportGitHubComment)).toHaveBeenCalledWith({
+        owner: "dustinbyrne", repo: "kb", number: 21, type: "pull",
+        comment: { author: "github-actions[bot]", body: "CI failed", createdAt: "2026-07-16T01:00:00Z", authorIsBot: true },
+      }, "project-1"));
+      expect(onImport).toHaveBeenCalledWith(mockTask);
+      expect(await within(prComments).findByText("Comment imported as a task")).toBeTruthy();
+      expect(screen.getByTestId("github-import-detail-actions")).toBeTruthy();
+
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValue([{ number: 22, title: "Feedback issue", body: "body", html_url: "https://github.com/owner/repo/issues/22", labels: [], state: "open", author: "owner" }]);
+      vi.mocked(apiFetchGitHubIssueDetail).mockResolvedValue({ comments: [{ author: "issue-reviewer", body: "Address this", createdAt: "2026-07-16T02:00:00Z", authorIsBot: false }] });
+      fireEvent.click(screen.getByRole("tab", { name: "Issues" }));
+      fireEvent.click(await screen.findByRole("button", { name: /Select issue #22/i }));
+      const issueComments = await screen.findByTestId("github-import-issue-comments");
+      fireEvent.click(await within(issueComments).findByTestId("github-import-comment-import"));
+      await waitFor(() => expect(vi.mocked(apiImportGitHubComment)).toHaveBeenLastCalledWith({
+        owner: "dustinbyrne", repo: "kb", number: 22, type: "issue",
+        comment: { author: "issue-reviewer", body: "Address this", createdAt: "2026-07-16T02:00:00Z", authorIsBot: false },
+      }, "project-1"));
+    });
+
+    it("shows Resolve feedback only for the pull request detail action", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValue(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValue([{ number: 23, title: "Action PR", body: "body", html_url: "https://github.com/owner/repo/pull/23", headBranch: "feature", baseBranch: "main" }]);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValue([{ number: 24, title: "Action issue", body: "body", html_url: "https://github.com/owner/repo/issues/24", labels: [], state: "open", author: "owner" }]);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} presentation="embedded" />);
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /Select pull request #23/i }));
+      expect(await screen.findByRole("button", { name: "Resolve feedback" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("tab", { name: "Issues" }));
+      fireEvent.click(await screen.findByRole("button", { name: /Select issue #24/i }));
+      expect(await screen.findByRole("button", { name: "Import" })).toBeTruthy();
+    });
+
     // FNXC:GitHubImport 2026-06-23-03:30: The Human filter hides bot comments; All (default) shows both.
     it("filters bot comments out when the comments filter is set to Human", async () => {
       Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1200 });
@@ -1305,9 +1510,54 @@ describe("GitHubImportModal", () => {
       });
     });
 
+    /*
+    FNXC:GitHubImport 2026-07-16-20:00:
+    Closing an upstream issue is irreversible from the import view. The real provider test proves the destructive API is unreachable until confirmation and that cancellation leaves the preview unchanged.
+    */
+    it("requires confirmation before closing an issue and preserves it on cancellation", async () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1200 });
+      const issues = [
+        { number: 8, title: "Close Confirmation Issue", body: "Confirm close body", html_url: "https://github.com/owner/repo/issues/8", labels: [], state: "open" as const, author: "dave" },
+      ];
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+      render(
+        <ConfirmDialogProvider>
+          <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />
+        </ConfirmDialogProvider>,
+      );
+
+      await screen.findByText("Close Confirmation Issue");
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #8/i }));
+      const closeButton = await screen.findByTestId("github-import-issue-close");
+      expect(closeButton).toHaveClass("btn-danger");
+
+      fireEvent.click(closeButton);
+      const dialog = await screen.findByRole("dialog", { name: "Close issue #8?" });
+      expect(dialog).toHaveTextContent("This closes dustinbyrne/kb#8 on GitHub. This cannot be undone from here.");
+      expect(within(dialog).getByRole("button", { name: "Close issue" })).toHaveClass("btn-danger");
+      expect(apiCloseGitHubIssue).not.toHaveBeenCalled();
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Close issue #8?" })).toBeNull());
+      expect(apiCloseGitHubIssue).not.toHaveBeenCalled();
+      expect(screen.getByTestId("github-import-preview-card")).toHaveTextContent("Close Confirmation Issue");
+      expect(screen.getByTestId("github-import-issue-close")).toBeTruthy();
+      expect(screen.queryByTestId("github-import-issue-close-toast")).toBeNull();
+
+      fireEvent.click(screen.getByTestId("github-import-issue-close"));
+      const confirmDialog = await screen.findByRole("dialog", { name: "Close issue #8?" });
+      fireEvent.click(within(confirmDialog).getByRole("button", { name: "Close issue" }));
+      await waitFor(() => {
+        expect(apiCloseGitHubIssue).toHaveBeenCalledTimes(1);
+        expect(apiCloseGitHubIssue).toHaveBeenCalledWith("dustinbyrne/kb", 8);
+        expect(screen.getByTestId("github-import-issue-close-toast")).toHaveTextContent("Issue #8 closed");
+        expect(screen.queryByTestId("github-import-issue-close")).toBeNull();
+      });
+    });
+
     // FNXC:GitHubImport 2026-07-02-00:00: Successful Close issue returns to the issue list/no-selection state; failure stays on the preview so the user can retry.
-
-
     it("keeps the selected issue preview open when close fails", async () => {
       Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1200 });
 
@@ -1318,7 +1568,11 @@ describe("GitHubImportModal", () => {
       vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
       vi.mocked(apiCloseGitHubIssue).mockRejectedValueOnce(new Error("close failed"));
 
-      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+      render(
+        <ConfirmDialogProvider>
+          <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />
+        </ConfirmDialogProvider>,
+      );
 
       await waitFor(() => expect(screen.getByText("Close Retry Issue")).toBeTruthy());
       const row = screen.getByRole("button", { name: /Select issue #8/i });
@@ -1326,6 +1580,8 @@ describe("GitHubImportModal", () => {
       expect(await screen.findByTestId("github-import-preview-card")).toHaveTextContent("Close Retry Issue");
 
       fireEvent.click(await screen.findByTestId("github-import-issue-close"));
+      const dialog = await screen.findByRole("dialog", { name: "Close issue #8?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close issue" }));
 
       await waitFor(() => {
         expect(apiCloseGitHubIssue).toHaveBeenCalledWith("dustinbyrne/kb", 8);
@@ -2222,6 +2478,41 @@ describe("GitHubImportModal — compact mobile layout (operator report)", () => 
     // The popover is the innermost layer: Escape dismisses IT, and must not also close the modal.
     expect(screen.queryByTestId("github-import-filter-panel")).toBeNull();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:GitHubImport 2026-07-16-20:00:
+  The compact breakpoint uses the same detail action bar, so its destructive action must retain danger styling and the cancellation gate instead of becoming a tap-through path on mobile.
+  */
+  it("keeps Close issue danger-styled and confirmation-gated on mobile", async () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 412 });
+    window.dispatchEvent(new Event("resize"));
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+      { number: 9, title: "Mobile Close Issue", body: "Mobile body", html_url: "https://github.com/dustinbyrne/kb/issues/9", labels: [], state: "open" },
+    ]);
+
+    try {
+      render(
+        <ConfirmDialogProvider>
+          <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />
+        </ConfirmDialogProvider>,
+      );
+      await screen.findByText("Mobile Close Issue");
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #9/i }));
+      const closeButton = await screen.findByTestId("github-import-issue-close");
+      expect(closeButton).toHaveClass("btn-danger");
+
+      fireEvent.click(closeButton);
+      const dialog = await screen.findByRole("dialog", { name: "Close issue #9?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Close issue #9?" })).toBeNull());
+      expect(apiCloseGitHubIssue).not.toHaveBeenCalled();
+      expect(screen.getByTestId("github-import-issue-close")).toBeTruthy();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: originalInnerWidth });
+      window.dispatchEvent(new Event("resize"));
+    }
   });
 
   it("offers Import ONLY in the detail preview, never in the list footer", async () => {

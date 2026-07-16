@@ -1154,6 +1154,18 @@ Checks + Comments sections live below the PR body in the scrollable preview pane
   color: var(--text);
   text-decoration: none;
   word-break: break-word;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-17:00:
+FN-8110 keeps a failed check's repair action attached to its own row without introducing a new button visual system.
+The shared btn primitives own colors and control treatment; this rule only reserves row layout and mobile-safe wrapping.
+*/
+.github-import-pr-check-fix-task {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 
 a.github-import-pr-check-name:hover {
@@ -1249,6 +1261,32 @@ Across the thread: a top filter (All/Human/Bot) and prev/next chevrons live in t
   font-size: 11px;
   color: var(--text-dim);
   margin-left: auto;
+}
+
+/*
+FNXC:GitHubImport 2026-07-16-18:15:
+Per-comment task import stays in the metadata flow so every human and bot comment has a reachable action without displacing author or timestamp context. Result feedback is inline because the detail window remains open for additional feedback imports.
+*/
+.github-import-comment__import {
+  margin-left: var(--space-xs);
+  white-space: nowrap;
+}
+
+.github-import-comment__import svg {
+  flex: 0 0 auto;
+}
+
+.github-import-comment__result {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.github-import-comment__result--success {
+  color: var(--color-success);
+}
+
+.github-import-comment__result--error {
+  color: var(--color-error);
 }
 
 .github-import-pr-comment--active {
@@ -1619,6 +1657,15 @@ Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge
 
 
 @media (max-width: 768px) {
+  /* FNXC:GitHubImport 2026-07-16-18:15: Mobile detail sheets keep each comment import action on its own reachable row when metadata wraps. */
+  .github-import-comment__import {
+    margin-left: 0;
+  }
+
+  .github-import-comment__time + .github-import-comment__import {
+    flex-basis: 100%;
+  }
+
   .github-import-provider,
   .github-import-gitlab .github-import-toolbar {
     flex-wrap: wrap;
@@ -1626,6 +1673,17 @@ Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge
 
   .github-import-gitlab__workspace {
     grid-template-columns: 1fr;
+  }
+
+  .github-import-pr-check-row {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .github-import-pr-check-fix-task {
+    width: 100%;
+    justify-content: center;
+    margin-inline-start: 0;
   }
 
   /*

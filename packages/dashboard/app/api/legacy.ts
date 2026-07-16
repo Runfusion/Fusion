@@ -2173,6 +2173,26 @@ export function apiImportGitHubPull(owner: string, repo: string, prNumber: numbe
   });
 }
 
+/**
+ * FNXC:GitHubImport 2026-07-16-18:05:
+ * Comment imports preserve the comment payload and issue/PR source context so the server can create a separately auditable resolve-feedback task without closing the detail window.
+ */
+export function apiImportGitHubComment(
+  params: {
+    owner: string;
+    repo: string;
+    number: number;
+    type: "issue" | "pull";
+    comment: Pick<GitHubCommentDetail, "author" | "body" | "createdAt">;
+  },
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId("/github/comments/import", projectId), {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 // --- GitLab Import API ---
 
 export interface GitLabImportItem {

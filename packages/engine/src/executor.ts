@@ -12241,6 +12241,13 @@ export class TaskExecutor {
         await this.handleDepAbortCleanup(task.id, worktreePath);
       } else if (isInvalidAssistantContinuationErrorMessage(errorMessage)) {
         /*
+        FNXC:PostDoneContinuation 2026-07-16-11:57:
+        FN-8111 requires a completed task to win over stale-transcript retry handling. An assistant-last error after the task already reached in-review must signal completion and clear the watchdog rather than create a deferred retry that never dispatches.
+        */
+        if (await this.handleNonContinuableSessionError(task, taskDone, errorMessage)) {
+          return;
+        }
+        /*
         FNXC:ExecutorSessionRecovery 2026-07-14-06:03:
         A stale assistant-last transcript gets a bounded fresh-session retry with the shared recovery backoff. The retry counter must survive the deferred move so repeated fresh-session failures eventually become a visible execution failure instead of cycling through Todo forever.
 

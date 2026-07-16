@@ -251,7 +251,8 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveResumeState: true });
     expect(store.handoffToReview).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
-    expect((task.log ?? []).some((entry: any) => entry.action.includes("Non-continuable session — fresh-session retry"))).toBe(true);
+    // FNXC:PostDoneContinuation 2026-07-16-11:57: Incomplete assistant-last transcripts use the dedicated stale-continuation recovery lane. Assert its fresh-session retry action rather than conflating it with the completed-work suppression path.
+    expect((task.log ?? []).some((entry: any) => entry.action.includes("Detected stale assistant-continuation session — fresh-session retry"))).toBe(true);
   });
 
   it("self-heals already wedged post-done non-continuable failures back to clean in-review", async () => {

@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as core from "@fusion/core";
-import { DatabaseSync } from "@fusion/core";
-import { ensureQualitySchema } from "../quality-schema.js";
 import { createQualityRoutes } from "../routes/create-routes.js";
 
 function git(cwd: string, args: string[]): string {
@@ -49,11 +47,10 @@ describe("preview start for done tasks", () => {
     child.stderr = new EventEmitter();
     vi.spyOn(core, "superviseSpawn").mockReturnValue({ child, kill: vi.fn() } as never);
 
-    const db = new DatabaseSync(":memory:");
-    ensureQualitySchema(db as never);
+    // Preview start does not need a Quality store; ensure we never call getDatabase.
     const ctx = {
       taskStore: {
-        getDatabase: () => db,
+        getAsyncLayer: () => ({ projectId: "proj", db: { execute: vi.fn() } }),
         getSettings: () => Promise.resolve({ experimentalFeatures: { qualityPlugin: true } }),
         getRootDir: () => repo,
         getTask: vi.fn(async () => ({

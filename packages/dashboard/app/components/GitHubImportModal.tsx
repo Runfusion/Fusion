@@ -10,6 +10,7 @@ import {
   apiFetchGitHubIssueDetail,
   apiCloseGitHubIssue,
   apiImportGitHubPull,
+  apiImportGitHubComment,
   apiFetchGitLabProjectIssues,
   apiFetchGitLabGroupIssues,
   apiFetchGitLabMergeRequests,
@@ -18,6 +19,7 @@ import {
   apiImportGitLabMergeRequest,
   fetchSettings,
   fetchGitRemotes,
+  createTask,
   type GitHubIssue,
   type GitHubPull,
   type GitHubPullDetail,
@@ -26,7 +28,7 @@ import {
   type GitRemote,
   type GitLabImportItem,
 } from "../api";
-import { Loader2, RefreshCw, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User, Filter } from "lucide-react";
+import { Loader2, RefreshCw, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User, Filter, ListPlus } from "lucide-react";
 import { GithubIcon } from "./GithubIcon";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import {
@@ -37,6 +39,7 @@ import type { TFunction } from "i18next";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useConfirm } from "../hooks/useConfirm";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { getGitHubImportState, saveGitHubImportState } from "../hooks/modalPersistence";
 import { FloatingWindow } from "./FloatingWindow";
@@ -100,6 +103,12 @@ function CommentsThread({
   errorTestId,
   emptyTestId,
   bodyTestId,
+  owner,
+  repo,
+  number,
+  sourceType,
+  projectId,
+  onImport,
   t,
 }: {
   comments: GitHubCommentDetail[];
@@ -111,6 +120,12 @@ function CommentsThread({
   errorTestId: string;
   emptyTestId: string;
   bodyTestId: string;
+  owner: string;
+  repo: string;
+  number: number;
+  sourceType: "issue" | "pull";
+  projectId?: string;
+  onImport: (task: Task) => void;
   t: TFunction<"app">;
 }) {
   const [filter, setFilter] = useState<CommentFilter>("all");
@@ -119,6 +134,8 @@ function CommentsThread({
   const commentRefs = useRef<Array<HTMLLIElement | null>>([]);
   // Avatar URLs that failed to load fall back to a generic lucide icon.
   const [brokenAvatars, setBrokenAvatars] = useState<Set<string>>(new Set());
+  const [importingCommentKeys, setImportingCommentKeys] = useState<Set<string>>(new Set());
+  const [commentImportResult, setCommentImportResult] = useState<{ key: string; kind: "success" | "error"; message: string } | null>(null);
 
   const filtered = useMemo(() => {
     if (filter === "human") return comments.filter((c) => !c.authorIsBot);
@@ -157,6 +174,29 @@ function CommentsThread({
       return next;
     });
   }, [scrollToIndex, filtered.length]);
+
+  /*
+  FNXC:GitHubImport 2026-07-16-18:10:
+  Each real comment row can create its own resolve-feedback task. The filtered-list index is deliberately part of the key: identical author/body/timestamp comments must retain independent loading and retry state.
+  */
+  const handleImportComment = useCallback(async (comment: GitHubCommentDetail, key: string) => {
+    setImportingCommentKeys((current) => new Set(current).add(key));
+    setCommentImportResult(null);
+    try {
+      const task = await apiImportGitHubComment({ owner, repo, number, type: sourceType, comment }, projectId);
+      onImport(task);
+      setCommentImportResult({ key, kind: "success", message: t("git.commentImported", "Comment imported as a task") });
+      window.setTimeout(() => setCommentImportResult((current) => current?.key === key ? null : current), 4000);
+    } catch (err) {
+      setCommentImportResult({ key, kind: "error", message: getErrorMessage(err) || t("git.failedToImportComment", "Failed to import comment") });
+    } finally {
+      setImportingCommentKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, [number, onImport, owner, projectId, repo, sourceType, t]);
 
   const renderFilter = (
     <div className="github-import-comments-filter" data-testid="github-import-comments-filter" role="group" aria-label={t("git.filterCommentsAriaLabel", "Filter comments by author type")}>
@@ -229,6 +269,9 @@ function CommentsThread({
             const authorType = comment.authorIsBot ? "bot" : "human";
             const timestamp = formatCommentTimestamp(comment.createdAt);
             const avatarKey = `${comment.author}-${idx}`;
+            const commentKey = `${sourceType}:${number}:${idx}`;
+            const importingComment = importingCommentKeys.has(commentKey);
+            const result = commentImportResult?.key === commentKey ? commentImportResult : null;
             const showAvatarImg = comment.authorAvatarUrl && !brokenAvatars.has(avatarKey);
             return (
               <li
@@ -263,7 +306,23 @@ function CommentsThread({
                       {timestamp}
                     </time>
                   )}
+                  <button
+                    type="button"
+                    className="btn github-import-comment__import"
+                    data-testid="github-import-comment-import"
+                    onClick={() => void handleImportComment(comment, commentKey)}
+                    disabled={importingComment}
+                    aria-label={t("git.importCommentAsTask", "Import as task")}
+                  >
+                    {importingComment ? <Loader2 className="spin" aria-hidden="true" /> : <ListPlus aria-hidden="true" />}
+                    {t("git.importCommentAsTask", "Import as task")}
+                  </button>
                 </div>
+                {result && (
+                  <div className={`github-import-comment__result github-import-comment__result--${result.kind}`} role="status">
+                    {result.message}
+                  </div>
+                )}
                 <MailboxMessageContent
                   className="github-import-pr-comment__body preview-body--markdown"
                   content={comment.body || t("git.noCommentBody", "(empty comment)")}
@@ -302,10 +361,39 @@ notice tells the operator to refine by label rather than pretending the list is 
 const ISSUES_FETCH_CAP = 300;
 const ISSUES_PAGE_SIZE = 30;
 
+/**
+ * FNXC:GitHubImport 2026-07-16-17:00:
+ * FN-8110 lets an operator create a repair task from a failed PR check without retyping its context.
+ * Keep this prompt composition pure so every check row carries its repository, PR, branch, status, and details-link evidence.
+ */
+export function buildCheckFixTaskPrompt(
+  pull: GitHubPull,
+  check: GitHubPullDetail["checks"][number],
+  repoSlug: string,
+): { title: string; description: string } {
+  const indicator = check.conclusion ?? check.status ?? "unknown";
+  const details = check.detailsUrl ? `\nCheck details: ${check.detailsUrl}` : "";
+
+  return {
+    title: `Fix failing check "${check.name}" on PR #${pull.number}`,
+    description: [
+      "Fix the failing GitHub pull request check described below.",
+      "",
+      `Repository: ${repoSlug}`,
+      `Pull request: #${pull.number} — ${pull.title}`,
+      `PR URL: ${pull.html_url}`,
+      `Branches: ${pull.headBranch} → ${pull.baseBranch}`,
+      `Failing check: ${check.name}`,
+      `Check status: ${indicator}${details}`,
+    ].join("\n"),
+  };
+}
+
 export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId, presentation = "modal" }: GitHubImportModalProps) {
   const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
   const { t, i18n } = useTranslation("app");
+  const { confirm } = useConfirm();
   /*
   FNXC:GitHubImportTranslate 2026-07-14-12:00:
   Translation target is the active dashboard locale (i18n.resolvedLanguage). When content is another language, the preview offers Translate / Show original / Dismiss.
@@ -438,6 +526,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const [closingIssue, setClosingIssue] = useState(false);
   const [closeToast, setCloseToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const closeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // FNXC:GitHubImport 2026-07-16-17:00: Track check-task submission by name + row index so duplicate GitHub check names never disable each other's controls.
+  const [creatingCheckFixTaskRows, setCreatingCheckFixTaskRows] = useState<Set<string>>(new Set());
+  const [checkFixTaskToast, setCheckFixTaskToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const checkFixTaskToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [isIssuesEmptyState, setIsIssuesEmptyState] = useState(false);
@@ -1120,20 +1212,31 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   // FNXC:GitHubImport 2026-06-23-03:15: Clear the transient close toast timer on unmount.
   useEffect(() => () => {
     if (closeToastTimerRef.current) clearTimeout(closeToastTimerRef.current);
+    if (checkFixTaskToastTimerRef.current) clearTimeout(checkFixTaskToastTimerRef.current);
   }, []);
 
   /*
-  FNXC:GitHubImport 2026-07-15-17:10:
-  Closing an issue keeps its FloatingWindow open through the success toast so the confirmation is visible and the locally closed state can replace the Close action. The full-width list remains behind the draggable/resizable detail window.
+  FNXC:GitHubImport 2026-07-16-20:00:
+  Closing permanently mutates the upstream GitHub issue, so its danger styling and confirmation gate must precede every local state mutation and API call. Keep the detail FloatingWindow open through the success toast so local closed state can replace the action.
   */
   const handleCloseIssue = useCallback(async () => {
     if (selectedIssueNumber === null || !owner.trim() || !repo.trim()) return;
     const issueNumber = selectedIssueNumber;
+    const repository = `${owner.trim()}/${repo.trim()}`;
+    const shouldClose = await confirm({
+      danger: true,
+      title: t("git.closeIssueConfirmTitle", "Close issue #{{number}}?", { number: issueNumber }),
+      message: t("git.closeIssueConfirmMessage", "This closes {{repo}}#{{number}} on GitHub. This cannot be undone from here.", { repo: repository, number: issueNumber }),
+      confirmLabel: t("git.closeIssue", "Close issue"),
+      cancelLabel: t("common.cancel", "Cancel"),
+    });
+    if (!shouldClose) return;
+
     setClosingIssue(true);
     if (closeToastTimerRef.current) clearTimeout(closeToastTimerRef.current);
     setCloseToast(null);
     try {
-      await apiCloseGitHubIssue(`${owner.trim()}/${repo.trim()}`, issueNumber);
+      await apiCloseGitHubIssue(repository, issueNumber);
       setClosedIssueNumbers((prev) => {
         const next = new Set(prev);
         next.add(issueNumber);
@@ -1146,10 +1249,40 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       setClosingIssue(false);
       closeToastTimerRef.current = setTimeout(() => setCloseToast(null), 4000);
     }
-  }, [selectedIssueNumber, owner, repo, t]);
+  }, [selectedIssueNumber, owner, repo, t, confirm]);
 
   const selectedIssue = issues.find((i) => i.number === selectedIssueNumber);
   const selectedPull = pulls.find((p) => p.number === selectedPullNumber);
+
+  const handleCreateCheckFixTask = useCallback(async (
+    check: GitHubPullDetail["checks"][number],
+    rowKey: string,
+  ) => {
+    if (!selectedPull || !owner.trim() || !repo.trim()) return;
+
+    setCreatingCheckFixTaskRows((current) => new Set(current).add(rowKey));
+    if (checkFixTaskToastTimerRef.current) clearTimeout(checkFixTaskToastTimerRef.current);
+    setCheckFixTaskToast(null);
+
+    try {
+      const task = await createTask(buildCheckFixTaskPrompt(selectedPull, check, `${owner.trim()}/${repo.trim()}`), projectId);
+      onImport(task);
+      setCheckFixTaskToast({ type: "success", message: t("git.checkFixTaskCreated", "Fix task created") });
+    } catch (err: unknown) {
+      setCheckFixTaskToast({
+        type: "error",
+        message: getErrorMessage(err) || t("git.failedToCreateCheckFixTask", "Failed to create fix task"),
+      });
+    } finally {
+      setCreatingCheckFixTaskRows((current) => {
+        const next = new Set(current);
+        next.delete(rowKey);
+        return next;
+      });
+      checkFixTaskToastTimerRef.current = setTimeout(() => setCheckFixTaskToast(null), 4000);
+    }
+  }, [onImport, owner, projectId, repo, selectedPull, t]);
+
   /*
   FNXC:GitHubImport 2026-06-23-03:15:
   An issue counts as closed if the upstream state is closed OR we closed it locally this session. Only OPEN issues show the Close button.
@@ -1808,6 +1941,12 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                       errorTestId="github-import-issue-comments-error"
                       emptyTestId="github-import-issue-comments-empty"
                       bodyTestId="github-import-issue-comment-body"
+                      owner={owner.trim()}
+                      repo={repo.trim()}
+                      number={selectedIssue.number}
+                      sourceType="issue"
+                      projectId={projectId}
+                      onImport={onImport}
                       t={t}
                     />
                   </div>
@@ -1882,13 +2021,29 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                                   : indicator === "neutral" || indicator === "skipped"
                                     ? "neutral"
                                     : "pending";
+                            // FNXC:GitHubImport 2026-07-16-18:00: GitHub can return duplicate check names, and a user can switch PRs before a create finishes; include the PR number so only the originating row is disabled.
+                            const rowKey = `${selectedPull.number}:${check.name}-${idx}`;
+                            const creatingFixTask = creatingCheckFixTaskRows.has(rowKey);
                             return (
-                              <li key={`${check.name}-${idx}`} className="github-import-pr-check-row">
+                              <li key={rowKey} className="github-import-pr-check-row">
                                 <span className={`github-import-pr-check-pill github-import-pr-check-pill--${variant}`}>{indicator || "pending"}</span>
                                 {check.detailsUrl ? (
                                   <a className="github-import-pr-check-name" href={check.detailsUrl} target="_blank" rel="noopener noreferrer">{check.name}</a>
                                 ) : (
                                   <span className="github-import-pr-check-name">{check.name}</span>
+                                )}
+                                {variant === "failure" && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm github-import-pr-check-fix-task"
+                                    data-testid="github-import-pr-check-fix-task"
+                                    aria-label={t("git.createCheckFixTaskAria", "Create fix task for {{checkName}}", { checkName: check.name })}
+                                    disabled={creatingFixTask}
+                                    onClick={() => handleCreateCheckFixTask(check, rowKey)}
+                                  >
+                                    {creatingFixTask && <Loader2 size={14} className="spin" aria-hidden="true" />}
+                                    {t("git.createCheckFixTask", "Create fix task")}
+                                  </button>
                                 )}
                               </li>
                             );
@@ -1896,6 +2051,15 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                         </ul>
                       ) : (
                         <div className="preview-detail-empty" data-testid="github-import-pr-checks-empty">{t("git.noChecks", "No checks")}</div>
+                      )}
+                      {checkFixTaskToast && (
+                        <div
+                          className={`github-import-close-toast github-import-close-toast--${checkFixTaskToast.type}`}
+                          role="status"
+                          data-testid="github-import-pr-check-fix-task-toast"
+                        >
+                          {checkFixTaskToast.message}
+                        </div>
                       )}
                     </div>
                     <CommentsThread
@@ -1908,6 +2072,12 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                       errorTestId="github-import-pr-comments-error"
                       emptyTestId="github-import-pr-comments-empty"
                       bodyTestId="github-import-pr-comment-body"
+                      owner={owner.trim()}
+                      repo={repo.trim()}
+                      number={selectedPull.number}
+                      sourceType="pull"
+                      projectId={projectId}
+                      onImport={onImport}
                       t={t}
                     />
                   </div>
@@ -1921,18 +2091,13 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 ) : null}
               </div>
               {/*
-              FNXC:GitHubImport 2026-07-15-23:20:
-              Bottom action bar for the detail preview — the ONLY place an import is committed now
-              (the list's footer Import was removed, so you can no longer import an issue whose body
-              you never opened). Import stays last/right as the primary action; Close issue sits to
-              its LEFT and still acts on the selected OPEN issue: hidden on the PR tab and for
-              already-closed issues, disabled while a close is in flight, and closing reflects
-              locally (the badge flips) without dismissing the preview.
+              FNXC:GitHubImport 2026-07-16-18:10:
+              The detail action remains Import for issues, while pull requests are explicitly Resolve feedback so their imported task covers reviewer feedback and failed checks. Close issue remains to its left and is unaffected.
               */}
               <div className="github-import-detail-actions" data-testid="github-import-detail-actions">
                 {activeTab === "issues" && selectedIssue && !selectedIssueClosed && (
                   <button
-                    className="btn github-import-issue-close"
+                    className="btn btn-danger github-import-issue-close"
                     data-testid="github-import-issue-close"
                     onClick={handleCloseIssue}
                     disabled={closingIssue}
@@ -1949,7 +2114,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
                   }
                 >
-                  {importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}
+                  {importing ? <Loader2 size={14} className="spin" /> : activeTab === "pulls" ? t("git.resolveFeedback", "Resolve feedback") : t("git.import", "Import")}
                 </button>
               </div>
               </div>

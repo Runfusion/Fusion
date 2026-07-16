@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileNavBar } from "../MobileNavBar";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
@@ -129,6 +129,10 @@ const createDefaultProps = () => ({
 describe("MobileNavBar", () => {
   beforeEach(() => {
     mockViewport("mobile");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders seven top-level tab buttons (command center + tasks + agents + missions + chat + mailbox + more) and keeps skills in More when showSkillsTab is true", () => {
@@ -896,6 +900,136 @@ describe("MobileNavBar", () => {
 
     await waitFor(() => {
       expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+  });
+
+  describe("More-sheet drag dismissal", () => {
+    const openSheet = (container: HTMLElement) => {
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      const sheet = container.querySelector<HTMLDivElement>(".mobile-more-sheet");
+      if (!sheet) throw new Error("Expected the More sheet to open");
+      Object.defineProperty(sheet, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ height: 400 }),
+      });
+      return sheet;
+    };
+
+    const startDrag = (target: Element, startY = 100) => {
+      fireEvent.touchStart(target, { touches: [{ clientY: startY }] });
+    };
+
+    const moveDrag = (sheet: Element, currentY: number) =>
+      fireEvent.touchMove(sheet, { touches: [{ clientY: currentY }] });
+
+    const endDrag = (sheet: Element, endY: number) => {
+      fireEvent.touchEnd(sheet, { changedTouches: [{ clientY: endY }] });
+    };
+
+    it("dismisses a top-anchored downward drag past the distance threshold", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      expect(moveDrag(sheet, 300)).toBe(false);
+      endDrag(sheet, 300);
+
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("preserves interior scrolling and does not prevent its downward touchmove", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+      sheet.scrollTop = 20;
+
+      startDrag(sheet);
+      expect(moveDrag(sheet, 300)).toBe(true);
+      endDrag(sheet, 300);
+
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+    });
+
+    it("snaps back after a slow below-threshold drag", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-16T12:00:00Z"));
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      moveDrag(sheet, 150);
+      vi.advanceTimersByTime(500);
+      endDrag(sheet, 150);
+
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+      expect(sheet.style.transform).toBe("translateY(0px)");
+    });
+
+    it("dismisses when a handle-anchored drag starts while the sheet is scrolled", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+      sheet.scrollTop = 20;
+      const handle = sheet.querySelector(".mobile-more-sheet-handle");
+      expect(handle).not.toBeNull();
+
+      startDrag(handle!);
+      expect(moveDrag(sheet, 300)).toBe(false);
+      endDrag(sheet, 300);
+
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("dismisses with the scripts submenu open without swallowing its normal toggle tap", async () => {
+      vi.mocked(fetchScripts).mockResolvedValue({});
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      fireEvent.click(screen.getByTestId("mobile-more-terminal-split-toggle"));
+      await waitFor(() => expect(screen.getByTestId("mobile-more-scripts-manage")).toBeInTheDocument());
+
+      startDrag(sheet);
+      moveDrag(sheet, 300);
+      endDrag(sheet, 300);
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("never dismisses for an upward drag", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet, 300);
+      expect(moveDrag(sheet, 100)).toBe(true);
+      endDrag(sheet, 100);
+
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+    });
+
+    it("dismisses on a fast downward flick below the distance threshold", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-16T12:00:00Z"));
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      moveDrag(sheet, 160);
+      vi.advanceTimersByTime(50);
+      endDrag(sheet, 160);
+
+      expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    });
+
+    it("resets a cancelled drag to the open position", () => {
+      const { container } = render(<MobileNavBar {...createDefaultProps()} />);
+      const sheet = openSheet(container);
+
+      startDrag(sheet);
+      moveDrag(sheet, 300);
+      expect(sheet.className).toContain("mobile-more-sheet--dragging");
+      expect(sheet.style.transform).toBe("translateY(200px)");
+
+      fireEvent.touchCancel(sheet);
+      expect(container.querySelector(".mobile-more-sheet")).not.toBeNull();
+      expect(sheet.className).not.toContain("mobile-more-sheet--dragging");
+      expect(sheet.style.transform).toBe("translateY(0px)");
     });
   });
 
