@@ -73,6 +73,7 @@ function makeCtx(cwd: string) {
 interface BuiltExtensionModule {
   default: (api: MockExtensionApi) => void;
   __setCachedStoreForTesting: (projectRoot: string, store: unknown) => void;
+  closeCachedStores: () => Promise<void>;
 }
 
 async function importBuiltExtension(): Promise<BuiltExtensionModule> {
@@ -111,7 +112,7 @@ pgDescribe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension inte
   let builtExtension: BuiltExtensionModule;
 
   beforeAll(async () => {
-    buildCliWithRealDashboardAssets();
+    await buildCliWithRealDashboardAssets();
     await h.beforeAll();
     builtExtension = await importBuiltExtension();
     extension = builtExtension.default;
@@ -133,6 +134,13 @@ pgDescribe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension inte
   afterEach(async () => {
     const shutdown = api.events.get("session_shutdown");
     if (shutdown) await shutdown();
+    /*
+     * FNXC:PostgresCutover 2026-07-16-09:05:
+     * The bundle owns a separate module cache. Clear its externally-owned PG
+     * entry before the shared harness closes that store, even if the shutdown
+     * hook already cleared it, so no built-module cache leaks across tests.
+     */
+    await builtExtension.closeCachedStores();
     await h.afterEach();
   });
 
@@ -272,14 +280,16 @@ pgDescribe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension inte
   });
 
   /*
-   * FNXC:CliTests 2026-07-16-07:47:
-   * FN-8081 removes this SQLite-trigger collision reproduction. The opt-in
-   * built-extension fixture has no backend-supported allocator seam without
-   * changing FN-8097-owned AgentStore/build setup; FN-8100 restores this exact
-   * assertion through a PostgreSQL fixture.
+   * FNXC:PostgresCutover 2026-07-16-16:00:
+   * SQLite triggers were removed with the backend cutover. Inject the collision
+   * at the shared PostgreSQL TaskStore boundary so this built-extension test
+   * continues to prove the user-facing delegate error rather than skipping it.
    */
-  it.skip("returns explicit error when fn_delegate_task hits task-id collision", async () => {
+  it("returns explicit error when fn_delegate_task hits task-id collision", async () => {
     const agent = await seedAgent(tmpDir, h.layer(), { name: "release-agent" });
+    const createTask = vi
+      .spyOn(h.store(), "createTask")
+      .mockRejectedValueOnce(new Error("Task ID already exists: FN-001"));
 
     const delegateTool = api.tools.get("fn_delegate_task")!;
     const result = await delegateTool.execute(
@@ -290,6 +300,7 @@ pgDescribe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension inte
       makeCtx(tmpDir),
     );
 
+    expect(createTask).toHaveBeenCalledTimes(1);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Task ID already exists: FN-001");
     expect(result.details.error).toContain("Task ID already exists: FN-001");

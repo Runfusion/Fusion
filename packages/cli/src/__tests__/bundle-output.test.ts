@@ -79,11 +79,11 @@ function expectSelfContainedBundle(pluginId: typeof selfContainedBundlePluginIds
 }
 
 describe("CLI bundle output", () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     // Intentional: bundle-output tests validate compiled artifacts, so they
     // perform their own explicit build bootstrap instead of relying on ambient
     // workspace dist/ state.
-    buildCliWithRealDashboardAssets();
+    await buildCliWithRealDashboardAssets();
   }, 300_000);
 
   it("dist/bin.js exists", () => {
