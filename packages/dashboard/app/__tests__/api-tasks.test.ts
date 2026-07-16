@@ -1085,6 +1085,7 @@ describe("batchUpdateTaskModels", () => {
     );
 
     const { batchUpdateTaskModels } = await import("../api");
+    // thinkingLevel sits between nodeId and projectId; pass undefined so projectId is not shifted.
     await batchUpdateTaskModels(
       ["FN-001"],
       undefined,
@@ -1094,6 +1095,7 @@ describe("batchUpdateTaskModels", () => {
       undefined,
       undefined,
       "node-abc",
+      undefined,
       "proj-123"
     );
 

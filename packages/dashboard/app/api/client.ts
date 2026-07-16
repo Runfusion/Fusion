@@ -108,3 +108,31 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
 
   return data as T;
 }
+
+/**
+ * Rewrite a path to route through the node proxy when viewing a remote node.
+ * When nodeId is provided and differs from localNodeId (i.e., it's a remote node),
+ * rewrites the path from `/tasks` to `/proxy/${encodeURIComponent(nodeId)}/tasks`.
+ * When nodeId is undefined or matches localNodeId, returns the path unchanged.
+ */
+export function withNodeId(path: string, nodeId?: string, localNodeId?: string): string {
+  if (!nodeId || nodeId === localNodeId) return path;
+  // Rewrite path to proxy endpoint: /tasks -> /proxy/:nodeId/tasks
+  // Strip leading /api prefix if present since proxyApi adds it
+  const apiPrefix = "/api";
+  const pathWithoutPrefix = path.startsWith(apiPrefix) ? path.slice(apiPrefix.length) : path;
+  return `/proxy/${encodeURIComponent(nodeId)}${pathWithoutPrefix}`;
+}
+
+/**
+ * Make an API request, optionally routing through the node proxy for remote nodes.
+ * When nodeId is provided and differs from localNodeId, the request is routed
+ * through /api/proxy/:nodeId/... instead of directly.
+ */
+export function proxyApi<T>(path: string, opts?: RequestInit & { nodeId?: string; localNodeId?: string }): Promise<T> {
+  // Extract nodeId/localNodeId from opts before passing to api()
+  const { nodeId, localNodeId, ...fetchOpts } = opts ?? {};
+  const resolvedPath = withNodeId(path, nodeId, localNodeId);
+  return api<T>(resolvedPath, fetchOpts);
+}
+
