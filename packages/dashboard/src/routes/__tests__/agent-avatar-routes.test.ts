@@ -80,6 +80,9 @@ function createMockStore(fusionDir: string) {
   return {
     getRootDir: vi.fn().mockReturnValue(path.dirname(fusionDir)),
     getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    // FNXC:PostgresCutover 2026-07-16-06:30: avatar routes construct their
+    // AgentStore through the backend accessor, so doubles retain that shape.
+    getAsyncLayer: vi.fn().mockReturnValue(undefined),
     listTasks: vi.fn().mockResolvedValue([]),
     searchTasks: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({}),

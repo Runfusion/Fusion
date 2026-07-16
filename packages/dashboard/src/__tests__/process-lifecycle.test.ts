@@ -50,8 +50,14 @@ describe("dashboard process lifecycle cleanup", () => {
     }
 
     const addedListeners = process.listenerCount("beforeExit") - baselineListeners;
+    /*
+    FNXC:DashboardProcessLifecycle 2026-07-16-08:28:
+    This suite owns the dashboard's beforeExit registration invariant. The host
+    process may independently register exit cleanup listeners, so only a
+    beforeExit MaxListeners warning proves this module-evaluation regression.
+    */
     const maxListenerWarnings = warnings.filter(
-      (warning) => warning.name === "MaxListenersExceededWarning"
+      (warning) => warning.name === "MaxListenersExceededWarning" && (warning as { type?: string }).type === "beforeExit",
     );
 
     expect(addedListeners).toBeLessThanOrEqual(1);

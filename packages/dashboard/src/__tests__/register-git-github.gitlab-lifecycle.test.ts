@@ -11,10 +11,16 @@ function createStore() {
   return Object.assign(emitter, {
     getRootDir: vi.fn().mockReturnValue(process.cwd()),
     getFusionDir: vi.fn().mockReturnValue(`${process.cwd()}/.fusion`),
+    // FNXC:PostgresCutover 2026-07-16-06:55: refresh listeners expect the
+    // backend accessor even when their test double does not persist index rows.
+    getAsyncLayer: vi.fn().mockReturnValue(undefined),
     getSettings: vi.fn().mockResolvedValue({ gitlabAuthToken: "token", gitlabInstanceUrl: "https://gitlab.example.com", gitlabCommentOnDone: true, gitlabCloseSourceIssueOnDone: true }),
     getGlobalSettingsStore: () => ({ getSettings: vi.fn().mockResolvedValue({}) }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     listTasks: vi.fn().mockResolvedValue([]),
+    // FNXC:PostgresCutover 2026-07-16-06:55: lifecycle refresh reads the
+    // current task asynchronously before deriving GitLab follow-up work.
+    getTask: vi.fn().mockResolvedValue(undefined),
     listTasksForGithubTrackingReconcile: vi.fn().mockResolvedValue({ tasks: [], hasMore: false }),
     updateTask: vi.fn().mockResolvedValue(undefined),
   });
@@ -45,7 +51,10 @@ describe("registerGitGitHubRoutes GitLab lifecycle services", () => {
     registerGitGitHubRoutes(createContext(store, disposers));
     store.emit("task:moved", { task, from: "todo", to: "done" });
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(5));
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith("/notes"))).toHaveLength(2);
+    // FNXC:GitLabIssueComments 2026-07-16-07:25: an imported GitLab task can
+    // carry both source and tracking links to one issue; its done transition
+    // must produce exactly one comment, with tracking owning the richer payload.
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith("/notes"))).toHaveLength(1);
     for (const dispose of disposers) dispose();
     store.emit("task:moved", { task, from: "done", to: "todo" });
     await Promise.resolve();

@@ -305,7 +305,6 @@ export default defineConfig({
             "src/__tests__/mission-factory-parity.integration.test.ts",
             "src/__tests__/planner-overseer-intervention-wiring.test.ts",
             "src/__tests__/project-engine.test.ts",
-            "src/__tests__/self-healing.test.ts",
             "src/__tests__/unlinked-missions-advisory-reporter.test.ts",
             "src/__tests__/workflow-graph-task-runner.test.ts",
             "src/__tests__/agent-tools-intake-column.test.ts",

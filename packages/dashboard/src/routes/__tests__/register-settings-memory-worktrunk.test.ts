@@ -64,6 +64,9 @@ function createApp(pluginRunner?: Record<string, unknown>) {
     getSettings: vi.fn(async () => ({ worktrunk: { enabled: false }, memoryDreamsEnabled: true })),
     getRootDir: vi.fn(() => "/tmp/project"),
     getFusionDir: vi.fn(() => "/tmp/project/.fusion"),
+    // FNXC:PostgresCutover 2026-07-16-06:30: all scoped-store doubles expose
+    // the backend accessor even when the mocked AgentStore does not consume it.
+    getAsyncLayer: vi.fn(() => undefined),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => patch),
   };
 
@@ -73,7 +76,16 @@ function createApp(pluginRunner?: Record<string, unknown>) {
       options: { pluginRunner },
       store: {} as any,
       runtimeLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as any,
-      getProjectContext: vi.fn(async () => ({ store: scopedStore, projectId: "p1" })),
+      getProjectContext: vi.fn(async () => ({
+        store: scopedStore,
+        // FNXC:PostgresCutover 2026-07-16-06:30: memory routes resolve the
+        // project identity through the engine before constructing async agents.
+        engine: {
+          getProjectId: () => "p1",
+          getRoutineStore: () => undefined,
+        },
+        projectId: "p1",
+      })),
       rethrowAsApiError: (err: unknown) => {
         throw err;
       },

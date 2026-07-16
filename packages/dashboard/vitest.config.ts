@@ -377,6 +377,10 @@ const qualityAppBackfillTests = ["app/**/*.test.{ts,tsx}"];
 
 const backfillApiExclude = [
   ...qualityApiTests,
+  // FNXC:DashboardDistArtifacts 2026-07-16-08:20: plugin-registry-dist asserts
+  // emitted server files and runs through the explicit test:build command after
+  // its dist bootstrap, rather than adding a full build to API backfill shards.
+  "src/__tests__/plugin-registry-dist.test.ts",
   ...skipListDashboardGlobs.filter((file) => file.startsWith("src/")),
 ];
 const qualityApiBackfillTests = ["src/**/*.test.{ts,tsx}"];

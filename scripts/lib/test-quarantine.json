@@ -27,11 +27,6 @@
       "quarantinedAt": "2026-07-14"
     },
     {
-      "file": "packages/engine/src/__tests__/self-healing.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
       "file": "packages/engine/src/__tests__/unlinked-missions-advisory-reporter.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"

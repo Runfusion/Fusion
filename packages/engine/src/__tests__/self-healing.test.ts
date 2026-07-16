@@ -179,8 +179,13 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     peekMergeQueue: vi.fn().mockReturnValue([]),
     mergeTask: vi.fn().mockResolvedValue(undefined),
     archiveTaskAndCleanup: vi.fn().mockResolvedValue({} as Task),
+    /*
+    FNXC:PgMigrationQuarantine 2026-07-16-08:00:
+    VAL-REMOVAL-005 moved run-audit reads and operational-log retention to the
+    asynchronous PostgreSQL TaskStore contract. Keep the synchronous audit probe
+    below because recent-activity recovery still uses it as an optional fallback.
+    */
     pruneOperationalLogsAsync: vi.fn().mockResolvedValue({ deletedTotal: 0, deletedByTable: {} }),
-    walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
     reconcileActiveTimingForEngineDowntime: vi.fn().mockResolvedValue({ shiftedTaskIds: [], downtimeMs: 0 }),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
@@ -188,6 +193,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     createTask: vi.fn().mockResolvedValue({ id: "FN-RESCUE", lineageId: "lin-rescue" }),
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getRunAuditEvents: vi.fn().mockReturnValue([]),
+    getRunAuditEventsAsync: vi.fn().mockResolvedValue([]),
     getBootstrappedAt: vi.fn().mockReturnValue(null),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
@@ -2715,7 +2721,7 @@ describe("SelfHealingManager", () => {
             status: "failed",
             mergeRetries: 3,
             error: "spawn ENOTDIR",
-            mergeDetails: { transientRecoveryCount: 2 },
+            mergeDetails: { transientRecoveryCount: 5 },
           },
         ],
       });
@@ -2816,7 +2822,7 @@ describe("SelfHealingManager", () => {
       mgr.stop();
     });
 
-    it("parks task as failed once budget is exhausted (transientRecoveryCount >= 2)", async () => {
+    it("parks task as failed once budget is exhausted (transientRecoveryCount >= 5)", async () => {
       const transientStore = setupTransientRecoveryStore({
         tasks: [
           {
@@ -2826,7 +2832,7 @@ describe("SelfHealingManager", () => {
             status: "failed",
             mergeRetries: 3,
             error: "Merge handoff refused (lease-handoff-failed): target-not-queued",
-            mergeDetails: { transientRecoveryCount: 2 },
+            mergeDetails: { transientRecoveryCount: 5 },
           },
         ],
       });
@@ -4762,9 +4768,9 @@ describe("SelfHealingManager", () => {
       });
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-500'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'main'..'fusion/fn-500'")) return "0\n" as any;
+        if (cmd.includes("rev-parse --verify fusion/fn-500")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+        if (cmd.includes("rev-list --count main..fusion/fn-500")) return "0\n" as any;
         return "" as any;
       });
       (store.listTasks as ReturnType<typeof vi.fn>)
@@ -4834,9 +4840,9 @@ describe("SelfHealingManager", () => {
       });
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-6461'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'main'..'fusion/fn-6461'")) return "0\n" as any;
+        if (cmd.includes("rev-parse --verify fusion/fn-6461")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+        if (cmd.includes("rev-list --count main..fusion/fn-6461")) return "0\n" as any;
         return "" as any;
       });
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -4892,9 +4898,9 @@ describe("SelfHealingManager", () => {
       });
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-6462'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'main'..'fusion/fn-6462'")) return "0\n" as any;
+        if (cmd.includes("rev-parse --verify fusion/fn-6462")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+        if (cmd.includes("rev-list --count main..fusion/fn-6462")) return "0\n" as any;
         return "" as any;
       });
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -4965,9 +4971,9 @@ describe("SelfHealingManager", () => {
       } as any);
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-501'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'main'..'fusion/fn-501'")) return "0\n" as any;
+        if (cmd.includes("rev-parse --verify fusion/fn-501")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+        if (cmd.includes("rev-list --count main..fusion/fn-501")) return "0\n" as any;
         return "" as any;
       });
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -5008,9 +5014,9 @@ describe("SelfHealingManager", () => {
       });
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-501'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'main'..'fusion/fn-501'")) return "3\n" as any;
+        if (cmd.includes("rev-parse --verify fusion/fn-501")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+        if (cmd.includes("rev-list --count main..fusion/fn-501")) return "3\n" as any;
         return "" as any;
       });
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -5067,9 +5073,9 @@ describe("SelfHealingManager", () => {
       });
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-502'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'main'..'fusion/fn-502'")) {
+        if (cmd.includes("rev-parse --verify fusion/fn-502")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+        if (cmd.includes("rev-list --count main..fusion/fn-502")) {
           throw new Error("git failed");
         }
         return "" as any;
@@ -5138,10 +5144,10 @@ describe("SelfHealingManager", () => {
     it("resolves ahead count via origin fallback", async () => {
       mockedExecSync.mockImplementation((command) => {
         const cmd = String(command);
-        if (cmd.includes("rev-parse --verify 'fusion/fn-999'")) return "ok" as any;
-        if (cmd.includes("rev-parse --verify 'release'")) throw new Error("missing local");
-        if (cmd.includes("rev-parse --verify 'origin/release'")) return "ok" as any;
-        if (cmd.includes("rev-list --count 'origin/release'..'fusion/fn-999'")) return "0\n" as any;
+        if (cmd.includes("rev-parse --verify fusion/fn-999")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify release")) throw new Error("missing local");
+        if (cmd.includes("rev-parse --verify origin/release")) return "ok" as any;
+        if (cmd.includes("rev-list --count origin/release..fusion/fn-999")) return "0\n" as any;
         return "" as any;
       });
 
@@ -9707,7 +9713,7 @@ describe("maintenance cycle concurrency", () => {
     expect((manager as any).maintenanceRunning).toBe(false);
   });
 
-  it("uses a passive WAL checkpoint during maintenance", async () => {
+  it("skips SQLite WAL checkpoints during PostgreSQL maintenance", async () => {
     (vi.spyOn(manager as any, "pruneWorktrees").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "cleanupOrphans").mockResolvedValue(0) as any);
     (vi.spyOn(manager as any, "enforceWorktreeCap").mockResolvedValue(0) as any);
@@ -9729,7 +9735,9 @@ describe("maintenance cycle concurrency", () => {
 
     await (manager as any).runMaintenance();
 
-    expect(store.walCheckpoint).toHaveBeenCalledWith("PASSIVE");
+    expect(getSelfHealingLogger().log).toHaveBeenCalledWith(
+      expect.stringContaining("wal-checkpoint\" skipped — PostgreSQL manages WAL + autovacuum"),
+    );
   });
 
   it("runs batch 1 operations in sequence (with isolation — one failure doesn't block others)", async () => {
@@ -10691,9 +10699,9 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     } as any);
     mockedExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      if (cmd.includes("rev-parse --verify 'fusion/fn-noop'")) return "ok" as any;
-      if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
-      if (cmd.includes("rev-list --count 'main'..'fusion/fn-noop'")) return "0\n" as any;
+      if (cmd.includes("rev-parse --verify fusion/fn-noop")) return "ok" as any;
+      if (cmd.includes("rev-parse --verify main")) return "ok" as any;
+      if (cmd.includes("rev-list --count main..fusion/fn-noop")) return "0\n" as any;
       return "" as any;
     });
 

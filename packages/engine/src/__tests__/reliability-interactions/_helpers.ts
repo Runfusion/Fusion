@@ -324,11 +324,12 @@ export async function makeReliabilityFixture(input: {
     },
     mergeTask: async () => aiMergeTask(store, rootDir, task.id),
     /*
-    FNXC:PgReliabilitySeeding 2026-07-16-04:48:
-    Reconcile tests must seed intentionally corrupt dependency/title rows that write-time guards reject.
-    Raw PostgreSQL updates bypass those guards, then clear both read-through snapshots: otherwise
-    startupSlimListMemo or taskCache can hide the corruption and reconcilers return zero. Require
-    exactly one persisted row so a bad fixture ID cannot make a negative-path test pass vacuously.
+    FNXC:ReliabilityFixtures 2026-07-16-12:00:
+    VAL-REMOVAL-005 made getDatabase() unusable for synchronous raw writes in PG-backed fixtures.
+    Reconcile tests must seed intentionally corrupt dependency/title rows that updateTask guards reject,
+    so this sole supported seam updates PostgreSQL directly. It then clears both read-through snapshots:
+    a warm startupSlimListMemo or taskCache otherwise hides corruption and reconcilers return zero.
+    Require exactly one persisted row so a bad fixture ID cannot make a negative-path test pass vacuously.
     */
     seedRawTaskColumns: async (taskId, patch) => {
       const values = {

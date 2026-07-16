@@ -811,25 +811,32 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
   columns even narrower than this recovers.
 
   FNXC:QuickAddActionRow 2026-07-16-12:50:
-  Operator follow-up: on mobile, every control row below the quick-add textarea must be CENTERED
-  with equal left/right insets — the wrapped rows read lopsided when the option rows hug the left
-  edge while the icons+Save row hugs the right. The container's own horizontal padding is already
-  symmetric (8px 10px on .quick-entry-box), so the fix is row alignment, not padding: center the
-  flex items on each wrapped line of the actions row and inside both groups, and drop the
-  primary group's `margin-left: auto` right-pinning at this breakpoint. Desktop/tablet keep the
-  left-options / right-Save toolbar layout.
+  Operator follow-up: on mobile, every control row below the quick-add textarea must share the
+  SAME left/right edges — the wrapped rows read lopsided when the option rows hug the left edge
+  while the icons+Save row hugs the right. The container's own horizontal padding is already
+  symmetric (8px 10px on .quick-entry-box), so the fix is row alignment, not padding. Desktop/
+  tablet keep the left-options / right-Save toolbar layout.
+
+  FNXC:QuickAddActionRow 2026-07-16-13:05:
+  Operator refinement of the centering pass above: centered rows still left the top two option
+  rows narrower than the icons+Save row. Spread every row edge-to-edge instead —
+  `justify-content: space-between` distributes each wrapped flex line so its first control sits
+  on the left inset and its last on the right inset, and the primary group is widened to the
+  full row (`width: 100%`, `margin-left: 0`) so all three rows land on identical edges. The
+  group `gap`s remain as minimum spacing between controls.
   */
   .quick-entry-actions {
-    justify-content: center;
+    justify-content: space-between;
   }
 
   .quick-entry-options-group {
-    justify-content: center;
+    justify-content: space-between;
   }
 
   .quick-entry-primary-group {
     gap: var(--space-xs);
-    justify-content: center;
+    justify-content: space-between;
+    width: 100%;
     margin-left: 0;
   }
 

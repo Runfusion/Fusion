@@ -3452,7 +3452,8 @@ describe("QuickEntryBox", () => {
       const file = new File(["image-bytes"], "pasted.png", { type: "image/png" });
       fireEvent.paste(textarea, { clipboardData: { files: [file] } });
 
-      expect(screen.getByAltText("pasted.png")).toBeInTheDocument();
+      // FNXC:QuickAddAttachments 2026-07-16-13:20: FN-8037 made the thumbnail <img> decorative (alt=""); the accessible handle for a pending image is its labelled open button.
+      expect(screen.getByRole("button", { name: "Open image pasted.png" })).toBeInTheDocument();
     });
 
     it("removes pending image previews", () => {
@@ -3463,9 +3464,9 @@ describe("QuickEntryBox", () => {
       const file = new File(["image-bytes"], "remove.png", { type: "image/png" });
       fireEvent.paste(textarea, { clipboardData: { files: [file] } });
 
-      expect(screen.getByAltText("remove.png")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open image remove.png" })).toBeInTheDocument();
       fireEvent.click(screen.getByTestId("quick-entry-preview-remove-0"));
-      expect(screen.queryByAltText("remove.png")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Open image remove.png" })).toBeNull();
     });
 
     it("uploads each pending image after task creation without refocusing", async () => {
@@ -3582,8 +3583,8 @@ describe("QuickEntryBox", () => {
       fireEvent.drop(box, { dataTransfer: { types: ["Files"], files: [image, text] } });
 
       expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
-      expect(screen.getByAltText("dropped.png")).toBeInTheDocument();
-      expect(screen.queryByAltText("notes.txt")).toBeNull();
+      expect(screen.getByRole("button", { name: "Open image dropped.png" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open image notes.txt" })).toBeNull();
     });
 
     it("uploads images added by dropping files after task creation", async () => {
@@ -3642,13 +3643,13 @@ describe("QuickEntryBox", () => {
 
       fireEvent.change(textarea, { target: { value: "Create and reset" } });
       fireEvent.change(fileInput, { target: { files: [file] } });
-      expect(screen.getByAltText("reset.png")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open image reset.png" })).toBeInTheDocument();
 
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await waitFor(() => {
         expect(onCreate).toHaveBeenCalled();
-        expect(screen.queryByAltText("reset.png")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Open image reset.png" })).toBeNull();
       });
 
       expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:reset.png");

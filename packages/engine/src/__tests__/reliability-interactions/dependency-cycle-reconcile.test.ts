@@ -23,6 +23,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     } as any);
     const child = await fx.store.createTask({ id: "FN-5256-C", title: "Foundation child", description: "child" } as any);
 
+    await fx.store.listTasks({ slim: true });
     await fx.seedRawTaskColumns(umbrella.id, { dependencies: [child.id] });
     await fx.seedRawTaskColumns(child.id, { dependencies: [umbrella.id] });
 
@@ -55,6 +56,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const b = await fx.store.createTask({ id: "FN-5241", title: "Task B", description: "B" } as any);
     const c = await fx.store.createTask({ id: "FN-5242", title: "Task C", description: "C" } as any);
 
+    await fx.store.listTasks({ slim: true });
     await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
     await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
     await fx.seedRawTaskColumns(c.id, { dependencies: [a.id] });
@@ -92,6 +94,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
       dependencies: [child.id],
     } as any);
 
+    await fx.store.listTasks({ column: "todo", slim: true });
     await fx.seedRawTaskColumns(child.id, { title: "Finalize FN-100: close loop", dependencies: ["FN-100"], column: "todo" });
     expect(await fx.store.getTask(child.id)).toMatchObject({
       title: "Finalize FN-100: close loop", dependencies: ["FN-100"], column: "todo",
@@ -137,6 +140,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const c = await fx.store.createTask({ id: "FN-5432-C", title: "Task C", description: "C" } as any);
     const d = await fx.store.createTask({ id: "FN-5432-D", title: "Task D", description: "D" } as any);
 
+    await fx.store.listTasks({ slim: true });
     await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
     await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
     await fx.seedRawTaskColumns(c.id, { dependencies: [d.id] });
@@ -171,6 +175,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const c = await fx.store.createTask({ id: "FN-5432-RC", title: "Task C", description: "C" } as any);
     const d = await fx.store.createTask({ id: "FN-5432-RD", title: "Task D", description: "D" } as any);
 
+    await fx.store.listTasks({ slim: true });
     await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
     await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
     await fx.seedRawTaskColumns(c.id, { dependencies: [d.id] });
@@ -192,6 +197,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const p = await fx.store.createTask({ title: "Task P", description: "P" } as any);
     const q = await fx.store.createTask({ title: "Task Q", description: "Q", dependencies: [p.id] } as any);
 
+    await fx.store.listTasks({ column: "todo", slim: true });
     await fx.seedRawTaskColumns(p.id, { title: "Finalize FN-101: now", dependencies: ["FN-101"], column: "todo" });
     expect(await fx.store.getTask(p.id)).toMatchObject({
       title: "Finalize FN-101: now", dependencies: ["FN-101"], column: "todo",
@@ -228,6 +234,7 @@ describeIfGit("reliability interactions: dependency-cycle reconciliation", () =>
     const c = await fx.store.createTask({ id: "FN-5432-SC", title: "Task C", description: "C" } as any);
     const d = await fx.store.createTask({ id: "FN-5432-SD", title: "Task D", description: "D" } as any);
 
+    await fx.store.listTasks({ slim: true });
     await fx.seedRawTaskColumns(a.id, { dependencies: [b.id] });
     await fx.seedRawTaskColumns(b.id, { dependencies: [c.id] });
     await fx.seedRawTaskColumns(c.id, { dependencies: [d.id] });

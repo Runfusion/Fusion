@@ -196,6 +196,14 @@ vi.mock("../FileBrowser", () => ({
 describe("SettingsModal", () => {
   installSettingsModalEnv();
 
+  /*
+  FNXC:SettingsModalTests 2026-07-16-13:30:
+  The Advanced settings switch (FNXC:SettingsSimplification 2026-07-11) hides advanced-only nav items (memory, experimental, remote, scheduled-evals) and display:nones low-frequency form-groups (testMode, pushAfterMerge, commitAuthorEnabled, worktree plumbing) in Basic mode. These suites exercise exactly those controls, so they opt into Advanced mode the same way settings-mobile and models-auth do; installSettingsModalEnv()'s beforeEach clears localStorage first, so this must be re-set per test.
+  */
+  beforeEach(() => {
+    localStorage.setItem("fusion:settings:show-advanced", "true");
+  });
+
   describe("Scheduling overlap ignore paths", () => {
     it("defaults hidden overlap path filtering checked when settings omit the key", async () => {
       const { ignoreHiddenOverlapPaths: _omitted, ...settingsWithoutHiddenDefault } = defaultSettings;
@@ -1634,8 +1642,8 @@ describe("SettingsModal", () => {
         renderModal();
         await waitForSettingsModalReady();
 
-        expect(screen.queryByRole("button", { name: /Research Defaults/i })).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: /^Research$/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Research · Global/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Research · Project/i })).not.toBeInTheDocument();
       });
 
       it("shows research settings nav items when experimentalFeatures.researchView is enabled", async () => {
@@ -1647,8 +1655,12 @@ describe("SettingsModal", () => {
         renderModal();
         await waitForSettingsModalReady();
 
-        expect(screen.getByRole("button", { name: /Research Defaults/i })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: /^Research$/i })).toBeInTheDocument();
+        /*
+        FNXC:SettingsModalTests 2026-07-16-13:30:
+        The research nav entries are labeled "Research · Global" / "Research · Project" (settings.nav.researchGlobal/researchProject); "Research Defaults" and the bare "Research" matchers predate that rename.
+        */
+        expect(screen.getByRole("button", { name: /Research · Global/i })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Research · Project/i })).toBeInTheDocument();
       });
 
       it("falls back to the first selectable section when opening research settings while researchView is disabled", async () => {
@@ -1660,7 +1672,7 @@ describe("SettingsModal", () => {
         renderModal({ initialSection: "research-global" });
         await waitForSettingsModalReady();
 
-        expect(screen.queryByRole("button", { name: /Research Defaults/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Research · Global/i })).not.toBeInTheDocument();
         /*
         FNXC:SettingsNavigation 2026-07-16-01:10:
         The fallback lands on Authentication, which is the first selectable section and where Settings opens. This asserted "General" back when that was the default landing section; the requirement is unchanged — an unreachable section falls back to the first selectable one — only which section that is has moved.
@@ -1921,13 +1933,17 @@ describe("SettingsModal", () => {
       expect(payload.experimentalFeatures).toEqual({ "my-feature": true });
     });
 
-    it("shows global scope banner in Experimental Features section", async () => {
+    it("shows a global scope indicator for the Experimental Features section", async () => {
       renderModal();
 
       await openExperimentalFeaturesSection();
 
-      // Should show global scope indicator
-      expect(screen.getByText(/shared across all your fusion projects/i)).toBeInTheDocument();
+      /*
+      FNXC:SettingsModalTests 2026-07-16-13:30:
+      The prose scope banner ("shared across all your Fusion projects") was removed from the section body; global scope is now conveyed by the navigation — the desktop nav item renders a globe scope icon (mocked here as icon-globe). The requirement is unchanged: the UI must tell the operator this section edits global state.
+      */
+      const experimentalNavButtons = screen.getAllByRole("button", { name: /Experimental Features/i });
+      expect(experimentalNavButtons.some((button) => within(button).queryByTestId("icon-globe"))).toBe(true);
     });
 
     it("handles undefined experimentalFeatures (falls back to empty) but still shows known features", async () => {

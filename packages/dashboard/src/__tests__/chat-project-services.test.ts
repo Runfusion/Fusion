@@ -10,6 +10,9 @@ function createStore(fusionDir = "/tmp/fusion-project") {
     getRootDir: vi.fn(() => "/tmp/project"),
     getSettings: vi.fn(async () => ({})),
     getDatabase: vi.fn(() => ({})),
+    // FNXC:PostgresCutover 2026-07-16-06:30: dashboard service doubles must
+    // expose the AsyncDataLayer contract used by AgentStore after SQLite removal.
+    getAsyncLayer: vi.fn(() => ({})),
   } as any;
 }
 

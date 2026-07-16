@@ -92,7 +92,7 @@
     "test:api": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-api --silent=passed-only --reporter=dot",
     "test:deep": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --project dashboard-api --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
     "test:browser-smoke": "node scripts/browser-layout-smoke.mjs",
-    "test:build": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts",
+    "test:build": "pnpm build && FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --project dashboard-api --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts src/__tests__/plugin-registry-dist.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
     "test:quality:api:backfill-1": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality-backfill --silent=passed-only --reporter=dot --shard=1/2",
     "test:quality:api:backfill-2": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality-backfill --silent=passed-only --reporter=dot --shard=2/2"

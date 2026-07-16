@@ -13,6 +13,12 @@ async function readDashboardFile(relativePath: string): Promise<string> {
   return readFile(path.join(dashboardRoot, relativePath), "utf-8");
 }
 
+/*
+FNXC:DashboardDistArtifacts 2026-07-16-08:20:
+This is an emitted-server-output assertion, not an API test. The explicit test:build
+command builds the dashboard before collecting it, keeping this test bounded and
+preventing API backfill shards from synchronously running a full package build.
+*/
 describe("plugin registry production output", () => {
   it("does not emit a Node 22-invalid static JSON import for registry-manifest.json", async () => {
     const pluginRoutesDist = await readDashboardFile("dist/plugin-routes.js");
