@@ -350,11 +350,19 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         const isOverridden = status === "overridden" || Boolean(thinkingValue);
         const laneLabel = getProjectLaneLabel(lane);
         return (<div className="form-group" key={lane.laneId}>
+        {/*
+        FNXC:SettingsHelp 2026-07-15-23:10:
+        Lane help rides the same "?" as every other row. It reads as an exception — a lane is a label + inherited/override badge + dropdown + conditional Reset, and its copy ends in the resolved fallback CHAIN — but that argues for WHERE the tip hangs (the label row, beside the badge), not for keeping a paragraph. Left inline, Project Models was the one section still showing prose under every control while its neighbours showed an icon; the global lanes next door already use the tip.
+        The badge stays in view precisely because it IS live state ("Override (Project)" vs "Inherited (Global)") — the fallback chain behind it explains that badge, and is what an operator opens deliberately.
+        */}
         <div className="settings-model-lane-label-row">
           <label htmlFor={`${lane.laneId}Model`}>{laneLabel}</label>
           <span className={`settings-lane-badge ${isOverridden ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={isOverridden ? "Explicitly set for this project" : "Inherited from global settings"}>
             {isOverridden ? "Override (Project)" : "Inherited (Global)"}
           </span>
+          <SettingsHelpTip settingKey={`${lane.laneId}Model`}>
+            {getProjectLaneHelperText(lane)}{t("settings.projectModels.fallsBackTo", " Falls back to: ")}{lane.fallbackOrder}.
+          </SettingsHelpTip>
         </div>
         <div className="settings-model-lane-control-row">
           <div className="settings-model-lane-control-main">
@@ -362,13 +370,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           </div>
           {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => { resetLaneValue(lane); resetLaneThinkingValue(lane); }} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
         </div>
-        {/*
-        FNXC:SettingsHelp 2026-07-15-21:40:
-        Model-lane help stays inline while plain rows moved theirs behind a "?": a lane row is not a label + control, it is a label + inherited/override badge + dropdown + conditional Reset, and its copy ends in the resolved fallback CHAIN — the thing an operator reads to understand which model actually runs when this lane is unset. That is resolved state, not a description of the control, so it stays in view. The workflow-lane and title-summarizer-fallback rows below follow the same rule for the same reason.
-        */}
-        <small>
-          {getProjectLaneHelperText(lane)}{t("settings.projectModels.fallsBackTo", " Falls back to: ")}{lane.fallbackOrder}.
-        </small>
       </div>);
     };
     const chatDefaultKind = form.chatDefaultKind ?? "model";
@@ -519,6 +520,8 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                   <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set for this project workflow" : "Inherited from workflow defaults"}>
                     {customized ? "Override (Project)" : "Inherited (Workflow)"}
                   </span>
+                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
+                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
                 </div>
                 <div className="settings-model-lane-control-row">
                   <div className="settings-model-lane-control-main">
@@ -526,7 +529,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                   </div>
                   {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
                 </div>
-                <small>{pair.help}</small>
                 {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
               </div>);
             })}
@@ -680,6 +682,10 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 <span className={`settings-lane-badge ${titleSummarizerFallbackCustomized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={titleSummarizerFallbackCustomized ? "Explicitly set for this project" : "Inherited from global settings"}>
                   {titleSummarizerFallbackCustomized ? "Override (Project)" : "Inherited (Global)"}
                 </span>
+                {/* FNXC:SettingsHelp 2026-07-15-23:10: Same lane shape as the rows above, so its help hangs off the label row too — this was the last row in Settings still rendering help as a paragraph. */}
+                <SettingsHelpTip settingKey="titleSummarizerFallbackModel">
+                  {t("settings.projectModels.titleSummarizerFallbackHelp", "Fallback provider and model used when the primary Title Summarizer model cannot be used. Falls back to the global summarization lane and then the default model chain.")}
+                </SettingsHelpTip>
               </div>
               <div className="settings-model-lane-control-row">
                 <div className="settings-model-lane-control-main">
@@ -687,7 +693,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 </div>
                 {titleSummarizerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetTitleSummarizerFallbackValue} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
               </div>
-              <small>{t("settings.projectModels.titleSummarizerFallbackHelp", "Fallback provider and model used when the primary Title Summarizer model cannot be used. Falls back to the global summarization lane and then the default model chain.")}</small>
             </div>
           </>)}
         {/*
