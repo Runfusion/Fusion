@@ -73,7 +73,6 @@ import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./already-m
 import { getTaskCompletionBlockerForStore } from "./task-completion.js";
 import { shouldReclaimWedgedMerge } from "./merge-reclaim-policy.js";
 
-export const COMPLETED_BLOCKED_PAUSE_REASON = "completed-work-blocked";
 import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
 import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
@@ -94,6 +93,39 @@ import type { GhostBugDecision } from "./triage-preflight.js";
 import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
 import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
+
+export {
+  COMPLETED_BLOCKED_PAUSE_REASON,
+  STALE_TEMP_MERGE_WORKTREE_MS,
+  DONE_TASK_TEMP_WORKTREE_GRACE_MS,
+  MIN_TEMP_WORKTREE_REAP_AGE_MS,
+  STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
+  COMPLETION_HANDOFF_LIMBO_GRACE_MS,
+  MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES,
+  MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES,
+  VALIDATOR_RUN_STALE_MAX_AGE_MS,
+  MAX_WORKTREE_SESSION_RETRIES,
+  PAUSE_ABORT_PARK_ERROR_MARKER,
+  PAUSE_ABORT_PARK_OPERATOR_MARKER,
+  MAX_AUTO_MERGE_RETRIES,
+  MAX_TRANSIENT_MERGE_RECOVERIES,
+} from "./self-healing-constants.js";
+import {
+  COMPLETED_BLOCKED_PAUSE_REASON,
+  STALE_TEMP_MERGE_WORKTREE_MS,
+  DONE_TASK_TEMP_WORKTREE_GRACE_MS,
+  MIN_TEMP_WORKTREE_REAP_AGE_MS,
+  STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
+  COMPLETION_HANDOFF_LIMBO_GRACE_MS,
+  MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES,
+  MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES,
+  MAX_WORKTREE_SESSION_RETRIES,
+  PAUSE_ABORT_PARK_ERROR_MARKER,
+  PAUSE_ABORT_PARK_OPERATOR_MARKER,
+  MAX_TRANSIENT_MERGE_RECOVERIES,
+} from "./self-healing-constants.js";
+export { isBranchAheadOfBase } from "./self-healing-branch.js";
+import { isBranchAheadOfBase } from "./self-healing-branch.js";
 
 const log = createLogger("self-healing");
 const OPTIONAL_STEP_REVISION_KEY_MARKER = "Workflow revision key:";
@@ -133,14 +165,7 @@ const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediat
 const DONE_TASK_INTEGRITY_SWEEP_LIMIT = 50;
 const BOARD_STALL_NOTIFICATION_COOLDOWN_MS = 60 * 60_000;
 const DB_CORRUPTION_NOTIFICATION_COOLDOWN_MS = 60 * 60 * 1000;
-export const STALE_TEMP_MERGE_WORKTREE_MS = 2 * 60 * 60 * 1000;
-export const DONE_TASK_TEMP_WORKTREE_GRACE_MS = 10 * 60 * 1000;
-export const MIN_TEMP_WORKTREE_REAP_AGE_MS = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
-export const STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS = 10 * 60_000;
 const PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER = 3;
-export const COMPLETION_HANDOFF_LIMBO_GRACE_MS = 5 * 60_000;
-export const MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES = 3;
-export const MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES = 3;
 const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 2;
 
 type WorkflowRecoveryRoute =
@@ -449,7 +474,6 @@ const ORPHANED_EXECUTION_RECOVERY_GRACE_MS = 60_000;
  * never races a task mid-transition out of in-progress.
  */
 const LEAKED_WORKTREE_SLOT_GRACE_MS = 60_000;
-export const VALIDATOR_RUN_STALE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /*
 FNXC:MergeQueue 2026-07-15-09:50:
 AI merge sets status="reviewing" during the clean-room review pass (merger-ai mergeAndReview). That is still live merge activity. Without it here, recoverInterruptedMergingTasks ignored hung review-phase merges and the single-flight pump stayed wedged while the board showed no merging badge.
@@ -494,7 +518,6 @@ const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
  * forever; when exhausted the task stays in `in-review` for human inspection.
  */
 const MAX_TASK_DONE_RETRIES = 3;
-export const MAX_WORKTREE_SESSION_RETRIES = 3;
 const RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET = new Set<string>(MERGE_ACTIVE_MISSING_WORKTREE_STATUSES);
 /**
  * FNXC:WorkflowLifecycle 2026-06-20-00:00: single source of truth for the
@@ -504,31 +527,10 @@ const RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET = new Set<string>(MERGE_A
  * silently drifting if the message text is ever edited (greptile review on
  * PR #1687: a string-coupled predicate breaks with no compile-time signal).
  */
-export const PAUSE_ABORT_PARK_ERROR_MARKER = "Workflow graph failure surfaced after paused";
-export const PAUSE_ABORT_PARK_OPERATOR_MARKER = "operator action required";
 /**
  * FNXC:AutoMergeRetries 2026-06-17-04:20:
  * Keep this export as the historical default seed for tests and dashboard fallback alignment, but SelfHealingManager must call resolveMaxAutoMergeRetries(settings) at decision points so configured projects do not recover or stall at the old fixed value.
  */
-export const MAX_AUTO_MERGE_RETRIES = 3;
-/**
- * FN-5627 follow-up: bounded budget for self-healing transient-merge-failure
- * recovery. After this many cycles of `recoverTransientMergeFailures` resetting
- * `mergeRetries` and re-enqueueing the same task, the task is considered
- * genuinely stuck and stays parked as `failed` for manual review. Tracked via
- * `task.mergeDetails.transientRecoveryCount`.
- *
- * FNXC:MergeReliability 2026-07-15-18:50 (FN-8004):
- * Raised 2 → 5. This budget only ever applies to errors already PROVEN transient by
- * `classifyTransientMergeError` — provider blips, network drops, lease races. For that
- * population the cost asymmetry is lopsided: an extra retry costs one merge attempt,
- * while giving up strands completed, reviewed work in `in-review` until a human notices.
- * Operators reported the old budget surrendering while the underlying fault was still
- * clearing. Recovery remains strictly bounded and audited — this widens the window,
- * it does not remove the ceiling.
- */
-export const MAX_TRANSIENT_MERGE_RECOVERIES = 5;
-
 // FN-5627: classifier extracted to `transient-merge-error-classifier.ts`
 // to avoid pulling `createLogger` into modules that mock `../logger.js`
 // (notification-service tests in particular). Re-exported here for callers
@@ -748,61 +750,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-export async function isBranchAheadOfBase(
-  task: Task,
-  rootDir: string,
-  preferredBaseRef?: string,
-): Promise<{ aheadCount: number; baseRef: string } | null> {
-  const branchName = resolveTaskWorkingBranch(task);
-
-  try {
-    await execAsync(`git rev-parse --verify ${shellQuote(branchName)}`, {
-      cwd: rootDir,
-      timeout: 30_000,
-    });
-  } catch {
-    return null;
-  }
-
-  const requestedBaseRef = preferredBaseRef || task.mergeDetails?.mergeTargetBranch || await resolveIntegrationBranch(rootDir, undefined);
-  let resolvedBaseRef = requestedBaseRef;
-
-  try {
-    await execAsync(`git rev-parse --verify ${shellQuote(requestedBaseRef)}`, {
-      cwd: rootDir,
-      timeout: 30_000,
-    });
-  } catch {
-    const remoteRef = `origin/${requestedBaseRef}`;
-    try {
-      await execAsync(`git rev-parse --verify ${shellQuote(remoteRef)}`, {
-        cwd: rootDir,
-        timeout: 30_000,
-      });
-      resolvedBaseRef = remoteRef;
-    } catch {
-      return null;
-    }
-  }
-
-  try {
-    const { stdout } = await execAsync(
-      `git rev-list --count ${shellQuote(resolvedBaseRef)}..${shellQuote(branchName)}`,
-      { cwd: rootDir, timeout: 30_000 },
-    );
-    const aheadCount = Number.parseInt(stdout.trim(), 10);
-    if (!Number.isFinite(aheadCount)) {
-      return null;
-    }
-    return { aheadCount, baseRef: resolvedBaseRef };
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    log.warn(
-      `Failed to compare ${branchName} against ${resolvedBaseRef} for ${task.id}: ${errorMessage}`,
-    );
-    return null;
-  }
-}
 
 function parseShortstat(output: string): Pick<LandedTaskCommit, "filesChanged" | "insertions" | "deletions"> {
   const normalized = output.trim().replace(/\n/g, " ");

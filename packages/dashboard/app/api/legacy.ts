@@ -81,7 +81,6 @@ import type {
   DockerNodeStatus,
   ProjectNodePathMapping,
   ApprovalRequestStatus,
-  TaskIdIntegrityReport,
   BranchGroup,
   BranchGroupPrState,
   WorkflowFieldDefinition,
@@ -99,7 +98,6 @@ import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { PlannerOverseerRuntimeSnapshot } from "@fusion/core";
 import type { PlannerInterventionEntry } from "@fusion/core";
 import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
-import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry, SkillFileContent } from "@fusion/dashboard";
 import type { MilestoneValidationTelemetry, MissionInterviewDraftSummary } from "../components/mission-types";
 import type {
   ResearchAvailability,
@@ -109,27 +107,41 @@ import type {
   ResearchProviderOption,
 } from "../research-types";
 import { appendTokenQuery, getAuthToken, withTokenHeader } from "../auth";
-import { dedupe, type DedupeOptions } from "./dedupe";
+import { dedupe } from "./dedupe";
 
-/** Options accepted by deduped fetchers. Pass `{ forceFresh: true }` after a
- *  mutation to bypass any in-flight pre-mutation request and force a new one. */
-export type FetchOptions = DedupeOptions;
+export {
+  api,
+  ApiRequestError,
+  buildApiUrl,
+} from "./client.js";
+export type { FetchOptions } from "./client.js";
+export {
+  fetchDashboardHealth,
+  refreshDashboardHealth,
+  fetchEngineStatus,
+  startEngine,
+  checkForUpdates,
+  withProjectId,
+} from "./health.js";
+export type {
+  DashboardHealthResponse,
+  EngineStatusResponse,
+  UpdateCheckResponse,
+} from "./health.js";
+import { api, ApiRequestError, buildApiUrl, looksLikeHtml } from "./client.js";
+import type { FetchOptions } from "./client.js";
+import { withProjectId } from "./health.js";
 
 // Re-export skills types for use by hooks and components
-export type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry, SkillFileContent };
-export type { CommitAssociationDiffBackfillReport };
-
-export class ApiRequestError extends Error {
-  readonly status: number;
-  readonly details?: Record<string, unknown>;
-
-  constructor(message: string, status: number, details?: Record<string, unknown>) {
-    super(message);
-    this.name = "ApiRequestError";
-    this.status = status;
-    this.details = details;
-  }
-}
+export type {
+  DiscoveredSkill,
+  CatalogEntry,
+  CatalogFetchResult,
+  ToggleSkillResult,
+  SkillContent,
+  SkillFileEntry,
+  SkillFileContent,
+} from "@fusion/dashboard";
 
 /** Options that shape the soft-delete request payload/query, not hard-delete behavior. */
 export interface DeleteTaskOptions {
@@ -141,155 +153,6 @@ export interface DeleteTaskOptions {
 
 export interface ArchiveTaskOptions {
   removeLineageReferences?: boolean;
-}
-
-function looksLikeHtml(body: string): boolean {
-  const trimmed = body.trim();
-  return trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML");
-}
-
-function buildApiUrl(path: string): string {
-  return `/api${path}`;
-}
-
-export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
-  const url = buildApiUrl(path);
-  const token = getAuthToken();
-  const headers = (() => {
-    if (token) {
-      const authenticatedHeaders = new Headers(opts.headers ?? {});
-      if (!authenticatedHeaders.has("Content-Type")) {
-        authenticatedHeaders.set("Content-Type", "application/json");
-      }
-      return withTokenHeader(authenticatedHeaders);
-    }
-
-    if (!opts.headers) {
-      return { "Content-Type": "application/json" };
-    }
-
-    const defaultHeaders = new Headers(opts.headers);
-    if (!defaultHeaders.has("Content-Type")) {
-      defaultHeaders.set("Content-Type", "application/json");
-    }
-    return Object.fromEntries(defaultHeaders.entries());
-  })();
-
-  const res = await fetch(url, {
-    ...opts,
-    headers,
-  });
-
-  // Handle successful 204 No Content responses (e.g., DELETE, reorder)
-  // These return no body and no JSON content-type — return undefined for void endpoints
-  if (res.status === 204) {
-    if (!res.ok) {
-      // 204 is always ok by definition, but guard anyway
-      throw new Error(`Request failed for ${url}: ${res.status} ${res.statusText}`);
-    }
-    return undefined as T;
-  }
-
-  const contentType = res.headers.get("content-type") ?? "";
-  const bodyText = await res.text();
-  const isJson = contentType.includes("application/json");
-  const isHtml = contentType.includes("text/html") || looksLikeHtml(bodyText);
-
-  if (isHtml) {
-    throw new Error(
-      `API returned HTML instead of JSON for ${url}. ` +
-      `The endpoint may not be properly configured. (${res.status} ${res.statusText})`
-    );
-  }
-
-  if (!isJson) {
-    const preview = bodyText.length > 160 ? `${bodyText.slice(0, 160)}...` : bodyText;
-    throw new Error(
-      `API returned ${contentType || "an unknown content type"} instead of JSON for ${url}. ` +
-      `(${res.status} ${res.statusText})${preview ? ` Response: ${preview}` : ""}`
-    );
-  }
-
-  let data: unknown;
-  try {
-    data = bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    throw new Error(
-      `API returned invalid JSON for ${url}. (${res.status} ${res.statusText})`
-    );
-  }
-
-  if (!res.ok) {
-    const payload = data as { error?: string; details?: Record<string, unknown> } | null;
-    throw new ApiRequestError(
-      payload?.error || `Request failed for ${url}: ${res.status} ${res.statusText}`,
-      res.status,
-      payload?.details,
-    );
-  }
-
-  return data as T;
-}
-
-export interface DashboardHealthResponse {
-  status: string;
-  version: string;
-  uptime: number;
-  engine?: {
-    available: boolean;
-  };
-  database: {
-    healthy: boolean;
-    corruptionDetected: boolean;
-    corruptionErrors: string[];
-    lastCheckedAt: string | null;
-    isRunning: boolean;
-  };
-  /*
-  FNXC:PostgresHealth 2026-07-14-23:45:
-  Health cannot label an unavailable PostgreSQL integrity detector as "ok". Preserve the existing report fields while exposing a distinct error state and diagnostic for the dashboard response contract.
-  */
-  taskIdIntegrity:
-    | (TaskIdIntegrityReport & { recommendedAction: string | null })
-    | {
-        status: "error";
-        checkedAt: string;
-        anomalies: [];
-        error: string;
-        recommendedAction: string | null;
-      };
-}
-
-export function fetchDashboardHealth(): Promise<DashboardHealthResponse> {
-  return api<DashboardHealthResponse>("/health");
-}
-
-export function refreshDashboardHealth(): Promise<DashboardHealthResponse> {
-  return api<DashboardHealthResponse>("/health/refresh", { method: "POST" });
-}
-
-export interface EngineStatusResponse {
-  connected: boolean;
-  starting: boolean;
-  canStart: boolean;
-  reason?: "dashboard-only" | "no-project" | string;
-  projectId?: string;
-}
-
-/*
- * FNXC:EngineStatusBanner 2026-06-22-00:00:
- * Engine status is project-scoped because a multi-project dashboard can have one running engine while the current project is paused, failed, or not yet started. Thread `projectId` through the existing query helper so the server resolves the same project context as task and settings routes.
- */
-export function fetchEngineStatus(projectId?: string): Promise<EngineStatusResponse> {
-  return api<EngineStatusResponse>(withProjectId("/engine/status", projectId));
-}
-
-export function startEngine(projectId?: string): Promise<EngineStatusResponse> {
-  return api<EngineStatusResponse>(withProjectId("/engine/start", projectId), { method: "POST" });
-}
-
-export function checkForUpdates(): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>("/updates/check");
 }
 
 export function fetchTasks(
@@ -1037,15 +900,6 @@ export function updateSettings(settings: Partial<Settings>, projectId?: string):
     method: "PUT",
     body: JSON.stringify(settings),
   });
-}
-
-export interface UpdateCheckResponse {
-  currentVersion: string;
-  latestVersion: string | null;
-  updateAvailable: boolean;
-  lastChecked?: number;
-  disabled?: boolean;
-  error?: string;
 }
 
 export function checkForUpdate(projectId?: string): Promise<UpdateCheckResponse> {
@@ -6487,11 +6341,6 @@ export interface AgentPromptSizePoint {
   totalChars: number;
 }
 
-export function withProjectId(path: string, projectId?: string): string {
-  if (!projectId) return path;
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}projectId=${encodeURIComponent(projectId)}`;
-}
 
 /** Append repoPath query param for workspace-mode sub-repo targeting */
 function withRepoPath(path: string, repoPath?: string): string {
