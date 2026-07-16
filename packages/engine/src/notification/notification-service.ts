@@ -340,37 +340,44 @@ export class NotificationService {
     or the task:updated handler, so errors are swallowed with a log line only.
   */
   private async writeAwaitingApprovalMailboxMessage(task: Task): Promise<void> {
-    const messageStore = this.options.messageStore;
-    if (!messageStore?.sendMessageOnce) {
-      return;
-    }
-    const identifier = formatTaskIdentifier(task);
-    const reason = task.awaitingApprovalReason ?? "manual";
-    const reasonLine =
-      reason === "plan-review-replan-cap"
-        ? "Plan Review exhausted its automatic revision attempts and escalated this plan for a human decision."
-        : "The generated plan is ready and needs your approval before execution begins.";
-    const link = buildNtfyClickUrl({
-      dashboardHost: this.dashboardHost,
-      projectId: this.options.projectId,
-      taskId: task.id,
-    });
-    const content = [
-      `**${identifier} needs plan approval**`,
-      "",
-      reasonLine,
-      ...(link ? ["", `[Open ${task.id}](${link})`] : []),
-    ].join("\n");
-    const input: MessageCreateInput = {
-      fromId: "system",
-      fromType: "system",
-      toId: DASHBOARD_USER_ID,
-      toType: "user",
-      type: "system",
-      content,
-      metadata: { taskId: task.id, awaitingApprovalReason: reason },
-    };
+    /*
+    FNXC:PlanApprovalMailbox 2026-07-16-20:10:
+    Called fire-and-forget (`void this.writeAwaitingApprovalMailboxMessage(task)`), so the ENTIRE
+    body — not just the store write — must be inside try/catch. A throw in payload construction
+    (e.g. formatTaskIdentifier on a malformed runtime task) would otherwise become an unhandled
+    promise rejection that can crash the process. Best-effort: log and swallow.
+    */
     try {
+      const messageStore = this.options.messageStore;
+      if (!messageStore?.sendMessageOnce) {
+        return;
+      }
+      const identifier = formatTaskIdentifier(task);
+      const reason = task.awaitingApprovalReason ?? "manual";
+      const reasonLine =
+        reason === "plan-review-replan-cap"
+          ? "Plan Review exhausted its automatic revision attempts and escalated this plan for a human decision."
+          : "The generated plan is ready and needs your approval before execution begins.";
+      const link = buildNtfyClickUrl({
+        dashboardHost: this.dashboardHost,
+        projectId: this.options.projectId,
+        taskId: task.id,
+      });
+      const content = [
+        `**${identifier} needs plan approval**`,
+        "",
+        reasonLine,
+        ...(link ? ["", `[Open ${task.id}](${link})`] : []),
+      ].join("\n");
+      const input: MessageCreateInput = {
+        fromId: "system",
+        fromType: "system",
+        toId: DASHBOARD_USER_ID,
+        toType: "user",
+        type: "system",
+        content,
+        metadata: { taskId: task.id, awaitingApprovalReason: reason },
+      };
       await messageStore.sendMessageOnce(input, `plan-approval:${task.id}`);
     } catch (error) {
       schedulerLog.log(

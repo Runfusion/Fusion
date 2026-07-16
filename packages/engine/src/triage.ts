@@ -2383,7 +2383,10 @@ export class TriageProcessor {
           && Boolean((result.output || result.notes)?.trim()),
       );
     const priorSpecReviewFeedback = (priorPlanReviewRevise?.output || priorPlanReviewRevise?.notes)?.trim() || undefined;
-    const specReviewAttempt = (task.planReviewReplanCount ?? 0) + 1;
+    // FNXC:TriagePlanReviewConvergence 2026-07-16-20:10: read the attempt from the SAME fresh
+    // latestTaskForReview snapshot as the prior feedback. Using the older `task` arg could pair
+    // fresh feedback with a stale (lower) attempt and miss the attempt-3 severity ratchet.
+    const specReviewAttempt = (latestTaskForReview.planReviewReplanCount ?? 0) + 1;
 
     let reviewFailure: unknown;
     const review = await reviewStep(
