@@ -25,7 +25,7 @@ Merge-attempt behavior is isolated behind a runner factory so the graph handler 
 export function createMergeAttemptHandler(deps: MergeAttemptRunnerDeps): WorkflowNodeHandler {
   return async (node, ctx) => {
     if (!deps.primitives) {
-      return deps.seams.merge(ctx.task, ctx.context);
+      return deps.seams.merge(ctx.task, ctx.context, ctx.signal);
     }
     const attempt = typeof ctx.context["workflow:work-item-attempt"] === "number"
       ? ctx.context["workflow:work-item-attempt"]

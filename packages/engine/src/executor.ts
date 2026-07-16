@@ -6476,6 +6476,13 @@ export class TaskExecutor {
         if (!this.mergeRequester) {
           return { outcome: "failure", value: "merge-unavailable", data: { status: "failed", reason: "merge-unavailable" } };
         }
+        /*
+        FNXC:WorkflowCancellation 2026-07-15-10:42:
+        Fail fast on an already-cancelled walk BEFORE any side effect. `ensureWorkflowMergeBoundaryTask` mutates the task row and the requester enqueues a real merge; neither may run for a walk the engine has already abandoned. `merge-cancelled` is deliberately not `data.status: "failed"` — `classifyMergeFailure` would read an unknown reason as `merge-failed` and route a cancellation into bounded auto-merge retry.
+        */
+        if (ctx.signal?.aborted) {
+          return { outcome: "failure", value: "merge-cancelled" };
+        }
         const mergeTask = await this.ensureWorkflowMergeBoundaryTask(task, {
           reason: "workflow-merge-boundary",
           nodeId: ctx.node.node.id,
@@ -6516,8 +6523,13 @@ export class TaskExecutor {
             data: { status: "failed", reason: "implementation-incomplete" },
           };
         }
+        /*
+        FNXC:WorkflowCancellation 2026-07-15-10:42:
+        The timeout bounds a wedged merge queue; it is NOT the cancellation path. `ctx.signal` (graph abort) is linked in via `AbortSignal.any` so a hard-cancel collapses the merge node immediately instead of after the full timeout, and is raced separately so the walk returns rather than waiting on a requester that may not settle on abort. Keep both signals live: dropping the timeout re-strands the walk behind a wedged queue, dropping the cancel link restores the 30-minute stall.
+        */
         const GRAPH_MERGE_TIMEOUT_MS = 30 * 60 * 1000;
         const controller = new AbortController();
+        const mergeSignal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<"timeout">((resolve) => {
           timeoutHandle = setTimeout(() => {
@@ -6526,8 +6538,18 @@ export class TaskExecutor {
           }, GRAPH_MERGE_TIMEOUT_MS);
           timeoutHandle.unref?.();
         });
+        let onGraphAbort: (() => void) | undefined;
+        const cancelled = new Promise<"cancelled">((resolve) => {
+          if (!ctx.signal) return;
+          onGraphAbort = () => resolve("cancelled");
+          ctx.signal.addEventListener("abort", onGraphAbort, { once: true });
+        });
         try {
-          const result = await Promise.race([this.mergeRequester(mergeTask.id, { signal: controller.signal }), timeout]);
+          const result = await Promise.race([this.mergeRequester(mergeTask.id, { signal: mergeSignal }), timeout, cancelled]);
+          if (result === "cancelled") {
+            executorLog.warn(`${mergeTask.id}: workflow merge primitive cancelled by graph abort`);
+            return { outcome: "failure", value: "merge-cancelled" };
+          }
           if (result === "timeout") {
             executorLog.warn(`${mergeTask.id}: workflow merge primitive timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
             return { outcome: "failure", value: "merge-timeout", data: { status: "timeout" } };
@@ -6574,6 +6596,8 @@ export class TaskExecutor {
           };
         } finally {
           if (timeoutHandle) clearTimeout(timeoutHandle);
+          // FNXC:WorkflowCancellation 2026-07-15-10:42: the graph signal outlives this node; leaving the listener attached leaks one per merge attempt across a retry loop.
+          if (onGraphAbort) ctx.signal?.removeEventListener("abort", onGraphAbort);
           await logAudit(mergeTask.id, {
             type: "merge-requested",
             message: `Workflow node ${ctx.node.node.id} requested merge`,
@@ -6781,9 +6805,13 @@ export class TaskExecutor {
         await this.handoffTaskToReview(live, "workflow-graph-review-handoff");
         return { outcome: "success", value: "in-review" };
       },
-      merge: async (seamTask) => {
+      merge: async (seamTask, _context, signal) => {
         if (!this.mergeRequester) {
           return { outcome: "failure", value: "merge-unavailable" };
+        }
+        // FNXC:WorkflowCancellation 2026-07-15-10:42: fail fast before the boundary-task mutation and the merge request — an abandoned walk must not enqueue a merge. Mirrors the `requestMerge` primitive.
+        if (signal?.aborted) {
+          return { outcome: "failure", value: "merge-cancelled" };
         }
         const mergeTask = await this.ensureWorkflowMergeBoundaryTask(seamTask, {
           reason: "workflow-merge-boundary",
@@ -6804,14 +6832,25 @@ export class TaskExecutor {
         // Bound the wait: a wedged merge queue must not strand the graph walk
         // holding the routing claim. On timeout the run fails cleanly and the
         // task is parked for human review; the queue can still finish later.
+        // FNXC:WorkflowCancellation 2026-07-15-10:42: the timeout is the wedged-queue bound, `signal` is the cancellation path — both must stay live. See the `requestMerge` primitive for the stall this prevents.
         const GRAPH_MERGE_TIMEOUT_MS = 30 * 60 * 1000;
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<"timeout">((resolve) => {
           timeoutHandle = setTimeout(() => resolve("timeout"), GRAPH_MERGE_TIMEOUT_MS);
           timeoutHandle.unref?.();
         });
+        let onGraphAbort: (() => void) | undefined;
+        const cancelled = new Promise<"cancelled">((resolve) => {
+          if (!signal) return;
+          onGraphAbort = () => resolve("cancelled");
+          signal.addEventListener("abort", onGraphAbort, { once: true });
+        });
         try {
-          const result = await Promise.race([this.mergeRequester(mergeTask.id), timeout]);
+          const result = await Promise.race([this.mergeRequester(mergeTask.id, signal ? { signal } : undefined), timeout, cancelled]);
+          if (result === "cancelled") {
+            executorLog.warn(`${mergeTask.id}: graph merge seam cancelled by graph abort`);
+            return { outcome: "failure", value: "merge-cancelled" };
+          }
           if (result === "timeout") {
             executorLog.warn(`${mergeTask.id}: graph merge seam timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
             return { outcome: "failure", value: "merge-timeout" };
@@ -6822,6 +6861,7 @@ export class TaskExecutor {
           return { outcome: "failure", value: result.reason ?? result.error ?? "merge-failed" };
         } finally {
           if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (onGraphAbort) signal?.removeEventListener("abort", onGraphAbort);
         }
       },
       schedule: async () => ({ outcome: "success" }),

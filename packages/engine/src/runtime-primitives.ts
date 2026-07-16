@@ -38,6 +38,13 @@ export interface WorkflowRuntimeNodeContext {
 export interface WorkflowPrimitiveContext {
   run: WorkflowRuntimeRunContext;
   node: WorkflowRuntimeNodeContext;
+  /*
+  FNXC:WorkflowCancellation 2026-07-15-10:42:
+  Graph cancellation must reach long-running primitives, not just node handlers. Before this existed, a hard-cancel (user cancel, engine restart, pause/resume) aborted the graph controller but the in-flight `merge` primitive never saw it: it raced the merge only against its own 30-minute timeout, so the walk sat inside the merge node for the full timeout before discovering it had been cancelled half an hour earlier. The timeout's abort then killed the still-running AI merge mid-flight ("Manual-merge failed: Request was aborted"), which could land between merger-ai's `worktree: null` write and `mergeConfirmed`, stranding the card as `no-worktree-no-merge-confirmed`.
+
+  Mirrors `WorkflowNodeExecutionContext.signal` (workflow-graph-executor.ts) and is threaded by `primitiveContextForNode`. Undefined on the sequential/uncancellable path. A primitive that can block on I/O for more than a few seconds MUST honor it — link it into any local timeout controller via `AbortSignal.any` rather than replacing it, so both cancellation and the timeout stay live.
+  */
+  signal?: AbortSignal;
 }
 
 export interface RuntimePrimitiveResult<TValue = unknown> {
@@ -212,6 +219,8 @@ export function primitiveNodeContext(
   run: WorkflowRuntimeRunContext,
   node: WorkflowRuntimeNodeContext["node"],
   extras: Omit<WorkflowRuntimeNodeContext, "node"> = {},
+  /** FNXC:WorkflowCancellation 2026-07-15-10:42: graph cancellation signal — see {@link WorkflowPrimitiveContext.signal}. */
+  signal?: AbortSignal,
 ): WorkflowPrimitiveContext {
   return {
     run,
@@ -219,6 +228,7 @@ export function primitiveNodeContext(
       ...extras,
       node,
     },
+    signal,
   };
 }
 
