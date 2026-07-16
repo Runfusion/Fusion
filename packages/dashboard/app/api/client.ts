@@ -5,8 +5,11 @@
 import { getAuthToken, withTokenHeader } from "../auth";
 import type { DedupeOptions } from "./dedupe";
 
-/** Options accepted by deduped fetchers. Pass `{ forceFresh: true }` after a
- *  mutation to bypass any in-flight pre-mutation request and force a new one. */
+/**
+ * FNXC:DashboardApi 2026-07-15-13:25:
+ * Options accepted by deduped fetchers. Pass `{ forceFresh: true }` after a
+ * mutation to bypass any in-flight pre-mutation request and force a new one.
+ */
 export type FetchOptions = DedupeOptions;
 
 export class ApiRequestError extends Error {
@@ -58,8 +61,11 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
     headers,
   });
 
-  // Handle successful 204 No Content responses (e.g., DELETE, reorder)
-  // These return no body and no JSON content-type — return undefined for void endpoints
+  /*
+   * FNXC:DashboardApi 2026-07-15-13:25:
+   * Successful 204 responses (for example DELETE and reorder) have no body or
+   * JSON content type, so return undefined for void endpoints before parsing.
+   */
   if (res.status === 204) {
     if (!res.ok) {
       // 204 is always ok by definition, but guard anyway
@@ -135,4 +141,3 @@ export function proxyApi<T>(path: string, opts?: RequestInit & { nodeId?: string
   const resolvedPath = withNodeId(path, nodeId, localNodeId);
   return api<T>(resolvedPath, fetchOpts);
 }
-

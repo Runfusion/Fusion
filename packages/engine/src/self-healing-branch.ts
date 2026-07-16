@@ -3,18 +3,14 @@
  * Branch-ahead-of-base probe peeled from self-healing.ts.
  */
 import { promisify } from "node:util";
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import type { Task } from "@fusion/core";
 import { resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("self-healing");
-const execAsync = promisify(exec);
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
+const execFileAsync = promisify(execFile);
 
 export async function isBranchAheadOfBase(
   task: Task,
@@ -24,7 +20,7 @@ export async function isBranchAheadOfBase(
   const branchName = resolveTaskWorkingBranch(task);
 
   try {
-    await execAsync(`git rev-parse --verify ${shellQuote(branchName)}`, {
+    await execFileAsync("git", ["rev-parse", "--verify", branchName], {
       cwd: rootDir,
       timeout: 30_000,
     });
@@ -36,14 +32,14 @@ export async function isBranchAheadOfBase(
   let resolvedBaseRef = requestedBaseRef;
 
   try {
-    await execAsync(`git rev-parse --verify ${shellQuote(requestedBaseRef)}`, {
+    await execFileAsync("git", ["rev-parse", "--verify", requestedBaseRef], {
       cwd: rootDir,
       timeout: 30_000,
     });
   } catch {
     const remoteRef = `origin/${requestedBaseRef}`;
     try {
-      await execAsync(`git rev-parse --verify ${shellQuote(remoteRef)}`, {
+      await execFileAsync("git", ["rev-parse", "--verify", remoteRef], {
         cwd: rootDir,
         timeout: 30_000,
       });
@@ -54,8 +50,9 @@ export async function isBranchAheadOfBase(
   }
 
   try {
-    const { stdout } = await execAsync(
-      `git rev-list --count ${shellQuote(resolvedBaseRef)}..${shellQuote(branchName)}`,
+    const { stdout } = await execFileAsync(
+      "git",
+      ["rev-list", "--count", `${resolvedBaseRef}..${branchName}`],
       { cwd: rootDir, timeout: 30_000 },
     );
     const aheadCount = Number.parseInt(stdout.trim(), 10);
@@ -71,4 +68,3 @@ export async function isBranchAheadOfBase(
     return null;
   }
 }
-

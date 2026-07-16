@@ -492,6 +492,7 @@ import {
   renderHeartbeatNoTaskSystemPrompt,
 } from "./agent-heartbeat-prompts.js";
 
+/* FNXC:AgentHeartbeat 2026-07-15-13:25: Keep recovery exports here so existing engine consumers retain the legacy public API after the extraction. */
 export {
   MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS,
   HEARTBEAT_ERROR_RECOVERY_METADATA_KEY,

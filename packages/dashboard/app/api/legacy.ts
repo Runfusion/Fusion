@@ -106,6 +106,7 @@ import type {
 import { appendTokenQuery, getAuthToken, withTokenHeader } from "../auth";
 import { dedupe } from "./dedupe";
 
+/* FNXC:DashboardApi 2026-07-15-13:25: Preserve the legacy API barrel while consumers migrate to focused modules. */
 export {
   api,
   ApiRequestError,

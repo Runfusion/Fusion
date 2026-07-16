@@ -3,14 +3,13 @@
  * Auto conflict classification and resolution helpers peeled from merger.ts.
  */
 import { promisify } from "node:util";
-import { exec } from "node:child_process";
-import * as childProcess from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { LOCKFILE_PATTERNS, GENERATED_PATTERNS, matchGlob, type ConflictType } from "./merger-glob.js";
 import { mergerLog } from "./logger.js";
 
 const execAsync = promisify(exec);
 const execFileAsync: (file: string, args: string[], opts?: import("node:child_process").ExecFileOptions) => Promise<{ stdout: string; stderr: string }> = (file, args, opts) =>
-  (promisify(childProcess.execFile) as (f: string, a: string[], o?: object) => Promise<{ stdout: string; stderr: string }>)(file, args, opts);
+  (promisify(execFile) as (f: string, a: string[], o?: object) => Promise<{ stdout: string; stderr: string }>)(file, args, opts);
 
 export async function getConflictedFiles(cwd: string): Promise<string[]> {
   try {
@@ -33,12 +32,17 @@ export async function getConflictedFiles(cwd: string): Promise<string[]> {
  */
 export async function isTrivialWhitespaceConflict(filePath: string, cwd: string): Promise<boolean> {
   try {
-    // Use git diff-tree to compare index entries with whitespace ignored
-    // :2 = ours (current branch), :3 = theirs (incoming branch)
-    // -w flag ignores whitespace
-    const { stdout } = await execAsync(
-      `git diff-tree -p -w -- :2:"${filePath}" :3:"${filePath}"`,
-      { cwd, encoding: "utf-8" }
+    /*
+     * FNXC:MergeSafety 2026-07-15-13:25:
+     * Conflict paths can originate in a repository checkout, so pass both stage
+     * references as execFile arguments. `git diff` compares the index's ours
+     * and theirs blobs directly; placing them after `--` would instead treat
+     * them as pathspecs and silently fail to classify whitespace-only conflicts.
+     */
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "-p", "-w", `:2:${filePath}`, `:3:${filePath}`],
+      { cwd, encoding: "utf-8" },
     );
 
     // If the diff output is empty or contains no actual changes, it's trivial
@@ -50,7 +54,7 @@ export async function isTrivialWhitespaceConflict(filePath: string, cwd: string)
     );
     return contentChanges.length === 0;
   } catch (error: unknown) {
-    // git diff-tree may exit with code 1 when there are differences
+    // git diff may exit with code 1 when there are differences
     // Check if the error output indicates substantive changes
     const stdout = error && typeof error === "object" && "stdout" in error
       ? (error as { stdout?: unknown }).stdout
@@ -124,10 +128,11 @@ export async function resolveWithTheirs(filePath: string, cwd: string): Promise<
 
 /**
  * Resolve a trivial whitespace conflict.
- * For trivial conflicts, we can just stage the file (git considers it resolved).
+ * For trivial conflicts, keep ours before staging the resolved file.
  */
 export async function resolveTrivialWhitespace(filePath: string, cwd: string): Promise<void> {
   try {
+    await execFileAsync("git", ["checkout", "--ours", "--", filePath], { cwd });
     await execFileAsync("git", ["add", "--", filePath], { cwd });
     mergerLog.log(`Auto-resolved ${filePath} (trivial whitespace)`);
   } catch (error) {
@@ -208,8 +213,3 @@ export async function resolveConflicts(
   }
   return remainingComplex;
 }
-
-/** Trailer key written into every Fusion-managed merge commit body. Used by
- *  recovery (findLandedTaskCommit) to identify a task's commit even when the
- *  configured commit subject doesn't include the task ID
- *  (`includeTaskIdInCommit: false`). */

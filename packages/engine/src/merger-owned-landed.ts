@@ -11,7 +11,7 @@ import { resolveTaskWorkingBranch } from "./worktree-names.js";
 const execFileAsync: (file: string, args: string[], opts?: import("node:child_process").ExecFileOptions) => Promise<{ stdout: string; stderr: string }> = (file, args, opts) =>
   (promisify(childProcess.execFile) as (f: string, a: string[], o?: object) => Promise<{ stdout: string; stderr: string }>)(file, args, opts);
 
-/** Task-id trailer key for merge commit ownership (also used by self-healing). */
+/** FNXC:MergeOwnership 2026-07-15-13:25: Task-id trailer key used to prove merge-commit ownership during recovery. */
 export const FUSION_TASK_ID_TRAILER_KEY = "Fusion-Task-Id";
 
 interface OwnedLandedCommit {
@@ -161,7 +161,11 @@ export async function classifyOwnedLandedEvidence(
     return { kind: "proven-no-op", baseRef: mergeTargetBranch, ownDiffEmpty: true };
   }
 
-  // FN-5345/FN-5377: empty-own-diff detection.
+  /*
+   * FNXC:MergeOwnership 2026-07-15-13:25:
+   * FN-5345/FN-5377 empty-own-diff detection preserves the no-op policy for
+   * branches whose commits leave no net change against their integration base.
+   */
   //
   // A branch with one or more own commits whose net tree change vs its own
   // merge-base with the integration branch is empty (e.g. a verification-only

@@ -16,9 +16,9 @@ export const HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON = "error-unrecoverable";
 export const HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON = "heartbeat-model-unavailable";
 
 /**
- * True when the scheduler should manage this agent at all. Ephemeral
- * (task-worker) agents are driven directly by TaskExecutor and must never
- * acquire a scheduler timer.
+ * FNXC:AgentHeartbeat 2026-07-15-13:25:
+ * Ephemeral task workers are driven directly by TaskExecutor and must never
+ * acquire scheduler timers, which are reserved for durable agents.
  */
 export function isHeartbeatManaged(agent: Agent): boolean {
   return !isEphemeralAgent(agent);
@@ -89,10 +89,12 @@ export function isHeartbeatErrorRecoverable(agent: Pick<Agent, "lastError">): bo
 }
 
 export function isModelUnavailablePark(agent: Pick<Agent, "state" | "pauseReason">): boolean {
-  // Key on pauseReason, not only state=paused: startRun flips the agent to
-  // "running" before the run-entry recovery gate reads it, and a failed preload
-  // can load the post-startRun store row. Matching only state=paused would miss
-  // budgeted auto-retry for those paths.
+  /*
+   * FNXC:AgentHeartbeat 2026-07-15-13:25:
+   * Key on pauseReason across state transitions: startRun can flip an agent to
+   * running before the recovery gate reads it, so state=paused alone would miss
+   * the budgeted retry for a failed preload.
+   */
   return agent.pauseReason === HEARTBEAT_MODEL_UNAVAILABLE_PAUSE_REASON
     && agent.state !== "active"
     && agent.state !== "idle";
@@ -119,4 +121,3 @@ export function isErrorRecoveryEligible(agent: Agent, limit: number): boolean {
     && isHeartbeatErrorRecoverable(agent)
     && readHeartbeatErrorRetryCount(agent) < Math.max(1, Math.floor(limit));
 }
-
