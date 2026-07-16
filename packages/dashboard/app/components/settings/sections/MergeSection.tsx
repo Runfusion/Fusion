@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import type { Settings } from "@fusion/core";
 import { fetchGitRemoteBranches } from "../../../api";
 import { MovedSettingsStub } from "./MovedSettingsStub";
+import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
 import type { SectionBaseProps } from "./context";
 /*
 FNXC:MergePush 2026-07-11-23:00:
@@ -50,6 +52,23 @@ async function readLegacyAutoMergeStampResponse(response: Response): Promise<Leg
     }
     return response.json() as Promise<LegacyAutoMergeStampListResponse>;
 }
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+The plain label+control+help rows here render through the shared settings primitives instead of hand-rolled `form-group` markup, so their labels, help copy, and padding come from the one settings type scale. `.form-group` itself stays untouched and global — 35 non-settings files style forms with it, so settings migrate off it rather than restyle it underneath the rest of the dashboard.
+
+FNXC:SettingsScope 2026-07-15-17:35:
+Every migrated key here is project-scoped (`DEFAULT_PROJECT_SETTINGS`): merge policy, retry caps, and auth mode describe one repository's landing strategy. The badges restate that per row because settings search can land an operator on a single control with no section chrome in view.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+Most of this section deliberately keeps its bespoke markup, because Merge is not a section of plain label+control+help rows:
+- Every row whose help lives in a `<details className="settings-option-details">` "More details" disclosure keeps it. Merge help copy is long enough that it is collapsed by default; a descriptor `help` renders unconditionally, so migrating those rows would silently delete a progressive-disclosure affordance across the section and turn Merge into a wall of prose. That is a UX change, not a styling one.
+- `mergeIntegrationWorktree`, `mergeConflictStrategy`, `postMergeAuditMode`, `commitAuthorName`, and `commitAuthorEmail` compose help from several `t()` fragments interleaved with `<code>`/`<strong>` elements; a descriptor `help` is a single string and flattening that copy would reword operator-facing text. `mergeIntegrationWorktree` additionally renders an adjacent live warning banner the primitive has no slot for.
+- `integrationBranch` and the push remote/branch pair are custom dropdown+Custom…-escape-hatch widgets, not plain selects.
+- `githubAuthToken` and `gitlabAuthToken` are `type="password"` inputs; SettingsTextRow renders `type="text"` and would expose a stored token on screen.
+- `planApprovalMode` keeps its `data-testid="plan-approval-mode-select"`, which the primitives have no slot for and MergeSection.legacy-automerge-cleanup.test.tsx reads.
+- `testMode`, `gitlabEnabled`, `gitlabAuthTokenType`, and `gitlabAuthToken` are declared in BOTH `DEFAULT_GLOBAL_SETTINGS` and `DEFAULT_PROJECT_SETTINGS`, so their scope is ambiguous and no badge can be stamped honestly.
+- The legacy auto-merge stamp cleanup panel is a report-and-trigger card, not a setting.
+*/
 export interface MergeSectionProps extends SectionBaseProps {
     scopeBanner: ReactNode;
     integrationBranchOptions: string[];
@@ -153,18 +172,25 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <small>{t("settings.merge.planApprovalModeHelp", "Project-wide override for the planning approval gate. Leave on workflow to use each workflow's Require plan approval setting, or force all approved specs to bypass or wait for manual approval.")}</small>
         </details>
       </div>
-      <div className="form-group">
-        <label htmlFor="maxAutoMergeRetries">{t("settings.merge.autoMergeConflictRetries", "Auto-merge conflict retries")}</label>
-        {/*
-          FNXC:AutoMergeRetries 2026-06-17-04:20:
-          Operators need a merge-section control for maxAutoMergeRetries so conflict-heavy projects can tune how many auto-resolution attempts occur before Fusion parks a task for human recovery. Invalid input falls back to 3 to preserve prior behavior.
-        */}
-        <input id="maxAutoMergeRetries" type="number" min={1} step={1} value={form.maxAutoMergeRetries ?? 3} onChange={(e) => setForm((f) => ({
+      {/*
+        FNXC:AutoMergeRetries 2026-06-17-04:20:
+        Operators need a merge-section control for maxAutoMergeRetries so conflict-heavy projects can tune how many auto-resolution attempts occur before Fusion parks a task for human recovery. Invalid input falls back to 3 to preserve prior behavior.
+      */}
+      <SettingsNumberRow
+        descriptor={{
+          key: "maxAutoMergeRetries",
+          label: t("settings.merge.autoMergeConflictRetries", "Auto-merge conflict retries"),
+          help: t("settings.merge.positiveIntegerRetryCapForAutoMergeConflict", "Positive integer retry cap for auto-merge conflict resolution before a task parks for human recovery. Default 3."),
+          scope: "project",
+          min: 1,
+          step: 1,
+        }}
+        value={form.maxAutoMergeRetries ?? 3}
+        onChange={(v) => setForm((f) => ({
             ...f,
-            maxAutoMergeRetries: e.target.value === "" ? undefined : resolveMaxAutoMergeRetriesForMergeForm(e.target.value),
-        }))}/>
-        <small>{t("settings.merge.positiveIntegerRetryCapForAutoMergeConflict", "Positive integer retry cap for auto-merge conflict resolution before a task parks for human recovery. Default 3.")}</small>
-      </div>
+            maxAutoMergeRetries: v === null ? undefined : resolveMaxAutoMergeRetriesForMergeForm(v),
+        }))}
+      />
       <div className="form-group" data-testid="legacy-automerge-stamp-cleanup-panel">
         <h5 className="settings-section-heading">{t("settings.merge.legacyAutoMergeStampCleanup", "Legacy auto-merge stamp cleanup")}</h5>
         <small>{t("settings.merge.findsInReviewTasksWhoseAutoMergeValue", " Finds in-review tasks whose auto-merge value came from the legacy review-entry stamp. Dry-run is automatic; applying delegates to the store cleanup and preserves genuine per-task overrides. ")}</small>
@@ -195,11 +221,19 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
         </details>
       </div>
       {(form.merger?.mode ?? "ai") === "ai" && (<>
-          <div className="form-group">
-            <label htmlFor="mergerMaxReviewPasses">{t("settings.merge.maxAIReviewPasses", "Max AI review passes")}</label>
-            <input id="mergerMaxReviewPasses" type="number" min={0} max={10} value={form.merger?.maxReviewPasses ?? 3} onChange={(e) => setForm((f) => ({ ...f, merger: { ...(f.merger ?? {}), maxReviewPasses: e.target.value === "" ? undefined : Number(e.target.value) } }))}/>
-            <small>{t("settings.merge.aICorrectiveRoundsBeforeLandingTheBestResult", "AI corrective rounds before landing the best result (advisory concern) or hard-failing (unfixable correctness concern). Default 3. The reviewer uses your project's reviewer/validator model.")}</small>
-          </div>
+          {/* FNXC:AIMerge 2026-07-15-17:35: Dotted descriptor key because this is a leaf of the nested project-scoped `merger` blob, not a top-level settings field; the row's anchor and control id follow the same `merger.maxReviewPasses` path the settings blob uses. */}
+          <SettingsNumberRow
+            descriptor={{
+              key: "merger.maxReviewPasses",
+              label: t("settings.merge.maxAIReviewPasses", "Max AI review passes"),
+              help: t("settings.merge.aICorrectiveRoundsBeforeLandingTheBestResult", "AI corrective rounds before landing the best result (advisory concern) or hard-failing (unfixable correctness concern). Default 3. The reviewer uses your project's reviewer/validator model."),
+              scope: "project",
+              min: 0,
+              max: 10,
+            }}
+            value={form.merger?.maxReviewPasses ?? 3}
+            onChange={(v) => setForm((f) => ({ ...f, merger: { ...(f.merger ?? {}), maxReviewPasses: v ?? undefined } }))}
+          />
           <div className="form-group">
             <label htmlFor="mergerAllowDirtyLocalCheckoutSync" className="checkbox-label">
               <input id="mergerAllowDirtyLocalCheckoutSync" type="checkbox" checked={form.merger?.allowDirtyLocalCheckoutSync === true} onChange={(e) => setForm((f) => ({
@@ -325,13 +359,20 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           </div>
         </>)}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.merge.gitHubAuthentication", "GitHub Authentication")}</h4>
-      <div className="form-group">
-        <label htmlFor="githubAuthMode">{t("settings.merge.gitHubAuthMode", "GitHub auth mode")}</label>
-        <select id="githubAuthMode" className="select" value={form.githubAuthMode ?? "gh-cli"} onChange={(e) => setForm((f) => ({ ...f, githubAuthMode: e.target.value as "gh-cli" | "token" }))}>
-          <option value="gh-cli">{t("settings.merge.gitHubCLIGhAuth", "GitHub CLI (gh auth) (default)")}</option>
-          <option value="token">{t("settings.merge.personalAccessToken", "Personal access token")}</option>
-        </select>
-      </div>
+      {/* FNXC:SettingsStyling 2026-07-15-17:35: No `help` — this row carried no help copy before the migration, and inventing one would be new operator-facing text rather than a restyle. */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "githubAuthMode",
+          label: t("settings.merge.gitHubAuthMode", "GitHub auth mode"),
+          scope: "project",
+          options: [
+            { value: "gh-cli", label: t("settings.merge.gitHubCLIGhAuth", "GitHub CLI (gh auth) (default)") },
+            { value: "token", label: t("settings.merge.personalAccessToken", "Personal access token") },
+          ],
+        }}
+        value={form.githubAuthMode ?? "gh-cli"}
+        onChange={(v) => setForm((f) => ({ ...f, githubAuthMode: v as "gh-cli" | "token" }))}
+      />
       {(form.githubAuthMode ?? "gh-cli") === "token" && (<div className="form-group">
           <label htmlFor="githubAuthToken">{t("settings.merge.gitHubPersonalAccessToken", "GitHub personal access token")}</label>
           <input id="githubAuthToken" type="password" className="input" value={form.githubAuthToken ?? ""} onChange={(e) => setForm((f) => ({ ...f, githubAuthToken: e.target.value || undefined }))}/>
@@ -440,18 +481,24 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           </small>
         </details>
       </div>
-      <div className="form-group">
-        <label htmlFor="mergeStrategyOverlapBehavior">{t("settings.merge.smartPreferMainOverlapGuard", "Smart Prefer Main Overlap Guard")}</label>
-        <select id="mergeStrategyOverlapBehavior" value={form.mergeStrategyOverlapBehavior ?? "flip-to-prefer-branch"} onChange={(e) => setForm((f) => ({
+      <SettingsSelectRow
+        descriptor={{
+          key: "mergeStrategyOverlapBehavior",
+          label: t("settings.merge.smartPreferMainOverlapGuard", "Smart Prefer Main Overlap Guard"),
+          help: t("settings.merge.whenUsingSmartPreferMainAutomaticallyPreferThe", " When using smart-prefer-main, automatically prefer the branch side for files that main has recently modified to avoid silently discarding branch work. "),
+          scope: "project",
+          options: [
+            { value: "flip-to-prefer-branch", label: t("settings.merge.flipOverlappingFilesToPreferTheTaskBranch", "Flip overlapping files to prefer the task branch (default)") },
+            { value: "warn-only", label: t("settings.merge.warnOnlyKeepLegacyMainWinsFallback", "Warn only \u2014 keep legacy main-wins fallback") },
+            { value: "ignore", label: t("settings.merge.ignoreOverlapDetectionPreserveLegacyBehavior", "Ignore overlap detection \u2014 preserve legacy behavior") },
+          ],
+        }}
+        value={form.mergeStrategyOverlapBehavior ?? "flip-to-prefer-branch"}
+        onChange={(v) => setForm((f) => ({
                 ...f,
-                mergeStrategyOverlapBehavior: e.target.value as "flip-to-prefer-branch" | "warn-only" | "ignore",
-            }))}>
-          <option value="flip-to-prefer-branch">{t("settings.merge.flipOverlappingFilesToPreferTheTaskBranch", "Flip overlapping files to prefer the task branch (default)")}</option>
-          <option value="warn-only">{t("settings.merge.warnOnlyKeepLegacyMainWinsFallback", "Warn only \u2014 keep legacy main-wins fallback")}</option>
-          <option value="ignore">{t("settings.merge.ignoreOverlapDetectionPreserveLegacyBehavior", "Ignore overlap detection \u2014 preserve legacy behavior")}</option>
-        </select>
-        <small>{t("settings.merge.whenUsingSmartPreferMainAutomaticallyPreferThe", " When using smart-prefer-main, automatically prefer the branch side for files that main has recently modified to avoid silently discarding branch work. ")}</small>
-      </div>
+                mergeStrategyOverlapBehavior: v as "flip-to-prefer-branch" | "warn-only" | "ignore",
+            }))}
+      />
       <div className="form-group">
         <label htmlFor="postMergeAuditMode">{t("settings.merge.postMergeAuditMode", "Post-merge audit mode")}</label>
         <select className="select" id="postMergeAuditMode" value={form.postMergeAuditMode ?? "warn"} onChange={(e) => setForm((f) => ({

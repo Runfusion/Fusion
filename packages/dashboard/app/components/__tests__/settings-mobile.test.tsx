@@ -435,7 +435,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     const picker = getByLabelText("Settings Section") as HTMLSelectElement;
     const labels = Array.from(picker.options).map((opt) => opt.textContent);
-    expect(labels).toEqual(["Global — MCP Servers", "Project — MCP Servers"]);
+    expect(labels).toEqual(["MCP Servers · Global", "MCP Servers · Project"]);
     expect(Array.from(picker.options).map((opt) => opt.value)).toEqual(["global-mcp", "mcp"]);
 
     await user.clear(search);
@@ -445,10 +445,17 @@ describe("SettingsModal mobile adaptations", () => {
     expect(getByText("No sections match this search.")).toBeTruthy();
   });
 
-  // FN-7552: the Authentication section is storage-less (scope: undefined) but belongs to the
-  // Global group in SETTINGS_SECTIONS, so its mobile picker option must still carry the
-  // "Global — " prefix like its Global-group siblings, without changing scoped sibling labels.
-  it("prefixes the storage-less Authentication section with 'Global —' in the mobile picker", async () => {
+  /*
+  FN-7552: the Authentication section is storage-less (scope: undefined) but is global in effect —
+  it holds credentials shared across every project — so its mobile picker option must still read as
+  Global, without changing scoped sibling labels.
+  FNXC:SettingsNavigation 2026-07-15-17:35: the requirement is unchanged; only the notation moved
+  from a "Global — " prefix to a " · Global" suffix, matching the nav labels now that the nav is
+  grouped by topic. FN-7552 originally derived this from Authentication sitting under a group header
+  literally labelled "Global"; no such group exists any more, so SettingsModal names the exception
+  explicitly via STORAGE_LESS_GLOBAL_SECTION_IDS.
+  */
+  it("marks the storage-less Authentication section as Global in the mobile picker", async () => {
     mockSettingsViewport(true);
     const { getByLabelText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
@@ -456,9 +463,9 @@ describe("SettingsModal mobile adaptations", () => {
     const picker = getByLabelText("Settings Section") as HTMLSelectElement;
     const optionByValue = (value: string) => Array.from(picker.options).find((opt) => opt.value === value);
 
-    expect(optionByValue("authentication")?.textContent).toBe("Global — Authentication");
-    expect(optionByValue("global-mcp")?.textContent).toBe("Global — MCP Servers");
-    expect(optionByValue("mcp")?.textContent).toBe("Project — MCP Servers");
+    expect(optionByValue("authentication")?.textContent).toBe("Authentication · Global");
+    expect(optionByValue("global-mcp")?.textContent).toBe("MCP Servers · Global");
+    expect(optionByValue("mcp")?.textContent).toBe("MCP Servers · Project");
   });
 
   it("can open memory settings from the mobile section picker", async () => {
@@ -571,7 +578,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     // Authentication is first with no scope banner by default - click the Project-scoped General section
     expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
-    await user.click(getByText("Project General"));
+    await user.click(getByText("General · Project"));
 
     // Verify project scope banner contains icon elements (SVG from Lucide, not emoji)
     const projectBanner = container.querySelector(".settings-scope-project");

@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Globe, CheckCircle, AlertTriangle } from "lucide-react";
 import { updateRemoteSettings, startRemoteTunnel, stopRemoteTunnel, killExternalTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteUrl, fetchRemoteQr, type RemoteSettings, type RemoteStatus, } from "../../../api";
 import type { ToastType } from "../../../hooks/useToast";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
 import type { SectionBaseProps, SettingsFormState } from "./context";
 export interface RemoteSectionData {
     projectId?: string;
@@ -52,6 +54,21 @@ export interface RemoteSectionProps extends SectionBaseProps {
     scopeBanner: ReactNode;
     remote: RemoteSectionData;
 }
+/*
+FNXC:SettingsScope 2026-07-15-17:35:
+Remote rows carry the "global" badge because these flattened form fields are not standalone settings keys: the shell's save-split (settings/save-split.ts, buildRemoteAccessPatch) folds them into the nested `remoteAccess` object, and `remoteAccess` is declared in DEFAULT_GLOBAL_SETTINGS. A tunnel belongs to the machine, not to one project, so the badge tells an operator these travel across every project on this node.
+Descriptor keys stay FLAT (`remoteShortLivedTtlMs`), not dotted, because flat is genuinely what `form.<key>` holds here — the flattening happens in the form, and the dotted-leaf idiom is only for sections that read `form.blob.leaf` directly.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+Migrated rows are pulled OUT of their `form-group` wrappers instead of being nested inside them: `.form-group label` (narrowed further by `.settings-content .form-group label:not(.checkbox-label)`) out-specifies `.settings-field-row-label`, so a nested row would render its label uppercase/muted — the exact treatment the primitives retire. Wrappers are kept only around the bespoke content that still needs their inset.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+Deliberately NOT migrated, and why:
+- The provider radio group (`remoteActiveProvider`) is a two-card radiogroup with provider icons, not a select.
+- `remoteCloudflareQuickTunnel` is driven by the Advanced disclosure's open/closed state, not by a checkbox.
+- The named-tunnel trio (`remoteCloudflareTunnelName`/`TunnelToken`/`IngressUrl`) stays whole inside that disclosure: `remoteCloudflareTunnelToken` is type="password" and SettingsTextRow hard-codes type="text", which would render the tunnel token UNMASKED. Splitting the other two out would strand the token alone.
+- The Auth Links block (`remoteAuthLinkTokenType` select) stays with the buttons and URL/QR output it configures; it is also local UI state, not a settings key.
+*/
 export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSectionProps) {
     const { t } = useTranslation("app");
     const { projectId, addToast, remoteStatus, externalTunnel, tunnelShareLink, remoteBusyAction, cloudflaredInstalling, cloudflaredInstallError, cloudflaredManualInstallCommand, cloudflaredMacFallbackCommand, handleInstallCloudflared, runRemoteAction, remoteShortLivedToken, setRemoteShortLivedToken, remoteAuthLinkTokenType, setRemoteAuthLinkTokenType, remoteUrlPreview, setRemoteUrlPreview, remoteQrSvg, setRemoteQrSvg, } = remote;
@@ -182,13 +199,22 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
           </div>
         </div>)}
 
-      {activeProvider && (<div className="form-group remote-provider-settings">
-          {activeProvider === "tailscale" ? (<>
-              <small>{t("settings.remote.tailscaleFunnelWillExposeThisDashboardOnYour", "Tailscale Funnel will expose this dashboard on your tailnet's public ")}{`https://<machine>.<tailnet>.ts.net/`}{t("settings.remote.uRLNoHostnameOrPortConfigurationNeeded", " URL \u2014 no hostname or port configuration needed.")}</small>
-              <label htmlFor="remoteTailscaleAcceptRoutes" className="checkbox-label">
-                <input id="remoteTailscaleAcceptRoutes" type="checkbox" checked={Boolean(remoteForm.remoteTailscaleAcceptRoutes)} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleAcceptRoutes: e.target.checked } as SettingsFormState))}/>{t("settings.remote.acceptRoutes", " Accept routes ")}</label>
-              <small>{t("settings.remote.acceptRoutesHint", "Default: disabled.")}</small>
-            </>) : (<>
+      {activeProvider === "tailscale" && (<>
+          <div className="form-group remote-provider-settings">
+            <small>{t("settings.remote.tailscaleFunnelWillExposeThisDashboardOnYour", "Tailscale Funnel will expose this dashboard on your tailnet's public ")}{`https://<machine>.<tailnet>.ts.net/`}{t("settings.remote.uRLNoHostnameOrPortConfigurationNeeded", " URL \u2014 no hostname or port configuration needed.")}</small>
+          </div>
+          <SettingsToggleRow
+            descriptor={{
+              key: "remoteTailscaleAcceptRoutes",
+              label: t("settings.remote.acceptRoutes", " Accept routes "),
+              help: t("settings.remote.acceptRoutesHint", "Default: disabled."),
+              scope: "global",
+            }}
+            value={Boolean(remoteForm.remoteTailscaleAcceptRoutes)}
+            onChange={(v) => setForm((f) => ({ ...f, remoteTailscaleAcceptRoutes: v === true } as SettingsFormState))}
+          />
+        </>)}
+      {activeProvider === "cloudflare" && (<div className="form-group remote-provider-settings">
               <small>
                 {(remoteForm.remoteCloudflareQuickTunnel ?? true)
                     ? t("settings.remote.usingQuickTunnel", "Using Quick Tunnel — automatically creates a random trycloudflare.com URL, no account needed. Default: enabled.")
@@ -215,7 +241,6 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
                     <input id="remoteCloudflareIngressUrl" type="text" placeholder={t("settings.remote.httpsYourDomainExample", "https://your-domain.example")} value={String(remoteForm.remoteCloudflareIngressUrl ?? "")} onChange={(e) => setForm((f) => ({ ...f, remoteCloudflareIngressUrl: e.target.value } as SettingsFormState))}/>
                   </div>) : null}
               </details>
-            </>)}
         </div>)}
 
       <div className="form-group remote-tunnel-actions">
@@ -263,20 +288,46 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
 
       <details className="remote-advanced-details">
         <summary>{t("settings.remote.advancedSettings", "Advanced Settings")}</summary>
-        <div className="form-group">
-          <label htmlFor="remoteShortLivedEnabled" className="checkbox-label">
-            <input id="remoteShortLivedEnabled" type="checkbox" checked={Boolean(remoteForm.remoteShortLivedEnabled)} onChange={(e) => setForm((f) => ({ ...f, remoteShortLivedEnabled: e.target.checked } as SettingsFormState))}/>{t("settings.remote.enableShortLivedTokens", " Enable short-lived tokens ")}</label>
-          <small>{t("settings.remote.shortLivedEnabledHint", "Default: disabled.")}</small>
-          <label htmlFor="remoteShortLivedTtlMs">{t("settings.remote.shortLivedTTLMs", "Short-lived TTL (ms)")}</label>
-          <input id="remoteShortLivedTtlMs" type="number" min={60000} max={86400000} value={Number(remoteForm.remoteShortLivedTtlMs ?? 900000)} onChange={(e) => setForm((f) => ({ ...f, remoteShortLivedTtlMs: Number(e.target.value || 900000) } as SettingsFormState))}/>
-          <small>{t("settings.remote.shortLivedTtlMsHint", "Default: 900000 (15 minutes).")}</small>
-          {remoteShortLivedToken && <small>{t("settings.remote.lastShortLivedTokenExpiresAt", "Last short-lived token expires at ")}{new Date(remoteShortLivedToken.expiresAt).toLocaleString()} ({remoteShortLivedToken.ttlMs}{t("settings.remote.ms", "ms)")}</small>}
-        </div>
-        <div className="form-group">
-          <label htmlFor="remoteRememberLastRunning" className="checkbox-label">
-            <input id="remoteRememberLastRunning" type="checkbox" checked={Boolean(remoteForm.remoteRememberLastRunning)} onChange={(e) => setForm((f) => ({ ...f, remoteRememberLastRunning: e.target.checked } as SettingsFormState))}/>{t("settings.remote.rememberLastRunningState", " Remember last running state ")}</label>
-          <small>{t("settings.remote.automaticallyRestoreTunnelOnStartupIfItWas", "Automatically restore tunnel on startup if it was running when last stopped. Default: disabled.")}</small>
-        </div>
+        <SettingsToggleRow
+          descriptor={{
+            key: "remoteShortLivedEnabled",
+            label: t("settings.remote.enableShortLivedTokens", " Enable short-lived tokens "),
+            help: t("settings.remote.shortLivedEnabledHint", "Default: disabled."),
+            scope: "global",
+          }}
+          value={Boolean(remoteForm.remoteShortLivedEnabled)}
+          onChange={(v) => setForm((f) => ({ ...f, remoteShortLivedEnabled: v === true } as SettingsFormState))}
+        />
+        {/*
+        FNXC:RemoteTokens 2026-07-15-17:35:
+        The TTL stays enabled even when short-lived tokens are off: the Advanced "Generate short-lived token" / URL / QR actions below read this value directly, so it is live regardless of the toggle.
+        A cleared field settles back to the 900000 default rather than to null — the token generators would otherwise mint a NaN TTL. Only an EMPTY field defaults: a typed 0 stores 0, matching the hand-rolled `Number(e.target.value || 900000)` where the string "0" is truthy and survives. Coercing 0 to the default here would silently rewrite an operator's input.
+        */}
+        <SettingsNumberRow
+          descriptor={{
+            key: "remoteShortLivedTtlMs",
+            label: t("settings.remote.shortLivedTTLMs", "Short-lived TTL (ms)"),
+            help: t("settings.remote.shortLivedTtlMsHint", "Default: 900000 (15 minutes)."),
+            scope: "global",
+            min: 60000,
+            max: 86400000,
+          }}
+          value={Number(remoteForm.remoteShortLivedTtlMs ?? 900000)}
+          onChange={(v) => setForm((f) => ({ ...f, remoteShortLivedTtlMs: v === null ? 900000 : v } as SettingsFormState))}
+        />
+        {remoteShortLivedToken && (<div className="form-group">
+          <small>{t("settings.remote.lastShortLivedTokenExpiresAt", "Last short-lived token expires at ")}{new Date(remoteShortLivedToken.expiresAt).toLocaleString()} ({remoteShortLivedToken.ttlMs}{t("settings.remote.ms", "ms)")}</small>
+        </div>)}
+        <SettingsToggleRow
+          descriptor={{
+            key: "remoteRememberLastRunning",
+            label: t("settings.remote.rememberLastRunningState", " Remember last running state "),
+            help: t("settings.remote.automaticallyRestoreTunnelOnStartupIfItWas", "Automatically restore tunnel on startup if it was running when last stopped. Default: disabled."),
+            scope: "global",
+          }}
+          value={Boolean(remoteForm.remoteRememberLastRunning)}
+          onChange={(v) => setForm((f) => ({ ...f, remoteRememberLastRunning: v === true } as SettingsFormState))}
+        />
         <div className="form-group">
           <label>{t("settings.remote.authLinks", "Auth Links")}</label>
           <div className="settings-button-row">

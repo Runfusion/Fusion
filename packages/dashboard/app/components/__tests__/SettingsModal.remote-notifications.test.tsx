@@ -1211,7 +1211,7 @@ describe("SettingsModal", () => {
     });
 
     const openResearchGlobalSection = async () => {
-      await settingsModalUser.click(await screen.findByRole("button", { name: /Research Defaults/i }));
+      await settingsModalUser.click(await screen.findByRole("button", { name: /Research · Global/i }));
     };
 
     const openResearchProjectSection = async () => {

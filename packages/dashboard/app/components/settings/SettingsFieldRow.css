@@ -4,15 +4,84 @@
  * redesigned SettingsModal and the WorkflowSettingsPanel read identically.
  * Mirrors the token/class conventions of WorkflowFieldsPanel.css. */
 
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+Every settings row must render from one type scale, because the pre-migration modal styled a text field's label and a toggle's label three different ways inside the same section: `.form-group label` (12px/600/uppercase/muted), a `.settings-content` override narrowing that to 0.72rem, and `.checkbox-label` (13px/500/sentence-case) whose declarations each carried `!important` purely to out-specify the first two.
+Sizes name shared `--font-size-*` rungs rather than raw values so the scale stays auditable: label = sm, help/error = xs, scope badge = 2xs.
+Sentence-case at weight 500 is the surviving idiom; the uppercase/muted treatment is dropped because a settings label names its control rather than heading a column.
+Rows carry no horizontal padding — `.settings-content` already owns the inset, and a second one would double-indent every row.
+*/
+
 .settings-field-row {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
   padding: var(--space-sm) 0;
+  scroll-margin-block: var(--space-xl);
 }
 
 .settings-field-row.is-disabled {
   opacity: 0.6;
+}
+
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+Inline rows (booleans) sit the control on the label's line. The help text then hangs beneath BOTH, indented past the control so it aligns with the label it explains rather than with the checkbox — without the indent the copy starts under the box and the column of help text no longer lines up with the column of labels.
+The indent is derived from the control's own width plus the head gap, so it tracks the checkbox rather than being a magic number.
+*/
+.settings-field-row--inline {
+  --settings-inline-control-width: 13px;
+}
+
+.settings-field-row--inline .settings-field-row-head {
+  gap: var(--space-sm);
+}
+
+.settings-field-row--inline .settings-field-row-label {
+  cursor: pointer;
+}
+
+.settings-field-row--inline .settings-field-row-help,
+.settings-field-row--inline .settings-field-row-error {
+  padding-inline-start: calc(var(--settings-inline-control-width) + var(--space-sm));
+}
+
+/*
+FNXC:SettingsSearch 2026-07-15-17:35:
+Jump-to-field: choosing a search result scrolls that row into view and flags it here, so the eye lands on the right control inside a long section instead of on the section's top.
+The hold is deliberately longer than any `--duration-*` UI-transition token (those top out at 0.3s, which reads as a flicker on a row the operator is still hunting for), so the timing is a named local property rather than a borrowed token.
+It must stay a duration-only value: `--transition-*` tokens bundle an easing keyword, and substituting one beside `ease-out` yields two easing functions, which invalidates the declaration and silently resolves to `animation: none` (the failure that froze 14 spinners in FN-5855).
+The wash paints background and box-shadow only — never a border or padding — so a landing row does not reflow its neighbours by a pixel.
+`scroll-margin-block` keeps the landed row clear of the section chrome rather than flush beneath it.
+*/
+.settings-field-row {
+  --settings-search-match-duration: 1.6s;
+  --settings-search-match-tint: color-mix(in srgb, var(--accent, #7c5cbf) 18%, transparent);
+}
+
+.settings-field-row.is-search-match {
+  border-radius: var(--radius-sm);
+  animation: settings-field-row-match var(--settings-search-match-duration) ease-out;
+}
+
+@keyframes settings-field-row-match {
+  0%,
+  60% {
+    background: var(--settings-search-match-tint);
+    box-shadow: 0 0 0 var(--space-xs) var(--settings-search-match-tint);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 var(--space-xs) transparent;
+  }
+}
+
+/* FNXC:SettingsStyling 2026-07-15-17:35: A reduced-motion operator still needs to see which row matched, so the wash resolves to a static hold instead of being animated away entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .settings-field-row.is-search-match {
+    animation: none;
+    background: var(--settings-search-match-tint);
+  }
 }
 
 .settings-field-row-head {
@@ -23,13 +92,14 @@
 }
 
 .settings-field-row-label {
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
   font-weight: 500;
+  line-height: var(--line-height-tight);
   color: var(--text);
 }
 
 .settings-field-row-scope {
-  font-size: 0.6rem;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -50,11 +120,17 @@
   gap: var(--space-xs);
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+Controls hold the 38px min-height the pre-migration `.settings-content` rule gave inputs, so a migrated row keeps its touch target and does not visibly shrink beside a not-yet-migrated one during the rollout.
+*/
 .settings-field-row-control > input:not([type="checkbox"]),
 .settings-field-row-control > select,
 .settings-field-row-control > textarea {
   flex: 1;
   min-width: 0;
+  min-height: 38px;
+  box-sizing: border-box;
 }
 
 .settings-field-row-clear {
@@ -81,14 +157,19 @@
   opacity: 0.5;
 }
 
+/* FNXC:SettingsStyling 2026-07-15-17:35: Help copy keeps the 78ch measure and `pretty` wrapping that the pre-migration `.settings-content .form-group small` rule gave long setting descriptions; without the cap it would run the full width of a resized modal. */
 .settings-field-row-help {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  max-width: 78ch;
+  text-wrap: pretty;
   color: var(--text-muted);
 }
 
 .settings-field-row-error {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
   color: var(--color-error, #f85149);
 }

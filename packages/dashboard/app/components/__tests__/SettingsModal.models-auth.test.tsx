@@ -216,7 +216,7 @@ describe("SettingsModal", () => {
       });
 
       await expectSettingPersists({
-        section: "models",
+        section: "models · global",
         label: "Sync opencode-go model list at startup",
         kind: "checkbox",
         value: false,
@@ -235,7 +235,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Global" }));
       await settingsModalUser.click(screen.getByText("OpenRouter advanced"));
 
       expect(screen.getByLabelText("OpenRouter HTTP-Referer")).toBeInTheDocument();
@@ -302,7 +302,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.getByText(/The Project Default Model is the fallback for this project/i)).toBeInTheDocument();
 
@@ -334,7 +334,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
       await settingsModalUser.click(screen.getByLabelText("Project Default Model"));
       await settingsModalUser.click(screen.getByText("GPT-4o"));
       await settingsModalUser.click(screen.getByText("Save"));
@@ -608,7 +608,7 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(await screen.findByText("GPT-4o"));
       expect(within(screen.getByTestId("workflow-model-lane-planning")).getByText("GPT-4o")).toBeInTheDocument();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "General" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "General · Global" }));
       await waitFor(() => {
         expect(screen.queryByTestId("workflow-model-lane-planning")).not.toBeInTheDocument();
       });

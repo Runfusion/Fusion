@@ -6265,8 +6265,8 @@
         "global": "Partagé entre tous les projets",
         "project": "Spécifique à ce projet"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6718,11 +6718,13 @@
       "allSections": "",
       "clear": "",
       "label": "",
+      "moreResults": "",
       "navigationLabel": "",
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": ""
+      "resultCount": "",
+      "settingResultCount": ""
     },
     "prompts": {
       "surfaceExplanation": ""

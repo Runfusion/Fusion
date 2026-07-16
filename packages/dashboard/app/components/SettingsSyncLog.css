@@ -1,3 +1,4 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: Sync-log rows previously hardcoded 11px/12px/13px, which drifted from the rest of Settings. Rows and filters now name the shared scale rungs (2xs for result/status pills, xs for row copy, sm for the empty state) so one token edit retunes the whole log. */
 /* === SettingsSyncLog === */
 .settings-sync-log {
   display: flex;
@@ -50,12 +51,12 @@
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
 .settings-sync-log__filters select {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   padding: 4px 8px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -87,7 +88,7 @@
 }
 
 .settings-sync-log__entry-timestamp {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   min-width: 140px;
 }
@@ -102,7 +103,7 @@
   display: inline-flex;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 500;
 }
 
@@ -123,11 +124,11 @@
 
 .settings-sync-log__entry-node {
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .settings-sync-log__entry-details {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -139,7 +140,7 @@
   text-align: center;
   color: var(--text-muted);
   padding: var(--space-md);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 .node-badge {
@@ -150,7 +151,7 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   width: fit-content;
   margin-top: 4px;
 }

@@ -3,12 +3,24 @@ import type { Settings } from "@fusion/core";
 import type { AuthProvider } from "../../../api";
 import type { SectionId } from "../../SettingsModal";
 import type { SectionBaseProps } from "./context";
+import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import { useTranslation } from "react-i18next";
 export interface ResearchGlobalSectionProps extends SectionBaseProps {
     scopeBanner: ReactNode;
     authProviders: AuthProvider[];
     onNavigateToSection: (section: SectionId) => void;
 }
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+The plain label+control+help rows inside the advanced disclosure render through the shared settings primitives instead of hand-rolled `form-group` markup, so their labels, help copy, and padding come from the one settings type scale. `.form-group` itself stays untouched and global — 35 non-settings files style forms with it, so settings migrate off it rather than restyle it underneath the rest of the dashboard.
+
+FNXC:SettingsScope 2026-07-15-17:35:
+Every migrated key here is global (`DEFAULT_GLOBAL_SETTINGS`): a search provider and its endpoint/engine ids are machine-wide research credentials-adjacent config, not per-repository policy. The badges restate that per row because settings search can land an operator on a single control with no section chrome in view.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+Four groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the built-in/external provider radio and its `<details>` disclosure, the limits grid (`settings-research-limit-field`), the Enabled Sources grid pairing an always-on locked Web Search row with per-source inline hints, and the two credential empty-state notes that carry navigation buttons.
+*/
 export function ResearchGlobalSection({ scopeBanner, form, setForm, authProviders, onNavigateToSection, }: ResearchGlobalSectionProps) {
     const { t } = useTranslation("app");
     const resolvedProvider = form.researchGlobalWebSearchProvider ??
@@ -42,31 +54,54 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
         <details className="settings-option-details settings-research-provider-advanced-details">
           <summary>{t("settings.researchGlobal.advancedExternalSearchProviders", "Advanced \u2014 external search providers")}</summary>
           <div className="settings-research-provider-advanced-body">
-            <div className="form-group">
-              <label htmlFor="research-global-search-provider-advanced">{t("settings.researchGlobal.searchProvider", "Search Provider")}</label>
-              <select id="research-global-search-provider-advanced" className="input" value={externalProvider ? resolvedProvider : "searxng"} onChange={(event) => setSearchProvider(event.target.value as Settings["researchGlobalWebSearchProvider"])}>
-                <option value="searxng">{t("settings.researchGlobal.searXNG", "SearXNG")}</option>
-                <option value="brave">{t("settings.researchGlobal.brave", "Brave")}</option>
-                <option value="google">{t("settings.researchGlobal.googleCustomSearch", "Google Custom Search")}</option>
-                <option value="tavily">{t("settings.researchGlobal.tavily", "Tavily")}</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label htmlFor="research-global-searxng-url">{t("settings.researchGlobal.searXNGURL", "SearXNG URL")}</label>
-              <input id="research-global-searxng-url" className="input" value={form.researchGlobalSearxngUrl ?? ""} onChange={(event) => setForm((current) => ({
+            {/*
+            FNXC:ResearchProviders 2026-07-15-17:35:
+            The select shows `searxng` while the built-in radio is chosen so the disclosure always presents a concrete external option to switch to; picking any option here is what flips the radio off, since both controls write the same `researchGlobalWebSearchProvider` key.
+            */}
+            <SettingsSelectRow
+              descriptor={{
+                key: "researchGlobalWebSearchProvider",
+                label: t("settings.researchGlobal.searchProvider", "Search Provider"),
+                scope: "global",
+                options: [
+                  { value: "searxng", label: t("settings.researchGlobal.searXNG", "SearXNG") },
+                  { value: "brave", label: t("settings.researchGlobal.brave", "Brave") },
+                  { value: "google", label: t("settings.researchGlobal.googleCustomSearch", "Google Custom Search") },
+                  { value: "tavily", label: t("settings.researchGlobal.tavily", "Tavily") },
+                ],
+              }}
+              value={externalProvider ? resolvedProvider : "searxng"}
+              onChange={(v) => setSearchProvider(v as Settings["researchGlobalWebSearchProvider"])}
+            />
+            {/* FNXC:ResearchProviders 2026-07-15-17:35: An emptied endpoint/engine id stores `undefined`, not "", so the key is absent from the settings blob and the provider falls back to unset rather than being configured with a blank URL. */}
+            <SettingsTextRow
+              descriptor={{
+                key: "researchGlobalSearxngUrl",
+                label: t("settings.researchGlobal.searXNGURL", "SearXNG URL"),
+                help: t("settings.researchGlobal.searXNGURLHint", "No default \u2014 unset."),
+                scope: "global",
+                placeholder: t("settings.researchGlobal.httpsSearxExampleCom", "https://searx.example.com"),
+              }}
+              value={form.researchGlobalSearxngUrl ?? null}
+              onChange={(v) => setForm((current) => ({
             ...current,
-            researchGlobalSearxngUrl: event.target.value || undefined,
-        }))} placeholder={t("settings.researchGlobal.httpsSearxExampleCom", "https://searx.example.com")}/>
-              <small>{t("settings.researchGlobal.searXNGURLHint", "No default \u2014 unset.")}</small>
-            </div>
-            <div className="form-group">
-              <label htmlFor="research-global-google-cx">{t("settings.researchGlobal.googleSearchCX", "Google Search CX")}</label>
-              <input id="research-global-google-cx" className="input" value={form.researchGlobalGoogleSearchCx ?? ""} onChange={(event) => setForm((current) => ({
+            researchGlobalSearxngUrl: v || undefined,
+        }))}
+            />
+            <SettingsTextRow
+              descriptor={{
+                key: "researchGlobalGoogleSearchCx",
+                label: t("settings.researchGlobal.googleSearchCX", "Google Search CX"),
+                help: t("settings.researchGlobal.googleSearchCXHint", "No default \u2014 unset."),
+                scope: "global",
+                placeholder: t("settings.researchGlobal.customSearchEngineId", "custom-search-engine-id"),
+              }}
+              value={form.researchGlobalGoogleSearchCx ?? null}
+              onChange={(v) => setForm((current) => ({
             ...current,
-            researchGlobalGoogleSearchCx: event.target.value || undefined,
-        }))} placeholder={t("settings.researchGlobal.customSearchEngineId", "custom-search-engine-id")}/>
-              <small>{t("settings.researchGlobal.googleSearchCXHint", "No default \u2014 unset.")}</small>
-            </div>
+            researchGlobalGoogleSearchCx: v || undefined,
+        }))}
+            />
             <div className="settings-empty-state settings-research-empty-state" role="note">{t("settings.researchGlobal.configureBraveTavilyAndGoogleAPIKeysIn", " Configure Brave, Tavily, and Google API keys in Authentication. ")}<button type="button" className="btn btn-sm" onClick={() => onNavigateToSection("authentication")}>{t("settings.researchGlobal.openAuthenticationSettings", " Open Authentication Settings ")}</button>
             </div>
           </div>

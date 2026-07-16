@@ -6265,8 +6265,8 @@
         "global": "在所有專案中共用",
         "project": "特定於此專案"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "",
@@ -6718,11 +6718,13 @@
       "allSections": "",
       "clear": "",
       "label": "",
+      "moreResults": "",
       "navigationLabel": "",
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": ""
+      "resultCount": "",
+      "settingResultCount": ""
     },
     "prompts": {
       "surfaceExplanation": ""

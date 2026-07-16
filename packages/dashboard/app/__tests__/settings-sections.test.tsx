@@ -107,9 +107,12 @@ describe("AppearanceSection", () => {
 
   it("round-trips the session-banner toggle through its setter", () => {
     render(<AppearanceHost />);
-    const toggle = screen.getByText("Hide AI session notification banners")
-      .closest("label")!
-      .querySelector("input[type=checkbox]") as HTMLInputElement;
+    /*
+    FNXC:SettingsStyling 2026-07-15-17:35:
+    Resolved through the label→control association rather than by walking the DOM. The old `getByText(...).closest("label").querySelector("input")` assumed the label ELEMENT wrapped the checkbox, which was the `checkbox-label` markup's shape; the shared row primitive binds `htmlFor`/`id` instead, so the label is now a sibling of the control and the walk returned null.
+    `getByLabelText` asserts the binding an assistive technology actually uses, so it survives markup changes and additionally fails if that binding is ever broken — which the DOM walk could not detect.
+    */
+    const toggle = screen.getByLabelText("Hide AI session notification banners") as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     fireEvent.click(toggle);
     expect(toggle.checked).toBe(true);

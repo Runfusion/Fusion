@@ -19,6 +19,9 @@ export interface KeyboardShortcutsSectionProps extends SectionBaseProps {
 /*
 FNXC:DashboardShortcuts 2026-07-04-00:00:
 FN-7553 promotes keyboard shortcuts from two bare inputs buried in Global General to their own dedicated settings section, grouped by category (Communication/Workspace/Navigation/Tasks from SHORTCUT_CATEGORIES) with a press-to-record capture control per row. `dashboardKeyboardShortcuts` ownership moved here from `global-general` (save-split.ts GLOBAL_SECTION_KEYS + section-keys.ts) so exactly one section owns the key for save/reset.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+This section stays off the shared settings row primitives, unlike its neighbors. It renders no plain setting: every row is a ShortcutCaptureInput bound to one action inside the single `dashboardKeyboardShortcuts` map, and its per-row `small` carries live capture validation (`normalizeKeyboardShortcut` errors) rather than static help copy. A descriptor row keys on a settings field name and there is no field per shortcut — so there is nothing here for a toggle/text/select row to own, and no `.search.ts` sibling. Shortcut discovery is served by the nav entry's `searchableText` in SettingsModal instead.
 */
 export function KeyboardShortcutsSection({ scopeBanner, form, setForm }: KeyboardShortcutsSectionProps) {
   const { t } = useTranslation("app");

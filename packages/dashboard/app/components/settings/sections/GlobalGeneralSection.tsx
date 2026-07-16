@@ -3,6 +3,8 @@ import type { GlobalSettings } from "@fusion/core";
 import { resolvePersistAgentThinkingLog } from "@fusion/core";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { CliBinaryPanel } from "../../CliBinaryPanel";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
 export interface GlobalGeneralSectionProps extends SectionBaseProps {
@@ -13,6 +15,12 @@ export interface GlobalGeneralSectionProps extends SectionBaseProps {
     globalTrackingRepoLoading: boolean;
     globalTrackingRepoError: string | null;
 }
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+Plain settings rows render through the shared primitives rather than hand-rolled `form-group` + `checkbox-label` markup, so labels, help copy, and padding come from one type scale. `.form-group` stays global and untouched — 35 non-settings files style forms with it.
+The migrated keys are all global-tier (DEFAULT_GLOBAL_SETTINGS), so each carries a "global" badge stating that it travels between projects.
+Rows that stay bespoke are the ones whose copy a single-string descriptor cannot carry without rewording it: the `fn` binary check, the update-check toggle, and the thinking-log group all build label or help from `t()` fragments interleaved with `<code>` tags. The thinking-log pair additionally shares ONE help string across two checkboxes, which no per-row descriptor models. The tracking-repo select, the GitLab disclosure, and CliBinaryPanel are custom widgets.
+*/
 export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSettings, onGlobalGitlabSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: GlobalGeneralSectionProps) {
     const { t } = useTranslation("app");
     const globalGitlab = globalSettings ?? form;
@@ -65,16 +73,26 @@ export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSetting
         </div>
       </details>
       <CliBinaryPanel />
-      <div className="form-group">
-        <label htmlFor="dismissModalsOnOutsideClick" className="checkbox-label">
-          <input id="dismissModalsOnOutsideClick" type="checkbox" checked={form.dismissModalsOnOutsideClick === true} onChange={(e) => setForm((f) => ({ ...f, dismissModalsOnOutsideClick: e.target.checked }))}/>{t("settings.globalGeneral.dismissModalsByClickingOutside", " Dismiss modals by clicking outside ")}</label>
-        <small>{t("settings.globalGeneral.dismissModalsByClickingOutsideHint", " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. ")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="persistAgentToolOutput" className="checkbox-label">
-          <input id="persistAgentToolOutput" type="checkbox" checked={form.persistAgentToolOutput === true} onChange={(e) => setForm((f) => ({ ...f, persistAgentToolOutput: e.target.checked }))}/>{t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs ")}</label>
-        <small>{t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "dismissModalsOnOutsideClick",
+          label: t("settings.globalGeneral.dismissModalsByClickingOutside", " Dismiss modals by clicking outside "),
+          help: t("settings.globalGeneral.dismissModalsByClickingOutsideHint", " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. "),
+          scope: "global",
+        }}
+        value={form.dismissModalsOnOutsideClick === true}
+        onChange={(v) => setForm((f) => ({ ...f, dismissModalsOnOutsideClick: v === true }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
+          key: "persistAgentToolOutput",
+          label: t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs "),
+          help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. "),
+          scope: "global",
+        }}
+        value={form.persistAgentToolOutput === true}
+        onChange={(v) => setForm((f) => ({ ...f, persistAgentToolOutput: v === true }))}
+      />
       <div className="form-group">
         <h5 className="settings-section-heading">{t("settings.globalGeneral.saveAIThinkingLogs", "Save AI thinking logs")}</h5>
         <label htmlFor="persistAgentThinkingLogPermanent" className="checkbox-label">
@@ -97,24 +115,41 @@ export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSetting
         <small>{t("settings.globalGeneral.whenEnabledFusionChecksNpmForNewVersions", " When enabled, Fusion checks npm for new versions of")}{" "}
           <code>@runfusion/fusion</code>{t("settings.globalGeneral.andShowsUpdateNoticesInTheCLIAnd", " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ")}</small>
       </div>
-      <div className="form-group">
-        <label htmlFor="updateCheckFrequency">{t("settings.globalGeneral.frequency", "Frequency")}</label>
-        <select id="updateCheckFrequency" value={form.updateCheckFrequency ?? "daily"} onChange={(e) => setForm((f) => ({
+      {/*
+        FNXC:SettingsGlobalGeneral 2026-07-15-17:35:
+        Frequency is disabled rather than hidden while auto-check is off: it describes a cadence that is
+        not running, and an operator turning checks back on needs to see which cadence will take effect.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "updateCheckFrequency",
+          label: t("settings.globalGeneral.frequency", "Frequency"),
+          help: t("settings.globalGeneral.controlsHowOftenTheDashboardReFetchesThe", " Controls how often the dashboard re-fetches the npm registry. Use the version + refresh control in the header to trigger an immediate check at any time. Default: daily. "),
+          scope: "global",
+          disabled: form.updateCheckEnabled === false,
+          options: [
+            { value: "manual", label: t("settings.globalGeneral.manualOnlyNeverAutoCheck", "Manual only \u2014 never auto-check") },
+            { value: "on-startup", label: t("settings.globalGeneral.onStartupOncePerServerLaunch", "On startup \u2014 once per server launch") },
+            { value: "daily", label: t("settings.globalGeneral.dailyRecommended", "Daily (recommended)") },
+            { value: "weekly", label: t("settings.globalGeneral.weekly", "Weekly") },
+          ],
+        }}
+        value={form.updateCheckFrequency ?? "daily"}
+        onChange={(v) => setForm((f) => ({
             ...f,
-            updateCheckFrequency: e.target.value as "manual" | "on-startup" | "daily" | "weekly",
-        }))} disabled={form.updateCheckEnabled === false}>
-          <option value="manual">{t("settings.globalGeneral.manualOnlyNeverAutoCheck", "Manual only \u2014 never auto-check")}</option>
-          <option value="on-startup">{t("settings.globalGeneral.onStartupOncePerServerLaunch", "On startup \u2014 once per server launch")}</option>
-          <option value="daily">{t("settings.globalGeneral.dailyRecommended", "Daily (recommended)")}</option>
-          <option value="weekly">{t("settings.globalGeneral.weekly", "Weekly")}</option>
-        </select>
-        <small>{t("settings.globalGeneral.controlsHowOftenTheDashboardReFetchesThe", " Controls how often the dashboard re-fetches the npm registry. Use the version + refresh control in the header to trigger an immediate check at any time. Default: daily. ")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="autoReloadOnVersionChange" className="checkbox-label">
-          <input id="autoReloadOnVersionChange" type="checkbox" checked={form.autoReloadOnVersionChange !== false} onChange={(e) => setForm((f) => ({ ...f, autoReloadOnVersionChange: e.target.checked }))}/>{t("settings.globalGeneral.autoReloadDashboardOnVersionChange", " Auto-reload dashboard on version change ")}</label>
-        <small>{t("settings.globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen", " When enabled (default), the dashboard automatically reloads when it detects a new build version \u2014 either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. ")}</small>
-      </div>
+            updateCheckFrequency: v as "manual" | "on-startup" | "daily" | "weekly",
+        }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
+          key: "autoReloadOnVersionChange",
+          label: t("settings.globalGeneral.autoReloadDashboardOnVersionChange", " Auto-reload dashboard on version change "),
+          help: t("settings.globalGeneral.whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen", " When enabled (default), the dashboard automatically reloads when it detects a new build version \u2014 either from server rebuilds or service worker updates. Disable this to stay on the current version until you manually refresh. Default: enabled. "),
+          scope: "global",
+        }}
+        value={form.autoReloadOnVersionChange !== false}
+        onChange={(v) => setForm((f) => ({ ...f, autoReloadOnVersionChange: v === true }))}
+      />
     </>);
 }
 export default GlobalGeneralSection;

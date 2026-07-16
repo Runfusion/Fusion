@@ -120,10 +120,22 @@ html {
   /* Typography */
   --font-primary: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /*
+  FNXC:DashboardStyling 2026-07-15-17:35:
+  The type scale must be complete and gap-free: every rung a component can name has to resolve to a real value.
+  `--font-size-sm` and `--font-size-md` were named by 12 declarations across AgentDetailView, DockTaskList, SetupWizardModal, and ModelOnboardingModal while never being defined anywhere, so those rules silently no-op and the elements inherit instead.
+  The command-center token-validity guard is the only gate that catches this class of omission, and it does not cover these files.
+  Rung semantics, derived from existing call sites: 2xs = badges/scope pills, xs = help and caption copy, sm = control labels and body, base = default body, md = card and section headings (h3/h4), lg = modal titles.
+  md is 1.125rem because unstyled h3 already renders at the 1.17em UA default here (no heading reset exists), so defining it holds current rendering rather than reflowing those views.
+  */
+  --font-size-2xs: 0.6875rem;
   /* FNXC:DashboardStyling 2026-06-19-05:50: FN-6703 defines the xs font-size token so tokenized mobile mailbox tabs satisfy the dashboard CSS token-validity guard without relying on an undefined fallback. */
   --font-size-xs: 0.8rem;
+  --font-size-sm: 0.875rem;
   /* FNXC:DashboardStyling 2026-06-21-11:24: Dashboard components must use defined typography tokens so the raw CSS token-validity gate catches real missing custom properties instead of shared type-scale omissions. */
   --font-size-base: 1rem;
+  --font-size-md: 1.125rem;
+  --font-size-lg: 1.25rem;
   --line-height-tight: 1.25;
 
   /* Spacing Scale */

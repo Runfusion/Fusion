@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { BackupListResponse } from "../../../api";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import type { SectionBaseProps } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 export interface BackupsSectionProps extends SectionBaseProps {
@@ -9,74 +13,146 @@ export interface BackupsSectionProps extends SectionBaseProps {
     backupLoading: boolean;
     onBackupNow: () => void;
 }
+/*
+FNXC:SettingsBackups 2026-07-15-17:35:
+Every schedule/retention/directory row is gated on its own `*Enabled` toggle: the cron, retention count, and target directory only describe an automatic backup that is actually scheduled, so they are disabled rather than hidden — an operator turning backups on needs to see the values that will take effect.
+Per-row validation (cron shape, 1-100 retention range, `..` traversal) rides the primitive's `error` band instead of a trailing `field-error` small, so an invalid value reports against the control that owns it.
+*/
 export function BackupsSection({ scopeBanner, form, setForm, backupInfo, backupLoading, onBackupNow }: BackupsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
       {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.backups.databaseBackups", "Database Backups")}</h4>
-      <div className="form-group">
-        <label htmlFor="autoBackupEnabled" className="checkbox-label">
-          <input id="autoBackupEnabled" type="checkbox" checked={form.autoBackupEnabled || false} onChange={(e) => setForm((f) => ({ ...f, autoBackupEnabled: e.target.checked }))}/>{t("settings.backups.enableAutomaticDatabaseBackups", " Enable automatic database backups ")}</label>
-        <small>{t("settings.backups.whenEnabledTheDatabaseIsBackedUpAutomatically", "When enabled, the database is backed up automatically on a schedule. Default: disabled.")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="autoBackupSchedule">{t("settings.backups.backupScheduleCron", "Backup Schedule (Cron)")}</label>
-        <input id="autoBackupSchedule" type="text" placeholder={t("settings.backups.02", "0 2 * * *")} value={form.autoBackupSchedule || "0 2 * * *"} onChange={(e) => setForm((f) => ({ ...f, autoBackupSchedule: e.target.value }))} disabled={!form.autoBackupEnabled}/>
-        <small>{t("settings.backups.cronExpressionForBackupTimingDefault02", " Cron expression for backup timing. Default: 0 2 * * * (daily at 2 AM). Examples: 0 * * * * (hourly), 0 0 * * 0 (weekly), */15 * * * * (every 15 min) ")}</small>
-        {form.autoBackupSchedule && !/^[\s\d*,/-]+$/.test(form.autoBackupSchedule) && (<small className="field-error">{t("settings.backups.invalidCronExpressionFormat", "Invalid cron expression format")}</small>)}
-      </div>
-      <div className="form-group">
-        <label htmlFor="autoBackupRetention">{t("settings.backups.retentionCount", "Retention Count")}</label>
-        <input id="autoBackupRetention" type="number" min={1} max={100} value={form.autoBackupRetention ?? ""} onChange={(e) => {
-            const val = e.target.value;
-            setForm((f) => ({ ...f, autoBackupRetention: val === "" ? undefined : Number(val) }));
-        }} disabled={!form.autoBackupEnabled}/>
-        <small>{t("settings.backups.numberOfBackupFilesToKeepOldestAre", "Number of backup files to keep (oldest are deleted first). Range: 1-100. Default: 7.")}</small>
-        {form.autoBackupRetention !== undefined && (form.autoBackupRetention < 1 || form.autoBackupRetention > 100) && (<small className="field-error">{t("settings.backups.mustBeBetween1And100", "Must be between 1 and 100")}</small>)}
-      </div>
-      <div className="form-group">
-        <label htmlFor="autoBackupDir">{t("settings.backups.backupDirectory", "Backup Directory")}</label>
-        <input id="autoBackupDir" type="text" placeholder={t("settings.backups.fusionBackups", ".fusion/backups")} value={form.autoBackupDir || ".fusion/backups"} onChange={(e) => setForm((f) => ({ ...f, autoBackupDir: e.target.value }))} disabled={!form.autoBackupEnabled}/>
-        <small>{t("settings.backups.directoryForBackupFilesRelativeToProjectRoot", "Directory for backup files, relative to project root. Default: .fusion/backups.")}</small>
-        {form.autoBackupDir && form.autoBackupDir.includes("..") && (<small className="field-error">{t("settings.backups.pathCannotContainParentDirectoryTraversal", "Path cannot contain parent directory traversal (..)")}</small>)}
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "autoBackupEnabled",
+          label: t("settings.backups.enableAutomaticDatabaseBackups", " Enable automatic database backups "),
+          help: t("settings.backups.whenEnabledTheDatabaseIsBackedUpAutomatically", "When enabled, the database is backed up automatically on a schedule. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.autoBackupEnabled || false}
+        onChange={(v) => setForm((f) => ({ ...f, autoBackupEnabled: v === true }))}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "autoBackupSchedule",
+          label: t("settings.backups.backupScheduleCron", "Backup Schedule (Cron)"),
+          help: t("settings.backups.cronExpressionForBackupTimingDefault02", " Cron expression for backup timing. Default: 0 2 * * * (daily at 2 AM). Examples: 0 * * * * (hourly), 0 0 * * 0 (weekly), */15 * * * * (every 15 min) "),
+          scope: "project",
+          placeholder: t("settings.backups.02", "0 2 * * *"),
+          disabled: !form.autoBackupEnabled,
+        }}
+        value={form.autoBackupSchedule || "0 2 * * *"}
+        onChange={(v) => setForm((f) => ({ ...f, autoBackupSchedule: v ?? "" }))}
+        error={form.autoBackupSchedule && !/^[\s\d*,/-]+$/.test(form.autoBackupSchedule)
+          ? t("settings.backups.invalidCronExpressionFormat", "Invalid cron expression format")
+          : undefined}
+      />
+      <SettingsNumberRow
+        descriptor={{
+          key: "autoBackupRetention",
+          label: t("settings.backups.retentionCount", "Retention Count"),
+          help: t("settings.backups.numberOfBackupFilesToKeepOldestAre", "Number of backup files to keep (oldest are deleted first). Range: 1-100. Default: 7."),
+          scope: "project",
+          min: 1,
+          max: 100,
+          disabled: !form.autoBackupEnabled,
+        }}
+        value={form.autoBackupRetention ?? null}
+        onChange={(v) => setForm((f) => ({ ...f, autoBackupRetention: v ?? undefined }))}
+        error={form.autoBackupRetention !== undefined && (form.autoBackupRetention < 1 || form.autoBackupRetention > 100)
+          ? t("settings.backups.mustBeBetween1And100", "Must be between 1 and 100")
+          : undefined}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "autoBackupDir",
+          label: t("settings.backups.backupDirectory", "Backup Directory"),
+          help: t("settings.backups.directoryForBackupFilesRelativeToProjectRoot", "Directory for backup files, relative to project root. Default: .fusion/backups."),
+          scope: "project",
+          placeholder: t("settings.backups.fusionBackups", ".fusion/backups"),
+          disabled: !form.autoBackupEnabled,
+        }}
+        value={form.autoBackupDir || ".fusion/backups"}
+        onChange={(v) => setForm((f) => ({ ...f, autoBackupDir: v ?? "" }))}
+        error={form.autoBackupDir && form.autoBackupDir.includes("..")
+          ? t("settings.backups.pathCannotContainParentDirectoryTraversal", "Path cannot contain parent directory traversal (..)")
+          : undefined}
+      />
 
       <h4 className="settings-section-heading">{t("settings.backups.memoryBackups", "Memory Backups")}</h4>
-      <div className="form-group">
-        <label htmlFor="memoryBackupEnabled" className="checkbox-label">
-          <input id="memoryBackupEnabled" type="checkbox" checked={form.memoryBackupEnabled || false} onChange={(e) => setForm((f) => ({ ...f, memoryBackupEnabled: e.target.checked }))}/>{t("settings.backups.enableAutomaticMemoryBackups", " Enable automatic memory backups ")}</label>
-        <small>{t("settings.backups.whenEnabledProjectAndAgentMemoryFilesAre", "When enabled, project and agent memory files are backed up automatically on a schedule. Default: disabled.")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="memoryBackupSchedule">{t("settings.backups.memoryBackupScheduleCron", "Memory Backup Schedule (Cron)")}</label>
-        <input id="memoryBackupSchedule" type="text" placeholder={t("settings.backups.03", "0 3 * * *")} value={form.memoryBackupSchedule || "0 3 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryBackupSchedule: e.target.value }))} disabled={!form.memoryBackupEnabled}/>
-        <small>{t("settings.backups.cronExpressionForMemoryBackupTimingDefault0", "Cron expression for memory backup timing. Default: 0 3 * * * (daily at 3 AM).")}</small>
-        {form.memoryBackupSchedule && !/^[\s\d*,/-]+$/.test(form.memoryBackupSchedule) && (<small className="field-error">{t("settings.backups.invalidCronExpressionFormat", "Invalid cron expression format")}</small>)}
-      </div>
-      <div className="form-group">
-        <label htmlFor="memoryBackupRetention">{t("settings.backups.memoryRetentionCount", "Memory Retention Count")}</label>
-        <input id="memoryBackupRetention" type="number" min={1} max={100} value={form.memoryBackupRetention ?? ""} onChange={(e) => {
-            const val = e.target.value;
-            setForm((f) => ({ ...f, memoryBackupRetention: val === "" ? undefined : Number(val) }));
-        }} disabled={!form.memoryBackupEnabled}/>
-        <small>{t("settings.backups.numberOfMemoryBackupsToKeepOldestAre", "Number of memory backups to keep (oldest are deleted first). Range: 1-100. Default: 14.")}</small>
-        {form.memoryBackupRetention !== undefined && (form.memoryBackupRetention < 1 || form.memoryBackupRetention > 100) && (<small className="field-error">{t("settings.backups.mustBeBetween1And100", "Must be between 1 and 100")}</small>)}
-      </div>
-      <div className="form-group">
-        <label htmlFor="memoryBackupDir">{t("settings.backups.memoryBackupDirectory", "Memory Backup Directory")}</label>
-        <input id="memoryBackupDir" type="text" placeholder={t("settings.backups.fusionBackupsMemory", ".fusion/backups/memory")} value={form.memoryBackupDir || ".fusion/backups/memory"} onChange={(e) => setForm((f) => ({ ...f, memoryBackupDir: e.target.value }))} disabled={!form.memoryBackupEnabled}/>
-        <small>{t("settings.backups.directoryForMemoryBackupsRelativeToProjectRoot", "Directory for memory backups, relative to project root. Default: .fusion/backups/memory.")}</small>
-        {form.memoryBackupDir && form.memoryBackupDir.includes("..") && (<small className="field-error">{t("settings.backups.pathCannotContainParentDirectoryTraversal", "Path cannot contain parent directory traversal (..)")}</small>)}
-      </div>
-      <div className="form-group">
-        <label htmlFor="memoryBackupScope">{t("settings.backups.memoryBackupScope", "Memory Backup Scope")}</label>
-        <select id="memoryBackupScope" value={form.memoryBackupScope || "all"} onChange={(e) => setForm((f) => ({ ...f, memoryBackupScope: e.target.value as "project" | "agents" | "all" }))} disabled={!form.memoryBackupEnabled}>
-          <option value="all">{t("settings.backups.allProjectAgents", "All (project + agents)")}</option>
-          <option value="project">{t("settings.backups.projectOnlyFusionMemory", "Project only (.fusion/memory)")}</option>
-          <option value="agents">{t("settings.backups.agentsOnlyFusionAgentMemory", "Agents only (.fusion/agent-memory)")}</option>
-        </select>
-        <small>{t("settings.backups.memoryBackupScopeHint", "Default: all (project + agents).")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryBackupEnabled",
+          label: t("settings.backups.enableAutomaticMemoryBackups", " Enable automatic memory backups "),
+          help: t("settings.backups.whenEnabledProjectAndAgentMemoryFilesAre", "When enabled, project and agent memory files are backed up automatically on a schedule. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.memoryBackupEnabled || false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryBackupEnabled: v === true }))}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "memoryBackupSchedule",
+          label: t("settings.backups.memoryBackupScheduleCron", "Memory Backup Schedule (Cron)"),
+          help: t("settings.backups.cronExpressionForMemoryBackupTimingDefault0", "Cron expression for memory backup timing. Default: 0 3 * * * (daily at 3 AM)."),
+          scope: "project",
+          placeholder: t("settings.backups.03", "0 3 * * *"),
+          disabled: !form.memoryBackupEnabled,
+        }}
+        value={form.memoryBackupSchedule || "0 3 * * *"}
+        onChange={(v) => setForm((f) => ({ ...f, memoryBackupSchedule: v ?? "" }))}
+        error={form.memoryBackupSchedule && !/^[\s\d*,/-]+$/.test(form.memoryBackupSchedule)
+          ? t("settings.backups.invalidCronExpressionFormat", "Invalid cron expression format")
+          : undefined}
+      />
+      <SettingsNumberRow
+        descriptor={{
+          key: "memoryBackupRetention",
+          label: t("settings.backups.memoryRetentionCount", "Memory Retention Count"),
+          help: t("settings.backups.numberOfMemoryBackupsToKeepOldestAre", "Number of memory backups to keep (oldest are deleted first). Range: 1-100. Default: 14."),
+          scope: "project",
+          min: 1,
+          max: 100,
+          disabled: !form.memoryBackupEnabled,
+        }}
+        value={form.memoryBackupRetention ?? null}
+        onChange={(v) => setForm((f) => ({ ...f, memoryBackupRetention: v ?? undefined }))}
+        error={form.memoryBackupRetention !== undefined && (form.memoryBackupRetention < 1 || form.memoryBackupRetention > 100)
+          ? t("settings.backups.mustBeBetween1And100", "Must be between 1 and 100")
+          : undefined}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "memoryBackupDir",
+          label: t("settings.backups.memoryBackupDirectory", "Memory Backup Directory"),
+          help: t("settings.backups.directoryForMemoryBackupsRelativeToProjectRoot", "Directory for memory backups, relative to project root. Default: .fusion/backups/memory."),
+          scope: "project",
+          placeholder: t("settings.backups.fusionBackupsMemory", ".fusion/backups/memory"),
+          disabled: !form.memoryBackupEnabled,
+        }}
+        value={form.memoryBackupDir || ".fusion/backups/memory"}
+        onChange={(v) => setForm((f) => ({ ...f, memoryBackupDir: v ?? "" }))}
+        error={form.memoryBackupDir && form.memoryBackupDir.includes("..")
+          ? t("settings.backups.pathCannotContainParentDirectoryTraversal", "Path cannot contain parent directory traversal (..)")
+          : undefined}
+      />
+      <SettingsSelectRow
+        descriptor={{
+          key: "memoryBackupScope",
+          label: t("settings.backups.memoryBackupScope", "Memory Backup Scope"),
+          help: t("settings.backups.memoryBackupScopeHint", "Default: all (project + agents)."),
+          scope: "project",
+          disabled: !form.memoryBackupEnabled,
+          options: [
+            { value: "all", label: t("settings.backups.allProjectAgents", "All (project + agents)") },
+            { value: "project", label: t("settings.backups.projectOnlyFusionMemory", "Project only (.fusion/memory)") },
+            { value: "agents", label: t("settings.backups.agentsOnlyFusionAgentMemory", "Agents only (.fusion/agent-memory)") },
+          ],
+        }}
+        value={form.memoryBackupScope || "all"}
+        onChange={(v) => setForm((f) => ({ ...f, memoryBackupScope: (v ?? "all") as "project" | "agents" | "all" }))}
+      />
       {backupLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.backups.loadingBackupInfo", "Loading backup info\u2026")} /></div>) : backupInfo ? (<div className="form-group">
           <label>{t("settings.backups.currentBackups", "Current Backups")}</label>
           <div className="backup-stats">

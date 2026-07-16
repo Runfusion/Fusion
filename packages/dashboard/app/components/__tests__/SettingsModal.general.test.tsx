@@ -253,7 +253,7 @@ describe("SettingsModal", () => {
     await waitForSettingsModalReady();
 
     await settingsModalUser.click(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i }));
-    await settingsModalUser.click(screen.getByRole("button", { name: /^General$/ }));
+    await settingsModalUser.click(screen.getByRole("button", { name: /^General · Global$/ }));
     await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -292,7 +292,7 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
   });
 
@@ -340,32 +340,32 @@ describe("SettingsModal", () => {
     // behind the toggle — expand it before interacting with the search input.
     await settingsModalUser.click(screen.getByLabelText("Show search"));
     const search = screen.getByTestId("settings-search-input");
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
 
     await settingsModalUser.type(search, "   ");
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "completion documentation");
 
-    expect(screen.queryByRole("button", { name: /^General$/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^General · Global$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
-    expect(screen.getByText("1 matching sections")).toBeInTheDocument();
+    expect(screen.getByText("1 matching section")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "Autonomy mode");
 
-    expect(screen.queryByRole("button", { name: /^Project General$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^General · Project$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^CLI Agents$/ })).toBeInTheDocument();
     expect(screen.getByTestId("cli-agents-settings")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "research providers");
 
-    expect(screen.queryByRole("button", { name: /^Research Defaults$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Research · Global$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Research$/ })).not.toBeInTheDocument();
     expect(screen.getAllByText(/No settings sections match/).length).toBeGreaterThan(0);
   });
@@ -380,17 +380,24 @@ describe("SettingsModal", () => {
     const search = screen.getByTestId("settings-search-input");
     await settingsModalUser.type(search, "mcp");
 
-    const matches = screen.getAllByRole("button", { name: /^MCP Servers$/ });
-    expect(matches).toHaveLength(2);
+    /*
+    FNXC:SettingsNavigation 2026-07-15-17:35:
+    Both MCP sections must be individually identifiable. This previously asserted TWO buttons named exactly "MCP Servers" — it pinned the duplicate-label bug as expected behavior, and the only thing telling the entries apart was the scope icon.
+    The nav is grouped by topic now, so the pair sits adjacent under Integrations and each label states its own scope.
+    */
+    const mcpMatches = screen.getAllByRole("button", { name: /^MCP Servers · (Global|Project)$/ });
+    expect(mcpMatches).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "MCP Servers · Global" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "MCP Servers · Project" })).toBeInTheDocument();
     expect(screen.getByText("2 matching sections")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "definitely not a setting");
 
-    expect(screen.queryByRole("button", { name: /^MCP Servers$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^MCP Servers · / })).not.toBeInTheDocument();
     await settingsModalUser.click(screen.getAllByRole("button", { name: "Clear settings search" })[0]);
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
   });
 
   it("keeps settings file pickers workspace-confined even when absolute browsing exists", async () => {
@@ -451,13 +458,13 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByLabelText("Show search"));
       const search = screen.getByTestId("settings-search-input");
       await settingsModalUser.type(search, "model pricing");
-      expect(screen.getByRole("button", { name: /^Models$/ })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /^Project General$/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Models · Global$/ })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^General · Project$/ })).not.toBeInTheDocument();
 
       fireEvent.keyDown(search, { key: "Escape" });
       expect(onClose).not.toHaveBeenCalled();
       expect(search).toHaveValue("");
-      expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
     });
 
     it("keeps the overlay and Escape-to-close in modal mode", async () => {
@@ -700,7 +707,8 @@ describe("SettingsModal", () => {
 
       // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
       expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
-      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest("small")).toBeTruthy();
+      // Migrated to SettingsToggleRow: help renders in the primitive's help band, not a <small>.
+      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-field-row-help")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
@@ -708,10 +716,11 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).not.toBeChecked();
 
-      // Helper descriptions render as small text (not .settings-field-help).
+      // Helper descriptions render as help text (not .settings-field-help): migrated rows use the
+      // primitive's help band, while the still-bespoke thinking-log group keeps its <small>.
       expect(document.querySelector(".settings-field-help")).toBeNull();
       const toolOutputHelper = screen.getByText(/When disabled, tool rows are still logged but detailed tool payloads are omitted/i);
-      expect(toolOutputHelper.closest("small")).toBeTruthy();
+      expect(toolOutputHelper.closest(".settings-field-row-help")).toBeTruthy();
       const thinkingHelper = screen.getByText(/Leave both thinking toggles off to keep the original default behavior/i);
       expect(thinkingHelper.closest("small")).toBeTruthy();
 
@@ -993,7 +1002,7 @@ describe("SettingsModal", () => {
     expect(payload.agentProvisioning?.approvalMode).toBe("always");
   });
 
-  describe("Project General", () => {
+  describe("General · Project", () => {
     it("renders completion documentation automation control", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
@@ -1026,7 +1035,7 @@ describe("SettingsModal", () => {
 
     it.each<PersistSettingInput>([
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Completion Documentation Automation",
         kind: "select",
         value: "changeset",
@@ -1034,7 +1043,7 @@ describe("SettingsModal", () => {
         expectedKey: "completionDocumentationMode",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Auto-cleanup old chats",
         kind: "select",
         value: 14,
@@ -1042,7 +1051,7 @@ describe("SettingsModal", () => {
         expectedKey: "chatAutoCleanupDays",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Close Quick Chat on outside click",
         kind: "checkbox",
         value: false,
@@ -1050,7 +1059,7 @@ describe("SettingsModal", () => {
         expectedKey: "quickChatCloseOnOutsideClick",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Show task chats in common Chat feed",
         kind: "checkbox",
         value: true,
@@ -1058,7 +1067,7 @@ describe("SettingsModal", () => {
         expectedKey: "showTaskChatsInCommonFeed",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Operational log retention",
         kind: "select",
         value: 7,
@@ -1091,7 +1100,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project General" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "General · Project" }));
 
       const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
       expect(ephemeralToggle).toBeInTheDocument();
@@ -1120,7 +1129,7 @@ describe("SettingsModal", () => {
       expect(sectionPicker).toBeInTheDocument();
       const projectGeneralOption = sectionPicker.querySelector('option[value="general"]');
       expect(projectGeneralOption).toBeInTheDocument();
-      expect(projectGeneralOption).toHaveTextContent("Project General");
+      expect(projectGeneralOption).toHaveTextContent("General · Project");
 
       await settingsModalUser.selectOptions(sectionPicker, "general");
 
@@ -1495,7 +1504,7 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText("Title, commit message, and GitHub tracking issue summarization model")).not.toBeInTheDocument();
     });
@@ -1509,7 +1518,7 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText(/model used for summarization now lives on the workflow/i)).not.toBeInTheDocument();
       expect(screen.getByText(/per-phase model lanes \(execution, planning, reviewer, and their fallbacks\) now live on the workflow/i)).toBeInTheDocument();

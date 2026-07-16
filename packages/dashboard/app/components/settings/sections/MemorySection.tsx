@@ -3,6 +3,9 @@ import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { MemoryBackendCapabilities, MemoryBackendStatus, MemoryFileInfo, MemoryRetrievalTestResult, } from "../../../api";
 import { FileEditor } from "../../FileEditor";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import type { SectionBaseProps } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 const MEMORY_FILE_OPTION_LABEL_MAX_CHARS = 72;
@@ -70,11 +73,16 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
         <small className="settings-muted">{t("settings.memory.memoryLivesIn", " Memory lives in ")}<code>.fusion/memory/</code>{t("settings.memory.agentsSearchWithQmdFirstFallBackTo", ". Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed. ")}</small>
       </div>
 
-      <div className="form-group">
-        <label htmlFor="memoryEnabled" className="checkbox-label">
-          <input id="memoryEnabled" type="checkbox" checked={form.memoryEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, memoryEnabled: e.target.checked }))}/>{t("settings.memory.enableMemoryTools", " Enable memory tools ")}</label>
-        <small>{t("settings.memory.agentsGetMemorySearchMemoryGetAndMemory", "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback. Default: enabled.")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryEnabled",
+          label: t("settings.memory.enableMemoryTools", " Enable memory tools "),
+          help: t("settings.memory.agentsGetMemorySearchMemoryGetAndMemory", "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback. Default: enabled."),
+          scope: "project",
+        }}
+        value={form.memoryEnabled !== false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryEnabled: v === true }))}
+      />
 
       {backendLoading ? (<div className="form-group">
           <small className="settings-muted">{t("settings.memory.checkingMemoryWriteAccess", "Checking memory write access...")}</small>
@@ -90,55 +98,99 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
           </button>
         </div>)}
 
-      <div className="form-group">
-        <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
-          <input id="memoryAutoSummarizeEnabled" type="checkbox" checked={form.memoryAutoSummarizeEnabled || false} onChange={(e) => setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: e.target.checked }))}/>{t("settings.memory.autoSummarizeMemory", " Auto-Summarize Memory ")}</label>
-        <small>{t("settings.memory.automaticallyCompactMemoryWhenItExceedsTheThreshold", "Automatically compact memory when it exceeds the threshold on a schedule. Default: disabled.")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryAutoSummarizeEnabled",
+          label: t("settings.memory.autoSummarizeMemory", " Auto-Summarize Memory "),
+          help: t("settings.memory.automaticallyCompactMemoryWhenItExceedsTheThreshold", "Automatically compact memory when it exceeds the threshold on a schedule. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.memoryAutoSummarizeEnabled || false}
+        onChange={(v) => setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: v === true }))}
+      />
 
       {(form.memoryAutoSummarizeEnabled || false) && (<>
-          <div className="form-group">
-            <label htmlFor="memoryAutoSummarizeThresholdChars">{t("settings.memory.compactionThresholdChars", "Compaction Threshold (chars)")}</label>
-            <input id="memoryAutoSummarizeThresholdChars" type="number" className="input" value={form.memoryAutoSummarizeThresholdChars ?? 50000} onChange={(e) => setForm((f) => ({
-                ...f,
-                memoryAutoSummarizeThresholdChars: parseInt(e.target.value, 10) || 50000,
-            }))} min={1000}/>
-            <small>{t("settings.memory.memoryWillBeCompactedWhenItExceedsThis", "Memory will be compacted when it exceeds this character count. Default: 50000.")}</small>
-          </div>
-          <div className="form-group">
-            <label htmlFor="memoryAutoSummarizeSchedule">{t("settings.memory.scheduleCron", "Schedule (cron)")}</label>
-            <input id="memoryAutoSummarizeSchedule" type="text" className="input" value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: e.target.value }))} placeholder={t("settings.memory.03", "0 3 * * *")}/>
-            <small>{t("settings.memory.cronExpressionForAutoSummarizeScheduleDefaultDaily", "Cron expression for auto-summarize schedule. Default: 0 3 * * * (daily at 3 AM).")}</small>
-          </div>
+          {/*
+          FNXC:MemoryCompaction 2026-07-15-17:35:
+          An empty or unparseable threshold falls back to the 50000 schema default rather than persisting undefined: the auto-summarize scheduler reads this value directly, so a blank field must still compact at the documented default instead of disabling compaction silently.
+          */}
+          <SettingsNumberRow
+            descriptor={{
+              key: "memoryAutoSummarizeThresholdChars",
+              label: t("settings.memory.compactionThresholdChars", "Compaction Threshold (chars)"),
+              help: t("settings.memory.memoryWillBeCompactedWhenItExceedsThis", "Memory will be compacted when it exceeds this character count. Default: 50000."),
+              scope: "project",
+              min: 1000,
+            }}
+            value={form.memoryAutoSummarizeThresholdChars ?? 50000}
+            onChange={(v) => setForm((f) => ({ ...f, memoryAutoSummarizeThresholdChars: v || 50000 }))}
+          />
+          <SettingsTextRow
+            descriptor={{
+              key: "memoryAutoSummarizeSchedule",
+              label: t("settings.memory.scheduleCron", "Schedule (cron)"),
+              help: t("settings.memory.cronExpressionForAutoSummarizeScheduleDefaultDaily", "Cron expression for auto-summarize schedule. Default: 0 3 * * * (daily at 3 AM)."),
+              scope: "project",
+              placeholder: t("settings.memory.03", "0 3 * * *"),
+            }}
+            value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"}
+            onChange={(v) => setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: v ?? "" }))}
+          />
         </>)}
 
-      <div className="form-group">
-        <label htmlFor="insightExtractionEnabled" className="checkbox-label">
-          <input id="insightExtractionEnabled" type="checkbox" checked={form.insightExtractionEnabled || false} onChange={(e) => setForm((f) => ({ ...f, insightExtractionEnabled: e.target.checked }))}/>{t("settings.memory.enableInsightExtraction", " Enable Insight Extraction ")}</label>
-        <small>{t("settings.memory.periodicallyExtractDurableInsightsFromCompletedTasks", "Periodically extract durable insights/learnings from completed tasks into memory")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "insightExtractionEnabled",
+          label: t("settings.memory.enableInsightExtraction", " Enable Insight Extraction "),
+          help: t("settings.memory.periodicallyExtractDurableInsightsFromCompletedTasks", "Periodically extract durable insights/learnings from completed tasks into memory"),
+          scope: "project",
+        }}
+        value={form.insightExtractionEnabled || false}
+        onChange={(v) => setForm((f) => ({ ...f, insightExtractionEnabled: v === true }))}
+      />
 
       {(form.insightExtractionEnabled || false) && (
-          <div className="form-group">
-            <label htmlFor="insightExtractionSchedule">{t("settings.memory.scheduleCron", "Schedule (cron)")}</label>
-            <input id="insightExtractionSchedule" type="text" className="input" value={form.insightExtractionSchedule ?? "0 2 * * *"} onChange={(e) => setForm((f) => ({ ...f, insightExtractionSchedule: e.target.value }))} placeholder={t("settings.memory.02", "0 2 * * *")}/>
-            <small>{t("settings.memory.cronExpressionForInsightExtractionScheduleDefaultDaily", "Cron expression for insight extraction schedule (default: daily at 2 AM)")}</small>
-          </div>)}
+          <SettingsTextRow
+            descriptor={{
+              key: "insightExtractionSchedule",
+              label: t("settings.memory.scheduleCron", "Schedule (cron)"),
+              help: t("settings.memory.cronExpressionForInsightExtractionScheduleDefaultDaily", "Cron expression for insight extraction schedule (default: daily at 2 AM)"),
+              scope: "project",
+              placeholder: t("settings.memory.02", "0 2 * * *"),
+            }}
+            value={form.insightExtractionSchedule ?? "0 2 * * *"}
+            onChange={(v) => setForm((f) => ({ ...f, insightExtractionSchedule: v ?? "" }))}
+          />)}
 
       <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }}/>
 
-      <div className="form-group">
-        <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
-          <input id="memoryDreamsEnabled" type="checkbox" checked={form.memoryDreamsEnabled === true} onChange={(e) => setForm((f) => ({ ...f, memoryDreamsEnabled: e.target.checked }))} disabled={!isMemoryEnabled}/>{t("settings.memory.processDreamsFromDailyMemory", " Process dreams from daily memory ")}</label>
-        <small>{t("settings.memory.turnsDailyNotesIntoDREAMSMdAndPromotes", "Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md. Default: disabled.")}</small>
-      </div>
+      {/*
+      FNXC:MemoryDreams 2026-07-15-17:35:
+      Dream processing reads the daily memory layer, so the toggle is disabled whenever memory tools are off — there is nothing to synthesize from. The schedule row below stays gated on both flags for the same reason.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "memoryDreamsEnabled",
+          label: t("settings.memory.processDreamsFromDailyMemory", " Process dreams from daily memory "),
+          help: t("settings.memory.turnsDailyNotesIntoDREAMSMdAndPromotes", "Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md. Default: disabled."),
+          scope: "project",
+          disabled: !isMemoryEnabled,
+        }}
+        value={form.memoryDreamsEnabled === true}
+        onChange={(v) => setForm((f) => ({ ...f, memoryDreamsEnabled: v === true }))}
+      />
 
       {isMemoryEnabled && form.memoryDreamsEnabled === true && (<>
-          <div className="form-group">
-            <label htmlFor="memoryDreamsSchedule">{t("settings.memory.dreamSchedule", "Dream Schedule")}</label>
-            <input id="memoryDreamsSchedule" type="text" value={form.memoryDreamsSchedule ?? "0 4 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))}/>
-            <small>{t("settings.memory.cronExpressionForDreamProcessing", "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM).")}</small>
-          </div>
+          <SettingsTextRow
+            descriptor={{
+              key: "memoryDreamsSchedule",
+              label: t("settings.memory.dreamSchedule", "Dream Schedule"),
+              help: t("settings.memory.cronExpressionForDreamProcessing", "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM)."),
+              scope: "project",
+            }}
+            value={form.memoryDreamsSchedule ?? "0 4 * * *"}
+            onChange={(v) => setForm((f) => ({ ...f, memoryDreamsSchedule: v ?? "" }))}
+          />
           <div className="form-group">
             <button type="button" className="btn btn-sm" onClick={onDreamNow} disabled={dreamRunning || form.memoryDreamsEnabled !== true}>
               {dreamRunning ? (<>
@@ -148,6 +200,10 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
           </div>
         </>)}
 
+      {/*
+      FNXC:SettingsSearch 2026-07-15-17:35:
+      The retrieval tester, memory-file picker, and editor below stay on plain `form-group` markup on purpose: none of them edits a settings key. They are a transient query box, a file selector gated on unsaved edits, and a document editor, so rendering them as settings rows would file them in the settings search index as configuration an operator can set — which they are not.
+      */}
       <div className="memory-retrieval-test">
         <div className="form-group">
           <label htmlFor="memoryRetrievalQuery">{t("settings.memory.testRetrieval", "Test Retrieval")}</label>

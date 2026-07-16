@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { NtfyNotificationEvent } from "@fusion/core";
+import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
 import type { SectionBaseProps } from "./context";
 /** Default event set used when a provider has no explicit `*Events` override. */
 export const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
@@ -51,6 +54,20 @@ export interface NotificationsSectionProps extends SectionBaseProps {
     }>;
     onTestProviderNotification: (provider: TestNotificationProvider) => void;
 }
+/*
+FNXC:SettingsStyling 2026-07-15-17:35:
+Plain configuration rows render through the shared settings primitives; the hand-rolled `form-group` wrappers they sat in are dropped rather than kept around them, because `.form-group label` (and the `.settings-content` narrowing of it) out-specifies `.settings-field-row-label` and would re-impose the uppercase/muted treatment the primitives exist to retire. `.form-group` itself stays global and untouched — 35 non-settings files style forms with it.
+
+FNXC:SettingsScope 2026-07-15-17:35:
+Every migrated row here is global: ntfy, webhook, and failure-notification keys all live in DEFAULT_GLOBAL_SETTINGS, so notification delivery is configured once per operator rather than per project.
+
+FNXC:SettingsStyling 2026-07-15-17:35:
+Deliberately NOT migrated, and why — each is a real behavior/copy constraint, not an oversight:
+- The ntfy/webhook `Enable` checkboxes stay in `.notification-provider-header`, a flex space-between card header pairing a provider title with its switch. That is a card header, not a plain label→control row.
+- `ntfyTopic`'s help embeds an ntfy.sh anchor, and the primitives take `help` as a pre-translated string; migrating would silently drop the link.
+- `ntfyBaseUrl` (type="url") and `ntfyAccessToken` / named-tunnel tokens (type="password") cannot migrate: SettingsTextRow hard-codes type="text", so an access token would render UNMASKED. They also live inside the Advanced disclosure.
+- The `ntfyEvents` / `webhookEvents` grids are per-event checkbox lists with their own descriptions, not single controls.
+*/
 export function NotificationsSection({ scopeBanner, form, setForm, testNotificationLoading, testNotificationResult, onTestProviderNotification, }: NotificationsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
@@ -63,29 +80,42 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
         The failure-notification card must reuse `.notification-provider-body` because `.notification-provider-card` has no own padding; this keeps its field gutters aligned with ntfy/webhook provider cards on desktop and mobile.
         */}
         <div className="notification-provider-body">
-          <div className="form-group">
-            <label htmlFor="failureNotificationMode">{t("settings.notifications.failureNotificationMode", "Failure notification mode")}</label>
-            <select id="failureNotificationMode" value={form.failureNotificationMode ?? "sticky-only"} onChange={(e) => {
-              const value = e.target.value as "sticky-only" | "all" | "terminal-only";
-              setForm((f) => ({ ...f, failureNotificationMode: value }));
-          }}>
-              <option value="sticky-only">{t("settings.notifications.stickyFailuresOnlyDefault", "Sticky failures only (default)")}</option>
-              <option value="terminal-only">{t("settings.notifications.terminalFailuresOnlySuppressAutoRetried", "Terminal failures only (suppress auto-retried)")}</option>
-              <option value="all">{t("settings.notifications.allFailuresLegacy", "All failures (legacy)")}</option>
-            </select>
-            <small>{t("settings.notifications.stickyOnlySuppressesRecoveredFailuresTerminalOnlyWaits", "Sticky-only suppresses recovered failures; terminal-only waits for paused/in-review failed tasks; all restores legacy alerts.")}</small>
-          </div>
-          <div className="form-group">
-            <label htmlFor="failureNotificationDelayMs">{t("settings.notifications.failureNotificationDelayMs", "Failure notification delay (ms)")}</label>
-            <input id="failureNotificationDelayMs" type="number" min={0} step={1000} disabled={(form.failureNotificationMode ?? "sticky-only") === "all"} value={form.failureNotificationDelayMs ?? 30000} onChange={(e) => {
-              const parsed = Number(e.target.value);
-              setForm((f) => ({
-                  ...f,
-                  failureNotificationDelayMs: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0,
-              }));
-          }}/>
-            <small>{t("settings.notifications.howLongAFailureMustPersistBeforeA", " How long a failure must persist before a push notification is sent. 0 = notify immediately. Default: 30000 (30 seconds). ")}</small>
-          </div>
+          <SettingsSelectRow
+            descriptor={{
+              key: "failureNotificationMode",
+              label: t("settings.notifications.failureNotificationMode", "Failure notification mode"),
+              help: t("settings.notifications.stickyOnlySuppressesRecoveredFailuresTerminalOnlyWaits", "Sticky-only suppresses recovered failures; terminal-only waits for paused/in-review failed tasks; all restores legacy alerts."),
+              scope: "global",
+              options: [
+                { value: "sticky-only", label: t("settings.notifications.stickyFailuresOnlyDefault", "Sticky failures only (default)") },
+                { value: "terminal-only", label: t("settings.notifications.terminalFailuresOnlySuppressAutoRetried", "Terminal failures only (suppress auto-retried)") },
+                { value: "all", label: t("settings.notifications.allFailuresLegacy", "All failures (legacy)") },
+              ],
+            }}
+            value={form.failureNotificationMode ?? "sticky-only"}
+            onChange={(v) => setForm((f) => ({ ...f, failureNotificationMode: (v ?? "sticky-only") as "sticky-only" | "all" | "terminal-only" }))}
+          />
+          {/*
+          FNXC:FailureNotifications 2026-07-15-17:35:
+          The delay is disabled rather than hidden in "all" mode: legacy alerting fires immediately, so the value cannot apply — but an operator switching modes needs to see the delay that will take effect again.
+          Coercion is preserved verbatim from the hand-rolled input: a cleared field and any negative value both settle to 0 (notify immediately), never to undefined, so the stored key always holds a usable delay.
+          */}
+          <SettingsNumberRow
+            descriptor={{
+              key: "failureNotificationDelayMs",
+              label: t("settings.notifications.failureNotificationDelayMs", "Failure notification delay (ms)"),
+              help: t("settings.notifications.howLongAFailureMustPersistBeforeA", " How long a failure must persist before a push notification is sent. 0 = notify immediately. Default: 30000 (30 seconds). "),
+              scope: "global",
+              min: 0,
+              step: 1000,
+              disabled: (form.failureNotificationMode ?? "sticky-only") === "all",
+            }}
+            value={form.failureNotificationDelayMs ?? 30000}
+            onChange={(v) => setForm((f) => ({
+              ...f,
+              failureNotificationDelayMs: v !== null && Number.isFinite(v) && v >= 0 ? v : 0,
+            }))}
+          />
         </div>
       </div>
 
@@ -146,15 +176,22 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
             })}
               </div>
             </div>
-            <div className="form-group">
-              <label htmlFor="ntfyDashboardHost">{t("settings.notifications.dashboardHostname", "Dashboard Hostname")}</label>
-              <input id="ntfyDashboardHost" type="text" placeholder={t("settings.notifications.httpLocalhost3000", "http://localhost:3000")} value={form.ntfyDashboardHost || ""} onChange={(e) => {
-                const val = e.target.value;
-                setForm((f) => ({ ...f, ntfyDashboardHost: val || undefined }));
-            }}/>
-              <small>{t("settings.notifications.baseURLForDeepLinksInNotificationsWhen", " Base URL for deep links in notifications. When set, clicking a notification opens the dashboard directly to the task. No default \u2014 unset. ")}</small>
-              {form.ntfyDashboardHost && !/^https?:\/\/.+/.test(form.ntfyDashboardHost) && (<small className="field-error">{t("settings.notifications.mustBeAValidURLStartingWithHttp", " Must be a valid URL starting with http:// or https:// ")}</small>)}
-            </div>
+            {/* FNXC:SettingsValidation 2026-07-15-17:35: The http(s) check rides the row's error band so an invalid deep-link host reports against the control that owns it. Empty coerces to undefined, not "", keeping "no default \u2014 unset" a real unset rather than a stored blank. */}
+            <SettingsTextRow
+              descriptor={{
+                key: "ntfyDashboardHost",
+                label: t("settings.notifications.dashboardHostname", "Dashboard Hostname"),
+                help: t("settings.notifications.baseURLForDeepLinksInNotificationsWhen", " Base URL for deep links in notifications. When set, clicking a notification opens the dashboard directly to the task. No default \u2014 unset. "),
+                scope: "global",
+                placeholder: t("settings.notifications.httpLocalhost3000", "http://localhost:3000"),
+              }}
+              value={form.ntfyDashboardHost || ""}
+              onChange={(v) => setForm((f) => ({ ...f, ntfyDashboardHost: v || undefined }))}
+              error={form.ntfyDashboardHost && !/^https?:\/\/.+/.test(form.ntfyDashboardHost)
+                ? t("settings.notifications.mustBeAValidURLStartingWithHttp", " Must be a valid URL starting with http:// or https:// ")
+                : undefined}
+            />
+
             <div className="notification-provider-actions">
               <button type="button" className="btn btn-sm" onClick={() => onTestProviderNotification("ntfy")} disabled={testNotificationLoading["ntfy"] ||
                 testNotificationLoading["ntfy-message"] ||
@@ -200,26 +237,32 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
           <small>{t("settings.notifications.webhookEnabledHint", "Default: disabled.")}</small>
         </div>
         {form.webhookEnabled && (<div className="notification-provider-body">
-            <div className="form-group">
-              <label htmlFor="webhookUrl">{t("settings.notifications.webhookURL", "Webhook URL")}</label>
-              <input id="webhookUrl" type="text" placeholder={t("settings.notifications.httpsHooksExampleCom", "https://hooks.example.com/...")} value={form.webhookUrl || ""} onChange={(e) => {
-                const val = e.target.value;
-                setForm((f) => ({ ...f, webhookUrl: val || undefined }));
-            }}/>
-              <small>{t("settings.notifications.webhookUrlHint", "No default \u2014 unset.")}</small>
-            </div>
-            <div className="form-group">
-              <label htmlFor="webhookFormat">{t("settings.notifications.format", "Format")}</label>
-              <select id="webhookFormat" value={form.webhookFormat || "generic"} onChange={(e) => {
-                const val = e.target.value as "slack" | "discord" | "generic";
-                setForm((f) => ({ ...f, webhookFormat: val }));
-            }}>
-                <option value="slack">{t("settings.notifications.slack", "Slack")}</option>
-                <option value="discord">{t("settings.notifications.discord", "Discord")}</option>
-                <option value="generic">{t("settings.notifications.generic", "Generic")}</option>
-              </select>
-              <small>{t("settings.notifications.webhookFormatHint", "Default: generic.")}</small>
-            </div>
+            <SettingsTextRow
+              descriptor={{
+                key: "webhookUrl",
+                label: t("settings.notifications.webhookURL", "Webhook URL"),
+                help: t("settings.notifications.webhookUrlHint", "No default \u2014 unset."),
+                scope: "global",
+                placeholder: t("settings.notifications.httpsHooksExampleCom", "https://hooks.example.com/..."),
+              }}
+              value={form.webhookUrl || ""}
+              onChange={(v) => setForm((f) => ({ ...f, webhookUrl: v || undefined }))}
+            />
+            <SettingsSelectRow
+              descriptor={{
+                key: "webhookFormat",
+                label: t("settings.notifications.format", "Format"),
+                help: t("settings.notifications.webhookFormatHint", "Default: generic."),
+                scope: "global",
+                options: [
+                  { value: "slack", label: t("settings.notifications.slack", "Slack") },
+                  { value: "discord", label: t("settings.notifications.discord", "Discord") },
+                  { value: "generic", label: t("settings.notifications.generic", "Generic") },
+                ],
+              }}
+              value={form.webhookFormat || "generic"}
+              onChange={(v) => setForm((f) => ({ ...f, webhookFormat: (v ?? "generic") as "slack" | "discord" | "generic" }))}
+            />
             <div className="form-group">
               <label>{t("settings.notifications.notifyOnEvents", "Notify on events")}</label>
               <div className="ntfy-events-list">

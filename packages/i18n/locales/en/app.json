@@ -5691,7 +5691,7 @@
       "language": "Language",
       "languageAuto": "Auto",
       "languageAutoHint": "Follow the browser language",
-      "suppressTheLdquoNeedsYourInputRdquoBanner": " Suppress the &ldquo;needs your input&rdquo; banner that appears when AI sessions are awaiting input or have failed. ",
+      "suppressTheLdquoNeedsYourInputRdquoBanner": "Suppress the “needs your input” banner that appears when AI sessions are awaiting input or have failed.",
       "title": "Appearance",
       "openTasksInRightSidebarHelp": "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.",
       "openMobileTasksInPopupHelp": "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.",
@@ -5837,11 +5837,15 @@
       "allSections": "Showing all settings sections",
       "clear": "Clear settings search",
       "label": "Search settings",
+      "moreResults": "{{count}} more — keep typing to narrow",
       "navigationLabel": "Settings navigation",
       "noMobileOptions": "No sections match this search.",
       "noResults": "No settings sections match \"{{query}}\".",
       "placeholder": "Search by setting or section",
-      "resultCount": "{{count}} matching sections"
+      "resultCount_one": "{{count}} matching section",
+      "resultCount_other": "{{count}} matching sections",
+      "settingResultCount_one": "{{count}} matching setting",
+      "settingResultCount_other": "{{count}} matching settings"
     },
     "general": {
       "25": "25",
@@ -6290,8 +6294,8 @@
         "global": "Shared across all projects",
         "project": "Specific to this project"
       },
-      "globalMcp": "MCP Servers",
-      "mcp": "MCP Servers"
+      "globalMcp": "MCP Servers · Global",
+      "mcp": "MCP Servers · Project"
     },
     "nodeRouting": {
       "blockExecution": "Block execution",
