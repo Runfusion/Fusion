@@ -489,20 +489,112 @@ export async function newAcpSession(
   return { sessionId: boundIdentifier(res.sessionId), modes: res.modes ?? undefined };
 }
 
+/*
+FNXC:AcpRuntime 2026-07-15-18:20:
+An ACP turn that fails server-side arrives as a JSON-RPC error object whose `message` is the
+bare protocol-standard text — `-32603` renders as literally "Internal error". Rethrowing the
+SDK error as-is discards `code`/`data`, the only fields identifying the fault as provider-side
+and retryable. Downstream transient classification then sees an unclassifiable string and parks
+the task permanently (FN-8004: a 20s Grok blip terminally failed an auto-merge).
+
+`describeAcpTurnError` re-shapes the error into a stable, greppable diagnostic carrying the
+numeric code, so classifiers anchor on an ACP-specific signature instead of pattern-matching the
+dangerously generic phrase "Internal error" (which could appear in unrelated application output).
+Format is load-bearing — `ACP_TRANSIENT_ERROR_PATTERNS` in the engine's transient-error-detector
+matches it. Keep the two in sync.
+*/
+
+/** JSON-RPC error codes that indicate a provider-side, retryable fault rather than a bad request. */
+const RETRYABLE_JSONRPC_CODES = new Set([
+  -32603, // Internal error — the agent blew up server-side.
+  -32000, // Server error (generic, reserved implementation-defined range).
+  -32001,
+  -32002,
+  -32003,
+]);
+
+/** Structured view of a thrown ACP/JSON-RPC error; all fields best-effort. */
+export interface AcpTurnErrorDetail {
+  message: string;
+  code?: number;
+  data?: unknown;
+  retryable: boolean;
+}
+
+/**
+ * Extract JSON-RPC `code`/`data` from a thrown ACP error.
+ *
+ * The SDK surfaces request errors in more than one shape depending on build: a flat
+ * `{ code, message, data }` and a nested `{ error: { code, message, data } }`. Read both.
+ */
+export function inspectAcpTurnError(error: unknown): AcpTurnErrorDetail {
+  type RpcShape = { code?: unknown; data?: unknown; message?: unknown };
+  const raw = error as (RpcShape & { error?: RpcShape }) | null;
+  const nested = raw && typeof raw === "object" ? raw.error : undefined;
+
+  /*
+  Read message/code/data from ONE source. Reading `code` from the nested payload while taking
+  `message` from the outer Error yields "request failed (acp rpc code -32603)" — the outer
+  wrapper text, not the provider's actual reason. The flat shape wins when it carries a numeric
+  code; otherwise the nested envelope is authoritative.
+  */
+  const source: RpcShape | undefined =
+    typeof raw?.code === "number" ? raw : typeof nested?.code === "number" ? nested : undefined;
+
+  const code = typeof source?.code === "number" ? source.code : undefined;
+  const data = source?.data;
+  const message =
+    (typeof source?.message === "string" && source.message)
+    || (typeof raw?.message === "string" && raw.message)
+    || (error instanceof Error ? error.message : String(error ?? "unknown error"));
+
+  return { message, code, data, retryable: code !== undefined && RETRYABLE_JSONRPC_CODES.has(code) };
+}
+
+/**
+ * Render a thrown ACP turn error as a single-line diagnostic that preserves the JSON-RPC code
+ * and any `data` payload, so transient classification has something to anchor on.
+ *
+ * Shape: `Internal error (acp rpc code -32603, retryable) [data: {...}]`
+ */
+export function describeAcpTurnError(error: unknown): string {
+  const { message, code, data, retryable } = inspectAcpTurnError(error);
+  if (code === undefined) return message;
+  const suffix = retryable ? ", retryable" : "";
+  let out = `${message} (acp rpc code ${code}${suffix})`;
+  if (data !== undefined) {
+    let rendered: string;
+    try {
+      rendered = typeof data === "string" ? data : JSON.stringify(data);
+    } catch {
+      rendered = String(data);
+    }
+    if (rendered && rendered !== "{}") out += ` [data: ${rendered.slice(0, 500)}]`;
+  }
+  return out;
+}
+
 /**
  * Send a prompt turn via `session/prompt` and return the terminal `stopReason`.
  *
  * The SDK prompt promise resolves only AFTER every `session/update` for the turn
  * has been delivered to the client handler — so resolving here is the correct
  * "turn complete" signal (no extra draining required).
+ *
+ * FNXC:AcpRuntime 2026-07-15-18:20: rethrows with `describeAcpTurnError` so the JSON-RPC code
+ * survives to the engine's transient classifier (FN-8004). `cause` retains the original error.
  */
 export async function promptAcpSession(
   connection: AcpConnection,
   sessionId: string,
   blocks: ContentBlock[],
 ): Promise<StopReason> {
-  const res = await connection.conn.prompt({ sessionId, prompt: blocks });
-  return res.stopReason;
+  try {
+    const res = await connection.conn.prompt({ sessionId, prompt: blocks });
+    return res.stopReason;
+  } catch (error) {
+    throw new Error(describeAcpTurnError(error), { cause: error });
+  }
 }
 
 /**

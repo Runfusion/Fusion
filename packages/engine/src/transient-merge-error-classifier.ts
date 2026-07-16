@@ -42,11 +42,40 @@
  *    stale temp merge checkout), not that the task branch's code failed. A
  *    fresh merge attempt gets a fresh/revalidated worktree, so the self-healing
  *    sweep can recover these within its bounded retry budget.
+ *
+ *  - `ai-provider-turn-failure`: the AI merge's LLM turn failed provider-side
+ *    (FN-8004). The merger drives a real model to resolve/compose the squash;
+ *    when that provider returns an internal/server error, the *merge* failed but
+ *    the task branch is untouched and a fresh attempt typically succeeds. Before
+ *    FN-8004 no provider fault was modeled here at all, so every one of them was
+ *    treated as a permanent defect.
+ *
+ *  - `network-transport-failure`: delegated to `isTransientError` (see below).
  */
+// Imports the import-free leaf, NOT `transient-error-detector.js` — that module pulls
+// `usage-limit-detector.js → logger.js`, the exact chain FN-5627 split this file out to avoid.
+import { isTransientError } from "./transient-error-patterns.js";
+
+/*
+FNXC:MergeReliability 2026-07-15-18:30:
+This classifier used to recognize only git/lease/spawn faults, while the inline retry gate in
+`project-engine.ts#maybeRetryTransientMerge` accepted `isTransientError(msg) || classify(msg)`.
+The self-healing sweep (`recoverTransientMergeFailures`) consulted ONLY this classifier — so any
+network-class error (ECONNRESET, socket hang up, WebSocket drop) got inline retries but became
+invisible to the sweep once parked `failed`, stranding it forever.
+
+Delegating to `isTransientError` here makes the two gates agree by construction. Both consumers
+now see one definition of "transient", which is what the FN-5627 header above already claimed.
+*/
 export function classifyTransientMergeError(error: string | null | undefined): string | null {
   if (!error) return null;
   if (/lease-handoff-failed[^a-z]+target-not-queued/i.test(error)) {
     return "lease-handoff-target-not-queued";
+  }
+  // FNXC:MergeReliability 2026-07-15-18:30 (FN-8004): AI-merge provider faults precede the
+  // generic network check so the more specific class wins in the audit/log trail.
+  if (/\bACP turn failed\b/i.test(error) || /\bacp rpc code -32(?:603|00[0-3])\b/i.test(error)) {
+    return "ai-provider-turn-failure";
   }
   if (/\bspawn(?:\s+\S+)?\s+ENO(?:TDIR|ENT)\b/i.test(error)) {
     return "process-spawn-failure";
@@ -57,6 +86,11 @@ export function classifyTransientMergeError(error: string | null | undefined): s
   const sameSha = error.match(/advanced concurrently \(expected ([0-9a-f]{7,40}),\s+observed ([0-9a-f]{7,40})\)/i);
   if (sameSha && sameSha[1].toLowerCase() === sameSha[2].toLowerCase()) {
     return "spurious-concurrent-advance-same-sha";
+  }
+  // FNXC:MergeReliability 2026-07-15-18:30 (FN-8004): last — the specific git/merge classes above
+  // must win the label. This aligns the sweep with the inline retry gate (see header).
+  if (isTransientError(error)) {
+    return "network-transport-failure";
   }
   return null;
 }

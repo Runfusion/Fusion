@@ -541,9 +541,19 @@ export class ProjectEngine {
   }
 
   /** FN-5697/FN-5674: cap transient provider/network abort retries in auto-merge.
-   *  Examples: "This operation was aborted", "socket hang up", `server_error`.
-   *  After this cap, the task is parked failed for human visibility. */
-  private static readonly MAX_AUTO_MERGE_TRANSIENT_RETRIES = 3;
+   *  Examples: "This operation was aborted", "socket hang up", `server_error`,
+   *  and (FN-8004) ACP provider turn failures such as `acp rpc code -32603`.
+   *  After this cap, the task is parked failed for human visibility.
+   *
+   *  FNXC:MergeReliability 2026-07-15-18:50 (FN-8004):
+   *  Raised 3 → 5. Applies only to errors already classified transient, and each retry
+   *  is spaced by exponential backoff (5s/10s/20s/40s/80s — ~2.5 min total), so the
+   *  widened budget rides out provider incidents lasting minutes rather than seconds
+   *  without meaningfully delaying a genuinely broken merge's park.
+   *
+   *  Readable (not private) so tests derive the cap from this single source of truth rather
+   *  than hardcoding it — the FN-8004 bump broke two suites that had baked in the old `3`. */
+  static readonly MAX_AUTO_MERGE_TRANSIENT_RETRIES = 5;
   private static readonly MERGE_REQUEST_RETRY_EXHAUSTED_AGE_MS = 30 * 60 * 1000;
   /** Cap on outer in-review→in-progress bounces caused by deterministic
    *  verification failures during auto-merge. After this many failed merges
