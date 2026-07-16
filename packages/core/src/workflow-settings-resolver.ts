@@ -39,6 +39,7 @@ import { PLANNER_OVERSIGHT_LEVELS, DEFAULT_PLANNER_OVERSIGHT_LEVEL, type Planner
 
 export const PLAN_REVIEW_MAX_REVISIONS_SETTING_ID = "planReviewMaxRevisions";
 export const CODE_REVIEW_MAX_REVISIONS_SETTING_ID = "codeReviewMaxRevisions";
+export const PLAN_REVIEW_REPLAN_CAP_SETTING_ID = "planReviewReplanCap";
 export type OptionalReviewRevisionBudget = NonNullable<WorkflowOptionalGroupConfig["maxRevisions"]>;
 
 const REVIEW_REVISION_SETTING_BY_GROUP_ID: Record<string, string | undefined> = {

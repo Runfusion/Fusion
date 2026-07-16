@@ -41,11 +41,13 @@ import {
   MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
   MISSION_FIX_IDEMPOTENCY_VERSION,
   IMPORT_TRANSLATION_CACHE_VERSION,
+  OWNER_PROJECT_ID_SPLIT_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
 } from "../../postgres/schema-applier.js";
 import { rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
+import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
 
 const PG_ADMIN_URL =
   process.env.FUSION_PG_TEST_ADMIN_URL ?? "postgresql://localhost:5432/postgres";
@@ -99,7 +101,14 @@ describe("schema-applier: immutable migration identities", () => {
 
   it("keeps the import translation cache assigned to version 0010", () => {
     expect(IMPORT_TRANSLATION_CACHE_VERSION).toBe("0010");
-    expect(SCHEMA_BASELINE_VERSION).toBe(IMPORT_TRANSLATION_CACHE_VERSION);
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the baseline marker advanced to
+    // 0011; 0010 keeps its immutable identity so its migration cannot be skipped.
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(IMPORT_TRANSLATION_CACHE_VERSION));
+  });
+
+  it("keeps the owner_project_id domain/partition split assigned to version 0011", () => {
+    expect(OWNER_PROJECT_ID_SPLIT_VERSION).toBe("0011");
+    expect(SCHEMA_BASELINE_VERSION).toBe(OWNER_PROJECT_ID_SPLIT_VERSION);
   });
 });
 
@@ -363,6 +372,48 @@ pgDescribe("schema-applier: VAL-SCHEMA-008 three-database topology", () => {
       ORDER BY schema_name
     `)) as unknown as Array<{ schema_name: string }>;
     expect(rows.map((r) => r.schema_name)).toEqual(["archive", "central", "project"]);
+  });
+
+  it("ensures schemas before hooks when all migration markers are already recorded", async () => {
+    ctx = await setupFreshDb();
+    await ctx.db.execute(sql.raw(`
+      CREATE TABLE public.fusion_schema_migrations (
+        version text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO public.fusion_schema_migrations (version)
+      SELECT lpad(n::text, 4, '0')
+      FROM generate_series(0, ${Number(SCHEMA_BASELINE_VERSION)}) AS migration(n);
+    `));
+
+    const observedSchemas: string[] = [];
+    const assertSchemasHook: PluginSchemaInitHook = {
+      pluginId: "assert-required-schemas",
+      async init(db) {
+        const rows = (await db.execute(sql`
+          SELECT schema_name FROM information_schema.schemata
+          WHERE schema_name IN ('project', 'central', 'archive')
+          ORDER BY schema_name
+        `)) as unknown as Array<{ schema_name: string }>;
+        observedSchemas.push(...rows.map(({ schema_name }) => schema_name));
+        if (rows.length !== 3) {
+          throw new Error(`Required schemas missing at plugin hook time: ${rows.map(({ schema_name }) => schema_name).join(", ")}`);
+        }
+      },
+    };
+
+    await expect(applySchemaBaseline(ctx.db, { pluginHooks: [assertSchemasHook] })).resolves.toEqual({
+      applied: false,
+      pluginHooksRun: 1,
+    });
+    expect(observedSchemas).toEqual(["archive", "central", "project"]);
+
+    const schemas = (await ctx.db.execute(sql`
+      SELECT schema_name FROM information_schema.schemata
+      WHERE schema_name IN ('project', 'central', 'archive')
+      ORDER BY schema_name
+    `)) as unknown as Array<{ schema_name: string }>;
+    expect(schemas.map(({ schema_name }) => schema_name)).toEqual(["archive", "central", "project"]);
   });
 });
 
@@ -953,7 +1004,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     const versions = (await ctx.db.execute(sql`
       SELECT version FROM public.fusion_schema_migrations ORDER BY version
     `)) as unknown as Array<{ version: string }>;
-    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, MISSION_FIX_IDEMPOTENCY_VERSION, SCHEMA_BASELINE_VERSION]);
+    expect(versions.map(({ version }) => version)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, MISSION_FIX_IDEMPOTENCY_VERSION, IMPORT_TRANSLATION_CACHE_VERSION, SCHEMA_BASELINE_VERSION]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
@@ -977,7 +1028,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       applySchemaBaseline(ctx.db, { pluginHooks: [] }),
     ]);
     expect(results.filter(({ applied }) => applied)).toHaveLength(1);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, MISSION_FIX_IDEMPOTENCY_VERSION, SCHEMA_BASELINE_VERSION]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", PROJECT_OWNERSHIP_SCHEMA_VERSION, SQLITE_SCHEMA_PARITY_VERSION, SESSION_ADVISOR_ENABLED_SCHEMA_VERSION, MISSION_FIX_IDEMPOTENCY_VERSION, IMPORT_TRANSLATION_CACHE_VERSION, SCHEMA_BASELINE_VERSION]);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
@@ -1013,7 +1064,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"]);
   });
 
   /**
@@ -1051,7 +1102,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       ))) as unknown as Array<{ project_id: string }>;
       expect(rows).toEqual([{ project_id: "project-a" }]);
     }
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"]);
   });
 
   /*
@@ -1089,7 +1140,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       "project_auth_users",
       "task_reviewer_runs",
     ]);
-    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"]);
   });
 });
 

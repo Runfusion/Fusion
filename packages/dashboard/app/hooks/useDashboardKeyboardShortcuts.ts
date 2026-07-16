@@ -8,17 +8,17 @@ import {
 } from "../utils/keyboardShortcuts";
 
 export interface DashboardKeyboardShortcutHandlers {
-  openQuickChat: () => void;
+  /*
+  FNXC:DashboardShortcuts 2026-07-16-00:00:
+  FN-8069 requires every configurable dashboard shortcut to toggle its surface. App owns state and navigation history, so this listener only dispatches the toggle callbacks; a re-press closes modals or restores the view that was active before Settings or Command Center opened (Runfusion/Fusion#2118).
+  */
+  toggleQuickChat: () => void;
   toggleTerminal: () => void;
   closeTopmostPopup?: () => boolean;
-  /*
-  FNXC:DashboardShortcuts 2026-07-04-00:00:
-  FN-7553 adds four more configurable actions. Each handler reuses an existing App nav callback (openFilesWithNav, openSettingsWithNav, a thin command-center nav wrapper, openNewTaskWithNav) so this hook never introduces a second/duplicate nav destination — it only dispatches to whatever the caller already uses for its header/sidebar entry points.
-  */
-  openFiles: () => void;
-  openSettings: () => void;
-  openCommandCenter: () => void;
-  openNewTask: () => void;
+  toggleFiles: () => void;
+  toggleSettings: () => void;
+  toggleCommandCenter: () => void;
+  toggleNewTask: () => void;
 }
 
 export interface UseDashboardKeyboardShortcutsOptions extends DashboardKeyboardShortcutHandlers {
@@ -33,13 +33,13 @@ The global dashboard listener only handles document-level shortcuts after target
 export function useDashboardKeyboardShortcuts({
   shortcuts,
   enabled = true,
-  openQuickChat,
+  toggleQuickChat,
   toggleTerminal,
   closeTopmostPopup,
-  openFiles,
-  openSettings,
-  openCommandCenter,
-  openNewTask,
+  toggleFiles,
+  toggleSettings,
+  toggleCommandCenter,
+  toggleNewTask,
 }: UseDashboardKeyboardShortcutsOptions): void {
   useEffect(() => {
     if (!enabled || typeof document === "undefined") return;
@@ -62,7 +62,7 @@ export function useDashboardKeyboardShortcuts({
 
       if (shortcutMatchesEvent(resolved.quickChat, event)) {
         event.preventDefault();
-        openQuickChat();
+        toggleQuickChat();
         return;
       }
 
@@ -74,29 +74,29 @@ export function useDashboardKeyboardShortcuts({
 
       if (shortcutMatchesEvent(resolved.openFiles, event)) {
         event.preventDefault();
-        openFiles();
+        toggleFiles();
         return;
       }
 
       if (shortcutMatchesEvent(resolved.openSettings, event)) {
         event.preventDefault();
-        openSettings();
+        toggleSettings();
         return;
       }
 
       if (shortcutMatchesEvent(resolved.openCommandCenter, event)) {
         event.preventDefault();
-        openCommandCenter();
+        toggleCommandCenter();
         return;
       }
 
       if (shortcutMatchesEvent(resolved.newTask, event)) {
         event.preventDefault();
-        openNewTask();
+        toggleNewTask();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeTopmostPopup, enabled, openCommandCenter, openFiles, openNewTask, openQuickChat, openSettings, shortcuts, toggleTerminal]);
+  }, [closeTopmostPopup, enabled, shortcuts, toggleCommandCenter, toggleFiles, toggleNewTask, toggleQuickChat, toggleSettings, toggleTerminal]);
 }

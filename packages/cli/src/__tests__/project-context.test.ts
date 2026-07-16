@@ -24,16 +24,32 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { beforeAll, afterAll } from "vitest";
 
-describe("project-context", () => {
+/*
+FNXC:ProjectContextTests 2026-07-16-09:00:
+CentralCore tests require PostgreSQL, but booting its embedded postmaster for every test races other forked CLI files under load. Use the shared external pg test harness and skip only CentralCore coverage when PostgreSQL is unavailable; pure formatting coverage remains ungated below.
+*/
+pgDescribe("project-context (PostgreSQL-backed detection)", () => {
+  let h: PgTestHarness;
   let tempDir: string;
   let homeDir: string;
   let central: CentralCore;
+  let previousDatabaseUrl: string | undefined;
   const createdProjectIds: string[] = [];
 
+  beforeAll(async () => {
+    h = await createTaskStoreForTest({ prefix: "fusion_cli_project_ctx_detection" });
+  });
+
+  afterAll(async () => {
+    await h.teardown();
+  });
+
   beforeEach(async () => {
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = h.testUrl;
     tempDir = mkdtempSync(join(tmpdir(), "kb-test-"));
     homeDir = mkdtempSync(join(tmpdir(), "kb-home-"));
-    central = new CentralCore(homeDir);
+    central = new CentralCore(homeDir, { asyncLayer: h.layer });
     await central.init();
   });
 
@@ -56,6 +72,11 @@ describe("project-context", () => {
       // Ignore close errors
     }
     await clearStoreCache();
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
 
     // Filesystem cleanup last
     try {
@@ -132,45 +153,6 @@ describe("project-context", () => {
     });
   });
 
-  describe("formatProjectLine", () => {
-    it("should format default project with asterisk", () => {
-      const project: RegisteredProject = {
-        id: "proj_123",
-        name: "my-app",
-        path: "/path/to/app",
-        status: "active",
-        isolationMode: "in-process",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      };
-
-      const line = formatProjectLine(project, true);
-
-      expect(line).toContain("* ");
-      expect(line).toContain("my-app");
-      expect(line).toContain("/path/to/app");
-      expect(line).toContain("[active]");
-    });
-
-    it("should format non-default project without asterisk", () => {
-      const project: RegisteredProject = {
-        id: "proj_456",
-        name: "other-app",
-        path: "/path/to/other",
-        status: "paused",
-        isolationMode: "child-process",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      };
-
-      const line = formatProjectLine(project, false);
-
-      expect(line).not.toContain("*");
-      expect(line).toContain("other-app");
-      expect(line).toContain("[paused]");
-    });
-  });
-
   describe("resolveProject", () => {
     it("should throw for unknown project name", async () => {
       await expect(resolveProject("unknown-project", tempDir, homeDir)).rejects.toThrow(
@@ -192,6 +174,45 @@ describe("project-context", () => {
         "No fusion project found"
       );
     });
+  });
+});
+
+describe("formatProjectLine", () => {
+  it("should format default project with asterisk", () => {
+    const project: RegisteredProject = {
+      id: "proj_123",
+      name: "my-app",
+      path: "/path/to/app",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    };
+
+    const line = formatProjectLine(project, true);
+
+    expect(line).toContain("* ");
+    expect(line).toContain("my-app");
+    expect(line).toContain("/path/to/app");
+    expect(line).toContain("[active]");
+  });
+
+  it("should format non-default project without asterisk", () => {
+    const project: RegisteredProject = {
+      id: "proj_456",
+      name: "other-app",
+      path: "/path/to/other",
+      status: "paused",
+      isolationMode: "child-process",
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    };
+
+    const line = formatProjectLine(project, false);
+
+    expect(line).not.toContain("*");
+    expect(line).toContain("other-app");
+    expect(line).toContain("[paused]");
   });
 });
 

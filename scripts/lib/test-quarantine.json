@@ -2,22 +2,7 @@
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config is the enforcement.",
   "entries": [
     {
-      "file": "packages/cli/src/__tests__/extension-dist-barrel.test.ts",
-      "reason": "FN-7530 RESCUE-by-split of the prior extension.test.ts entry: the dist-barrel fn_task_list test timed out at 5000ms in the full-suite shard 4/4 (run https://github.com/Runfusion/Fusion/actions/runs/28697507894) while passing locally in ~1.2s and in 3 of the 4 surrounding CI runs. Root-cause invariant: the test does in-test module recompilation (vi.resetModules + vi.importActual of the full @fusion/core dist barrel + a fresh dynamic import of extension.js) inside the default 5s test timeout; that work is CPU-bound and degrades non-linearly under 4-shard CI contention (same loaded-lane signature as FN-6483/FN-6705/FN-6795/FN-6839). Widening the timeout is forbidden by the flaky-test rule and removing the recompilation removes the test's only point, so the file is quarantined pending a split into smaller compilation units.",
-      "quarantinedAt": "2026-07-04"
-    },
-    {
       "file": "packages/engine/src/__tests__/backlog-pressure-reporter.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/cross-node-claim-mutex.integration.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/distributed-claim-mutex.integration.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
     },
@@ -28,11 +13,6 @@
     },
     {
       "file": "packages/engine/src/__tests__/mission-factory-parity.integration.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/owning-node-handoff.integration.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: fails due to SQLite removal or sync API incompatibility in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
     },
@@ -127,37 +107,12 @@
       "quarantinedAt": "2026-07-14"
     },
     {
-      "file": "packages/engine/src/__tests__/reliability-interactions/in-review-handoff-atomic.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/reliability-interactions/multi-node-claim-mutex-interactions.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
       "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
     },
     {
       "file": "packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/reliability-interactions/self-defeating-dep-reconcile.test.ts",
-      "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/engine/src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
       "quarantinedAt": "2026-07-14"
     },
@@ -179,16 +134,6 @@
     {
       "file": "packages/engine/src/__tests__/reliability-interactions/post-done-continuation-no-wedge.test.ts",
       "reason": "VAL-REMOVAL-005 PG migration: reliability fixture uses PG-backed store but sync APIs (getRunAuditEvents, getDatabase) fail in backend mode. Failing run: https://github.com/Runfusion/Fusion/actions/runs/29344576232. Mirrored in packages/engine/vitest.config.ts.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/dashboard/src/__tests__/routes-system.test.ts",
-      "reason": "PostgreSQL maintainability verification on 2026-07-14 observed the CPU sampling assertion near line 500 receive 10 when 30 was expected during the local file-scoped `pnpm --filter @fusion/dashboard exec vitest run packages/dashboard/src/__tests__/routes-system.test.ts` run. Archived local-run evidence: https://github.com/Runfusion/Fusion/pull/2109#discussion_r3584473782. The unrelated sampling result is timing/load-sensitive, so quarantine the file on sight instead of changing its timeout, retries, or assertion. Mirrored in packages/dashboard/vitest.config.ts quarantinedDashboardTests.",
-      "quarantinedAt": "2026-07-14"
-    },
-    {
-      "file": "packages/cli/src/__tests__/project-context.test.ts",
-      "reason": "PR #2110 feedback verification on 2026-07-14 observed the embedded PostgreSQL postmaster exit unexpectedly in a combined file-scoped CLI run, followed by ECONNREFUSED, 10s hook timeouts, and the subprocess guard; the unchanged suite passed 12/12 immediately in isolation. Archived local-run evidence: https://github.com/Runfusion/Fusion/pull/2110#issuecomment-4977406152. The loaded-lane embedded-cluster interference is timing/resource-sensitive, so quarantine the file on sight instead of widening timeouts, adding retries, or weakening assertions. Mirrored in packages/cli/vitest.config.ts quarantinedCliTests.",
       "quarantinedAt": "2026-07-14"
     }
   ]

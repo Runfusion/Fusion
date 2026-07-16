@@ -25,8 +25,12 @@ binary-path control render flush against the card's left/right/bottom edges. See
   margin-top: var(--space-sm);
 }
 
+/*
+FNXC:CursorCli 2026-07-15-00:00:
+FN-8043 uses --text-muted for secondary labels because --text-secondary is an undefined deprecated alias in both themes.
+*/
 .cursor-cli-binary-path-label {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.78rem;
   font-weight: 600;
 }

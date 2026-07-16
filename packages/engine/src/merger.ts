@@ -104,6 +104,7 @@ import {
   type AutostashOrphanRecord,
   normalizeMergeAdvanceAutoSyncMode,
   isMergeRequestContractShadowEnabled,
+  resolveMergerFallbackModel,
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge-trait.js";
@@ -1130,7 +1131,11 @@ async function attemptInMergeVerificationFix(
       : null;
     const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
     const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
-    // FN-5279: verification-fix sessions run in the resolved integration root,
+
+    // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+    const mergerFallbackModel = resolveMergerFallbackModel(settings);
+      // FN-5279: verification-fix sessions run in the resolved integration root,
     // which is the reused task worktree in handoff mode.
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
@@ -1160,8 +1165,8 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       onToolEnd: logger.onToolEnd,
       defaultProvider: mergerSessionModel.provider,
       defaultModelId: mergerSessionModel.modelId,
-      fallbackProvider: settings.fallbackProvider,
-      fallbackModelId: settings.fallbackModelId,
+      fallbackProvider: mergerFallbackModel.provider,
+      fallbackModelId: mergerFallbackModel.modelId,
       fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
       defaultThinkingLevel: resolveMergerThinkingLevel(settings),
       runAuditor: createRunAuditor(store, {
@@ -2360,6 +2365,10 @@ async function runAiAgentForAutostashConflict(params: {
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
   const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
 
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
+
   const systemPrompt = `You are an autostash-conflict resolution agent running after a Fusion merge has already committed on the main branch.
 
 Before the merge ran, the developer had uncommitted local changes in their working tree. The merger snapshotted those changes into a git stash, ran the merge cleanly, and is now reapplying the stash on top of the merged HEAD. The reapply hit conflicts because the merge committed changes that overlap the developer's stashed edits.
@@ -2404,8 +2413,8 @@ ${fileList}
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
@@ -2769,6 +2778,10 @@ async function runAiAgentForAutostashHardFail(params: {
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
   const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
 
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
+
   const systemPrompt = `You are an autostash hard-failure recovery agent for the Fusion merger.
 
 Before the merge ran, the developer had uncommitted local changes. We snapshotted them into a git stash, ran the merge cleanly on top, and tried to re-apply the stash. Both \`git stash apply\` and \`git apply --3way\` failed without producing conflict markers — meaning git refused to attempt the apply at all (typical causes: untracked-file overwrite, a path in the stash no longer exists at HEAD, or an index conflict that produced no in-tree markers).
@@ -2823,8 +2836,8 @@ ${fileList}
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
@@ -5829,6 +5842,10 @@ You are assisting with a paused \`git pull --rebase\`.
 
   throwIfAborted(options?.signal, taskId);
   const mergerSessionModel = resolveMergerSessionModel(settings, options?.assignedAgentRuntimeConfig);
+
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     runtimeHint: options?.runtimeHint,
@@ -5842,8 +5859,8 @@ You are assisting with a paused \`git pull --rebase\`.
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
@@ -10791,6 +10808,10 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
   const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
 
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
+
+  const mergerFallbackModel = resolveMergerFallbackModel(settings);
+
   // FN-5279: Layer 3 / merge-authoring AI runs in the resolved integration
   // root so arbiter edits land in the reused task worktree when handoff mode
   // is active.
@@ -10808,8 +10829,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
-    fallbackProvider: settings.fallbackProvider,
-    fallbackModelId: settings.fallbackModelId,
+    fallbackProvider: mergerFallbackModel.provider,
+    fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {

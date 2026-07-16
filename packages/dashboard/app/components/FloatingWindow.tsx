@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { isFullScreenSheetViewport, isShortViewport } from "../hooks/useViewportMode";
 import { currentFloatingZ, currentTaskDetailFloatingZ, nextFloatingZ, nextTaskDetailFloatingZ } from "./floatingWindowStack";
 import "./FloatingWindow.css";
 
@@ -48,6 +49,10 @@ export interface FloatingWindowProps {
   className?: string;
   /** Optional localStorage key used to restore the last clamped position and size. */
   persistGeometryKey?: string;
+  /** Skip desktop geometry restoration/writes while this caller renders as a full-screen mobile sheet. */
+  suspendGeometryPersistenceOnMobile?: boolean;
+  /** Include the CSS short-viewport sheet breakpoint when suspending geometry persistence. */
+  suspendGeometryPersistenceOnShortViewport?: boolean;
   /**
    * Opt-in outside-pointer dismissal for transient windows like Quick Chat.
    * Persistent task/terminal pop-outs must omit this so page clicks do not close them.
@@ -175,16 +180,30 @@ export function FloatingWindow({
   dragHandleSelector,
   className,
   persistGeometryKey,
+  suspendGeometryPersistenceOnMobile = false,
+  suspendGeometryPersistenceOnShortViewport = false,
   closeOnOutsidePointerDown = false,
   layer = "utility",
   ariaLabel,
 }: FloatingWindowProps) {
   const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
+  /*
+  FNXC:ModalGeometryPersistence 2026-07-16-00:40:
+  Opt-in sheet callers leave desktop geometry untouched at `max-width: 768px`. Most wide, short
+  landscape phones remain movable FloatingWindows and must restore geometry; Artifact Gallery opts
+  into its separate `max-height: 480px` full-screen-sheet CSS breakpoint as well.
+  */
+  const geometryPersistenceSuspended = suspendGeometryPersistenceOnMobile && (
+    isFullScreenSheetViewport() || (suspendGeometryPersistenceOnShortViewport && isShortViewport())
+  );
+
   if (!initialGeometry.current) {
     const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize);
     const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize) : defaultPositionFor(windowKey, fallbackSize);
-    initialGeometry.current = readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize);
+    initialGeometry.current = geometryPersistenceSuspended
+      ? { size: fallbackSize, position: fallbackPosition }
+      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize);
   }
 
   const [size, setSize] = useState<FloatingWindowSize>(() =>
@@ -406,13 +425,13 @@ export function FloatingWindow({
   Quick Chat reopens should restore the last desktop floating-window size and position while still clamping onto the current viewport. Keep persistence generic and opt-in with persistGeometryKey so each caller controls whether geometry is shared or isolated.
   */
   useEffect(() => {
-    if (!persistGeometryKey || typeof window === "undefined") return;
+    if (!persistGeometryKey || typeof window === "undefined" || geometryPersistenceSuspended) return;
     try {
       localStorage.setItem(persistGeometryKey, JSON.stringify({ size, position }));
     } catch {
       // Ignore storage failures; geometry persistence is a convenience only.
     }
-  }, [persistGeometryKey, position, size]);
+  }, [geometryPersistenceSuspended, persistGeometryKey, position, size]);
 
   const panelStyle = {
     left: `${position.x}px`,

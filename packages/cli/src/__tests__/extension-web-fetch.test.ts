@@ -28,6 +28,8 @@ vi.mock("@fusion/engine", () => ({
   workflowDeleteParams: {},
   workflowSettingsParams: {},
   traitListParams: {},
+  normalizeAgentLogPaging: vi.fn(() => ({ limit: 100, offset: 0 })),
+  renderAgentLogEntries: vi.fn(() => ""),
 }));
 
 import kbExtension from "../extension.js";

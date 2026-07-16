@@ -45,7 +45,8 @@ function rowToSession(row: CliSessionRow): CliSession {
     taskId: row.taskId,
     chatSessionId: row.chatSessionId,
     purpose: row.purpose as CliSessionPurpose,
-    projectId: row.projectId,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011). The store always writes it, so hydrated rows are non-null.
+    projectId: row.ownerProjectId ?? "",
     adapterId: row.adapterId,
     agentState: row.agentState as CliAgentState,
     terminationReason: row.terminationReason as CliTerminationReason | null,
@@ -77,7 +78,7 @@ export class CliSessionStore extends EventEmitter<CliSessionStoreEvents> {
     const rows = await layer.db
       .select()
       .from(schema.project.cliSessions)
-      .where(eq(schema.project.cliSessions.projectId, projectId))
+      .where(eq(schema.project.cliSessions.ownerProjectId, projectId))
       .orderBy(desc(schema.project.cliSessions.updatedAt));
     for (const row of rows) store.sessions.set(row.id, rowToSession(row));
     return store;
@@ -143,8 +144,12 @@ export class CliSessionStore extends EventEmitter<CliSessionStoreEvents> {
       updatedAt: now,
     };
     this.sessions.set(session.id, session);
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the session's domain project to
+    // owner_project_id and never project_id — the trigger/GUC owns the RLS partition.
+    const { projectId: ownerProjectId, ...columns } = session;
     this.enqueue(() => this.layer.db.insert(schema.project.cliSessions).values({
-      ...session,
+      ...columns,
+      ownerProjectId,
       autonomyPosture: session.autonomyPosture ? JSON.stringify(session.autonomyPosture) : null,
     }));
     this.emit("cli-session:created", session);
@@ -203,7 +208,7 @@ export class CliSessionStore extends EventEmitter<CliSessionStoreEvents> {
       })
       .where(and(
         eq(schema.project.cliSessions.id, id),
-        eq(schema.project.cliSessions.projectId, this.projectId),
+        eq(schema.project.cliSessions.ownerProjectId, this.projectId),
       )));
     this.emit("cli-session:updated", updated);
     return updated;
@@ -215,7 +220,7 @@ export class CliSessionStore extends EventEmitter<CliSessionStoreEvents> {
       .delete(schema.project.cliSessions)
       .where(and(
         eq(schema.project.cliSessions.id, id),
-        eq(schema.project.cliSessions.projectId, this.projectId),
+        eq(schema.project.cliSessions.ownerProjectId, this.projectId),
       )));
     this.emit("cli-session:deleted", id);
     return true;

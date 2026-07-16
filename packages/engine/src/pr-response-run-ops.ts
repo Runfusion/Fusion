@@ -10,8 +10,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PrEntity, Settings, TaskStore } from "@fusion/core";
-import { resolveAgentPrompt } from "@fusion/core";
-import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel } from "./agent-session-helpers.js";
+import { resolveAgentPrompt, resolveMergerFallbackModel } from "@fusion/core";
+import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { promptWithFallback } from "./pi.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
@@ -101,6 +101,8 @@ export function makePrResponseAgentRunner(
 }) => Promise<PrAgentRunResult> {
   return async ({ prompt, systemPrompt, signal, threads }) => {
     const model = resolveMergerSessionModel(settings);
+    // FNXC:Settings-MergerModel 2026-07-16-00:00: PR-response retries use the merger-only fallback lane, retaining shared fallback inheritance when unset.
+    const mergerFallbackModel = resolveMergerFallbackModel(settings);
     let captured = "";
     /*
      * FNXC:McpConfig 2026-06-26-00:00:
@@ -129,8 +131,9 @@ export function makePrResponseAgentRunner(
       },
       defaultProvider: model.provider,
       defaultModelId: model.modelId,
-      fallbackProvider: settings.fallbackProvider,
-      fallbackModelId: settings.fallbackModelId,
+      fallbackProvider: mergerFallbackModel.provider,
+      fallbackModelId: mergerFallbackModel.modelId,
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
       defaultThinkingLevel: resolveMergerThinkingLevel(settings),
       settings,
       taskId,

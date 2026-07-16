@@ -8,6 +8,7 @@
 import { useTranslation } from "react-i18next";
 import type { AgentPromptsConfig } from "@fusion/core";
 import { AgentPromptsManager } from "../../AgentPromptsManager";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import type { SectionBaseProps } from "./context";
 
@@ -23,14 +24,18 @@ export function PromptsSection({ form, setForm, onOpenWorkflowSettings }: Prompt
   const { t } = useTranslation("app");
   return (
     <>
-      <h4 className="settings-section-heading">{t("settings.nav.prompts", "Prompts")}</h4>
-      <div className="form-group">
-        <small>
+      {/*
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      Section intro moved behind the shared "?" beside the heading - operator requirement: no inline description paragraphs in Settings.
+      */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.nav.prompts", "Prompts")}</h4>
+        <SettingsHelpTip settingKey="prompts-section">
           {t(
             "settings.prompts.surfaceExplanation",
             "Use this section for agent role system prompt templates, role assignments, and global PromptKey segment overrides. Per-workflow step prompts for prompt and gate nodes are edited in the Workflow Editor. No default \u2014 unset (built-in role prompts apply until overridden).",
           )}
-        </small>
+        </SettingsHelpTip>
       </div>
       <MovedSettingsStub
         message={t(

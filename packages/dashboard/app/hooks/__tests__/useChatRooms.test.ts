@@ -227,6 +227,77 @@ describe("useChatRooms", () => {
     expect(cached?.[0]).not.toHaveProperty("messages");
   });
 
+  it("normalizes descending initial room hydration to chronological state", async () => {
+    const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
+    const descendingTranscript = [
+      { ...roomMessage("assistant-pm", "room-1", "PM reply", "2026-05-09T00:02:01.000Z"), role: "assistant" as const, senderAgentId: "pm" },
+      { ...roomMessage("assistant-cto", "room-1", "CTO reply", "2026-05-09T00:02:00.000Z"), role: "assistant" as const, senderAgentId: "cto" },
+      roomMessage("user-hi", "room-1", "Hi", "2026-05-09T00:00:00.000Z"),
+    ];
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: descendingTranscript });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms).toHaveLength(1));
+
+    act(() => result.current.selectRoom("room-1"));
+
+    await waitFor(() => {
+      expect(result.current.messages.map((message) => message.id)).toEqual(["user-hi", "assistant-cto", "assistant-pm"]);
+    });
+  });
+
+  it("normalizes the descending authoritative post-send refresh and appends optimistic messages", async () => {
+    const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
+    const descendingTranscript = [
+      { ...roomMessage("assistant-reply", "room-1", "Reply", "2026-05-09T00:03:00.000Z"), role: "assistant" as const, senderAgentId: "agent-1" },
+      roomMessage("posted-user", "room-1", "Hi", "2026-05-09T00:02:00.000Z"),
+      roomMessage("older-user", "room-1", "Earlier", "2026-05-09T00:00:00.000Z"),
+    ];
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms).toHaveLength(1));
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [] });
+    act(() => result.current.selectRoom("room-1"));
+    await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-1"));
+
+    let resolvePost!: (value: { message: ChatRoomMessage }) => void;
+    mockPostChatRoomMessage.mockReturnValueOnce(new Promise((resolve) => { resolvePost = resolve; }));
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: descendingTranscript });
+    let sendPromise!: Promise<void>;
+    await act(async () => { sendPromise = result.current.sendRoomMessage("Hi"); });
+    expect(result.current.messages.at(-1)?.content).toBe("Hi");
+
+    resolvePost({ message: descendingTranscript[1]! });
+    await act(async () => { await sendPromise; });
+    expect(result.current.messages.map((message) => message.id)).toEqual(["older-user", "posted-user", "assistant-reply"]);
+  });
+
+  it("normalizes the descending recovery refresh and appends SSE messages at the bottom", async () => {
+    const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
+    const descendingTranscript = [
+      { ...roomMessage("assistant-reply", "room-1", "Reply", "2026-05-09T00:03:00.000Z"), role: "assistant" as const, senderAgentId: "agent-1" },
+      roomMessage("recovered-user", "room-1", "Hi", "2026-05-09T00:02:00.000Z"),
+      roomMessage("older-user", "room-1", "Earlier", "2026-05-09T00:00:00.000Z"),
+    ];
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms).toHaveLength(1));
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [] });
+    act(() => result.current.selectRoom("room-1"));
+    await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-1"));
+
+    mockPostChatRoomMessage.mockRejectedValueOnce(new Error("post failed"));
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: descendingTranscript });
+    await act(async () => { await expect(result.current.sendRoomMessage("Hi")).rejects.toThrow("post failed"); });
+    expect(result.current.messages.map((message) => message.id)).toEqual(["older-user", "recovered-user", "assistant-reply"]);
+
+    const sseMessage = { ...roomMessage("sse-new", "room-1", "Newest", "2026-05-09T00:04:00.000Z"), role: "assistant" as const, senderAgentId: "agent-2" };
+    act(() => {
+      capturedEvents["chat:room:message:added"]?.({ data: JSON.stringify(sseMessage) } as MessageEvent);
+    });
+    expect(result.current.messages.at(-1)?.id).toBe("sse-new");
+  });
+
   it("handles room message SSE for active and inactive rooms", async () => {    const older = room("room-1", "one", "2026-05-09T01:00:00.000Z");
     const newer = room("room-2", "two", "2026-05-09T02:00:00.000Z");
     mockFetchChatRooms.mockResolvedValueOnce({ rooms: [older, newer] });
@@ -308,7 +379,7 @@ describe("useChatRooms", () => {
 
     expect(mockPostChatRoomMessage).toHaveBeenCalledWith("room-1", { content: "hello" }, "proj-1");
     expect(mockFetchChatRoomMessages).toHaveBeenLastCalledWith("room-1", { limit: 100, order: "desc" }, "proj-1");
-    expect(result.current.messages.map((message) => message.id)).toEqual(["msg-user", "msg-assistant"]);
+    expect(result.current.messages.map((message) => message.id)).toEqual(["msg-assistant", "msg-user"]);
   });
 
   it("deduplicates user message across optimistic add, SSE echo, and post resolution interleaving", async () => {

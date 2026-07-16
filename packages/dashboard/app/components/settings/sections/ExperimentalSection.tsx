@@ -1,5 +1,6 @@
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 export interface ExperimentalSectionProps extends SectionBaseProps {
     /** Display labels for well-known features (always rendered). */
     knownFeatures: Record<string, string>;
@@ -25,9 +26,13 @@ export function ExperimentalSection({ form, setForm, knownFeatures, legacyAliase
     ])).filter((key) => !hiddenFeatureKeys?.has(key)).sort((a, b) => a.localeCompare(b));
     const featureFlags = allFeatureKeys.map((key) => [key, isFeatureEnabled(experimentalFeatures, key)] as const);
     return (<>
-      <h4 className="settings-section-heading">{t("settings.experimental.experimentalFeatures", "Experimental Features")}</h4>
-      <div className="form-group">
-        <small>{t("settings.experimental.experimentalFeaturesAreEarlyCapabilitiesThatAreNot", " Experimental features are early capabilities that are not yet fully stable. Enable them to test new functionality, but be aware they may change or be removed. Default: disabled for every feature flag below. ")}</small>
+      {/*
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      Section intro moved behind the shared "?" beside the heading - operator requirement: no inline description paragraphs in Settings.
+      */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.experimental.experimentalFeatures", "Experimental Features")}</h4>
+        <SettingsHelpTip settingKey="experimental-section">{t("settings.experimental.experimentalFeaturesAreEarlyCapabilitiesThatAreNot", " Experimental features are early capabilities that are not yet fully stable. Enable them to test new functionality, but be aware they may change or be removed. Default: disabled for every feature flag below. ")}</SettingsHelpTip>
       </div>
 
       <div className="form-group">

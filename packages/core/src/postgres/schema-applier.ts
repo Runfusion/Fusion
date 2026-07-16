@@ -28,10 +28,10 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 
 /** The latest PostgreSQL schema version known to this applier. */
 /*
-FNXC:GitHubImportTranslate 2026-07-15-09:30:
-Advances to 0010 with the import-translation cache. Per-migration identities above stay fixed; only this latest-version marker moves.
+FNXC:MultiProjectIsolation 2026-07-15-23:40:
+Advances to 0012 after the owner_project_id domain/partition split and chat pin timestamp. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0010";
+export const SCHEMA_BASELINE_VERSION = "0012";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -56,6 +56,22 @@ FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Import-translation cache advances to 0010. Migrations are registered here explicitly (not auto-discovered from the migrations dir), so a new .sql file that is not wired through a version constant + bookkeeping check silently never runs.
 */
 export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
+/*
+FNXC:MultiProjectIsolation 2026-07-15-23:40:
+Version 0011 splits the domain "project" field from the RLS partition on the tables
+that conflated them: `project_id` stays the trigger/GUC-owned isolation partition,
+`owner_project_id` becomes the caller-supplied domain field. Writing domain values
+into the partition put parent rows and child rows in different partitions and broke
+the composite FKs (SQLSTATE 23503). Keep this identity fixed when
+SCHEMA_BASELINE_VERSION advances.
+*/
+export const OWNER_PROJECT_ID_SPLIT_VERSION = "0011";
+/*
+FNXC:ChatPinned 2026-07-16-12:30:
+Version 0012 makes the persisted pin timestamp available on databases that
+already applied the baseline before Direct conversations can be pinned.
+*/
+export const CHAT_SESSION_PINS_VERSION = "0012";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -112,6 +128,16 @@ const IMPORT_TRANSLATION_CACHE_MIGRATION_PATH = join(
   "migrations",
   "0010_import_translation_cache.sql",
 );
+const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0011_owner_project_id.sql",
+);
+const CHAT_SESSION_PINS_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0012_chat_session_pins.sql",
+);
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -167,6 +193,18 @@ export async function applySchemaBaseline(
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fusion:schema-applier'))`);
     await ensureBookkeepingTable(tx);
+    /*
+    FNXC:PostgresSchema 2026-07-16-00:55:
+    FN-8051 requires project, central, and archive to exist before plugin schema-init hooks run.
+    Hooks run even when migration markers are already recorded and target project tables, so
+    ensure the namespaces unconditionally inside the advisory-locked transaction rather than
+    relying on the baseline batch that a marker-present database skips.
+    */
+    await tx.execute(sql.raw(`
+      CREATE SCHEMA IF NOT EXISTS project;
+      CREATE SCHEMA IF NOT EXISTS central;
+      CREATE SCHEMA IF NOT EXISTS archive;
+    `));
     const applied = await getAppliedMigrations(tx);
     const baselineAlreadyApplied = applied.includes(INITIAL_SCHEMA_VERSION);
     const automationIsolationAlreadyApplied = applied.includes(AUTOMATION_ISOLATION_SCHEMA_VERSION);
@@ -179,6 +217,8 @@ export async function applySchemaBaseline(
     const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
+    const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
+    const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -411,6 +451,36 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(importTranslationCacheSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MultiProjectIsolation 2026-07-15-23:40:
+    Apply the owner_project_id domain/partition split independently of earlier
+    schema versions so existing databases gain the domain column (backfilled from
+    the previously conflated partition value) before any store read/write path
+    that now targets owner_project_id runs on boot.
+    */
+    if (!ownerProjectIdSplitAlreadyApplied) {
+      const ownerProjectIdSplitSql = await readFile(OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(ownerProjectIdSplitSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OWNER_PROJECT_ID_SPLIT_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:ChatPinned 2026-07-16-12:30:
+    Apply the pin timestamp separately from the baseline so all pre-existing
+    databases can safely read and write Direct chat pins after this rollout.
+    */
+    if (!chatSessionPinsAlreadyApplied) {
+      const chatSessionPinsSql = await readFile(CHAT_SESSION_PINS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(chatSessionPinsSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_PINS_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

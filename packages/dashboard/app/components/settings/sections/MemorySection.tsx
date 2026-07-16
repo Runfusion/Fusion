@@ -66,9 +66,13 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
         dreams: "Dreams",
     };
     return (<>
-      <h4 className="settings-section-heading">{t("settings.memory.memory", "Memory")}</h4>
-      <div className="form-group">
-        <small className="settings-muted">{t("settings.memory.memoryLivesIn", " Memory lives in ")}<code>.fusion/memory/</code>{t("settings.memory.agentsSearchWithQmdFirstFallBackTo", ". Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed. ")}</small>
+      {/*
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      Section intro moved behind the shared "?" beside the heading — operator requirement: no inline description paragraphs in Settings.
+      */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.memory.memory", "Memory")}</h4>
+        <SettingsHelpTip settingKey="memory-section">{t("settings.memory.memoryLivesIn", " Memory lives in ")}<code>.fusion/memory/</code>{t("settings.memory.agentsSearchWithQmdFirstFallBackTo", ". Agents search with qmd first, fall back to local files when qmd is missing, and open exact line windows only when needed. ")}</SettingsHelpTip>
       </div>
 
       <SettingsToggleRow
@@ -195,10 +199,10 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
                   <Loader2 size={14} className="animate-spin"/>{t("settings.memory.dreaming", " Dreaming\u2026 ")}</>) : (t("settings.memory.dreamNow", "Dream Now"))}
             </button>
             {/*
-            FNXC:SettingsHelp 2026-07-15-21:40:
-            Stays inline (same for "Compact Selected File" below): the affordance is a BUTTON, not a labelled control, so there is no label line for a tip to sit on. Hiding a one-shot action's description behind a "?" beside a button would hide what the button does.
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings, action buttons included. The tip is a sibling of the button; the button's own label still names the action.
             */}
-            <small>{t("settings.memory.manuallyTriggerDreamProcessingNow", "Manually trigger dream processing now.")}</small>
+            <SettingsHelpTip settingKey="memory-dream-now">{t("settings.memory.manuallyTriggerDreamProcessingNow", "Manually trigger dream processing now.")}</SettingsHelpTip>
           </div>
         </>)}
 
@@ -244,7 +248,14 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
 
       {memoryLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.memory.loadingMemory", "Loading memory\u2026")} /></div>) : (<div className="memory-editor-section">
           <div className="form-group">
-            <label htmlFor="memoryFilePath">{t("settings.memory.memoryFile", "Memory File")}</label>
+            {/*
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            The descriptive branch moved behind the shared "?" beside the label — operator requirement: no inline description paragraphs in Settings. The dirty-state line below stays inline: it is the live reason the select is DISABLED, not help, and must be visible without opening a tip.
+            */}
+            <div className="settings-field-label-row">
+              <label htmlFor="memoryFilePath">{t("settings.memory.memoryFile", "Memory File")}</label>
+              <SettingsHelpTip settingKey="memoryFilePath">Choose any project memory file to view or edit. Dreams is selected by default.</SettingsHelpTip>
+            </div>
             <select id="memoryFilePath" value={selectedMemoryPath} onChange={(e) => {
                 setSelectedMemoryPath(e.target.value);
                 setMemoryDirty(false);
@@ -253,15 +264,7 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
                   {formatMemoryFileOptionLabel(file)}
                 </option>))}
             </select>
-            {/*
-            FNXC:SettingsHelp 2026-07-15-21:40:
-            Stays inline: in the dirty branch this copy is the reason the select is DISABLED, not help. An operator who finds the picker greyed out must be told why without hunting for a "?" — so the whole `<small>` stays visible rather than splitting one string across two affordances by state.
-            */}
-            <small>
-              {memoryDirty
-                ? "Save or discard the current edits before switching files."
-                : "Choose any project memory file to view or edit. Dreams is selected by default."}
-            </small>
+            {memoryDirty && (<small>Save or discard the current edits before switching files.</small>)}
           </div>
           {selectedMemoryFile && (<div className="memory-file-summary">
               <span>{memoryLayerNames[selectedMemoryFile.layer]}</span>
@@ -271,17 +274,19 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
               </small>
             </div>)}
           <div className="form-group memory-editor-form-group">
-            <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
             {/*
-            FNXC:SettingsHelp 2026-07-15-21:40:
-            Stays inline: this describes what the SELECTED FILE holds and changes with the picker above, so it reads as content orientation for the editor pane, not as help for a control. It also labels a document editor rather than a settings control, which is why it never had an id to hang a tip's key off.
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            Per-layer orientation copy moved behind the shared "?" beside the editor label — operator requirement: no inline description paragraphs in Settings. The bubble content still tracks the file picker, so it always describes the currently selected file.
             */}
-            <small>
-              {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls promoted from dreams."}
-              {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}
-              {selectedMemoryFile?.layer === "dreams" && "Synthesized patterns and open loops promoted from daily memory."}
-              {!selectedMemoryFile && "Edits the selected memory file."}
-            </small>
+            <div className="settings-field-label-row">
+              <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
+              <SettingsHelpTip settingKey="memory-editor">
+                {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls promoted from dreams."}
+                {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}
+                {selectedMemoryFile?.layer === "dreams" && "Synthesized patterns and open loops promoted from daily memory."}
+                {!selectedMemoryFile && "Edits the selected memory file."}
+              </SettingsHelpTip>
+            </div>
             <div className="memory-editor-frame">
               <FileEditor content={memoryContent} onChange={(content) => {
                 setMemoryContent(content);
@@ -295,11 +300,12 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
           <button type="button" className="btn btn-secondary btn-sm" onClick={onCompactMemory} disabled={!isEditingAllowed || memoryDirty || memoryCompactLoading}>
             {memoryCompactLoading ? t("settings.memory.compacting", "Compacting…") : t("settings.memory.compactSelectedFile", "Compact Selected File")}
           </button>
-          <small>
-            {memoryDirty
-                ? "Save or discard edits before compacting this file."
-                : `Compacts ${selectedMemoryPath} and writes the result back to the same file.`}
-          </small>
+          {/*
+          FNXC:SettingsHelp 2026-07-16-12:45:
+          The descriptive branch moved behind the shared "?" beside the action button — operator requirement: no inline description paragraphs in Settings. The dirty-state line stays inline: it is the live reason the button is DISABLED, not help.
+          */}
+          <SettingsHelpTip settingKey="memory-compact-file">{`Compacts ${selectedMemoryPath} and writes the result back to the same file.`}</SettingsHelpTip>
+          {memoryDirty && (<small>Save or discard edits before compacting this file.</small>)}
         </div>)}
 
       {memoryDirty && isEditingAllowed && (<div className="form-group">

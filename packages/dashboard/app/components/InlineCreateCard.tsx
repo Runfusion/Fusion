@@ -17,6 +17,7 @@ import { applyPresetToSelection } from "../utils/modelPresets";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
+import { PendingImagePreviews } from "./PendingImagePreviews";
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const STORAGE_KEY = "kb-inline-create-text";
@@ -868,24 +869,13 @@ export function InlineCreateCard({
           />
         )}
       </div>
-      {pendingImages.length > 0 && (
-        <div className="inline-create-previews">
-          {pendingImages.map((img, i) => (
-            <div key={img.previewUrl} className="inline-create-preview">
-              <img src={img.previewUrl} alt={img.file.name} />
-              <button
-                type="button"
-                className="inline-create-preview-remove"
-                onClick={() => removeImage(i)}
-                disabled={submitting}
-                title={t("inline.removeImage", "Remove image")}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <PendingImagePreviews
+        images={pendingImages}
+        onRemove={removeImage}
+        disabled={submitting}
+        removeLabel={t("inline.removeImage", "Remove image")}
+        testIdPrefix="inline-create-preview"
+      />
       {isExpanded && (
         <div id="inline-create-controls" className="inline-create-footer">
           <div className="inline-create-controls">

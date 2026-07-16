@@ -204,6 +204,10 @@ export function RemoteSection({ form, setForm, remote }: RemoteSectionProps) {
 
       {activeProvider === "tailscale" && (<>
           <div className="form-group remote-provider-settings">
+            {/*
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            Stays inline: this is the block-level description for the whole Tailscale provider mode, and the block has no heading or label of its own to host a "?" trigger — the nearest heading ("Remote Access") describes both providers, so a tip there would misattribute provider-specific copy. Same reasoning as the Cloudflare mode `<small>` below, which is additionally live state (its text switches with Quick Tunnel mode).
+            */}
             <small>{t("settings.remote.tailscaleFunnelWillExposeThisDashboardOnYour", "Tailscale Funnel will expose this dashboard on your tailnet's public ")}{`https://<machine>.<tailnet>.ts.net/`}{t("settings.remote.uRLNoHostnameOrPortConfigurationNeeded", " URL \u2014 no hostname or port configuration needed.")}</small>
           </div>
           <SettingsToggleRow

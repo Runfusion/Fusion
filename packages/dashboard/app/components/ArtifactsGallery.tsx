@@ -464,6 +464,9 @@ function OverlayShell({ label, onClose, children, wide, closeRef, windowKey, per
       dragHandleSelector=".artifacts-gallery-viewer-header"
       className="artifacts-gallery-window"
       ariaLabel={label}
+      /* FNXC:ModalGeometryPersistence 2026-07-16-00:40: Artifact viewers are full-screen sheets at ≤768px or ≤480px tall, so neither mobile shape may overwrite desktop geometry. */
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
       persistGeometryKey={persistKey}
       defaultSize={wide ? { width: 1024, height: 720 } : { width: 720, height: 640 }}
       minSize={{ width: 320, height: 280 }}

@@ -453,14 +453,10 @@ export async function listTasksForGitlabTrackingReconcileImpl(store: TaskStore, 
         .offset(deletedOffset);
       const deletedTasks = deletedRowsRaw.map((row) => {
         const raw = row as unknown as Record<string, unknown>;
+        // FNXC:GitLabTracking 2026-07-16-05:36: rowToTask now hydrates GitLab
+        // tracking through the shared persistence registry, so reconcile uses
+        // the same authoritative mapper as every other live-task read.
         const task = store.rowToTask(store.pgRowToTaskRow(raw));
-        // FNXC:GitLabTracking 2026-07-12-00:00: the generic row mapper does not
-        // yet include gitlabTracking (the feature is partial on this branch).
-        // Manually attach it from the raw jsonb column so reconcile callers get
-        // the tracking item they need to reconcile.
-        if (raw.gitlabTracking != null) {
-          task.gitlabTracking = raw.gitlabTracking as Task["gitlabTracking"];
-        }
         task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
         task.log = [];
         return task;

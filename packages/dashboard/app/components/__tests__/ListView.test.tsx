@@ -430,6 +430,36 @@ describe("ListView", () => {
     expect(screen.getByText("View")).toBeDefined();
   });
 
+  it("renders the exhausted review budget indicator only for the matching approval reason in desktop rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-BUDGET", status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+        createMockTask({ id: "FN-MANUAL", status: "awaiting-approval" }),
+        createMockTask({ id: "FN-LEGACY", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }),
+      ],
+    });
+
+    expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
+    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    viewportSpy.mockRestore();
+  });
+
+  it("renders the exhausted review budget indicator only for the matching approval reason in grouped cards", () => {
+    const viewportSpy = mockMobileViewport();
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-BUDGET", status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+        createMockTask({ id: "FN-MANUAL", status: "awaiting-approval" }),
+        createMockTask({ id: "FN-LEGACY", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }),
+      ],
+    });
+
+    expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
+    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    viewportSpy.mockRestore();
+  });
+
   it("falls back malformed task columns to Planning group instead of crashing", () => {
     const malformedTask = {
       ...createMockTask({ id: "FN-404" }),
@@ -807,6 +837,19 @@ describe("ListView", () => {
     expect(onRetryTask).not.toHaveBeenCalled();
     expect(onArchiveTask).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
+  });
+
+  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+    const onResetTask = vi.fn(async () => createMockTask());
+    mockConfirm.mockResolvedValueOnce(true);
+    renderListView({ tasks: [createMockTask({ id: "FN-901", column: "in-progress" })], onResetTask });
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-901"));
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
+    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
   });
 
   it("opens Planning Mode from eligible list row menus and omits it for executing rows", async () => {
@@ -1962,59 +2005,69 @@ describe("ListView", () => {
     }
   });
 
-  it("shows the Reviewing badge in the desktop table status cell while Plan Review runs", () => {
+  it("keeps the desktop border and Reviewing badge active for a status-null running Plan Review", () => {
     const tasks = [
       createMockTask({
         id: "FN-7831",
-        status: "planning",
+        status: null as any,
         enabledWorkflowSteps: ["plan-review"],
-        workflowStepResults: [
-          {
-            workflowStepId: "plan-review",
-            workflowStepName: "Plan Review",
-            status: "pending",
-            startedAt: "2026-07-11T12:00:00.000Z",
-          },
-        ],
+        workflowStepResults: [{
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "pending",
+          startedAt: "2026-07-11T12:00:00.000Z",
+        }],
       } as Partial<Task>),
     ];
 
     renderListView({ tasks });
 
-    const row = screen.getByText("FN-7831").closest("tr");
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByText("Reviewing")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("planning")).toBeInTheDocument();
+    const row = screen.getByText("FN-7831").closest("tr") as HTMLElement;
+    expect(row.className).toContain("agent-active");
+    const badge = within(row).getByText("Reviewing");
+    expect(badge.className).toContain("pulsing");
   });
 
-  it("shows the Reviewing badge in grouped mobile cards while Plan Review runs", () => {
+  it("keeps the mobile border and Reviewing badge active for a status-null running Plan Review", () => {
     const matchMediaSpy = mockMobileViewport();
     try {
       const tasks = [
         createMockTask({
           id: "FN-7831",
-          status: "planning",
+          status: null as any,
           enabledWorkflowSteps: ["plan-review"],
-          workflowStepResults: [
-            {
-              workflowStepId: "plan-review",
-              workflowStepName: "Plan Review",
-              status: "pending",
-              startedAt: "2026-07-11T12:00:00.000Z",
-            },
-          ],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-11T12:00:00.000Z",
+          }],
         } as Partial<Task>),
       ];
 
       renderListView({ tasks });
 
-      const card = screen.getByText("FN-7831").closest(".list-card");
-      expect(card).not.toBeNull();
-      expect(within(card as HTMLElement).getByText("Reviewing")).toBeInTheDocument();
-      expect(within(card as HTMLElement).getByText("planning")).toBeInTheDocument();
+      const card = screen.getByText("FN-7831").closest(".list-card") as HTMLElement;
+      expect(card.className).toContain("agent-active");
+      expect(within(card).getByText("Reviewing").className).toContain("pulsing");
     } finally {
       matchMediaSpy.mockRestore();
     }
+  });
+
+  it("turns off the desktop border and Reviewing pulse when globally paused", () => {
+    const tasks = [createMockTask({
+      id: "FN-8055-paused",
+      status: null as any,
+      enabledWorkflowSteps: ["plan-review"],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending", startedAt: "2026-07-16T00:00:00.000Z" }],
+    } as Partial<Task>)];
+
+    renderListView({ tasks, globalPaused: true });
+
+    const row = screen.getByText("FN-8055-paused").closest("tr") as HTMLElement;
+    expect(row.className).not.toContain("agent-active");
+    expect(within(row).queryByText("Reviewing")).toBeNull();
   });
 
   it("does not show the Reviewing badge after Plan Review completes", () => {

@@ -1048,6 +1048,31 @@ Mirrors `.settings-field-row-head` (same gap, same wrap) so the two idioms produ
 }
 
 /*
+FNXC:SettingsStyling 2026-07-16-12:40:
+Every checkbox in Settings resolves to ONE appearance, whatever markup it sits in.
+The global `.form-group input[type="checkbox"]` rule themes only checkboxes that happen to sit inside a form-group, so the Advanced-settings header toggle, SettingsToggleRow's `.settings-toggle`, the ntfy/webhook card-header enables, and the MCP card toggle all fell back to the browser-default accent — observed as a mix of default-blue and themed checkboxes in one section on Android.
+Scoped to `.settings-modal` (both the dialog and the embedded `settings-modal--embedded` panel carry it) and declaration-identical to the global form-group rule, so cascade ties between the two are harmless.
+*/
+.settings-modal input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--todo);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: box-shadow var(--transition-fast);
+}
+.settings-modal input[type="checkbox"]:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+.settings-modal input[type="checkbox"]:disabled {
+  cursor: default;
+}
+
+/*
 FNXC:SettingsStyling 2026-07-15-18:52:
 Every text-entry control in Settings resolves to ONE appearance, whatever markup it sits in.
 The dashboard ships two competing input treatments: `.input`/`.select` (6px 10px at 13px) and the global `.form-group input` rule (`var(--space-sm) var(--space-md)` = 8px 12px at 14px). A control's padding therefore depended on whether an ancestor happened to be a `.form-group` — and because `.form-group input` (0,1,1) out-specifies `.input` (0,1,0), adding the standard class to a control inside one did nothing. Migrated rows sit outside `.form-group` and got 6px 10px; the bespoke rows still inside one got 8px 12px, side by side in the same section.

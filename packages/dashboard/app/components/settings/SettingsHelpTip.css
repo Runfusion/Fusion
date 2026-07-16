@@ -100,10 +100,15 @@ On a narrow viewport the bubble anchors to the ROW, not to the trigger, and span
 Anchoring to the trigger fails wherever the trigger sits away from the left edge: the label line reads "Name [scope] ?", so the "?" is often near the right of a 390px screen, and a bubble starting there runs off-screen no matter how tightly `max-width` clamps it. Measured on an iPhone-sized viewport before this rule: the bubble spanned x=338→658 against a 390px screen — 268px of it unreachable.
 Neutralising `.settings-help`'s own positioning makes the row the nearest positioned ancestor, so `inset-inline: 0` resolves against the full row and the bubble simply cannot be clipped horizontally. It lands under the whole row rather than under the icon, which on a phone reads better anyway.
 The row selectors cover both idioms: `.settings-field-row` (shared primitive) and `.form-group` (rows that deliberately stay bespoke).
+
+FNXC:SettingsHelp 2026-07-16-12:40:
+Every container that hosts a bespoke SettingsHelpTip must be in this positioned-ancestor list. The ntfy/webhook card headers (`.notification-provider-header`) were missing, so on a phone their bubble anchored to the page shell and rendered at top:100% of it — below the viewport, unreachable (the ntfy "Enable" tip opened with no visible bubble). `.settings-field-label-row` is included for bespoke label lines that sit outside a `.form-group` (e.g. card bodies), so a tip hosted there can never regress the same way.
 */
 @media (max-width: 768px) {
   .settings-field-row,
-  .settings-content .form-group {
+  .settings-content .form-group,
+  .settings-field-label-row,
+  .notification-provider-header {
     position: relative;
   }
 

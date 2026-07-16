@@ -22,7 +22,10 @@ FNXC:Chat-ThinkingLevel 2026-07-12-20:08:
 The Default entry must describe the resolved project/global default supplied by ChatView, while omitted props preserve the legacy isolated fallback label `Default (off)`.
 
 FNXC:Chat-ModelSwitch 2026-07-12-00:00:
-The same brain-icon popup now owns active direct-session targeting too: model-loop sessions can switch provider/model via CustomModelDropdown, and agent sessions can switch to a real agent from the existing list. Selecting either closes the popup and persists immediately through useChat.setSessionModel, while CLI and room composers stay gated in ChatView.
+The same brain-icon popup now owns active direct-session targeting too: model-loop sessions can switch provider/model via CustomModelDropdown, and agent sessions can switch to a real agent from the existing list. Selecting either closes the popup and persists immediately through useChat.setSessionModel, while CLI composers stay gated in ChatView.
+
+FNXC:Chat-ThinkingLevel 2026-07-16-00:34:
+FN-8030 lets room composers reuse this control with showTargetSection={false}. A room's thinking effort is the default reasoning effort for every responder, and rooms have no per-composer model or agent target to switch.
 */
 
 export interface ChatThinkingLevelControlAgent {
@@ -38,6 +41,8 @@ export interface ChatThinkingLevelControlProps {
   onChange: (level: string) => void | Promise<void>;
   /** Resolved project/global default used only for the Default/clear label. */
   defaultThinkingLevel?: string;
+  /** Show direct-chat model/agent targeting controls; rooms render only the thinking-level list. */
+  showTargetSection?: boolean;
   models?: ModelInfo[];
   favoriteProviders?: string[];
   favoriteModels?: string[];
@@ -56,6 +61,7 @@ export function ChatThinkingLevelControl({
   level,
   onChange,
   defaultThinkingLevel = "off",
+  showTargetSection = true,
   models = [],
   favoriteProviders = [],
   favoriteModels = [],
@@ -73,7 +79,7 @@ export function ChatThinkingLevelControl({
   const normalizedLevel = level ?? "";
   const currentModelValue = modelProvider && modelId ? `${modelProvider}/${modelId}` : "";
   const selectedAgentId = agentId && agentId !== FN_AGENT_ID ? agentId : "";
-  const isActive = normalizedLevel !== "" || Boolean(currentModelValue) || Boolean(selectedAgentId);
+  const isActive = normalizedLevel !== "" || (showTargetSection && (Boolean(currentModelValue) || Boolean(selectedAgentId)));
   const listboxId = "chat-thinking-level-listbox";
 
   useEffect(() => {
@@ -183,6 +189,7 @@ export function ChatThinkingLevelControl({
 
       {open ? (
         <div className="chat-thinking-popover" role="presentation" data-testid="chat-thinking-popover">
+          {showTargetSection ? (
           <section className="chat-thinking-target-section" aria-label={t("chat.modelAgentSection", "Model / Agent")}>
             <div className="chat-thinking-section-title">{t("chat.modelAgentSection", "Model / Agent")}</div>
             <div className="chat-thinking-mode-toggle" data-testid="chat-thinking-mode-toggle">
@@ -266,6 +273,7 @@ export function ChatThinkingLevelControl({
               </div>
             )}
           </section>
+          ) : null}
 
           <section className="chat-thinking-level-section" aria-label={t("chat.thinkingLevelButton", "Thinking level")}>
             <div className="chat-thinking-section-title">{t("chat.thinkingLevelSection", "Thinking level")}</div>

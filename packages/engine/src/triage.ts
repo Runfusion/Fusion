@@ -43,6 +43,8 @@ import {
   MAX_TASK_LIST_TEXT_CHARS,
   upsertWorkflowStepResult,
   deriveFallbackTaskTitle,
+  detectContentLanguage,
+  localeDisplayName,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -2241,14 +2243,23 @@ export class TriageProcessor {
   `plan-review-replan-cap` so TaskCard/TaskDetailModal/notifications can tell the operator
   why approval is required (Plan Review did not converge) instead of looking like a generic
   require-all plan gate.
+
+  FNXC:PlanReviewReplan 2026-07-15-12:00:
+  FN-7985 makes this triage-only ceiling a workflow setting. The source constant remains the
+  fallback when no valid non-negative finite integer is resolved, so an unset workflow follows
+  the coordinated built-in default instead of persisting a duplicate numeric default.
   */
-  private async blockAfterPlanReviewRevise(task: Task, latestFeedback: string): Promise<void> {
+  private async blockAfterPlanReviewRevise(task: Task, latestFeedback: string, settings: Settings): Promise<void> {
+    const configuredCap = settings.planReviewReplanCap;
+    const replanCap = typeof configuredCap === "number" && Number.isFinite(configuredCap) && Number.isInteger(configuredCap) && configuredCap >= 0
+      ? configuredCap
+      : PLAN_REVIEW_GATE_REPLAN_CAP;
     const priorCount = task.planReviewReplanCount ?? 0;
-    if (priorCount >= PLAN_REVIEW_GATE_REPLAN_CAP) {
+    if (priorCount >= replanCap) {
       await this.store.logEntry(
         task.id,
         PLAN_REVIEW_REPLAN_CAP_LOG_ACTION,
-        `The triage Plan Review gate requested a planning revision ${priorCount} consecutive times without converging (cap ${PLAN_REVIEW_GATE_REPLAN_CAP}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is being routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${latestFeedback}`,
+        `The triage Plan Review gate requested a planning revision ${priorCount} consecutive times without converging (cap ${replanCap}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is being routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${latestFeedback}`,
       );
       /*
       FNXC:PlanReviewReplan 2026-07-13-00:00:
@@ -2270,7 +2281,7 @@ export class TriageProcessor {
       };
       await this.store.updateTask(task.id, escalationUpdates);
       planLog.warn(
-        `${task.id} Plan Review replan cap (${PLAN_REVIEW_GATE_REPLAN_CAP}) reached after ${priorCount} REVISE replans — escalating to awaiting-approval instead of replanning`,
+        `${task.id} Plan Review replan cap (${replanCap}) reached after ${priorCount} REVISE replans — escalating to awaiting-approval instead of replanning`,
       );
       return;
     }
@@ -2327,7 +2338,7 @@ export class TriageProcessor {
           "AI spec revision requested",
           `Plan Review deterministic external-integration evidence check requested a planning revision before execution.\n\nFeedback:\n${diagnostic}`,
         );
-        await this.blockAfterPlanReviewRevise(task, diagnostic);
+        await this.blockAfterPlanReviewRevise(task, diagnostic, settings);
         return "blocked";
       }
     }
@@ -2461,7 +2472,7 @@ export class TriageProcessor {
         "AI spec revision requested",
         `Plan Review requested a planning revision before execution.\n\nStatus: ${review.verdict}\nFeedback:\n${reviseFeedback}`,
       );
-      await this.blockAfterPlanReviewRevise(task, reviseFeedback);
+      await this.blockAfterPlanReviewRevise(task, reviseFeedback, settings);
       return "blocked";
     }
 
@@ -3240,6 +3251,31 @@ When writing PROMPT.md, add this as an explicit requirement under completion doc
     memorySection = "\n\n" + buildTriageMemoryInstructions("", settings);
   }
 
+  let taskDefinitionLanguageSection = "";
+  if (settings?.taskDefinitionInInputLanguage === true) {
+    const detectedLanguage = detectContentLanguage(task.description);
+    const isSupportedNonEnglishLanguage = (
+      detectedLanguage.locale === "es"
+      || detectedLanguage.locale === "fr"
+      || detectedLanguage.locale === "ko"
+      || detectedLanguage.locale === "zh-CN"
+    ) && (detectedLanguage.confidence === "medium" || detectedLanguage.confidence === "high");
+
+    /*
+    FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+    PROMPT.md gates parse canonical English headings and markers, so opt-in localization
+    applies only to planner-authored prose. Conservative core detection limits authoring to
+    confident es/fr/ko/zh-CN input; Chinese intentionally normalizes to zh-CN, while English,
+    Japanese/unknown, short, and low-confidence descriptions keep byte-faithful English output.
+    */
+    if (isSupportedNonEnglishLanguage) {
+      taskDefinitionLanguageSection = `\n\n## Task Definition Language
+Write all human-readable, planner-authored prose in the operator's detected input language: ${localeDisplayName(detectedLanguage.locale)} (${detectedLanguage.locale}). This includes Mission, Before → After bullets, Review Level assessments, step descriptions, and Do NOT items.
+
+Keep every \`##\`/\`###\` section heading, machine marker, the verbatim \`## Original Description\` block, fenced and inline code, file paths, \`fn_*\` tool names, and commit-message conventions in canonical English. Do not translate or alter them.`;
+    }
+  }
+
   let attachmentsSection = "";
   if (attachmentContents && attachmentContents.length > 0) {
     const parts = ["## Attachments", ""];
@@ -3398,5 +3434,5 @@ ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join("
 ## Instructions
 ${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Description text above (verbatim)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
-Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${attachmentsSection}${userCommentsSection}`;
+Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

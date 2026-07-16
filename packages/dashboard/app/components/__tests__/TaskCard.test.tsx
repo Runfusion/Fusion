@@ -456,6 +456,23 @@ describe("TaskCard", () => {
     }
   });
 
+  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onResetTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+    try {
+      render(<TaskCard task={makeTask({ column: "in-progress" })} onOpenDetail={noop} onResetTask={onResetTask} addToast={noop} />);
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      fireEvent.click(screen.getByRole("menuitem", { name: "Reset" }));
+      await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
+      expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
+      expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
   /*
   FNXC:TaskCardMenu 2026-07-10-12:00:
   The card actions menu must ALSO be reachable from the visible ⋯ button (first-run users never
@@ -2220,6 +2237,50 @@ describe("TaskCard", () => {
     }
   });
 
+  it("keeps the card border and Reviewing badge in agreement for a status-null running Plan Review", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8055",
+          column: "triage",
+          status: null as any,
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-16T00:00:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")?.className).toContain("agent-active");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-8055"]')?.className).toContain("pulsing");
+  });
+
+  it("turns off both border and Reviewing pulse when the render queue gate is active", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8055-queued",
+          column: "triage",
+          status: null as any,
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending", startedAt: "2026-07-16T00:00:00.000Z" }],
+        })}
+        queued
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")?.className).not.toContain("agent-active");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-8055-queued"]')).toBeNull();
+  });
+
   it("renders the status badge after the card ID in DOM order", () => {
     const { container } = render(
       <TaskCard
@@ -2270,7 +2331,20 @@ describe("TaskCard", () => {
    * When Plan Review exhausts automatic REVISE replans, the card must not look like a
    * generic require-all hold — badge text + title explain the non-convergence reason.
    */
-  it("renders a distinct Plan Review Cap badge when awaitingApprovalReason is plan-review-replan-cap", () => {
+  it("keeps the generic Awaiting Approval badge for an ordinary manual hold", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "awaiting-approval" } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(within(container).getByText("Awaiting Approval")).toBeDefined();
+    expect(container.querySelector(".awaiting-approval--plan-review-replan-cap")).toBeNull();
+  });
+
+  it("renders a distinct review-budget-exhausted badge when awaitingApprovalReason is plan-review-replan-cap", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -2282,7 +2356,7 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(within(container).getByText("Plan Review Cap")).toBeDefined();
+    expect(within(container).getByText("Review budget exhausted")).toBeDefined();
     expect(within(container).queryByText("Awaiting Approval")).toBeNull();
     const badge = container.querySelector(".card-status-badge") as HTMLElement;
     expect(badge.className).toContain("awaiting-approval--plan-review-replan-cap");
@@ -6180,6 +6254,73 @@ describe("TaskCard undo-of chip", () => {
     );
 
     expect(screen.queryByText(/Undo of/)).toBeNull();
+  });
+});
+
+/*
+ * FNXC:TaskRevert 2026-07-16-00:00:
+ * FN-8066 regression coverage locks the completed-source invariant at TaskCard,
+ * the shared board/list card component: only persisted, non-blank revert markers
+ * render the compact chip in done or archived columns, while other provenance
+ * chips can coexist in the same footer cluster.
+ */
+describe("TaskCard reverted chip", () => {
+  it.each(["done", "archived"] as const)("renders for reverted %s cards", (column) => {
+    render(
+      <TaskCard
+        task={makeTask({ column, sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByLabelText("This task's changes were reverted")).toBeInTheDocument();
+  });
+
+  it("does not render for missing, blank, or non-completed revert markers", () => {
+    const { rerender } = render(
+      <TaskCard task={makeTask({ column: "done" })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(document.querySelector(".card-reverted-chip")).toBeNull();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "archived", sourceMetadata: { revertedAt: "  " } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(document.querySelector(".card-reverted-chip")).toBeNull();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "todo", sourceMetadata: { revertedAt: "2026-07-16T00:00:00.000Z" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(document.querySelector(".card-reverted-chip")).toBeNull();
+  });
+
+  it("coexists with undo and duplicate provenance chips", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          sourceMetadata: {
+            revertedAt: "2026-07-16T00:00:00.000Z",
+            revertOf: "FN-1234",
+            nearDuplicateOf: "FN-5678",
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Reverted")).toBeInTheDocument();
+    expect(screen.getByText("Undo of FN-1234")).toBeInTheDocument();
+    expect(screen.queryByText("Duplicate of FN-5678")).toBeNull();
   });
 });
 

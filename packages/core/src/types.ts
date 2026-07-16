@@ -1111,9 +1111,9 @@ export interface TaskTokenUsage {
 }
 
 export interface TaskTokenBudget {
-  /** Total-token soft cap. When reached, emits one notification and continues. */
+  /** Input, output, and cache-write token soft cap (cache reads excluded). When reached, emits one notification and continues. */
   soft?: number;
-  /** Total-token hard cap. When reached, pauses the task with pausedReason="token_budget_exceeded". */
+  /** Input, output, and cache-write token hard cap (cache reads excluded). When reached, pauses the task with pausedReason="token_budget_exceeded". */
   hard?: number;
   /** Optional per-size overrides keyed by Task.size (S/M/L). Falls back to soft/hard when absent. */
   perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } };
@@ -2367,6 +2367,11 @@ export interface GlobalSettings {
    * Modal backdrop dismissal is a global operator preference, not project policy. Default false keeps fixed modal overlays from closing on accidental outside clicks unless the operator opts in.
    */
   dismissModalsOnOutsideClick?: boolean;
+  /**
+   * FNXC:Settings 2026-07-16-05:30:
+   * This global operator preference defaults to false. When enabled, the dashboard skips centralized critical-action confirmations and proceeds with their primary/default choice. It must never be project-scoped so shared projects cannot force destructive actions without a prompt.
+   */
+  skipConfirmationDialogs?: boolean;
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
@@ -3892,6 +3897,16 @@ export interface ProjectSettings {
    *  characters will automatically receive an AI-generated title (max 60 chars).
    *  Default: false. */
   autoSummarizeTitles?: boolean;
+  /*
+  FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+  This opt-in localizes only planner-authored task-definition prose for supported detectable
+  locales (en/es/fr/ko/zh-CN). Chinese always resolves to zh-CN because Traditional Chinese
+  is not variant-detected; headings, markers, code, and unsupported input such as Japanese
+  remain canonical English so deterministic PROMPT.md gates keep parsing safely.
+  */
+  /** When true, writes generated task-definition prose in the operator's detected supported
+   *  input language. Default: false; uncertain or unsupported input falls back to English. */
+  taskDefinitionInInputLanguage?: boolean;
   /** When true, merge commit messages include an AI-generated summary of the
    *  changes instead of just listing step commit subjects. Body composition
    *  includes a narrative line, bullet summary, and `git diff --stat` when
@@ -3920,6 +3935,19 @@ export interface ProjectSettings {
   mergerModelId?: string;
   /** Optional project merger-lane thinking override. Inherits through global merger thinking then default thinking when unset. */
   mergerThinkingLevel?: ThinkingLevel;
+  /*
+  FNXC:Settings-MergerModel 2026-07-16-00:00:
+  Merger session retries need a project-scoped fallback lane so operators can pin a merge-capable recovery model without changing the shared global fallback. Both provider and model id must be set; partial pairs fall through to the shared global fallback pair.
+  */
+  /** Project fallback AI model provider for merger agent sessions.
+   *  Must be set together with `mergerFallbackModelId`. Resolves before the global
+   *  `fallbackProvider`/`fallbackModelId` pair. */
+  mergerFallbackProvider?: string;
+  /** Project fallback AI model ID for merger agent sessions.
+   *  Must be set together with `mergerFallbackProvider`. */
+  mergerFallbackModelId?: string;
+  /** Optional project merger-fallback thinking override. Falls through to global fallback thinking, then merger thinking. */
+  mergerFallbackThinkingLevel?: ThinkingLevel;
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   Import Tasks auto-translation is a dedicated one-off AI helper lane, kept separate from the summarization lane so operators can pin a cheap/fast translation model without dragging title summarization onto it.
@@ -5621,6 +5649,17 @@ export interface PlanningQuestion {
   question: string;
   description?: string;
   options?: Array<{ id: string; label: string; description?: string }>;
+  /**
+   * FNXC:PlanningMode 2026-07-16-00:00:
+   * FN-8065 / GitHub #2150 requires the deepening checkpoint to carry a read-only preview
+   * of its withheld pendingSummary. Keeping this optional preserves legacy persisted
+   * currentQuestion rows and leaves ordinary interview questions unchanged.
+   */
+  planPreview?: {
+    title: string;
+    description: string;
+    keyDeliverables: string[];
+  };
 }
 
 /** The final summary generated after planning conversation completes */
@@ -6080,6 +6119,7 @@ export const AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES: readonly string[] = [
   "fn_post_room_message",
   "fn_read_messages",
   "fn_task_log",
+  "fn_task_logs_read",
   "fn_task_done",
   "fn_heartbeat_done",
   "fn_task_document_write",

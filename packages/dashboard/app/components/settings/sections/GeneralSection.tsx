@@ -4,6 +4,7 @@ import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 /*
 FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Locale labels come from core's shared `localeDisplayName` (endonyms), NOT from the LanguageSelector component: importing a component module for a constant drags its i18n/react-i18next initialization into every consumer of this section, which breaks tests that mock react-i18next narrowly.
@@ -29,6 +30,9 @@ FNXC:SettingsStyling 2026-07-15-17:35:
 Plain settings rows render through the shared primitives instead of hand-rolled `form-group` + `checkbox-label` markup, so labels, help copy, and padding come from one type scale. `.form-group` stays global and untouched — 35 non-settings files style forms with it — so the fix is to migrate settings off it, not to restyle it underneath the rest of the dashboard.
 Every key here is project-scoped (DEFAULT_PROJECT_SETTINGS), which the per-row badge states: the nav already labels the section "Project General", but the badge is what distinguishes these from the global-tier settings an operator sees one section away.
 Rows that stay bespoke are the ones a single-string descriptor cannot carry without rewording the copy — help built from `t()` fragments interleaved with `<code>` (ephemeral agents, completion documentation) — plus the custom widgets and editors: the workflow pickers, the built-in workflow enablement list, and the Clear-local-data button.
+
+FNXC:SettingsHelp 2026-07-16-12:45:
+Bespoke rows no longer render their help as inline `<small>` paragraphs. Their copy moved VERBATIM (same `t()` keys, same `<code>` fragments) behind the shared "?" affordance (`SettingsHelpTip`), matching the primitives' descriptor help — operator requirement: no inline description paragraphs in Settings. Only live status/feedback and validation errors stay inline.
 
 FNXC:SourceControl 2026-07-15-20:30:
 GitHub/GitLab settings are NOT in this section. The tracking block, the tracking-repo select, and the GitLab disclosure moved to "Source Control · Project" (SourceControlSection.tsx), which also absorbed Merge's GitHub/GitLab auth blocks. Do not add source-control settings back here: `gitlabEnabled` was previously writable from both this section and Merge, and one owning section is what keeps that from recurring.
@@ -156,10 +160,19 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
       />
       <div className="form-group">
         <ProjectDefaultWorkflowField projectId={projectId} addToast={addToast}/>
-        <small>{t("settings.general.newTasksInheritThisCustomWorkflowsStepsOverridable", "New tasks inherit this custom workflow's steps (overridable per task). No default \u2014 unset (built-in default workflow).")}</small>
+        {/*
+          FNXC:SettingsHelp 2026-07-16-12:45:
+          Inline help moved behind the shared "?" affordance \u2014 operator requirement: no inline description paragraphs in Settings.
+          The tip sits AFTER the whole picker widget (not in a `.settings-field-label-row` beside its label) because ProjectDefaultWorkflowField renders its own label inside WorkflowSelector; re-parenting that label is not possible from here, and the tip must stay a sibling of any `<label>`, never nested in one.
+        */}
+        <SettingsHelpTip settingKey="projectDefaultWorkflow">{t("settings.general.newTasksInheritThisCustomWorkflowsStepsOverridable", "New tasks inherit this custom workflow's steps (overridable per task). No default \u2014 unset (built-in default workflow).")}</SettingsHelpTip>
       </div>
       {builtinWorkflows.length > 0 && (<div className="form-group">
-          <label>{t("settings.general.fusionWorkflows", "Fusion workflows")}</label>
+          {/* FNXC:SettingsHelp 2026-07-16-12:45: The checkbox group's ONE shared help paragraph moved behind a single "?" beside the group label — operator requirement: no inline description paragraphs in Settings. */}
+          <div className="settings-field-label-row">
+            <label>{t("settings.general.fusionWorkflows", "Fusion workflows")}</label>
+            <SettingsHelpTip settingKey="enabledBuiltinWorkflowIds">{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).")}</SettingsHelpTip>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
             {builtinWorkflows.map((workflow) => (<label key={workflow.id} htmlFor={`builtin-workflow-${workflow.id}`} className="checkbox-label">
                 <input id={`builtin-workflow-${workflow.id}`} type="checkbox" checked={enabledBuiltinWorkflowIds.has(workflow.id)} onChange={(e) => setBuiltinWorkflowEnabled(workflow.id, e.target.checked)}/>
@@ -167,10 +180,13 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
                 <span>{workflow.name}</span>
               </label>))}
           </div>
-          <small>{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).")}</small>
         </div>)}
       <div className="form-group">
-        <label htmlFor="aiUndoTaskWorkflowId">{t("settings.general.aiUndoTaskWorkflow", "AI-undo task workflow")}</label>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
+        <div className="settings-field-label-row">
+          <label htmlFor="aiUndoTaskWorkflowId">{t("settings.general.aiUndoTaskWorkflow", "AI-undo task workflow")}</label>
+          <SettingsHelpTip settingKey="aiUndoTaskWorkflowId">{t("settings.general.aiUndoTaskWorkflowHelp", "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.")}</SettingsHelpTip>
+        </div>
         <select id="aiUndoTaskWorkflowId" className="select" data-testid="ai-undo-workflow-select" value={aiUndoTaskWorkflowValue} onChange={(e) => setForm((f) => ({ ...f, aiUndoTaskWorkflowId: e.target.value }))}>
           <option value="">{t("settings.general.aiUndoTaskWorkflowInherit", "Inherit project default workflow")}</option>
           {aiUndoWorkflowOptions.map((workflow) => (<option key={workflow.id} value={workflow.id}>
@@ -178,12 +194,14 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
             </option>))}
           {!aiUndoWorkflowHasStoredValue && (<option value={aiUndoTaskWorkflowValue}>{aiUndoTaskWorkflowValue}</option>)}
         </select>
-        <small>{t("settings.general.aiUndoTaskWorkflowHelp", "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.")}</small>
       </div>
       <div className="form-group">
-        <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">
-          <input id="ephemeralAgentsEnabled" type="checkbox" checked={form.ephemeralAgentsEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, ephemeralAgentsEnabled: e.target.checked }))}/>{t("settings.general.useEphemeralTaskWorkerAgents", " Use ephemeral task-worker agents ")}</label>
-        <small>{t("settings.general.whenEnabledDefaultFusionSpawnsShortLived", " When enabled (default), Fusion spawns short-lived ")}<code>executor-FN-XXXX</code>{t("settings.general.agentsToRunEachTaskWhenDisabledOnly", " agents to run each task. When disabled, only permanent agents execute tasks and the scheduler auto-assigns work using the agent reporting chain. Tasks with no eligible permanent agent stay queued. ")}</small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the checkbox label (a button inside a label breaks click-to-toggle). */}
+        <div className="settings-field-label-row">
+          <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">
+            <input id="ephemeralAgentsEnabled" type="checkbox" checked={form.ephemeralAgentsEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, ephemeralAgentsEnabled: e.target.checked }))}/>{t("settings.general.useEphemeralTaskWorkerAgents", " Use ephemeral task-worker agents ")}</label>
+          <SettingsHelpTip settingKey="ephemeralAgentsEnabled">{t("settings.general.whenEnabledDefaultFusionSpawnsShortLived", " When enabled (default), Fusion spawns short-lived ")}<code>executor-FN-XXXX</code>{t("settings.general.agentsToRunEachTaskWhenDisabledOnly", " agents to run each task. When disabled, only permanent agents execute tasks and the scheduler auto-assigns work using the agent reporting chain. Tasks with no eligible permanent agent stay queued. ")}</SettingsHelpTip>
+        </div>
       </div>
       {/*
         FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
@@ -231,7 +249,11 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         onChange={(v) => setForm((f) => ({ ...f, allowAbsoluteFileBrowserPaths: v === true }))}
       />
       <div className="form-group">
-        <label htmlFor="completionDocumentationMode">{t("settings.general.completionDocumentationAutomation", "Completion Documentation Automation")}</label>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
+        <div className="settings-field-label-row">
+          <label htmlFor="completionDocumentationMode">{t("settings.general.completionDocumentationAutomation", "Completion Documentation Automation")}</label>
+          <SettingsHelpTip settingKey="completionDocumentationMode">{t("settings.general.controlsHowFutureTaskSpecsHandleReleaseNote", " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ")}<code>.changeset</code>{t("settings.general.workflowsOrChangelogModeWhenContributorsShouldUpdate", " workflows, or changelog mode when contributors should update an existing changelog file. Default: off. ")}</SettingsHelpTip>
+        </div>
         <select id="completionDocumentationMode" value={form.completionDocumentationMode || "off"} onChange={(e) => setForm((f) => ({
             ...f,
             completionDocumentationMode: e.target.value as "off" | "changeset" | "changelog",
@@ -240,7 +262,6 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           <option value="changeset">{t("settings.general.requireChangesetChangesetMd", "Require changeset (.changeset/*.md)")}</option>
           <option value="changelog">{t("settings.general.requireChangelogUpdateExistingChangelog", "Require changelog update (existing changelog)")}</option>
         </select>
-        <small>{t("settings.general.controlsHowFutureTaskSpecsHandleReleaseNote", " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ")}<code>.changeset</code>{t("settings.general.workflowsOrChangelogModeWhenContributorsShouldUpdate", " workflows, or changelog mode when contributors should update an existing changelog file. Default: off. ")}</small>
       </div>
       {/*
         FNXC:SettingsGeneral 2026-07-15-17:35:
@@ -522,8 +543,11 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
       */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.browserData", "Browser Data")}</h4>
       <div className="form-group">
-        <label>{t("settings.general.clearLocalData", "Clear local data")}</label>
-        <small>{t("settings.general.clearLocalDataHint", "Remove cached board snapshots, chat threads, and UI preferences stored in this browser. Frees space when the dashboard runs low on browser storage. Your tasks and project settings are stored server-side and are not affected.")}</small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
+        <div className="settings-field-label-row">
+          <label>{t("settings.general.clearLocalData", "Clear local data")}</label>
+          <SettingsHelpTip settingKey="clearLocalData">{t("settings.general.clearLocalDataHint", "Remove cached board snapshots, chat threads, and UI preferences stored in this browser. Frees space when the dashboard runs low on browser storage. Your tasks and project settings are stored server-side and are not affected.")}</SettingsHelpTip>
+        </div>
         <div style={{ marginTop: "var(--space-sm)" }}>
           <button type="button" className="btn btn-sm" onClick={handleClearLocalData}>{t("settings.general.clearLocalDataButton", "Clear local data")}</button>
         </div>

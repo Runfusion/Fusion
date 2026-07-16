@@ -1,5 +1,6 @@
 import "./McpServersCard.css";
 import { Download, Pencil, Play, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -540,11 +541,14 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
         <button type="button" className="btn btn-primary touch-target" onClick={() => { setEditor(draftFromServer()); setEditorError(null); }}><Plus aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_MD} /> {t("settings.mcp.addServer", "Add server")}</button>
       </div>
 
-      <label className="checkbox-label mcp-enabled-toggle">
-        <input type="checkbox" checked={settings.enabled === true} onChange={(event) => setEnabled(event.target.checked)} />
-        {t("settings.mcp.enabled", "Enable MCP servers for this scope")}
-      </label>
-      <small className="settings-description">{t("settings.mcp.enabledHint", "Default: disabled, with no servers configured.")}</small>
+      {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. settingKey is scope-suffixed because this card renders once per scope and bubble DOM ids must stay unique. */}
+      <div className="settings-field-label-row">
+        <label className="checkbox-label mcp-enabled-toggle">
+          <input type="checkbox" checked={settings.enabled === true} onChange={(event) => setEnabled(event.target.checked)} />
+          {t("settings.mcp.enabled", "Enable MCP servers for this scope")}
+        </label>
+        <SettingsHelpTip settingKey={`mcp-enabled-${scope}`}>{t("settings.mcp.enabledHint", "Default: disabled, with no servers configured.")}</SettingsHelpTip>
+      </div>
 
       <div className="mcp-discovery card" data-testid={`mcp-discovery-${scope}`}>
         <div className="mcp-discovery__header">

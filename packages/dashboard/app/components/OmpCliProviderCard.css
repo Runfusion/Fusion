@@ -26,8 +26,12 @@ Compact card body inset to match auth-provider-header horizontal padding (same a
   margin-top: var(--space-sm);
 }
 
+/*
+FNXC:OmpAcp 2026-07-15-00:00:
+FN-8043 uses --text-muted for secondary labels because --text-secondary is an undefined deprecated alias in both themes.
+*/
 .omp-cli-binary-path-label {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.78rem;
   font-weight: 600;
 }

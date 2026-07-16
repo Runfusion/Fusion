@@ -1,20 +1,25 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { closeTopmostDashboardPopupForShortcut } from "../App";
 import { useDashboardKeyboardShortcuts } from "../hooks/useDashboardKeyboardShortcuts";
+import { useNavigationHistory } from "../hooks/useNavigationHistory";
+import { closeViewShortcut, retainViewNavRevert } from "../utils/dashboardShortcutToggles";
 
 function baseHandlers() {
   return {
-    openFiles: vi.fn(),
-    openSettings: vi.fn(),
-    openCommandCenter: vi.fn(),
-    openNewTask: vi.fn(),
+    toggleFiles: vi.fn(),
+    toggleSettings: vi.fn(),
+    toggleCommandCenter: vi.fn(),
+    toggleNewTask: vi.fn(),
   };
 }
 
 /*
 FNXC:DashboardShortcuts 2026-07-04-12:02:
 FN-7507 closes the FN-7494 Code Review gap by proving the dashboard shortcut/Escape invariants at the App-owned seam without rendering every lazy dashboard surface. The hook assertions cover settings-to-document key handling, while closeTopmostDashboardPopupForShortcut covers the App shell's one-popup Escape ordering.
+
+FNXC:DashboardShortcuts 2026-07-16-00:00:
+FN-8069 adds live navigation-history coverage for the App helper that retains and closes Settings/Command Center view entries. It verifies callback identity removal, prior-view restoration, and Browser Back self-cleanup rather than relying on dispatcher spies alone (Runfusion/Fusion#2118).
 */
 function press(init: KeyboardEventInit, target: Document | HTMLElement = document) {
   const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
@@ -24,29 +29,60 @@ function press(init: KeyboardEventInit, target: Document | HTMLElement = documen
 
 describe("App dashboard keyboard shortcuts", () => {
   it("opens Quick Chat with the default Space binding from document focus", () => {
-    const openQuickChat = vi.fn();
+    const toggleQuickChat = vi.fn();
 
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), openQuickChat, toggleTerminal: vi.fn() }));
+      ...baseHandlers(), toggleQuickChat, toggleTerminal: vi.fn() }));
     const event = press({ key: " " });
 
-    expect(openQuickChat).toHaveBeenCalledTimes(1);
+    expect(toggleQuickChat).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("dispatches every default shortcut twice so App toggle callbacks own both directions", () => {
+    const toggleQuickChat = vi.fn();
+    const toggleTerminal = vi.fn();
+    const handlers = {
+      toggleQuickChat,
+      toggleTerminal,
+      toggleFiles: vi.fn(),
+      toggleSettings: vi.fn(),
+      toggleCommandCenter: vi.fn(),
+      toggleNewTask: vi.fn(),
+    };
+    renderHook(() => useDashboardKeyboardShortcuts(handlers));
+
+    const bindings: KeyboardEventInit[] = [
+      { key: " " },
+      { key: "`", ctrlKey: true },
+      { key: "e", ctrlKey: true },
+      { key: ",", ctrlKey: true },
+      { key: "k", ctrlKey: true },
+      { key: "n", ctrlKey: true, shiftKey: true },
+    ];
+    for (const binding of bindings) {
+      press(binding);
+      press(binding);
+    }
+
+    for (const handler of Object.values(handlers)) {
+      expect(handler).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it("uses configured Terminal bindings and leaves disabled bindings inert", () => {
-    const openQuickChat = vi.fn();
+    const toggleQuickChat = vi.fn();
     const toggleTerminal = vi.fn();
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
       shortcuts: { quickChat: "", terminal: "Alt+T" },
-      openQuickChat,
+      toggleQuickChat,
       toggleTerminal,
     }));
 
     const disabledQuickChatEvent = press({ key: " " });
-    expect(openQuickChat).not.toHaveBeenCalled();
+    expect(toggleQuickChat).not.toHaveBeenCalled();
     expect(disabledQuickChatEvent.defaultPrevented).toBe(false);
 
     const terminalEvent = press({ key: "t", altKey: true });
@@ -55,14 +91,14 @@ describe("App dashboard keyboard shortcuts", () => {
   });
 
   it("does not capture Space or Escape while an editable field owns the key", () => {
-    const openQuickChat = vi.fn();
+    const toggleQuickChat = vi.fn();
     const closeTopmostPopup = vi.fn(() => true);
     const input = document.createElement("input");
     document.body.append(input);
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      openQuickChat,
+      toggleQuickChat,
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -71,7 +107,7 @@ describe("App dashboard keyboard shortcuts", () => {
     const spaceEvent = press({ key: " " }, input);
     const escapeEvent = press({ key: "Escape" }, input);
 
-    expect(openQuickChat).not.toHaveBeenCalled();
+    expect(toggleQuickChat).not.toHaveBeenCalled();
     expect(closeTopmostPopup).not.toHaveBeenCalled();
     expect(spaceEvent.defaultPrevented).toBe(false);
     expect(escapeEvent.defaultPrevented).toBe(false);
@@ -80,12 +116,12 @@ describe("App dashboard keyboard shortcuts", () => {
   });
 
   it("lets nested handlers keep default-prevented shortcut events", () => {
-    const openQuickChat = vi.fn();
+    const toggleQuickChat = vi.fn();
     const closeTopmostPopup = vi.fn(() => true);
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      openQuickChat,
+      toggleQuickChat,
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -98,7 +134,7 @@ describe("App dashboard keyboard shortcuts", () => {
     Object.defineProperty(menuEscape, "defaultPrevented", { value: true });
     document.dispatchEvent(menuEscape);
 
-    expect(openQuickChat).not.toHaveBeenCalled();
+    expect(toggleQuickChat).not.toHaveBeenCalled();
     expect(closeTopmostPopup).not.toHaveBeenCalled();
   });
 
@@ -159,7 +195,7 @@ describe("App dashboard keyboard shortcuts", () => {
 
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      openQuickChat: vi.fn(),
+      toggleQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -171,35 +207,105 @@ describe("App dashboard keyboard shortcuts", () => {
     expect(handled.defaultPrevented).toBe(true);
     expect(unhandled.defaultPrevented).toBe(false);
   });
-  it("dispatches the FN-7553 openFiles/openSettings/openCommandCenter/newTask actions and ignores editable targets", () => {
-    const openFiles = vi.fn();
-    const openSettings = vi.fn();
-    const openCommandCenter = vi.fn();
-    const openNewTask = vi.fn();
+  it("dispatches the FN-7553 toggleFiles/toggleSettings/toggleCommandCenter/newTask actions and ignores editable targets", () => {
+    const toggleFiles = vi.fn();
+    const toggleSettings = vi.fn();
+    const toggleCommandCenter = vi.fn();
+    const toggleNewTask = vi.fn();
     const input = document.createElement("input");
     document.body.append(input);
 
     renderHook(() => useDashboardKeyboardShortcuts({
-      openQuickChat: vi.fn(),
+      toggleQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
-      openFiles,
-      openSettings,
-      openCommandCenter,
-      openNewTask,
+      toggleFiles,
+      toggleSettings,
+      toggleCommandCenter,
+      toggleNewTask,
     }));
 
     press({ key: "e", ctrlKey: true });
     press({ key: ",", ctrlKey: true });
     press({ key: "k", ctrlKey: true });
     press({ key: "n", ctrlKey: true, shiftKey: true });
-    expect(openFiles).toHaveBeenCalledTimes(1);
-    expect(openSettings).toHaveBeenCalledTimes(1);
-    expect(openCommandCenter).toHaveBeenCalledTimes(1);
-    expect(openNewTask).toHaveBeenCalledTimes(1);
+    expect(toggleFiles).toHaveBeenCalledTimes(1);
+    expect(toggleSettings).toHaveBeenCalledTimes(1);
+    expect(toggleCommandCenter).toHaveBeenCalledTimes(1);
+    expect(toggleNewTask).toHaveBeenCalledTimes(1);
+
+    press({ key: "e", ctrlKey: true });
+    press({ key: ",", ctrlKey: true });
+    press({ key: "k", ctrlKey: true });
+    press({ key: "n", ctrlKey: true, shiftKey: true });
+    expect(toggleFiles).toHaveBeenCalledTimes(2);
+    expect(toggleSettings).toHaveBeenCalledTimes(2);
+    expect(toggleCommandCenter).toHaveBeenCalledTimes(2);
+    expect(toggleNewTask).toHaveBeenCalledTimes(2);
 
     input.focus();
     press({ key: "e", ctrlKey: true }, input);
-    expect(openFiles).toHaveBeenCalledTimes(1);
+    expect(toggleFiles).toHaveBeenCalledTimes(2);
     input.remove();
+  });
+
+  it("keeps invalid bindings inert without preventing their key event", () => {
+    const toggleQuickChat = vi.fn();
+    renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
+      shortcuts: { quickChat: "Ctrl+Alt" },
+      toggleQuickChat,
+      toggleTerminal: vi.fn(),
+    }));
+
+    const event = press({ key: "a", ctrlKey: true, altKey: true });
+    expect(toggleQuickChat).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("removes the exact retained view entry and restores the prior view", () => {
+    const { result } = renderHook(() => useNavigationHistory({ enabled: true }));
+    const reverts = new Map<string, (() => void)[]>();
+    const restoreView = vi.fn();
+    const revert = retainViewNavRevert("settings", "list", reverts, restoreView);
+    const removeNav = vi.fn(result.current.removeNav);
+    result.current.pushNav({ type: "view", revert });
+
+    expect(closeViewShortcut("settings", reverts, removeNav, vi.fn())).toBe(true);
+    expect(removeNav).toHaveBeenCalledWith(revert);
+    expect(restoreView).toHaveBeenCalledWith("list");
+    expect(reverts.has("settings")).toBe(false);
+  });
+
+  it("self-cleans retained view callbacks when Browser Back closes a view", () => {
+    const { result } = renderHook(() => useNavigationHistory({ enabled: true }));
+    const reverts = new Map<string, (() => void)[]>();
+    const restoreView = vi.fn();
+    const revert = retainViewNavRevert("command-center", "list", reverts, restoreView);
+    result.current.pushNav({ type: "view", revert });
+
+    act(() => window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } })));
+
+    expect(restoreView).toHaveBeenCalledWith("list");
+    expect(reverts.has("command-center")).toBe(false);
+  });
+
+  it("preserves an earlier Settings entry after closing a later Settings shortcut", () => {
+    const reverts = new Map<string, (() => void)[]>();
+    const restoreView = vi.fn();
+    const removeNav = vi.fn();
+    const firstSettingsRevert = retainViewNavRevert("settings", "list", reverts, restoreView);
+    const boardRevert = retainViewNavRevert("board", "settings", reverts, restoreView);
+    const secondSettingsRevert = retainViewNavRevert("settings", "board", reverts, restoreView);
+
+    expect(closeViewShortcut("settings", reverts, removeNav, vi.fn())).toBe(true);
+    expect(removeNav).toHaveBeenCalledWith(secondSettingsRevert);
+    expect(restoreView).toHaveBeenLastCalledWith("board");
+    expect(reverts.get("settings")).toEqual([firstSettingsRevert]);
+
+    boardRevert();
+    expect(closeViewShortcut("settings", reverts, removeNav, vi.fn())).toBe(true);
+    expect(removeNav).toHaveBeenLastCalledWith(firstSettingsRevert);
+    expect(restoreView).toHaveBeenLastCalledWith("list");
+    expect(reverts.has("settings")).toBe(false);
   });
 });

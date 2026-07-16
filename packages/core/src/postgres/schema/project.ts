@@ -931,6 +931,8 @@ export const researchRuns = projectSchema.table("research_runs", {
   topic: text("topic"),
   status: text("status").notNull(),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   trigger: text("trigger"),
   providerConfig: jsonb("provider_config"),
   sources: jsonb("sources").notNull().default([]),
@@ -985,6 +987,8 @@ export const experimentSessions = projectSchema.table("experiment_sessions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   status: text("status").notNull(),
   metric: text("metric").notNull(),
   currentSegment: integer("current_segment").notNull().default(1),
@@ -1022,7 +1026,10 @@ export const experimentSessionRecords = projectSchema.table("experiment_session_
 // ── Eval runs ────────────────────────────────────────────────────────
 export const evalRuns = projectSchema.table("eval_runs", {
   id: text("id").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   status: text("status").notNull(),
   trigger: text("trigger").notNull(),
   scope: text("scope").notNull(),
@@ -1425,7 +1432,10 @@ export const routines = projectSchema.table("routines", {
 
 export const projectInsights = projectSchema.table("project_insights", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   title: text("title").notNull(),
   content: text("content"),
   category: text("category").notNull(),
@@ -1443,7 +1453,10 @@ export const projectInsights = projectSchema.table("project_insights", {
 
 export const projectInsightRuns = projectSchema.table("project_insight_runs", {
   id: text("id").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   trigger: text("trigger").notNull(),
   status: text("status").notNull(),
   summary: text("summary"),
@@ -1483,7 +1496,10 @@ export const projectInsightRunEvents = projectSchema.table("project_insight_run_
 // ── Todo lists ───────────────────────────────────────────────────────
 export const todoLists = projectSchema.table("todo_lists", {
   id: text("id").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   title: text("title").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -1618,6 +1634,8 @@ export const aiSessions = projectSchema.table("ai_sessions", {
   thinkingOutput: text("thinking_output").default(""),
   error: text("error"),
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   /*
@@ -1685,6 +1703,8 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   title: text("title"),
   status: text("status").notNull().default("active"),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
   // FNXC:ChatThinkingLevel 2026-07-10: FN-7775 per-chat thinking-level override
@@ -1695,6 +1715,9 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   planningThinkingLevel: text("planning_thinking_level"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  // FNXC:ChatPinned 2026-07-16-12:00: nullable timestamp persists the active
+  // Direct-session pin; the ChatStore enforces the per-scope max-three invariant.
+  pinnedAt: text("pinned_at"),
   cliSessionFile: text("cli_session_file"),
   inFlightGeneration: jsonb("in_flight_generation"),
   cliExecutorAdapterId: text("cli_executor_adapter_id"),
@@ -1708,7 +1731,10 @@ export const cliSessions = projectSchema.table("cli_sessions", {
   taskId: text("task_id"),
   chatSessionId: text("chat_session_id"),
   purpose: text("purpose").notNull(),
-  projectId: text("project_id").notNull(),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: reflect the DB default installed by migration 0006 so insert types treat the trigger/GUC-owned partition as optional; stores must not write it.
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   adapterId: text("adapter_id").notNull(),
   agentState: text("agent_state").notNull().default("starting"),
   terminationReason: text("termination_reason"),
@@ -1749,6 +1775,8 @@ export const chatTokenUsage = projectSchema.table("chat_token_usage", {
   roomId: text("room_id"),
   messageId: text("message_id"),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   agentId: text("agent_id"),
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
@@ -1951,6 +1979,8 @@ export const chatRooms = projectSchema.table("chat_rooms", {
   slug: text("slug").notNull(),
   description: text("description"),
   projectId: text("project_id"),
+  // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain "project" field, split from the trigger/GUC-owned project_id RLS partition (migration 0011).
+  ownerProjectId: text("owner_project_id"),
   createdBy: text("created_by"),
   status: text("status").notNull().default("active"),
   // FNXC:Chat-ThinkingLevel 2026-07-13 (merge port): room-level reasoning-effort default.

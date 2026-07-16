@@ -172,6 +172,7 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "autoSelectModelPreset",
     "autoSummarizeTitles",
     "defaultPresetBySize",
+    "taskDefinitionInInputLanguage",
     "defaultWorkflowId",
     "modelPresets",
     "prDescriptionPromptInstructions",

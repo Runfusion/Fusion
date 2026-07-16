@@ -225,6 +225,17 @@ describe("SettingsModal", () => {
       });
     });
 
+    it("saves the task-definition input-language toggle in the project settings payload", async () => {
+      await expectSettingPersists({
+        section: "Models · Project",
+        label: "Write task definitions in the operator's input language",
+        kind: "checkbox",
+        value: true,
+        scope: "project",
+        expectedKey: "taskDefinitionInInputLanguage",
+      });
+    });
+
     it("renders and saves OpenRouter advanced settings", async () => {
       mockFetchModels.mockResolvedValue({
         models: MODEL_FIXTURE,

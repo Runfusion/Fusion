@@ -181,8 +181,8 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
               </details>
             </div>
             {/*
-            FNXC:SettingsHelp 2026-07-15-21:40:
-            The per-event `<small>`s stay inline. They are OPTION descriptions inside one multi-select control — the thing an operator compares while ticking boxes — not help for 14 separate settings. Putting a "?" on every option would replace one scannable list with fourteen closed bubbles, which is the opposite of what moving help off the row is for.
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            (Supersedes the 2026-07-15-21:40 note that kept the per-event `<small>`s inline as option descriptions.) Operator decision 2026-07-16: ALL inline description/help text in Settings moves behind the shared "?" affordance — including these per-event descriptions. Each option now carries a SettingsHelpTip beside its checkbox label, keyed `ntfy-event-${event}` / `webhook-event-${event}` so bubble DOM ids stay unique across the two lists.
             */}
             <div className="form-group">
               <label>{t("settings.notifications.notifyOnEvents", "Notify on events")}</label>
@@ -190,17 +190,20 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
                 {NOTIFICATION_EVENT_OPTIONS.map(({ event, label, description }) => {
                 const checked = form.ntfyEvents?.includes(event) ?? true;
                 return (<div key={`ntfy-${event}`}>
-                      <label className="checkbox-label">
-                        <input type="checkbox" checked={checked} onChange={(e) => {
-                        const current = form.ntfyEvents ?? [...DEFAULT_NTFY_EVENTS];
-                        const newEvents = e.target.checked
-                            ? (current.includes(event) ? current : [...current, event])
-                            : current.filter((ev): ev is NtfyNotificationEvent => ev !== event);
-                        setForm((f) => ({ ...f, ntfyEvents: newEvents.length > 0 ? newEvents : undefined }));
-                    }}/>
-                        {label}
-                      </label>
-                      <small>{description}</small>
+                      {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
+                      <div className="settings-field-label-row">
+                        <label className="checkbox-label">
+                          <input type="checkbox" checked={checked} onChange={(e) => {
+                          const current = form.ntfyEvents ?? [...DEFAULT_NTFY_EVENTS];
+                          const newEvents = e.target.checked
+                              ? (current.includes(event) ? current : [...current, event])
+                              : current.filter((ev): ev is NtfyNotificationEvent => ev !== event);
+                          setForm((f) => ({ ...f, ntfyEvents: newEvents.length > 0 ? newEvents : undefined }));
+                      }}/>
+                          {label}
+                        </label>
+                        <SettingsHelpTip settingKey={`ntfy-event-${event}`}>{description}</SettingsHelpTip>
+                      </div>
                     </div>);
             })}
               </div>
@@ -300,17 +303,20 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
                 const currentEvents = form.webhookEvents ?? [...DEFAULT_NTFY_EVENTS];
                 const checked = currentEvents.includes(event);
                 return (<div key={`webhook-${event}`}>
-                      <label className="checkbox-label">
-                        <input type="checkbox" checked={checked} onChange={(e) => {
-                        const current = form.webhookEvents ?? [...DEFAULT_NTFY_EVENTS];
-                        const newEvents = e.target.checked
-                            ? (current.includes(event) ? current : [...current, event])
-                            : current.filter((ev) => ev !== event);
-                        setForm((f) => ({ ...f, webhookEvents: newEvents.length > 0 ? newEvents : undefined }));
-                    }}/>
-                        {label}
-                      </label>
-                      <small>{description}</small>
+                      {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
+                      <div className="settings-field-label-row">
+                        <label className="checkbox-label">
+                          <input type="checkbox" checked={checked} onChange={(e) => {
+                          const current = form.webhookEvents ?? [...DEFAULT_NTFY_EVENTS];
+                          const newEvents = e.target.checked
+                              ? (current.includes(event) ? current : [...current, event])
+                              : current.filter((ev) => ev !== event);
+                          setForm((f) => ({ ...f, webhookEvents: newEvents.length > 0 ? newEvents : undefined }));
+                      }}/>
+                          {label}
+                        </label>
+                        <SettingsHelpTip settingKey={`webhook-event-${event}`}>{description}</SettingsHelpTip>
+                      </div>
                     </div>);
             })}
               </div>

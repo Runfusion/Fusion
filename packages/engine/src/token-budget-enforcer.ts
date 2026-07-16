@@ -1,9 +1,12 @@
-import type { GlobalSettings, ProjectSettings, RunMutationContext, Task } from "@fusion/core";
+import type { GlobalSettings, ProjectSettings, RunMutationContext, Task, TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
+import { getActiveNotificationService } from "./notifier.js";
 
 const log = createLogger("token-budget-enforcer");
 
 type BudgetSource = "task-override" | "project-per-size" | "project" | "global-per-size" | "global" | "none";
+
+type TokenBudgetStore = Pick<TaskStore, "getTask" | "getSettingsByScope" | "updateTaskAtomic" | "pauseTask">;
 
 export interface ResolvedTaskTokenBudget {
   soft?: number;
@@ -62,27 +65,92 @@ export function resolveTaskTokenBudget(
   return { source: "none" };
 }
 
+/**
+ * FNXC:TokenBudget 2026-07-16-00:00:
+ * Budget limits measure newly processed input/output plus cache writes, not cache reads.
+ * Cache reads can dominate a session without representing new model work, so using them
+ * would unexpectedly pause existing tasks calibrated for actual work tokens.
+ */
+export function getTokenBudgetUsage(tokenUsage: Task["tokenUsage"]): number {
+  return (tokenUsage?.inputTokens ?? 0) + (tokenUsage?.outputTokens ?? 0) + (tokenUsage?.cacheWriteTokens ?? 0);
+}
+
 export async function enforceTaskTokenBudget(
-  params: { store: { updateTask: (id: string, updates: Record<string, unknown>, runContext?: RunMutationContext) => Promise<unknown>; pauseTask: (id: string, paused: boolean, runContext?: RunMutationContext) => Promise<unknown> }; task: Task } & EnforcementContext,
+  params: { store: Pick<TokenBudgetStore, "updateTaskAtomic" | "pauseTask">; task: Task } & EnforcementContext,
 ): Promise<void> {
   const { store, task, projectSettings, globalSettings, runContext, notify } = params;
-  const total = task.tokenUsage?.totalTokens ?? 0;
-  const resolved = resolveTaskTokenBudget(task, projectSettings, globalSettings);
-  const { soft, hard } = resolved;
+  const total = getTokenBudgetUsage(task.tokenUsage);
+  const { soft, hard } = resolveTaskTokenBudget(task, projectSettings, globalSettings);
 
-  if (soft !== undefined && total >= soft && !task.tokenBudgetSoftAlertedAt) {
+  if (soft !== undefined && total >= soft) {
     const now = new Date().toISOString();
-    await store.updateTask(task.id, { tokenBudgetSoftAlertedAt: now }, runContext);
-    log.warn(`${task.id}: soft token budget reached (${total}/${soft})`);
-    await notify({ kind: "soft", task, total, soft, hard });
+    let claimedSoft = false;
+    await store.updateTaskAtomic(task.id, (current) => {
+      if (current.tokenBudgetSoftAlertedAt) return null;
+      claimedSoft = true;
+      return { tokenBudgetSoftAlertedAt: now };
+    }, runContext);
+    if (claimedSoft) {
+      log.warn(`${task.id}: soft token budget reached (${total}/${soft})`);
+      await notify({ kind: "soft", task, total, soft, hard });
+    }
   }
 
-  if (hard !== undefined && total >= hard && !task.tokenBudgetHardAlertedAt) {
+  if (hard !== undefined && total >= hard) {
     const now = new Date().toISOString();
-    await store.updateTask(task.id, { tokenBudgetHardAlertedAt: now }, runContext);
-    await store.pauseTask(task.id, true, runContext);
-    await store.updateTask(task.id, { pausedReason: "token_budget_exceeded" }, runContext);
-    log.error(`${task.id}: hard token budget reached (${total}/${hard}), task paused`);
-    await notify({ kind: "hard", task, total, soft, hard });
+    let claimedHard = false;
+    await store.updateTaskAtomic(task.id, (current) => {
+      if (current.tokenBudgetHardAlertedAt) return null;
+      claimedHard = true;
+      return { tokenBudgetHardAlertedAt: now };
+    }, runContext);
+    if (claimedHard) {
+      try {
+        await store.pauseTask(task.id, true, runContext, { pausedReason: "token_budget_exceeded" });
+      } catch (err) {
+        await store.updateTaskAtomic(task.id, (current) =>
+          current.tokenBudgetHardAlertedAt === now ? { tokenBudgetHardAlertedAt: null } : null,
+        runContext).catch(() => {});
+        throw err;
+      }
+      log.error(`${task.id}: hard token budget reached (${total}/${hard}), task paused`);
+      await notify({ kind: "hard", task, total, soft, hard });
+    }
+  }
+}
+
+/**
+ * FNXC:TokenBudget 2026-07-16-00:00:
+ * FN-8056 found the enforcer was dead code; every persisted task.tokenUsage must enter
+ * this best-effort helper so documented soft alerts and hard pauses remain live.
+ */
+export async function enforceTaskTokenBudgetForPersist(
+  store: TokenBudgetStore,
+  taskId: string,
+  runContext?: RunMutationContext,
+): Promise<void> {
+  try {
+    const [task, settings] = await Promise.all([store.getTask(taskId), store.getSettingsByScope()]);
+    await enforceTaskTokenBudget({
+      store,
+      task,
+      projectSettings: settings.project as ProjectSettings,
+      globalSettings: settings.global,
+      runContext,
+      notify: async ({ kind, task: notifiedTask, total, soft, hard }) => {
+        const notificationService = getActiveNotificationService();
+        if (!notificationService) return;
+        await notificationService.dispatch("token-budget", {
+          taskId: notifiedTask.id,
+          taskTitle: notifiedTask.title,
+          event: "token-budget",
+          timestamp: new Date().toISOString(),
+          metadata: { kind, total, soft, hard },
+        });
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`${taskId}: token budget enforcement failed: ${message}`);
   }
 }

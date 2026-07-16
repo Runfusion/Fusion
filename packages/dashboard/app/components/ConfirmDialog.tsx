@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { ConfirmOptions } from "../hooks/useConfirm";
@@ -35,11 +35,30 @@ export function ConfirmDialog({
   The confirm dialog (e.g. the "discard changes" prompt when cancelling New Task) MUST sit above the floating modal stack. Floating windows (New Task, pop-outs) live at the shared floating z-band (nextFloatingZ) and are portaled to document.body, so a confirm rendered inline at the page .modal-overlay z (~10000) paints BEHIND them. Portal the confirm to body and claim the TOP of the shared stack each time it opens so it always appears over whatever floating window triggered it.
   */
   const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
-  useEffect(() => {
+  const backdropPressStartedHereRef = useRef(false);
+  useLayoutEffect(() => {
     if (isOpen) {
       setOverlayZ(nextFloatingZ());
     }
   }, [isOpen]);
+
+  /*
+  FNXC:Confirm 2026-07-16-10:00:
+  A confirm opened from a task delete must remain visible until an explicit user
+  action. The trigger's trailing click can reach this newly portaled backdrop,
+  so outside-dismiss is valid only after a press that began on the backdrop.
+  */
+  const recordBackdropPress = (event: React.SyntheticEvent<HTMLDivElement>) => {
+    backdropPressStartedHereRef.current = event.target === event.currentTarget;
+  };
+
+  const dismissFromBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const startedOnBackdrop = backdropPressStartedHereRef.current;
+    backdropPressStartedHereRef.current = false;
+    if (startedOnBackdrop && event.target === event.currentTarget) {
+      onCancel();
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -64,7 +83,14 @@ export function ConfirmDialog({
   }
 
   return createPortal(
-    <div className="modal-overlay open confirm-dialog-overlay" onClick={onCancel} style={overlayZ ? { zIndex: overlayZ } : undefined}>
+    <div
+      className="modal-overlay open confirm-dialog-overlay"
+      onPointerDown={recordBackdropPress}
+      onMouseDown={recordBackdropPress}
+      onTouchStart={recordBackdropPress}
+      onClick={dismissFromBackdropClick}
+      style={overlayZ ? { zIndex: overlayZ } : undefined}
+    >
       <div
         className="modal confirm-dialog"
         onClick={(event) => event.stopPropagation()}

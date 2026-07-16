@@ -76,6 +76,21 @@ const SAMPLE_QUESTION = {
   ],
 };
 
+const MARKDOWN_QUESTION = {
+  id: "markdown-question",
+  type: "text" as const,
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+  description: "Choose the mode before continuing.",
+};
+
+function expectMarkdownQuestionFormatting() {
+  const question = screen.getByTestId("planning-question-text");
+  expect(question.querySelector("strong")).toHaveTextContent("fast");
+  expect([...question.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+  expect([...question.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+  expect(question).not.toHaveTextContent("**fast**");
+}
+
 describe("MilestoneSliceInterviewModal", () => {
   let streamHandlers: any;
 
@@ -392,6 +407,30 @@ describe("MilestoneSliceInterviewModal", () => {
         expect(screen.getByText("What is the target scope?")).toBeDefined();
         expect(screen.getByText("Pick the size for this feature.")).toBeDefined();
       });
+    });
+
+    it("renders markdown formatting in AI milestone and slice interview questions", async () => {
+      mockStartMilestoneInterview.mockResolvedValue({ sessionId: "session-123" });
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Start Interview"));
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+      act(() => {
+        streamHandlers.onQuestion(MARKDOWN_QUESTION);
+      });
+
+      await waitFor(expectMarkdownQuestionFormatting);
     });
 
     it("shows reconnecting only during active generation, not on persisted questions", async () => {

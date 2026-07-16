@@ -29,7 +29,7 @@ import userEvent from "@testing-library/user-event";
 import * as api from "../../api";
 import { PlanningModeModal } from "../PlanningModeModal";
 import { TaskDetailModal } from "../TaskDetailModal";
-import type { MergeResult } from "@fusion/core";
+import type { MergeResult, PlanningQuestion } from "@fusion/core";
 import {
   mockStartPlanning,
   mockStartPlanningStreaming,
@@ -130,6 +130,21 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (...args: any[]) => mockUseMobileKeyboard(...args),
 }));
 
+const MARKDOWN_QUESTION: PlanningQuestion = {
+  id: "markdown-question",
+  type: "text",
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+  description: "Choose the mode before continuing.",
+};
+
+function expectMarkdownQuestionFormatting() {
+  const question = screen.getByTestId("planning-question-text");
+  expect(question.querySelector("strong")).toHaveTextContent("fast");
+  expect([...question.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+  expect([...question.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+  expect(question).not.toHaveTextContent("**fast**");
+}
+
 describe("PlanningModeModal", () => {
   const mockOnClose = vi.fn();
   const mockOnTaskCreated = vi.fn();
@@ -217,6 +232,30 @@ describe("PlanningModeModal", () => {
       expect(screen.getByRole("button", { name: "Plan" })).toBeDefined();
       expect(container.querySelector(".detail-body")).not.toBeNull();
     });
+  });
+
+  it("renders markdown formatting in AI planning questions", async () => {
+    mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+      setTimeout(() => handlers.onQuestion?.(MARKDOWN_QUESTION), 0);
+      return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+    });
+
+    render(
+      <PlanningModeModal
+        isOpen={true}
+        onClose={mockOnClose}
+        onTaskCreated={mockOnTaskCreated}
+        onTasksCreated={vi.fn()}
+        tasks={mockTasks}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+      target: { value: "Format the planning question" },
+    });
+    fireEvent.click(screen.getByText("Start Planning"));
+
+    await waitFor(expectMarkdownQuestionFormatting);
   });
 
   describe("Loading state", () => {

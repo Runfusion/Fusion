@@ -281,7 +281,7 @@ function readTail(file: string, max: number): string {
  * Reject postgresFlags that would break cmd.exe quoting or enable injection
  * when embedded into launch.bat (review: arbitrary flags with % " & | etc.).
  */
-function sanitizePostgresFlags(flags: readonly string[]): string[] {
+export function sanitizePostgresFlags(flags: readonly string[]): string[] {
   const safe: string[] = [];
   for (const flag of flags) {
     if (typeof flag !== "string" || flag.length === 0) {

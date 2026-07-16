@@ -72,6 +72,7 @@ import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
@@ -2667,18 +2668,24 @@ export function TaskDetailContent({
       });
   }, [task.id, onBypassReview, onTaskUpdated, addToast, t]);
 
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
     if (!onResetTask) return;
-    if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
+    const shouldReset = await confirm({
+      title: t("taskDetail.reset.btn", "Reset"),
+      message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
+      confirmLabel: t("taskDetail.reset.btn", "Reset"),
+      cancelLabel: t("common.cancel", "Cancel"),
+      danger: true,
+    });
+    if (!shouldReset) return;
     requestClose();
-    onResetTask(task.id)
-      .then(() => {
-        addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
-      })
-      .catch((err) => {
-        addToast(getErrorMessage(err), "error");
-      });
-  }, [task.id, onResetTask, requestClose, addToast]);
+    try {
+      await onResetTask(task.id);
+      addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [task.id, onResetTask, requestClose, addToast, confirm, t]);
 
   const handleDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
@@ -2796,8 +2803,7 @@ export function TaskDetailContent({
   without converging so the operator is not guessing why the task is parked.
   */
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
-  const isPlanReviewReplanCapApproval =
-    isAwaitingApproval && task.awaitingApprovalReason === "plan-review-replan-cap";
+  const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
 
   const handleTogglePause = useCallback(async () => {
     try {

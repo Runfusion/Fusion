@@ -1,6 +1,7 @@
 import type { NodeInfo } from "../../../api";
 import { NodeHealthDot } from "../../NodeHealthDot";
 import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SettingsFormState, SetSettingsForm } from "./context";
 import { useTranslation } from "react-i18next";
 function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error", t: ReturnType<typeof useTranslation<"app">>["t"]): string {
@@ -29,10 +30,16 @@ export function NodeRoutingSection({ form, setForm, nodes }: NodeRoutingSectionP
       <p className="settings-node-routing-note">{t("settings.nodeRouting.theseSettingsApplyAtTheProjectLevel", "These settings apply at the project level.")}</p>
       {/*
       FNXC:SettingsStyling 2026-07-15-17:35:
-      This row stays hand-rolled: routing safety requires the live NodeHealthDot for the selected node to sit between the control and its help text, and the shared select row renders only label/control/help with no slot for an adjacent status widget. Forcing it onto the primitive would move or drop the health readout, so the dot wins over row uniformity here.
+      This row stays hand-rolled: routing safety requires the live NodeHealthDot for the selected node to render right under the control, and the shared select row renders only label/control/help with no slot for an adjacent status widget. Forcing it onto the primitive would move or drop the health readout, so the dot wins over row uniformity here.
+
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the label (a button inside a label is invalid), so both sit in a `.settings-field-label-row`. The live NodeHealthDot status stays inline: it is state feedback, not help copy.
       */}
       <div className="form-group">
-        <label htmlFor="defaultNodeId">{t("settings.nodeRouting.defaultExecutionNode", "Default Execution Node")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="defaultNodeId">{t("settings.nodeRouting.defaultExecutionNode", "Default Execution Node")}</label>
+          <SettingsHelpTip settingKey="defaultNodeId">{t("settings.nodeRouting.usedWhenATaskHasNoNodeOverride", "Used when a task has no node override. Node status is shown for safer routing selection. No default — unset (local execution).")}</SettingsHelpTip>
+        </div>
         <select id="defaultNodeId" className="select" value={typeof form.defaultNodeId === "string" ? form.defaultNodeId : ""} onChange={(e) => {
             const val = e.target.value;
             setForm((f) => ({ ...f, defaultNodeId: val || undefined } as SettingsFormState));
@@ -51,7 +58,6 @@ export function NodeRoutingSection({ form, setForm, nodes }: NodeRoutingSectionP
               <NodeHealthDot status={selectedNode.status} showLabel/>
             </div>);
         })()}
-        <small>{t("settings.nodeRouting.usedWhenATaskHasNoNodeOverride", "Used when a task has no node override. Node status is shown for safer routing selection. No default \u2014 unset (local execution).")}</small>
       </div>
       <SettingsSelectRow
         descriptor={{

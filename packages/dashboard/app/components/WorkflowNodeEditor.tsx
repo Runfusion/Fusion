@@ -5643,6 +5643,8 @@ function InnerEditor({
           dragHandleSelector=".wf-editor-header"
           defaultSize={{ width: 1200, height: 820 }}
           minSize={{ width: 640, height: 480 }}
+          /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: The workflow editor becomes a ≤768px full-screen sheet, so retain desktop geometry without replaying or writing it on the sheet. */
+          suspendGeometryPersistenceOnMobile
           persistGeometryKey="fusion:workflow-node-editor-floating-geometry"
         >
           {modalElement}

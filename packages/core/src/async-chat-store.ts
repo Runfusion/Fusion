@@ -44,12 +44,14 @@ function rowToSession(row: Record<string, unknown>): ChatSession {
     agentId: row.agentId as string,
     title: (row.title as string | null) ?? null,
     status: row.status as ChatSessionStatus,
-    projectId: (row.projectId as string | null) ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? null,
     modelProvider: (row.modelProvider as string | null) ?? null,
     modelId: (row.modelId as string | null) ?? null,
     thinkingLevel: (row.thinkingLevel as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
+    pinnedAt: (row.pinnedAt as string | null) ?? null,
     cliSessionFile: (row.cliSessionFile as string | null) ?? null,
     inFlightGeneration: (row.inFlightGeneration as ChatInFlightGenerationState | null) ?? null,
     cliExecutorAdapterId: (row.cliExecutorAdapterId as string | null) ?? null,
@@ -75,7 +77,8 @@ function rowToRoom(row: Record<string, unknown>): ChatRoom {
     name: row.name as string,
     slug: row.slug as string,
     description: (row.description as string | null) ?? null,
-    projectId: (row.projectId as string | null) ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain projectId reads from owner_project_id (see rowToSession).
+    projectId: (row.ownerProjectId as string | null) ?? null,
     createdBy: (row.createdBy as string | null) ?? null,
     status: row.status as ChatRoomStatus,
     // FNXC:Chat-ThinkingLevel 2026-07-13 (merge port): room-level reasoning-effort default.
@@ -120,12 +123,14 @@ export async function createChatSession(handle: QueryHandle, session: ChatSessio
     agentId: session.agentId,
     title: session.title,
     status: session.status,
-    projectId: session.projectId,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — the trigger/GUC owns the partition.
+    ownerProjectId: session.projectId,
     modelProvider: session.modelProvider,
     modelId: session.modelId,
     thinkingLevel: session.thinkingLevel ?? null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    pinnedAt: session.pinnedAt,
     cliSessionFile: session.cliSessionFile,
     inFlightGeneration: session.inFlightGeneration,
     cliExecutorAdapterId: session.cliExecutorAdapterId,
@@ -153,7 +158,7 @@ export async function listChatSessions(
   options?: { projectId?: string; agentId?: string; status?: ChatSessionStatus },
 ): Promise<ChatSession[]> {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options?.projectId) conditions.push(eq(schema.project.chatSessions.projectId, options.projectId));
+  if (options?.projectId) conditions.push(eq(schema.project.chatSessions.ownerProjectId, options.projectId));
   if (options?.agentId) conditions.push(eq(schema.project.chatSessions.agentId, options.agentId));
   if (options?.status) conditions.push(eq(schema.project.chatSessions.status, options.status));
   const query = handle
@@ -283,7 +288,7 @@ export async function createChatRoom(
       name: room.name,
       slug: room.slug,
       description: room.description,
-      projectId: room.projectId,
+      ownerProjectId: room.projectId,
       createdBy: room.createdBy,
       status: room.status,
       thinkingLevel: room.thinkingLevel ?? null,
@@ -325,9 +330,9 @@ export async function getChatRoomBySlug(
 ): Promise<ChatRoom | undefined> {
   const conditions = [eq(schema.project.chatRooms.slug, slug)];
   if (projectId !== null) {
-    conditions.push(eq(schema.project.chatRooms.projectId, projectId));
+    conditions.push(eq(schema.project.chatRooms.ownerProjectId, projectId));
   } else {
-    conditions.push(isNull(schema.project.chatRooms.projectId));
+    conditions.push(isNull(schema.project.chatRooms.ownerProjectId));
   }
   const rows = await handle
     .select()
@@ -344,7 +349,7 @@ export async function listChatRooms(
   options?: { projectId?: string; status?: ChatRoomStatus },
 ): Promise<ChatRoom[]> {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options?.projectId) conditions.push(eq(schema.project.chatRooms.projectId, options.projectId));
+  if (options?.projectId) conditions.push(eq(schema.project.chatRooms.ownerProjectId, options.projectId));
   if (options?.status) conditions.push(eq(schema.project.chatRooms.status, options.status));
   const query = handle
     .select()
@@ -501,6 +506,26 @@ export async function clearChatRoomMessages(handle: QueryHandle, roomId: string)
 // backend-mode branches in chat-store.ts call these helpers instead of throwing.
 
 /**
+ * Lock a session row before a pin or archive mutation.
+ *
+ * FNXC:ChatPinned 2026-07-16-12:30: Pinning and archiving must serialize on
+ * the same session row. Reading under this lock prevents an archive from
+ * clearing a pin before a concurrent pin request writes it back.
+ */
+export async function getChatSessionForUpdate(
+  tx: DbTransaction,
+  id: string,
+): Promise<ChatSession | undefined> {
+  const rows = await tx
+    .select()
+    .from(schema.project.chatSessions)
+    .where(eq(schema.project.chatSessions.id, id))
+    .for("update");
+  const row = rows[0];
+  return row ? rowToSession(row) : undefined;
+}
+
+/**
  * FNXC:ChatStore 2026-06-24-22:05:
  * Update a chat session's mutable fields (title, status, modelProvider,
  * modelId) and bump updatedAt. Returns the updated session, or undefined if
@@ -515,6 +540,7 @@ export async function updateChatSession(
     modelProvider?: string | null;
     modelId?: string | null;
     thinkingLevel?: string | null;
+    pinnedAt?: string | null;
   },
 ): Promise<ChatSession | undefined> {
   const existing = await getChatSession(handle, id);
@@ -527,6 +553,10 @@ export async function updateChatSession(
   if (input.modelProvider !== undefined) setValues.modelProvider = input.modelProvider;
   if (input.modelId !== undefined) setValues.modelId = input.modelId;
   if (input.thinkingLevel !== undefined) setValues.thinkingLevel = input.thinkingLevel;
+  if (input.pinnedAt !== undefined) setValues.pinnedAt = input.pinnedAt;
+  // FNXC:ChatPinned 2026-07-16-12:00: archiving clears the persisted pin in
+  // this same update, including callers that bypass archiveChatSession.
+  if (input.status === "archived") setValues.pinnedAt = null;
 
   await handle
     .update(schema.project.chatSessions)
@@ -857,7 +887,7 @@ export async function listChatRoomsForAgent(
 
   const conditions: ReturnType<typeof eq>[] = [inArray(schema.project.chatRooms.id, memberRoomIds)];
   if (options?.status) conditions.push(eq(schema.project.chatRooms.status, options.status));
-  if (options?.projectId) conditions.push(eq(schema.project.chatRooms.projectId, options.projectId));
+  if (options?.projectId) conditions.push(eq(schema.project.chatRooms.ownerProjectId, options.projectId));
 
   const rows = await handle
     .select()
@@ -986,7 +1016,7 @@ export async function findLatestActiveChatSessionForTarget(
     eq(schema.project.chatSessions.agentId, normalizedAgentId),
   ];
   if (options.projectId && options.projectId.trim()) {
-    baseConditions.push(eq(schema.project.chatSessions.projectId, options.projectId.trim()));
+    baseConditions.push(eq(schema.project.chatSessions.ownerProjectId, options.projectId.trim()));
   }
 
   // Model-targeted: exact provider+model match.

@@ -1078,9 +1078,13 @@ export async function linkGithubIssueImpl(store: TaskStore,
     });
 }
 
+/*
+FNXC:AgentLogRead 2026-07-16-00:00:
+Issue #2149 requires read-only type filtering to reach the file store before pagination so task-chat log pages and their totals are coherent.
+*/
 export async function getAgentLogsImpl(store: TaskStore,
     taskId: string,
-    options?: { limit?: number; offset?: number },
+    options?: { limit?: number; offset?: number; type?: AgentLogEntry["type"] },
   ): Promise<AgentLogEntry[]> {
     // Ensure buffered entries are visible before reading.
     store.flushAgentLogBuffer();
@@ -1100,12 +1104,16 @@ export async function getAgentLogsImpl(store: TaskStore,
 
     if (limit === 0) return [];
 
-    return readAgentLogEntries(store.taskDir(taskId), { limit, offset }).map(
+    return readAgentLogEntries(store.taskDir(taskId), { limit, offset, type: options?.type }).map(
       ({ lineNo: _lineNo, sourceRef: _sourceRef, ...entry }) => entry,
     );
 }
 
-export async function getAgentLogCountImpl(store: TaskStore, taskId: string): Promise<number> {
+export async function getAgentLogCountImpl(
+  store: TaskStore,
+  taskId: string,
+  options?: { type?: AgentLogEntry["type"] },
+): Promise<number> {
     store.flushAgentLogBuffer();
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-15:45:
     // Backend mode: skip the sync readTaskFromDb check. The agent log file
@@ -1116,5 +1124,5 @@ export async function getAgentLogCountImpl(store: TaskStore, taskId: string): Pr
         return 0;
       }
     }
-    return countAgentLogEntries(store.taskDir(taskId));
+    return countAgentLogEntries(store.taskDir(taskId), { type: options?.type });
 }

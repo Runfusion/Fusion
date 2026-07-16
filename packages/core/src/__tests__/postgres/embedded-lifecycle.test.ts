@@ -33,11 +33,15 @@ import {
   EmbeddedPostgresLifecycle,
   EmbeddedStartTimeoutError,
   DEFAULT_START_TIMEOUT_MS,
+  DEFAULT_EMBEDDED_POSTGRES_FLAGS,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
   readPortFromPostmasterPid,
   __setEmbeddedPostgresCtorForTests,
+  __setWindowsElevatedAdminForTests,
+  __setWindowsEmbeddedPostgresNativeRootForTests,
+  __setWindowsLauncherForTests,
   resolveElectronAsarUnpackedPath,
   fingerprintEmbeddedPostgresNativeRoot,
   buildEmbeddedPostgresMaterializationMarker,
@@ -60,6 +64,9 @@ const tracked: Array<{
 
 afterEach(async () => {
   __setEmbeddedPostgresCtorForTests(null);
+  __setWindowsElevatedAdminForTests(null);
+  __setWindowsEmbeddedPostgresNativeRootForTests(null);
+  __setWindowsLauncherForTests(null);
   vi.useRealTimers();
   while (tracked.length > 0) {
     const { lifecycle, dataDir } = tracked.pop()!;
@@ -1090,6 +1097,87 @@ describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", (
       expect(port).not.toBeNaN();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
+ * FNXC:PostgresEmbedded 2026-07-16-12:45:
+ * Assert the shared-memory floor at the lifecycle boundary, which is used by
+ * both startup-factory boot and direct lifecycle callers. Mock starts reject
+ * before database work so these tests stay deterministic and process-free.
+ */
+describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
+  const sentinel = new Error("mock postgres start complete");
+
+  function installCtorRecorder(records: Record<string, unknown>[]): void {
+    class RecordingEmbeddedPostgres {
+      constructor(options: Record<string, unknown>) {
+        records.push(options);
+      }
+      initialise = vi.fn(async () => {});
+      async start() {
+        throw sentinel;
+      }
+      stop = vi.fn(async () => {});
+    }
+    __setEmbeddedPostgresCtorForTests(RecordingEmbeddedPostgres as never);
+  }
+
+  it.each([
+    ["omitted", undefined, [...DEFAULT_EMBEDDED_POSTGRES_FLAGS]],
+    ["empty", [], [...DEFAULT_EMBEDDED_POSTGRES_FLAGS]],
+    [
+      "caller override after the default",
+      ["-c", "shared_memory_type=sysv"],
+      [...DEFAULT_EMBEDDED_POSTGRES_FLAGS, "-c", "shared_memory_type=sysv"],
+    ],
+  ])("passes %s flags to the normal embedded-postgres constructor", async (_state, postgresFlags, expected) => {
+    const dataDir = makeDataDir();
+    const records: Record<string, unknown>[] = [];
+    installCtorRecorder(records);
+    try {
+      writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+      const lifecycle = new EmbeddedPostgresLifecycle({ ...baseOptions(dataDir), postgresFlags });
+
+      await expect(lifecycle.start()).rejects.toBe(sentinel);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.postgresFlags).toEqual(expected);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the ordered defaults and caller override through the elevated Windows launcher", async () => {
+    const dataDir = makeDataDir();
+    const records: Record<string, unknown>[] = [];
+    const launcherSentinel = new Error("mock Windows launcher reached");
+    let launcherOptions: Record<string, unknown> | undefined;
+    installCtorRecorder(records);
+    __setWindowsElevatedAdminForTests(true);
+    __setWindowsEmbeddedPostgresNativeRootForTests("/test/embedded-postgres/native");
+    __setWindowsLauncherForTests(async (options) => {
+      launcherOptions = options;
+      throw launcherSentinel;
+    });
+
+    try {
+      // Reuse skips real initdb; the sentinel rejects before ensureDatabase.
+      writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        postgresFlags: ["-c", "shared_memory_type=sysv"],
+      });
+
+      await expect(lifecycle.start()).rejects.toBe(launcherSentinel);
+      expect(records).toHaveLength(1);
+      expect(launcherOptions?.postgresFlags).toEqual([
+        ...DEFAULT_EMBEDDED_POSTGRES_FLAGS,
+        "-c",
+        "shared_memory_type=sysv",
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 });

@@ -22,7 +22,10 @@ Four groups deliberately keep their bespoke markup because they are not plain la
 
 FNXC:SettingsHelp 2026-07-15-21:40:
 The bespoke rows that are still one control + one help string — the built-in provider radio and each limits field — hang that help off the same "?" as the migrated rows above (`.settings-field-label-row` + `SettingsHelpTip`), so a limits grid of five "Default: N." paragraphs no longer sits beside rows whose help is behind an icon.
-Two kinds of copy stay inline here: the Enabled Sources hints, which annotate a checkbox grid rather than describe one control, and the credential empty-state/alert notes, which are live credential status plus a navigation button the operator must actually see.
+
+FNXC:SettingsHelp 2026-07-16-12:45:
+The Enabled Sources per-source hints now ride the same "?" too, beside each option's label (settingKey = the input id) — operator requirement: no inline description paragraphs in Settings. The tip is a sibling of the checkbox label, never inside it.
+Only the credential empty-state/alert notes stay inline: they are live credential status plus a navigation button the operator must actually see. The locked Web Search "Always on" span is a status tag, not help, and also stays.
 */
 export function ResearchGlobalSection({ form, setForm, authProviders, onNavigateToSection, }: ResearchGlobalSectionProps) {
     const { t } = useTranslation("app");
@@ -174,17 +177,24 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
         <label htmlFor="research-global-source-webSearch" className="checkbox-label settings-research-source-locked">
           <input id="research-global-source-webSearch" type="checkbox" checked disabled readOnly/>{t("settings.researchGlobal.webSearch", " Web Search ")}<span className="settings-muted">{t("settings.researchGlobal.alwaysOn", "Always on")}</span>
         </label>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline source hints moved behind the shared "?" affordance beside each option's label — operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the checkbox label (a button inside a label breaks click-to-toggle). */}
         <div className="settings-research-source-grid">
-          <label htmlFor="research-global-source-github" className="checkbox-label">
-            <input id="research-global-source-github" type="checkbox" checked={form.researchGlobalGitHubEnabled ?? false} onChange={(event) => setForm((current) => ({
+          <div className="settings-field-label-row">
+            <label htmlFor="research-global-source-github" className="checkbox-label">
+              <input id="research-global-source-github" type="checkbox" checked={form.researchGlobalGitHubEnabled ?? false} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalGitHubEnabled: event.target.checked,
-        }))}/>{t("settings.researchGlobal.gitHub", " GitHub ")}<small>{t("settings.researchGlobal.gitHubSourceHint", " Default: disabled. ")}</small></label>
-          <label htmlFor="research-global-source-local-docs" className="checkbox-label">
-            <input id="research-global-source-local-docs" type="checkbox" checked={form.researchGlobalLocalDocsEnabled ?? true} onChange={(event) => setForm((current) => ({
+        }))}/>{t("settings.researchGlobal.gitHub", " GitHub ")}</label>
+            <SettingsHelpTip settingKey="research-global-source-github">{t("settings.researchGlobal.gitHubSourceHint", " Default: disabled. ")}</SettingsHelpTip>
+          </div>
+          <div className="settings-field-label-row">
+            <label htmlFor="research-global-source-local-docs" className="checkbox-label">
+              <input id="research-global-source-local-docs" type="checkbox" checked={form.researchGlobalLocalDocsEnabled ?? true} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalLocalDocsEnabled: event.target.checked,
-        }))}/>{t("settings.researchGlobal.localDocs", " Local Docs ")}<small>{t("settings.researchGlobal.localDocsSourceHint", " Default: enabled. ")}</small></label>
+        }))}/>{t("settings.researchGlobal.localDocs", " Local Docs ")}</label>
+            <SettingsHelpTip settingKey="research-global-source-local-docs">{t("settings.researchGlobal.localDocsSourceHint", " Default: enabled. ")}</SettingsHelpTip>
+          </div>
         </div>
       </div>
       {hasMissingResearchCredential && (<div className="settings-empty-state" role="alert">{t("settings.researchGlobal.missingCredentialsForTheSelectedResearchProvider", " Missing credentials for the selected research provider. ")}<button type="button" className="btn btn-sm" onClick={() => onNavigateToSection("authentication")}>{t("settings.researchGlobal.openAuthentication", " Open Authentication ")}</button>

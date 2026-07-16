@@ -3,6 +3,7 @@ import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SettingsFormState, SetSettingsForm } from "./context";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const AUTO_ARCHIVE_DEFAULT_AFTER_DAYS = 2;
@@ -26,7 +27,7 @@ The machine-wide cap (`globalMaxConcurrent`) moved to SchedulingGlobalSection, a
 Rows keep their per-row `scope` badge even though the section is now uniformly project-scoped: search can land an operator on a single control with no section chrome in view, so the badge is the only scope signal at that moment.
 
 FNXC:SettingsStyling 2026-07-15-17:35:
-The `overlapIgnorePaths` allowlist deliberately keeps its bespoke markup: it is a repeating row editor with per-row Browse/Remove buttons, and its help interleaves `t()` fragments with `<code>` elements, which a single-string descriptor `help` cannot express.
+The `overlapIgnorePaths` allowlist deliberately keeps its bespoke markup: it is a repeating row editor with per-row Browse/Remove buttons, so no shared row primitive fits. Its help interleaves `t()` fragments with `<code>` elements, which a single-string descriptor `help` cannot express — but SettingsHelpTip takes ReactNode, so that copy now lives behind the shared "?" affordance instead of an inline `<small>`.
 */
 export function SchedulingSection({ form, setForm, concurrencyLoading = false, onOverlapIgnorePathChange, onOpenOverlapPathPicker, onRemoveOverlapIgnorePath, onAddOverlapIgnorePath, onOpenWorkflowSettings, }: SchedulingSectionProps) {
     const { t } = useTranslation("app");
@@ -301,9 +302,11 @@ export function SchedulingSection({ form, setForm, concurrencyLoading = false, o
       />
 
       <div className="form-group settings-overlap-ignore-group">
-        <label>{t("settings.scheduling.ignoredOverlapPaths", "Ignored overlap paths")}</label>
-        <small>{t("settings.scheduling.optionalFileOrDirectoryPathsToIgnoreWhen", " No default \u2014 unset (empty). Optional file or directory paths to ignore when overlap serialization is enabled. Paths are project-relative (for example ")}<code>docs/</code>{t("settings.scheduling.or", " or ")}<code>generated/*</code>{t("settings.scheduling.closeParenPeriod", ").")}
-        </small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance \u2014 operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the label (a button inside a label is invalid), wrapped with it in `.settings-field-label-row`; the `<code>` fragments ride along verbatim because SettingsHelpTip takes ReactNode. */}
+        <div className="settings-field-label-row">
+          <label>{t("settings.scheduling.ignoredOverlapPaths", "Ignored overlap paths")}</label>
+          <SettingsHelpTip settingKey="overlapIgnorePaths">{t("settings.scheduling.optionalFileOrDirectoryPathsToIgnoreWhen", " No default \u2014 unset (empty). Optional file or directory paths to ignore when overlap serialization is enabled. Paths are project-relative (for example ")}<code>docs/</code>{t("settings.scheduling.or", " or ")}<code>generated/*</code>{t("settings.scheduling.closeParenPeriod", ").")}</SettingsHelpTip>
+        </div>
         <div className="settings-overlap-ignore-list">
           {(form.overlapIgnorePaths && form.overlapIgnorePaths.length > 0 ? form.overlapIgnorePaths : [""]).map((path, index) => (<div key={`overlap-ignore-${index}`} className="settings-overlap-ignore-row">
               <div className="settings-overlap-ignore-path-controls">

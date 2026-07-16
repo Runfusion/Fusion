@@ -55,7 +55,8 @@ type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
 function rowToRun(row: Record<string, unknown>): EvalRun {
   return {
     id: String(row.id),
-    projectId: String(row.projectId),
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: String(row.ownerProjectId ?? ""),
     status: row.status as EvalRunStatus,
     trigger: row.trigger as EvalRun["trigger"],
     scope: String(row.scope),
@@ -123,7 +124,8 @@ export async function createEvalRun(
 ): Promise<EvalRun> {
   await handle.insert(schema.project.evalRuns).values({
     id: run.id,
-    projectId: run.projectId,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — domain writes into the partition desynced parent/child partitions and broke composite FKs (23503).
+    ownerProjectId: run.projectId,
     status: "pending",
     trigger: run.trigger,
     scope: run.scope,
@@ -144,7 +146,7 @@ export async function createEvalRun(
   });
   return rowToRun({
     id: run.id,
-    projectId: run.projectId,
+    ownerProjectId: run.projectId,
     status: "pending",
     trigger: run.trigger,
     scope: run.scope,
@@ -181,7 +183,7 @@ export async function getEvalRun(handle: QueryHandle, id: string): Promise<EvalR
  */
 export async function listEvalRuns(handle: QueryHandle, options: EvalRunListOptions = {}): Promise<EvalRun[]> {
   const conditions: ReturnType<typeof eq>[] = [];
-  if (options.projectId) conditions.push(eq(schema.project.evalRuns.projectId, options.projectId));
+  if (options.projectId) conditions.push(eq(schema.project.evalRuns.ownerProjectId, options.projectId));
   if (options.status) conditions.push(eq(schema.project.evalRuns.status, options.status));
   if (options.trigger) conditions.push(eq(schema.project.evalRuns.trigger, options.trigger));
   let query = handle
@@ -232,17 +234,22 @@ export async function upsertEvalTaskResult(
   handle: QueryHandle,
   result: EvalTaskResult,
 ): Promise<void> {
+  // FNXC:MultiProjectIsolation 2026-07-16-08:05: children inherit the parent run's
+  // project_id partition explicitly. The GUC-driven trigger only covers bound sessions;
+  // unbound/bypass handles (tests, admin, maintenance) or a GUC naming another partition
+  // would otherwise violate the composite (project_id, run_id) FK with SQLSTATE 23503.
+  // Inherit the PARTITION column (projectId), never the domain field (ownerProjectId).
   const runRows = await handle
     .select({ projectId: schema.project.evalRuns.projectId })
     .from(schema.project.evalRuns)
     .where(eq(schema.project.evalRuns.id, result.runId))
     .limit(1);
-  const projectId = runRows[0]?.projectId;
-  if (!projectId) throw new Error(`Eval run not found: ${result.runId}`);
+  const parentProjectId = runRows[0]?.projectId;
+  if (!parentProjectId) throw new Error(`Eval run not found: ${result.runId}`);
   await handle
     .insert(schema.project.evalTaskResults)
     .values({
-      projectId,
+      projectId: parentProjectId,
       id: result.id,
       runId: result.runId,
       taskId: result.taskId,
@@ -346,13 +353,16 @@ export async function appendEvalRunEvent(
   input: { id: string; runId: string; type: string; message: string; status?: EvalRunStatus; taskId?: string; metadata?: Record<string, unknown> },
 ): Promise<EvalRunEvent> {
   return layer.transactionImmediate(async (tx) => {
+    // FNXC:MultiProjectIsolation 2026-07-16-08:05: inherit the parent run's project_id
+    // partition explicitly (see upsertEvalTaskResult) — the ambient GUC is not guaranteed
+    // to match for unbound/bypass handles, and a mismatch breaks the composite parent FK.
     const runRows = await tx
       .select({ projectId: schema.project.evalRuns.projectId })
       .from(schema.project.evalRuns)
       .where(eq(schema.project.evalRuns.id, input.runId))
       .limit(1);
-    const projectId = runRows[0]?.projectId;
-    if (!projectId) throw new Error(`Eval run not found: ${input.runId}`);
+    const parentProjectId = runRows[0]?.projectId;
+    if (!parentProjectId) throw new Error(`Eval run not found: ${input.runId}`);
     const seqRows = await tx
       .select({ maxSeq: sql<number | null>`max(${schema.project.evalRunEvents.seq})` })
       .from(schema.project.evalRunEvents)
@@ -360,7 +370,7 @@ export async function appendEvalRunEvent(
     const seq = (seqRows[0]?.maxSeq ?? 0) + 1;
     const createdAt = new Date().toISOString();
     await tx.insert(schema.project.evalRunEvents).values({
-      projectId,
+      projectId: parentProjectId,
       id: input.id,
       runId: input.runId,
       seq,

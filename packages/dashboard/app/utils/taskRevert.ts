@@ -22,6 +22,17 @@ import type { Task } from "@fusion/core";
  * helper (and `findOpenUndoTaskForSource` below) so the forward/reverse affordances
  * never disagree about what counts as "an undo relationship".
  */
+/**
+ * FNXC:TaskRevert 2026-07-16-00:00:
+ * FN-8066 considers a source task reverted only when the route persisted a
+ * non-blank `revertedAt` marker after a clean or already-reverted git outcome.
+ * Keep this defensive predicate shared so every card/detail consumer applies the
+ * same provenance contract to untyped historical source metadata.
+ */
+export function isTaskReverted(sourceMetadata: Task["sourceMetadata"] | undefined): boolean {
+  return typeof sourceMetadata?.revertedAt === "string" && sourceMetadata.revertedAt.trim().length > 0;
+}
+
 export function getRevertOfId(
   sourceMetadata: Task["sourceMetadata"] | undefined,
   sourceParentTaskId?: string | null,

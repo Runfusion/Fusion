@@ -23,6 +23,7 @@ import {
   type DashboardShortcutAction,
 } from "../utils/keyboardShortcuts";
 import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
+import { SettingsHelpTip } from "./settings/SettingsHelpTip";
 import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { ExperimentalSection } from "./settings/sections/ExperimentalSection";
@@ -492,6 +493,10 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       "auto summarize titles",
       "auto-summarize titles",
       "autoSummarizeTitles",
+      "task definition language",
+      "task definitions input language",
+      "taskDefinitionInInputLanguage",
+      "localized task prose",
       "title summarization",
       "title summarizer",
       "AI title",
@@ -4708,16 +4713,19 @@ export function SettingsModal({
               </div>
               
               <div className="form-group">
-                <label htmlFor="import-merge" className="checkbox-label">
-                  <input
-                    id="import-merge"
-                    type="checkbox"
-                    checked={importMerge}
-                    onChange={(e) => setImportMerge(e.target.checked)}
-                  />
-                  {t("settings.importExport.mergeExisting", "Merge with existing settings (recommended)")}
-                </label>
-                <small>{t("settings.importExport.replaceWarning", "If unchecked, existing settings will be replaced with imported values.")}</small>
+                {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. */}
+                <div className="settings-field-label-row">
+                  <label htmlFor="import-merge" className="checkbox-label">
+                    <input
+                      id="import-merge"
+                      type="checkbox"
+                      checked={importMerge}
+                      onChange={(e) => setImportMerge(e.target.checked)}
+                    />
+                    {t("settings.importExport.mergeExisting", "Merge with existing settings (recommended)")}
+                  </label>
+                  <SettingsHelpTip settingKey="import-merge">{t("settings.importExport.replaceWarning", "If unchecked, existing settings will be replaced with imported values.")}</SettingsHelpTip>
+                </div>
               </div>
             </div>
             <div className="modal-actions">

@@ -27,6 +27,7 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   createWorkflowAuthoringTools: () => [],
   createChatTaskDocumentTools: () => [],
+  createChatTaskLogsReadTool: () => ({}),
 }));
 
 import type { AiSessionRow, AiSessionStore } from "../ai-session-store.js";

@@ -57,6 +57,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `language` | `"en" \| "zh-CN" \| "zh-TW" \| "fr" \| "es" \| "ko"` | `undefined` | UI language for the dashboard and TUI. When unset, the dashboard detects from localStorage → browser language and the CLI from `--lang` flag → environment locale, falling back to `en`. Validated at the store write boundary (`validateLocale`); invalid values are dropped. Reset to auto-detect via the dashboard's "Auto" language option or `fn settings set language auto` (clears the persisted key). |
 | `dashboardFontScalePct` | `number` | `100` | Dashboard font scale percentage used by Appearance settings. Valid range: `85` to `125`; applied pre-hydration via document root font-size so board typography (column headers/counts, task cards, and quick-entry text) scales with the setting from first paint. |
 | `dismissModalsOnOutsideClick` | `boolean` | `false` | Global dashboard preference for closing fixed modal overlays by clicking/tapping the backdrop. Off by default to prevent accidental modal dismissal; explicit close, cancel, and Escape paths remain available. |
+| `skipConfirmationDialogs` | `boolean` | `false` | Global-only operator preference that skips centralized confirmation dialogs for critical actions. When enabled, destructive actions such as deleting a task or resetting progress immediately take the dialog's primary/default action; project settings cannot enable it for shared-project collaborators. |
 | `defaultProvider` | `string` | `undefined` | Default AI provider. Anthropic has three independent surfaces, all executing on the direct `anthropic` provider except the CLI: (1) **direct OAuth** — a Claude subscription/OAuth login drives `anthropic/*` selections; Fusion sends the OAuth token to `https://api.anthropic.com/v1` with Claude Code identity headers (the same path the Claude Code CLI uses), so a subscription needs no API key. Credentials live under the `anthropic-subscription` auth/status/usage/banner id but are resolved for the direct provider at runtime; they are never stored or resolved as raw `ANTHROPIC_API_KEY` material. (2) **raw API key** — `ANTHROPIC_API_KEY`, a `models.json` `apiKey`, or an `api_key` auth credential uses `x-api-key` on the same direct provider and takes precedence over OAuth. (3) **Claude CLI** — the explicit `pi-claude-cli` model provider runs sessions through the local `claude` CLI. There is no runtime rerouting between these surfaces. |
 | `defaultModelId` | `string` | `undefined` | Default AI model ID. |
 | `modelPricingOverrides` | `Record<string, ModelPricing>` | `undefined` | Optional global Command Center pricing overrides keyed by lowercased `provider:model` or bare `:model`. Values store USD per 1M input, output, cache-read, and cache-write tokens plus optional `source`; they override the built-in pricing table for cost estimates only and are editable from Settings → Global Models → View pricing table. |
@@ -298,7 +299,11 @@ Actions. It has two tabs:
   controls. Built-in Plan Review/spec and Code Review revision caps also live here:
   leave `planReviewMaxRevisions` or `codeReviewMaxRevisions` empty for unbounded
   automatic revisions, enter a non-negative integer to cap attempts, or enter `0`
-  to disable automatic revision for that path. `plannerOversightLevel` is the
+  to disable automatic revision for that path. The separate triage Plan Review
+  replan ceiling, `planReviewReplanCap`, controls consecutive pre-execution
+  `REVISE` → replan cycles before Fusion requests manual approval; leave it empty
+  to use the built-in engine default, or set a non-negative integer (including
+  `0`) for the workflow. `plannerOversightLevel` is the
   workflow-native planner oversight mode and accepts `off`, `observe`, `steer`,
   or `autonomous` (default). `plannerHeartbeatPatrolEnabled` controls idle/no-task
   heartbeat patrol task creation separately and defaults to `true`. Edits batch
@@ -340,7 +345,7 @@ These groups moved out of project settings and into workflow settings (built-in
 | Group | Keys (examples) |
 |---|---|
 | **Step execution** | `workflowStepTimeoutMs`, `runStepsInNewSessions`, `maxParallelSteps`, `workflowStepScopeEnforcement`, `strictScopeEnforcement`, `verificationFixRetries`, `maxPostReviewFixes`, `buildRetryCount` |
-| **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`, `planReviewMaxRevisions`, `codeReviewMaxRevisions`; project override: `planApprovalMode` |
+| **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`, `planReviewMaxRevisions`, `codeReviewMaxRevisions`, `planReviewReplanCap`; project override: `planApprovalMode` |
 | **Planner oversight** | `plannerOversightLevel` (workflow-native; values: `off`, `observe`, `steer`, `autonomous`); `plannerOversightNotificationLevel` (workflow-native; values: `silent`, `errors`, `important`, `all`); `plannerOverseerExecutorStuckAfterMs` (workflow-native; number, default `7200000` = 2h); `plannerOverseerAdvisorEnabled` (boolean, **default false**); `plannerOverseerAdvisorProvider` / `plannerOverseerAdvisorModelId` (session-advisor model; both required when enabled); `plannerHeartbeatPatrolEnabled` (workflow-native; boolean, default `true`, gates idle/no-task heartbeat patrol task creation) |
 | **Per-phase model lanes** | `executionProvider`/`executionModelId` + `executionThinkingLevel`, `planningProvider`/`planningModelId` + `planningThinkingLevel` (+ fallbacks), `validatorProvider`/`validatorModelId` + `validatorThinkingLevel` (+ fallbacks). Thinking values accept `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`; unset inherits. |
 
@@ -378,6 +383,7 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 | `autoApproveSpec` | `false` | Legacy compatibility setting. Workflow Plan Review now owns optional pre-execution AI plan approval. |
 | `planReviewMaxRevisions` | unset | Workflow-native Plan Review/spec revision cap. Unset/empty means unbounded automatic replans; a non-negative integer caps attempts; `0` disables automatic Plan Review revision. |
 | `codeReviewMaxRevisions` | unset | Workflow-native Code Review remediation cap. Unset/empty means unbounded automatic code-fix passes; a non-negative integer caps attempts; `0` disables automatic Code Review remediation. |
+| `planReviewReplanCap` | unset | Workflow-native triage Plan Review replan ceiling. It bounds consecutive pre-execution Plan Review `REVISE` → replan cycles before manual approval; unset/empty uses the built-in engine default, and a non-negative integer (including `0`) overrides it. |
 | `plannerOversightLevel` | `autonomous` | Workflow-native planner oversight mode. `off` disables oversight; `observe` watches only; `steer` injects guidance or suggests revisions; `autonomous` enables bounded retry and targeted-fix recovery — but merge/PR progression and any destructive or external-service side effect ALWAYS require an explicit, recorded human confirmation before they run, even at `autonomous` (FN-7513's confirmation gate; see `docs/architecture.md` → "Planner overseer confirmation gate"). Tasks may set a nullable `Task.plannerOversightLevel` override (same four values) that wins over this workflow value when present; `null`/unset means "inherit the workflow value". `resolveEffectivePlannerOversightLevel` in `@fusion/core` computes the effective level (task override → workflow effective → `autonomous`). The per-task override is exposed in the dashboard as a "Planner oversight" selector (Inherit from workflow / Off / Observe / Steer / Autonomous recovery) in both the New Task dialog and Task Detail edit form, threaded through `createTask`/`updateTask` (FN-7515); the project/global default is set via the **Workflow Editor → Values** tab on the default workflow's `plannerOversightLevel` value, not in Project Settings. FN-7517 additionally exposes a quick inline oversight-level select in the Task Detail modal's meta-controls cluster (same `updateTask` override plumbing, no parallel path) plus manual nudge/stop-oversight/explain-current-action controls that call the overseer runtime directly — see `docs/dashboard-guide.md`. Engine read-site behavior beyond the FN-7513 confirmation gate remains follow-up work (FN-7510+). |
 | `plannerOversightNotificationLevel` | `important` | Workflow-native planner-overseer notification verbosity (FN-7518). `silent` suppresses overseer notifications; `errors` notifies only on failures/escalations; `important` (the default) notifies on interventions/recovery actions and errors; `all` notifies on every observation. Resolves through the generic `resolveEffectiveSettings` default path with no special-casing, alongside `plannerOversightLevel`. This is a declaration-only setting: the notification-emission gating that reads it lands downstream in FN-7519 (intervention timeline) and FN-7520 (run-audit/activity events). |
 | `plannerOverseerAdvisorEnabled` | `false` | Master switch for the planner overseer **session advisor** (live LLM transcript review). **Off by default.** When false, no second-model advisor runs regardless of model fields or `plannerOversightLevel`. Lifecycle stage watching, stall recovery, and merge confirmation are unaffected. |
@@ -669,7 +675,8 @@ GitLab configuration examples: leave both URL fields blank for GitLab.com (`http
 | `memoryBackupRetention` | `number` | `14` | Number of memory backups to retain. |
 | `memoryBackupDir` | `string` | `".fusion/backups/memory"` | Relative memory backup directory path. |
 | `memoryBackupScope` | `"project" \| "agents" \| "all"` | `"all"` | Backup scope: project memory, agent memory, or both. |
-| `autoSummarizeTitles` | `boolean` | `false` | Auto-generate titles for long untitled descriptions across dashboard/API task creation. Agent-created tasks from `fn_task_create` and `fn_delegate_task` always request summarization for untitled tasks, regardless of this setting. |
+| `autoSummarizeTitles` | `boolean` | `false` | Auto-generate titles for long untitled descriptions across dashboard/API task creation. Generated titles match the operator's input language from the task description. Agent-created tasks from `fn_task_create` and `fn_delegate_task` always request summarization for untitled tasks, regardless of this setting. |
+| `taskDefinitionInInputLanguage` | `boolean` | `false` | When enabled, generated task-definition (`PROMPT.md`) prose uses a confidently detected supported input language: Spanish (`es`), French (`fr`), Korean (`ko`), or Chinese (`zh-CN`). Only planner-authored prose is localized; headings, markers, the verbatim Original Description, code, paths, tool names, and commit conventions stay canonical English for deterministic parsing. Chinese always authors as `zh-CN`; Traditional Chinese is not variant-detected. English, short/uncertain, and unsupported input such as Japanese fall back to English. Configure in **Settings → Project Models**. |
 | `useAiMergeCommitSummary` | `boolean` | `true` | Use AI-generated merge commit summaries (subject + bullet body + diff-stat) instead of raw step-commit subject lists. |
 | `titleSummarizerProvider` | `string` | `undefined` | Provider for title summarization. |
 | `titleSummarizerModelId` | `string` | `undefined` | Model ID for title summarization. |
@@ -756,6 +763,8 @@ Backlog health is the alert family for scheduler/backlog imbalance, dependency-b
 3. Project base (`project.taskTokenBudget.soft/hard`)
 4. Global per-size (`global.taskTokenBudget.perSize[task.size]`)
 5. Global base (`global.taskTokenBudget.soft/hard`)
+
+Budgets measure **input + output + cache-write tokens**. Cache-read tokens are deliberately excluded: reading a cached prompt can be very large without representing newly processed model work. A soft cap records one alert timestamp and dispatches one `token-budget` notification; a hard cap records its timestamp, pauses the task with `pausedReason: "token_budget_exceeded"`, then dispatches one notification. These transitions are atomic and are not repeated on later token persists.
 
 Example:
 
@@ -1083,7 +1092,9 @@ Dedicated model lane for merger agent sessions (conflict resolution, clean-room 
 
 Thinking level for merger sessions: project `mergerThinkingLevel` → global `mergerGlobalThinkingLevel` → project `defaultThinkingLevelOverride` → global `defaultThinkingLevel`.
 
-Session-level model fallback on retryable failures still uses the shared global `fallbackProvider` + `fallbackModelId` pair (not a merger-specific fallback lane).
+Session-level fallback on retryable failures resolves project `mergerFallbackProvider` + `mergerFallbackModelId` first, then the shared global `fallbackProvider` + `fallbackModelId` pair. Partial project fallback pairs are ignored. This lane applies to every merger session, including merger-ai mutating and review agents and the PR-response runner.
+
+Fallback thinking level resolves project `mergerFallbackThinkingLevel` → global `fallbackThinkingLevel` → the merger thinking chain above.
 
 For post-merge prompt workflow steps, explicit step-level `modelProvider` + `modelId` overrides take precedence over the merger lane above.
 

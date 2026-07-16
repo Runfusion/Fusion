@@ -29,6 +29,12 @@ const confirmQuestion: PlanningQuestion = {
   question: "Should Fusion continue?",
 };
 
+const markdownQuestion: PlanningQuestion = {
+  id: "q-markdown",
+  type: "text",
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+};
+
 function expectNoObjectObject() {
   expect(screen.queryByText(/\[object Object\]/)).toBeNull();
 }
@@ -49,6 +55,20 @@ describe("ConversationHistory", () => {
     expect(screen.getByText("Q1")).toBeDefined();
     expect(screen.getByText("What is the project scope?")).toBeDefined();
     expect(screen.getByText("Medium")).toBeDefined();
+  });
+
+  it("renders historical AI questions as sanitized markdown", () => {
+    const { container } = render(
+      <ConversationHistory
+        entries={[{ question: markdownQuestion, response: { "q-markdown": "Yes" } }]}
+      />,
+    );
+
+    const question = container.querySelector(".conversation-entry-question-text");
+    expect(question?.querySelector("strong")).toHaveTextContent("fast");
+    expect([...question!.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+    expect([...question!.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+    expect(question).not.toHaveTextContent("**fast**");
   });
 
   it("renders single-select Other responses as the user's own answer", () => {

@@ -57,7 +57,8 @@ function rowToRun(row: Record<string, unknown>): ResearchRun {
     query: row.query as string,
     topic: (row.topic as string | null) ?? undefined,
     status: normalizeStatus((row.status as ResearchRunStatus | "pending") ?? "queued"),
-    projectId: (row.projectId as string | null) ?? undefined,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? undefined,
     trigger: (row.trigger as string | null) ?? undefined,
     providerConfig: row.providerConfig as ResearchRun["providerConfig"],
     sources: (row.sources as ResearchSource[]) ?? [],
@@ -99,7 +100,8 @@ export async function createResearchRun(
     query: run.query,
     topic: run.topic ?? null,
     status: run.status,
-    projectId: run.projectId ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — writing domain data into the partition put parents and children in different partitions and broke the composite FKs (23503).
+    ownerProjectId: run.projectId ?? null,
     trigger: run.trigger ?? null,
     providerConfig: run.providerConfig ?? null,
     sources: run.sources,
@@ -141,7 +143,7 @@ export async function persistResearchRun(handle: QueryHandle, run: ResearchRun):
       query: run.query,
       topic: run.topic ?? null,
       status: run.status,
-      projectId: run.projectId ?? null,
+      ownerProjectId: run.projectId ?? null,
       trigger: run.trigger ?? null,
       providerConfig: run.providerConfig ?? null,
       sources: run.sources,
@@ -251,7 +253,7 @@ export async function getActiveResearchRun(
     .from(schema.project.researchRuns)
     .where(
       and(
-        eq(schema.project.researchRuns.projectId, projectId),
+        eq(schema.project.researchRuns.ownerProjectId, projectId),
         eq(schema.project.researchRuns.trigger, trigger),
         inArray(schema.project.researchRuns.status, ["queued", "running", "cancelling", "retry_waiting"]),
       ),

@@ -141,8 +141,15 @@ export function SourceControlSection({ form, setForm, projectTrackingRepoOptions
             <input id="gitlabEnabled" type="checkbox" checked={form.gitlabEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, gitlabEnabled: e.target.checked }))}/>
             {t("settings.general.enableGitLabIntegration", "Enable GitLab integration")}
           </label>
+          {/*
+          FNXC:SettingsHelp 2026-07-16-12:45:
+          Inline disclosure hint moved behind the shared "?" affordance beside the summary title — operator requirement: no inline description paragraphs in Settings.
+          The copy stays conditional on `gitlabEnabled` (the tip's ReactNode children carry it verbatim). The wrapping span stops propagation, same as the summary's checkbox label, so opening the tip never toggles the disclosure.
+          */}
+          <span onClick={(event) => event.stopPropagation()}>
+            <SettingsHelpTip settingKey="project-gitlab-configuration">{form.gitlabEnabled === false ? t("settings.general.gitLabDisabledHint", "GitLab API imports, comments, close/reopen, and refresh operations are disabled. Saved URLs and tokens remain stored for re-enable.") : t("settings.general.gitLabEnabledHint", "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com. No default — unset (unset behaves as enabled until explicitly disabled).")}</SettingsHelpTip>
+          </span>
         </summary>
-        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.general.gitLabDisabledHint", "GitLab API imports, comments, close/reopen, and refresh operations are disabled. Saved URLs and tokens remain stored for re-enable.") : t("settings.general.gitLabEnabledHint", "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
         <div className="settings-gitlab-disclosure__body" aria-disabled={form.gitlabEnabled === false}>
           <SettingsTextRow
             descriptor={{
@@ -174,9 +181,14 @@ export function SourceControlSection({ form, setForm, projectTrackingRepoOptions
 
             FNXC:SourceControl 2026-07-15-20:30:
             The auth block keeps BOTH its own heading and its own enable/disable hint after the merge: the URL hint above describes what disabling does to imports/refresh, while this one describes the PRIVATE-TOKEN auth contract and the token's global fallback. Neither string is a paraphrase of the other, so collapsing them into one would delete operator-facing copy rather than deduplicate it.
+
+            FNXC:SettingsHelp 2026-07-16-12:45:
+            That hint now rides the shared "?" beside the auth heading instead of an inline paragraph — operator requirement: no inline description paragraphs in Settings. The copy stays conditional on `gitlabEnabled` inside the tip.
           */}
-          <h5 className="settings-section-heading">{t("settings.merge.gitLabAuthentication", "GitLab Authentication")}</h5>
-          <small className="settings-description">{form.gitlabEnabled === false ? t("settings.merge.gitLabDisabledHint", "GitLab comments, close/reopen, import fetches, and refresh operations are disabled. Saved tokens remain stored for re-enable.") : t("settings.merge.gitLabAuthDetails", "Fusion uses GitLab REST API token authentication with the PRIVATE-TOKEN header. Leave the token blank to clear the project override and fall back to a configured global GitLab token or GITLAB_TOKEN where available. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
+          <div className="settings-field-label-row">
+            <h5 className="settings-section-heading">{t("settings.merge.gitLabAuthentication", "GitLab Authentication")}</h5>
+            <SettingsHelpTip settingKey="project-gitlab-authentication">{form.gitlabEnabled === false ? t("settings.merge.gitLabDisabledHint", "GitLab comments, close/reopen, import fetches, and refresh operations are disabled. Saved tokens remain stored for re-enable.") : t("settings.merge.gitLabAuthDetails", "Fusion uses GitLab REST API token authentication with the PRIVATE-TOKEN header. Leave the token blank to clear the project override and fall back to a configured global GitLab token or GITLAB_TOKEN where available. No default — unset (unset behaves as enabled until explicitly disabled).")}</SettingsHelpTip>
+          </div>
           <SettingsSelectRow
             descriptor={{
               key: "gitlabAuthTokenType",

@@ -16,11 +16,14 @@ FNXC:SettingsSearch 2026-07-15-17:35:
 The descriptor key is the dotted path `researchSettings.enabled`, not the bare `researchSettings` blob key, because the toggle owns exactly one leaf of that nested object. The sources and limits below own their own leaves of the same blob, so a bare key would collide the moment either migrates, and search would anchor several controls to one row.
 
 FNXC:SettingsStyling 2026-07-15-17:35:
-Two groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the Enabled Sources grid pairs an always-on locked Web Search row with a checkbox grid carrying inline per-source default hints, and the limits grid lays four numeric fields plus a shared validation error out side by side (`settings-research-limit-field`).
+Two groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the Enabled Sources grid pairs an always-on locked Web Search row with a checkbox grid (per-source default hints ride "?" tips beside each label), and the limits grid lays four numeric fields plus a shared validation error out side by side (`settings-research-limit-field`).
 
 FNXC:SettingsHelp 2026-07-15-21:40:
 Each limits field is still one control with one help string, so its "Default: N." hangs off the same "?" as the migrated toggle above (`.settings-field-label-row` + `SettingsHelpTip`) rather than printing four paragraphs under a section whose other row hides its help behind an icon.
-Two things stay inline: the shared limits validation error (a message the operator has to open a tip to find is one they will not see) and the Enabled Sources copy — the always-on Web Search note points at another section, and the per-source hints annotate a checkbox grid rather than describe one control.
+
+FNXC:SettingsHelp 2026-07-16-12:45:
+The Enabled Sources copy now rides the same "?" too — operator requirement: no inline description paragraphs in Settings. The always-on Web Search note and each per-source "Default: …" hint hang off a tip beside that option's label (settingKey = the input id); only the "Always on" span stays inline, because it is a status tag, not help.
+The one thing still inline is the shared limits validation error — a message the operator has to open a tip to find is one they will not see.
 */
 export function ResearchProjectSection({ form, setForm, researchLimitError }: ResearchProjectSectionProps) {
     const { t } = useTranslation("app");
@@ -46,18 +49,22 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
       />
       <div className="form-group">
         <label>{t("settings.researchProject.enabledSources", "Enabled Sources")}</label>
-        <label htmlFor="research-project-source-webSearch" className="checkbox-label settings-research-source-locked">
-          <input id="research-project-source-webSearch" type="checkbox" checked disabled readOnly/>{t("settings.researchProject.webSearch", " Web Search ")}<span className="settings-muted">{t("settings.researchProject.alwaysOn", "Always on")}</span>
-        </label>
-        <small className="settings-muted">{t("settings.researchProject.webSearchIsAlwaysEnabledConfigureTheSearch", " Web search is always enabled. Configure the search provider under Research Defaults. ")}</small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline source hints moved behind the shared "?" affordance beside each option's label — operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the checkbox label (a button inside a label breaks click-to-toggle); the "Always on" span stays inline as a status tag. */}
+        <div className="settings-field-label-row">
+          <label htmlFor="research-project-source-webSearch" className="checkbox-label settings-research-source-locked">
+            <input id="research-project-source-webSearch" type="checkbox" checked disabled readOnly/>{t("settings.researchProject.webSearch", " Web Search ")}<span className="settings-muted">{t("settings.researchProject.alwaysOn", "Always on")}</span>
+          </label>
+          <SettingsHelpTip settingKey="research-project-source-webSearch">{t("settings.researchProject.webSearchIsAlwaysEnabledConfigureTheSearch", " Web search is always enabled. Configure the search provider under Research Defaults. ")}</SettingsHelpTip>
+        </div>
         <div className="settings-research-source-grid">
           {[
             ["pageFetch", t("settings.researchProject.pageFetch", "Page Fetch"), "Default: enabled."],
             ["github", t("settings.researchProject.github", "GitHub"), "Default: disabled."],
             ["localDocs", t("settings.researchProject.localDocs", "Local Docs"), "Default: enabled."],
             ["llmSynthesis", t("settings.researchProject.llmSynthesis", "LLM Synthesis"), "Default: enabled."],
-        ].map(([key, label, defaultHint]) => (<label key={key} htmlFor={`research-project-source-${key}`} className="checkbox-label">
-              <input id={`research-project-source-${key}`} type="checkbox" checked={sources?.[key as keyof NonNullable<typeof sources>] ?? false} onChange={(event) => setForm((current) => ({
+        ].map(([key, label, defaultHint]) => (<div key={key} className="settings-field-label-row">
+              <label htmlFor={`research-project-source-${key}`} className="checkbox-label">
+                <input id={`research-project-source-${key}`} type="checkbox" checked={sources?.[key as keyof NonNullable<typeof sources>] ?? false} onChange={(event) => setForm((current) => ({
                 ...current,
                 researchSettings: {
                     ...(current.researchSettings ?? {}),
@@ -67,9 +74,10 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
                     },
                 },
             }))}/>
-              {label}
-              <small>{defaultHint}</small>
-            </label>))}
+                {label}
+              </label>
+              <SettingsHelpTip settingKey={`research-project-source-${key}`}>{defaultHint}</SettingsHelpTip>
+            </div>))}
         </div>
       </div>
       <div className="form-group">

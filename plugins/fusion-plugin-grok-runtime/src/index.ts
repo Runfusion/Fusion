@@ -25,9 +25,20 @@ fusion-plugin-acp-runtime, so bundled Grok does not depend on the experimental
 ACP example plugin package.
 */
 
-// Reap Grok ACP agent subprocesses on hard process exit (registry SIGKILL is
-// authoritative). Scoped to ACP-tracked agent children only — never port 4040.
-process.on("exit", killAllProcesses);
+/*
+FNXC:ProcessLifecycle 2026-07-16-07:00:
+The dashboard backfill worker repeatedly evaluates this plugin through
+`vi.resetModules()` while retaining the process singleton. Install one exit
+listener per Grok lifecycle owner and use the process-shared registry in the
+ACP manager so it reaps children from every evaluation. Do not appease this
+with `setMaxListeners`; the listener must stay bounded.
+*/
+const PROCESS_EXIT_HOOK_KEY = Symbol.for("fusion.plugin.grok-runtime.exitCleanup");
+const processWithExitHook = process as typeof process & { [key: symbol]: boolean | undefined };
+if (!processWithExitHook[PROCESS_EXIT_HOOK_KEY]) {
+  process.on("exit", killAllProcesses);
+  processWithExitHook[PROCESS_EXIT_HOOK_KEY] = true;
+}
 
 const plugin: FusionPlugin = definePlugin({
   manifest: {

@@ -175,6 +175,7 @@ export const READONLY_FN_TOOLS: ReadonlySet<string> = new Set([
   "fn_memory_search",
   "fn_memory_get",
   "fn_task_log",
+  "fn_task_logs_read",
   "fn_task_done",
   "fn_heartbeat_done",
   "fn_memory_append",
@@ -197,6 +198,7 @@ export const COORDINATION_EXEMPT_TOOLS = [
   "grep",
   "ls",
   "fn_task_log",
+  "fn_task_logs_read",
   "fn_task_done",
   /* FNXC:ArtifactRegistry 2026-06-21-00:00: Artifact registration mutates persisted registry state, but it is a low-risk coordination action classified like fn_task_document_write so permanent agents can publish discoverable deliverables without broad mutation approval. */
   "fn_artifact_register",

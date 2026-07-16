@@ -112,6 +112,7 @@ export interface TaskRow {
   prInfos: string | null;
   issueInfo: string | null;
   githubTracking: string | null;
+  gitlabTracking: string | null;
   sourceIssueProvider: string | null;
   sourceIssueRepository: string | null;
   sourceIssueExternalIssueId: string | null;
@@ -169,7 +170,7 @@ PostgreSQL task JSONB conversion must use one registry for both descriptor write
 export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "dependencies", "steps", "customFields", "log", "attachments", "steeringComments",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
-  "issueInfo", "githubTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
+  "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "enabledWorkflowSteps",
   "modifiedFiles", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
   "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification",
 ]);
@@ -297,6 +298,12 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("prInfos", (task) => toJson(task.prInfos || [])),
   defineTaskColumn("issueInfo", (task) => toJsonNullable(task.issueInfo)),
   defineTaskColumn("githubTracking", (task) => toJsonNullable(task.githubTracking)),
+  /*
+  FNXC:GitLabTracking 2026-07-16-05:34:
+  GitLab import provenance must use the shared task persistence registry like GitHub tracking.
+  This closes the partial-feature gap so create and update writes retain metadata for live reads.
+  */
+  defineTaskColumn("gitlabTracking", (task) => toJsonNullable(task.gitlabTracking)),
   defineTaskColumn("sourceIssueProvider", (task) => task.sourceIssue?.provider ?? null),
   defineTaskColumn("sourceIssueRepository", (task) => task.sourceIssue?.repository ?? null),
   defineTaskColumn("sourceIssueExternalIssueId", (task) => task.sourceIssue?.externalIssueId ?? null),

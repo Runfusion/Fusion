@@ -63,6 +63,13 @@ export interface ChatSession {
   /** When the session was last updated */
   updatedAt: string;
   /**
+   * FNXC:ChatPinned 2026-07-16-12:00:
+   * Null means unpinned. Active Direct sessions may have at most three pins per
+   * project scope; null projectId uses the canonical default scope and the store
+   * serializes pin changes before counting and writing this timestamp.
+   */
+  pinnedAt: string | null;
+  /**
    * Absolute path to the pi/Claude CLI session file backing this chat, if
    * any. Set on the first assistant turn (when SessionManager.create
    * provisions the file) and reused by SessionManager.open on subsequent
@@ -237,6 +244,8 @@ export interface ChatSessionUpdateInput {
   agentId?: string;
   /** Thinking/reasoning-effort override */
   thinkingLevel?: string | null;
+  /** Pin timestamp, or null to remove a pin. */
+  pinnedAt?: string | null;
 }
 
 /**

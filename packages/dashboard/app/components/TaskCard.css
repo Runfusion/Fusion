@@ -435,6 +435,24 @@ The Plan Review "Reviewing" badge must read as an active review state without ad
   color: var(--triage);
 }
 
+/*
+FNXC:PlanReviewReplan 2026-07-15-12:15:
+FN-7985 promotes exhausted automatic Plan Review revisions from an ordinary approval hold to a
+warning badge, while generic and release-authorization holds retain the triage appearance.
+*/
+.card-status-badge.awaiting-approval--plan-review-replan-cap {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+@media (max-width: 768px) {
+  .card-status-badge.awaiting-approval--plan-review-replan-cap {
+    max-width: 100%;
+    text-align: center;
+  }
+}
+
 .card-status-badge.awaiting-input {
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
@@ -1123,7 +1141,8 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
     max-width: 100%;
   }
 
-  .card-undo-chip {
+  .card-undo-chip,
+  .card-reverted-chip {
     max-width: 100%;
   }
 }
@@ -1134,8 +1153,14 @@ FN-7555's "Undo of <id>" chip is purely informational (not a warning/error), so 
 reuses the neutral `.card-time-indicator` token pair instead of the near-duplicate
 chip's `--color-warning` tokens. Layout (padding/height/radius/font) still matches
 `.card-duplicate-chip` for visual consistency in the footer row.
+
+FNXC:TaskRevert 2026-07-16-00:00:
+FN-8066's Reverted chip is source-task provenance rather than a warning/error. It
+shares the neutral undo-chip tokens and narrow-screen constraints so completed-card
+footer chips retain their established density in board and list layouts.
 */
-.card-undo-chip {
+.card-undo-chip,
+.card-reverted-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -1154,7 +1179,8 @@ chip's `--color-warning` tokens. Layout (padding/height/radius/font) still match
   white-space: nowrap;
 }
 
-.card-undo-chip > span {
+.card-undo-chip > span,
+.card-reverted-chip > span {
   display: inline-flex;
   align-items: center;
   line-height: 1;

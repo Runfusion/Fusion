@@ -35,7 +35,8 @@ function rowToSession(row: Record<string, unknown>): ExperimentSession {
   return {
     id: row.id as string,
     name: row.name as string,
-    projectId: (row.projectId as string | null) ?? undefined,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: the domain projectId now maps to owner_project_id; project_id is the trigger/GUC-owned RLS partition (migration 0011).
+    projectId: (row.ownerProjectId as string | null) ?? undefined,
     status: row.status as ExperimentSessionStatus,
     metric: (metricRaw as ExperimentSession["metric"]) ?? { name: "unknown", direction: "maximize" },
     currentSegment: Number(row.currentSegment ?? 1),
@@ -74,7 +75,8 @@ export async function createExperimentSession(
   await handle.insert(schema.project.experimentSessions).values({
     id: session.id,
     name: session.name,
-    projectId: session.projectId ?? null,
+    // FNXC:MultiProjectIsolation 2026-07-15-23:40: domain project goes to owner_project_id; project_id (the RLS partition) is owned by the fusion_assign_project_id trigger/GUC.
+    ownerProjectId: session.projectId ?? null,
     status: session.status,
     metric: JSON.stringify(session.metric),
     currentSegment: session.currentSegment,
@@ -109,7 +111,7 @@ export async function getExperimentSession(handle: QueryHandle, id: string): Pro
 export async function listExperimentSessions(handle: QueryHandle, options: ExperimentSessionListOptions = {}): Promise<ExperimentSession[]> {
   const conditions: ReturnType<typeof eq>[] = [];
   if (options.status) conditions.push(eq(schema.project.experimentSessions.status, options.status));
-  if (options.projectId) conditions.push(eq(schema.project.experimentSessions.projectId, options.projectId));
+  if (options.projectId) conditions.push(eq(schema.project.experimentSessions.ownerProjectId, options.projectId));
   const query = handle
     .select()
     .from(schema.project.experimentSessions)
@@ -126,7 +128,7 @@ export async function persistExperimentSession(handle: QueryHandle, session: Exp
     .update(schema.project.experimentSessions)
     .set({
       name: session.name,
-      projectId: session.projectId ?? null,
+      ownerProjectId: session.projectId ?? null,
       status: session.status,
       metric: JSON.stringify(session.metric),
       currentSegment: session.currentSegment,

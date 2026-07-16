@@ -65,6 +65,25 @@ describe("planning deepening checkpoint helpers", () => {
       "UX and interaction details",
       "Testing and verification",
     ]);
+    expect(question.planPreview).toEqual({
+      title: summaryWithSurfaces.title,
+      description: summaryWithSurfaces.description,
+      keyDeliverables: summaryWithSurfaces.keyDeliverables,
+    });
+  });
+
+  it("includes an empty deliverables preview instead of an unchecked payload", () => {
+    const question = buildDeepeningCheckpointQuestion([], {
+      ...summaryWithSurfaces,
+      keyDeliverables: [],
+    });
+
+    expect(question.planPreview).toEqual({
+      title: summaryWithSurfaces.title,
+      description: summaryWithSurfaces.description,
+      keyDeliverables: [],
+    });
+    expect(question.options?.[0]?.id).toBe(PLANNING_DEEPEN_PROCEED_OPTION_ID);
   });
 
   it("falls back to safe default themes when no conversation themes are inferred", () => {

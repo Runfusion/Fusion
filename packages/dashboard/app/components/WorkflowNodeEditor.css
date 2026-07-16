@@ -1742,12 +1742,16 @@ One-click fix affordances: a quiet pill per fixable warning row plus a
   line-height: 1.35;
 }
 
+/*
+FNXC:WorkflowNodeEditor 2026-07-15-00:00:
+FN-8043 uses --text-muted for lifecycle warning chips because --text-secondary is an undefined deprecated alias in both themes.
+*/
 .wf-lifecycle-warning-code,
 .wf-lifecycle-warning-node {
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-family: var(--font-mono, monospace);
 }

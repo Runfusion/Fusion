@@ -312,6 +312,55 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         }
         return lane.helperText;
     };
+    /*
+     * FNXC:SettingsModels 2026-07-16-00:00:
+     * The merger fallback is project-scoped and must sit directly after Project Merger
+     * in Model Lanes so operators configure the primary and retry models together.
+     */
+    const mergerFallbackValue = form.mergerFallbackProvider && form.mergerFallbackModelId
+        ? `${form.mergerFallbackProvider}/${form.mergerFallbackModelId}`
+        : "";
+    const mergerFallbackThinkingValue = typeof form.mergerFallbackThinkingLevel === "string"
+        ? form.mergerFallbackThinkingLevel
+        : "";
+    const mergerFallbackCustomized = Boolean(mergerFallbackValue || mergerFallbackThinkingValue);
+    const setMergerFallbackValue = (value: string) => {
+        if (!value) {
+            setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined } as SettingsFormState));
+            return;
+        }
+        const slashIdx = value.indexOf("/");
+        setForm((f) => ({
+            ...f,
+            mergerFallbackProvider: value.slice(0, slashIdx),
+            mergerFallbackModelId: value.slice(slashIdx + 1),
+        } as SettingsFormState));
+    };
+    const setMergerFallbackThinkingValue = (value: string) => {
+        setForm((f) => ({ ...f, mergerFallbackThinkingLevel: value || undefined } as SettingsFormState));
+    };
+    const resetMergerFallbackValue = () => {
+        setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined } as SettingsFormState));
+    };
+    const renderMergerFallbackLane = () => (
+      <div className="form-group" data-testid="project-model-lane-merger-fallback">
+        <div className="settings-model-lane-label-row">
+          <label htmlFor="mergerFallbackModel">{t("settings.projectModels.mergerFallbackModel", "Merger Fallback Model")}</label>
+          <span className={`settings-lane-badge ${mergerFallbackCustomized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={mergerFallbackCustomized ? "Explicitly set for this project" : "Inherited from global settings"}>
+            {mergerFallbackCustomized ? "Override (Project)" : "Inherited (Global)"}
+          </span>
+          <SettingsHelpTip settingKey="mergerFallbackModel">
+            {t("settings.projectModels.mergerFallbackHelp", "Fallback provider and model used when a merger session retries. Leave unset to use the shared global fallback model pair.")}
+          </SettingsHelpTip>
+        </div>
+        <div className="settings-model-lane-control-row">
+          <div className="settings-model-lane-control-main">
+            <CustomModelDropdown id="mergerFallbackModel" label="Merger Fallback Model" models={availableModels} value={mergerFallbackValue} onChange={setMergerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={mergerFallbackThinkingValue} onThinkingLevelChange={setMergerFallbackThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
+          </div>
+          {mergerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetMergerFallbackValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+        </div>
+      </div>
+    );
     const titleSummarizerFallbackValue = form.titleSummarizerFallbackProvider && form.titleSummarizerFallbackModelId
         ? `${form.titleSummarizerFallbackProvider}/${form.titleSummarizerFallbackModelId}`
         : "";
@@ -425,15 +474,23 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
       />
 
       {/* --- Project Model Lanes --- */}
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelLanes", "Model Lanes")}</h4>
-      <p className="settings-description">{t("settings.projectModels.overrideGlobalModelSettingsAtTheProjectLevel", " Override global model settings at the project level. Each lane controls a specific AI usage context. Unset lanes inherit from the corresponding global lane. The Project Default Model is the fallback for this project when a more specific lane is unset. ")}</p>
+      {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelLanes", "Model Lanes")}</h4>
+        <SettingsHelpTip settingKey="project-model-lanes">{t("settings.projectModels.overrideGlobalModelSettingsAtTheProjectLevel", " Override global model settings at the project level. Each lane controls a specific AI usage context. Unset lanes inherit from the corresponding global lane. The Project Default Model is the fallback for this project when a more specific lane is unset. ")}</SettingsHelpTip>
+      </div>
       {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
-          {projectModelLanes.map(renderProjectLane)}
+          {projectModelLanes.filter((lane) => lane.laneId === "default" || lane.laneId === "merger").map(renderProjectLane)}
+          {renderMergerFallbackLane()}
+          {projectModelLanes.filter((lane) => lane.laneId === "import-translate").map(renderProjectLane)}
         </>)}
 
       {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
-      <p className="settings-description">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</p>
+      {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
+        <SettingsHelpTip settingKey="project-chat-defaults">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</SettingsHelpTip>
+      </div>
       {/*
       FNXC:SettingsModels 2026-07-15-17:35:
       Only the mode select migrates to a primitive. The target picker below it (Model/Agent segmented toggle + model dropdown or agent select + shared Reset) is one compound control over five form keys, not a row per key, so it stays bespoke.
@@ -468,7 +525,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           {/*
           FNXC:SettingsHelp 2026-07-15-21:40:
           Model mode is a plain label + control + help row, so its help hangs off the same "?" as the New Chat behavior select directly above it instead of printing a paragraph beside it.
-          The agent-mode branch below keeps its `<small>` inline: that slot swaps to "No agents are available for this project yet.", which explains an empty picker and must stay in view.
+          FNXC:SettingsHelp 2026-07-16-12:45: The agent-mode branch's descriptive help now hangs off the same "?" too — operator requirement: no inline description paragraphs in Settings. Only its dynamic empty-state line ("No agents are available for this project yet.") stays inline, because it is live status explaining an empty picker and must stay in view.
           */}
           <div className="settings-field-label-row">
             <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
@@ -481,7 +538,10 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
           </div>
         </div>) : (<div className="form-group" data-testid="project-models-chat-agent">
-          <label htmlFor="chatDefaultAgentId">{t("settings.projectModels.chatDefaultAgent", "Chat Default Agent")}</label>
+          <div className="settings-field-label-row">
+            <label htmlFor="chatDefaultAgentId">{t("settings.projectModels.chatDefaultAgent", "Chat Default Agent")}</label>
+            <SettingsHelpTip settingKey="chatDefaultAgentId">{t("settings.projectModels.chatDefaultAgentHelp", "Agent-mode New Chat starts a Direct chat with the selected durable agent.")}</SettingsHelpTip>
+          </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">
               <select id="chatDefaultAgentId" value={form.chatDefaultAgentId ?? ""} disabled={agentsLoading || agents.length === 0} onChange={(event) => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultAgentId: event.target.value || undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState))}>
@@ -491,13 +551,16 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             </div>
             {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
           </div>
-          <small>{agents.length === 0 && !agentsLoading ? t("settings.projectModels.chatDefaultAgentEmpty", "No agents are available for this project yet.") : t("settings.projectModels.chatDefaultAgentHelp", "Agent-mode New Chat starts a Direct chat with the selected durable agent.")}</small>
+          {agents.length === 0 && !agentsLoading ? (<small>{t("settings.projectModels.chatDefaultAgentEmpty", "No agents are available for this project yet.")}</small>) : null}
         </div>)}
 
       {/* --- Default workflow model lanes --- */}
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>
-      <p className="settings-description">
-        {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " These project overrides apply to the active default workflow. ")}</p>
+      {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>
+        <SettingsHelpTip settingKey="default-workflow-model-lanes">
+          {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " These project overrides apply to the active default workflow. ")}</SettingsHelpTip>
+      </div>
       {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
           {workflowModelPairs.map((pair) => {
                 const value = modelPairValue(effectiveWorkflowValues, pair);
@@ -669,10 +732,39 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             </div>))}
         </div>) : null}
 
+      {/*
+      FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+      Keep task-definition language outside title and merge summarization controls: it changes
+      triage authoring only, uses no summarizer lane, and is opt-in for supported detectable
+      languages. The shared toggle row carries the responsive Project Models layout.
+      */}
+      <SettingsToggleRow
+        descriptor={{
+          key: "taskDefinitionInInputLanguage",
+          label: t("settings.projectModels.taskDefinitionInInputLanguage", "Write task definitions in the operator's input language"),
+          help: t("settings.projectModels.taskDefinitionInInputLanguageHelp", "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled."),
+          scope: "project",
+        }}
+        value={form.taskDefinitionInInputLanguage || false}
+        onChange={(v) => setForm((f) => ({ ...f, taskDefinitionInInputLanguage: v === true }))}
+      />
+
       {/* --- AI Title and Git Commit Message Summarization --- */}
       <section data-testid="project-models-ai-summarization">
-        <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.aITitleAndGitCommitMessageSummarization", " AI Title and Git Commit Message Summarization ")}</h4>
-        <p className="settings-description">{t("settings.projectModels.configuresTheModelUsedForTwoShortSummary", " Configures the model used for two short-summary jobs: auto-generating task titles from long descriptions, and generating merge commit summaries from step commits and diff stats. ")}</p>
+        {/*
+        FNXC:SettingsHelp 2026-07-16-12:45:
+        Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings.
+        The formerly separate conditional paragraph (shown once any summarization feature is on) rides in the same tip as a conditional fragment; SettingsHelpTip's ReactNode children carry conditional copy, so the condition is preserved verbatim.
+        */}
+        <div className="settings-field-label-row">
+          <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.aITitleAndGitCommitMessageSummarization", " AI Title and Git Commit Message Summarization ")}</h4>
+          <SettingsHelpTip settingKey="project-ai-summarization">
+            {t("settings.projectModels.configuresTheModelUsedForTwoShortSummary", " Configures the model used for two short-summary jobs: auto-generating task titles from long descriptions, and generating merge commit summaries from step commits and diff stats. ")}
+            {(form.autoSummarizeTitles || form.useAiMergeCommitSummary || form.githubTrackingEnabledByDefault || false)
+              ? t("settings.movedStub.summarizerModelInline", "These summarization model controls govern title auto-summarization, merge commit summaries, GitHub tracking titles, and PR metadata generation.")
+              : ""}
+          </SettingsHelpTip>
+        </div>
         {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models…")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
             {summarizationLane ? renderProjectLane(summarizationLane) : null}
             {/* FNXC:Settings-ThinkingLevel 2026-07-10-12:08: Title-summarizer fallback provider/model/thinking settings are project-scoped, not workflow-declared. Render it with the summarization controls so saves use project null-as-delete semantics instead of the workflow-values API. */}
@@ -720,10 +812,6 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           value={form.useAiMergeCommitSummary || false}
           onChange={(v) => setForm((f) => ({ ...f, useAiMergeCommitSummary: v === true }))}
         />
-
-        {(form.autoSummarizeTitles || form.useAiMergeCommitSummary || form.githubTrackingEnabledByDefault || false) && (<p className="settings-description">
-            {t("settings.movedStub.summarizerModelInline", "These summarization model controls govern title auto-summarization, merge commit summaries, GitHub tracking titles, and PR metadata generation.")}
-          </p>)}
 
       <SettingsTextareaRow
         descriptor={{

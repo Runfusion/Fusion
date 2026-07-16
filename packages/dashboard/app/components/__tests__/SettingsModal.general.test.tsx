@@ -740,13 +740,15 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).not.toBeChecked();
 
-      // Migrated rows source help from the primitive (now its help tip); the still-bespoke
-      // thinking-log group, whose one help string covers two checkboxes, keeps its <small>.
+      /*
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      All help copy — including the bespoke thinking-log group's shared string, which previously stayed in an inline <small> — now renders behind the shared "?" affordance (operator requirement: no inline description paragraphs in Settings). Both helpers must resolve inside a help bubble.
+      */
       expect(document.querySelector(".settings-field-help")).toBeNull();
       const toolOutputHelper = screen.getByText(/When disabled, tool rows are still logged but detailed tool payloads are omitted/i);
       expect(toolOutputHelper.closest(".settings-help-bubble")).toBeTruthy();
       const thinkingHelper = screen.getByText(/Leave both thinking toggles off to keep the original default behavior/i);
-      expect(thinkingHelper.closest("small")).toBeTruthy();
+      expect(thinkingHelper.closest(".settings-help-bubble")).toBeTruthy();
     });
 
     /*
@@ -837,6 +839,25 @@ describe("SettingsModal", () => {
       if (mockUpdateSettings.mock.calls.length > 0) {
         const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
         expect(projectPayload.dismissModalsOnOutsideClick).toBeUndefined();
+      }
+    });
+
+    it("saves skipConfirmationDialogs only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Skip confirmation dialogs for critical actions" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.skipConfirmationDialogs).toBe(true);
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.skipConfirmationDialogs).toBeUndefined();
       }
     });
 

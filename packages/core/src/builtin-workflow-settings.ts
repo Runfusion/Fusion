@@ -469,6 +469,23 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     description:
       "Maximum automatic Code Review remediation attempts for this workflow. Leave unset for unbounded; set 0 to disable automatic revision.",
   },
+  {
+    id: "planReviewReplanCap",
+    name: "Plan Review replan cap",
+    type: "number",
+    minimum: 0,
+    integer: true,
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-07-15-12:00:
+     * FN-7985 makes the triage Plan Review replan ceiling operator-configurable per workflow.
+     * The write boundary rejects fractional and negative values so operators never save a
+     * value triage would discard. Leave this declaration without a default so an unset value falls back to
+     * PLAN_REVIEW_GATE_REPLAN_CAP; that preserves the source default while allowing its
+     * coordinated value to change without baking a second default into workflow settings.
+     */
+    description:
+      "Maximum automatic plan → REVISE → replan iterations before manual approval. Leave unset to use the built-in default; set 0 to require approval after the first REVISE.",
+  },
 ];
 
 /**

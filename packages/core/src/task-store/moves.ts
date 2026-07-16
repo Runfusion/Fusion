@@ -219,11 +219,14 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
               agentId: internal.runContext?.agentId,
               runId: internal.runContext?.runId,
             });
+            // FNXC:PostgresCutover 2026-07-15-12:00:
+            // Same-column retries must share the outer handoff transaction too,
+            // so workflow work cannot survive a rolled-back queue/audit handoff.
             await store.createCompletionHandoffWorkflowWork(task, {
               runId: internal.runContext?.runId,
               now: internal.now,
               source: internal.evidence?.reason,
-            });
+            }, tx);
             await recordRunAuditEventWithinTransaction(tx, {
               taskId: id,
               agentId: internal.runContext?.agentId ?? "system",
@@ -241,6 +244,14 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
                 alreadyEnqueued: existing,
               },
             });
+            /*
+            FNXC:HandoffFailureInjection 2026-07-15-12:00:
+            Backend handoffs bypass the legacy enqueueMergeQueueSyncInternal spy.
+            This test-only no-op seam runs after every VAL-DATA-013 sub-write
+            (move, queue, workflow work, and handoff audit), so an injected throw
+            proves this transaction rolls all of them back.
+            */
+            await store.__invokeHandoffMergeQueueFailureInjectorForTesting(id);
           });
           return task;
         }
@@ -830,6 +841,14 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
               alreadyEnqueued,
             },
           });
+          /*
+          FNXC:HandoffFailureInjection 2026-07-15-12:00:
+          Backend handoffs bypass the legacy enqueueMergeQueueSyncInternal spy.
+          This test-only no-op seam runs after every VAL-DATA-013 sub-write
+          (move, queue, workflow work, and handoff audit), so an injected throw
+          proves this transaction rolls all of them back.
+          */
+          await store.__invokeHandoffMergeQueueFailureInjectorForTesting(id);
         }
       });
     } else {

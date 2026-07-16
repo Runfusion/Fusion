@@ -198,6 +198,18 @@ describe("ReliabilityView", () => {
     expect(within(screen.getByTestId("reliability-flow-chart")).queryByText("No in-review flow data")).not.toBeInTheDocument();
   });
 
+  it("FN-8036: reflows all reliability metric cards from the content column width", async () => {
+    apiMock.mockResolvedValue(baseResponse);
+    const { container } = renderInProjectContent();
+
+    await waitFor(() => expect(container.querySelector(".reliability-grid")).not.toBeNull());
+    const grid = container.querySelector(".reliability-grid") as HTMLElement;
+
+    expect(grid.querySelectorAll(":scope > .reliability-card")).toHaveLength(3);
+    expect(getComputedStyle(grid).gridTemplateColumns).toContain("auto-fit");
+    expect(getComputedStyle(grid).gridTemplateColumns).toContain("minmax");
+  });
+
   it("renders the merge-attempts chart for populated reliability data", async () => {
     apiMock.mockResolvedValue(baseResponse);
     render(<ReliabilityView />);

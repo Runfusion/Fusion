@@ -1126,7 +1126,19 @@ function resolveColumnMapping(
   const mapping: ColumnMapping[] = [];
   const unmappedSourceColumns: string[] = [];
   for (const sc of sqliteCols) {
-    const pgName = toSnakeCase(sc.name);
+    /*
+    FNXC:MultiProjectIsolation 2026-07-15-23:40:
+    SQLite had no partition concept: a legacy `projectId` column is always the DOMAIN
+    project field. Since migration 0011 split that domain field (`owner_project_id`)
+    from the trigger/GUC-owned RLS partition (`project_id`), route the source value to
+    `owner_project_id` whenever the target declares it. The partition still receives
+    the registry-resolved project id through the existing unmapped-project_id insert
+    path, so cutover preserves the source's domain value instead of coercing it away.
+    */
+    let pgName = toSnakeCase(sc.name);
+    if (pgName === "project_id" && pgByName.has("owner_project_id")) {
+      pgName = "owner_project_id";
+    }
     const pgCol = pgByName.get(pgName);
     if (!pgCol) {
       /*

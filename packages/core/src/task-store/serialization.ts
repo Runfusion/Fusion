@@ -203,6 +203,7 @@ export function rowToTask(row: TaskRow): Task {
     })(),
     issueInfo: fromJson<import("../types.js").IssueInfo>(row.issueInfo),
     githubTracking: fromJson<import("../types.js").TaskGithubTracking>(row.githubTracking) ?? undefined,
+    gitlabTracking: fromJson<import("../types.js").TaskGitLabTracking>(row.gitlabTracking) ?? undefined,
     sourceIssue: (() => {
       if (
         row.sourceIssueProvider === null

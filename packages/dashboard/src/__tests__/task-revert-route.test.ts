@@ -195,6 +195,12 @@ function createMockStore(
     getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
     createTask,
     findOpenRevertTaskForSource,
+    updateTask: vi.fn().mockImplementation(async (_id: string, updates: { sourceMetadataPatch?: Record<string, unknown> }) => {
+      if (updates.sourceMetadataPatch) {
+        task.sourceMetadata = { ...task.sourceMetadata, ...updates.sourceMetadataPatch };
+      }
+      return task;
+    }),
     updatePrInfo: vi.fn().mockResolvedValue(task),
     addPrInfo: vi.fn().mockResolvedValue(task),
     logEntry: vi.fn().mockResolvedValue(undefined),
@@ -234,6 +240,9 @@ describe("POST /tasks/:id/revert", () => {
     const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "git", clean: true, revertCommitSha: "abc123" });
+    expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String), revertedCommitSha: "abc123" }),
+    });
     expect(performTaskRevertMock).toHaveBeenCalledTimes(1);
   });
 
@@ -245,6 +254,9 @@ describe("POST /tasks/:id/revert", () => {
     const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "git", clean: true, alreadyReverted: true });
+    expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
+    });
   });
 
   it("mode:'git' returns a conflicting result without creating an AI-undo follow-up task (FN-7524: default mode is now 'auto', which DOES fall back to AI on conflict — explicit 'git' is required to preserve the FN-7523 git-only contract)", async () => {
@@ -339,6 +351,9 @@ describe("POST /tasks/:id/revert", () => {
       workspace: { repos: [{ repo: "repo-a" }, { repo: "repo-b" }] },
     });
     expect(revertWorkspaceTaskMock).toHaveBeenCalledTimes(1);
+    expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
+    });
     expect(performTaskRevertMock).not.toHaveBeenCalled();
   });
 
@@ -680,6 +695,23 @@ describe("POST /tasks/:id/revert — FN-7554 mode:'pr' (autoMerge:false)", () =>
     expect(createPrMock).not.toHaveBeenCalled();
   });
 
+  it("already-reverted under autoMerge:false stamps the source without creating a PR", async () => {
+    process.env.GITHUB_REPOSITORY = "o/r";
+    const task = makeTask({ id: "FN-959", column: "done" });
+    const store = createMockStore(task, { autoMerge: false });
+    vi.spyOn(githubRateLimiter, "canMakeRequest").mockReturnValue(true);
+    findPrForBranchMock.mockResolvedValue(null);
+    prepareRevertPrBranchMock.mockResolvedValue({ eligible: false, alreadyReverted: true });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", clean: true, alreadyReverted: true });
+    expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
+    });
+    expect(createPrMock).not.toHaveBeenCalled();
+  });
+
   it("conflicting under autoMerge:false, mode:'git' → { mode: 'git', clean: false, conflicts } without a PR", async () => {
     process.env.GITHUB_REPOSITORY = "o/r";
     const task = makeTask({ id: "FN-100", column: "done" });
@@ -968,6 +1000,9 @@ describe("POST /tasks/:id/revert — FN-7577 workspace mode:'pr' (autoMerge:fals
     const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "git", clean: true, workspace: { repos: [] } });
+    expect(store.updateTask as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, {
+      sourceMetadataPatch: expect.objectContaining({ revertedAt: expect.any(String) }),
+    });
     expect(createPrMock).not.toHaveBeenCalled();
     expect(findPrForBranchMock).not.toHaveBeenCalled();
   });

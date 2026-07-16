@@ -796,6 +796,47 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
     line-height: 1;
   }
 
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-12:45:
+  Operator feedback on the FN-7684-era wrap behavior: Save must sit on the SAME line as the five
+  icon controls on mobile, not wrap to a second right-aligned line. The wrap fired because the
+  primary group needed ~275px in a ~260px column (measured 2026-07-15): five 36px icon floors +
+  five 8px gaps + an unshrinkable Save. Rather than re-allowing Save to clip (the FN-7684 bug),
+  recover the deficit from spacing and icon width inside this group only:
+  - group gap drops to --space-xs (saves 4px × 5 gaps = 20px),
+  - icon-only controls drop their min-width floor from the global 36px .btn-icon rule to
+    --space-2xl (32px; saves 4px × 5 = 20px).
+  Touch-target HEIGHT is untouched (the 36px fixed-box rule above still owns it), so the controls
+  remain tappable; only horizontal footprint shrinks. flex-wrap stays as the safety net for
+  columns even narrower than this recovers.
+
+  FNXC:QuickAddActionRow 2026-07-16-12:50:
+  Operator follow-up: on mobile, every control row below the quick-add textarea must be CENTERED
+  with equal left/right insets — the wrapped rows read lopsided when the option rows hug the left
+  edge while the icons+Save row hugs the right. The container's own horizontal padding is already
+  symmetric (8px 10px on .quick-entry-box), so the fix is row alignment, not padding: center the
+  flex items on each wrapped line of the actions row and inside both groups, and drop the
+  primary group's `margin-left: auto` right-pinning at this breakpoint. Desktop/tablet keep the
+  left-options / right-Save toolbar layout.
+  */
+  .quick-entry-actions {
+    justify-content: center;
+  }
+
+  .quick-entry-options-group {
+    justify-content: center;
+  }
+
+  .quick-entry-primary-group {
+    gap: var(--space-xs);
+    justify-content: center;
+    margin-left: 0;
+  }
+
+  .quick-entry-primary-group .btn-icon {
+    min-width: var(--space-2xl);
+  }
+
   .quick-entry-box .dep-dropdown {
     max-width: calc(100vw - calc(var(--space-lg) * 2));
   }

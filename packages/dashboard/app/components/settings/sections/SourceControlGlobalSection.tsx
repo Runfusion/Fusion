@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 
 type GlobalGitlabSettings = Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType">;
@@ -34,10 +35,13 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
     */
     const globalGitlab = globalSettings ?? form;
     return (<>
+      {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance beside the label — operator requirement: no inline description paragraphs in Settings. The bespoke TrackingRepoSelect widget is no obstacle: the tip belongs to the label line, not the control. */}
       <div className="form-group">
-        <label htmlFor="globalGithubTrackingDefaultRepo">{t("settings.globalGeneral.globalDefaultTrackingRepo", "Global default tracking repo")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="globalGithubTrackingDefaultRepo">{t("settings.globalGeneral.globalDefaultTrackingRepo", "Global default tracking repo")}</label>
+          <SettingsHelpTip settingKey="globalGithubTrackingDefaultRepo">{t("settings.globalGeneral.projectsInheritThisValueWhenTheyDoNot", "Projects inherit this value when they do not set a project default tracking repo. No default — unset.")}</SettingsHelpTip>
+        </div>
         <TrackingRepoSelect id="globalGithubTrackingDefaultRepo" ariaLabel="Global default tracking repo" value={form.githubTrackingDefaultRepo ?? ""} options={globalTrackingRepoOptions} loading={globalTrackingRepoLoading} error={globalTrackingRepoError ?? undefined} placeholder={t("settings.globalGeneral.ownerRepo", "owner/repo")} onChange={(nextValue) => setForm((f) => ({ ...f, githubTrackingDefaultRepo: nextValue || undefined }))}/>
-        <small>{t("settings.globalGeneral.projectsInheritThisValueWhenTheyDoNot", "Projects inherit this value when they do not set a project default tracking repo. No default — unset.")}</small>
       </div>
       {/*
         FNXC:GitLabEnablement 2026-07-02-00:00:
@@ -50,8 +54,15 @@ export function SourceControlGlobalSection({ form, setForm, globalSettings, onGl
             <input id="globalGitlabEnabled" type="checkbox" checked={globalGitlab.gitlabEnabled !== false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabEnabled: e.target.checked })}/>
             {t("settings.globalGeneral.enableGitLabIntegration", "Enable GitLab integration")}
           </label>
+          {/*
+          FNXC:SettingsHelp 2026-07-16-12:45:
+          Inline disclosure hint moved behind the shared "?" affordance beside the summary title — operator requirement: no inline description paragraphs in Settings.
+          The copy stays conditional on `gitlabEnabled` inside the tip. The wrapping span stops propagation, same as the summary's checkbox label, so opening the tip never toggles the disclosure.
+          */}
+          <span onClick={(event) => event.stopPropagation()}>
+            <SettingsHelpTip settingKey="global-gitlab-configuration">{globalGitlab.gitlabEnabled === false ? t("settings.globalGeneral.gitLabDisabledHint", "GitLab API operations are disabled by global default. Saved URL and token fallbacks remain stored for re-enable.") : t("settings.globalGeneral.gitLabEnabledHint", "Global GitLab URL and token fallbacks apply to projects that do not set their own values. No default — unset (unset behaves as enabled until explicitly disabled).")}</SettingsHelpTip>
+          </span>
         </summary>
-        <small className="settings-description">{globalGitlab.gitlabEnabled === false ? t("settings.globalGeneral.gitLabDisabledHint", "GitLab API operations are disabled by global default. Saved URL and token fallbacks remain stored for re-enable.") : t("settings.globalGeneral.gitLabEnabledHint", "Global GitLab URL and token fallbacks apply to projects that do not set their own values. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
         <div className="settings-gitlab-disclosure__body" aria-disabled={globalGitlab.gitlabEnabled === false}>
           <SettingsTextRow
             descriptor={{

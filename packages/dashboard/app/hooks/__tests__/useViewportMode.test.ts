@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getViewportMode, isMobileViewport, MOBILE_MEDIA_QUERY, useViewportMode } from "../useViewportMode";
+import { getViewportMode, isFullScreenSheetViewport, isMobileViewport, MOBILE_MEDIA_QUERY, useViewportMode } from "../useViewportMode";
 
 const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1024px)";
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
@@ -129,6 +129,17 @@ describe("useViewportMode", () => {
 
     expect(getViewportMode()).toBe("mobile");
     expect(renderHook(() => useViewportMode()).result.current).toBe("mobile");
+  });
+
+  it("matches full-screen sheets by width only, not the landscape-phone mobile clause", () => {
+    stubScreen(844, 390);
+    installViewportMedia({ width: false, height: true, tablet: false });
+
+    expect(isMobileViewport()).toBe(true);
+    expect(isFullScreenSheetViewport()).toBe(false);
+
+    installViewportMedia({ width: true, height: false, tablet: false });
+    expect(isFullScreenSheetViewport()).toBe(true);
   });
 
   it("keeps tablet mode when only the short-height clause matches on a tablet-class screen", () => {

@@ -63,6 +63,7 @@ describe("workflow-native built-in workflow settings", () => {
       "reviewerInlineFixes",
       "planReviewMaxRevisions",
       "codeReviewMaxRevisions",
+      "planReviewReplanCap",
     ]);
     const inlineFixes = revisionById.get("reviewerInlineFixes");
     expect(inlineFixes).toMatchObject({
@@ -72,17 +73,39 @@ describe("workflow-native built-in workflow settings", () => {
     expect(fullIds.has("reviewerInlineFixes")).toBe(true);
     expect(movedIds.has("reviewerInlineFixes")).toBe(false);
     expect(movedKeyIds.has("reviewerInlineFixes")).toBe(false);
-    for (const id of ["planReviewMaxRevisions", "codeReviewMaxRevisions"]) {
+    for (const id of ["planReviewMaxRevisions", "codeReviewMaxRevisions", "planReviewReplanCap"]) {
       const setting = revisionById.get(id);
       expect(setting, `${id} should be declared`).toBeDefined();
       expect(setting?.type).toBe("number");
       expect(setting).not.toHaveProperty("default");
-      expect(setting?.description).toMatch(/Leave unset for unbounded|Leave unset|unbounded/i);
+      if (id === "planReviewReplanCap") {
+        expect(setting).toMatchObject({ minimum: 0, integer: true });
+      }
+      expect(setting?.description).toMatch(/Leave unset|unset|unbounded/i);
       expect(setting?.description).toContain("0");
       expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
       expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
       expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
     }
+  });
+
+  it("rejects fractional and negative values for the Plan Review replan cap", () => {
+    const invalid = validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: -1,
+    });
+    expect(invalid.rejections).toEqual([
+      expect.objectContaining({ settingId: "planReviewReplanCap", code: "type-mismatch" }),
+    ]);
+
+    const fractionalCap = validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: 2.5,
+    });
+    expect(fractionalCap.rejections).toEqual([
+      expect.objectContaining({ settingId: "planReviewReplanCap", code: "type-mismatch" }),
+    ]);
+    expect(validateSettingValuePatch(BUILTIN_REVIEW_REVISION_SETTINGS, {
+      planReviewReplanCap: 0,
+    }).accepted).toEqual({ planReviewReplanCap: 0 });
   });
 
   it("declares planner oversight level as a workflow-native enum outside moved/project settings", () => {

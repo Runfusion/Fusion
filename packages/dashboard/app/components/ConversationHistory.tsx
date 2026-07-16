@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import type { PlanningQuestion } from "@fusion/core";
 import { useState } from "react";
 import type { ConversationHistoryEntry } from "../api";
+import { MailboxMessageContent } from "./MailboxMessageContent";
 
 const COMMENT_ICON = "💬";
 const PLANNING_OTHER_RESPONSE_KEY = "_other";
@@ -171,7 +172,10 @@ export function ConversationHistory({ entries, defaultShowThinking = false }: Co
             {hasQuestion ? (
               <div className="conversation-entry-question">
                 <span className="conversation-entry-question-label">Q{entry.questionNumber}</span>
-                <p>{entry.question?.question}</p>
+                <MailboxMessageContent
+                  className="conversation-entry-question-text"
+                  content={entry.question?.question ?? ""}
+                />
               </div>
             ) : (
               <div className="conversation-entry-question">

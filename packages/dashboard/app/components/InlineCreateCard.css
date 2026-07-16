@@ -166,21 +166,25 @@
   margin-left: auto;
 }
 
+/*
+FNXC:QuickAddAttachments 2026-07-16-00:00:
+Pending-image previews share this compact tokenized footprint across QuickEntryBox, TaskForm, and InlineCreateCard so Board, List, and form composers keep their action areas usable. The thumbnail remains a crop; its shared renderer provides the full-size open action.
+*/
 .inline-create-previews {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
-  max-height: 120px;
+  max-height: calc(var(--space-2xl) * 2.5);
   overflow-y: auto;
-  padding: 2px;
+  padding: var(--space-xs);
 }
 
 .inline-create-preview {
   position: relative;
-  width: 48px;
-  height: 48px;
-  border: 1px solid var(--border);
+  width: var(--space-2xl);
+  height: var(--space-2xl);
+  border: thin solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--card);

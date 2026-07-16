@@ -34,15 +34,17 @@ import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { isTaskStuck } from "../utils/taskStuck";
-import { getRevertOfId } from "../utils/taskRevert";
+import { getRevertOfId, isTaskReverted } from "../utils/taskRevert";
 import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../utils/taskAgeStalenessCopy";
 import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel } from "../utils/taskStatusBadgeLabel";
+import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
@@ -262,22 +264,9 @@ function isAgentCreatedTask(task: Task): boolean {
 // (which are not members and correctly resolve to false).
 const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
 
-/*
-FNXC:MergeQueue 2026-07-15-10:40:
-AI merge is live for most of its window under status reviewing (clean-room review) and landing (advance main / cleanup), not only merging*. Keep card pulse, merge timer, and status badge on for the full pipeline so operators always see a Merging badge on the single-flight owner.
-*/
-const ACTIVE_STATUSES = new Set([
-  "planning",
-  "researching",
-  "executing",
-  "finalizing",
-  "merging",
-  "merging-pr",
-  "merging-fix",
-  "reviewing",
-  "landing",
-]);
-const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix", "reviewing", "landing"]);
+const ACTIVE_MERGE_STATUSES = new Set(
+  [...ACTIVE_STATUSES].filter((status) => ["merging", "merging-pr", "merging-fix", "reviewing", "landing"].includes(status)),
+);
 
 const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -1331,11 +1320,10 @@ function TaskCardComponent({
   converging — Approve keeps the current PROMPT.md; Reject regenerates.
   */
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
-  const isPlanReviewReplanCapApproval =
-    isAwaitingApproval && task.awaitingApprovalReason === "plan-review-replan-cap";
+  const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
-  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && !isAwaitingInput && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
+  const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, isStuck });
   // Native HTML5 drag is desktop-mouse only — it doesn't move cards via touch.
   // On touch-primary devices the `draggable` attribute still arms the browser's
   // touch-drag heuristic, which intermittently hijacks horizontal swipes meant
@@ -1394,6 +1382,14 @@ function TaskCardComponent({
    */
   const revertOfId = getRevertOfId(task.sourceMetadata, task.sourceParentTaskId, task.sourceType);
   const showUndoOfChip = Boolean(revertOfId);
+  /*
+   * FNXC:TaskRevert 2026-07-16-00:00:
+   * FN-8066 makes the source-task revert marker visible only in its completed
+   * surfaces. TaskCard serves both board and list views, so this one predicate
+   * preserves the done/archived invariant without adding a view-specific badge.
+   */
+  const showRevertedChip = isTaskReverted(task.sourceMetadata)
+    && (task.column === "done" || task.column === "archived");
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
@@ -2191,13 +2187,23 @@ function TaskCardComponent({
     }
   }, [addToast, isPaused, onPauseTask, onUnpauseTask, task.id, t]);
 
-  const handleTaskActionReset = useCallback(() => {
+  const handleTaskActionReset = useCallback(async () => {
     if (!onResetTask) return;
-    if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
-    void onResetTask(task.id)
-      .then(() => addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success"))
-      .catch((err) => addToast(getErrorMessage(err), "error"));
-  }, [addToast, onResetTask, task.id, t]);
+    const shouldReset = await confirm({
+      title: t("taskDetail.reset.btn", "Reset"),
+      message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
+      confirmLabel: t("taskDetail.reset.btn", "Reset"),
+      cancelLabel: t("common.cancel", "Cancel"),
+      danger: true,
+    });
+    if (!shouldReset) return;
+    try {
+      await onResetTask(task.id);
+      addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, confirm, onResetTask, task.id, t]);
 
   const handleTaskActionDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
@@ -2792,6 +2798,7 @@ function TaskCardComponent({
     || timeIndicator
     || showNearDuplicateChip
     || showUndoOfChip
+    || showRevertedChip
     || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue)
     || (task.retrySummary?.total ?? 0) > 0);
   /*
@@ -2811,6 +2818,15 @@ function TaskCardComponent({
           aria-label={t("tasks.undoOfTitle", "Created to undo {{id}}", { id: String(revertOfId) })}
         >
           <span>{t("tasks.undoOf", "Undo of {{id}}", { id: String(revertOfId) })}</span>
+        </span>
+      )}
+      {showRevertedChip && (
+        <span
+          className="card-reverted-chip"
+          title={t("tasks.revertedBadgeTitle", "This task's changes were reverted")}
+          aria-label={t("tasks.revertedBadgeTitle", "This task's changes were reverted")}
+        >
+          <span>{t("tasks.revertedBadge", "Reverted")}</span>
         </span>
       )}
       {showNearDuplicateChip && (
@@ -2931,7 +2947,7 @@ function TaskCardComponent({
     || showOversightBadge;
   const hasHeaderBadges = Boolean(isPaused)
     || Boolean(!isPaused && visualStatus && visualStatus !== "queued")
-    || planReviewRunning
+    || (planReviewRunning && isAgentActive)
     || Boolean(!isPaused && task.column === "todo" && !visualStatus && (task.steps?.length ?? 0) > 0)
     || Boolean(hasInReviewStall && stallCopy)
     || cliWaitingOnInput
@@ -3049,7 +3065,7 @@ function TaskCardComponent({
         )}
         {!isPaused && visualStatus && visualStatus !== "queued" && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${isAgentActive ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
             title={
               isPlanReviewReplanCapApproval
                 ? t(
@@ -3069,7 +3085,7 @@ function TaskCardComponent({
             {isStuck
               ? t("tasks.stuck", "Stuck")
               : isPlanReviewReplanCapApproval
-                ? t("tasks.awaitingApprovalPlanReviewReplanCap", "Plan Review Cap")
+                ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                 : isAwaitingApproval
                   ? t("tasks.awaitingApproval", "Awaiting Approval")
                   : isAwaitingInput
@@ -3079,7 +3095,7 @@ function TaskCardComponent({
                       : getTaskStatusLabel(visualStatus, t)}
           </span>
         )}
-        {planReviewRunning && (
+        {planReviewRunning && isAgentActive && (
           /*
           FNXC:TaskCardPlanReviewBadge 2026-07-11-12:06:
           The Reviewing badge is additive to the normal header status badge so operators can distinguish "planning" from active Plan Review without hiding paused/stuck/status affordances.

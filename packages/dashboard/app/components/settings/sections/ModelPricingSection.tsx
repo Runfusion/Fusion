@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import type { ModelPricing, ModelPricingOverrides } from "@fusion/core";
 import { api } from "../../../api";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { ToastType } from "../../../hooks/useToast";
 import type { SetSettingsForm, SettingsFormState } from "./context";
 import "./ModelPricingSection.css";
@@ -231,10 +232,17 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
     <section className="model-pricing-section" aria-label={t("settings.modelPricing.title", "Model pricing overrides")}>
       <div className="model-pricing-section__header">
         <div>
-          <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.modelPricing.title", "Model Pricing")}</h4>
-          <p className="settings-description">
-            {t("settings.modelPricing.description", "Override per-1M token rates used by Command Center cost estimates. Overrides win over the built-in baseline; unlisted models still use the baseline. No default \u2014 unset (no overrides).")}
-          </p>
+          {/*
+          FNXC:SettingsHelp 2026-07-16-12:45:
+          Section description and the manual-edit save hint moved behind the shared "?" beside the heading - operator requirement: no inline description paragraphs in Settings. The fetched-at line below stays inline: it is live status (snapshot date/source), not help.
+          */}
+          <div className="settings-field-label-row">
+            <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.modelPricing.title", "Model Pricing")}</h4>
+            <SettingsHelpTip settingKey="model-pricing-section">
+              {t("settings.modelPricing.description", "Override per-1M token rates used by Command Center cost estimates. Overrides win over the built-in baseline; unlisted models still use the baseline. No default \u2014 unset (no overrides).")}{" "}
+              {t("settings.modelPricing.saveHint", "Manual edits are saved with the rest of Global settings.")}
+            </SettingsHelpTip>
+          </div>
           <p className="settings-muted model-pricing-section__meta">
             {form.modelPricingFetchedAt
               ? t("settings.modelPricing.pricesAsOf", "Prices as of {{date}}", { date: new Date(form.modelPricingFetchedAt).toLocaleString() })
@@ -256,7 +264,6 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
           {t("settings.modelPricing.viewTable", "View pricing table")}
         </button>
       </div>
-      <small>{t("settings.modelPricing.saveHint", "Manual edits are saved with the rest of Global settings.")}</small>
       {renderPricingTableModal()}
     </section>
   );

@@ -34,9 +34,17 @@ interface ConfirmContextValue {
 
 const ConfirmContext = createContext<ConfirmContextValue | null>(null);
 
-export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
+export function ConfirmDialogProvider({
+  children,
+  skipConfirmations = false,
+}: {
+  children: ReactNode;
+  skipConfirmations?: boolean;
+}) {
   const [queue, setQueue] = useState<PendingConfirm[]>([]);
   const queueRef = useRef<PendingConfirm[]>([]);
+  const skipConfirmationsRef = useRef(skipConfirmations);
+  skipConfirmationsRef.current = skipConfirmations;
 
   const updateQueue = useCallback((updater: (current: PendingConfirm[]) => PendingConfirm[]) => {
     setQueue((current) => {
@@ -47,6 +55,17 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const confirmWithCheckbox = useCallback((options: ConfirmOptions) => {
+    /*
+    FNXC:ConfirmDialogs 2026-07-16-05:30:
+    Operators who globally skip critical-action confirmations must receive the same primary/default result as clicking the dialog's primary button. Never invent a different outcome or enqueue a hidden dialog; checkbox prompts retain their configured default value.
+    */
+    if (skipConfirmationsRef.current) {
+      return Promise.resolve({
+        choice: "primary" as const,
+        checkboxValue: options.checkbox?.defaultChecked ?? false,
+      });
+    }
+
     return new Promise<{ choice: ConfirmChoice; checkboxValue: boolean }>((resolve) => {
       updateQueue((current) => [
         ...current,

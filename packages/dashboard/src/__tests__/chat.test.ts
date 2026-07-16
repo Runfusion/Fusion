@@ -59,6 +59,7 @@ vi.mock("@fusion/engine", () => ({
   createAskQuestionTool: vi.fn(() => ({})),
   createChatArtifactTools: vi.fn(() => []),
   createChatTaskDocumentTools: vi.fn(() => []),
+  createChatTaskLogsReadTool: vi.fn(() => ({})),
   createWorkflowAuthoringTools: vi.fn(() => []),
   createTaskCreateTool: vi.fn(),
   createTaskListTool: vi.fn(),

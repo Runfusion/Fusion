@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
 import { FloatingWindow } from "../FloatingWindow";
 
@@ -38,6 +38,16 @@ function cssRulesForClass(css: string, className: string): string[] {
   return [...css.matchAll(new RegExp(`\\.${escaped}[^{}]*\\{[^}]*\\}`, "g"))].map((match) => match[0]);
 }
 
+function setSheetViewport(isSheetWidth: boolean): void {
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+    matches: query === "(max-width: 768px)" ? isSheetWidth : query === "(max-height: 480px)",
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+}
+
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
 Contract tests for the reusable non-blocking floating window:
@@ -51,6 +61,10 @@ JSDOM has no real layout/pointer-capture, so drag math is asserted in the RightD
 describe("FloatingWindow", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
   it("renders a non-blocking, click-through transparent overlay with a pointer-events:auto panel", () => {
     render(
@@ -626,6 +640,108 @@ describe("FloatingWindow", () => {
     expect(panel.style.height).toBe("430px");
     expect(panel.style.left).toBe("80px");
     expect(panel.style.top).toBe("90px");
+  });
+
+  it("preserves desktop geometry during opt-in sheet opens and restores it on desktop", () => {
+    const key = "floating-window:sheet-preserve";
+    const desktopGeometry = { size: { width: 640, height: 460 }, position: { x: 120, y: 96 } };
+    localStorage.setItem(key, JSON.stringify(desktopGeometry));
+    setSheetViewport(true);
+
+    const { unmount } = render(
+      <FloatingWindow
+        windowKey="sheet-preserve-mobile"
+        title="Sheet"
+        onClose={() => {}}
+        persistGeometryKey={key}
+        suspendGeometryPersistenceOnMobile
+        defaultSize={{ width: 500, height: 400 }}
+        defaultPosition={{ x: 32, y: 48 }}
+      >
+        <div>sheet body</div>
+      </FloatingWindow>,
+    );
+
+    const sheetPanel = screen.getByTestId("floating-window-sheet-preserve-mobile");
+    expect(sheetPanel.style.width).toBe("500px");
+    expect(sheetPanel.style.left).toBe("32px");
+    expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(desktopGeometry);
+    unmount();
+
+    setSheetViewport(false);
+    render(
+      <FloatingWindow windowKey="sheet-preserve-desktop" title="Desktop" onClose={() => {}} persistGeometryKey={key} suspendGeometryPersistenceOnMobile>
+        <div>desktop body</div>
+      </FloatingWindow>,
+    );
+    const desktopPanel = screen.getByTestId("floating-window-sheet-preserve-desktop");
+    expect(desktopPanel.style.width).toBe("640px");
+    expect(desktopPanel.style.height).toBe("460px");
+    expect(desktopPanel.style.left).toBe("120px");
+    expect(desktopPanel.style.top).toBe("96px");
+  });
+
+  it("preserves opt-in geometry during a short-viewport full-screen sheet", () => {
+    const key = "floating-window:short-sheet";
+    const desktopGeometry = { size: { width: 640, height: 460 }, position: { x: 120, y: 96 } };
+    localStorage.setItem(key, JSON.stringify(desktopGeometry));
+    setSheetViewport(false);
+
+    render(
+      <FloatingWindow
+        windowKey="short-sheet"
+        title="Short sheet"
+        onClose={() => {}}
+        persistGeometryKey={key}
+        suspendGeometryPersistenceOnMobile
+        suspendGeometryPersistenceOnShortViewport
+        defaultSize={{ width: 500, height: 400 }}
+        defaultPosition={{ x: 32, y: 48 }}
+      >
+        <div>short sheet body</div>
+      </FloatingWindow>,
+    );
+
+    const sheetPanel = screen.getByTestId("floating-window-short-sheet");
+    expect(sheetPanel.style.width).toBe("500px");
+    expect(sheetPanel.style.left).toBe("32px");
+    expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(desktopGeometry);
+  });
+
+  it("keeps opt-in geometry persistence on wide short landscape phones that remain movable", () => {
+    const key = "floating-window:landscape-phone";
+    localStorage.setItem(key, JSON.stringify({ size: { width: 620, height: 450 }, position: { x: 100, y: 80 } }));
+    // `isMobileViewport()` would be true for this max-height match, but sheets use only max-width.
+    setSheetViewport(false);
+
+    render(
+      <FloatingWindow windowKey="landscape-phone" title="Landscape" onClose={() => {}} persistGeometryKey={key} suspendGeometryPersistenceOnMobile>
+        <div>landscape body</div>
+      </FloatingWindow>,
+    );
+
+    const panel = screen.getByTestId("floating-window-landscape-phone");
+    expect(panel.style.width).toBe("620px");
+    expect(panel.style.left).toBe("100px");
+    expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual({ size: { width: 620, height: 450 }, position: { x: 100, y: 80 } });
+  });
+
+  it("continues persistence at sheet width when suspension is not opted in", () => {
+    const key = "floating-window:sheet-default";
+    const geometry = { size: { width: 610, height: 440 }, position: { x: 90, y: 72 } };
+    localStorage.setItem(key, JSON.stringify(geometry));
+    setSheetViewport(true);
+
+    render(
+      <FloatingWindow windowKey="sheet-default" title="Default" onClose={() => {}} persistGeometryKey={key}>
+        <div>default body</div>
+      </FloatingWindow>,
+    );
+
+    const panel = screen.getByTestId("floating-window-sheet-default");
+    expect(panel.style.width).toBe("610px");
+    expect(panel.style.left).toBe("90px");
+    expect(JSON.parse(localStorage.getItem(key) ?? "{}")).toEqual(geometry);
   });
 
   it("shares geometry only between windows that opt into the same persistence key", () => {

@@ -1,6 +1,7 @@
 import { resolvePersistAgentThinkingLog } from "@fusion/core";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
 export type GlobalGeneralSectionProps = SectionBaseProps;
@@ -9,6 +10,9 @@ FNXC:SettingsStyling 2026-07-15-17:35:
 Plain settings rows render through the shared primitives rather than hand-rolled `form-group` + `checkbox-label` markup, so labels, help copy, and padding come from one type scale. `.form-group` stays global and untouched — 35 non-settings files style forms with it.
 The migrated keys are all global-tier (DEFAULT_GLOBAL_SETTINGS), so each carries a "global" badge stating that it travels between projects.
 Rows that stay bespoke are the ones whose copy a single-string descriptor cannot carry without rewording it: the `fn` binary check, the update-check toggle, and the thinking-log group all build label or help from `t()` fragments interleaved with `<code>` tags. The thinking-log pair additionally shares ONE help string across two checkboxes, which no per-row descriptor models. The CLI binary panel has moved to its own advanced-only section.
+
+FNXC:SettingsHelp 2026-07-16-12:45:
+Bespoke rows no longer render their help as inline `<small>` paragraphs. The copy moved VERBATIM (same `t()` keys, same `<code>` fragments) behind the shared "?" affordance (`SettingsHelpTip`) — operator requirement: no inline description paragraphs in Settings. The thinking-log pair's shared help hangs off ONE tip beside the group heading.
 */
 export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProps) {
     const { t } = useTranslation("app");
@@ -34,6 +38,16 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
       />
       <SettingsToggleRow
         descriptor={{
+          key: "skipConfirmationDialogs",
+          label: t("settings.globalGeneral.skipConfirmationDialogs", " Skip confirmation dialogs for critical actions "),
+          help: t("settings.globalGeneral.skipConfirmationDialogsHint", " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled"),
+          scope: "global",
+        }}
+        value={form.skipConfirmationDialogs === true}
+        onChange={(v) => setForm((f) => ({ ...f, skipConfirmationDialogs: v === true }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
           key: "persistAgentToolOutput",
           label: t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs "),
           help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. "),
@@ -43,26 +57,35 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         onChange={(v) => setForm((f) => ({ ...f, persistAgentToolOutput: v === true }))}
       />
       <div className="form-group">
-        <h5 className="settings-section-heading">{t("settings.globalGeneral.saveAIThinkingLogs", "Save AI thinking logs")}</h5>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: The pair's ONE shared help paragraph moved behind a single "?" beside the group heading — operator requirement: no inline description paragraphs in Settings. */}
+        <div className="settings-field-label-row">
+          <h5 className="settings-section-heading">{t("settings.globalGeneral.saveAIThinkingLogs", "Save AI thinking logs")}</h5>
+          <SettingsHelpTip settingKey="persistAgentThinkingLog">{t("settings.globalGeneral.leaveBothThinkingTogglesOffToKeepThe", " Leave both thinking toggles off to keep the original default behavior. This only controls persisted ")}<code>thinking</code>{t("settings.globalGeneral.rowsAndDoesNotAffectAssistantTextOr", " rows and does not affect assistant text or tool rows. Default: disabled for both permanent and ephemeral agents. ")}</SettingsHelpTip>
+        </div>
         <label htmlFor="persistAgentThinkingLogPermanent" className="checkbox-label">
           <input id="persistAgentThinkingLogPermanent" type="checkbox" checked={resolvePersistAgentThinkingLog(form, { ephemeral: false })} onChange={(e) => setForm((f) => ({ ...f, persistAgentThinkingLogPermanent: e.target.checked }))}/>{t("settings.globalGeneral.saveAIThinkingForPermanentAgents", " Save AI thinking for permanent agents ")}</label>
         <label htmlFor="persistAgentThinkingLogEphemeral" className="checkbox-label">
           <input id="persistAgentThinkingLogEphemeral" type="checkbox" checked={resolvePersistAgentThinkingLog(form, { ephemeral: true })} onChange={(e) => setForm((f) => ({ ...f, persistAgentThinkingLogEphemeral: e.target.checked }))}/>{t("settings.globalGeneral.saveAIThinkingForEphemeralTaskWorkerAgents", " Save AI thinking for ephemeral / task-worker agents ")}</label>
-        <small>{t("settings.globalGeneral.leaveBothThinkingTogglesOffToKeepThe", " Leave both thinking toggles off to keep the original default behavior. This only controls persisted ")}<code>thinking</code>{t("settings.globalGeneral.rowsAndDoesNotAffectAssistantTextOr", " rows and does not affect assistant text or tool rows. Default: disabled for both permanent and ephemeral agents. ")}</small>
       </div>
       <div className="form-group">
-        <label htmlFor="fnBinaryCheckEnabled" className="checkbox-label">
-          <input id="fnBinaryCheckEnabled" type="checkbox" checked={form.fnBinaryCheckEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, fnBinaryCheckEnabled: e.target.checked }))}/>{t("settings.globalGeneral.checkForThe", " Check for the ")}<code>fn</code>{t("settings.globalGeneral.cLIBinaryOnPATH", " CLI binary on PATH ")}</label>
-        <small>{t("settings.globalGeneral.whenEnabledTheDashboardProbesForAGlobally", " When enabled, the dashboard probes for a globally-installed")}{" "}
-          <code>fn</code> / <code>fusion</code>{t("settings.globalGeneral.cLIBySpawning", " CLI by spawning")}{" "}
-          <code>&lt;bin&gt; --version</code>{t("settings.globalGeneral.disableThisIfYourLocalDevProcessIs", ". Disable this if your local dev process is the source of truth and you don't want any outdated globally-installed binary executed during the probe. Default: enabled. ")}</small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the checkbox label (a button inside a label breaks click-to-toggle). */}
+        <div className="settings-field-label-row">
+          <label htmlFor="fnBinaryCheckEnabled" className="checkbox-label">
+            <input id="fnBinaryCheckEnabled" type="checkbox" checked={form.fnBinaryCheckEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, fnBinaryCheckEnabled: e.target.checked }))}/>{t("settings.globalGeneral.checkForThe", " Check for the ")}<code>fn</code>{t("settings.globalGeneral.cLIBinaryOnPATH", " CLI binary on PATH ")}</label>
+          <SettingsHelpTip settingKey="fnBinaryCheckEnabled">{t("settings.globalGeneral.whenEnabledTheDashboardProbesForAGlobally", " When enabled, the dashboard probes for a globally-installed")}{" "}
+            <code>fn</code> / <code>fusion</code>{t("settings.globalGeneral.cLIBySpawning", " CLI by spawning")}{" "}
+            <code>&lt;bin&gt; --version</code>{t("settings.globalGeneral.disableThisIfYourLocalDevProcessIs", ". Disable this if your local dev process is the source of truth and you don't want any outdated globally-installed binary executed during the probe. Default: enabled. ")}</SettingsHelpTip>
+        </div>
       </div>
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.globalGeneral.updates", "Updates")}</h4>
       <div className="form-group">
-        <label htmlFor="updateCheckEnabled" className="checkbox-label">
-          <input id="updateCheckEnabled" type="checkbox" checked={form.updateCheckEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, updateCheckEnabled: e.target.checked }))}/>{t("settings.globalGeneral.checkForUpdatesAutomatically", " Check for updates automatically ")}</label>
-        <small>{t("settings.globalGeneral.whenEnabledFusionChecksNpmForNewVersions", " When enabled, Fusion checks npm for new versions of")}{" "}
-          <code>@runfusion/fusion</code>{t("settings.globalGeneral.andShowsUpdateNoticesInTheCLIAnd", " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ")}</small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. The tip is a SIBLING of the checkbox label (a button inside a label breaks click-to-toggle). */}
+        <div className="settings-field-label-row">
+          <label htmlFor="updateCheckEnabled" className="checkbox-label">
+            <input id="updateCheckEnabled" type="checkbox" checked={form.updateCheckEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, updateCheckEnabled: e.target.checked }))}/>{t("settings.globalGeneral.checkForUpdatesAutomatically", " Check for updates automatically ")}</label>
+          <SettingsHelpTip settingKey="updateCheckEnabled">{t("settings.globalGeneral.whenEnabledFusionChecksNpmForNewVersions", " When enabled, Fusion checks npm for new versions of")}{" "}
+            <code>@runfusion/fusion</code>{t("settings.globalGeneral.andShowsUpdateNoticesInTheCLIAnd", " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ")}</SettingsHelpTip>
+        </div>
       </div>
       {/*
         FNXC:SettingsGlobalGeneral 2026-07-15-17:35:

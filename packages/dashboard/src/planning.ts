@@ -47,6 +47,7 @@ import {
 import {
   buildSessionSkillContextSync,
   createChatTaskDocumentTools,
+  createChatTaskLogsReadTool,
   createFnAgent as engineCreateFnAgent,
   createWorkflowAuthoringTools,
   resolveMcpServersForStore,
@@ -654,17 +655,27 @@ Planning Mode final summaries are user-gated, not AI-gated. Every AI completion 
 
 FNXC:PlanningMode 2026-07-05-00:20:
 buildDeepeningCheckpointOptions prefers the AI's plan-specific deepeningThemes when the completion payload supplied any; it falls back to the generic regex-derived CHECKPOINT_THEME_CANDIDATES only when the AI supplied none (FN-7616 / issue #1912). The reserved proceed option is always first and deterministic in both branches.
+
+FNXC:PlanningMode 2026-07-16-00:00:
+FN-8065 / GitHub #2150 places the withheld pendingSummary preview directly on the persisted checkpoint question. That makes the same read-only plan available through fresh SSE, restored sessions, retry recovery, and the missed-SSE poll watchdog without adding another transport path.
 */
 export function buildDeepeningCheckpointQuestion(
   history: Array<{ question: PlanningQuestion; response: unknown }>,
   summary: PlanningSummary,
 ): PlanningQuestion {
+  const planPreview = {
+    title: typeof summary.title === "string" ? summary.title : "",
+    description: typeof summary.description === "string" ? summary.description : "",
+    keyDeliverables: normalizeStringArray(summary.keyDeliverables),
+  };
+
   return {
     id: PLANNING_DEEPEN_CHECKPOINT_ID,
     type: "multi_select",
     question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
     description: "Select any areas you want to explore further, write an unlisted topic, or proceed to the final plan.",
     options: buildDeepeningCheckpointOptions(history, summary),
+    planPreview,
   };
 }
 
@@ -1257,6 +1268,7 @@ export async function createSession(
       Planning sessions do not own the dashboard MessageStore, so artifact tools stay excluded here until the planning lane can thread the same inbox dependency as chat. This preserves the FN-6778 requirement that registration notifications use an existing MessageStore rather than constructing a new one.
       */
       ...createChatTaskDocumentTools(store),
+      createChatTaskLogsReadTool(store),
     ],
     onThinking: () => {
       // Non-streaming path ignores thinking output
@@ -1863,6 +1875,7 @@ async function createPlanningAgent(
       ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
       /* FNXC:ArtifactRegistry 2026-06-21-00:00: Streaming planning excludes artifact tools for the same reason as non-streaming planning: this module has no MessageStore dependency to provide best-effort dashboard inbox notifications. */
       ...createChatTaskDocumentTools(store),
+      createChatTaskLogsReadTool(store),
     ],
     ...(modelProvider && modelId
       ? {

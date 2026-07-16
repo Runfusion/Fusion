@@ -27,6 +27,22 @@ const ACTIVE_SESSION_STORAGE_KEY = "kb-chat-active-session";
 export const FN_AGENT_ID = "__fn_agent__";
 const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
 
+/** FNXC:ChatPinned 2026-07-16-12:00: one comparator keeps refresh, cache,
+ * optimistic mutations, SSE updates, and search results pinned-first. */
+export function compareChatSessions(a: ChatSessionInfo, b: ChatSessionInfo): number {
+  const aPinned = a.pinnedAt !== null && a.pinnedAt !== undefined;
+  const bPinned = b.pinnedAt !== null && b.pinnedAt !== undefined;
+  if (aPinned !== bPinned) return aPinned ? -1 : 1;
+  const primary = aPinned
+    ? new Date(b.pinnedAt!).getTime() - new Date(a.pinnedAt!).getTime()
+    : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  return primary || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+}
+
+function sortChatSessions(sessions: ChatSessionInfo[]): ChatSessionInfo[] {
+  return [...sessions].sort(compareChatSessions);
+}
+
 function isTaskPlannerSession(session: ChatSessionInfo): boolean {
   return session.agentId.startsWith(TASK_PLANNER_CHAT_AGENT_ID_PREFIX);
 }
@@ -43,6 +59,7 @@ export interface ChatSessionInfo {
   modelProvider?: string | null;
   modelId?: string | null;
   thinkingLevel?: string | null;
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   lastMessagePreview?: string;
@@ -102,6 +119,8 @@ export interface UseChatReturn {
   ) => Promise<ChatSessionInfo>;
   archiveSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
+  pinSession: (id: string, pinned: boolean) => Promise<void>;
+  pinnedCount: number;
   setSessionModel: (
     id: string,
     selection: { agentId?: string; modelProvider?: string | null; modelId?: string | null },
@@ -442,10 +461,7 @@ export function useChat(
     }
     try {
       const data: ChatSessionListResponse = await fetchChatSessions(projectId);
-      // Sort by updatedAt descending
-      const sorted = [...data.sessions].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      );
+      const sorted = sortChatSessions(data.sessions);
       setSessions(sorted);
       const cacheKey = getChatSessionsCacheKey(projectId);
       if (cacheKey) {
@@ -466,7 +482,7 @@ export function useChat(
   }, [getChatSessionsCacheKey, projectId]);
 
   useEffect(() => {
-    const cachedSessions = readCachedSessions(projectId);
+    const cachedSessions = sortChatSessions(readCachedSessions(projectId));
     setSessions(cachedSessions);
     setSessionsLoading(cachedSessions.length === 0);
   }, [projectId, readCachedSessions]);
@@ -954,13 +970,14 @@ export function useChat(
         modelProvider: data.session.modelProvider,
         modelId: data.session.modelId,
         thinkingLevel: data.session.thinkingLevel,
+        pinnedAt: data.session.pinnedAt,
         createdAt: data.session.createdAt,
         updatedAt: data.session.updatedAt,
       };
 
       setSessions((prev) => {
         if (prev.some((s) => s.id === newSession.id)) return prev;
-        return [newSession, ...prev];
+        return sortChatSessions([newSession, ...prev]);
       });
 
       removePersistedPendingChatMessages(previousSessionId);
@@ -1029,6 +1046,36 @@ export function useChat(
         setSessions(previousSessions);
         setActiveSession(previousActiveSession);
         addToast?.("Failed to rename conversation", "error");
+        throw error;
+      }
+    },
+    [activeSession, addToast, projectId, sessions],
+  );
+
+  /**
+   * FNXC:ChatPinned 2026-07-16-12:00:
+   * Optimistically pin/unpin both displayed session state and the active header;
+   * the server remains authoritative for the advisory-locked limit and restores
+   * the prior snapshot when that limit rejects a fourth conversation.
+   */
+  const pinSession = useCallback(
+    async (id: string, pinned: boolean) => {
+      const previousSessions = sessions;
+      const previousActiveSession = activeSession;
+      const optimisticPinnedAt = pinned ? new Date().toISOString() : null;
+      setSessions((prev) => sortChatSessions(prev.map((session) =>
+        session.id === id ? { ...session, pinnedAt: optimisticPinnedAt } : session,
+      )));
+      setActiveSession((prev) => prev?.id === id ? { ...prev, pinnedAt: optimisticPinnedAt } : prev);
+      try {
+        const data = await updateChatSession(id, { pinned }, projectId);
+        const patch = { pinnedAt: data.session.pinnedAt, updatedAt: data.session.updatedAt };
+        setSessions((prev) => sortChatSessions(prev.map((session) => session.id === id ? { ...session, ...patch } : session)));
+        setActiveSession((prev) => prev?.id === id ? { ...prev, ...patch } : prev);
+      } catch (error) {
+        setSessions(previousSessions);
+        setActiveSession(previousActiveSession);
+        addToast?.(error instanceof Error ? error.message : "You can pin up to 3 conversations", "error");
         throw error;
       }
     },
@@ -1535,9 +1582,7 @@ export function useChat(
       const existing = merged.get(session.id);
       merged.set(session.id, { ...(existing ?? session), matchedMessagePreview: preview });
     }
-    return Array.from(merged.values()).sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    );
+    return sortChatSessions(Array.from(merged.values()));
   })();
 
   useEffect(() => {
@@ -1657,8 +1702,7 @@ export function useChat(
       // Avoid duplicates
       setSessions((prev) => {
         if (prev.some((s) => s.id === session.id)) return prev;
-        // Add at the top (sessions are sorted by updatedAt desc)
-        return [session, ...prev];
+        return sortChatSessions([session, ...prev]);
       });
     };
 
@@ -1667,7 +1711,7 @@ export function useChat(
       const updatedSession: ChatSessionInfo = JSON.parse(e.data);
       setSessions((prev) => {
         const updated = prev.map((s) => (s.id === updatedSession.id ? updatedSession : s));
-        return [...updated];
+        return sortChatSessions(updated);
       });
       // If this is the active session, update it too
       if (activeSessionRef.current?.id === updatedSession.id) {
@@ -1791,6 +1835,8 @@ export function useChat(
     };
   }, []);
 
+  const pinnedCount = sessions.filter((session) => session.status === "active" && session.pinnedAt != null).length;
+
   return {
     sessions,
     activeSession,
@@ -1806,6 +1852,8 @@ export function useChat(
     createSession,
     archiveSession,
     renameSession,
+    pinSession,
+    pinnedCount,
     setSessionModel,
     setSessionThinkingLevel,
     deleteSession,

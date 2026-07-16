@@ -4,6 +4,11 @@
 
 See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-review-2026-07-14.md) for the audited authority inventory, exact authorized legacy readers, and deployment/rollback checklist.
 
+## Embedded PostgreSQL startup resources
+
+- The zero-config embedded PostgreSQL lifecycle uses mmap-backed primary shared memory to avoid exhausted SysV shared-memory IDs on constrained hosts.
+- The supported, tested constrained-host floor is **64MB `/dev/shm`**. Both `fn serve` and boot smoke inherit this lifecycle default; an explicit later PostgreSQL `-c shared_memory_type=…` flag remains an operator override.
+
 ## Task-ID allocator authority and compatibility
 
 - `distributed_task_id_state` is the authoritative local task-ID allocator state. `nextSequence` is the active high-water mark used for local ID reservations.

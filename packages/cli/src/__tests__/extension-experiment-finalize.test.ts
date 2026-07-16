@@ -76,6 +76,8 @@ vi.mock("@fusion/engine", () => ({
   workflowDeleteParams: {},
   workflowSettingsParams: {},
   traitListParams: {},
+  normalizeAgentLogPaging: vi.fn(() => ({ limit: 100, offset: 0 })),
+  renderAgentLogEntries: vi.fn(() => ""),
   defaultGitOps: vi.fn(() => ({})),
   ExperimentFinalizeService: makeConstructibleMock(() => ({ previewPlan: previewPlanMock, finalize: finalizeMock })),
   ExperimentFinalizeStateError: mockErrors.StateError,

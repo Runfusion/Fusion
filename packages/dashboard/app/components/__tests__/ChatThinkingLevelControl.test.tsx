@@ -68,6 +68,26 @@ describe("ChatThinkingLevelControl", () => {
     expect(screen.getAllByRole("option")).toHaveLength(THINKING_LEVELS.length + 1);
   });
 
+  it("renders only thinking-level options in level-only mode and persists selections", () => {
+    const onChange = vi.fn();
+    render(<ChatThinkingLevelControl level="medium" onChange={onChange} showTargetSection={false} models={models} agents={agents} />);
+
+    expect(screen.getByTestId("chat-thinking-btn").className).toContain("chat-thinking-btn--active");
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+
+    expect(screen.getByRole("listbox")).toBeDefined();
+    expect(screen.queryByTestId("chat-thinking-mode-toggle")).toBeNull();
+    expect(screen.queryByTestId("chat-thinking-model-picker")).toBeNull();
+    expect(screen.getByTestId("chat-thinking-option-high")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("chat-thinking-option-high"));
+    expect(onChange).toHaveBeenCalledWith("high");
+
+    fireEvent.click(screen.getByTestId("chat-thinking-btn"));
+    fireEvent.click(screen.getByTestId("chat-thinking-option-default"));
+    expect(onChange).toHaveBeenCalledWith("");
+  });
+
   it("labels Default with the supplied resolved project/global thinking default", () => {
     render(<ChatThinkingLevelControl level={null} defaultThinkingLevel="medium" onChange={vi.fn()} />);
 

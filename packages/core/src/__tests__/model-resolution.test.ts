@@ -7,6 +7,7 @@ import {
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
+  resolveMergerFallbackModel,
   resolveMergerSettingsModel,
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
@@ -142,6 +143,29 @@ describe("model-resolution", () => {
       defaultProviderOverride: "project-default-provider",
       defaultModelIdOverride: "project-default-model",
     })).toEqual({ provider: "project-merger-provider", modelId: "project-merger-model" });
+  });
+
+  it("resolves merger fallback project pair, global fallback, partial pairs, and test mode", () => {
+    expect(resolveMergerFallbackModel({
+      mergerFallbackProvider: "project-merger-fallback-provider",
+      mergerFallbackModelId: "project-merger-fallback-model",
+      fallbackProvider: "global-fallback-provider",
+      fallbackModelId: "global-fallback-model",
+    })).toEqual({ provider: "project-merger-fallback-provider", modelId: "project-merger-fallback-model" });
+    expect(resolveMergerFallbackModel({
+      mergerFallbackProvider: "partial-provider",
+      fallbackProvider: "global-fallback-provider",
+      fallbackModelId: "global-fallback-model",
+    })).toEqual({ provider: "global-fallback-provider", modelId: "global-fallback-model" });
+    expect(resolveMergerFallbackModel({
+      fallbackProvider: "global-fallback-provider",
+      fallbackModelId: "global-fallback-model",
+    })).toEqual({ provider: "global-fallback-provider", modelId: "global-fallback-model" });
+    expect(resolveMergerFallbackModel({
+      testMode: true,
+      mergerFallbackProvider: "project-merger-fallback-provider",
+      mergerFallbackModelId: "project-merger-fallback-model",
+    })).toEqual(TEST_MODE_RESOLVED);
   });
 
   it("does not mix partial project lane pairs with lower precedence model fields", () => {

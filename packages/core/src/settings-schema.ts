@@ -97,6 +97,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Fixed dashboard modals must ignore backdrop clicks by default so accidental outside taps do not discard in-progress form state. Operators can globally opt in to the legacy outside-click dismissal behavior.
   */
   dismissModalsOnOutsideClick: false,
+  /*
+  FNXC:Settings 2026-07-16-05:30:
+  Critical-action confirmation dialogs stay enabled by default. This global-only preference may opt an operator into primary/default auto-approval, but project settings cannot enable it for collaborators.
+  */
+  skipConfirmationDialogs: false,
   language: undefined,
   defaultProvider: undefined,
   defaultModelId: undefined,
@@ -617,6 +622,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryBackupDir: ".fusion/backups/memory",
   memoryBackupScope: "all" as const,
   autoSummarizeTitles: false,
+  /*
+  FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+  Default off preserves byte-faithful English task definitions unless operators opt into
+  prose localization for the detector's supported locales (en/es/fr/ko/zh-CN); zh-TW is
+  not variant-detected and unsupported input, including Japanese, remains English.
+  */
+  taskDefinitionInInputLanguage: false,
   useAiMergeCommitSummary: true,
   // Title-summarizer model lanes stay project-scoped (not moved in U4).
   titleSummarizerProvider: undefined,
@@ -641,6 +653,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   mergerProvider: undefined,
   mergerModelId: undefined,
   mergerThinkingLevel: undefined,
+  // FNXC:Settings-MergerModel 2026-07-16-00:00: project merger fallback overrides shared global fallback only when its provider/model pair is complete.
+  mergerFallbackProvider: undefined,
+  mergerFallbackModelId: undefined,
+  mergerFallbackThinkingLevel: undefined,
   prTitlePromptInstructions: undefined,
   prDescriptionPromptInstructions: undefined,
   scripts: undefined,

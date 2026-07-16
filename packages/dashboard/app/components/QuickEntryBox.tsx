@@ -17,6 +17,7 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
+import { PendingImagePreviews } from "./PendingImagePreviews";
 import { getPriorityColorVar, getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 
 const STORAGE_KEY = "kb-quick-entry-text";
@@ -2348,25 +2349,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           </div>
         )}
 
-        {pendingImages.length > 0 && (
-          <div className="inline-create-previews">
-            {pendingImages.map((img, index) => (
-              <div key={img.previewUrl} className="inline-create-preview">
-                <img src={img.previewUrl} alt={img.file.name} />
-                <button
-                  type="button"
-                  className="inline-create-preview-remove"
-                  onClick={() => removeImage(index)}
-                  disabled={isSubmitting}
-                  title={t("tasks.removeImage", "Remove image")}
-                  data-testid={`quick-entry-preview-remove-${index}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <PendingImagePreviews
+          images={pendingImages}
+          onRemove={removeImage}
+          disabled={isSubmitting}
+          removeLabel={t("tasks.removeImage", "Remove image")}
+          testIdPrefix="quick-entry-preview"
+        />
         {isModelMenuOpen && portalRoot && modelMenuPosition && createPortal(
             <div
               ref={modelMenuPortalRef}

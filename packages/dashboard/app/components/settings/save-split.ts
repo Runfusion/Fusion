@@ -43,9 +43,9 @@ import type { GlobalSettings, McpServersSettings, Settings } from "@fusion/core"
  * null-as-delete instead of being dropped as an unchanged inherited value.
  *
  * FNXC:Settings-MergerModel 2026-07-13-07:52:
- * Merger project lane (provider/model/thinking) is project-scoped like
- * title summarizer — not workflow-moved — so it participates in the same
- * changed-only/null-as-delete project-branch write path.
+ * Merger primary and merger-fallback lanes (provider/model/thinking) are project-scoped
+ * like title summarizer — not workflow-moved — so set edits and null-as-delete resets
+ * participate in the same changed-only project-branch write path instead of being dropped.
  *
  * FNXC:GitHubImportTranslate 2026-07-15-09:30:
  * The import auto-translation settings are PROJECT-scoped: which language a repo's
@@ -63,6 +63,7 @@ export const MODEL_LANE_KEYS = [
   "titleSummarizerProvider", "titleSummarizerModelId",
   "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackThinkingLevel",
   "mergerProvider", "mergerModelId", "mergerThinkingLevel",
+  "mergerFallbackProvider", "mergerFallbackModelId", "mergerFallbackThinkingLevel",
   "githubImportAutoTranslate", "importTranslateTargetLocale",
   "importTranslateProvider", "importTranslateModelId", "importTranslateThinkingLevel",
 ] as const;
@@ -137,6 +138,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   "global-general": new Set([
     "language",
     "dismissModalsOnOutsideClick",
+    "skipConfirmationDialogs",
     "persistAgentToolOutput",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",

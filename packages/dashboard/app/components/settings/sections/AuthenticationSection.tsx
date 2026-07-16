@@ -13,6 +13,7 @@ import { LoginInstructions } from "../../LoginInstructions";
 import { LoadingSpinner } from "../../LoadingSpinner";
 import { OAuthManualCodeForm } from "../../OAuthManualCodeForm";
 import { CustomProvidersSection } from "../../CustomProvidersSection";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { copyTextToClipboard } from "../../../utils/copyToClipboard";
 import { appendTokenQuery } from "../../../auth";
 import { refreshModelsCache } from "../../../hooks/useModelsCache";
@@ -206,7 +207,11 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
     Only `type: "api_key"` cards show key controls so OAuth logout never looks like it will clear `ANTHROPIC_API_KEY`.
     */
     return (<>
-      <h4 className="settings-section-heading">{t("settings.auth.title", "Authentication")}</h4>
+      {/* FNXC:SettingsHelp 2026-07-16-12:45: Inline help moved behind the shared "?" affordance — operator requirement: no inline description paragraphs in Settings. The panel-level "changes take effect immediately" blurb now hangs off the section heading. */}
+      <div className="settings-field-label-row">
+        <h4 className="settings-section-heading">{t("settings.auth.title", "Authentication")}</h4>
+        <SettingsHelpTip settingKey="auth-section">{t("settings.auth.hint", "Authentication changes take effect immediately — no need to save.")}</SettingsHelpTip>
+      </div>
       {authLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.auth.loadingStatus", "Loading authentication status…")} /></div>) : authProviders.length === 0 ? (<div className="settings-empty-state settings-muted">
           {t("settings.auth.noProviders", "No providers available")}
         </div>) : (<div className="auth-panel-body">
@@ -257,19 +262,18 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
             </div>)}
         </div>)}
       {/*
-      FNXC:SettingsHelp 2026-07-15-21:40:
-      No `<small>` in this section moved behind the shared "?" help affordance, and none should. This section has no settings rows: it renders provider CARDS, whose `<small>`s are all live state (save progress, key errors, provider loginError, OpenCode refresh status) that must stay visible, plus two section-level blurbs — this one and the onboarding hint below — that describe the panel rather than any one control.
+      FNXC:SettingsHelp 2026-07-16-12:45:
+      The provider cards' `<small>`s stay inline: they are all live state (save progress, key errors, provider loginError, OpenCode refresh status) that must stay visible where the operator is acting. The two DESCRIPTIVE blurbs this section carried — the panel-level "changes take effect immediately" hint and the reopen-onboarding hint — moved behind the shared "?" affordance per the operator requirement that no inline description paragraphs remain in Settings.
       */}
-      <small className="auth-hint">
-        {t("settings.auth.hint", "Authentication changes take effect immediately — no need to save.")}
-      </small>
       {onReopenOnboarding && (<div className="form-group" style={{ marginTop: "var(--space-md)" }}>
-          <button type="button" className="btn btn-sm" onClick={onReopenOnboarding}>
-            {t("settings.auth.reopenOnboarding", "Reopen onboarding guide")}
-          </button>
-          <small className="settings-muted">
-            {t("settings.auth.reopenOnboardingHint", "Re-run the setup wizard to review or update your AI provider and model configuration.")}
-          </small>
+          <div className="settings-field-label-row">
+            <button type="button" className="btn btn-sm" onClick={onReopenOnboarding}>
+              {t("settings.auth.reopenOnboarding", "Reopen onboarding guide")}
+            </button>
+            <SettingsHelpTip settingKey="reopen-onboarding">
+              {t("settings.auth.reopenOnboardingHint", "Re-run the setup wizard to review or update your AI provider and model configuration.")}
+            </SettingsHelpTip>
+          </div>
         </div>)}
 
       <CustomProvidersSection />

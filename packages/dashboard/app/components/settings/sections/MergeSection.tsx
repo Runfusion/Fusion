@@ -193,8 +193,11 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
         }))}
       />
       <div className="form-group" data-testid="legacy-automerge-stamp-cleanup-panel">
-        <h5 className="settings-section-heading">{t("settings.merge.legacyAutoMergeStampCleanup", "Legacy auto-merge stamp cleanup")}</h5>
-        <small>{t("settings.merge.findsInReviewTasksWhoseAutoMergeValue", " Finds in-review tasks whose auto-merge value came from the legacy review-entry stamp. Dry-run is automatic; applying delegates to the store cleanup and preserves genuine per-task overrides. ")}</small>
+        {/* FNXC:SettingsHelp 2026-07-16-12:45: The panel's descriptive paragraph moved behind the shared "?" beside its heading — operator requirement: no inline description paragraphs in Settings. The live status/count/success/error `<small>`s below stay inline: they are dynamic feedback, not help copy. */}
+        <div className="settings-field-label-row">
+          <h5 className="settings-section-heading">{t("settings.merge.legacyAutoMergeStampCleanup", "Legacy auto-merge stamp cleanup")}</h5>
+          <SettingsHelpTip settingKey="legacy-automerge-stamp-cleanup">{t("settings.merge.findsInReviewTasksWhoseAutoMergeValue", " Finds in-review tasks whose auto-merge value came from the legacy review-entry stamp. Dry-run is automatic; applying delegates to the store cleanup and preserves genuine per-task overrides. ")}</SettingsHelpTip>
+        </div>
         {legacyStampLoading ? (<small aria-live="polite">{t("settings.merge.checkingForLegacyAutoMergeStamps", "Checking for legacy auto-merge stamps\u2026")}</small>) : legacyStampCandidates.length === 0 ? (<small data-testid="legacy-automerge-stamp-empty-state">{t("settings.merge.noLegacyAutoMergeStampsToCleanUp", " No legacy auto-merge stamps to clean up. ")}</small>) : (<>
             <small>{legacyStampCandidates.length}{t("settings.merge.legacyAutoMergeStamp", " legacy auto-merge stamp")}{legacyStampCandidates.length === 1 ? "" : "s"}{t("settings.merge.readyToCleanUp", " ready to clean up.")}</small>
             <ul>

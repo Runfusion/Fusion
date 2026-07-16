@@ -54,6 +54,7 @@ import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore, Copy } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
+import { MailboxMessageContent } from "./MailboxMessageContent";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
@@ -2600,6 +2601,15 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
   const question = normalizeQuestionOptions(rawQuestion);
   const questionOptions = question.options ?? [];
   const isDeepeningCheckpoint = question.id === PLANNING_DEEPEN_CHECKPOINT_ID;
+  const planPreview = isDeepeningCheckpoint && question.planPreview
+    ? {
+        title: typeof question.planPreview.title === "string" ? question.planPreview.title : "",
+        description: typeof question.planPreview.description === "string" ? question.planPreview.description : "",
+        keyDeliverables: Array.isArray(question.planPreview.keyDeliverables)
+          ? question.planPreview.keyDeliverables.filter((deliverable): deliverable is string => typeof deliverable === "string")
+          : [],
+      }
+    : undefined;
   const [response, setResponse] = useState<QuestionResponse>({});
   const [textValue, setTextValue] = useState("");
   const [commentValue, setCommentValue] = useState("");
@@ -2740,10 +2750,58 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
             <span className="planning-progress-text">{t("planning.questionProgress", "Question {{progress}} of ~3", { progress })}</span>
           </div>
 
+          {/*
+          FNXC:PlanningMode 2026-07-16-00:00:
+          FN-8065 / GitHub #2150 requires the deepening checkpoint to show its persisted
+          pendingSummary preview before users choose whether to refine or proceed. The strict
+          checkpoint-and-payload guard preserves ordinary questions and legacy checkpoint rows.
+          */}
+          {planPreview && (
+            <section className="planning-checkpoint-plan-preview" aria-labelledby="planning-checkpoint-plan-preview-heading">
+              <div className="planning-checkpoint-plan-preview-header">
+                <h4 id="planning-checkpoint-plan-preview-heading">
+                  {t("planning.checkpointPlanPreviewHeading", "Your plan so far")}
+                </h4>
+                <p className="text-muted">
+                  {t("planning.checkpointPlanPreviewDescription", "Review the plan below, then choose to refine further or proceed.")}
+                </p>
+              </div>
+              <h5 className="planning-checkpoint-plan-preview-title">{planPreview.title}</h5>
+              {planPreview.description && (
+                <div className="planning-checkpoint-plan-preview-description markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{planPreview.description}</ReactMarkdown>
+                </div>
+              )}
+              {planPreview.keyDeliverables.length > 0 && (
+                <div className="planning-checkpoint-plan-preview-deliverables">
+                  <h5>{t("planning.keyDeliverables", "Key Deliverables")}</h5>
+                  <ul>
+                    {planPreview.keyDeliverables.map((deliverable, index) => (
+                      <li key={`${deliverable}-${index}`}>{deliverable}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+          )}
+
           <div className="planning-question-content">
-            <h4 className="planning-question-text">{question.question}</h4>
+            {/*
+            FNXC:PlanningInterview 2026-07-16-00:00:
+            GitHub #2152 requires AI-authored interview questions and descriptions to use the
+            sanitized GFM renderer, so bold text, hard line breaks, and lists remain readable
+            without trusting generated HTML.
+            */}
+            <MailboxMessageContent
+              className="planning-question-text markdown-body"
+              content={question.question}
+              testId="planning-question-text"
+            />
             {question.description && (
-              <p className="planning-question-desc">{question.description}</p>
+              <MailboxMessageContent
+                className="planning-question-desc markdown-body"
+                content={question.description}
+              />
             )}
 
             <div className="planning-options">
