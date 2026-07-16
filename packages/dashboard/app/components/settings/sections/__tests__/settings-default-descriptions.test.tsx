@@ -273,9 +273,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 
 /** Setting keys intentionally not surfaced as a plain Settings UI description field, with reasons. */
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
-  // Internal migration/inbox bookkeeping — not plain Settings UI description fields.
-  sqliteMigrationNotice: "engine/migration bookkeeping; not a Settings description field",
-  postgresMigrationInboxMessageSentAt: "engine/migration inbox timestamp; not a Settings description field",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in settings-schema.ts.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",
@@ -313,8 +310,11 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   engineActiveSinceMs: "internal engine bookkeeping timestamp",
   engineActivationGraceMs: "internal engine tuning constant, no UI field",
   reliabilityStatsResetAt: "internal engine bookkeeping timestamp",
-  // FNXC:SettingsDefaults 2026-07-15-23:18: FN-8038 classifies PostgreSQL migration
-  // bookkeeping as engine-managed records, not user-editable Settings descriptions.
+  /*
+  FNXC:SettingsDefaults 2026-07-16-12:25:
+  Single allowlist entry per key (noDuplicateObjectKeys). FN-8038 classifies PostgreSQL
+  migration bookkeeping as engine-managed records, not user-editable Settings descriptions.
+  */
   sqliteMigrationNotice: "startup-factory-managed PostgreSQL migration banner record, not a plain description field",
   postgresMigrationInboxMessageSentAt: "engine-written PostgreSQL migration inbox completion-message marker, not a plain description field",
   dashboardCurrentNodeId: "dashboard session/PWA restore state, not a setting field",

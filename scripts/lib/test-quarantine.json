@@ -132,9 +132,9 @@
       "quarantinedAt": "2026-07-14"
     },
     {
-      "file": "packages/dashboard/app/components/__tests__/RuntimeFallbackBadge.test.tsx",
-      "reason": "Local active-lane verification 2026-07-14: vitest run of this file alone never emits a Test Files summary and hangs until process kill/timeout (observed repeatedly; wedges dashboard-app-quality-backfill batches that include it, including former --shard=2/4). No corresponding product assertion failure \u2014 collection/teardown hang. Mirrored exclude in packages/dashboard/vitest.config.ts. Rescue requires root-cause of the hang (open handles/module graph), not timeout widening.",
-      "quarantinedAt": "2026-07-14"
+      "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.oversight-mobile.test.tsx",
+      "reason": "PR #2229 review: focus assertion flakes under concurrent quality load (activeElement never becomes the nudge menuitem). Quarantine on sight per deletion ratchet instead of it.skip in source. Mirrored exclude in packages/dashboard/vitest.config.ts. Rescue requires a deterministic focus harness (fakeTimers/userEvent), not timeout widening.",
+      "quarantinedAt": "2026-07-16"
     },
     {
       "file": "packages/dashboard/src/__tests__/chat-project-services.test.ts",

@@ -403,11 +403,12 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
   (level-only) state.
   */
   /*
-  FNXC:DashboardTests 2026-07-15-12:15:
-  Focus assertion flakes under concurrent quality load (activeElement never becomes nudge).
-  Skip until a deterministic fakeTimers/focus harness exists — do not widen waitFor timeout.
+  FNXC:DashboardTests 2026-07-16-12:25:
+  Focus assertion can flake under concurrent quality load (activeElement never becomes nudge).
+  Keep the test active so quarantine-ledger tooling can still list it; the suite is
+  file-quarantined in vitest.config + test-quarantine.json rather than source-skipped.
   */
-  it.skip("auto-focuses the first button menuitem (never the native select) when nudge/stop/explain are available", async () => {
+  it("auto-focuses the first button menuitem (never the native select) when nudge/stop/explain are available", async () => {
     render(
       <TaskDetailModal
         task={makeTask({ id: "FN-213", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}

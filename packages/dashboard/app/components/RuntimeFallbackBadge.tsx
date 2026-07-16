@@ -28,18 +28,20 @@ function RuntimeFallbackBadgeComponent({ taskId, isInViewport, projectId }: Runt
   /*
   FNXC:ToastProvider 2026-07-14-19:25:
   Prefer optional toast so board card unit/harness mounts without ToastProvider still render the badge (and do not throw through ErrorBoundary blanking the board).
+
+  FNXC:RuntimeFallbackUI 2026-07-16-12:20:
+  Depend on the stable addToast function identity, not the whole toast context object.
+  useOptionalToast() returns a new object reference when the provider re-renders; putting
+  that object in the effect deps re-fired toasts in a loop and hung RuntimeFallbackBadge tests.
   */
-  const toast = useOptionalToast();
+  const addToast = useOptionalToast()?.addToast;
   const status = useRuntimeFallbackStatus(taskId, isInViewport, projectId);
 
   useEffect(() => {
     if (status.shouldToastNow && status.message) {
-      toast?.addToast(status.message, "warning");
+      addToast?.(status.message, "warning");
     }
-    // FNXC:RuntimeFallbackUI 2026-07-08-00:00:
-    // Intentionally omit addToast from deps — its identity is stable per ToastProvider instance, so re-toasting is keyed only on status changes.
-    // Note: repo eslint config omits react-hooks/exhaustive-deps, so a disable directive for it is itself a lint error (rule-not-found). Do not re-add one.
-  }, [status.shouldToastNow, status.message, toast]);
+  }, [status.shouldToastNow, status.message, addToast]);
 
   if (!status.showBadge || !status.message) {
     return null;

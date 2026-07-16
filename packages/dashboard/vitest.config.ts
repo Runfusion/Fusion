@@ -333,10 +333,12 @@ FN-8077 removed routes-system.test.ts from this list and the ledger in lockstep.
 */
 const quarantinedDashboardTests: string[] = [
   /*
-  FNXC:DashboardTests 2026-07-14-21:45:
-  RuntimeFallbackBadge.test.tsx never finishes collecting/running under vitest (process hangs until watchdog) and wedges any backfill batch that includes it. Quarantine lockstep with scripts/lib/test-quarantine.json; rescue requires root-cause of the collection hang (not timeout appeasement).
+  FNXC:DashboardTests 2026-07-16-12:25:
+  RuntimeFallbackBadge hang was a toast-context identity loop (PR #2229); component
+  now depends on stable addToast. File re-admitted. Oversight-mobile focus flake
+  quarantined on sight (ledger lockstep) instead of it.skip source skips.
   */
-  "app/components/__tests__/RuntimeFallbackBadge.test.tsx",
+  "app/components/__tests__/TaskDetailModal.oversight-mobile.test.tsx",
   "app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
   "app/components/__tests__/QuickEntryBox.test.tsx",
   // FNXC:DashboardTests 2026-07-14-22:15: VAL-REMOVAL-005 — API backfill suites still boot sync SQLite Database via TaskStore.init; quarantine until PG harness conversion (ledger lockstep).

@@ -177,14 +177,21 @@ export function agentToData(agent: Agent): Record<string, unknown> {
  * Upsert an agent row (INSERT ... ON CONFLICT(id) DO UPDATE). The indexed
  * columns (name, role, state, taskId, createdAt, updatedAt, lastHeartbeatAt,
  * metadata, data) are all written. Non-destructive on the primary key.
+ *
+ * FNXC:MultiProjectIsolation 2026-07-16-12:15:
+ * Bound project ids are written explicitly. Unbound (null/empty) writes leave
+ * project_id empty so fusion_assign_project_id / the column DEFAULT can honor
+ * the session GUC (`fusion.project_id`). Forcing projectOwnershipPartition's
+ * `__legacy_unscoped__` fallback would override a valid GUC and hide the agent
+ * from FORCE-RLS project-scoped reads (greptile P1 on PR #2229).
  */
 export async function writeAgent(handle: QueryHandle, agent: Agent, projectId?: string | null): Promise<void> {
-  const ownership = projectOwnershipPartition(projectId);
+  const boundProjectId = projectId?.trim() || "";
   const data = agentToData(agent);
   await handle
     .insert(schema.project.agents)
     .values({
-      projectId: ownership,
+      projectId: boundProjectId,
       id: agent.id,
       name: agent.name,
       role: agent.role,

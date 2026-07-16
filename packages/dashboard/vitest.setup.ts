@@ -236,8 +236,13 @@ afterAll(async () => {
   File-level cleanup: reset SSE again and clear fake timers so thread/fork workers do not retain intervals after the last test of a backfill file (shard-2 hang canary).
   */
   try {
-    vi.useRealTimers();
+    /*
+    FNXC:DashboardTests 2026-07-16-12:30:
+    clearAllTimers must run while fake timers are still active; useRealTimers first
+    leaves scheduled fake timers uncleared and can retain open handles across files.
+    */
     vi.clearAllTimers();
+    vi.useRealTimers();
   } catch {
     // ignore
   }
