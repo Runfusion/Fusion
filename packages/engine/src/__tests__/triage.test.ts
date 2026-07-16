@@ -3169,25 +3169,14 @@ describe("requirePlanApproval setting", () => {
     });
 
     /*
-    FNXC:PlanApproval 2026-07-15-15:10:
-    Legacy approvals — recorded before the `## Original Description` hygiene injection existed —
-    must still auto-approve. approve-plan hashes the on-disk PROMPT.md, so those tasks carry a
-    fingerprint over PRE-injection content; once the injection ships it rewrites the prompt, the
-    fingerprint moves, and the operator gets re-asked to approve a plan they already approved and
-    that has not changed.
-
-    ## Surface Enumeration
-    - Legacy fingerprint + unchanged plan -> auto-approve (the reported symptom).
-    - Legacy fingerprint + unchanged plan -> stored fingerprint migrated forward, so the
-      reconciliation happens once per task rather than on every pass.
-    - Legacy fingerprint + CHANGED plan -> must still park. This is the safety edge: the
-      tolerance must not become "any prior approval approves any later plan".
-    - Current (post-injection) fingerprint -> unchanged behavior, no spurious migration write.
-    - Both finalizeApprovedTask callers (direct + recoverApprovedTask) share this gate.
+    FNXC:PlanApproval 2026-07-15-20:45:
+    FN-8008 — stored approval fingerprints and finalize recovery must ignore deterministic
+    Original Description / Frontend UX hygiene. Cover the successful on-disk write seam: the
+    fingerprint is recorded for the raw operator-authored plan, then finalize injects a non-empty
+    description before comparing it and must still move directly to todo.
     */
-    it("auto-approves a plan whose fingerprint predates the prompt-hygiene injection", async () => {
-      // A pre-injection approval: the operator approved the raw plan, before the hygiene
-      // injection existed, so the recorded hash is over PRE-injection content.
+    it("auto-approves an unchanged plan after successfully injecting Original Description", async () => {
+      // The recorded fingerprint is over the pre-injection planner text.
       const legacyFingerprint = computePlanApprovalFingerprint(planText);
       const task = createTriageTask({
         id: "FN-LEGACY-FP",
@@ -3211,10 +3200,10 @@ describe("requirePlanApproval setting", () => {
 
       expect(store.moveTask).toHaveBeenCalledWith("FN-LEGACY-FP", "todo");
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-LEGACY-FP", expect.objectContaining({ status: "awaiting-approval" }));
-      // Migrated forward to the post-injection hash, so this is a one-time reconciliation.
-      const migratedFingerprint = computePlanApprovalFingerprint(approvedOnDisk(planText, "Triage task"));
-      expect(store.updateTask).toHaveBeenCalledWith("FN-LEGACY-FP", { approvedPlanFingerprint: migratedFingerprint });
-      expect(migratedFingerprint).not.toBe(legacyFingerprint);
+      expect(store.updateTask).not.toHaveBeenCalledWith(
+        "FN-LEGACY-FP",
+        expect.objectContaining({ approvedPlanFingerprint: expect.anything() }),
+      );
     });
 
     it("still re-asks approval for a CHANGED plan when the prior approval predates prompt hygiene", async () => {
@@ -3280,7 +3269,7 @@ describe("requirePlanApproval setting", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-LEGACY-RECOVER", expect.objectContaining({ status: "awaiting-approval" }));
     });
 
-    it("does not write a fingerprint migration when the approval is already post-hygiene", async () => {
+    it("does not rewrite a matching approved fingerprint", async () => {
       const approvedPlan = approvedOnDisk(planText, "Triage task");
       const task = createTriageTask({
         id: "FN-FP-NO-MIGRATE",
@@ -3301,7 +3290,7 @@ describe("requirePlanApproval setting", () => {
       );
 
       expect(store.moveTask).toHaveBeenCalledWith("FN-FP-NO-MIGRATE", "todo");
-      // Already current — no redundant fingerprint write on every pass.
+      // A matching normalized fingerprint needs no redundant write.
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-FP-NO-MIGRATE", expect.objectContaining({ approvedPlanFingerprint: expect.anything() }));
     });
 
@@ -3379,11 +3368,11 @@ describe("requirePlanApproval setting", () => {
      * proven to reach every finalizeApprovedTask caller, not just a direct-call seam.
      */
     it("recoverApprovedTask (self-healing planning recovery) skips re-park for an unchanged already-approved plan", async () => {
-      // The plan the operator approved is the on-disk file, description already injected.
-      const approvedPlan = approvedOnDisk(planText, "Recovered triage task");
-      const fingerprint = computePlanApprovalFingerprint(approvedPlan);
+      // Recovery reads raw planner text from disk and successfully injects the description.
+      // Its pre-injection approval fingerprint must compare equal after that write.
+      const fingerprint = computePlanApprovalFingerprint(planText);
       await mkdir(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT"), { recursive: true });
-      await writeFile(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT", "PROMPT.md"), approvedPlan);
+      await writeFile(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT", "PROMPT.md"), planText);
       const store = createMockStore({
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 2,

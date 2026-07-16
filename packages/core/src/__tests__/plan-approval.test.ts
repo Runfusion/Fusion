@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computePlanApprovalFingerprint, resolvePlanApprovalRequired, type PlanApprovalMode } from "../plan-approval.js";
+import { applyFrontendUxCriteria } from "../frontend-ux-policy.js";
+import { applyOriginalDescription } from "../original-description-policy.js";
 
 const workflowValues = [true, false, undefined] as const;
 
@@ -54,7 +56,56 @@ describe("computePlanApprovalFingerprint", () => {
     expect(computePlanApprovalFingerprint("line one   \nline two")).toBe(computePlanApprovalFingerprint("line one\nline two"));
   });
 
-  it("differs when the plan content actually changes", () => {
+  it("ignores deterministic Original Description and Frontend UX hygiene sections", () => {
+    const plannerText = "# Task: FN-1\n\n## Mission\n\nBuild the interface.\n\n## File Scope\n\n- packages/dashboard/app/page.tsx\n";
+    const withOriginalDescription = applyOriginalDescription(plannerText, "Operator request");
+    const withAllHygiene = applyFrontendUxCriteria(withOriginalDescription, ["packages/dashboard/app/page.tsx"]);
+
+    expect(computePlanApprovalFingerprint(withOriginalDescription)).toBe(
+      computePlanApprovalFingerprint(plannerText),
+    );
+    expect(computePlanApprovalFingerprint(withAllHygiene)).toBe(
+      computePlanApprovalFingerprint(plannerText),
+    );
+  });
+
+  it("ignores Original Description when its verbatim body contains marker-like text", () => {
+    const plannerText = "# Task: FN-1\n\n## Mission\n\nBuild the interface.\n";
+    const descriptionWithMarker = [
+      "Keep this literal marker in the task request:",
+      "<!-- fusion-original-description:end -->",
+      "It is description content, not the generated section boundary.",
+    ].join("\n");
+
+    expect(computePlanApprovalFingerprint(applyOriginalDescription(plannerText, descriptionWithMarker))).toBe(
+      computePlanApprovalFingerprint(plannerText),
+    );
+  });
+
+  it("preserves plan changes after an end-marker literal outside the generated section", () => {
+    const plannerText = [
+      "# Task: FN-1",
+      "",
+      "## Mission",
+      "",
+      "Build the interface.",
+      "",
+      "<!-- fusion-original-description:end -->",
+      "",
+      "## Steps",
+      "",
+      "- [ ] Implement the original plan.",
+      "",
+    ].join("\n");
+    const changedPlan = plannerText.replace("Implement the original plan.", "Implement the revised plan.");
+    const description = "Operator request";
+
+    expect(computePlanApprovalFingerprint(applyOriginalDescription(plannerText, description))).not.toBe(
+      computePlanApprovalFingerprint(applyOriginalDescription(changedPlan, description)),
+    );
+  });
+
+  it("differs when the operator-authored plan content actually changes", () => {
     const original = "# Task: FN-1\n\n## File Scope\n\n- a.ts\n";
     const changed = "# Task: FN-1\n\n## File Scope\n\n- a.ts\n- b.ts\n";
     expect(computePlanApprovalFingerprint(original)).not.toBe(computePlanApprovalFingerprint(changed));

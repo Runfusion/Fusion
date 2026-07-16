@@ -2951,49 +2951,17 @@ export class TriageProcessor {
        * already made their independent decisions, so it never weakens either of those gates
        * or auto-approve-all (which never reaches this branch at all).
        */
-      /*
-       * FNXC:PlanApproval 2026-07-15-15:10:
-       * Accept a fingerprint recorded BEFORE the `## Original Description` hygiene injection
-       * existed (applyOriginalDescription, added 2026-07-14), so the short-circuit above is not
-       * defeated for plans approved by an older build.
-       *
-       * Why this is needed: approve-plan fingerprints the on-disk PROMPT.md. For a plan approved
-       * before the injection shipped, that recorded hash is over PRE-injection content. On the
-       * task's next pass the injection rewrites PROMPT.md, `currentFingerprint` moves, and the
-       * operator is asked to re-approve a plan they already approved and that has not changed.
-       *
-       * `written` diverges from `writtenInput` ONLY via that injection (the sole rewrite in this
-       * method), so `writtenInput` IS the as-approved content for such a task, and hashing it
-       * recovers the legacy fingerprint exactly. This does not weaken the gate: both arms compare
-       * against bytes the operator actually approved — only the representation differs. A plan
-       * that genuinely changed matches neither arm and still parks.
-       *
-       * Migrate the stored fingerprint forward on a legacy match so this is a one-time
-       * reconciliation per task rather than a comparison carried forever.
-       */
       const priorFingerprint = latestTransitionTask?.approvedPlanFingerprint ?? task.approvedPlanFingerprint;
+      // FNXC:PlanApproval 2026-07-15-20:45: The shared hasher strips deterministic
+      // Original Description / Frontend UX hygiene, so approve-plan's on-disk fingerprint and
+      // this post-injection recovery fingerprint represent the same operator-authored plan.
       const currentFingerprint = computePlanApprovalFingerprint(written);
-      const preHygieneFingerprint = written === writtenInput
-        ? currentFingerprint
-        : computePlanApprovalFingerprint(writtenInput);
-      const matchesPriorApproval = Boolean(priorFingerprint)
-        && (priorFingerprint === currentFingerprint || priorFingerprint === preHygieneFingerprint);
-      if (matchesPriorApproval) {
+      if (priorFingerprint && priorFingerprint === currentFingerprint) {
         await this.store.logEntry(
           task.id,
           "Plan unchanged since prior approval — proceeding without re-approval",
         );
         planLog.log(`${task.id} plan unchanged since prior approval — proceeding without re-approval`);
-        if (priorFingerprint !== currentFingerprint) {
-          // Direct write, not `taskUpdates` — that batch was already flushed above (line ~2579),
-          // long before this gate runs.
-          await this.store.updateTask(task.id, { approvedPlanFingerprint: currentFingerprint });
-          await this.store.logEntry(
-            task.id,
-            "Approved plan fingerprint migrated to current prompt hygiene format",
-          );
-          planLog.log(`${task.id} approved plan fingerprint migrated to post-hygiene content`);
-        }
       } else {
         /*
          * FNXC:PlanApproval 2026-07-04-21:35:
