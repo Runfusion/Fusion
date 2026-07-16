@@ -95,6 +95,44 @@ describe("useConfirm", () => {
     });
   });
 
+  it("keeps a mouse-opened confirm visible when its trailing click reaches the backdrop", async () => {
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    const trigger = screen.getByText("open");
+    fireEvent.pointerDown(trigger, { pointerType: "mouse" });
+    fireEvent.click(trigger);
+
+    const overlay = await screen.findByText("Delete FN-001?").then(() => document.querySelector(".confirm-dialog-overlay"));
+    expect(overlay).toBeTruthy();
+    fireEvent.pointerUp(overlay as Element, { pointerType: "mouse" });
+    fireEvent.click(overlay as Element);
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(screen.getByTestId("result")).toHaveTextContent("idle");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("confirmed"));
+  });
+
+  it("keeps a touch-opened confirm visible when its trailing tap reaches the backdrop", async () => {
+    render(React.createElement(ConfirmDialogProvider, null, React.createElement(Harness)));
+
+    const trigger = screen.getByText("open");
+    fireEvent.touchStart(trigger);
+    fireEvent.click(trigger);
+
+    const overlay = await screen.findByText("Delete FN-001?").then(() => document.querySelector(".confirm-dialog-overlay"));
+    expect(overlay).toBeTruthy();
+    fireEvent.touchEnd(overlay as Element);
+    fireEvent.click(overlay as Element);
+
+    expect(screen.getByRole("dialog", { name: "Delete Task" })).toBeInTheDocument();
+    expect(screen.getByTestId("result")).toHaveTextContent("idle");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.getByTestId("result")).toHaveTextContent("confirmed"));
+  });
+
   it("resolves false when cancel is clicked", async () => {
     render(
       React.createElement(

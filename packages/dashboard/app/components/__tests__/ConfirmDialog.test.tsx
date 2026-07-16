@@ -48,6 +48,21 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("calls onCancel when the header close button is clicked", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Close confirmation dialog" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("calls onCancel on Escape key", () => {
     const onCancel = vi.fn();
     render(
@@ -63,7 +78,7 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onCancel when overlay clicked", () => {
+  it("calls onCancel when a backdrop press and click both originate on the overlay", () => {
     const onCancel = vi.fn();
     render(
       <ConfirmDialog
@@ -77,6 +92,7 @@ describe("ConfirmDialog", () => {
     // FNXC: ConfirmDialog portals to document.body, so query from document (not the render container).
     const overlay = document.querySelector(".modal-overlay");
     expect(overlay).toBeTruthy();
+    fireEvent.pointerDown(overlay as Element);
     fireEvent.click(overlay as Element);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
@@ -108,6 +124,20 @@ describe("ConfirmDialog", () => {
     );
 
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("claims a floating-stack z-index before the dialog is painted", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const overlay = document.querySelector<HTMLElement>(".confirm-dialog-overlay");
+    expect(overlay?.style.zIndex).not.toBe("");
   });
 
   it("uses compact mobile override classes on overlay and dialog surface", () => {
