@@ -2273,3 +2273,7 @@ Reliability-layer changes are in scope. Interaction regression backstops live in
 - FN-5223 backstop: `packages/engine/src/__tests__/reliability-interactions/engine-active-since-floor.test.ts` covers engine-activation floor + grace composition across startup, pause/unpause, global-pause gating, and StuckTaskDetector lifecycle interactions.
 
 The auto-recovery dispatcher at `packages/engine/src/auto-recovery.ts` (FN-4533) composes on top of existing layers (FN-4500 fast-path, FN-4508 deterministic branch-conflict, FN-4499 bootstrap-misbinding, FN-4428 contamination, `mergeAuditAutoRecovery` Stages 1–5, self-healing) to handle six residual classes: file-scope violation at squash, branch misbinding / ghost worktree, verification-fix scope leak, contamination, `branch-conflict-unrecoverable` residuals, and room-post/message-send failures. Invocation is additive — no existing layer's behavior changes.
+
+### Concurrent soft-delete heartbeat races (FN-8004)
+
+A heartbeat `moveTask` failure with the typed `TaskDeletedError` soft-delete message is a benign board miss: the durable agent stays active, clears `lastError` and heartbeat recovery metadata, and emits `agent:heartbeat-move-skipped-soft-delete`. Its audit metadata is structured only: `agentId`, `taskId`, `deletedAt`, `moveAttemptedAt`, and `source`.

@@ -240,6 +240,69 @@ describe("HeartbeatMonitor error-state recovery", () => {
     }));
   });
 
+  it("keeps an agent active when a heartbeat move races a soft-delete", async () => {
+    const deletedAt = "2026-07-13T10:18:51.000Z";
+    const raceMessage = `Task FN-8004 is soft-deleted (deletedAt=${deletedAt}) and cannot be read or mutated`;
+    const store = createAgentStore(baseAgent({
+      state: "active",
+      lastError: "previous failure",
+      metadata: buildHeartbeatErrorRecoveryMetadata(baseAgent(), 3),
+    }));
+    const taskStore = createNoTaskStore();
+    const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
+    const run = await monitor.startRun(store.agent.id, { source: "timer" });
+
+    await monitor.completeRun(store.agent.id, run.id, { status: "failed", errorMessage: raceMessage });
+
+    expect(store.agent.state).toBe("active");
+    expect(store.agent.lastError).toBeUndefined();
+    expect(readHeartbeatErrorRetryCount(store.agent)).toBe(0);
+    expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "agent:heartbeat-move-skipped-soft-delete",
+      target: store.agent.id,
+      metadata: expect.objectContaining({
+        agentId: store.agent.id,
+        taskId: "FN-8004",
+        deletedAt,
+        moveAttemptedAt: expect.any(String),
+        source: "timer",
+      }),
+    }));
+    expect(store.updateAgentState).not.toHaveBeenCalledWith(store.agent.id, "error");
+    expect(store.updateAgentState).not.toHaveBeenCalledWith(store.agent.id, "paused");
+  });
+
+  it("recognizes a soft-delete race from stderrExcerpt without making empty failures benign", async () => {
+    const raceMessage = "Task FN-8004 is soft-deleted (deletedAt=2026-07-13T10:18:51.000Z) and cannot be read or mutated";
+    const raceStore = createAgentStore(baseAgent({ state: "active" }));
+    const raceMonitor = new HeartbeatMonitor({ store: raceStore, taskStore: createNoTaskStore(), rootDir: process.cwd() });
+    const raceRun = await raceMonitor.startRun(raceStore.agent.id, { source: "timer" });
+
+    await raceMonitor.completeRun(raceStore.agent.id, raceRun.id, { status: "failed", stderrExcerpt: raceMessage });
+
+    expect(raceStore.agent.state).toBe("active");
+    expect(raceStore.agent.lastError).toBeUndefined();
+
+    const emptyStore = createAgentStore(baseAgent({ state: "active" }));
+    const emptyMonitor = new HeartbeatMonitor({ store: emptyStore, taskStore: createNoTaskStore(), rootDir: process.cwd() });
+    const emptyRun = await emptyMonitor.startRun(emptyStore.agent.id, { source: "timer" });
+    await emptyMonitor.completeRun(emptyStore.agent.id, emptyRun.id, { status: "failed" });
+
+    expect(emptyStore.agent.state).toBe("error");
+    expect(emptyStore.agent.lastError).toBe("Run failed");
+  });
+
+  it("keeps genuine failed heartbeat runs on the existing error path", async () => {
+    const store = createAgentStore(baseAgent({ state: "active" }));
+    const monitor = new HeartbeatMonitor({ store, taskStore: createNoTaskStore(), rootDir: process.cwd() });
+    const run = await monitor.startRun(store.agent.id, { source: "timer" });
+
+    await monitor.completeRun(store.agent.id, run.id, { status: "failed", errorMessage: "socket hang up" });
+
+    expect(store.agent.state).toBe("error");
+    expect(store.agent.lastError).toBe("socket hang up");
+  });
+
   it("auto-retries a false heartbeat-model-unavailable park on the next heartbeat without operator Retry", async () => {
     const session = createSession(async () => undefined);
     mockedCreateFnAgent.mockResolvedValueOnce(session as never);

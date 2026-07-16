@@ -438,6 +438,11 @@ export type DatabaseMutationType =
   | "agent:reset-error-state-on-startup"
   | "agent:error-retry-exhausted"
   | "agent:error-parked-unrecoverable"
+  /*
+  FNXC:RunAudit 2026-07-15-00:00:
+  FN-8004 records a heartbeat move that lost a concurrent soft-delete using identifiers and timestamps only. Never place the failed run text or agent lastError in this event because the race is benign and audit metadata must remain structured.
+  */
+  | "agent:heartbeat-move-skipped-soft-delete"
   | "task:release"
   | "task:pause"
   | "task:unpause"

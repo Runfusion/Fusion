@@ -8,7 +8,9 @@ import {
   isTransientAuthCredentialError,
   classifyError,
   isSilentTransientError,
+  extractConcurrentSoftDeleteRaceDetails,
   extractMissingModulePath,
+  isConcurrentSoftDeleteRaceError,
   isOperatorActionableAgentError,
   isStaleWorktreeModuleResolutionError,
   isModelAuthTierIncompatibilityError,
@@ -275,6 +277,44 @@ describe("Transient Error Detector", () => {
       TRANSIENT_ERROR_PATTERNS.forEach((pattern) => {
         expect(pattern.flags).toContain("i");
       });
+    });
+  });
+
+  describe("isConcurrentSoftDeleteRaceError", () => {
+    const raceMessage = "Task FN-8004 is soft-deleted (deletedAt=2026-07-13T10:18:51.000Z) and cannot be read or mutated";
+
+    it("matches the typed soft-delete move race and extracts audit-safe details", () => {
+      expect(isConcurrentSoftDeleteRaceError(raceMessage)).toBe(true);
+      expect(extractConcurrentSoftDeleteRaceDetails(`Error: ${raceMessage}`)).toEqual({
+        taskId: "FN-8004",
+        deletedAt: "2026-07-13T10:18:51.000Z",
+      });
+    });
+
+    it("matches canonical TaskDeletedError serialization even when its message changes", () => {
+      const serializedError = "TaskDeletedError: task FN-8004 was deleted";
+      expect(isConcurrentSoftDeleteRaceError(serializedError)).toBe(true);
+      expect(extractConcurrentSoftDeleteRaceDetails(serializedError)).toEqual({ taskId: "FN-8004", deletedAt: undefined });
+    });
+
+    it("extracts available fields from the JSON form of a serialized TaskDeletedError", () => {
+      const serializedError = '{"name":"TaskDeletedError","taskId":"FN-8004","deletedAt":"2026-07-13T10:18:51.000Z"}';
+      expect(isConcurrentSoftDeleteRaceError(serializedError)).toBe(true);
+      expect(extractConcurrentSoftDeleteRaceDetails(serializedError)).toEqual({
+        taskId: "FN-8004",
+        deletedAt: "2026-07-13T10:18:51.000Z",
+      });
+    });
+
+    it.each([
+      "invalid api key",
+      "socket hang up",
+      "Task FN-8004 is soft-deleted (deletedAt=2026-07-13T10:18:51.000Z) and cannot be recreated",
+      "",
+      undefined,
+    ])("does not match unrelated or empty input: %s", (errorMessage) => {
+      expect(isConcurrentSoftDeleteRaceError(errorMessage as string)).toBe(false);
+      expect(extractConcurrentSoftDeleteRaceDetails(errorMessage as string)).toBeNull();
     });
   });
 

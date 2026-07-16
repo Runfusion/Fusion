@@ -49,7 +49,12 @@ import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, se
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
-import { isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
+import {
+  extractConcurrentSoftDeleteRaceDetails,
+  isConcurrentSoftDeleteRaceError,
+  isOperatorActionableAgentError,
+  isStaleWorktreeModuleResolutionError,
+} from "./transient-error-detector.js";
 
 /**
  * FNXC:WorktreeAcquisition 2026-07-09-00:00:
@@ -1435,6 +1440,47 @@ export class HeartbeatMonitor {
           const failedWithRecoverableError = isHeartbeatErrorRecoverable({ lastError: failedError });
           const failedWithUnrecoverableError = !failedWithRecoverableError && !isStaleWorktreeModuleResolutionError(failedError);
           /*
+          FNXC:HeartbeatRecovery 2026-07-15-00:00:
+          FN-8004 requires a typed TaskDeletedError from a heartbeat move racing soft-delete to bypass every error, exhaustion, and unrecoverable branch below. The task is already intentionally gone, so keep the durable agent active, clear stale recovery state, and retain only structured audit evidence.
+          */
+          if (isConcurrentSoftDeleteRaceError(failedError)) {
+            const raceDetails = extractConcurrentSoftDeleteRaceDetails(failedError);
+            const runWithSource = run as unknown as { source?: unknown };
+            const runSource = typeof runWithSource.source === "string" ? runWithSource.source : undefined;
+            const moveAttemptedAt = new Date().toISOString();
+
+            await this.store.updateAgentState(agentId, "active");
+            await this.store.updateAgent(agentId, {
+              lastError: undefined,
+              ...(latestAgent ? { metadata: resetHeartbeatErrorRecoveryMetadata(latestAgent) } : {}),
+            });
+            heartbeatLog.log(`Agent ${agentId} heartbeat move skipped because task ${raceDetails?.taskId ?? "unknown"} was soft-deleted concurrently`);
+
+            if (this.taskStore) {
+              try {
+                const audit = createRunAuditor(this.taskStore, {
+                  runId,
+                  agentId,
+                  phase: "heartbeat",
+                  source: runSource,
+                });
+                await audit.database({
+                  type: "agent:heartbeat-move-skipped-soft-delete",
+                  target: agentId,
+                  metadata: {
+                    agentId,
+                    taskId: raceDetails?.taskId,
+                    deletedAt: raceDetails?.deletedAt,
+                    moveAttemptedAt,
+                    source: runSource,
+                  },
+                });
+              } catch (auditErr) {
+                heartbeatLog.warn(`Agent ${agentId} soft-delete race audit failed: ${auditErr instanceof Error ? auditErr.message : String(auditErr)} — continuing`);
+              }
+            }
+          } else {
+          /*
           FNXC:HeartbeatRecovery 2026-07-11-19:57:
           FN-7835's primary timer path cannot rely on a future heartbeat to perform exhaustion bookkeeping: once retryCount reaches the limit, timer eligibility intentionally stops dispatching error-state agents. Park the agent paused on the failing boundary run so the bounded retry contract is reachable in production.
           */
@@ -1509,6 +1555,7 @@ export class HeartbeatMonitor {
           } else {
             await this.store.updateAgentState(agentId, "error");
             await this.store.updateAgent(agentId, { lastError: failedError });
+          }
           }
         } else if (completionResult.status === "terminated") {
           await this.store.updateAgentState(agentId, "paused");

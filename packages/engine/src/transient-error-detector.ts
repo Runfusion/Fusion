@@ -136,6 +136,41 @@ export function classifyError(errorMessage: string): "transient" | "usage-limit"
 const STALE_WORKTREE_MODULE_RESOLUTION_PATTERN = /Cannot find module\s+['"][^'"]*node_modules[^'"]*['"][\s\S]*imported from\s+/i;
 const STALE_WORKTREE_MODULE_PATH_PATTERN = /Cannot find module\s+['"]([^'"]*node_modules[^'"]*)['"]/i;
 
+/*
+FNXC:Reliability-ErrorClassification 2026-07-15-00:00:
+FN-8004 treats only the typed TaskDeletedError message emitted when a heartbeat move races a soft-delete as a benign board miss. This must not classify broader deleted-task failures as harmless because genuine heartbeat failures still require normal recovery or parking.
+*/
+const CONCURRENT_SOFT_DELETE_RACE_PATTERN = /Task\s+([^\s]+)\s+is\s+soft-deleted\s+\(deletedAt=([^)]+)\)\s+and\s+cannot\s+be\s+read\s+or\s+mutated/i;
+const TASK_DELETED_ERROR_TYPE_PATTERN = /(?:\bTaskDeletedError\s*:|["']name["']\s*:\s*["']TaskDeletedError["']|\bname\s*[=:]\s*TaskDeletedError\b)/i;
+const SERIALIZED_TASK_ID_PATTERN = /["']taskId["']\s*:\s*["']([^"']+)["']/i;
+const SERIALIZED_DELETED_AT_PATTERN = /["']deletedAt["']\s*:\s*["']([^"']+)["']/i;
+const TYPED_TASK_ID_PATTERN = /\bTaskDeletedError\s*:\s*(?:task\s+)?([A-Za-z][A-Za-z0-9_-]*)\b/i;
+
+export function isConcurrentSoftDeleteRaceError(errorMessage: string): boolean {
+  if (!errorMessage || typeof errorMessage !== "string") {
+    return false;
+  }
+
+  // A serialized core error can preserve only its canonical name, not Error.message.
+  return CONCURRENT_SOFT_DELETE_RACE_PATTERN.test(errorMessage) || TASK_DELETED_ERROR_TYPE_PATTERN.test(errorMessage);
+}
+
+export function extractConcurrentSoftDeleteRaceDetails(errorMessage: string): { taskId?: string; deletedAt?: string } | null {
+  if (!errorMessage || typeof errorMessage !== "string" || !isConcurrentSoftDeleteRaceError(errorMessage)) {
+    return null;
+  }
+
+  const canonicalMatch = errorMessage.match(CONCURRENT_SOFT_DELETE_RACE_PATTERN);
+  if (canonicalMatch?.[1] && canonicalMatch[2]) {
+    return { taskId: canonicalMatch[1], deletedAt: canonicalMatch[2] };
+  }
+
+  const taskId = errorMessage.match(SERIALIZED_TASK_ID_PATTERN)?.[1]
+    ?? errorMessage.match(TYPED_TASK_ID_PATTERN)?.[1];
+  const deletedAt = errorMessage.match(SERIALIZED_DELETED_AT_PATTERN)?.[1];
+  return taskId || deletedAt ? { taskId, deletedAt } : null;
+}
+
 export function isStaleWorktreeModuleResolutionError(errorMessage: string): boolean {
   if (!errorMessage || typeof errorMessage !== "string") {
     return false;
