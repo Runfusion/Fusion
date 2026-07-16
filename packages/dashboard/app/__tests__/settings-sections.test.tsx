@@ -93,7 +93,6 @@ describe("AppearanceSection", () => {
     const [hidden, setHidden] = useState(false);
     return (
       <AppearanceSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={vi.fn()}
         themeMode="dark"
@@ -107,9 +106,12 @@ describe("AppearanceSection", () => {
 
   it("round-trips the session-banner toggle through its setter", () => {
     render(<AppearanceHost />);
-    const toggle = screen.getByText("Hide AI session notification banners")
-      .closest("label")!
-      .querySelector("input[type=checkbox]") as HTMLInputElement;
+    /*
+    FNXC:SettingsStyling 2026-07-15-17:35:
+    Resolved through the label→control association rather than by walking the DOM. The old `getByText(...).closest("label").querySelector("input")` assumed the label ELEMENT wrapped the checkbox, which was the `checkbox-label` markup's shape; the shared row primitive binds `htmlFor`/`id` instead, so the label is now a sibling of the control and the walk returned null.
+    `getByLabelText` asserts the binding an assistive technology actually uses, so it survives markup changes and additionally fails if that binding is ever broken — which the DOM walk could not detect.
+    */
+    const toggle = screen.getByLabelText("Hide AI session notification banners") as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     fireEvent.click(toggle);
     expect(toggle.checked).toBe(true);
@@ -128,7 +130,6 @@ describe("GeneralSection", () => {
 
     render(
       <GeneralSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={vi.fn()}
         addToast={vi.fn()}
@@ -150,7 +151,6 @@ describe("GeneralSection", () => {
       const [form, setForm] = useState({ allowAbsoluteFileBrowserPaths: false } as SettingsFormState);
       return (
         <GeneralSection
-          scopeBanner={null}
           form={form}
           setForm={setForm}
           addToast={vi.fn()}
@@ -178,7 +178,6 @@ describe("NotificationsSection", () => {
     const setForm = vi.fn();
     render(
       <NotificationsSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={setForm}
         testNotificationLoading={{}}
@@ -196,7 +195,6 @@ describe("NotificationsSection", () => {
   it("nests the failure-notification mode field inside the padded provider body", () => {
     render(
       <NotificationsSection
-        scopeBanner={null}
         form={emptyForm}
         setForm={vi.fn()}
         testNotificationLoading={{}}
@@ -214,7 +212,6 @@ describe("NotificationsSection", () => {
   it("shows the ntfy topic field only when ntfy is enabled", () => {
     const { rerender } = render(
       <NotificationsSection
-        scopeBanner={null}
         form={{ ntfyEnabled: false } as SettingsFormState}
         setForm={vi.fn()}
         testNotificationLoading={{}}
@@ -225,7 +222,6 @@ describe("NotificationsSection", () => {
     expect(screen.queryByLabelText("ntfy Topic")).not.toBeInTheDocument();
     rerender(
       <NotificationsSection
-        scopeBanner={null}
         form={{ ntfyEnabled: true } as SettingsFormState}
         setForm={vi.fn()}
         testNotificationLoading={{}}
@@ -238,11 +234,15 @@ describe("NotificationsSection", () => {
 });
 
 describe("SecretsSection", () => {
-  it("renders the scope banner, title, and the SecretsView card", () => {
+  /*
+  FNXC:SettingsScope 2026-07-15-18:52:
+  The scope-banner assertion went with the banner itself: sections no longer take a `scopeBanner` slot, because one section-level scope claim was false wherever a section mixed scopes. Scope now rides on each row's badge.
+  The rest of the contract — title plus the SecretsView card — is unchanged and still asserted.
+  */
+  it("renders the title and the SecretsView card", () => {
     render(
-      <SecretsSection scopeBanner={<div data-testid="scope-banner" />} addToast={vi.fn()} />,
+      <SecretsSection addToast={vi.fn()} />,
     );
-    expect(screen.getByTestId("scope-banner")).toBeInTheDocument();
     expect(screen.getByText("Secrets")).toBeInTheDocument();
     expect(screen.getByTestId("secrets-view")).toBeInTheDocument();
   });
@@ -264,7 +264,6 @@ describe("WorktreesSection", () => {
     const onAdd = vi.fn();
     render(
       <WorktreesSection
-        scopeBanner={null}
         form={{ recycleWorktrees: false, worktreeCopyFiles: [".env"] } as SettingsFormState}
         setForm={vi.fn()}
         gitRemotes={[]}
@@ -301,7 +300,6 @@ describe("WorktreesSection", () => {
 
     render(
       <WorktreesSection
-        scopeBanner={null}
         form={{ recycleWorktrees: false, showWorktreeGrouping: false, worktreeCopyFiles: [] } as SettingsFormState}
         setForm={setForm}
         gitRemotes={[]}
@@ -326,7 +324,6 @@ describe("WorktreesSection", () => {
   it("keeps an empty copy-file row reachable when the setting is undefined", () => {
     render(
       <WorktreesSection
-        scopeBanner={null}
         form={{ recycleWorktrees: false, worktreeCopyFiles: undefined } as SettingsFormState}
         setForm={vi.fn()}
         gitRemotes={[]}
@@ -350,7 +347,6 @@ describe("GlobalModelsSection", () => {
     const updateLaneThinkingValue = vi.fn();
     render(
       <GlobalModelsSection
-        scopeBanner={null}
         form={{ defaultThinkingLevel: "low" } as SettingsFormState}
         setForm={vi.fn()}
         availableModels={[{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }]}
@@ -384,7 +380,6 @@ describe("GlobalModelsSection", () => {
       } as SettingsFormState);
       return (
         <GlobalModelsSection
-          scopeBanner={null}
           form={form}
           setForm={setForm}
           availableModels={[{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true }]}
@@ -447,7 +442,6 @@ describe("ProjectModelsSection", () => {
   it("opts Project Models lane and preset dropdowns into readable menu width", () => {
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{} as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -472,7 +466,6 @@ describe("ProjectModelsSection", () => {
   it("colocates summarization model controls with AI summarization settings", () => {
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{} as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -509,7 +502,6 @@ describe("ProjectModelsSection", () => {
   it("keeps summarization controls behind the available-models guard", () => {
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{} as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -535,7 +527,6 @@ describe("ProjectModelsSection", () => {
     const resetLaneValue = vi.fn();
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultThinkingLevel: "medium" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -575,7 +566,6 @@ describe("ProjectModelsSection", () => {
       } as SettingsFormState);
       return (
         <ProjectModelsSection
-          scopeBanner={null}
           form={form}
           setForm={setForm}
           models={{
@@ -635,7 +625,6 @@ describe("ProjectModelsSection", () => {
 
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultWorkflowId: "builtin:coding", defaultThinkingLevel: "medium" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -688,7 +677,6 @@ describe("ProjectModelsSection", () => {
 
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -735,7 +723,6 @@ describe("ProjectModelsSection", () => {
 
     render(
       <ProjectModelsSection
-        scopeBanner={null}
         form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
         setForm={vi.fn()}
         models={{
@@ -796,7 +783,6 @@ describe("ProjectModelsSection", () => {
       } as SettingsFormState);
       return (
         <ProjectModelsSection
-          scopeBanner={null}
           form={form}
           setForm={setFormState as never}
           models={models}
@@ -823,7 +809,7 @@ describe("ProjectModelsSection", () => {
 describe("PromptsSection", () => {
   it("renders the title and mounts AgentPromptsManager", () => {
     render(
-      <PromptsSection scopeBanner={null} form={emptyForm} setForm={vi.fn()} />,
+      <PromptsSection form={emptyForm} setForm={vi.fn()} />,
     );
     expect(screen.getByText("Prompts")).toBeInTheDocument();
     expect(screen.getByTestId("agent-prompts-manager")).toBeInTheDocument();
@@ -859,7 +845,6 @@ describe("ExperimentalSection", () => {
     );
     return (
       <ExperimentalSection
-        scopeBanner={null}
         form={form}
         setForm={setFormState as never}
         knownFeatures={knownFeatures}

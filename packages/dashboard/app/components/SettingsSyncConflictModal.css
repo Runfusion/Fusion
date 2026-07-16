@@ -1,3 +1,4 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: Diff labels derived their size from a calc() over spacing tokens, coupling type to layout spacing. The modal now names --font-size-xs directly so the diff and manual-input panes track the settings type scale instead of --space-* changes. */
 /* === SettingsSyncConflictModal === */
 .settings-sync-conflict-modal {
   max-width: 860px;
@@ -38,7 +39,7 @@
 }
 
 .settings-sync-conflict-modal__diff-label {
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
@@ -49,7 +50,7 @@
   padding: var(--space-xs) var(--space-sm);
   white-space: pre;
   font-family: monospace;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   overflow-x: auto;
 }
@@ -74,7 +75,7 @@
 .settings-sync-conflict-modal__manual-input {
   width: 100%;
   font-family: monospace;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   min-height: 80px;
   margin-top: var(--space-xs);
   padding: var(--space-sm);

@@ -23,7 +23,12 @@ export function SettingsTextRow({
   error,
   clearable,
 }: SettingsTextRowProps) {
-  const { key, label, help, scope, disabled, placeholder } = descriptor;
+  const { key, label, help, scope, disabled, placeholder, type, autoComplete } = descriptor;
+  /*
+  FNXC:SettingsSecurity 2026-07-15-18:52:
+  A `password` row defaults to `autocomplete="off"` so the browser never offers to save or autofill a stored API token. The descriptor can override it, but the default is the safe one — a caller adding a token row cannot leak it by omission.
+  */
+  const resolvedAutoComplete = autoComplete ?? (type === "password" ? "off" : undefined);
   return (
     <SettingsFieldRow
       htmlFor={key}
@@ -37,8 +42,9 @@ export function SettingsTextRow({
     >
       <input
         id={key}
-        className="settings-text"
-        type="text"
+        className="input settings-text"
+        type={type ?? "text"}
+        autoComplete={resolvedAutoComplete}
         value={value ?? ""}
         placeholder={placeholder}
         disabled={disabled}

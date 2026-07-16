@@ -32,7 +32,6 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}) {
 
   render(
     <AppearanceSection
-      scopeBanner={<div data-testid="scope-banner" />}
       form={form}
       setForm={setForm}
       themeMode="dark"
@@ -70,6 +69,13 @@ describe("AppearanceSection", () => {
 
     const checkbox = screen.getByLabelText("Open tasks as popups");
     expect(checkbox).not.toBeChecked();
+    /*
+    FNXC:MobileTaskPopups 2026-07-15-17:35:
+    This assertion tracked copy that FN-7945 deliberately rewrote — the setting became all-viewport, so the help text gained "List row/card" and the popup became "movable" — and it had been failing against the shipped string ever since.
+    Realigned to the copy the section actually renders rather than deleted: the requirement (the help text must state which click targets route to the popup) is still worth asserting, and dropping it would leave the copy uncovered.
+    */
+    expect(screen.getByText(/ordinary board task-card, List row\/card, and right-dock Tasks-list clicks open the existing movable task popup/)).toBeInTheDocument();
+    expect(screen.getByText(/Deep-tab and other task opens keep their current behavior/)).toBeInTheDocument();
 
     fireEvent.click(checkbox);
 

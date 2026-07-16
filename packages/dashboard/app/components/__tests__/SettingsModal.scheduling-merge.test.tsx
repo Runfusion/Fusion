@@ -205,7 +205,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).toBeChecked();
     });
@@ -220,7 +220,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).not.toBeChecked();
     });
@@ -229,7 +229,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
       await settingsModalUser.type(screen.getByPlaceholderText("docs/"), "generated/*");
@@ -254,7 +254,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
       await settingsModalUser.click(screen.getByText("Save"));
@@ -274,7 +274,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
       expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
@@ -284,7 +284,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
 
@@ -298,7 +298,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
       await settingsModalUser.click(await screen.findByRole("button", { name: "Select README.md" }));
@@ -326,7 +326,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
       expect(select.value).toBe("lite");
@@ -355,7 +355,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       expect((screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement).checked).toBe(expectedChecked);
     });
@@ -369,7 +369,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(false);
@@ -393,7 +393,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(true);
@@ -415,7 +415,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       const input = screen.getByLabelText("Max Concurrent Tasks") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -426,12 +426,15 @@ describe("SettingsModal", () => {
       expect(input.value).toBe("");
     });
 
+    /*
+    FNXC:SettingsScope 2026-07-15-18:52:
+    The machine-wide cap moved to its own `Scheduling · Global` section when Scheduling was split by scope, so this navigates there. The requirement is unchanged: clearing the field must leave it empty rather than snapping to a stuck "0".
+    */
     it("allows clearing globalMaxConcurrent without leaving a stuck zero", async () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      // Open Scheduling section
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Global" }));
 
       const input = screen.getByLabelText("Global Max Concurrent") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -447,7 +450,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       const input = screen.getByLabelText("Poll Interval (ms)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -461,7 +464,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling & Capacity"));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
 
       const input = screen.getByLabelText("Stale High Fan-out Escalation (hours)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -1201,20 +1204,24 @@ describe("SettingsModal", () => {
         expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
       });
 
-      it("merge option descriptions are hidden behind disclosure by default", () => {
+      /*
+      FNXC:SettingsHelp 2026-07-15-23:20:
+      Merge's bespoke "More details" `<details>` disclosures were replaced by the shared help tip, so these two tests are re-pointed at the COPY and the tip's open/closed state rather than at the removed `<details>`/`<summary>` elements. The intent is unchanged: this help is deferred by default and revealed on demand.
+      Visibility is asserted via the trigger's `aria-expanded`, not `toBeVisible()`: the bubble's collapsed state is CSS-driven and the copy stays in the DOM at all times (so find-in-page, assistive tech, and settings search still reach it), which jsdom reports as visible either way.
+      */
+      it("merge option descriptions are hidden behind the help tip by default", () => {
         const autoMergeDescription = screen.getByText(/When enabled, tasks that pass review are automatically merged/i);
-        const disclosure = autoMergeDescription.closest("details");
 
-        expect(disclosure).not.toBeNull();
-        expect(disclosure).not.toHaveAttribute("open");
-        expect(autoMergeDescription).not.toBeVisible();
+        expect(autoMergeDescription.closest(".settings-help-bubble")).toBeTruthy();
+        expect(screen.getByTestId("settings-help-autoMerge")).toHaveAttribute("aria-expanded", "false");
       });
 
-      it("merge option descriptions are revealed when clicking More details", async () => {
-        const moreDetailsSummaries = screen.getAllByText("More details");
-        await settingsModalUser.click(moreDetailsSummaries[0]);
+      it("merge option descriptions are revealed when clicking the help tip", async () => {
+        const helpTrigger = screen.getByTestId("settings-help-autoMerge");
+        await settingsModalUser.click(helpTrigger);
 
-        expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeVisible();
+        expect(helpTrigger).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeInTheDocument();
       });
 
       it("no longer renders the moved workflow revision fork checkbox", () => {
@@ -1368,12 +1375,28 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("keeps GitHub tracking controls out of Merge and preserves GitHub authentication controls", async () => {
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    GitHub authentication moved OUT of Merge into "Source Control · Project", joining the tracking controls that were already absent here. Merge must now hold neither: it owns the landing strategy, not the forge credentials it consumes.
+    */
+    it("keeps GitHub tracking AND GitHub authentication controls out of Merge", async () => {
       renderModal({ initialSection: "merge" });
       await waitForSettingsModalReady();
 
       expect(screen.queryByLabelText("Default tracking mode for new tasks")).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Project default tracking repo")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "GitHub Authentication" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("GitHub auth mode")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "GitLab Authentication" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("GitLab access token")).not.toBeInTheDocument();
+      // The duplicate `gitlabEnabled` toggle this section used to render is gone.
+      expect(screen.queryByLabelText("Enable GitLab integration")).not.toBeInTheDocument();
+    });
+
+    it("renders and saves GitHub authentication controls in Source Control", async () => {
+      renderModal({ initialSection: "source-control" });
+      await waitForSettingsModalReady();
+
       expect(screen.getByRole("heading", { name: "GitHub Authentication" })).toBeInTheDocument();
 
       const authModeSelect = screen.getByLabelText("GitHub auth mode") as HTMLSelectElement;
@@ -1393,15 +1416,22 @@ describe("SettingsModal", () => {
       expect(payload.githubAuthToken).toBe("ghp_test_token");
     });
 
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    The GitLab URL disclosure and the GitLab auth disclosure merged into ONE disclosure with ONE `gitlabEnabled` toggle, so this reads the configuration disclosure (`project-gitlab-configuration-disclosure`) and opens it by its own summary title. The auth block keeps its heading inside that disclosure; only the second enable toggle went away.
+    */
     it("renders GitLab authentication controls as secret-safe project settings", async () => {
-      renderModal({ initialSection: "merge" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
-      const disclosure = screen.getByTestId("project-gitlab-authentication-disclosure");
+      const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
       expect(disclosure).not.toHaveAttribute("open");
-      await settingsModalUser.click(within(disclosure).getByText("GitLab Authentication"));
+      await settingsModalUser.click(within(disclosure).getByText("GitLab Configuration"));
       expect(disclosure).toHaveAttribute("open");
 
+      // Exactly one enable toggle governs the whole GitLab block.
+      expect(screen.getAllByLabelText("Enable GitLab integration")).toHaveLength(1);
+      expect(screen.queryByTestId("project-gitlab-authentication-disclosure")).not.toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "GitLab Authentication" })).toBeInTheDocument();
       const tokenInput = screen.getByLabelText("GitLab access token") as HTMLInputElement;
       expect(tokenInput.type).toBe("password");
@@ -1410,8 +1440,8 @@ describe("SettingsModal", () => {
       expect((screen.getByLabelText("GitLab token type") as HTMLSelectElement).value).toBe("personal");
     });
 
-    it.each(["personal", "project", "group"] as const)("saves a %s GitLab access token from Merge", async (tokenType) => {
-      renderModal({ initialSection: "merge" });
+    it.each(["personal", "project", "group"] as const)("saves a %s GitLab access token from Source Control", async (tokenType) => {
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.selectOptions(screen.getByLabelText("GitLab token type"), tokenType);
@@ -1439,7 +1469,7 @@ describe("SettingsModal", () => {
         project: { gitlabAuthToken: "saved-token", gitlabAuthTokenType: "group" },
       });
 
-      renderModal({ initialSection: "merge" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab access token"));

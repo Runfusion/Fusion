@@ -253,7 +253,7 @@ describe("SettingsModal", () => {
     await waitForSettingsModalReady();
 
     await settingsModalUser.click(screen.getByRole("checkbox", { name: /Enable MCP servers for this scope/i }));
-    await settingsModalUser.click(screen.getByRole("button", { name: /^General$/ }));
+    await settingsModalUser.click(screen.getByRole("button", { name: /^General · Global$/ }));
     await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -292,7 +292,7 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
   });
 
@@ -340,32 +340,32 @@ describe("SettingsModal", () => {
     // behind the toggle — expand it before interacting with the search input.
     await settingsModalUser.click(screen.getByLabelText("Show search"));
     const search = screen.getByTestId("settings-search-input");
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
 
     await settingsModalUser.type(search, "   ");
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "completion documentation");
 
-    expect(screen.queryByRole("button", { name: /^General$/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^General · Global$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
-    expect(screen.getByText("1 matching sections")).toBeInTheDocument();
+    expect(screen.getByText("1 matching section")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "Autonomy mode");
 
-    expect(screen.queryByRole("button", { name: /^Project General$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^General · Project$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^CLI Agents$/ })).toBeInTheDocument();
     expect(screen.getByTestId("cli-agents-settings")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "research providers");
 
-    expect(screen.queryByRole("button", { name: /^Research Defaults$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Research · Global$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Research$/ })).not.toBeInTheDocument();
     expect(screen.getAllByText(/No settings sections match/).length).toBeGreaterThan(0);
   });
@@ -380,17 +380,24 @@ describe("SettingsModal", () => {
     const search = screen.getByTestId("settings-search-input");
     await settingsModalUser.type(search, "mcp");
 
-    const matches = screen.getAllByRole("button", { name: /^MCP Servers$/ });
-    expect(matches).toHaveLength(2);
+    /*
+    FNXC:SettingsNavigation 2026-07-15-17:35:
+    Both MCP sections must be individually identifiable. This previously asserted TWO buttons named exactly "MCP Servers" — it pinned the duplicate-label bug as expected behavior, and the only thing telling the entries apart was the scope icon.
+    The nav is grouped by topic now, so the pair sits adjacent under Integrations and each label states its own scope.
+    */
+    const mcpMatches = screen.getAllByRole("button", { name: /^MCP Servers · (Global|Project)$/ });
+    expect(mcpMatches).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "MCP Servers · Global" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "MCP Servers · Project" })).toBeInTheDocument();
     expect(screen.getByText("2 matching sections")).toBeInTheDocument();
 
     await settingsModalUser.clear(search);
     await settingsModalUser.type(search, "definitely not a setting");
 
-    expect(screen.queryByRole("button", { name: /^MCP Servers$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^MCP Servers · / })).not.toBeInTheDocument();
     await settingsModalUser.click(screen.getAllByRole("button", { name: "Clear settings search" })[0]);
-    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Global$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
   });
 
   it("keeps settings file pickers workspace-confined even when absolute browsing exists", async () => {
@@ -451,13 +458,13 @@ describe("SettingsModal", () => {
       await settingsModalUser.click(screen.getByLabelText("Show search"));
       const search = screen.getByTestId("settings-search-input");
       await settingsModalUser.type(search, "model pricing");
-      expect(screen.getByRole("button", { name: /^Models$/ })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /^Project General$/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Models · Global$/ })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^General · Project$/ })).not.toBeInTheDocument();
 
       fireEvent.keyDown(search, { key: "Escape" });
       expect(onClose).not.toHaveBeenCalled();
       expect(search).toHaveValue("");
-      expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^General · Project$/ })).toBeInTheDocument();
     });
 
     it("keeps the overlay and Escape-to-close in modal mode", async () => {
@@ -640,27 +647,36 @@ describe("SettingsModal", () => {
   });
 
   describe("deferred settings fetches", () => {
-    it("does not fetch global concurrency until Scheduling is selected", async () => {
+    /*
+    FNXC:SettingsConcurrency 2026-07-15-18:52:
+    `/Scheduling/` now matches two nav buttons — the section split into a Global/Project pair — so the selector names the exact one. The deferral requirement is unchanged: the global-concurrency endpoint is not hit until a scheduling section is opened.
+    */
+    it("does not fetch global concurrency until a Scheduling section is selected", async () => {
       renderModal();
       await waitForSettingsModalReady();
 
       expect(mockFetchGlobalConcurrency).not.toHaveBeenCalled();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Scheduling/ }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
 
       await waitFor(() => {
         expect(mockFetchGlobalConcurrency).toHaveBeenCalledTimes(1);
       });
     });
 
+    /*
+    FNXC:SettingsConcurrency 2026-07-15-18:52:
+    The invariant is unchanged — a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback. Only its surface moved: the global cap now lives in its own section, so the assertion follows it across both halves of the pair rather than reading them all off one screen.
+    */
     it("disables concurrency inputs until their actual values load", async () => {
       mockFetchGlobalConcurrency.mockReturnValue(new Promise(() => {}));
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Scheduling/ }));
-
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
       expect(screen.getByLabelText("Global Max Concurrent")).toBeDisabled();
+
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
       expect(screen.getByLabelText("Max Concurrent Tasks")).toBeDisabled();
       expect(screen.getByLabelText("Max Triage Concurrent")).toBeDisabled();
     });
@@ -694,13 +710,18 @@ describe("SettingsModal", () => {
 
     // Read-only default-render assertions are merged into one rendered
     // instance to avoid re-rendering the full modal per pure-display check.
-    it("renders default global logging fields, helper text, and tracking repo control", async () => {
+    it("renders default global logging fields and helper text", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
       // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
       expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
-      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest("small")).toBeTruthy();
+      /*
+      FNXC:SettingsHelp 2026-07-15-22:10:
+      Migrated rows render help through the shared primitive rather than a bespoke `<small>`. The copy now lives in the help tip's bubble (`.settings-help-bubble`) instead of an inline `.settings-field-row-help` paragraph — deferred visually, but still in the DOM and the accessibility tree, which is why `getByText` still resolves it.
+      The assertion's intent is unchanged: this row's help must come from the primitive, not hand-rolled markup.
+      */
+      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-help-bubble")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
@@ -708,14 +729,34 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).not.toBeChecked();
 
-      // Helper descriptions render as small text (not .settings-field-help).
+      // Migrated rows source help from the primitive (now its help tip); the still-bespoke
+      // thinking-log group, whose one help string covers two checkboxes, keeps its <small>.
       expect(document.querySelector(".settings-field-help")).toBeNull();
       const toolOutputHelper = screen.getByText(/When disabled, tool rows are still logged but detailed tool payloads are omitted/i);
-      expect(toolOutputHelper.closest("small")).toBeTruthy();
+      expect(toolOutputHelper.closest(".settings-help-bubble")).toBeTruthy();
       const thinkingHelper = screen.getByText(/Leave both thinking toggles off to keep the original default behavior/i);
       expect(thinkingHelper.closest("small")).toBeTruthy();
+    });
 
-      // Global default tracking repo control + inheritance hint render.
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    The tracking-repo control and the GitLab disclosure moved to "Source Control · Global". Asserting they are GONE from here (not just present there) is the half that catches a partial move: a section left rendering a second copy of a dual-scope control is exactly the duplicate-`gitlabEnabled` bug this split removed, and it would leave every positive assertion green.
+    */
+    it("no longer renders the moved source-control controls", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(screen.queryByRole("combobox", { name: "Global default tracking repo" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("global-gitlab-configuration-disclosure")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Enable GitLab integration")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Global GitLab instance URL")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Global GitLab access token")).not.toBeInTheDocument();
+    });
+
+    it("renders the moved global tracking repo control and its inheritance hint in Source Control · Global", async () => {
+      renderModal({ initialSection: "source-control-global" });
+      await waitForSettingsModalReady();
+
       expect(screen.getByRole("combobox", { name: "Global default tracking repo" })).toBeInTheDocument();
       expect(screen.getByText(/Projects inherit this value when they do not set a project default tracking repo/i)).toBeInTheDocument();
     });
@@ -835,7 +876,7 @@ describe("SettingsModal", () => {
       mockFetchProjects.mockResolvedValueOnce([{ id: "p-1", name: "Alpha" }]);
       mockFetchGitRemotes.mockResolvedValueOnce([{ name: "origin", owner: "octo", repo: "global-default", url: "https://github.com/octo/global-default.git" }]);
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       await waitFor(() => {
@@ -859,7 +900,7 @@ describe("SettingsModal", () => {
     });
 
     it("saves GitLab URL configuration via global settings payload only", async () => {
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       expect(screen.getByLabelText("Global GitLab instance URL")).toHaveAttribute("placeholder", "https://gitlab.com");
@@ -890,7 +931,7 @@ describe("SettingsModal", () => {
         project: { gitlabEnabled: true },
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
@@ -909,7 +950,7 @@ describe("SettingsModal", () => {
         project: { gitlabEnabled: true },
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
@@ -944,7 +985,7 @@ describe("SettingsModal", () => {
         project: {},
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
@@ -962,7 +1003,7 @@ describe("SettingsModal", () => {
     it("shows global tracking repo error hint and keeps custom entry when lookups fail", async () => {
       mockFetchProjects.mockRejectedValueOnce(new Error("no projects"));
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       expect(await screen.findByText(/Could not load project list/i)).toBeInTheDocument();
@@ -993,7 +1034,7 @@ describe("SettingsModal", () => {
     expect(payload.agentProvisioning?.approvalMode).toBe("always");
   });
 
-  describe("Project General", () => {
+  describe("General · Project", () => {
     it("renders completion documentation automation control", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
@@ -1026,7 +1067,7 @@ describe("SettingsModal", () => {
 
     it.each<PersistSettingInput>([
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Completion Documentation Automation",
         kind: "select",
         value: "changeset",
@@ -1034,7 +1075,7 @@ describe("SettingsModal", () => {
         expectedKey: "completionDocumentationMode",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Auto-cleanup old chats",
         kind: "select",
         value: 14,
@@ -1042,7 +1083,7 @@ describe("SettingsModal", () => {
         expectedKey: "chatAutoCleanupDays",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Close Quick Chat on outside click",
         kind: "checkbox",
         value: false,
@@ -1050,7 +1091,7 @@ describe("SettingsModal", () => {
         expectedKey: "quickChatCloseOnOutsideClick",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Show task chats in common Chat feed",
         kind: "checkbox",
         value: true,
@@ -1058,7 +1099,7 @@ describe("SettingsModal", () => {
         expectedKey: "showTaskChatsInCommonFeed",
       },
       {
-        section: "Project General",
+        section: "General · Project",
         label: "Operational log retention",
         kind: "select",
         value: 7,
@@ -1091,7 +1132,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project General" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "General · Project" }));
 
       const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
       expect(ephemeralToggle).toBeInTheDocument();
@@ -1120,7 +1161,7 @@ describe("SettingsModal", () => {
       expect(sectionPicker).toBeInTheDocument();
       const projectGeneralOption = sectionPicker.querySelector('option[value="general"]');
       expect(projectGeneralOption).toBeInTheDocument();
-      expect(projectGeneralOption).toHaveTextContent("Project General");
+      expect(projectGeneralOption).toHaveTextContent("General · Project");
 
       await settingsModalUser.selectOptions(sectionPicker, "general");
 
@@ -1223,8 +1264,8 @@ describe("SettingsModal", () => {
       expect(payload.chatRoomSummaryMaxChars).toBe(900);
     });
 
-    it("renders and saves GitHub tracking controls in the General section", async () => {
-      renderModal({ initialSection: "general" });
+    it("renders and saves GitHub tracking controls in the Source Control section", async () => {
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(screen.getByRole("heading", { name: "GitHub Tracking" })).toBeInTheDocument();
@@ -1253,7 +1294,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders and saves GitLab URL configuration as project settings", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
@@ -1301,7 +1342,7 @@ describe("SettingsModal", () => {
         },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
@@ -1330,7 +1371,7 @@ describe("SettingsModal", () => {
         },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab instance URL"));
@@ -1348,7 +1389,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders and saves imported GitHub issue tracking linking as a project setting", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const importLinkToggle = screen.getByLabelText(
@@ -1383,7 +1424,7 @@ describe("SettingsModal", () => {
         project: { githubLinkImportedIssuesToTracking: true },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const importLinkToggle = screen.getByLabelText(
@@ -1413,7 +1454,7 @@ describe("SettingsModal", () => {
         githubTrackingDefaultRepo: "octo/existing",
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const modeSelect = screen.getByLabelText("Default tracking mode for new tasks") as HTMLSelectElement;
@@ -1436,7 +1477,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders github dedup toggle as checked when project value is unset", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1451,7 +1492,7 @@ describe("SettingsModal", () => {
         githubTrackingDedupEnabled: false,
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1461,7 +1502,7 @@ describe("SettingsModal", () => {
     });
 
     it("saves github dedup toggle changes", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1495,7 +1536,7 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText("Title, commit message, and GitHub tracking issue summarization model")).not.toBeInTheDocument();
     });
@@ -1509,7 +1550,7 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
 
-      await settingsModalUser.click(screen.getByRole("button", { name: "Project Models" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Models · Project" }));
 
       expect(screen.queryByText(/model used for summarization now lives on the workflow/i)).not.toBeInTheDocument();
       expect(screen.getByText(/per-phase model lanes \(execution, planning, reviewer, and their fallbacks\) now live on the workflow/i)).toBeInTheDocument();
@@ -1520,7 +1561,7 @@ describe("SettingsModal", () => {
         { name: "origin", owner: "octo", repo: "repo", url: "https://github.com/octo/repo.git" },
       ]);
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const repoSelect = screen.getByRole("combobox", { name: "Project default tracking repo" }) as HTMLSelectElement;
@@ -1540,7 +1581,7 @@ describe("SettingsModal", () => {
     it("shows project tracking repo error hint and keeps custom entry when remotes fail", async () => {
       mockFetchGitRemotes.mockRejectedValueOnce(new Error("remotes failed"));
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(await screen.findByText(/Could not load detected remotes/i)).toBeInTheDocument();
@@ -1550,7 +1591,7 @@ describe("SettingsModal", () => {
     });
 
     it("always shows GitHub tracking summarization helper copy", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(
@@ -1683,8 +1724,13 @@ describe("SettingsModal", () => {
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.autoMerge).toBeNull();
       expect(payload.mergeStrategy).toBeNull();
-      expect(payload.gitlabAuthToken).toBeNull();
-      // Not part of "merge" — owned by "general" instead; must not leak in.
+      /*
+      FNXC:SourceControl 2026-07-15-20:30:
+      Merge's reset no longer touches ANY forge key — they all moved to "source-control". This used to assert only that `gitlabEnabled` stayed out while `gitlabAuthToken` was reset from here, which was the registry arbitrating a key two sections rendered.
+      */
+      expect(payload).not.toHaveProperty("gitlabAuthToken");
+      expect(payload).not.toHaveProperty("gitlabAuthTokenType");
+      expect(payload).not.toHaveProperty("githubAuthMode");
       expect(payload).not.toHaveProperty("gitlabEnabled");
       expect(payload).not.toHaveProperty("taskPrefix");
       expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();

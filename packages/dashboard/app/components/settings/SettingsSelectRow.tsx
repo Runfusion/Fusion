@@ -37,7 +37,7 @@ export function SettingsSelectRow({
     >
       <select
         id={key}
-        className="settings-select"
+        className="select settings-select"
         value={value ?? ""}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}

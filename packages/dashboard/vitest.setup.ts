@@ -35,6 +35,19 @@ await i18next.use(initReactI18next).init({
           toolCallCount_one: "{{count}} tool call",
           toolCallCount_other: "{{count}} tool calls",
         },
+        /*
+        FNXC:TestI18n 2026-07-15-17:35:
+        Settings search reports its counts through i18next plural resolution, and its call sites intentionally pass NO inline default — a literal default would out-rank the catalog's singular form and reinstate "1 matching settings".
+        That means these keys resolve from resources or not at all, so they are mirrored here (same `_one`/`_other` shape as the real en catalog) exactly as the taskChat counters above.
+        */
+        settings: {
+          search: {
+            resultCount_one: "{{count}} matching section",
+            resultCount_other: "{{count}} matching sections",
+            settingResultCount_one: "{{count}} matching setting",
+            settingResultCount_other: "{{count}} matching settings",
+          },
+        },
       },
       errors: {},
     },

@@ -1,9 +1,13 @@
-import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ModelPreset, Settings } from "@fusion/core";
 import { ApiRequestError, fetchWorkflow, fetchWorkflowSettingValues, updateWorkflowSettingValues, type ModelInfo, type WorkflowSettingDefinition, type WorkflowSettingRejection, type WorkflowSettingValuesPayload, } from "../../../api";
 import { CustomModelDropdown } from "../../CustomModelDropdown";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextareaRow } from "../SettingsTextareaRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { applyPresetToSelection } from "../../../utils/modelPresets";
 import type { ToastType } from "../../../hooks/useToast";
 import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState } from "./context";
@@ -127,14 +131,13 @@ export class WorkflowLaneFlushRejection extends Error {
     }
 }
 export interface ProjectModelsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
     models: ProjectModelsSectionModelProps;
     projectId?: string;
     addToast: (message: string, type?: ToastType) => void;
     onOpenWorkflowSettings?: () => void;
     registerWorkflowLaneSaver?: (saver: SectionSaveHandler | null) => void;
 }
-export function ProjectModelsSection({ scopeBanner, form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
+export function ProjectModelsSection({ form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
     const { t } = useTranslation("app");
     const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
     const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
@@ -347,11 +350,19 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         const isOverridden = status === "overridden" || Boolean(thinkingValue);
         const laneLabel = getProjectLaneLabel(lane);
         return (<div className="form-group" key={lane.laneId}>
+        {/*
+        FNXC:SettingsHelp 2026-07-15-23:10:
+        Lane help rides the same "?" as every other row. It reads as an exception — a lane is a label + inherited/override badge + dropdown + conditional Reset, and its copy ends in the resolved fallback CHAIN — but that argues for WHERE the tip hangs (the label row, beside the badge), not for keeping a paragraph. Left inline, Project Models was the one section still showing prose under every control while its neighbours showed an icon; the global lanes next door already use the tip.
+        The badge stays in view precisely because it IS live state ("Override (Project)" vs "Inherited (Global)") — the fallback chain behind it explains that badge, and is what an operator opens deliberately.
+        */}
         <div className="settings-model-lane-label-row">
           <label htmlFor={`${lane.laneId}Model`}>{laneLabel}</label>
           <span className={`settings-lane-badge ${isOverridden ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={isOverridden ? "Explicitly set for this project" : "Inherited from global settings"}>
             {isOverridden ? "Override (Project)" : "Inherited (Global)"}
           </span>
+          <SettingsHelpTip settingKey={`${lane.laneId}Model`}>
+            {getProjectLaneHelperText(lane)}{t("settings.projectModels.fallsBackTo", " Falls back to: ")}{lane.fallbackOrder}.
+          </SettingsHelpTip>
         </div>
         <div className="settings-model-lane-control-row">
           <div className="settings-model-lane-control-main">
@@ -359,9 +370,6 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
           </div>
           {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => { resetLaneValue(lane); resetLaneThinkingValue(lane); }} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
         </div>
-        <small>
-          {getProjectLaneHelperText(lane)}{t("settings.projectModels.fallsBackTo", " Falls back to: ")}{lane.fallbackOrder}.
-        </small>
       </div>);
     };
     const chatDefaultKind = form.chatDefaultKind ?? "model";
@@ -395,21 +403,26 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         setForm((f) => ({ ...f, chatNewSessionMode: undefined, chatDefaultKind: undefined, chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState));
     };
     return (<>
-      {scopeBanner}
 
       {/* --- Token Cap --- */}
       <h4 className="settings-section-heading">{t("settings.projectModels.tokenCap", "Token Cap")}</h4>
-      <div className="form-group">
-        <label htmlFor="tokenCap">{t("settings.projectModels.tokenCap", "Token Cap")}</label>
-        <div className="settings-token-cap-row">
-          <input id="tokenCap" type="number" placeholder={t("settings.projectModels.noCap", "No cap")} value={form.tokenCap ?? ""} onChange={(e) => {
-            const val = e.target.value;
-            setForm((f) => ({ ...f, tokenCap: val ? parseInt(val, 10) : null } as SettingsFormState));
-        }}/>
-          {form.tokenCap != null && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToDefaultNoCap", "Reset to default (no cap)")} onClick={() => setForm((f) => ({ ...f, tokenCap: null } as unknown as SettingsFormState))} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
-        </div>
-        <small>{t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default \u2014 unset (no cap).")}</small>
-      </div>
+      {/*
+      FNXC:SettingsModels 2026-07-15-17:35:
+      The reset affordance stays conditional on an actual cap being set: "no cap" is the unset state, so offering to reset a lane that is already unset would advertise an action with nothing to undo.
+      `v ? Math.trunc(v) : null` reproduces the previous `val ? parseInt(val, 10) : null` contract exactly \u2014 a token cap is a whole number of tokens, and 0 means "no cap" (null), not a cap of zero.
+      */}
+      <SettingsNumberRow
+        descriptor={{
+          key: "tokenCap",
+          label: t("settings.projectModels.tokenCap", "Token Cap"),
+          help: t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default \u2014 unset (no cap)."),
+          scope: "project",
+          placeholder: t("settings.projectModels.noCap", "No cap"),
+        }}
+        value={form.tokenCap ?? null}
+        onChange={(v) => setForm((f) => ({ ...f, tokenCap: v ? Math.trunc(v) : null } as SettingsFormState))}
+        clearable={form.tokenCap != null}
+      />
 
       {/* --- Project Model Lanes --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelLanes", "Model Lanes")}</h4>
@@ -421,14 +434,25 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       {/* FNXC:ChatModels 2026-07-12-20:45: Project Models owns the Direct-chat default because New Chat needs a project-scoped model-or-agent target plus prompt-vs-direct creation mode without changing workflow or in-chat switcher settings. */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.chatHeading", "Chat")}</h4>
       <p className="settings-description">{t("settings.projectModels.chatDescription", "Choose the default target for new Direct chats and whether New Chat should prompt or immediately use that default.")}</p>
-      <div className="form-group" data-testid="project-models-chat-mode">
-        <label htmlFor="chatNewSessionMode">{t("settings.projectModels.chatNewSessionMode", "New Chat behavior")}</label>
-        <select id="chatNewSessionMode" value={form.chatNewSessionMode ?? "prompt"} onChange={(event) => setForm((f) => ({ ...f, chatNewSessionMode: event.target.value === "always-default" ? "always-default" : undefined } as SettingsFormState))}>
-          <option value="prompt">{t("settings.projectModels.chatNewSessionModePrompt", "Prompt for model each time")}</option>
-          <option value="always-default">{t("settings.projectModels.chatNewSessionModeAlwaysDefault", "Always use configured default")}</option>
-        </select>
-        <small>{t("settings.projectModels.chatNewSessionModeHelp", "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete.")}</small>
-      </div>
+      {/*
+      FNXC:SettingsModels 2026-07-15-17:35:
+      Only the mode select migrates to a primitive. The target picker below it (Model/Agent segmented toggle + model dropdown or agent select + shared Reset) is one compound control over five form keys, not a row per key, so it stays bespoke.
+      "prompt" is the unset default rather than a stored value: anything that is not `always-default` writes `undefined` so the key is deleted rather than persisted at its default.
+      */}
+      <SettingsSelectRow
+        descriptor={{
+          key: "chatNewSessionMode",
+          label: t("settings.projectModels.chatNewSessionMode", "New Chat behavior"),
+          help: t("settings.projectModels.chatNewSessionModeHelp", "Prompt mode opens New Chat with this default preselected. Always-default mode skips the dialog when the configured default is complete."),
+          scope: "project",
+          options: [
+            { value: "prompt", label: t("settings.projectModels.chatNewSessionModePrompt", "Prompt for model each time") },
+            { value: "always-default", label: t("settings.projectModels.chatNewSessionModeAlwaysDefault", "Always use configured default") },
+          ],
+        }}
+        value={form.chatNewSessionMode ?? "prompt"}
+        onChange={(v) => setForm((f) => ({ ...f, chatNewSessionMode: v === "always-default" ? "always-default" : undefined } as SettingsFormState))}
+      />
       <div className="form-group" data-testid="project-models-chat-kind">
         <label>{t("settings.projectModels.chatDefaultKind", "Chat default target")}</label>
         <div className="chat-new-dialog-mode-toggle" data-testid="project-models-chat-kind-toggle">
@@ -441,14 +465,21 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         </div>
       </div>
       {chatDefaultKind === "model" ? (<div className="form-group" data-testid="project-models-chat-model">
-          <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          Model mode is a plain label + control + help row, so its help hangs off the same "?" as the New Chat behavior select directly above it instead of printing a paragraph beside it.
+          The agent-mode branch below keeps its `<small>` inline: that slot swaps to "No agents are available for this project yet.", which explains an empty picker and must stay in view.
+          */}
+          <div className="settings-field-label-row">
+            <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
+            <SettingsHelpTip settingKey="chatDefaultModel">{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</SettingsHelpTip>
+          </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">
               <CustomModelDropdown id="chatDefaultModel" label={t("settings.projectModels.chatDefaultModel", "Chat Default Model")} models={availableModels} value={chatDefaultModelValue} onChange={setChatDefaultModelValue} placeholder={t("settings.projectModels.selectChatDefaultModel", "Select a chat default model")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={chatDefaultThinkingValue} onThinkingLevelChange={setChatDefaultThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
             </div>
             {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
           </div>
-          <small>{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</small>
         </div>) : (<div className="form-group" data-testid="project-models-chat-agent">
           <label htmlFor="chatDefaultAgentId">{t("settings.projectModels.chatDefaultAgent", "Chat Default Agent")}</label>
           <div className="settings-model-lane-control-row">
@@ -489,6 +520,8 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
                   <span className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={customized ? "Explicitly set for this project workflow" : "Inherited from workflow defaults"}>
                     {customized ? "Override (Project)" : "Inherited (Workflow)"}
                   </span>
+                  {/* FNXC:SettingsHelp 2026-07-15-23:10: Same affordance as the project lanes above — a workflow lane is the same shape, so its help hangs off the label row too rather than sitting under the dropdown as prose. */}
+                  {pair.help ? <SettingsHelpTip settingKey={`workflow-${pair.id}-model`}>{pair.help}</SettingsHelpTip> : null}
                 </div>
                 <div className="settings-model-lane-control-row">
                   <div className="settings-model-lane-control-main">
@@ -496,7 +529,6 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
                   </div>
                   {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
                 </div>
-                <small>{pair.help}</small>
                 {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
               </div>);
             })}
@@ -605,11 +637,16 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
           </div>
         </div>) : null}
 
-      <div className="form-group settings-preset-auto-select">
-        <label htmlFor="autoSelectModelPreset" className="checkbox-label">
-          <input id="autoSelectModelPreset" type="checkbox" checked={form.autoSelectModelPreset || false} onChange={(e) => setForm((current) => ({ ...current, autoSelectModelPreset: e.target.checked }))}/>{t("settings.projectModels.autoSelectPresetBasedOnTaskSize", " Auto-select preset based on task size ")}</label>
-        <small>{t("settings.projectModels.autoSelectModelPresetHint", "Default: disabled.")}</small>
-      </div>
+      <SettingsToggleRow
+        descriptor={{
+          key: "autoSelectModelPreset",
+          label: t("settings.projectModels.autoSelectPresetBasedOnTaskSize", " Auto-select preset based on task size "),
+          help: t("settings.projectModels.autoSelectModelPresetHint", "Default: disabled."),
+          scope: "project",
+        }}
+        value={form.autoSelectModelPreset || false}
+        onChange={(v) => setForm((current) => ({ ...current, autoSelectModelPreset: v === true }))}
+      />
 
       {form.autoSelectModelPreset ? (<div className="settings-preset-size-grid">
           {(["S", "M", "L"] as const).map((sizeKey) => (<div className="form-group settings-preset-size-row" key={sizeKey}>
@@ -645,6 +682,10 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
                 <span className={`settings-lane-badge ${titleSummarizerFallbackCustomized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={titleSummarizerFallbackCustomized ? "Explicitly set for this project" : "Inherited from global settings"}>
                   {titleSummarizerFallbackCustomized ? "Override (Project)" : "Inherited (Global)"}
                 </span>
+                {/* FNXC:SettingsHelp 2026-07-15-23:10: Same lane shape as the rows above, so its help hangs off the label row too — this was the last row in Settings still rendering help as a paragraph. */}
+                <SettingsHelpTip settingKey="titleSummarizerFallbackModel">
+                  {t("settings.projectModels.titleSummarizerFallbackHelp", "Fallback provider and model used when the primary Title Summarizer model cannot be used. Falls back to the global summarization lane and then the default model chain.")}
+                </SettingsHelpTip>
               </div>
               <div className="settings-model-lane-control-row">
                 <div className="settings-model-lane-control-main">
@@ -652,36 +693,61 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
                 </div>
                 {titleSummarizerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetTitleSummarizerFallbackValue} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
               </div>
-              <small>{t("settings.projectModels.titleSummarizerFallbackHelp", "Fallback provider and model used when the primary Title Summarizer model cannot be used. Falls back to the global summarization lane and then the default model chain.")}</small>
             </div>
           </>)}
-        <div className="form-group">
-          <label htmlFor="autoSummarizeTitles" className="checkbox-label">
-            <input id="autoSummarizeTitles" type="checkbox" checked={form.autoSummarizeTitles || false} onChange={(e) => setForm((f) => ({ ...f, autoSummarizeTitles: e.target.checked }))}/>{t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize long descriptions as titles ")}</label>
-          <small>{t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title (max 60 characters). The same model is also used to generate fallback merge commit message bodies when the branch's commit log is empty (e.g. squash merges with no unique commits), and GitHub tracking issue titles when a tracked task has no title yet. Default: disabled. ")}</small>
-        </div>
+        {/*
+        FNXC:SettingsSearch 2026-07-15-17:35:
+        This is the row operators searched "summarize" for and could not find (FN-7907, patched again 2026-07-14). It is now indexed by descriptor key from ProjectModelsSection.search.ts, so the word in its own label is what search matches — no hand-maintained keyword list to fall behind again.
+        */}
+        <SettingsToggleRow
+          descriptor={{
+            key: "autoSummarizeTitles",
+            label: t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize long descriptions as titles "),
+            help: t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title (max 60 characters). The same model is also used to generate fallback merge commit message bodies when the branch's commit log is empty (e.g. squash merges with no unique commits), and GitHub tracking issue titles when a tracked task has no title yet. Default: disabled. "),
+            scope: "project",
+          }}
+          value={form.autoSummarizeTitles || false}
+          onChange={(v) => setForm((f) => ({ ...f, autoSummarizeTitles: v === true }))}
+        />
 
-        <div className="form-group">
-          <label htmlFor="useAiMergeCommitSummary" className="checkbox-label">
-            <input id="useAiMergeCommitSummary" type="checkbox" checked={form.useAiMergeCommitSummary || false} onChange={(e) => setForm((f) => ({ ...f, useAiMergeCommitSummary: e.target.checked }))}/>{t("settings.projectModels.aIMergeCommitSummaries", " AI merge commit summaries ")}</label>
-          <small>{t("settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI", " When enabled, merge commit messages include an AI-generated subject plus body summary (narrative + bullets + diff-stat) instead of just listing step commit subjects. Uses the title summarization model. Default: enabled. ")}</small>
-        </div>
+        <SettingsToggleRow
+          descriptor={{
+            key: "useAiMergeCommitSummary",
+            label: t("settings.projectModels.aIMergeCommitSummaries", " AI merge commit summaries "),
+            help: t("settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI", " When enabled, merge commit messages include an AI-generated subject plus body summary (narrative + bullets + diff-stat) instead of just listing step commit subjects. Uses the title summarization model. Default: enabled. "),
+            scope: "project",
+          }}
+          value={form.useAiMergeCommitSummary || false}
+          onChange={(v) => setForm((f) => ({ ...f, useAiMergeCommitSummary: v === true }))}
+        />
 
         {(form.autoSummarizeTitles || form.useAiMergeCommitSummary || form.githubTrackingEnabledByDefault || false) && (<p className="settings-description">
             {t("settings.movedStub.summarizerModelInline", "These summarization model controls govern title auto-summarization, merge commit summaries, GitHub tracking titles, and PR metadata generation.")}
           </p>)}
 
-      <div className="form-group">
-        <label htmlFor="prTitlePromptInstructions">{t("settings.projectModels.prTitlePromptInstructions", "PR title prompt guidance")}</label>
-        <textarea id="prTitlePromptInstructions" value={form.prTitlePromptInstructions || ""} onChange={(e) => setForm((f) => ({ ...f, prTitlePromptInstructions: e.target.value }))} rows={3} placeholder={t("settings.projectModels.prTitlePromptInstructionsPlaceholder", "Example: Use conventional-commit style and keep titles under 72 characters.")}/>
-        <small>{t("settings.projectModels.prTitlePromptInstructionsHelp", "Guides the AI-generated Create PR title. Leave blank to use the default PR metadata prompt. No default \u2014 unset.")}</small>
-      </div>
+      <SettingsTextareaRow
+        descriptor={{
+          key: "prTitlePromptInstructions",
+          label: t("settings.projectModels.prTitlePromptInstructions", "PR title prompt guidance"),
+          help: t("settings.projectModels.prTitlePromptInstructionsHelp", "Guides the AI-generated Create PR title. Leave blank to use the default PR metadata prompt. No default \u2014 unset."),
+          scope: "project",
+          placeholder: t("settings.projectModels.prTitlePromptInstructionsPlaceholder", "Example: Use conventional-commit style and keep titles under 72 characters."),
+        }}
+        value={form.prTitlePromptInstructions || ""}
+        onChange={(v) => setForm((f) => ({ ...f, prTitlePromptInstructions: v ?? "" }))}
+      />
 
-      <div className="form-group">
-        <label htmlFor="prDescriptionPromptInstructions">{t("settings.projectModels.prDescriptionPromptInstructions", "PR description prompt guidance")}</label>
-        <textarea id="prDescriptionPromptInstructions" value={form.prDescriptionPromptInstructions || ""} onChange={(e) => setForm((f) => ({ ...f, prDescriptionPromptInstructions: e.target.value }))} rows={4} placeholder={t("settings.projectModels.prDescriptionPromptInstructionsPlaceholder", "Example: Emphasize operator-facing behavior and list verification commands exactly.")}/>
-        <small>{t("settings.projectModels.prDescriptionPromptInstructionsHelp", "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default \u2014 unset.")}</small>
-      </div>
+      <SettingsTextareaRow
+        descriptor={{
+          key: "prDescriptionPromptInstructions",
+          label: t("settings.projectModels.prDescriptionPromptInstructions", "PR description prompt guidance"),
+          help: t("settings.projectModels.prDescriptionPromptInstructionsHelp", "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default \u2014 unset."),
+          scope: "project",
+          placeholder: t("settings.projectModels.prDescriptionPromptInstructionsPlaceholder", "Example: Emphasize operator-facing behavior and list verification commands exactly."),
+        }}
+        value={form.prDescriptionPromptInstructions || ""}
+        onChange={(v) => setForm((f) => ({ ...f, prDescriptionPromptInstructions: v ?? "" }))}
+      />
       </section>
     </>);
 }

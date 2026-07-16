@@ -1,3 +1,4 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: The pricing hint named --font-size-xs but carried a raw 0.75rem fallback that no longer matches the token's 0.8rem value. The fallback is dropped so the declaration cannot silently render off-scale. */
 .model-pricing-section {
   display: flex;
   flex-direction: column;
@@ -58,7 +59,7 @@
 
 .model-pricing-row--head {
   color: var(--text-muted);
-  font-size: var(--font-size-xs, 0.75rem);
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 

@@ -1,5 +1,11 @@
 /* SettingsTextRow (U8 / KTD-10) — single-line text input control slot. */
 
+/*
+FNXC:SettingsStyling 2026-07-15-18:52:
+The control carries the dashboard's standard `.input` class alongside `.settings-text`, and the modifier below only sizes it.
+Reason: `.settings-text` used to be the ONLY class on the control, and it set nothing but width — so every migrated row rendered a browser-default input (no border, no radius, no surface colour, no `6px 10px` padding, no 13px type) sitting beside unmigrated `.input` neighbours. The rows meant to unify settings were themselves the odd ones out.
+`.input` is reused rather than restyled or duplicated here: it is the dashboard-wide control appearance across ~300 call sites, so naming it keeps settings identical to every other form in the app and leaves one place to retune it. Duplicating its padding/border into settings CSS would drift the moment either side changed.
+*/
 .settings-text {
   width: 100%;
 }

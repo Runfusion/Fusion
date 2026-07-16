@@ -93,7 +93,6 @@ function renderSection(initialForm: SettingsFormState = { defaultThinkingLevel: 
     latestForm = form;
     return (
       <ProjectModelsSection
-        scopeBanner={null}
         form={form}
         setForm={setForm}
         models={models}

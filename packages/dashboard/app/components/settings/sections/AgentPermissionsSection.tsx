@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { AGENT_PERMISSION_POLICY_ACTION_CATEGORIES } from "@fusion/core";
 import type { AgentPermissionPolicy, AgentPermissionPolicyRules } from "@fusion/core";
 import { AgentPermissionPolicyEditor } from "../../AgentPermissionPolicyEditor";
@@ -11,13 +10,10 @@ function toCompleteAgentPermissionRules(rules?: Partial<AgentPermissionPolicyRul
         return acc;
     }, {} as AgentPermissionPolicyRules);
 }
-export interface AgentPermissionsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
-}
-export function AgentPermissionsSection({ scopeBanner, form, setForm }: AgentPermissionsSectionProps) {
+export type AgentPermissionsSectionProps = SectionBaseProps;
+export function AgentPermissionsSection({ form, setForm }: AgentPermissionsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.agentPermissions.agentPermissions", "Agent Permissions")}</h4>
       <div className="form-group">
         <small className="settings-muted">{t("settings.agentPermissions.perAgentSettingsOverrideProjectDefaultsEachCategory", "Project defaults apply to permanent agents, ephemeral task workers, and fallback executor workers unless a per-agent override is set. Exact tool rules compose with the legacy ephemeral create-task toggle. Default: unset \u2014 every action category defaults to allow until a category is explicitly restricted.")}</small>
