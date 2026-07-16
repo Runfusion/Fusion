@@ -1527,7 +1527,8 @@ describe("SettingsModal", () => {
     it("falls back to first visible section when initial section is unavailable", async () => {
       renderModal({ initialSection: "unknown-section" as any });
       await waitForSettingsModalReady();
-      expect(await screen.findByRole("heading", { name: "General" })).toBeInTheDocument();
+      // FNXC:SettingsNavigation 2026-07-16-01:10: an unknown section still falls back to the first visible one; that is Authentication now, which is also where Settings opens.
+      expect(await screen.findByRole("heading", { name: "Authentication" })).toBeInTheDocument();
     });
   });
 

@@ -563,8 +563,14 @@ describe("SettingsModal mobile adaptations", () => {
     const { container, findAllByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    // Authentication is first by default, so click General to see form controls
-    const generalTabs = await findAllByText("General");
+    /*
+    FNXC:SettingsNavigation 2026-07-16-01:10:
+    Settings opens on Authentication, which renders provider cards rather than form
+    controls, so this navigates to a section that has some. The nav label is
+    "General · Project" now that the Global/Project pair is disambiguated — plain
+    "General" no longer matches any element.
+    */
+    const generalTabs = await findAllByText("General · Project");
     await user.click(generalTabs[0]);
 
     const controls = container.querySelectorAll(".settings-content input, .settings-content select, .settings-content textarea");
