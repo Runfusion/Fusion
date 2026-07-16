@@ -980,14 +980,45 @@ The simplified Settings surface needs one consistent reading rhythm across legac
   font-size: var(--font-size-sm);
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-20:30:
+Bespoke rows keep the same vertical rhythm as migrated ones.
+`.settings-field-row` spaces itself with `padding-block: var(--space-sm)`, while a `.form-group` spaced itself with `margin-top: var(--space-md)`. Mixed in one section — which is now the normal case, since some rows deliberately stay bespoke — that produced three different gaps depending on which idioms happened to be adjacent: 16px between two migrated rows, 12px between two bespoke ones, and 20px where they met.
+Matching the primitive's `padding-block` (rather than giving the primitive a margin) keeps one idiom: every settings row owns its own space and margins never collapse or compound between them.
+`padding-inline: 0` stays — `.settings-content` already owns the horizontal inset, and `.form-group`'s global `0 var(--space-xl)` would double-indent every bespoke row.
+*/
 .settings-content .form-group {
   padding-inline: 0;
-  margin-top: var(--space-md);
+  margin-top: 0;
+  padding-block: var(--space-sm);
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-20:30:
+Every label in Settings reads the same way, whether its row is migrated or still bespoke.
+Some rows deliberately stay hand-rolled — a `data-testid` the primitives have no slot for, help copy that interleaves `<code>` or a link, a repeating-row editor — and those inherit the GLOBAL `.form-group label` treatment: 12px, weight 600, uppercase, letter-spaced, muted. So a section rendered "PLAN APPROVAL MODE" in caps directly above "Auto-merge conflict retries" in sentence case. Two idioms on one screen is the exact inconsistency the migration set out to remove, and migrating every last row is not achievable (nor desirable — see the bespoke rows' own FNXC notes).
+Retuning them here instead of at the global rule is deliberate: `.form-group` is dashboard-wide across 35 non-settings files, and its uppercase treatment is that context's convention, not a bug. This selector is settings-scoped, so it changes Settings only.
+Declarations mirror `.settings-field-row-label` — one contract, expressed at whatever specificity each markup idiom needs.
+*/
 .settings-content .form-group label:not(.checkbox-label) {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: var(--line-height-tight);
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: var(--space-xs);
+}
+
+/*
+FNXC:SettingsStyling 2026-07-15-20:30:
+Bespoke help text (`<small>` inside a form-group) matches `.settings-field-row-help`: same rung, same colour, same measure. Without this a bespoke row's help sat at 12px/1.4 beside a migrated row's at 12.8px/1.5 — close enough to look like a rendering glitch rather than a choice.
+*/
+.settings-content .form-group small,
+.settings-content .form-group .form-text {
   font-size: var(--font-size-xs);
-  line-height: 1.35;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .settings-content .checkbox-label {
