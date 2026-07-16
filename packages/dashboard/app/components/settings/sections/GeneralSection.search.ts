@@ -177,16 +177,6 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "general",
-    key: "githubLinkImportedIssuesToTracking",
-    labelKey: "settings.general.alwaysLinkImportedGitHubIssuesToTracking",
-    labelFallback: " Always link imported GitHub issues to GitHub tracking ",
-    helpKey: "settings.general.whenEnabledImportedGitHubIssuesUseTheirSource",
-    helpFallback:
-      "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.",
-    keywords: ["adopt issue", "import"],
-  },
-  {
-    sectionId: "general",
     key: "githubImportAutoTranslate",
     labelKey: "settings.general.autoTranslateImportedIssues",
     labelFallback: "Auto-translate imported issues",
@@ -204,15 +194,5 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
     helpFallback:
       "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language.",
     keywords: ["locale", "localization"],
-  },
-  {
-    sectionId: "general",
-    key: "githubTrackingDedupEnabled",
-    labelKey: "settings.general.searchTheTrackingRepoForLikelyDuplicatesBefore",
-    labelFallback: " Search the tracking repo for likely duplicates before opening a new issue ",
-    helpKey: "settings.general.whenEnabledFusionChecksOpenAndClosedIssues",
-    helpFallback:
-      " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ",
-    keywords: ["dedupe", "deduplication"],
   },
 ];

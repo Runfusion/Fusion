@@ -268,14 +268,14 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: null,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({ gitlabEnabled: false, gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" });
     expect(projectPatch).toEqual({});
   });
 
-  it("routes GitLab enable and token settings to project settings outside global general", () => {
+  it("routes GitLab enable and token settings to project settings outside the global source-control section", () => {
     const initialScopedValues = {
       global: { gitlabEnabled: false, gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" },
       project: { gitlabEnabled: true },
@@ -291,7 +291,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: null,
       initialScopedValues,
-      activeSection: "merge",
+      activeSection: "source-control",
     });
 
     expect(globalPatch).toEqual({});
@@ -319,7 +319,7 @@ describe("splitSettingsSave", () => {
       // genuine global edit.
       initialValues: { gitlabEnabled: true } as never,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({ gitlabEnabled: true });
@@ -336,7 +336,7 @@ describe("splitSettingsSave", () => {
       payload: { gitlabEnabled: true },
       initialValues: { gitlabEnabled: true } as never,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({});
@@ -354,7 +354,7 @@ describe("splitSettingsSave", () => {
       // is explicitly present-but-undefined (unset) — the edit must still land.
       initialValues: { gitlabEnabled: true } as never,
       initialScopedValues,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
 
     expect(globalPatch).toEqual({ gitlabEnabled: true });
@@ -375,7 +375,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: null,
       initialScopedValues,
-      activeSection: "merge",
+      activeSection: "source-control",
     });
 
     expect(projectPatch).toEqual({ gitlabAuthToken: null, gitlabAuthTokenType: "personal" });
@@ -673,7 +673,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
     expect(onGlobal.globalPatch).toMatchObject(payload);
     expect("gitlabInstanceUrl" in onGlobal.projectPatch).toBe(false);
@@ -683,7 +683,7 @@ describe("splitSettingsSave", () => {
       payload,
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "general",
+      activeSection: "source-control",
     });
     expect("gitlabInstanceUrl" in onProject.globalPatch).toBe(false);
     expect("gitlabApiBaseUrl" in onProject.globalPatch).toBe(false);
@@ -700,7 +700,7 @@ describe("splitSettingsSave", () => {
         global: { gitlabInstanceUrl: "https://global.example", gitlabApiBaseUrl: "https://global.example/api/v4" },
         project: {},
       } as never,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
     expect(onGlobal.globalPatch).toEqual({ gitlabInstanceUrl: null, gitlabApiBaseUrl: null });
 
@@ -711,18 +711,18 @@ describe("splitSettingsSave", () => {
         global: {},
         project: { gitlabInstanceUrl: "https://project.example", gitlabApiBaseUrl: "https://project.example/api/v4" },
       } as never,
-      activeSection: "general",
+      activeSection: "source-control",
     });
     expect(onProject.projectPatch).toEqual({ gitlabInstanceUrl: null, gitlabApiBaseUrl: null });
   });
 
-  it("routes githubTrackingDefaultRepo to global only on the global-general section", () => {
+  it("routes githubTrackingDefaultRepo to global only on the source-control-global section", () => {
     const payloadGlobal: Record<string, unknown> = { githubTrackingDefaultRepo: "org/repo" };
     const onGlobal = splitSettingsSave({
       payload: payloadGlobal,
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "global-general",
+      activeSection: "source-control-global",
     });
     expect(onGlobal.globalPatch).toMatchObject({ githubTrackingDefaultRepo: "org/repo" });
     expect("githubTrackingDefaultRepo" in onGlobal.projectPatch).toBe(false);
@@ -731,11 +731,11 @@ describe("splitSettingsSave", () => {
       payload: { githubTrackingDefaultRepo: "org/repo" },
       initialValues: {} as never,
       initialScopedValues: { global: {}, project: {} } as never,
-      activeSection: "general",
+      activeSection: "source-control",
     });
     expect("githubTrackingDefaultRepo" in onProject.globalPatch).toBe(false);
     // ...and is instead routed to the project patch on the project-scoped
-    // "general" section, rather than being dropped or erroring.
+    // "source-control" section, rather than being dropped or erroring.
     expect(onProject.projectPatch).toMatchObject({ githubTrackingDefaultRepo: "org/repo" });
   });
 });

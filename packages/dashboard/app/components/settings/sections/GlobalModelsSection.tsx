@@ -8,6 +8,7 @@ import { CustomModelDropdown } from "../../CustomModelDropdown";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps, ModelLane } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 function toCommaSeparatedInput(values?: string[]): string {
@@ -43,8 +44,15 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
       {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.models.loadingModels", "Loading available models…")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">
           {t("settings.models.noModels", "No models available. Configure authentication first.")}
         </div>) : (<>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          The Default and Fallback pickers stay bespoke (CustomModelDropdown owns the provider/model pair and its thinking companion), but each is still one control with one help string, so the help hangs off the same "?" as the Thinking Effort row rendered directly below them.
+          */}
           <div className="form-group">
-            <label htmlFor="defaultModel">{t("settings.globalModels.defaultModel", "Default Model")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="defaultModel">{t("settings.globalModels.defaultModel", "Default Model")}</label>
+              <SettingsHelpTip settingKey="defaultModel">{t("settings.globalModels.defaultAIModelUsedForTaskExecutionWhen", "Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically. No default — unset.")}</SettingsHelpTip>
+            </div>
             <CustomModelDropdown id="defaultModel" label="Default Model" models={availableModels} value={selectedValue} onChange={(val) => {
                 if (!val) {
                     setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
@@ -58,11 +66,13 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                     }));
                 }
             }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
-            <small>{t("settings.globalModels.defaultAIModelUsedForTaskExecutionWhen", "Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically. No default \u2014 unset.")}</small>
           </div>
 
           <div className="form-group">
-            <label htmlFor="fallbackModel">{t("settings.globalModels.fallbackModel", "Fallback Model")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="fallbackModel">{t("settings.globalModels.fallbackModel", "Fallback Model")}</label>
+              <SettingsHelpTip settingKey="fallbackModel">{t("settings.globalModels.usedAutomaticallyIfThePrimaryDefaultModelHits", "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default \u2014 unset.")}</SettingsHelpTip>
+            </div>
             {/* FNXC:Settings-ThinkingLevel 2026-07-10-12:00: Global fallback model selection owns its own thinking-level companion (`fallbackThinkingLevel`). Clearing the fallback picker must clear the companion value so null-as-delete reset parity matches the per-lane model pickers. */}
             <CustomModelDropdown id="fallbackModel" label="Fallback Model" models={availableModels} value={form.fallbackProvider && form.fallbackModelId ? `${form.fallbackProvider}/${form.fallbackModelId}` : ""} onChange={(val) => {
                 if (!val) {
@@ -80,7 +90,6 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                 const selectedModel = availableModels.find((m) => m.provider === form.fallbackProvider && m.id === form.fallbackModelId);
                 return selectedModel ? Boolean(selectedModel.reasoning) : true;
             })()} thinkingLevel={form.fallbackThinkingLevel || ""} onThinkingLevelChange={(level) => setForm((f) => ({ ...f, fallbackThinkingLevel: (level as ThinkingLevel) || undefined }))} defaultThinkingLevel={form.defaultThinkingLevel}/>
-            <small>{t("settings.globalModels.usedAutomaticallyIfThePrimaryDefaultModelHits", "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default \u2014 unset.")}</small>
           </div>
         </>)}
       {(() => {
@@ -121,7 +130,11 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                 const value = provider && model ? `${provider}/${model}` : "";
                 const thinkingValue = getLaneThinkingValue(lane);
                 return (<div className="form-group" key={`global-${lane.laneId}`}>
-                <label htmlFor={`global-${lane.laneId}-model`}>{lane.label}</label>
+                {/* FNXC:SettingsHelp 2026-07-15-21:40: A global lane row is plain label + picker + one help string (unlike the project lanes, which add an inherited/override badge and a resolved fallback chain), so its helper text hangs off the shared "?" like every other row in this section. */}
+                <div className="settings-field-label-row">
+                  <label htmlFor={`global-${lane.laneId}-model`}>{lane.label}</label>
+                  <SettingsHelpTip settingKey={`global-${lane.laneId}-model`}>{lane.helperText}</SettingsHelpTip>
+                </div>
                 <CustomModelDropdown id={`global-${lane.laneId}-model`} label={lane.label} models={availableModels} value={value} onChange={(selected) => {
                         if (!selected) {
                             setForm((f) => ({
@@ -139,7 +152,6 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                             [lane.globalModelKey]: selected.slice(slashIdx + 1),
                         }));
                     }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={Boolean(lane.globalThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
-                <small>{lane.helperText}</small>
               </div>);
             })}
         </>)}
@@ -165,11 +177,16 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
       {/*
       FNXC:SettingsStyling 2026-07-15-17:35:
       Left on hand-rolled markup deliberately: its help text embeds a <code> element for the `opencode models opencode --refresh` command, and the primitives take help as a pre-translated string. Migrating it would mean either dropping the code formatting or splicing the command in as a bare literal, so the row keeps its markup until the descriptor can carry rich help.
+
+      FNXC:SettingsHelp 2026-07-15-21:40:
+      The row still reads like its migrated neighbor above: `SettingsHelpTip` takes `ReactNode`, so the `<code>`-bearing copy moves behind the same "?" verbatim, without the flattening that kept it inline in the first place.
       */}
       <div className="form-group">
-        <label htmlFor="opencodeGoModelSync" className="checkbox-label">
-          <input id="opencodeGoModelSync" type="checkbox" checked={form.opencodeGoModelSync !== false} onChange={(e) => setForm((f) => ({ ...f, opencodeGoModelSync: e.target.checked }))}/>{t("settings.globalModels.syncOpencodeGoModelListAtStartup", " Sync opencode-go model list at startup ")}</label>
-        <small>{t("settings.globalModels.whenEnabledStartupRefreshesModelsThroughTheLocal", " When enabled, startup refreshes models through the local ")}<code>opencode models opencode --refresh</code>{t("settings.globalModels.flowAndPublishesThemUnderTheOpencodeGo", " flow and publishes them under the opencode-go provider in model pickers. Default: enabled. ")}</small>
+        <div className="settings-field-label-row">
+          <label htmlFor="opencodeGoModelSync" className="checkbox-label">
+            <input id="opencodeGoModelSync" type="checkbox" checked={form.opencodeGoModelSync !== false} onChange={(e) => setForm((f) => ({ ...f, opencodeGoModelSync: e.target.checked }))}/>{t("settings.globalModels.syncOpencodeGoModelListAtStartup", " Sync opencode-go model list at startup ")}</label>
+          <SettingsHelpTip settingKey="opencodeGoModelSync">{t("settings.globalModels.whenEnabledStartupRefreshesModelsThroughTheLocal", " When enabled, startup refreshes models through the local ")}<code>opencode models opencode --refresh</code>{t("settings.globalModels.flowAndPublishesThemUnderTheOpencodeGo", " flow and publishes them under the opencode-go provider in model pickers. Default: enabled. ")}</SettingsHelpTip>
+        </div>
       </div>
       <details>
         <summary>{t("settings.globalModels.openRouterAdvanced", "OpenRouter advanced")}</summary>

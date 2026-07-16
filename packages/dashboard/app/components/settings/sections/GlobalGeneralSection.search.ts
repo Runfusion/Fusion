@@ -3,7 +3,10 @@
  *
  * FNXC:SettingsSearch 2026-07-15-17:35:
  * One entry per descriptor row the section renders, co-located so a setting and its index entry change in the same edit. Labels and help mirror the section's `t()` calls verbatim: the index matches on the copy operators actually read, so a paraphrase here would make search miss the words on screen.
- * The section's bespoke rows are deliberately absent — the tracking-repo select, GitLab disclosure, CliBinaryPanel, thinking-log pair, `fn` binary check, and update-check toggle are not descriptor rows, so they carry no `data-settings-key` anchor for a result to scroll to.
+ * The section's bespoke rows are deliberately absent — CliBinaryPanel, the thinking-log pair, the `fn` binary check, and the update-check toggle are not descriptor rows, so they carry no `data-settings-key` anchor for a result to scroll to.
+ *
+ * FNXC:SettingsSearch 2026-07-15-20:30:
+ * The global GitLab rows and the global tracking-repo select moved to SourceControlGlobalSection.search.ts with their controls; neither was indexed from here before (both were bespoke), so this is a move of the section's contents, not of its entries.
  */
 import type { SettingsSearchEntry } from "../search/types";
 

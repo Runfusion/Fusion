@@ -1,5 +1,6 @@
 import type { SectionBaseProps } from "./context";
 import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { useTranslation } from "react-i18next";
 export interface ResearchProjectSectionProps extends SectionBaseProps {
     researchLimitError: string | null;
@@ -16,6 +17,10 @@ The descriptor key is the dotted path `researchSettings.enabled`, not the bare `
 
 FNXC:SettingsStyling 2026-07-15-17:35:
 Two groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the Enabled Sources grid pairs an always-on locked Web Search row with a checkbox grid carrying inline per-source default hints, and the limits grid lays four numeric fields plus a shared validation error out side by side (`settings-research-limit-field`).
+
+FNXC:SettingsHelp 2026-07-15-21:40:
+Each limits field is still one control with one help string, so its "Default: N." hangs off the same "?" as the migrated toggle above (`.settings-field-label-row` + `SettingsHelpTip`) rather than printing four paragraphs under a section whose other row hides its help behind an icon.
+Two things stay inline: the shared limits validation error (a message the operator has to open a tip to find is one they will not see) and the Enabled Sources copy — the always-on Web Search note points at another section, and the per-source hints annotate a checkbox grid rather than describe one control.
 */
 export function ResearchProjectSection({ form, setForm, researchLimitError }: ResearchProjectSectionProps) {
     const { t } = useTranslation("app");
@@ -70,7 +75,10 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
       <div className="form-group">
         <div className="settings-research-limits-grid">
           <div className="settings-research-limit-field">
-            <label htmlFor="research-project-max-concurrent">{t("settings.researchProject.maxConcurrentRuns", "Max Concurrent Runs")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-project-max-concurrent">{t("settings.researchProject.maxConcurrentRuns", "Max Concurrent Runs")}</label>
+              <SettingsHelpTip settingKey="research-project-max-concurrent">{t("settings.researchProject.maxConcurrentRunsHint", "Default: 3.")}</SettingsHelpTip>
+            </div>
             <input id="research-project-max-concurrent" className="input" type="number" min={1} value={limits?.maxConcurrentRuns ?? 3} onChange={(event) => setForm((current) => ({
             ...current,
             researchSettings: {
@@ -81,10 +89,12 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
                 },
             },
         }))}/>
-            <small>{t("settings.researchProject.maxConcurrentRunsHint", "Default: 3.")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-project-max-sources">{t("settings.researchProject.maxSourcesPerRun", "Max Sources Per Run")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-project-max-sources">{t("settings.researchProject.maxSourcesPerRun", "Max Sources Per Run")}</label>
+              <SettingsHelpTip settingKey="research-project-max-sources">{t("settings.researchProject.maxSourcesPerRunHint", "Default: 20.")}</SettingsHelpTip>
+            </div>
             <input id="research-project-max-sources" className="input" type="number" min={1} value={limits?.maxSourcesPerRun ?? 20} onChange={(event) => setForm((current) => ({
             ...current,
             researchSettings: {
@@ -95,10 +105,12 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
                 },
             },
         }))}/>
-            <small>{t("settings.researchProject.maxSourcesPerRunHint", "Default: 20.")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-project-max-duration">{t("settings.researchProject.maxDurationMs", "Max Duration (ms)")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-project-max-duration">{t("settings.researchProject.maxDurationMs", "Max Duration (ms)")}</label>
+              <SettingsHelpTip settingKey="research-project-max-duration">{t("settings.researchProject.maxDurationMsHint", "Default: 300000 (5 minutes).")}</SettingsHelpTip>
+            </div>
             <input id="research-project-max-duration" className="input" type="number" min={1000} value={limits?.maxDurationMs ?? 300000} onChange={(event) => setForm((current) => ({
             ...current,
             researchSettings: {
@@ -109,10 +121,12 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
                 },
             },
         }))}/>
-            <small>{t("settings.researchProject.maxDurationMsHint", "Default: 300000 (5 minutes).")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-project-request-timeout">{t("settings.researchProject.requestTimeoutMs", "Request Timeout (ms)")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-project-request-timeout">{t("settings.researchProject.requestTimeoutMs", "Request Timeout (ms)")}</label>
+              <SettingsHelpTip settingKey="research-project-request-timeout">{t("settings.researchProject.requestTimeoutMsHint", "Default: 30000 (30 seconds).")}</SettingsHelpTip>
+            </div>
             <input id="research-project-request-timeout" className="input" type="number" min={1000} value={limits?.requestTimeoutMs ?? 30000} onChange={(event) => setForm((current) => ({
             ...current,
             researchSettings: {
@@ -123,8 +137,8 @@ export function ResearchProjectSection({ form, setForm, researchLimitError }: Re
                 },
             },
         }))}/>
-            <small>{t("settings.researchProject.requestTimeoutMsHint", "Default: 30000 (30 seconds).")}</small>
           </div>
+          {/* FNXC:SettingsHelp 2026-07-15-21:40: The validation error stays inline while the fields' help moved behind the "?" — an error the operator has to open a tip to read is an error they will not see. */}
           {researchLimitError && <small className="field-error settings-research-limits-error">{researchLimitError}</small>}
         </div>
       </div>

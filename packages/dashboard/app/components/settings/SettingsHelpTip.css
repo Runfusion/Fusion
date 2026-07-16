@@ -95,12 +95,25 @@ Hover/focus reveal is gated to real pointers. Touch browsers synthesise `:hover`
 }
 
 /*
-FNXC:SettingsHelp 2026-07-15-21:10:
-Near the right edge of a narrow viewport the bubble would run off-screen when anchored to the trigger's start edge. On mobile it anchors to the row instead and spans the available width, which is both readable and impossible to clip.
-Mirrors the dashboard mobile breakpoint (max-width: 768px), matching the rest of the settings mobile rules.
+FNXC:SettingsHelp 2026-07-15-21:55:
+On a narrow viewport the bubble anchors to the ROW, not to the trigger, and spans the row's width.
+Anchoring to the trigger fails wherever the trigger sits away from the left edge: the label line reads "Name [scope] ?", so the "?" is often near the right of a 390px screen, and a bubble starting there runs off-screen no matter how tightly `max-width` clamps it. Measured on an iPhone-sized viewport before this rule: the bubble spanned x=338→658 against a 390px screen — 268px of it unreachable.
+Neutralising `.settings-help`'s own positioning makes the row the nearest positioned ancestor, so `inset-inline: 0` resolves against the full row and the bubble simply cannot be clipped horizontally. It lands under the whole row rather than under the icon, which on a phone reads better anyway.
+The row selectors cover both idioms: `.settings-field-row` (shared primitive) and `.form-group` (rows that deliberately stay bespoke).
 */
 @media (max-width: 768px) {
+  .settings-field-row,
+  .settings-content .form-group {
+    position: relative;
+  }
+
+  .settings-help {
+    position: static;
+  }
+
   .settings-help-bubble {
-    max-width: min(320px, calc(100vw - var(--space-lg) * 2));
+    inset-inline: 0;
+    width: auto;
+    max-width: none;
   }
 }

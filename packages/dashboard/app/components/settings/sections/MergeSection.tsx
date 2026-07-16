@@ -63,9 +63,8 @@ Most of this section deliberately keeps its bespoke markup, because Merge is not
 - Every row whose help lives in a `<details className="settings-option-details">` "More details" disclosure keeps it. Merge help copy is long enough that it is collapsed by default; a descriptor `help` renders unconditionally, so migrating those rows would silently delete a progressive-disclosure affordance across the section and turn Merge into a wall of prose. That is a UX change, not a styling one.
 - `mergeIntegrationWorktree`, `mergeConflictStrategy`, `postMergeAuditMode`, `commitAuthorName`, and `commitAuthorEmail` compose help from several `t()` fragments interleaved with `<code>`/`<strong>` elements; a descriptor `help` is a single string and flattening that copy would reword operator-facing text. `mergeIntegrationWorktree` additionally renders an adjacent live warning banner the primitive has no slot for.
 - `integrationBranch` and the push remote/branch pair are custom dropdown+Custom…-escape-hatch widgets, not plain selects.
-- `githubAuthToken` and `gitlabAuthToken` are `type="password"` inputs; SettingsTextRow renders `type="text"` and would expose a stored token on screen.
 - `planApprovalMode` keeps its `data-testid="plan-approval-mode-select"`, which the primitives have no slot for and MergeSection.legacy-automerge-cleanup.test.tsx reads.
-- `testMode`, `gitlabEnabled`, `gitlabAuthTokenType`, and `gitlabAuthToken` are declared in BOTH `DEFAULT_GLOBAL_SETTINGS` and `DEFAULT_PROJECT_SETTINGS`, so their scope is ambiguous and no badge can be stamped honestly.
+- `testMode` is declared in BOTH `DEFAULT_GLOBAL_SETTINGS` and `DEFAULT_PROJECT_SETTINGS`, so its scope is ambiguous and no badge can be stamped honestly.
 - The legacy auto-merge stamp cleanup panel is a report-and-trigger card, not a setting.
 */
 export interface MergeSectionProps extends SectionBaseProps {
@@ -355,56 +354,11 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
             </details>
           </div>
         </>)}
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.merge.gitHubAuthentication", "GitHub Authentication")}</h4>
-      {/* FNXC:SettingsStyling 2026-07-15-17:35: No `help` — this row carried no help copy before the migration, and inventing one would be new operator-facing text rather than a restyle. */}
-      <SettingsSelectRow
-        descriptor={{
-          key: "githubAuthMode",
-          label: t("settings.merge.gitHubAuthMode", "GitHub auth mode"),
-          scope: "project",
-          options: [
-            { value: "gh-cli", label: t("settings.merge.gitHubCLIGhAuth", "GitHub CLI (gh auth) (default)") },
-            { value: "token", label: t("settings.merge.personalAccessToken", "Personal access token") },
-          ],
-        }}
-        value={form.githubAuthMode ?? "gh-cli"}
-        onChange={(v) => setForm((f) => ({ ...f, githubAuthMode: v as "gh-cli" | "token" }))}
-      />
-      {(form.githubAuthMode ?? "gh-cli") === "token" && (<div className="form-group">
-          <label htmlFor="githubAuthToken">{t("settings.merge.gitHubPersonalAccessToken", "GitHub personal access token")}</label>
-          <input id="githubAuthToken" type="password" className="input" value={form.githubAuthToken ?? ""} onChange={(e) => setForm((f) => ({ ...f, githubAuthToken: e.target.value || undefined }))}/>
-          <small>{t("settings.merge.githubAuthTokenHint", "No default \u2014 unset.")}</small>
-        </div>)}
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.merge.gitLabAuthentication", "GitLab Authentication")}</h4>
-      {/**
-       * FNXC:GitLabEnablement 2026-07-02-00:00:
-       * FN-7453 makes project GitLab auth controls collapsible and governed by the same project-scoped enable switch as URL settings. Disabling GitLab preserves saved tokens but blocks outbound API side effects before auth validation.
-       */}
-      <details className="settings-gitlab-disclosure" data-testid="project-gitlab-authentication-disclosure">
-        <summary>
-          <span className="settings-gitlab-disclosure__title">{t("settings.merge.gitLabAuthentication", "GitLab Authentication")}</span>
-          <label className="checkbox-label settings-gitlab-disclosure__toggle" htmlFor="mergeGitlabEnabled" onClick={(event) => event.stopPropagation()}>
-            <input id="mergeGitlabEnabled" type="checkbox" checked={form.gitlabEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, gitlabEnabled: e.target.checked }))}/>
-            {t("settings.merge.enableGitLabIntegration", "Enable GitLab integration")}
-          </label>
-        </summary>
-        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.merge.gitLabDisabledHint", "GitLab comments, close/reopen, import fetches, and refresh operations are disabled. Saved tokens remain stored for re-enable.") : t("settings.merge.gitLabAuthDetails", "Fusion uses GitLab REST API token authentication with the PRIVATE-TOKEN header. Leave the token blank to clear the project override and fall back to a configured global GitLab token or GITLAB_TOKEN where available. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
-        <div className="settings-gitlab-disclosure__body" aria-disabled={form.gitlabEnabled === false}>
-          <div className="form-group">
-            <label htmlFor="gitlabAuthTokenType">{t("settings.merge.gitLabTokenType", "GitLab token type")}</label>
-            <select id="gitlabAuthTokenType" className="select" value={form.gitlabAuthTokenType ?? "personal"} disabled={form.gitlabEnabled === false} onChange={(e) => setForm((f) => ({ ...f, gitlabAuthTokenType: e.target.value as "personal" | "project" | "group" }))}>
-              <option value="personal">{t("settings.merge.gitLabPersonalAccessToken", "Personal access token (default)")}</option>
-              <option value="project">{t("settings.merge.gitLabProjectAccessToken", "Project access token")}</option>
-              <option value="group">{t("settings.merge.gitLabGroupAccessToken", "Group access token")}</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label htmlFor="gitlabAuthToken">{t("settings.merge.gitLabAccessToken", "GitLab access token")}</label>
-            <input id="gitlabAuthToken" type="password" className="input" autoComplete="off" value={form.gitlabAuthToken ?? ""} disabled={form.gitlabEnabled === false} onChange={(e) => setForm((f) => ({ ...f, gitlabAuthToken: e.target.value || undefined }))}/>
-            <small className="settings-description">{t("settings.merge.gitLabAuthTokenHint", "Read-only GitLab operations need read_api or api. Future write actions such as comments and auto-close need api. Project and group tokens are limited to their associated resource and role membership. No default \u2014 unset.")}</small>
-          </div>
-        </div>
-      </details>
+      {/*
+        FNXC:SourceControl 2026-07-15-20:30:
+        The GitHub Authentication and GitLab Authentication blocks moved to "Source Control · Project" (SourceControlSection.tsx), joining the GitHub tracking + GitLab URL settings that were in General. Merge owns the landing strategy; how Fusion authenticates to a forge is a source-control concern that Merge only consumed.
+        This section's GitLab auth disclosure carried a SECOND `gitlabEnabled` toggle (id `mergeGitlabEnabled`) writing the same key as General's — removing it here is what resolves that duplicate, so do not reintroduce a forge auth control in Merge.
+      */}
       <div className="form-group">
         <label htmlFor="includeTaskIdInCommit" className="checkbox-label">
           <input id="includeTaskIdInCommit" type="checkbox" checked={form.includeTaskIdInCommit !== false} onChange={(e) => setForm((f) => ({ ...f, includeTaskIdInCommit: e.target.checked }))}/>{t("settings.merge.includeTaskIDInCommitScope", " Include task ID in commit scope ")}</label>

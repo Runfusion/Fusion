@@ -3,7 +3,10 @@
  *
  * FNXC:SettingsSearch 2026-07-15-17:35:
  * One entry per descriptor row the section renders, co-located so a setting and its index entry change in the same edit. Labels and help mirror the section's `t()` calls verbatim: the index matches on the copy operators actually read, so a paraphrase here would make search miss the words on screen.
- * This list is short because most of Merge is deliberately still bespoke — "More details" disclosure rows, custom branch/remote dropdowns, password inputs, and rows whose help interleaves `<code>` fragments. See the FNXC block in MergeSection.tsx for why each stayed. Those settings remain reachable through the section's own `searchableText` in SETTINGS_SECTIONS; they simply have no per-control anchor yet.
+ * This list is short because most of Merge is deliberately still bespoke — "More details" disclosure rows, custom branch/remote dropdowns, and rows whose help interleaves `<code>` fragments. See the FNXC block in MergeSection.tsx for why each stayed. Those settings remain reachable through the section's own `searchableText` in SETTINGS_SECTIONS; they simply have no per-control anchor yet.
+ *
+ * FNXC:SettingsSearch 2026-07-15-20:30:
+ * The GitHub/GitLab auth entries moved to SourceControlSection.search.ts with their controls. Merge no longer renders any forge auth row, so password inputs are no longer among this section's reasons for staying bespoke.
  */
 import type { SettingsSearchEntry } from "../search/types";
 
@@ -37,16 +40,5 @@ export const mergeSearchEntries: SettingsSearchEntry[] = [
     helpFallback:
       " When using smart-prefer-main, automatically prefer the branch side for files that main has recently modified to avoid silently discarding branch work. ",
     keywords: ["ours", "theirs", "lost work", "clobber"],
-  },
-  {
-    sectionId: "merge",
-    key: "githubAuthMode",
-    labelKey: "settings.merge.gitHubAuthMode",
-    labelFallback: "GitHub auth mode",
-    /*
-    FNXC:SettingsSearch 2026-07-15-17:35:
-    No helpKey/helpFallback: this row carries no help copy in the section either, and inventing index-only text would let search match words that appear nowhere on screen. The keywords carry the vocabulary instead.
-    */
-    keywords: ["gh cli", "personal access token", "pat", "credentials", "login"],
   },
 ];

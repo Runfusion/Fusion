@@ -710,14 +710,18 @@ describe("SettingsModal", () => {
 
     // Read-only default-render assertions are merged into one rendered
     // instance to avoid re-rendering the full modal per pure-display check.
-    it("renders default global logging fields, helper text, and tracking repo control", async () => {
+    it("renders default global logging fields and helper text", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
       // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
       expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
-      // Migrated to SettingsToggleRow: help renders in the primitive's help band, not a <small>.
-      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-field-row-help")).toBeTruthy();
+      /*
+      FNXC:SettingsHelp 2026-07-15-22:10:
+      Migrated rows render help through the shared primitive rather than a bespoke `<small>`. The copy now lives in the help tip's bubble (`.settings-help-bubble`) instead of an inline `.settings-field-row-help` paragraph — deferred visually, but still in the DOM and the accessibility tree, which is why `getByText` still resolves it.
+      The assertion's intent is unchanged: this row's help must come from the primitive, not hand-rolled markup.
+      */
+      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-help-bubble")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
@@ -725,15 +729,34 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).not.toBeChecked();
 
-      // Helper descriptions render as help text (not .settings-field-help): migrated rows use the
-      // primitive's help band, while the still-bespoke thinking-log group keeps its <small>.
+      // Migrated rows source help from the primitive (now its help tip); the still-bespoke
+      // thinking-log group, whose one help string covers two checkboxes, keeps its <small>.
       expect(document.querySelector(".settings-field-help")).toBeNull();
       const toolOutputHelper = screen.getByText(/When disabled, tool rows are still logged but detailed tool payloads are omitted/i);
-      expect(toolOutputHelper.closest(".settings-field-row-help")).toBeTruthy();
+      expect(toolOutputHelper.closest(".settings-help-bubble")).toBeTruthy();
       const thinkingHelper = screen.getByText(/Leave both thinking toggles off to keep the original default behavior/i);
       expect(thinkingHelper.closest("small")).toBeTruthy();
+    });
 
-      // Global default tracking repo control + inheritance hint render.
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    The tracking-repo control and the GitLab disclosure moved to "Source Control · Global". Asserting they are GONE from here (not just present there) is the half that catches a partial move: a section left rendering a second copy of a dual-scope control is exactly the duplicate-`gitlabEnabled` bug this split removed, and it would leave every positive assertion green.
+    */
+    it("no longer renders the moved source-control controls", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(screen.queryByRole("combobox", { name: "Global default tracking repo" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("global-gitlab-configuration-disclosure")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Enable GitLab integration")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Global GitLab instance URL")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Global GitLab access token")).not.toBeInTheDocument();
+    });
+
+    it("renders the moved global tracking repo control and its inheritance hint in Source Control · Global", async () => {
+      renderModal({ initialSection: "source-control-global" });
+      await waitForSettingsModalReady();
+
       expect(screen.getByRole("combobox", { name: "Global default tracking repo" })).toBeInTheDocument();
       expect(screen.getByText(/Projects inherit this value when they do not set a project default tracking repo/i)).toBeInTheDocument();
     });
@@ -853,7 +876,7 @@ describe("SettingsModal", () => {
       mockFetchProjects.mockResolvedValueOnce([{ id: "p-1", name: "Alpha" }]);
       mockFetchGitRemotes.mockResolvedValueOnce([{ name: "origin", owner: "octo", repo: "global-default", url: "https://github.com/octo/global-default.git" }]);
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       await waitFor(() => {
@@ -877,7 +900,7 @@ describe("SettingsModal", () => {
     });
 
     it("saves GitLab URL configuration via global settings payload only", async () => {
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       expect(screen.getByLabelText("Global GitLab instance URL")).toHaveAttribute("placeholder", "https://gitlab.com");
@@ -908,7 +931,7 @@ describe("SettingsModal", () => {
         project: { gitlabEnabled: true },
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
@@ -927,7 +950,7 @@ describe("SettingsModal", () => {
         project: { gitlabEnabled: true },
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
@@ -962,7 +985,7 @@ describe("SettingsModal", () => {
         project: {},
       });
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
@@ -980,7 +1003,7 @@ describe("SettingsModal", () => {
     it("shows global tracking repo error hint and keeps custom entry when lookups fail", async () => {
       mockFetchProjects.mockRejectedValueOnce(new Error("no projects"));
 
-      renderModal({ initialSection: "global-general" });
+      renderModal({ initialSection: "source-control-global" });
       await waitForSettingsModalReady();
 
       expect(await screen.findByText(/Could not load project list/i)).toBeInTheDocument();
@@ -1241,8 +1264,8 @@ describe("SettingsModal", () => {
       expect(payload.chatRoomSummaryMaxChars).toBe(900);
     });
 
-    it("renders and saves GitHub tracking controls in the General section", async () => {
-      renderModal({ initialSection: "general" });
+    it("renders and saves GitHub tracking controls in the Source Control section", async () => {
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(screen.getByRole("heading", { name: "GitHub Tracking" })).toBeInTheDocument();
@@ -1271,7 +1294,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders and saves GitLab URL configuration as project settings", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
@@ -1319,7 +1342,7 @@ describe("SettingsModal", () => {
         },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
@@ -1348,7 +1371,7 @@ describe("SettingsModal", () => {
         },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab instance URL"));
@@ -1366,7 +1389,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders and saves imported GitHub issue tracking linking as a project setting", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const importLinkToggle = screen.getByLabelText(
@@ -1401,7 +1424,7 @@ describe("SettingsModal", () => {
         project: { githubLinkImportedIssuesToTracking: true },
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const importLinkToggle = screen.getByLabelText(
@@ -1431,7 +1454,7 @@ describe("SettingsModal", () => {
         githubTrackingDefaultRepo: "octo/existing",
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const modeSelect = screen.getByLabelText("Default tracking mode for new tasks") as HTMLSelectElement;
@@ -1454,7 +1477,7 @@ describe("SettingsModal", () => {
     });
 
     it("renders github dedup toggle as checked when project value is unset", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1469,7 +1492,7 @@ describe("SettingsModal", () => {
         githubTrackingDedupEnabled: false,
       });
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1479,7 +1502,7 @@ describe("SettingsModal", () => {
     });
 
     it("saves github dedup toggle changes", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const dedupToggle = screen.getByLabelText(
@@ -1538,7 +1561,7 @@ describe("SettingsModal", () => {
         { name: "origin", owner: "octo", repo: "repo", url: "https://github.com/octo/repo.git" },
       ]);
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       const repoSelect = screen.getByRole("combobox", { name: "Project default tracking repo" }) as HTMLSelectElement;
@@ -1558,7 +1581,7 @@ describe("SettingsModal", () => {
     it("shows project tracking repo error hint and keeps custom entry when remotes fail", async () => {
       mockFetchGitRemotes.mockRejectedValueOnce(new Error("remotes failed"));
 
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(await screen.findByText(/Could not load detected remotes/i)).toBeInTheDocument();
@@ -1568,7 +1591,7 @@ describe("SettingsModal", () => {
     });
 
     it("always shows GitHub tracking summarization helper copy", async () => {
-      renderModal({ initialSection: "general" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       expect(
@@ -1701,8 +1724,13 @@ describe("SettingsModal", () => {
       const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.autoMerge).toBeNull();
       expect(payload.mergeStrategy).toBeNull();
-      expect(payload.gitlabAuthToken).toBeNull();
-      // Not part of "merge" — owned by "general" instead; must not leak in.
+      /*
+      FNXC:SourceControl 2026-07-15-20:30:
+      Merge's reset no longer touches ANY forge key — they all moved to "source-control". This used to assert only that `gitlabEnabled` stayed out while `gitlabAuthToken` was reset from here, which was the registry arbitrating a key two sections rendered.
+      */
+      expect(payload).not.toHaveProperty("gitlabAuthToken");
+      expect(payload).not.toHaveProperty("gitlabAuthTokenType");
+      expect(payload).not.toHaveProperty("githubAuthMode");
       expect(payload).not.toHaveProperty("gitlabEnabled");
       expect(payload).not.toHaveProperty("taskPrefix");
       expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();

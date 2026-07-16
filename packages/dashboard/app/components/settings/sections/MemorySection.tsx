@@ -5,6 +5,7 @@ import { FileEditor } from "../../FileEditor";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 import { LoadingSpinner } from "../../LoadingSpinner";
 const MEMORY_FILE_OPTION_LABEL_MAX_CHARS = 72;
@@ -193,6 +194,10 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
               {dreamRunning ? (<>
                   <Loader2 size={14} className="animate-spin"/>{t("settings.memory.dreaming", " Dreaming\u2026 ")}</>) : (t("settings.memory.dreamNow", "Dream Now"))}
             </button>
+            {/*
+            FNXC:SettingsHelp 2026-07-15-21:40:
+            Stays inline (same for "Compact Selected File" below): the affordance is a BUTTON, not a labelled control, so there is no label line for a tip to sit on. Hiding a one-shot action's description behind a "?" beside a button would hide what the button does.
+            */}
             <small>{t("settings.memory.manuallyTriggerDreamProcessingNow", "Manually trigger dream processing now.")}</small>
           </div>
         </>)}
@@ -203,9 +208,15 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
       */}
       <div className="memory-retrieval-test">
         <div className="form-group">
-          <label htmlFor="memoryRetrievalQuery">{t("settings.memory.testRetrieval", "Test Retrieval")}</label>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          The tester is not a settings key (see the note above), but its help still hangs off the shared "?" so this section does not mix a help icon and a paragraph in adjacent rows. `settingKey` reuses the input's id — the tip only needs a stable handle for its bubble id, not a real settings key.
+          */}
+          <div className="settings-field-label-row">
+            <label htmlFor="memoryRetrievalQuery">{t("settings.memory.testRetrieval", "Test Retrieval")}</label>
+            <SettingsHelpTip settingKey="memoryRetrievalQuery">{t("settings.memory.runsTheSameQmdBackedMemorySearchPath", "Runs the same qmd-backed memory_search path agents use.")}</SettingsHelpTip>
+          </div>
           <input id="memoryRetrievalQuery" type="text" value={memoryTestQuery} onChange={(e) => setMemoryTestQuery(e.target.value)} placeholder={t("settings.memory.searchMemoryWithQmd", "Search memory with qmd")}/>
-          <small>{t("settings.memory.runsTheSameQmdBackedMemorySearchPath", "Runs the same qmd-backed memory_search path agents use.")}</small>
         </div>
         <div className="form-group">
           <button type="button" className="btn btn-secondary btn-sm" onClick={onTestMemoryRetrieval} disabled={memoryTestLoading}>
@@ -242,6 +253,10 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
                   {formatMemoryFileOptionLabel(file)}
                 </option>))}
             </select>
+            {/*
+            FNXC:SettingsHelp 2026-07-15-21:40:
+            Stays inline: in the dirty branch this copy is the reason the select is DISABLED, not help. An operator who finds the picker greyed out must be told why without hunting for a "?" — so the whole `<small>` stays visible rather than splitting one string across two affordances by state.
+            */}
             <small>
               {memoryDirty
                 ? "Save or discard the current edits before switching files."
@@ -257,6 +272,10 @@ export function MemorySection({ form, setForm, memory }: MemorySectionProps) {
             </div>)}
           <div className="form-group memory-editor-form-group">
             <label>{selectedMemoryFile?.label || "Memory Editor"}</label>
+            {/*
+            FNXC:SettingsHelp 2026-07-15-21:40:
+            Stays inline: this describes what the SELECTED FILE holds and changes with the picker above, so it reads as content orientation for the editor pane, not as help for a control. It also labels a document editor rather than a settings control, which is why it never had an id to hang a tip's key off.
+            */}
             <small>
               {selectedMemoryFile?.layer === "long-term" && "Curated durable decisions, conventions, constraints, and pitfalls promoted from dreams."}
               {selectedMemoryFile?.layer === "daily" && "Raw daily observations, open loops, and running context for dream processing."}

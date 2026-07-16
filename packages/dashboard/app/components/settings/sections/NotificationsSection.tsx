@@ -3,6 +3,7 @@ import type { NtfyNotificationEvent } from "@fusion/core";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 /** Default event set used when a provider has no explicit `*Events` override. */
 export const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
@@ -121,18 +122,28 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
           <strong>{t("settings.notifications.ntfy", "ntfy")}</strong>
           <label htmlFor="ntfyEnabled" className="checkbox-label">
             <input id="ntfyEnabled" type="checkbox" checked={form.ntfyEnabled || false} onChange={(e) => setForm((f) => ({ ...f, ntfyEnabled: e.target.checked }))}/>{t("settings.notifications.enable", " Enable ")}</label>
-          <small>{t("settings.notifications.ntfyEnabledHint", "Default: disabled.")}</small>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          The tip replaces the `<small>` in place rather than wrapping label+tip in a `.settings-field-label-row`: `.notification-provider-header` is ALREADY that line — a flex/align-center row — so it needs no second one, and re-parenting the label would change what its `space-between` distributes. The invariant that matters still holds: the trigger is a sibling of the `<label>`, never a button nested inside it.
+          */}
+          <SettingsHelpTip settingKey="ntfyEnabled">{t("settings.notifications.ntfyEnabledHint", "Default: disabled.")}</SettingsHelpTip>
         </div>
         {form.ntfyEnabled && (<div className="notification-provider-body">
             <div className="form-group">
-              <label htmlFor="ntfyTopic">{t("settings.notifications.ntfyTopic", "ntfy Topic")}</label>
+              {/*
+              FNXC:SettingsHelp 2026-07-15-21:40:
+              This row cannot move onto the shared primitive (its `help` takes a pre-translated STRING, and this copy carries an ntfy.sh anchor a string would silently drop \u2014 see the note above), but it can still use the same affordance: SettingsHelpTip takes ReactNode, so the link and the `t()` fragments go behind the "?" verbatim.
+              */}
+              <div className="settings-field-label-row">
+                <label htmlFor="ntfyTopic">{t("settings.notifications.ntfyTopic", "ntfy Topic")}</label>
+                <SettingsHelpTip settingKey="ntfyTopic">{t("settings.notifications.yourNtfyShTopicName164Alphanumeric", " Your ntfy.sh topic name (1\u201364 alphanumeric/hyphen/underscore characters). No default \u2014 unset.")}{" "}
+                  <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer" className="settings-inline-link">{t("settings.notifications.learnMoreAboutNtfySh", " Learn more about ntfy.sh ")}</a>
+                </SettingsHelpTip>
+              </div>
               <input id="ntfyTopic" type="text" placeholder={t("settings.notifications.myTopicName", "my-topic-name")} value={form.ntfyTopic || ""} onChange={(e) => {
                 const val = e.target.value;
                 setForm((f) => ({ ...f, ntfyTopic: val || undefined }));
             }}/>
-              <small>{t("settings.notifications.yourNtfyShTopicName164Alphanumeric", " Your ntfy.sh topic name (1\u201364 alphanumeric/hyphen/underscore characters). No default \u2014 unset.")}{" "}
-                <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer" className="settings-inline-link">{t("settings.notifications.learnMoreAboutNtfySh", " Learn more about ntfy.sh ")}</a>
-              </small>
               {form.ntfyTopic && !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic) && (<small className="field-error">{t("settings.notifications.topicMustBe164AlphanumericHyphenOr", " Topic must be 1\u201364 alphanumeric, hyphen, or underscore characters ")}</small>)}
               <details className="ntfy-advanced-disclosure">
                 <summary>{t("settings.notifications.advanced", "Advanced")}</summary>
@@ -169,6 +180,10 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
                 </div>
               </details>
             </div>
+            {/*
+            FNXC:SettingsHelp 2026-07-15-21:40:
+            The per-event `<small>`s stay inline. They are OPTION descriptions inside one multi-select control — the thing an operator compares while ticking boxes — not help for 14 separate settings. Putting a "?" on every option would replace one scannable list with fourteen closed bubbles, which is the opposite of what moving help off the row is for.
+            */}
             <div className="form-group">
               <label>{t("settings.notifications.notifyOnEvents", "Notify on events")}</label>
               <div className="ntfy-events-list">
@@ -248,7 +263,8 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
           <strong>{t("settings.notifications.webhook", "Webhook")}</strong>
           <label htmlFor="webhookEnabled" className="checkbox-label">
             <input id="webhookEnabled" type="checkbox" checked={form.webhookEnabled || false} onChange={(e) => setForm((f) => ({ ...f, webhookEnabled: e.target.checked }))}/>{t("settings.notifications.webhookNotifications", " Webhook notifications ")}</label>
-          <small>{t("settings.notifications.webhookEnabledHint", "Default: disabled.")}</small>
+          {/* FNXC:SettingsHelp 2026-07-15-21:40: In-place tip for the same reason as the ntfy card header above. */}
+          <SettingsHelpTip settingKey="webhookEnabled">{t("settings.notifications.webhookEnabledHint", "Default: disabled.")}</SettingsHelpTip>
         </div>
         {form.webhookEnabled && (<div className="notification-provider-body">
             <SettingsTextRow

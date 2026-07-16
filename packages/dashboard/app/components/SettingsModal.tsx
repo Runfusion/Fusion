@@ -51,6 +51,8 @@ import { NodeRoutingSection } from "./settings/sections/NodeRoutingSection";
 import { WorktreesSection } from "./settings/sections/WorktreesSection";
 import { CommandsSection } from "./settings/sections/CommandsSection";
 import { MergeSection } from "./settings/sections/MergeSection";
+import { SourceControlSection } from "./settings/sections/SourceControlSection";
+import { SourceControlGlobalSection } from "./settings/sections/SourceControlGlobalSection";
 import { AgentPermissionsSection } from "./settings/sections/AgentPermissionsSection";
 import { MemorySection } from "./settings/sections/MemorySection";
 import { ResearchProjectSection } from "./settings/sections/ResearchProjectSection";
@@ -439,7 +441,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "task popup", "task popups", "board list popups", "popup view attachment", "open tasks as popups", "quick chat"] },
   { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", labelKey: "settings.nav.keyboardShortcuts", scope: "global", searchableText: ["keyboard shortcuts", "hotkeys", "quick chat shortcut", "terminal shortcut", "open files", "open settings", "command center", "new task shortcut", "record shortcut"] },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global", searchableText: ["ntfy", "webhook", "events", "failure notifications", "sticky", "toast"] },
-  { id: "global-general", label: "General · Global", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs", "GitLab instance URL", "global tracking repo"] },
+  { id: "global-general", label: "General · Global", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs"] },
 
   { id: "__project_header", label: "Project", labelKey: "settings.nav.projectHeader", scope: undefined, isGroupHeader: true },
   /*
@@ -447,7 +449,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   Import auto-translation lives in Project General beside the other import-scoped GitHub settings, but operators look for it by what it DOES ("translate", "language", "auto translate issues"), not by the section it happens to live in.
   FNXC:SettingsSearch 2026-07-15-19:10: the per-setting index now matches these controls on their own label and help text, so the terms that merely restate the copy are no longer load-bearing. The list is kept for the genuine vocabulary gaps — "localize", "localization", "foreign language issues" — which appear nowhere in the copy, and because unmigrated siblings in this section still rely on section-level keywords.
   */
-  { id: "general", label: "General · Project", labelKey: "settings.nav.projectGeneral", scope: "project", searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "GitHub tracking", "GitLab integration", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization"], searchableKeys: ["settings.general.autoTranslateImportedIssues", "settings.general.autoTranslateImportedIssuesHelp", "settings.general.translationTargetLanguage", "settings.general.translationTargetLanguageHelp", "settings.general.followDashboardLanguage"] },
+  { id: "general", label: "General · Project", labelKey: "settings.nav.projectGeneral", scope: "project", searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization"], searchableKeys: ["settings.general.autoTranslateImportedIssues", "settings.general.autoTranslateImportedIssuesHelp", "settings.general.translationTargetLanguage", "settings.general.translationTargetLanguageHelp", "settings.general.followDashboardLanguage"] },
   { id: "commands", label: "Commands & Scripts", labelKey: "settings.nav.commands", scope: "project", searchableText: ["test command", "build command", "verification command", "workflow scripts", "commands"] },
   { id: "worktrees", label: "Worktrees", labelKey: "settings.nav.worktrees", scope: "project", searchableText: ["worktree directory", "copy files", "recycle worktrees", "branch naming", "sibling branch rename"] },
   { id: "merge", label: "Merge", labelKey: "settings.nav.merge", scope: "project", searchableText: ["auto merge", "AI merge", "merge strategy", "plan approval", "direct merge", "integration branch", "push after merge"] },
@@ -569,6 +571,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "scheduled-evals", label: "Scheduled Evals", labelKey: "settings.nav.scheduledEvals", scope: "project", searchableText: ["scheduled evals", "evaluation schedule", "eval runs", "quality jobs"] },
 
   { id: "__integrations_header", label: "Integrations", labelKey: "settings.nav.integrationsHeader", scope: undefined, isGroupHeader: true },
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  The Global/Project source-control pair sits under Integrations, not Project: these settings configure how Fusion talks to GitHub/GitLab, which is the same kind of thing as the MCP and provider entries beside them.
+  The two are adjacent and ordered global-then-project to match the inheritance they model — the global entry holds the fallbacks the project entry overrides — mirroring the MCP Servers pair directly below.
+  The GitLab/GitHub keywords below were curated on the `general` and `merge` nav entries before their controls moved here; a keyword left behind would send an operator searching "gitlab token" to a section that no longer renders one. The translate keywords deliberately did NOT move: `githubImportAutoTranslate`/`importTranslateTargetLocale` are Import Tasks panel settings and stay in General.
+  */
+  { id: "source-control-global", label: "Source Control · Global", labelKey: "settings.nav.sourceControlGlobal", scope: "global", searchableText: ["GitLab instance URL", "global tracking repo", "GitLab", "GitHub", "global GitLab token", "GitLab fallback", "source control", "forge"] },
+  { id: "source-control", label: "Source Control · Project", labelKey: "settings.nav.sourceControl", scope: "project", searchableText: ["GitHub tracking", "GitLab integration", "GitHub auth mode", "GitLab access token", "GitHub personal access token", "tracking repo", "source control", "forge", "gh cli", "issue tracking"] },
   { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
   { id: "global-mcp", label: "MCP Servers · Global", labelKey: "settings.nav.globalMcp", scope: "global", searchableText: ["global MCP servers", "shared MCP", "user MCP", "tool servers"] },
   { id: "mcp", label: "MCP Servers · Project", labelKey: "settings.nav.mcp", scope: "project", searchableText: ["project MCP servers", "workspace MCP", "project tool servers", "mcp config"] },
@@ -2040,7 +2050,8 @@ export function SettingsModal({
   }, [activeSection, projectId]);
 
   useEffect(() => {
-    if (activeSection !== "general") {
+    // FNXC:SourceControl 2026-07-15-20:30: The tracking-repo select moved to the project source-control section; this loader must follow the control it populates or the select renders with no options.
+    if (activeSection !== "source-control") {
       return;
     }
 
@@ -2074,7 +2085,8 @@ export function SettingsModal({
   }, [activeSection, projectId]);
 
   useEffect(() => {
-    if (activeSection !== "global-general" || globalTrackingRepoLoadedRef.current) {
+    // FNXC:SourceControl 2026-07-15-20:30: Follows the global tracking-repo select into the global source-control section.
+    if (activeSection !== "source-control-global" || globalTrackingRepoLoadedRef.current) {
       return;
     }
 
@@ -3221,9 +3233,12 @@ export function SettingsModal({
       }
       /*
       FNXC:GitLabEnablement 2026-07-02-00:00:
-      The Global General section must edit raw global GitLab settings, not the merged project-effective form. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
+      The global source-control section must edit raw global GitLab settings, not the merged project-effective form. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
+
+      FNXC:SourceControl 2026-07-15-20:30:
+      Section id moved with the controls (was "global-general"). This must name whichever section renders the global GitLab rows: a stale id here would send the merged, project-effective values to the global patch — the exact overwrite the scoped-state indirection exists to prevent.
       */
-      const gitlabFormForSave = activeSection === "global-general" && globalGitlabSettings ? globalGitlabSettings : form;
+      const gitlabFormForSave = activeSection === "source-control-global" && globalGitlabSettings ? globalGitlabSettings : form;
       const payload = {
         ...form,
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
@@ -3264,7 +3279,8 @@ export function SettingsModal({
         experimentalFeatures: normalizeExperimentalFeaturesForSave(form.experimentalFeatures),
       };
 
-      if (activeSection === "general") {
+      // FNXC:SourceControl 2026-07-15-20:30: Both GitLab URL-cache refreshes follow their editing sections ("general"/"global-general" before the move).
+      if (activeSection === "source-control") {
         resolveGitlabConfig({
           project: {
             gitlabInstanceUrl: payload.gitlabInstanceUrl,
@@ -3272,7 +3288,7 @@ export function SettingsModal({
           },
         });
       }
-      if (activeSection === "global-general") {
+      if (activeSection === "source-control-global") {
         resolveGitlabConfig({
           global: {
             gitlabInstanceUrl: payload.gitlabInstanceUrl,
@@ -3603,15 +3619,22 @@ export function SettingsModal({
             addToast={addToast}
             prefixError={prefixError}
             setPrefixError={setPrefixError}
-            projectTrackingRepoOptions={projectTrackingRepoOptions}
-            projectTrackingRepoLoading={projectTrackingRepoLoading}
-            projectTrackingRepoError={projectTrackingRepoError}
             onQuickChatButtonModeChange={onQuickChatButtonModeChange}
           />
         );
-      case "global-general":
+      case "source-control":
         return (
-          <GlobalGeneralSection
+          <SourceControlSection
+            form={form}
+            setForm={setForm}
+            projectTrackingRepoOptions={projectTrackingRepoOptions}
+            projectTrackingRepoLoading={projectTrackingRepoLoading}
+            projectTrackingRepoError={projectTrackingRepoError}
+          />
+        );
+      case "source-control-global":
+        return (
+          <SourceControlGlobalSection
             form={form}
             setForm={setForm}
             globalSettings={globalGitlabSettings}
@@ -3626,6 +3649,13 @@ export function SettingsModal({
             globalTrackingRepoOptions={globalTrackingRepoOptions}
             globalTrackingRepoLoading={globalTrackingRepoLoading}
             globalTrackingRepoError={globalTrackingRepoError}
+          />
+        );
+      case "global-general":
+        return (
+          <GlobalGeneralSection
+            form={form}
+            setForm={setForm}
           />
         );
       case "keyboard-shortcuts":

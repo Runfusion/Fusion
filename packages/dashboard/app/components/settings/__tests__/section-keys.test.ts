@@ -24,8 +24,14 @@ const EXPECTED_KEY_OWNING_SECTIONS: Record<string, "global" | "project"> = {
   "node-sync": "global",
   "research-global": "global",
   remote: "global",
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  The Source Control pair owns every GitHub/GitLab key, at one scope each. The two ids look like duplicates but are not: the six dual-scope keys (gitlab* plus githubTrackingDefaultRepo) exist in both DEFAULT_GLOBAL_SETTINGS and DEFAULT_PROJECT_SETTINGS, and the disjointness guard below is per-scope precisely so a global fallback and its project override can coexist.
+  */
+  "source-control-global": "global",
   // project sections (new for FN-7506)
   general: "project",
+  "source-control": "project",
   commands: "project",
   worktrees: "project",
   scheduling: "project",
@@ -129,10 +135,6 @@ describe("settings section-keys registry", () => {
         "commitAuthorEnabled",
         "commitAuthorName",
         "directMergeCommitStrategy",
-        "githubAuthMode",
-        "githubAuthToken",
-        "gitlabAuthToken",
-        "gitlabAuthTokenType",
         "includeTaskIdInCommit",
         "integrationBranch",
         "maxAutoMergeRetries",
@@ -150,8 +152,70 @@ describe("settings section-keys registry", () => {
         "testMode",
       ]),
     );
-    // gitlabEnabled's enable+URL fields are owned by "general" instead, not duplicated here.
-    expect(entry.keys).not.toContain("gitlabEnabled");
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    Merge owns no forge key at all now — auth mode/token and every gitlab* key moved to "source-control" with their controls. Asserting the whole GitHub/GitLab family is absent (not just `gitlabEnabled`) is what pins the consolidation: a key drifting back here would mean a second section is writing it again, which is the duplicate this split removed.
+    */
+    for (const forgeKey of [
+      "githubAuthMode",
+      "githubAuthToken",
+      "gitlabAuthToken",
+      "gitlabAuthTokenType",
+      "gitlabEnabled",
+      "gitlabInstanceUrl",
+      "gitlabApiBaseUrl",
+    ]) {
+      expect(entry.keys).not.toContain(forgeKey);
+    }
+  });
+
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  Pins the consolidation itself rather than a section's contents: every project-scoped GitHub/GitLab key is owned by "source-control" and by nothing else. The generic disjointness test above only proves no key has two owners at a scope; it would stay green if a key were dropped from the registry entirely, which is exactly what a careless move would do.
+  */
+  it("source-control owns every project-scoped GitHub/GitLab key, and general no longer does", () => {
+    const entry = getSectionKeyEntry("source-control")!;
+    expect(entry.scope).toBe("project");
+    expect(new Set(entry.keys)).toEqual(
+      new Set([
+        "githubAuthMode",
+        "githubAuthToken",
+        "githubLinkImportedIssuesToTracking",
+        "githubTrackingDedupEnabled",
+        "githubTrackingDefaultRepo",
+        "githubTrackingEnabledByDefault",
+        "gitlabApiBaseUrl",
+        "gitlabAuthToken",
+        "gitlabAuthTokenType",
+        "gitlabEnabled",
+        "gitlabInstanceUrl",
+      ]),
+    );
+
+    const generalKeys = getSectionKeyEntry("general")!.keys;
+    for (const forgeKey of entry.keys) {
+      expect(generalKeys).not.toContain(forgeKey);
+    }
+  });
+
+  it("source-control-global owns the global GitLab fallbacks and the global tracking repo", () => {
+    const entry = getSectionKeyEntry("source-control-global")!;
+    expect(entry.scope).toBe("global");
+    expect(new Set(entry.keys)).toEqual(
+      new Set([
+        "githubTrackingDefaultRepo",
+        "gitlabEnabled",
+        "gitlabInstanceUrl",
+        "gitlabApiBaseUrl",
+        "gitlabAuthToken",
+        "gitlabAuthTokenType",
+      ]),
+    );
+
+    const globalGeneralKeys = getSectionKeyEntry("global-general")!.keys;
+    for (const forgeKey of entry.keys) {
+      expect(globalGeneralKeys).not.toContain(forgeKey);
+    }
   });
 
   it("a representative global section (appearance) maps to its expected owned keys", () => {

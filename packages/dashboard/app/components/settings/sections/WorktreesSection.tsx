@@ -5,6 +5,7 @@ import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps, SettingsFormState } from "./context";
 export interface WorktreesSectionProps extends SectionBaseProps {
     gitRemotes: GitRemoteDetailed[];
@@ -30,6 +31,10 @@ Four groups deliberately keep their bespoke markup because they are not plain la
 - `worktreesDir` pairs its input with a Browse button and swaps in rich `<code>`-bearing help.
 - `executorAllowSiblingBranchRename` and `worktreeRebaseRemote` compose their help from several `t()` fragments interleaved with `<code>` elements; a descriptor `help` is a single string, and flattening that copy would reword operator-facing text.
 - The whole worktrunk block edits one nested `worktrunk` object (not a top-level settings key), carries `<code>`-bearing help, cross-field disabled logic, and an install affordance.
+
+FNXC:SettingsHelp 2026-07-15-21:40:
+Those bespoke rows still hang their help off the same "?" as the migrated ones: each one's `<small>` moved into a `SettingsHelpTip` beside its label (`.settings-field-label-row`), so the section reads as one idiom instead of "rows with a help icon" next to "rows with a paragraph". The tip takes `ReactNode`, so the `<code>`-bearing copy above moves verbatim.
+The worktrunk install affordance keeps its inline `<small>`s: install state, the installed path/version, and the "install the binary below to enable this" precondition are live status and operator next-steps, not a description of what a control does — deferring them behind a "?" would hide the reason a control is disabled.
 */
 export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, worktrunkInstallVerified, onOpenWorktreesDirPicker, onWorktreeCopyFileChange, onRemoveWorktreeCopyFile, onAddWorktreeCopyFile, onOpenWorktreeCopyFilePicker, onOpenApprovals, }: WorktreesSectionProps) {
     const { t } = useTranslation("app");
@@ -81,7 +86,11 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         onChange={(v) => setForm((f) => ({ ...f, showWorktreeGrouping: v === true }))}
       />
       <div className="form-group">
-        <label>{t("settings.worktrees.filesToCopyIntoNewWorktrees", "Files to copy into new worktrees")}</label>
+        {/* FNXC:SettingsHelp 2026-07-15-21:40: The allowlist is a repeating row editor, but it is still one settings key (`worktreeCopyFiles`), so its help hangs off the group's own label rather than any single path input. */}
+        <div className="settings-field-label-row">
+          <label>{t("settings.worktrees.filesToCopyIntoNewWorktrees", "Files to copy into new worktrees")}</label>
+          <SettingsHelpTip settingKey="worktreeCopyFiles">{t("settings.worktrees.copyFilesHelp", "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).")}</SettingsHelpTip>
+        </div>
         {/*
         FNXC:WorktreeCopyFiles 2026-06-24-00:00:
         Users need a visible, editable allowlist for repository files such as `.env` that Fusion copies into freshly prepared task worktrees. The UI preserves blank rows while editing, but save normalization trims, removes blanks, and de-duplicates before persistence.
@@ -122,12 +131,13 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         <button type="button" className="btn btn-sm" onClick={onAddWorktreeCopyFile}>
           {t("settings.worktrees.addCopyFile", "Add file")}
         </button>
-        <small>{t("settings.worktrees.copyFilesHelp", "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).")}</small>
       </div>
       <div className="form-group">
-        <label htmlFor="executorAllowSiblingBranchRename" className="checkbox-label">
-          <input id="executorAllowSiblingBranchRename" type="checkbox" checked={form.executorAllowSiblingBranchRename === true} onChange={(e) => setForm((f) => ({ ...f, executorAllowSiblingBranchRename: e.target.checked }))}/>{t("settings.worktrees.allowSilentSiblingBranchRenameDuringExecutorConflicts", " Allow silent sibling branch rename during executor conflicts ")}</label>
-        <small>{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. Default: disabled. ")}</small>
+        <div className="settings-field-label-row">
+          <label htmlFor="executorAllowSiblingBranchRename" className="checkbox-label">
+            <input id="executorAllowSiblingBranchRename" type="checkbox" checked={form.executorAllowSiblingBranchRename === true} onChange={(e) => setForm((f) => ({ ...f, executorAllowSiblingBranchRename: e.target.checked }))}/>{t("settings.worktrees.allowSilentSiblingBranchRenameDuringExecutorConflicts", " Allow silent sibling branch rename during executor conflicts ")}</label>
+          <SettingsHelpTip settingKey="executorAllowSiblingBranchRename">{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. Default: disabled. ")}</SettingsHelpTip>
+        </div>
       </div>
       {/*
       FNXC:Worktrees 2026-07-15-17:35:
@@ -152,16 +162,19 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         onChange={(v) => setForm((f) => ({ ...f, worktreeNaming: v as "random" | "task-id" | "task-title" }))}
       />
       <div className="form-group">
-        <label htmlFor="worktreesDir">{t("settings.worktrees.worktreesDirectory", "Worktrees Directory")}</label>
+        {/* FNXC:SettingsHelp 2026-07-15-21:40: The help swaps to the worktrunk-disabled explanation, so the tip is what tells an operator why the input is greyed out; it stays on the same "?" as every other row rather than becoming a second inline idiom. */}
+        <div className="settings-field-label-row">
+          <label htmlFor="worktreesDir">{t("settings.worktrees.worktreesDirectory", "Worktrees Directory")}</label>
+          <SettingsHelpTip settingKey="worktreesDir">
+            {form.worktrunk?.enabled === true
+              ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
+              : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
+          </SettingsHelpTip>
+        </div>
         <div className="settings-overlap-ignore-path-controls">
           <input id="worktreesDir" type="text" placeholder={t("settings.worktrees.defaultsToWorktreesLeaveEmptyUnlessOverriding", "Defaults to .worktrees \u2014 leave empty unless overriding")} value={form.worktreesDir || ""} disabled={form.worktrunk?.enabled === true} onChange={(e) => setForm((f) => ({ ...f, worktreesDir: e.target.value }))}/>
           <button type="button" className="btn btn-sm" onClick={onOpenWorktreesDirPicker} aria-label={t("settings.worktrees.browseWorktreesDirectory", "Browse worktrees directory")} disabled={form.worktrunk?.enabled === true}>{t("settings.worktrees.browse", " Browse ")}</button>
         </div>
-        <small>
-          {form.worktrunk?.enabled === true
-            ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
-            : <>{t("settings.worktrees.optionalSupports", " Optional. Supports ")}<code>~</code>{t("settings.worktrees.and", " and ")}<code>{"{repo}"}</code>{t("settings.worktrees.defaultsTo", ". Defaults to ")}<code>&lt;projectRoot&gt;/.worktrees</code>{t("settings.worktrees.whenUnsetOnlyAffectsNewlyCreatedWorktrees", " when unset. Only affects newly-created worktrees. ")}</>}
-        </small>
       </div>
       {/* FNXC:Worktrees 2026-07-15-17:35: Defaults to on, so an absent key reads as enabled (`!== false`) rather than off \u2014 an unset settings blob must not silently skip the pre-merge rebase. */}
       <SettingsToggleRow
@@ -175,15 +188,16 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
         onChange={(v) => setForm((f) => ({ ...f, worktreeRebaseBeforeMerge: v === true }))}
       />
       {form.worktreeRebaseBeforeMerge !== false && (<div className="form-group">
-          <label htmlFor="worktreeRebaseRemote">{t("settings.worktrees.rebaseRemote", "Rebase Remote")}</label>
+          <div className="settings-field-label-row">
+            <label htmlFor="worktreeRebaseRemote">{t("settings.worktrees.rebaseRemote", "Rebase Remote")}</label>
+            <SettingsHelpTip settingKey="worktreeRebaseRemote">{t("settings.worktrees.whichRemoteToFetchForThePreMerge", " Which remote to fetch for the pre-merge rebase. \"Use git default\" falls back to the remote configured for the default branch (typically ")}<code>origin</code>{t("settings.worktrees.closeParenPeriod", ").")}</SettingsHelpTip>
+          </div>
           <select id="worktreeRebaseRemote" value={form.worktreeRebaseRemote ?? ""} onChange={(e) => setForm((f) => ({ ...f, worktreeRebaseRemote: e.target.value || undefined }))}>
             <option value="">{t("settings.worktrees.useGitDefault", "Use git default")}</option>
             {gitRemotes.map((remote) => (<option key={remote.name} value={remote.name}>
                 {remote.name} ({remote.fetchUrl})
               </option>))}
           </select>
-          <small>{t("settings.worktrees.whichRemoteToFetchForThePreMerge", " Which remote to fetch for the pre-merge rebase. \"Use git default\" falls back to the remote configured for the default branch (typically ")}<code>origin</code>{t("settings.worktrees.closeParenPeriod", ").")}
-          </small>
         </div>)}
       <SettingsToggleRow
         descriptor={{
@@ -198,16 +212,19 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
 
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.worktrees.worktrunkIntegration", "Worktrunk integration")}</h4>
       <div className="form-group">
-        <label htmlFor="worktrunkEnabled" className="checkbox-label">
-          <input id="worktrunkEnabled" type="checkbox" checked={form.worktrunk?.enabled === true} disabled={!worktrunkInstallVerified && form.worktrunk?.enabled !== true} onChange={(e) => setForm((f) => ({
-            ...f,
-            worktrunk: {
-                enabled: e.target.checked,
-                binaryPath: f.worktrunk?.binaryPath ?? "",
-                onFailure: f.worktrunk?.onFailure ?? "fail",
-            },
-        }))}/>{t("settings.worktrees.enableWorktrunkIntegration", " Enable worktrunk integration ")}</label>
-        <small>{t("settings.worktrees.disabledByDefaultOptInWhenEnabledFusion", " Disabled by default (opt-in). When enabled, Fusion shells out to ")}<code>worktrunk</code>{t("settings.worktrees.forWorktreeCreateSyncPruneAndRemoveOperations", " for worktree create, sync, prune, and remove operations and follows worktrunk's directory layout. ")}</small>
+        <div className="settings-field-label-row">
+          <label htmlFor="worktrunkEnabled" className="checkbox-label">
+            <input id="worktrunkEnabled" type="checkbox" checked={form.worktrunk?.enabled === true} disabled={!worktrunkInstallVerified && form.worktrunk?.enabled !== true} onChange={(e) => setForm((f) => ({
+              ...f,
+              worktrunk: {
+                  enabled: e.target.checked,
+                  binaryPath: f.worktrunk?.binaryPath ?? "",
+                  onFailure: f.worktrunk?.onFailure ?? "fail",
+              },
+          }))}/>{t("settings.worktrees.enableWorktrunkIntegration", " Enable worktrunk integration ")}</label>
+          <SettingsHelpTip settingKey="worktrunkEnabled">{t("settings.worktrees.disabledByDefaultOptInWhenEnabledFusion", " Disabled by default (opt-in). When enabled, Fusion shells out to ")}<code>worktrunk</code>{t("settings.worktrees.forWorktreeCreateSyncPruneAndRemoveOperations", " for worktree create, sync, prune, and remove operations and follows worktrunk's directory layout. ")}</SettingsHelpTip>
+        </div>
+        {/* FNXC:SettingsHelp 2026-07-15-21:40: Stays inline: this is the reason the checkbox above is disabled and the action that clears it, not a description of the setting. Behind a "?" the operator would see a dead toggle with no explanation in view. */}
         {!worktrunkInstallVerified && form.worktrunk?.enabled !== true && (<small className="settings-muted">{t("settings.worktrees.installTheWorktrunkBinaryBelowToEnableThis", "Install the worktrunk binary below to enable this integration.")}</small>)}
       </div>
       <div className="form-group" data-testid="worktrunk-install-affordance">
@@ -233,7 +250,10 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           </>)}
       </div>
       <div className="form-group">
-        <label htmlFor="worktrunkBinaryPath">{t("settings.worktrees.worktrunkBinaryPath", "Worktrunk binary path")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="worktrunkBinaryPath">{t("settings.worktrees.worktrunkBinaryPath", "Worktrunk binary path")}</label>
+          <SettingsHelpTip settingKey="worktrunkBinaryPath">{t("settings.worktrees.optionalLeaveBlankToAutoResolveFusionWill", "Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.")}</SettingsHelpTip>
+        </div>
         <input id="worktrunkBinaryPath" type="text" className="input" placeholder={t("settings.worktrees.autoDetectFusionBinWorktrunkOrPATH", "auto-detect (~/.fusion/bin/worktrunk or $PATH)")} value={form.worktrunk?.binaryPath ?? ""} disabled={form.worktrunk?.enabled !== true} onChange={(e) => setForm((f) => ({
             ...f,
             worktrunk: {
@@ -242,10 +262,12 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
                 onFailure: f.worktrunk?.onFailure ?? "fail",
             },
         }))}/>
-        <small>{t("settings.worktrees.optionalLeaveBlankToAutoResolveFusionWill", "Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.")}</small>
       </div>
       <div className="form-group">
-        <label htmlFor="worktrunkOnFailure">{t("settings.worktrees.worktrunkFailureBehavior", "Worktrunk failure behavior")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="worktrunkOnFailure">{t("settings.worktrees.worktrunkFailureBehavior", "Worktrunk failure behavior")}</label>
+          <SettingsHelpTip settingKey="worktrunkOnFailure"><code>fail</code>{t("settings.worktrees.stopsOnWorktrunkErrorsForExplicitOperatorRecovery", " stops on worktrunk errors for explicit operator recovery; ")}<code>fallback-native</code>{t("settings.worktrees.keepsProgressMovingBySwitchingToFusionApos", " keeps progress moving by switching to Fusion's built-in worktree backend. ")}</SettingsHelpTip>
+        </div>
         <select id="worktrunkOnFailure" className="select" value={form.worktrunk?.onFailure ?? "fail"} disabled={form.worktrunk?.enabled !== true} onChange={(e) => setForm((f) => ({
             ...f,
             worktrunk: {
@@ -257,8 +279,6 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           <option value="fail">{t("settings.worktrees.failAndPauseTheTaskDefault", "Fail and pause the task (default)")}</option>
           <option value="fallback-native">{t("settings.worktrees.fallBackToFusionsNativeWorktreeBackend", "Fall back to Fusion's native worktree backend")}</option>
         </select>
-        <small>
-          <code>fail</code>{t("settings.worktrees.stopsOnWorktrunkErrorsForExplicitOperatorRecovery", " stops on worktrunk errors for explicit operator recovery; ")}<code>fallback-native</code>{t("settings.worktrees.keepsProgressMovingBySwitchingToFusionApos", " keeps progress moving by switching to Fusion's built-in worktree backend. ")}</small>
       </div>
     </>);
 }

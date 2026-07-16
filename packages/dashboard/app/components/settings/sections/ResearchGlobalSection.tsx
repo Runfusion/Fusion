@@ -4,6 +4,7 @@ import type { SectionId } from "../../SettingsModal";
 import type { SectionBaseProps } from "./context";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { useTranslation } from "react-i18next";
 export interface ResearchGlobalSectionProps extends SectionBaseProps {
     authProviders: AuthProvider[];
@@ -18,6 +19,10 @@ Every migrated key here is global (`DEFAULT_GLOBAL_SETTINGS`): a search provider
 
 FNXC:SettingsStyling 2026-07-15-17:35:
 Four groups deliberately keep their bespoke markup because they are not plain label+control+help rows: the built-in/external provider radio and its `<details>` disclosure, the limits grid (`settings-research-limit-field`), the Enabled Sources grid pairing an always-on locked Web Search row with per-source inline hints, and the two credential empty-state notes that carry navigation buttons.
+
+FNXC:SettingsHelp 2026-07-15-21:40:
+The bespoke rows that are still one control + one help string — the built-in provider radio and each limits field — hang that help off the same "?" as the migrated rows above (`.settings-field-label-row` + `SettingsHelpTip`), so a limits grid of five "Default: N." paragraphs no longer sits beside rows whose help is behind an icon.
+Two kinds of copy stay inline here: the Enabled Sources hints, which annotate a checkbox grid rather than describe one control, and the credential empty-state/alert notes, which are live credential status plus a navigation button the operator must actually see.
 */
 export function ResearchGlobalSection({ form, setForm, authProviders, onNavigateToSection, }: ResearchGlobalSectionProps) {
     const { t } = useTranslation("app");
@@ -45,9 +50,11 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
     return (<>
       <h4 className="settings-section-heading">{t("settings.researchGlobal.researchDefaults", "Research Defaults")}</h4>
       <div className="form-group settings-research-provider-group">
-        <label htmlFor="research-global-provider-builtin" className="checkbox-label">
-          <input id="research-global-provider-builtin" type="radio" name="research-global-search-provider" checked={!externalProvider} onChange={() => setSearchProvider("builtin")}/>{t("settings.researchGlobal.builtInUsesAgentWebTools", " Built-in (uses agent web tools) (default) ")}</label>
-        <small>{t("settings.researchGlobal.searchesAndFetchesUseTheAgentsNativeWebSearch", " Searches and fetches use the agent's native WebSearch/WebFetch tools. No API key required. Default: builtin. ")}</small>
+        <div className="settings-field-label-row">
+          <label htmlFor="research-global-provider-builtin" className="checkbox-label">
+            <input id="research-global-provider-builtin" type="radio" name="research-global-search-provider" checked={!externalProvider} onChange={() => setSearchProvider("builtin")}/>{t("settings.researchGlobal.builtInUsesAgentWebTools", " Built-in (uses agent web tools) (default) ")}</label>
+          <SettingsHelpTip settingKey="research-global-provider-builtin">{t("settings.researchGlobal.searchesAndFetchesUseTheAgentsNativeWebSearch", " Searches and fetches use the agent's native WebSearch/WebFetch tools. No API key required. Default: builtin. ")}</SettingsHelpTip>
+        </div>
         <details className="settings-option-details settings-research-provider-advanced-details">
           <summary>{t("settings.researchGlobal.advancedExternalSearchProviders", "Advanced \u2014 external search providers")}</summary>
           <div className="settings-research-provider-advanced-body">
@@ -107,15 +114,20 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
       <div className="form-group">
         <div className="settings-research-limits-grid">
           <div className="settings-research-limit-field">
-            <label htmlFor="research-global-max-concurrent">{t("settings.researchGlobal.defaultMaxConcurrentRuns", "Default Max Concurrent Runs")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-global-max-concurrent">{t("settings.researchGlobal.defaultMaxConcurrentRuns", "Default Max Concurrent Runs")}</label>
+              <SettingsHelpTip settingKey="research-global-max-concurrent">{t("settings.researchGlobal.maxConcurrentRunsHint", "Default: 3.")}</SettingsHelpTip>
+            </div>
             <input id="research-global-max-concurrent" className="input" type="number" min={1} value={form.researchGlobalMaxConcurrentRuns ?? 3} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalMaxConcurrentRuns: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
-            <small>{t("settings.researchGlobal.maxConcurrentRunsHint", "Default: 3.")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-global-max-sources">{t("settings.researchGlobal.defaultMaxSourcesPerRun", "Default Max Sources Per Run")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-global-max-sources">{t("settings.researchGlobal.defaultMaxSourcesPerRun", "Default Max Sources Per Run")}</label>
+              <SettingsHelpTip settingKey="research-global-max-sources">{t("settings.researchGlobal.maxSourcesPerRunHint", "Default: 20.")}</SettingsHelpTip>
+            </div>
             <input id="research-global-max-sources" className="input" type="number" min={1} value={form.researchGlobalMaxSourcesPerRun ?? 20} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalMaxSourcesPerRun: event.target.value === "" ? undefined : Number(event.target.value),
@@ -124,31 +136,36 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
                 maxSourcesPerRun: event.target.value === "" ? undefined : Number(event.target.value),
             },
         }))}/>
-            <small>{t("settings.researchGlobal.maxSourcesPerRunHint", "Default: 20.")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-global-default-timeout">{t("settings.researchGlobal.defaultMaxDurationMs", "Default Max Duration (ms)")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-global-default-timeout">{t("settings.researchGlobal.defaultMaxDurationMs", "Default Max Duration (ms)")}</label>
+              <SettingsHelpTip settingKey="research-global-default-timeout">{t("settings.researchGlobal.defaultMaxDurationMsHint", "Default: 300000 (5 minutes).")}</SettingsHelpTip>
+            </div>
             <input id="research-global-default-timeout" className="input" type="number" min={1000} value={form.researchGlobalDefaultTimeout ?? 300000} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalDefaultTimeout: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
-            <small>{t("settings.researchGlobal.defaultMaxDurationMsHint", "Default: 300000 (5 minutes).")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-global-fetch-timeout">{t("settings.researchGlobal.requestTimeoutMs", "Request Timeout (ms)")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-global-fetch-timeout">{t("settings.researchGlobal.requestTimeoutMs", "Request Timeout (ms)")}</label>
+              <SettingsHelpTip settingKey="research-global-fetch-timeout">{t("settings.researchGlobal.requestTimeoutMsHint", "Default: 30000 (30 seconds).")}</SettingsHelpTip>
+            </div>
             <input id="research-global-fetch-timeout" className="input" type="number" min={1000} value={form.researchGlobalFetchTimeoutMs ?? 30000} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalFetchTimeoutMs: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
-            <small>{t("settings.researchGlobal.requestTimeoutMsHint", "Default: 30000 (30 seconds).")}</small>
           </div>
           <div className="settings-research-limit-field">
-            <label htmlFor="research-global-max-synthesis-rounds">{t("settings.researchGlobal.maxSynthesisRounds", "Max Synthesis Rounds")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="research-global-max-synthesis-rounds">{t("settings.researchGlobal.maxSynthesisRounds", "Max Synthesis Rounds")}</label>
+              <SettingsHelpTip settingKey="research-global-max-synthesis-rounds">{t("settings.researchGlobal.maxSynthesisRoundsHint", "Default: 2.")}</SettingsHelpTip>
+            </div>
             <input id="research-global-max-synthesis-rounds" className="input" type="number" min={1} value={form.researchGlobalMaxSynthesisRounds ?? 2} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalMaxSynthesisRounds: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
-            <small>{t("settings.researchGlobal.maxSynthesisRoundsHint", "Default: 2.")}</small>
           </div>
         </div>
       </div>

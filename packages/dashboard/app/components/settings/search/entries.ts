@@ -25,6 +25,8 @@ import { researchProjectSearchEntries } from "../sections/ResearchProjectSection
 import { scheduledEvalsSearchEntries } from "../sections/ScheduledEvalsSection.search";
 import { schedulingGlobalSearchEntries } from "../sections/SchedulingGlobalSection.search";
 import { schedulingSearchEntries } from "../sections/SchedulingSection.search";
+import { sourceControlGlobalSearchEntries } from "../sections/SourceControlGlobalSection.search";
+import { sourceControlSearchEntries } from "../sections/SourceControlSection.search";
 import { worktreesSearchEntries } from "../sections/WorktreesSection.search";
 
 /**
@@ -50,6 +52,8 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
   ...scheduledEvalsSearchEntries,
   ...schedulingGlobalSearchEntries,
   ...schedulingSearchEntries,
+  ...sourceControlGlobalSearchEntries,
+  ...sourceControlSearchEntries,
   ...worktreesSearchEntries,
 ];
 

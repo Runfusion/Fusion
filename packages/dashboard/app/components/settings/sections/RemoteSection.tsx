@@ -5,6 +5,7 @@ import type { ToastType } from "../../../hooks/useToast";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsTextRow } from "../SettingsTextRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps, SettingsFormState } from "./context";
 export interface RemoteSectionData {
     projectId?: string;
@@ -174,6 +175,10 @@ export function RemoteSection({ form, setForm, remote }: RemoteSectionProps) {
             </span>
           </label>
         </div>
+        {/*
+        FNXC:SettingsHelp 2026-07-15-21:40:
+        Stays inline: this is the empty-state instruction for the whole provider block, shown only while nothing is picked, not help for one control. Behind a "?" the one operator who needs it — the one who has not chosen a provider yet — would never find it.
+        */}
         {!activeProvider && <small>{t("settings.remote.selectAProviderAboveToConfigureRemoteAccess", "Select a provider above to configure remote access.")}</small>}
       </div>
 
@@ -383,13 +388,18 @@ export function RemoteSection({ form, setForm, remote }: RemoteSectionProps) {
             setRemoteQrSvg(qr.data ?? null);
         })}>{t("settings.remote.generateQR", "Generate QR")}</button>
           </div>
-          <label htmlFor="remoteAuthLinkTokenType">{t("settings.remote.authLinkTokenType", "Auth link token type")}</label>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          This select stays hand-rolled (it drives local UI state, not a settings key — see the note above), but its help moves behind the shared "?" anyway: a section that mixes rows with a help icon and rows with a paragraph reads as two different surfaces. The live TTL fragment rides along inside the tip because it qualifies the token-type choice rather than reporting a result.
+          */}
+          <div className="settings-field-label-row">
+            <label htmlFor="remoteAuthLinkTokenType">{t("settings.remote.authLinkTokenType", "Auth link token type")}</label>
+            <SettingsHelpTip settingKey="remoteAuthLinkTokenType">{t("settings.remote.uRLAndQRGenerationUseTheSelectedToken", " URL and QR generation use the selected token type. ")}{remoteAuthLinkTokenType === "short-lived" ? ` TTL: ${Number(remoteForm.remoteShortLivedTtlMs ?? 900000)}ms.` : ""}</SettingsHelpTip>
+          </div>
           <select id="remoteAuthLinkTokenType" value={remoteAuthLinkTokenType} onChange={(e) => setRemoteAuthLinkTokenType(e.target.value as "persistent" | "short-lived")}>
             <option value="persistent">{t("settings.remote.persistentToken", "Persistent token")}</option>
             <option value="short-lived">{t("settings.remote.shortLivedToken", "Short-lived token")}</option>
           </select>
-          <small>{t("settings.remote.uRLAndQRGenerationUseTheSelectedToken", " URL and QR generation use the selected token type. ")}{remoteAuthLinkTokenType === "short-lived" ? ` TTL: ${Number(remoteForm.remoteShortLivedTtlMs ?? 900000)}ms.` : ""}
-          </small>
           {remoteUrlPreview?.url && (<>
               <small>{t("settings.remote.authenticatedURL", "Authenticated URL:")}<code className="settings-url-output">{remoteUrlPreview.url}</code></small>
               <small>{t("settings.remote.tokenType", " Token type: ")}<strong>{remoteUrlPreview.tokenType}</strong>

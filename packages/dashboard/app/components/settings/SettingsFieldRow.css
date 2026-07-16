@@ -41,7 +41,6 @@ The indent is derived from the control's own width plus the head gap, so it trac
   cursor: pointer;
 }
 
-.settings-field-row--inline .settings-field-row-help,
 .settings-field-row--inline .settings-field-row-error {
   padding-inline-start: calc(var(--settings-inline-control-width) + var(--space-sm));
 }
@@ -155,16 +154,6 @@ Controls hold the 38px min-height the pre-migration `.settings-content` rule gav
 .settings-field-row-clear:disabled {
   cursor: default;
   opacity: 0.5;
-}
-
-/* FNXC:SettingsStyling 2026-07-15-17:35: Help copy keeps the 78ch measure and `pretty` wrapping that the pre-migration `.settings-content .form-group small` rule gave long setting descriptions; without the cap it would run the full width of a resized modal. */
-.settings-field-row-help {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  line-height: 1.5;
-  max-width: 78ch;
-  text-wrap: pretty;
-  color: var(--text-muted);
 }
 
 .settings-field-row-error {

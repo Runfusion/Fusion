@@ -7,6 +7,7 @@ import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextareaRow } from "../SettingsTextareaRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import { applyPresetToSelection } from "../../../utils/modelPresets";
 import type { ToastType } from "../../../hooks/useToast";
 import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState } from "./context";
@@ -361,6 +362,10 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           </div>
           {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => { resetLaneValue(lane); resetLaneThinkingValue(lane); }} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
         </div>
+        {/*
+        FNXC:SettingsHelp 2026-07-15-21:40:
+        Model-lane help stays inline while plain rows moved theirs behind a "?": a lane row is not a label + control, it is a label + inherited/override badge + dropdown + conditional Reset, and its copy ends in the resolved fallback CHAIN — the thing an operator reads to understand which model actually runs when this lane is unset. That is resolved state, not a description of the control, so it stays in view. The workflow-lane and title-summarizer-fallback rows below follow the same rule for the same reason.
+        */}
         <small>
           {getProjectLaneHelperText(lane)}{t("settings.projectModels.fallsBackTo", " Falls back to: ")}{lane.fallbackOrder}.
         </small>
@@ -459,14 +464,21 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </div>
       </div>
       {chatDefaultKind === "model" ? (<div className="form-group" data-testid="project-models-chat-model">
-          <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
+          {/*
+          FNXC:SettingsHelp 2026-07-15-21:40:
+          Model mode is a plain label + control + help row, so its help hangs off the same "?" as the New Chat behavior select directly above it instead of printing a paragraph beside it.
+          The agent-mode branch below keeps its `<small>` inline: that slot swaps to "No agents are available for this project yet.", which explains an empty picker and must stay in view.
+          */}
+          <div className="settings-field-label-row">
+            <label htmlFor="chatDefaultModel">{t("settings.projectModels.chatDefaultModel", "Chat Default Model")}</label>
+            <SettingsHelpTip settingKey="chatDefaultModel">{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</SettingsHelpTip>
+          </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">
               <CustomModelDropdown id="chatDefaultModel" label={t("settings.projectModels.chatDefaultModel", "Chat Default Model")} models={availableModels} value={chatDefaultModelValue} onChange={setChatDefaultModelValue} placeholder={t("settings.projectModels.selectChatDefaultModel", "Select a chat default model")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={chatDefaultThinkingValue} onThinkingLevelChange={setChatDefaultThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
             </div>
             {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
           </div>
-          <small>{t("settings.projectModels.chatDefaultModelHelp", "Model-mode New Chat uses the built-in Fusion chat agent with this provider/model pair. Leave empty to fall back to prompting.")}</small>
         </div>) : (<div className="form-group" data-testid="project-models-chat-agent">
           <label htmlFor="chatDefaultAgentId">{t("settings.projectModels.chatDefaultAgent", "Chat Default Agent")}</label>
           <div className="settings-model-lane-control-row">

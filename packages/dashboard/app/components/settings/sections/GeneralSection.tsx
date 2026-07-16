@@ -12,7 +12,6 @@ The core helper is the same list the translate banner labels source languages wi
 import { localeDisplayName } from "@fusion/core/detect-content-language";
 import { ProjectDefaultWorkflowField } from "../../WorkflowSelector";
 import { WorkflowIcon } from "../../WorkflowIcon";
-import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { fetchWorkflows } from "../../../api";
 import { clearAllLocalCache } from "../../../utils/swrCache";
 import type { ToastType } from "../../../hooks/useToast";
@@ -23,18 +22,18 @@ export interface GeneralSectionProps extends SectionBaseProps {
     addToast: (message: string, type?: ToastType) => void;
     prefixError: string | null;
     setPrefixError: (value: string | null) => void;
-    projectTrackingRepoOptions: TrackingRepoOption[];
-    projectTrackingRepoLoading: boolean;
-    projectTrackingRepoError: string | null;
     onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
 }
 /*
 FNXC:SettingsStyling 2026-07-15-17:35:
 Plain settings rows render through the shared primitives instead of hand-rolled `form-group` + `checkbox-label` markup, so labels, help copy, and padding come from one type scale. `.form-group` stays global and untouched — 35 non-settings files style forms with it — so the fix is to migrate settings off it, not to restyle it underneath the rest of the dashboard.
 Every key here is project-scoped (DEFAULT_PROJECT_SETTINGS), which the per-row badge states: the nav already labels the section "Project General", but the badge is what distinguishes these from the global-tier settings an operator sees one section away.
-Rows that stay bespoke are the ones a single-string descriptor cannot carry without rewording the copy — help built from `t()` fragments interleaved with `<code>` (ephemeral agents, completion documentation) — plus the custom widgets and editors: the workflow pickers, the built-in workflow enablement list, the tracking-repo selects, the GitLab disclosure, and the Clear-local-data button.
+Rows that stay bespoke are the ones a single-string descriptor cannot carry without rewording the copy — help built from `t()` fragments interleaved with `<code>` (ephemeral agents, completion documentation) — plus the custom widgets and editors: the workflow pickers, the built-in workflow enablement list, and the Clear-local-data button.
+
+FNXC:SourceControl 2026-07-15-20:30:
+GitHub/GitLab settings are NOT in this section. The tracking block, the tracking-repo select, and the GitLab disclosure moved to "Source Control · Project" (SourceControlSection.tsx), which also absorbed Merge's GitHub/GitLab auth blocks. Do not add source-control settings back here: `gitlabEnabled` was previously writable from both this section and Merge, and one owning section is what keeps that from recurring.
 */
-export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, projectTrackingRepoOptions, projectTrackingRepoLoading, projectTrackingRepoError, onQuickChatButtonModeChange, }: GeneralSectionProps) {
+export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
     useEffect(() => {
@@ -465,44 +464,12 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           sessionAdvisorEnabledByDefault: v === "new-tasks",
         }))}
       />
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.gitHubTracking", "GitHub Tracking")}</h4>
-      <div className="form-group">
-        <label htmlFor="githubTrackingMode">{t("settings.general.defaultTrackingModeForNewTasks", "Default tracking mode for new tasks")}</label>
-        <select id="githubTrackingMode" className="select" value={form.githubTrackingEnabledByDefault ? "new-tasks" : "off"} onChange={(e) => setForm((f) => ({
-            ...f,
-            githubTrackingEnabledByDefault: e.target.value === "new-tasks",
-        }))}>
-          <option value="off">{t("settings.general.offDefault", "Off (default)")}</option>
-          <option value="new-tasks">{t("settings.general.onForNewTasks", "On for new tasks")}</option>
-        </select>
-        <small>{t("settings.general.controlsWhetherNewlyCreatedTasksHaveGitHubIssue", " Controls whether newly created tasks have GitHub issue tracking enabled by default. Individual tasks can still override this from the task detail modal. ")}</small>
-        {/*
-          FNXC:SettingsGeneral 2026-06-22-03:20:
-          Tracking-issue helper copy. The FN-6771 JSX→t() extraction left a raw HTML
-          entity ("&apos;") in this default string. As a t() argument the string is a
-          plain JS value (not JSX-decoded), so the entity rendered verbatim as the
-          literal "&apos;" instead of an apostrophe. Use a real apostrophe so the copy
-          reads correctly in both modal and embedded presentations.
-        */}
-        <small>{t("settings.general.trackingIssuesUseThisTaskAposSTitle", " Tracking issues use this task's title. If a task has no title yet, Fusion can summarize its description using the title summarization model in Project Models. ")}{!form.autoSummarizeTitles && !form.useAiMergeCommitSummary && !form.githubTrackingEnabledByDefault
-            ? t("settings.general.enableSummarizationInProjectModelsToConfigureThatModel", " Enable summarization in Project Models to configure that model.")
-            : ""}
-        </small>
-      </div>
       {/*
-        FNXC:GithubImportTracking 2026-07-01-00:00:
-        This checkbox is project-scoped and import-specific: operators can link imported GitHub issues to GitHub tracking without turning tracking on for every new task.
+        FNXC:SourceControl 2026-07-15-20:30:
+        The GitHub Tracking controls, the GitLab disclosure, and `githubLinkImportedIssuesToTracking` moved to "Source Control · Project". The two import-translate rows below did NOT: they only affect the Import Tasks panel's rendering of issue text, not how Fusion talks to GitHub/GitLab.
+        The heading stays because those rows still sit under it and it is their existing copy — there is no "issue import" heading string in the catalog, and inventing one here would be new operator-facing text rather than a move.
       */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "githubLinkImportedIssuesToTracking",
-          label: t("settings.general.alwaysLinkImportedGitHubIssuesToTracking", " Always link imported GitHub issues to GitHub tracking "),
-          help: t("settings.general.whenEnabledImportedGitHubIssuesUseTheirSource", "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled."),
-          scope: "project",
-        }}
-        value={form.githubLinkImportedIssuesToTracking === true}
-        onChange={(v) => setForm((f) => ({ ...f, githubLinkImportedIssuesToTracking: v === true }))}
-      />
+      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.gitHubTracking", "GitHub Tracking")}</h4>
       {/*
         FNXC:GitHubImportTranslate 2026-07-15-09:30:
         Both controls live beside the other import-scoped GitHub settings because they
@@ -547,48 +514,6 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           importTranslateTargetLocale: v && isLocale(v) ? v : undefined,
         }))}
       />
-      <div className="form-group">
-        <label htmlFor="projectGithubTrackingDefaultRepoGeneral">{t("settings.general.projectDefaultTrackingRepo", "Project default tracking repo")}</label>
-        <TrackingRepoSelect id="projectGithubTrackingDefaultRepoGeneral" ariaLabel="Project default tracking repo" value={form.githubTrackingDefaultRepo ?? ""} options={projectTrackingRepoOptions} loading={projectTrackingRepoLoading} error={projectTrackingRepoError ?? undefined} placeholder={t("settings.general.ownerRepo", "owner/repo")} onChange={(nextValue) => setForm((f) => ({ ...f, githubTrackingDefaultRepo: nextValue || undefined }))}/>
-        <small>{t("settings.general.defaultRepoUsedWhenCreatingGitHubIssuesFor", "Default repo used when creating GitHub issues for tracked tasks. Falls back to the global default if blank.")}</small>
-      </div>
-      <SettingsToggleRow
-        descriptor={{
-          key: "githubTrackingDedupEnabled",
-          label: t("settings.general.searchTheTrackingRepoForLikelyDuplicatesBefore", " Search the tracking repo for likely duplicates before opening a new issue "),
-          help: t("settings.general.whenEnabledFusionChecksOpenAndClosedIssues", " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. "),
-          scope: "project",
-        }}
-        value={form.githubTrackingDedupEnabled !== false}
-        onChange={(v) => setForm((f) => ({ ...f, githubTrackingDedupEnabled: v === true }))}
-      />
-      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.gitLabConfiguration", "GitLab Configuration")}</h4>
-      {/*
-        FNXC:GitLabEnablement 2026-07-02-00:00:
-        FN-7453 keeps saved GitLab URL settings separate from the active integration switch. The disclosure is collapsed by default to reduce Settings noise; the summary toggle remains reachable without expanding advanced self-managed URL fields.
-      */}
-      <details className="settings-gitlab-disclosure" data-testid="project-gitlab-configuration-disclosure">
-        <summary>
-          <span className="settings-gitlab-disclosure__title">{t("settings.general.gitLabConfiguration", "GitLab Configuration")}</span>
-          <label className="checkbox-label settings-gitlab-disclosure__toggle" htmlFor="gitlabEnabled" onClick={(event) => event.stopPropagation()}>
-            <input id="gitlabEnabled" type="checkbox" checked={form.gitlabEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, gitlabEnabled: e.target.checked }))}/>
-            {t("settings.general.enableGitLabIntegration", "Enable GitLab integration")}
-          </label>
-        </summary>
-        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.general.gitLabDisabledHint", "GitLab API imports, comments, close/reopen, and refresh operations are disabled. Saved URLs and tokens remain stored for re-enable.") : t("settings.general.gitLabEnabledHint", "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
-        <div className="settings-gitlab-disclosure__body" aria-disabled={form.gitlabEnabled === false}>
-          <div className="form-group">
-            <label htmlFor="gitlabInstanceUrl">{t("settings.general.gitLabInstanceUrl", "GitLab instance URL")}</label>
-            <input id="gitlabInstanceUrl" className="input" type="url" placeholder="https://gitlab.com" value={form.gitlabInstanceUrl ?? ""} disabled={form.gitlabEnabled === false} onChange={(e) => setForm((f) => ({ ...f, gitlabInstanceUrl: e.target.value || undefined }))}/>
-            <small>{t("settings.general.gitLabInstanceUrlHint", "Blank uses GitLab.com or the global default. Set an absolute http:// or https:// URL for self-managed GitLab, such as https://gitlab.example.com/gitlab.")}</small>
-          </div>
-          <div className="form-group">
-            <label htmlFor="gitlabApiBaseUrl">{t("settings.general.gitLabApiBaseUrlOptional", "GitLab API base URL (optional / advanced)")}</label>
-            <input id="gitlabApiBaseUrl" className="input" type="url" placeholder="https://gitlab.com/api/v4" value={form.gitlabApiBaseUrl ?? ""} disabled={form.gitlabEnabled === false} onChange={(e) => setForm((f) => ({ ...f, gitlabApiBaseUrl: e.target.value || undefined }))}/>
-            <small>{t("settings.general.gitLabApiBaseUrlHint", "Blank derives <instance>/api/v4. Override only when a self-managed GitLab API is served from a different absolute http:// or https:// URL.")}</small>
-          </div>
-        </div>
-      </details>
       {/*
         FNXC:SettingsGeneral 2026-07-02-00:00:
         "Clear local data" panel — the user-facing escape hatch when the dashboard runs out of

@@ -1371,12 +1371,28 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("keeps GitHub tracking controls out of Merge and preserves GitHub authentication controls", async () => {
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    GitHub authentication moved OUT of Merge into "Source Control · Project", joining the tracking controls that were already absent here. Merge must now hold neither: it owns the landing strategy, not the forge credentials it consumes.
+    */
+    it("keeps GitHub tracking AND GitHub authentication controls out of Merge", async () => {
       renderModal({ initialSection: "merge" });
       await waitForSettingsModalReady();
 
       expect(screen.queryByLabelText("Default tracking mode for new tasks")).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Project default tracking repo")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "GitHub Authentication" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("GitHub auth mode")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "GitLab Authentication" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("GitLab access token")).not.toBeInTheDocument();
+      // The duplicate `gitlabEnabled` toggle this section used to render is gone.
+      expect(screen.queryByLabelText("Enable GitLab integration")).not.toBeInTheDocument();
+    });
+
+    it("renders and saves GitHub authentication controls in Source Control", async () => {
+      renderModal({ initialSection: "source-control" });
+      await waitForSettingsModalReady();
+
       expect(screen.getByRole("heading", { name: "GitHub Authentication" })).toBeInTheDocument();
 
       const authModeSelect = screen.getByLabelText("GitHub auth mode") as HTMLSelectElement;
@@ -1396,15 +1412,22 @@ describe("SettingsModal", () => {
       expect(payload.githubAuthToken).toBe("ghp_test_token");
     });
 
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    The GitLab URL disclosure and the GitLab auth disclosure merged into ONE disclosure with ONE `gitlabEnabled` toggle, so this reads the configuration disclosure (`project-gitlab-configuration-disclosure`) and opens it by its own summary title. The auth block keeps its heading inside that disclosure; only the second enable toggle went away.
+    */
     it("renders GitLab authentication controls as secret-safe project settings", async () => {
-      renderModal({ initialSection: "merge" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
-      const disclosure = screen.getByTestId("project-gitlab-authentication-disclosure");
+      const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
       expect(disclosure).not.toHaveAttribute("open");
-      await settingsModalUser.click(within(disclosure).getByText("GitLab Authentication"));
+      await settingsModalUser.click(within(disclosure).getByText("GitLab Configuration"));
       expect(disclosure).toHaveAttribute("open");
 
+      // Exactly one enable toggle governs the whole GitLab block.
+      expect(screen.getAllByLabelText("Enable GitLab integration")).toHaveLength(1);
+      expect(screen.queryByTestId("project-gitlab-authentication-disclosure")).not.toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "GitLab Authentication" })).toBeInTheDocument();
       const tokenInput = screen.getByLabelText("GitLab access token") as HTMLInputElement;
       expect(tokenInput.type).toBe("password");
@@ -1413,8 +1436,8 @@ describe("SettingsModal", () => {
       expect((screen.getByLabelText("GitLab token type") as HTMLSelectElement).value).toBe("personal");
     });
 
-    it.each(["personal", "project", "group"] as const)("saves a %s GitLab access token from Merge", async (tokenType) => {
-      renderModal({ initialSection: "merge" });
+    it.each(["personal", "project", "group"] as const)("saves a %s GitLab access token from Source Control", async (tokenType) => {
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.selectOptions(screen.getByLabelText("GitLab token type"), tokenType);
@@ -1442,7 +1465,7 @@ describe("SettingsModal", () => {
         project: { gitlabAuthToken: "saved-token", gitlabAuthTokenType: "group" },
       });
 
-      renderModal({ initialSection: "merge" });
+      renderModal({ initialSection: "source-control" });
       await waitForSettingsModalReady();
 
       await settingsModalUser.clear(screen.getByLabelText("GitLab access token"));

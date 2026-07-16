@@ -55,6 +55,8 @@ const SECTION_FILE_TO_ID: Record<string, string> = {
   "ScheduledEvalsSection.tsx": "scheduled-evals",
   "SchedulingGlobalSection.tsx": "scheduling-global",
   "SchedulingSection.tsx": "scheduling",
+  "SourceControlGlobalSection.tsx": "source-control-global",
+  "SourceControlSection.tsx": "source-control",
   "WorktreesSection.tsx": "worktrees",
 };
 

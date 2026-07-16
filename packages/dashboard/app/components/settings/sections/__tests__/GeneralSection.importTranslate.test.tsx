@@ -77,9 +77,6 @@ function GeneralHost({ initialForm, onSetForm }: {
       addToast={vi.fn()}
       prefixError={null}
       setPrefixError={vi.fn()}
-      projectTrackingRepoOptions={[]}
-      projectTrackingRepoLoading={false}
-      projectTrackingRepoError={null}
     />
   );
 }
@@ -108,10 +105,14 @@ describe("GeneralSection - import auto-translate controls", () => {
     expect(row.textContent).toContain("Auto-translate imported issues");
   });
 
-  it("matches the neighbouring imported-issue checkbox's structure exactly", () => {
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  The parity neighbour used to be `githubLinkImportedIssuesToTracking`, which moved to "Source Control · Project" with the rest of the GitHub tracking block. The REQUIREMENT is unchanged — auto-translate must not become a second checkbox idiom inside General — so this now compares against a checkbox General still renders. Any of the section's toggles serves: they all render through SettingsToggleRow, which is the invariant being pinned.
+  */
+  it("matches a neighbouring section checkbox's structure exactly", () => {
     render(<GeneralHost initialForm={{}} />);
     const mine = document.getElementById("githubImportAutoTranslate")!.closest(".settings-field-row")!;
-    const neighbour = document.getElementById("githubLinkImportedIssuesToTracking")!.closest(".settings-field-row")!;
+    const neighbour = document.getElementById("showTaskChatsInCommonFeed")!.closest(".settings-field-row")!;
     // Parity is the point: both render through the same row primitive, so an
     // idiom split cannot reappear in this section.
     expect(mine.className).toBe(neighbour.className);
