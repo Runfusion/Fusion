@@ -48,6 +48,7 @@ export interface TaskRow {
   resumeLimboCount: number | null;
   graphResumeRetryCount: number | null;
   consecutiveToolFailureRetryCount: number | null;
+  executorEscalationAttempted: number | null;
   toolFailureDetectorLogCursor: number | null;
   toolFailureRetryExhaustedAuditEmitted: number | null;
   resumeLimboTipSha: string | null;
@@ -232,6 +233,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("resumeLimboCount", (task) => task.resumeLimboCount ?? 0),
   defineTaskColumn("graphResumeRetryCount", (task) => task.graphResumeRetryCount === undefined ? 0 : task.graphResumeRetryCount),
   defineTaskColumn("consecutiveToolFailureRetryCount", (task) => task.consecutiveToolFailureRetryCount ?? 0),
+  defineTaskColumn("executorEscalationAttempted", (task) => task.executorEscalationAttempted ? 1 : 0),
   defineTaskColumn("toolFailureDetectorLogCursor", (task) => task.toolFailureDetectorLogCursor ?? null),
   // FNXC:ExecutorToolFailureRetry 2026-07-16-13:30: PostgreSQL stores this CAS marker as integer (0/1), matching its schema and legacy SQLite flag representation.
   defineTaskColumn("toolFailureRetryExhaustedAuditEmitted", (task) => task.toolFailureRetryExhaustedAuditEmitted ? 1 : 0),

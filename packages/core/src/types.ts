@@ -1618,6 +1618,11 @@ export interface Task {
    * FN-7996 persists the bounded same-model retry budget for consecutive terminal tool errors. The executor atomically claims it per run cursor so concurrent failures cannot exceed the configured cap.
    */
   consecutiveToolFailureRetryCount?: number | null;
+  /**
+   * FNXC:ExecutorEscalation 2026-07-16-21:00:
+   * Records consumption of the one opt-in alternate model/node attempt after FN-7996 exhausts same-model retries. Reset with the retry window so unrelated failure surfaces receive their own bounded escalation.
+   */
+  executorEscalationAttempted?: boolean | null;
   /** Agent-log boundary captured at executor-run start; only later terminal outcomes qualify. */
   toolFailureDetectorLogCursor?: number | null;
   /** Durable compare-and-set marker which permits one exhaustion audit per retry window. */
@@ -3052,6 +3057,14 @@ export interface ProjectSettings {
   executorToolFailureRetryCount?: number;
   executorToolFailureRetryBackoffMs?: number;
   executorToolFailureThreshold?: number;
+  /**
+   * FNXC:ExecutorEscalation 2026-07-16-21:00:
+   * Opt-in single-shot escalation runs only after FN-7996 exhausts same-model retries. The task model target enters the model-selection hierarchy as an override and the node target enters routing as a task override; default off prevents surprise cost or behavior changes.
+   */
+  executorModelEscalationEnabled?: boolean;
+  executorEscalationProvider?: string;
+  executorEscalationModelId?: string;
+  executorEscalationNodeId?: string;
   /**
    * FNXC:VerificationConcurrency 2026-07-15-03:35:
    * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.

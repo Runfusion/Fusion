@@ -1755,4 +1755,15 @@ Standardize executor/validator pairs; auto-selectable by task size (Small → Bu
 | `executorToolFailureRetryBackoffMs` | integer, `2000` | Unref'd delay before the rerun. |
 | `executorToolFailureThreshold` | integer, `3` | Consecutive terminal tool failures required to qualify. |
 
-Values are project-scoped and finite values are floored; count/backoff must be at least `0`, and threshold at least `1`, otherwise their defaults apply. The executor evaluates this bounded policy before its terminal graph-failure park: it counts `tool_error` completion entries, resets only on `tool_result`, and ignores `tool` invocation markers. The detector is scoped to the current executor-run agent-log cursor. Its project-scoped atomic claim prevents concurrent retries and classifies cursor mismatch before an exhausted cap so stale handlers do not park newer work. The exhausted audit is compare-and-set deduplicated while the terminal park remains idempotent. FN-7998 may extend this same-model foundation with escalation.
+Values are project-scoped and finite values are floored; count/backoff must be at least `0`, and threshold at least `1`, otherwise their defaults apply. The executor evaluates this bounded policy before its terminal graph-failure park: it counts `tool_error` completion entries, resets only on `tool_result`, and ignores `tool` invocation markers. The detector is scoped to the current executor-run agent-log cursor. Its project-scoped atomic claim prevents concurrent retries and classifies cursor mismatch before an exhausted cap so stale handlers do not park newer work. The exhausted audit is compare-and-set deduplicated while the terminal park remains idempotent.
+
+### Executor escalation after tool-failure retry exhaustion
+
+| Setting | Type/default | Behavior |
+| --- | --- | --- |
+| `executorModelEscalationEnabled` | boolean, `false` | Opt in to one alternate attempt after same-model retries exhaust. |
+| `executorEscalationProvider` | string, unset | Provider for an alternate model; requires `executorEscalationModelId`. |
+| `executorEscalationModelId` | string, unset | Alternate model ID; requires `executorEscalationProvider`. |
+| `executorEscalationNodeId` | string, unset | Optional configured node target. |
+
+Escalation is enabled only when the toggle is true and either a complete provider/model pair or a node ID is configured. It is single-shot: after FN-7996 exhausts same-model retries, Fusion persists the override and tries once before the existing terminal park. The alternate model enters the [model-selection hierarchy](#model-selection-hierarchy) as a task-level override; a node target enters `resolveEffectiveNode` as a task-level routing override and is requeued so scheduler routing is recalculated. This remains opt-in by default to avoid unexpected model cost or execution behavior. Column-agent overrides still govern their sessions and can supersede a task-level model target.

@@ -73,6 +73,35 @@ export function resolveConsecutiveToolFailureThreshold(settings?: { executorTool
   return Number.isFinite(numeric) && Math.floor(numeric) >= 1 ? Math.floor(numeric) : CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD;
 }
 
+export interface ExecutorEscalationTarget {
+  enabled: boolean;
+  provider?: string;
+  modelId?: string;
+  nodeId?: string;
+}
+
+/**
+ * FNXC:ExecutorEscalation 2026-07-16-21:00:
+ * Escalation remains opt-in and only accepts a complete model pair or a node target. Keeping this resolver in core makes engine and settings surfaces agree that incomplete targets silently preserve FN-7996 terminal behavior.
+ */
+export function resolveExecutorEscalationTarget(settings?: {
+  executorModelEscalationEnabled?: unknown;
+  executorEscalationProvider?: unknown;
+  executorEscalationModelId?: unknown;
+  executorEscalationNodeId?: unknown;
+} | null): ExecutorEscalationTarget {
+  const provider = typeof settings?.executorEscalationProvider === "string" ? settings.executorEscalationProvider.trim() : "";
+  const modelId = typeof settings?.executorEscalationModelId === "string" ? settings.executorEscalationModelId.trim() : "";
+  const nodeId = typeof settings?.executorEscalationNodeId === "string" ? settings.executorEscalationNodeId.trim() : "";
+  const hasModelTarget = Boolean(provider && modelId);
+  const hasNodeTarget = Boolean(nodeId);
+  return {
+    enabled: settings?.executorModelEscalationEnabled === true && (hasModelTarget || hasNodeTarget),
+    ...(hasModelTarget ? { provider, modelId } : {}),
+    ...(hasNodeTarget ? { nodeId } : {}),
+  };
+}
+
 export const IN_REVIEW_STALL_LOG_PREFIX = "In-review stall surfaced [";
 export const IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX = "In-review stall auto-disposed [";
 export const IN_REVIEW_STALL_TERMINAL_LOG_PREFIX = "In-review stall terminal disposed [";
