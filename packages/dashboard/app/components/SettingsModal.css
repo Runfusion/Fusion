@@ -1,3 +1,4 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: Settings mixed px, rem, em, and calc()-over-spacing font sizes across ~10 distinct values with no scale. Declarations now name scale rungs by role — 2xs for badges/pills, xs for help and caption copy, sm for control labels and body, base/md for headings — so type is retuned from the token definitions rather than by sweeping this file. The mobile `font-size: 16px` overrides stay raw on purpose: they are iOS's focus-zoom threshold, not a type rung, and must hold at 16px even if the root font size shrinks. */
 /* === SettingsModal: all settings-related layout, panel, and component styles ===
    Extracted from styles.css as part of the Sweep-3 CSS extraction effort.
    Imported by SettingsModal.tsx (and MemoryView.tsx for shared classes). */
@@ -71,7 +72,7 @@
   border-radius: var(--radius-pill);
   background: var(--card);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   text-decoration: none;
   overflow: hidden;
@@ -178,7 +179,7 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  font-size: 1.125rem;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text);
   letter-spacing: normal;
@@ -304,7 +305,7 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
 
 .settings-modal-version {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   font-weight: 500;
 }
@@ -450,7 +451,7 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-xs);
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   font-weight: 500;
 }
 
@@ -538,14 +539,14 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
 
 .backup-stat-value {
   color: var(--text);
-  font-size: 1rem;
+  font-size: var(--font-size-base);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .backup-stat-label {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -595,7 +596,7 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
   min-width: 0;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   overflow-x: auto;
 }
@@ -603,7 +604,7 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
 .backup-size {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   text-align: right;
   white-space: nowrap;
 }
@@ -711,7 +712,7 @@ The Advanced settings preference is a navigation-level disclosure, so keep it vi
   padding: var(--space-sm);
   border-bottom: var(--btn-border-width) solid var(--border);
   color: var(--text);
-  font-size: 0.8rem;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   cursor: pointer;
 }
@@ -735,7 +736,7 @@ The Advanced settings preference is a navigation-level disclosure, so keep it vi
 
 .settings-search-label {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -760,8 +761,62 @@ The Advanced settings preference is a navigation-level disclosure, so keep it vi
 .settings-search-results,
 .settings-search-empty-hint {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   margin: 0;
+}
+
+/*
+FNXC:SettingsSearch 2026-07-15-17:35:
+Per-setting search results. Sits between the search input and the section nav because it answers the question the operator actually asked — which setting, not which section — and the nav below stays filtered as the coarse view.
+Scrolls at a fixed max-height rather than growing: the list is capped at 8 entries, but long labels still wrap, and an unbounded block would push the section nav out of view on a short viewport.
+Sizes name the shared scale (label = xs, section = 2xs) so results read as the same UI as the rows they navigate to.
+*/
+.settings-search-hits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: calc(var(--space-2xl) * 6);
+  overflow-y: auto;
+}
+
+.settings-search-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.settings-search-hit:hover,
+.settings-search-hit:focus-visible {
+  background: var(--bg);
+}
+
+.settings-search-hit-label {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
+/* The owning section, so two similarly-named settings are distinguishable before navigating. */
+.settings-search-hit-section {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+}
+
+.settings-search-hits-more {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
 }
 
 .settings-search-empty {
@@ -867,7 +922,7 @@ The Advanced settings preference is a navigation-level disclosure, so keep it vi
   display: block;
   width: 100%;
   padding: var(--space-sm) var(--space-md);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-muted);
   background: none;
@@ -905,7 +960,7 @@ The simplified Settings surface needs one consistent reading rhythm across legac
   padding: var(--space-lg) calc(var(--space-xl) + var(--space-sm)) calc(var(--space-xl) + var(--space-md));
 }
 
-.settings-content > :is(.settings-scope-banner, .settings-gitlab-disclosure) {
+.settings-content > .settings-gitlab-disclosure {
   margin-inline: 0;
 }
 
@@ -917,22 +972,74 @@ The simplified Settings surface needs one consistent reading rhythm across legac
 }
 
 .settings-content h4.settings-section-heading {
-  font-size: 0.95rem;
+  font-size: var(--font-size-base);
   margin-bottom: var(--space-md);
 }
 
 .settings-content h5.settings-section-heading {
-  font-size: 0.82rem;
+  font-size: var(--font-size-sm);
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-20:30:
+Bespoke rows keep the same vertical rhythm as migrated ones.
+`.settings-field-row` spaces itself with `padding-block: var(--space-sm)`, while a `.form-group` spaced itself with `margin-top: var(--space-md)`. Mixed in one section — which is now the normal case, since some rows deliberately stay bespoke — that produced three different gaps depending on which idioms happened to be adjacent: 16px between two migrated rows, 12px between two bespoke ones, and 20px where they met.
+Matching the primitive's `padding-block` (rather than giving the primitive a margin) keeps one idiom: every settings row owns its own space and margins never collapse or compound between them.
+`padding-inline: 0` stays — `.settings-content` already owns the horizontal inset, and `.form-group`'s global `0 var(--space-xl)` would double-indent every bespoke row.
+*/
 .settings-content .form-group {
   padding-inline: 0;
-  margin-top: var(--space-md);
+  margin-top: 0;
+  padding-block: var(--space-sm);
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-20:30:
+Every label in Settings reads the same way, whether its row is migrated or still bespoke.
+Some rows deliberately stay hand-rolled — a `data-testid` the primitives have no slot for, help copy that interleaves `<code>` or a link, a repeating-row editor — and those inherit the GLOBAL `.form-group label` treatment: 12px, weight 600, uppercase, letter-spaced, muted. So a section rendered "PLAN APPROVAL MODE" in caps directly above "Auto-merge conflict retries" in sentence case. Two idioms on one screen is the exact inconsistency the migration set out to remove, and migrating every last row is not achievable (nor desirable — see the bespoke rows' own FNXC notes).
+Retuning them here instead of at the global rule is deliberate: `.form-group` is dashboard-wide across 35 non-settings files, and its uppercase treatment is that context's convention, not a bug. This selector is settings-scoped, so it changes Settings only.
+Declarations mirror `.settings-field-row-label` — one contract, expressed at whatever specificity each markup idiom needs.
+*/
 .settings-content .form-group label:not(.checkbox-label) {
-  font-size: 0.72rem;
-  line-height: 1.35;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: var(--line-height-tight);
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: var(--space-xs);
+}
+
+/*
+FNXC:SettingsStyling 2026-07-15-20:30:
+Bespoke help text (`<small>` inside a form-group) matches `.settings-field-row-help`: same rung, same colour, same measure. Without this a bespoke row's help sat at 12px/1.4 beside a migrated row's at 12.8px/1.5 — close enough to look like a rendering glitch rather than a choice.
+Still applies to the copy that legitimately stays inline: validation messages (`.field-error`) and the explanatory blurbs that describe a whole block rather than one control.
+*/
+.settings-content .form-group small,
+.settings-content .form-group .form-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:SettingsHelp 2026-07-15-21:40:
+The label line for a row that is NOT on the shared primitive, so its help can hang off a "?" exactly like a migrated row's.
+A bespoke row is `<label>` + control + `<small>`; the tip has to sit beside the label, and it cannot go INSIDE the `<label>` — a nested button would both swallow the label's click-to-focus and put an interactive element inside a label, which is invalid. This wrapper puts them on one line as siblings instead.
+Mirrors `.settings-field-row-head` (same gap, same wrap) so the two idioms produce an identical label line.
+*/
+.settings-field-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+/* The label inside the wrapper must not also claim the row's full width, or the tip wraps to its own line. */
+.settings-content .form-group .settings-field-label-row label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 0;
 }
 
 .settings-content .checkbox-label {
@@ -940,10 +1047,19 @@ The simplified Settings surface needs one consistent reading rhythm across legac
   line-height: 1.35;
 }
 
+/*
+FNXC:SettingsStyling 2026-07-15-18:52:
+Every text-entry control in Settings resolves to ONE appearance, whatever markup it sits in.
+The dashboard ships two competing input treatments: `.input`/`.select` (6px 10px at 13px) and the global `.form-group input` rule (`var(--space-sm) var(--space-md)` = 8px 12px at 14px). A control's padding therefore depended on whether an ancestor happened to be a `.form-group` — and because `.form-group input` (0,1,1) out-specifies `.input` (0,1,0), adding the standard class to a control inside one did nothing. Migrated rows sit outside `.form-group` and got 6px 10px; the bespoke rows still inside one got 8px 12px, side by side in the same section.
+Normalized here rather than by editing the global `.form-group` rule, which 35 non-settings files depend on: this selector is already settings-scoped and already targets exactly the right set (form-group children AND `.input`/`.select`/`.form-input`), so it is the one place that can reconcile them without reaching outside Settings.
+Values intentionally mirror `.input` in styles.css — it is the dashboard-wide control appearance across ~300 call sites, so Settings matches the rest of the app rather than inventing a third treatment. If `.input` is ever tokenized, this pairs with it.
+*/
 .settings-content .form-group :is(input:not([type="checkbox"]), select, textarea),
 .settings-content :is(.input, .select, .form-input) {
   min-height: 38px;
   box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 13px;
 }
 
 .settings-content :is(.form-group small, .settings-description, .settings-section-description) {
@@ -969,7 +1085,7 @@ The simplified Settings surface needs one consistent reading rhythm across legac
 
 /* Settings group headers - visual separators between global and project sections */
 .settings-group-header {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1106,7 +1222,7 @@ FNXC:SettingsMobile 2026-06-23-09:02:
 Settings section headings should preserve hierarchy through spacing and type only. Avoid per-heading divider borders so mobile and desktop shared Settings sections keep the lighter scrollbar-focused chrome contract.
 */
 .settings-section-heading {
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   padding: var(--space-lg) 0 var(--space-md);
   margin: 0 0 var(--space-md);
@@ -1129,7 +1245,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
   margin: 0;
   margin-bottom: var(--space-sm);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -1147,7 +1263,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
   border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   padding: var(--space-xs) var(--space-md);
   cursor: pointer;
@@ -1187,35 +1303,13 @@ Settings section headings should preserve hierarchy through spacing and type onl
 }
 
 /* Scope banner above section content */
-.settings-scope-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-xl);
-  margin: 0 var(--space-xl) var(--space-xs);
-  font-size: 12px;
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-}
-.settings-scope-global {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-info) 40%, transparent);
-}
-.settings-scope-project {
-  background: color-mix(in srgb, var(--color-success) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--color-success) 40%, transparent);
-}
-.settings-scope-mixed {
-  background: color-mix(in srgb, var(--triage) 8%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--triage) 40%, transparent);
-}
 
 /* Helper note styling for Settings sections — aligns with form-group horizontal gutters */
 .settings-note {
   display: block;
   padding: 0 var(--space-xl);
   margin-top: var(--space-xs);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
@@ -1234,7 +1328,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
   background: none;
   border: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--accent, #4a90e2);
   cursor: pointer;
   text-decoration: underline;
@@ -1246,7 +1340,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
 
 .settings-overlap-ignore-group code {
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: var(--font-size-sm);
 }
 
 .settings-button-row {
@@ -1266,7 +1360,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
   max-height: calc(var(--space-2xl) * 7);
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-size: var(--font-size-xs);
 }
 
 .settings-url-output {
@@ -1278,7 +1372,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
   background: var(--surface);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-size: var(--font-size-xs);
   overflow-wrap: anywhere;
   word-break: break-word;
   overflow-x: auto;
@@ -1294,7 +1388,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
 
 .settings-qr-preview-label {
   margin: 0;
-  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
@@ -1527,7 +1621,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
 .remote-advanced-details > summary {
   cursor: pointer;
   color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-size: var(--font-size-xs);
   list-style: none;
 }
 
@@ -1596,7 +1690,7 @@ Settings section headings should preserve hierarchy through spacing and type onl
 .settings-option-details > summary {
   cursor: pointer;
   color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-size: var(--font-size-xs);
   list-style: none;
 }
 
@@ -1621,7 +1715,7 @@ FN-7453 keeps GitLab's enable switch visible while hiding noisy URL/token fields
 FNXC:SettingsLayout 2026-07-10-12:20:
 First-run review video showed the GitLab Configuration box (and its right-flushed "Enable GitLab integration" checkbox) leaking past the alignment line of every other General control, reading as overflow at the panel/viewport edge.
 Root cause: settings controls get their horizontal gutter from the base `.form-group { padding: 0 var(--space-xl) }`, but this disclosure is a direct `.settings-content` child that carried no gutter of its own, so its bordered box spanned the full content width.
-Fix the invariant: bordered boxes that are direct settings-content children align their OUTER edge to the form-group gutter via horizontal margins (same convention as `.settings-scope-banner`), desktop `var(--space-xl)` and mobile `var(--space-sm)` to mirror the mobile `.form-group` gutter below.
+Fix the invariant: bordered boxes that are direct settings-content children align their OUTER edge to the form-group gutter via horizontal margins, desktop `var(--space-xl)` and mobile `var(--space-sm)` to mirror the mobile `.form-group` gutter below.
 */
 .settings-gitlab-disclosure {
   display: flex;
@@ -1705,7 +1799,7 @@ Fix the invariant: bordered boxes that are direct settings-content children alig
 .remote-cf-advanced-details > summary {
   cursor: pointer;
   color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-size: var(--font-size-xs);
   list-style: none;
 }
 
@@ -1771,7 +1865,7 @@ Fix the invariant: bordered boxes that are direct settings-content children alig
 
 .settings-overlap-path-picker-note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
@@ -1850,7 +1944,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   .remote-status-url {
     width: 100%;
     margin-left: 0;
-    font-size: 0.8em;
+    font-size: var(--font-size-xs);
   }
 
   .remote-provider-option {
@@ -1882,7 +1976,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   cursor: pointer;
   list-style: none;
   padding: var(--space-sm) var(--space-md);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text);
 }
@@ -2014,14 +2108,14 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 .memory-test-result strong,
 .memory-test-result span {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .memory-test-result small {
   display: block;
   margin-top: var(--space-xs);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .memory-test-result ul {
@@ -2042,7 +2136,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 .memory-test-result p {
   margin: var(--space-xs) 0 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -2082,7 +2176,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   border-radius: var(--radius-pill);
   color: var(--color-info);
   background: color-mix(in srgb, var(--color-info) 12%, transparent);
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
 }
 
@@ -2091,13 +2185,13 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   overflow-wrap: anywhere;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .memory-file-summary small {
   grid-column: 2;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .memory-editor-frame {
@@ -2126,7 +2220,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   margin-bottom: var(--space-md);
   background: var(--bg-tertiary);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   border-left: 3px solid var(--text-muted);
 }
@@ -2134,7 +2228,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   margin-bottom: calc(var(--space-sm) + var(--space-xs) / 2);
 }
 .auth-group-label {
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -2194,7 +2288,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 .auth-hint {
   display: block;
   padding: 12px 4px 0;
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   border-top: 1px solid var(--border);
   margin-top: 8px;
@@ -2217,7 +2311,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   border-radius: 6px;
   color: var(--text);
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   width: 180px;
   font-family: monospace;
 }
@@ -2230,12 +2324,12 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   opacity: 0.6;
 }
 .auth-apikey-progress {
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   padding-right: 4px;
 }
 .auth-apikey-error {
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   color: var(--color-error);
   padding-right: 4px;
 }
@@ -2260,7 +2354,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 
 .auth-device-code-pill {
   font-family: var(--font-mono);
-  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  font-size: var(--font-size-sm);
   letter-spacing: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-pill);
@@ -2274,7 +2368,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 /* === Key Hint === */
 .auth-key-hint {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   display: inline-block;
   margin-top: var(--space-xs);
@@ -2286,7 +2380,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   align-items: center;
   padding: 2px 8px;
   border-radius: 10px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -2327,7 +2421,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   align-items: center;
   padding: 2px 8px;
   border-radius: 10px;
-  font-size: 11px;
+  font-size: var(--font-size-2xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -2346,12 +2440,12 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   display: block;
   margin: var(--space-xs) 0 var(--space-md);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
 .settings-description {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-dim);
   padding-inline: var(--space-xl);
   margin-block: 0 var(--space-md);
@@ -2435,7 +2529,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 }
 
 .settings-preset-summary {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   overflow-wrap: anywhere;
 }
 
@@ -2676,10 +2770,6 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     padding: 0;
   }
 
-  .settings-scope-banner {
-    margin: 0 var(--space-sm) var(--space-xs);
-    padding: var(--space-xs) var(--space-sm);
-  }
 
   .memory-editor-frame {
     min-height: 65vh;
@@ -2837,7 +2927,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 
   .settings-node-routing-note {
     padding: var(--space-sm);
-    font-size: 12px;
+    font-size: var(--font-size-xs);
   }
 }
 
@@ -2849,7 +2939,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   padding: var(--space-md) var(--space-lg);
   margin-top: var(--space-sm);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -2858,7 +2948,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   align-items: center;
   gap: var(--space-xs);
   margin-top: var(--space-sm);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 
@@ -2900,7 +2990,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   color: var(--text);
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   line-height: 1.4;
 }
 
@@ -2912,7 +3002,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 /* KTD-8: informational note at the bottom of the Node Sync section. */
 .settings-sync-workflow-note {
   margin-top: var(--space-md);
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 

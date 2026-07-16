@@ -34,6 +34,7 @@ export function SettingsToggleRow({
       disabled={disabled}
       clearable={clearable}
       onClear={() => onChange(null)}
+      inlineControl
     >
       <label className="settings-toggle">
         <input

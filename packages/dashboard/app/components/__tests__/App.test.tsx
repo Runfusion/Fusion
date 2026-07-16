@@ -2815,7 +2815,6 @@ describe("App view switching", () => {
       expect(mockCreateTask).toHaveBeenCalledWith({
         title: "Task from insight",
         description: "Use this insight as a task description",
-        column: "triage",
         source: {
           sourceType: "dashboard_ui",
           sourceMetadata: {

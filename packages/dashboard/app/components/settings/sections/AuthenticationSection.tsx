@@ -256,6 +256,10 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
                 </div>))}
             </div>)}
         </div>)}
+      {/*
+      FNXC:SettingsHelp 2026-07-15-21:40:
+      No `<small>` in this section moved behind the shared "?" help affordance, and none should. This section has no settings rows: it renders provider CARDS, whose `<small>`s are all live state (save progress, key errors, provider loginError, OpenCode refresh status) that must stay visible, plus two section-level blurbs — this one and the onboarding hint below — that describe the panel rather than any one control.
+      */}
       <small className="auth-hint">
         {t("settings.auth.hint", "Authentication changes take effect immediately — no need to save.")}
       </small>

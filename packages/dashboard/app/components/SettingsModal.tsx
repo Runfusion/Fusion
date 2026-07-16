@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
-import { Globe, Folder, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
+import { Globe, Folder, GitBranch, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
   getErrorMessage,
   resolveGitlabConfig,
@@ -45,11 +45,15 @@ import { PromptsSection } from "./settings/sections/PromptsSection";
 import { GeneralSection } from "./settings/sections/GeneralSection";
 import { ProjectModelsSection, WorkflowLaneFlushRejection } from "./settings/sections/ProjectModelsSection";
 import { SchedulingSection } from "./settings/sections/SchedulingSection";
+import { SchedulingGlobalSection } from "./settings/sections/SchedulingGlobalSection";
+import { CliBinarySection } from "./settings/sections/CliBinarySection";
 import { ScheduledEvalsSection } from "./settings/sections/ScheduledEvalsSection";
 import { NodeRoutingSection } from "./settings/sections/NodeRoutingSection";
 import { WorktreesSection } from "./settings/sections/WorktreesSection";
 import { CommandsSection } from "./settings/sections/CommandsSection";
 import { MergeSection } from "./settings/sections/MergeSection";
+import { SourceControlSection } from "./settings/sections/SourceControlSection";
+import { SourceControlGlobalSection } from "./settings/sections/SourceControlGlobalSection";
 import { AgentPermissionsSection } from "./settings/sections/AgentPermissionsSection";
 import { MemorySection } from "./settings/sections/MemorySection";
 import { ResearchProjectSection } from "./settings/sections/ResearchProjectSection";
@@ -79,6 +83,9 @@ import { useViewportMode } from "../hooks/useViewportMode";
 import { useWorktrunkInstallStatus } from "../hooks/useWorktrunkInstallStatus";
 import { type TrackingRepoOption } from "./TrackingRepoSelect";
 import { filterVisibleOnboardingAndSettingsProviders } from "./providerVisibility";
+import { SETTINGS_SEARCH_ENTRIES } from "./settings/search/entries";
+import { rankSettingsSearchResults, matchedSectionIds } from "./settings/search/match";
+import { SettingsSearchHighlightProvider } from "./settings/SettingsSearchHighlightContext";
 
 // ---------------------------------------------------------------------------
 // GitHub star count — fetched once per session, cached in localStorage (1 h).
@@ -239,6 +246,25 @@ export type SettingsSection = {
 const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
 const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
 const ADVANCED_SETTINGS_STORAGE_KEY = "fusion:settings:show-advanced";
+/*
+FNXC:SettingsSearch 2026-07-15-17:35:
+Mirrors `--settings-search-match-duration` in SettingsFieldRow.css: the highlight clears when the row's wash finishes. If this drifts shorter the class is pulled mid-animation and the wash cuts out; longer and the highlight lingers into the operator's next query.
+*/
+const SETTINGS_SEARCH_HIGHLIGHT_MS = 1600;
+
+/** Per-setting results shown before the list is capped; see the hits list. */
+const SETTINGS_SEARCH_MAX_RESULTS = 8;
+
+/**
+ * Scroll behavior for landing a search result, honoring reduced-motion.
+ * Follows the inline `matchMedia` idiom used by OAuthManualCodeForm rather than
+ * adding a hook — the dashboard has no shared reduced-motion hook.
+ */
+function settingsSearchScrollBehavior(): ScrollBehavior {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "auto";
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
 const SETTINGS_NAV_WIDTH_STORAGE_KEY = "fusion:settings-nav-width";
 const SETTINGS_NAV_DEFAULT_WIDTH = 248;
 const SETTINGS_NAV_MIN_WIDTH = 200;
@@ -268,6 +294,7 @@ const ADVANCED_SETTINGS_SECTION_IDS = new Set([
   "mcp",
   "prompts",
   "plugins",
+  "cli-binary",
 ]);
 
 function readAdvancedSettingsPreference(): boolean {
@@ -312,8 +339,19 @@ export function sectionMatchesSettingsSearch(
   query: string,
   label: string,
   translateSearchKey: (key: string) => string,
+  entryMatchedSectionIds?: ReadonlySet<string>,
 ): boolean {
   if (!query || section.isGroupHeader) {
+    return true;
+  }
+
+  /*
+  FNXC:SettingsSearch 2026-07-15-17:35:
+  A section also matches when the per-setting index matched any control inside it, which is the path that finds settings the section's own curated keywords never mentioned.
+  Checked before the keyword list because it is the authoritative one: it indexes the label and help text operators actually read, whereas `searchableText` is a hand-written approximation of it.
+  The keyword list still runs as the fallback — sections are migrated to the index incrementally, and an unmigrated section has no entries, so dropping it here would make those sections unsearchable mid-rollout.
+  */
+  if (entryMatchedSectionIds?.has(section.id)) {
     return true;
   }
 
@@ -331,6 +369,7 @@ export function filterSettingsSectionsForSearch(
   query: string,
   translateLabel: (section: SettingsSection) => string,
   translateSearchKey: (key: string) => string,
+  entryMatchedSectionIds?: ReadonlySet<string>,
 ): SettingsSection[] {
   if (!query) {
     return sections;
@@ -338,7 +377,7 @@ export function filterSettingsSectionsForSearch(
 
   const matchedIds = new Set(
     sections
-      .filter((section) => !section.isGroupHeader && sectionMatchesSettingsSearch(section, query, translateLabel(section), translateSearchKey))
+      .filter((section) => !section.isGroupHeader && sectionMatchesSettingsSearch(section, query, translateLabel(section), translateSearchKey, entryMatchedSectionIds))
       .map((section) => section.id),
   );
 
@@ -363,47 +402,33 @@ function resolveFirstSelectableSettingsSection(sections: SettingsSection[], fall
   return sections.find((section) => !section.isGroupHeader)?.id ?? fallback;
 }
 
+
 /*
-FNXC:SettingsNavigation 2026-07-04-00:00:
-The mobile Settings section picker (`<select>` on narrow viewports) prefixes every
-section option with its owning group (`Global — `/`Project — `) so entries are
-unambiguous when labels collide across scopes (e.g. "MCP Servers" exists in both
-Global and Project). The Authentication section is intentionally `scope: undefined`
-(it is not backed by settings storage — see SETTINGS_SECTIONS), but it still lives
-under the Global group header in SETTINGS_SECTIONS, so its mobile option rendered as
-bare "Authentication" instead of "Global — Authentication", inconsistent with its
-Global-group siblings (FN-7552). SETTINGS_SECTION_GROUP_LABEL_BY_ID maps every
-non-header section id to the label of the most recent group-header row preceding it
-in SETTINGS_SECTIONS, so resolveSettingsSectionOptionLabel can fall back to a
-group-derived "Global — " prefix for storage-less sections that belong to the Global
-group — without changing behavior for any section that already declares a scope
-(Runtimes entries keep their existing scope:"global" path) or for undefined-scope
-group-header rows themselves (which are never rendered as selectable options).
+FNXC:SettingsNavigation 2026-07-15-17:35:
+Scope is written as a ` · Global`/` · Project` SUFFIX, matching the nav labels, rather than the former `Global — `/`Project — ` prefix.
+The nav is now grouped by topic, so scope is no longer implied by position and the paired sections spell it out in their own label ("MCP Servers · Global"). Keeping the old prefix here would have rendered "Global — MCP Servers · Global" on mobile.
+The prefix cannot simply be dropped instead: the mobile picker is a bare `<select>` with no room for the scope icon the desktop nav draws, so this suffix is the only scope signal a mobile operator gets — which is why it is still applied to every scoped section, not just the colliding pairs.
 */
-function buildSettingsSectionGroupLabelMap(sections: SettingsSection[]): Map<string, string> {
-  const map = new Map<string, string>();
-  let currentGroupLabel: string | undefined;
-  for (const section of sections) {
-    if (section.isGroupHeader) {
-      currentGroupLabel = section.label;
-      continue;
-    }
-    if (currentGroupLabel !== undefined) {
-      map.set(section.id, currentGroupLabel);
-    }
-  }
-  return map;
-}
+const SETTINGS_SECTION_SCOPE_SUFFIX = / · (Global|Project)$/;
+
+/*
+FNXC:SettingsNavigation 2026-07-15-17:35:
+Storage-less sections that are nevertheless global in effect (FN-7552: Authentication holds credentials shared across every project, but is not backed by settings storage, hence `scope: undefined`).
+This is an explicit list because the previous rule — "the most recent group header says Global" — cannot survive topic-first grouping: there is no group named "Global" any more, and Authentication now sits under Integrations. Deriving scope from a group label was always indirect; naming the exception is honest and does not silently lapse when groups are renamed again.
+*/
+const STORAGE_LESS_GLOBAL_SECTION_IDS = new Set(["authentication"]);
 
 function resolveSettingsSectionOptionLabel(section: SettingsSection, label: string): string {
-  if (section.scope === "global") {
-    return `Global — ${label}`;
+  // Paired sections already carry the suffix in their own label; re-appending
+  // would read "MCP Servers · Global · Global".
+  if (SETTINGS_SECTION_SCOPE_SUFFIX.test(label)) {
+    return label;
+  }
+  if (section.scope === "global" || STORAGE_LESS_GLOBAL_SECTION_IDS.has(section.id)) {
+    return `${label} · Global`;
   }
   if (section.scope === "project") {
-    return `Project — ${label}`;
-  }
-  if (SETTINGS_SECTION_GROUP_LABEL_BY_ID.get(section.id) === "Global") {
-    return `Global — ${label}`;
+    return `${label} · Project`;
   }
   return label;
 }
@@ -414,93 +439,32 @@ function resolveMaxAutoMergeRetriesForSettingsForm(settings?: { maxAutoMergeRetr
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-  // Global group (shared across all Fusion projects)
-  { id: "__global_header", label: "Global", labelKey: "settings.nav.globalHeader", scope: undefined, isGroupHeader: true },
-  { id: "global-general", label: "General", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs", "GitLab instance URL", "global tracking repo"] },
-  { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", labelKey: "settings.nav.keyboardShortcuts", scope: "global", searchableText: ["keyboard shortcuts", "hotkeys", "quick chat shortcut", "terminal shortcut", "open files", "open settings", "command center", "new task shortcut", "record shortcut"] },
-  { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
+  { id: "__preferences_header", label: "Preferences", labelKey: "settings.nav.preferencesHeader", scope: undefined, isGroupHeader: true },
   { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "task popup", "task popups", "board list popups", "popup view attachment", "open tasks as popups", "quick chat"] },
+  { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", labelKey: "settings.nav.keyboardShortcuts", scope: "global", searchableText: ["keyboard shortcuts", "hotkeys", "quick chat shortcut", "terminal shortcut", "open files", "open settings", "command center", "new task shortcut", "record shortcut"] },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global", searchableText: ["ntfy", "webhook", "events", "failure notifications", "sticky", "toast"] },
-  { id: "node-sync", label: "Node Sync", labelKey: "settings.nav.nodeSync", scope: "global", searchableText: ["sync", "node", "distributed", "heartbeat", "coordination"] },
-  { id: "global-models", label: "Models", labelKey: "settings.nav.globalModels", scope: "global", searchableText: ["global models", "model presets", "favorite providers", "model pricing overrides", "LiteLLM pricing", "token pricing", "translate", "translation model", "import translation model", "import auto-translation model"] },
-  { id: "global-mcp", label: "MCP Servers", labelKey: "settings.nav.globalMcp", scope: "global", searchableText: ["global MCP servers", "shared MCP", "user MCP", "tool servers"] },
-  {
-    id: "cli-agents",
-    label: "CLI Agents",
-    labelKey: "settings.nav.cliAgents",
-    scope: "global",
-    searchableText: [
-      "Droid CLI",
-      "Cursor CLI",
-      "agent runtime",
-      "command line agents",
-      "Adapter",
-      "Command override",
-      "Path or name of the binary to launch",
-      "Extra arguments",
-      "Appended after the adapter's computed arguments",
-      "Environment variable additions",
-      "Comma-separated variable names forwarded",
-      "Autonomy mode",
-      "Elevated autonomy requires a per-project approval",
-    ],
-    searchableKeys: [
-      "settings.cliAgents.adapterLabel",
-      "settings.cliAgents.commandLabel",
-      "settings.cliAgents.commandHelp",
-      "settings.cliAgents.extraArgsLabel",
-      "settings.cliAgents.extraArgsHelp",
-      "settings.cliAgents.envLabel",
-      "settings.cliAgents.envHelp",
-      "settings.cliAgents.autonomyLabel",
-      "settings.cliAgents.autonomyHelp",
-      "settings.cliAgents.approvedNote",
-    ],
-  },
-  { id: "research-global", label: "Research Defaults", labelKey: "settings.nav.researchGlobal", scope: "global", searchableText: ["research providers", "external search providers", "fetch limits", "global research defaults", "citations"] },
-  /*
-  FNXC:SettingsNavigation 2026-06-26-09:20:
-  FN-7062 requires the remote settings nav entry to read "Remote Access" only. The stale "& Node Sync" suffix belongs to the separate Node Sync settings section, while this section body already uses the Remote Access heading.
-  */
-  { id: "remote", label: "Remote Access", labelKey: "settings.nav.remote", scope: "global", searchableText: ["cloudflared", "tunnel", "QR", "persistent token", "remote URL"] },
-  { id: "experimental", label: "Experimental Features", labelKey: "settings.nav.experimental", scope: "global", searchableText: ["feature flags", "experiments", "research view", "evals view", "sandbox", "subtask breakdown"] },
+  { id: "global-general", label: "General · Global", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs"] },
 
-  // Runtimes group (plugin runtimes with their own settings)
-  { id: "__runtimes_header", label: "Runtimes", labelKey: "settings.nav.runtimesHeader", scope: undefined, isGroupHeader: true },
-  { id: "hermes-runtime", label: "Hermes", labelKey: "settings.nav.hermesRuntime", scope: "global", searchableText: ["Hermes runtime", "plugin runtime", "printer runtime"] },
-  { id: "openclaw-runtime", label: "OpenClaw", labelKey: "settings.nav.openclawRuntime", scope: "global", searchableText: ["OpenClaw runtime", "plugin runtime", "open claw"] },
-  { id: "paperclip-runtime", label: "Paperclip", labelKey: "settings.nav.paperclipRuntime", scope: "global", searchableText: ["Paperclip runtime", "plugin runtime"] },
-
-  // Project group (specific to this project)
   { id: "__project_header", label: "Project", labelKey: "settings.nav.projectHeader", scope: undefined, isGroupHeader: true },
-  {
-    id: "general",
-    label: "Project General",
-    labelKey: "settings.nav.projectGeneral",
-    scope: "project",
-    /*
-    FNXC:GitHubImportTranslate 2026-07-15-16:20:
-    Import auto-translation lives in Project General beside the other import-scoped GitHub settings, but operators look for it by what it DOES ("translate", "language", "auto translate issues"), not by the section it happens to live in. Settings search only matches curated terms plus advertised i18n keys, so without these the controls are effectively unfindable — the section name says nothing about translation.
-    */
-    searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "GitHub tracking", "GitLab integration", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization"],
-    searchableKeys: [
-      "settings.general.autoTranslateImportedIssues",
-      "settings.general.autoTranslateImportedIssuesHelp",
-      "settings.general.translationTargetLanguage",
-      "settings.general.translationTargetLanguageHelp",
-      "settings.general.followDashboardLanguage",
-    ],
-  },
+  /*
+  FNXC:GitHubImportTranslate 2026-07-15-16:20:
+  Import auto-translation lives in Project General beside the other import-scoped GitHub settings, but operators look for it by what it DOES ("translate", "language", "auto translate issues"), not by the section it happens to live in.
+  FNXC:SettingsSearch 2026-07-15-19:10: the per-setting index now matches these controls on their own label and help text, so the terms that merely restate the copy are no longer load-bearing. The list is kept for the genuine vocabulary gaps — "localize", "localization", "foreign language issues" — which appear nowhere in the copy, and because unmigrated siblings in this section still rely on section-level keywords.
+  */
+  { id: "general", label: "General · Project", labelKey: "settings.nav.projectGeneral", scope: "project", searchableText: ["project general", "Completion Documentation Automation", "Quick Chat launcher", "ephemeral task-worker agents", "chat rooms", "auto-cleanup old chats", "translate", "translation", "auto translate", "auto-translate", "autotranslate", "auto translate issues", "translate issues", "translate imported issues", "githubImportAutoTranslate", "importTranslateTargetLocale", "target language", "translation target language", "translation language", "language", "foreign language issues", "import language", "localize", "localization"], searchableKeys: ["settings.general.autoTranslateImportedIssues", "settings.general.autoTranslateImportedIssuesHelp", "settings.general.translationTargetLanguage", "settings.general.translationTargetLanguageHelp", "settings.general.followDashboardLanguage"] },
   { id: "commands", label: "Commands & Scripts", labelKey: "settings.nav.commands", scope: "project", searchableText: ["test command", "build command", "verification command", "workflow scripts", "commands"] },
   { id: "worktrees", label: "Worktrees", labelKey: "settings.nav.worktrees", scope: "project", searchableText: ["worktree directory", "copy files", "recycle worktrees", "branch naming", "sibling branch rename"] },
-  { id: "scheduling", label: "Scheduling & Capacity", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
-  { id: "scheduled-evals", label: "Scheduled Evals", labelKey: "settings.nav.scheduledEvals", scope: "project", searchableText: ["scheduled evals", "evaluation schedule", "eval runs", "quality jobs"] },
-  { id: "node-routing", label: "Node Routing", labelKey: "settings.nav.nodeRouting", scope: "project", searchableText: ["node routing", "routing rules", "node selection", "execution nodes"] },
   { id: "merge", label: "Merge", labelKey: "settings.nav.merge", scope: "project", searchableText: ["auto merge", "AI merge", "merge strategy", "plan approval", "direct merge", "integration branch", "push after merge"] },
-  { id: "agent-permissions", label: "Agents & Permissions", labelKey: "settings.nav.agentPermissions", scope: "project", searchableText: ["agent provisioning", "approval", "permissions", "policy", "agent creation"] },
-  { id: "memory", label: "Memory", labelKey: "settings.nav.memory", scope: "project", searchableText: ["memory backend", "Dreams", "long-term memory", "qmd", "memory file", "retrieval"] },
-  { id: "backups", label: "Backups", labelKey: "settings.nav.backups", scope: "project", searchableText: ["backup", "restore", "settings export", "settings import"] },
-  { id: "research-project", label: "Research", labelKey: "settings.nav.researchProject", scope: "project", searchableText: ["project research", "research runs", "citations", "search limits", "fetch synthesis"] },
+
+  { id: "__ai_header", label: "AI & Models", labelKey: "settings.nav.aiHeader", scope: undefined, isGroupHeader: true },
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:30:
+  Authentication leads the AI & Models group, and Settings still opens on it.
+  It is a provider-credentials screen, so it belongs with the model settings it gates rather than under Integrations (where it sat among MCP/Plugins/runtimes) or floating above the groups as a special case — connecting a provider and choosing its models are one task, done in that order.
+  First within the group because nothing else in AI & Models can be configured until it is done: with no provider connected there are no models to pick.
+  */
+  { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
+  { id: "global-models", label: "Models · Global", labelKey: "settings.nav.globalModels", scope: "global", searchableText: ["global models", "model presets", "favorite providers", "model pricing overrides", "LiteLLM pricing", "token pricing", "translate", "translation model", "import translation model", "import auto-translation model"] },
   /**
    * FNXC:SettingsNavigation 2026-07-13-00:00:
    * Project Models owns the FN-7907 Direct-chat default settings. Its shared Settings search index must advertise chat-default terms and i18n labels so desktop nav, the mobile section picker, and filtered search all surface this section when operators search for Chat defaults.
@@ -510,7 +474,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
    */
   {
     id: "project-models",
-    label: "Project Models",
+    label: "Models · Project",
     labelKey: "settings.nav.projectModels",
     scope: "project",
     searchableText: [
@@ -567,16 +531,93 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       "settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI",
     ],
   },
-  { id: "secrets", label: "Secrets", labelKey: "settings.nav.secrets", scope: "project", searchableText: ["secrets", "secret storage", "environment", "credentials"] },
-  { id: "mcp", label: "MCP Servers", labelKey: "settings.nav.mcp", scope: "project", searchableText: ["project MCP servers", "workspace MCP", "project tool servers", "mcp config"] },
+  {
+    id: "cli-agents",
+    label: "CLI Agents",
+    labelKey: "settings.nav.cliAgents",
+    scope: "global",
+    searchableText: [
+      "Droid CLI",
+      "Cursor CLI",
+      "agent runtime",
+      "command line agents",
+      "Adapter",
+      "Command override",
+      "Path or name of the binary to launch",
+      "Extra arguments",
+      "Appended after the adapter's computed arguments",
+      "Environment variable additions",
+      "Comma-separated variable names forwarded",
+      "Autonomy mode",
+      "Elevated autonomy requires a per-project approval",
+    ],
+    searchableKeys: [
+      "settings.cliAgents.adapterLabel",
+      "settings.cliAgents.commandLabel",
+      "settings.cliAgents.commandHelp",
+      "settings.cliAgents.extraArgsLabel",
+      "settings.cliAgents.extraArgsHelp",
+      "settings.cliAgents.envLabel",
+      "settings.cliAgents.envHelp",
+      "settings.cliAgents.autonomyLabel",
+      "settings.cliAgents.autonomyHelp",
+      "settings.cliAgents.approvedNote",
+    ],
+  },
+  { id: "agent-permissions", label: "Agents & Permissions", labelKey: "settings.nav.agentPermissions", scope: "project", searchableText: ["agent provisioning", "approval", "permissions", "policy", "agent creation"] },
   { id: "prompts", label: "Prompts", labelKey: "settings.nav.prompts", scope: "project", searchableText: ["prompt instructions", "PR title prompt", "PR description prompt", "custom prompts"] },
+  { id: "memory", label: "Memory", labelKey: "settings.nav.memory", scope: "project", searchableText: ["memory backend", "Dreams", "long-term memory", "qmd", "memory file", "retrieval"] },
+  { id: "research-global", label: "Research · Global", labelKey: "settings.nav.researchGlobal", scope: "global", searchableText: ["research providers", "external search providers", "fetch limits", "global research defaults", "citations"] },
+  { id: "research-project", label: "Research · Project", labelKey: "settings.nav.researchProject", scope: "project", searchableText: ["project research", "research runs", "citations", "search limits", "fetch synthesis"] },
+
+  { id: "__automation_header", label: "Automation", labelKey: "settings.nav.automationHeader", scope: undefined, isGroupHeader: true },
+  /*
+  FNXC:SettingsNavigation 2026-07-15-18:52:
+  Scheduling is split into a Global/Project pair rather than one section holding both authority levels behind in-section subheadings. The machine-wide concurrency cap and a project's scheduling posture are different questions, and a search result landing mid-section showed no subheading to disambiguate them.
+  */
+  { id: "scheduling-global", label: "Scheduling · Global", labelKey: "settings.nav.schedulingGlobal", scope: "global", searchableText: ["global max concurrent", "concurrency cap", "all projects", "machine wide", "parallel agents", "scheduler"] },
+  { id: "scheduling", label: "Scheduling · Project", labelKey: "settings.nav.scheduling", scope: "project", searchableText: ["max concurrent", "capacity", "stuck tasks", "poll interval", "parallel steps", "scheduler"] },
+  { id: "scheduled-evals", label: "Scheduled Evals", labelKey: "settings.nav.scheduledEvals", scope: "project", searchableText: ["scheduled evals", "evaluation schedule", "eval runs", "quality jobs"] },
+
+  { id: "__integrations_header", label: "Integrations", labelKey: "settings.nav.integrationsHeader", scope: undefined, isGroupHeader: true },
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  The Global/Project source-control pair sits under Integrations, not Project: these settings configure how Fusion talks to GitHub/GitLab, which is the same kind of thing as the MCP and provider entries beside them.
+  The two are adjacent and ordered global-then-project to match the inheritance they model — the global entry holds the fallbacks the project entry overrides — mirroring the MCP Servers pair directly below.
+  The GitLab/GitHub keywords below were curated on the `general` and `merge` nav entries before their controls moved here; a keyword left behind would send an operator searching "gitlab token" to a section that no longer renders one. The translate keywords deliberately did NOT move: `githubImportAutoTranslate`/`importTranslateTargetLocale` are Import Tasks panel settings and stay in General.
+  */
+  { id: "source-control-global", label: "Source Control · Global", labelKey: "settings.nav.sourceControlGlobal", scope: "global", icon: GitBranch, searchableText: ["GitLab instance URL", "global tracking repo", "GitLab", "GitHub", "global GitLab token", "GitLab fallback", "source control", "forge"] },
+  { id: "source-control", label: "Source Control · Project", labelKey: "settings.nav.sourceControl", scope: "project", icon: GitBranch, searchableText: ["GitHub tracking", "GitLab integration", "GitHub auth mode", "GitLab access token", "GitHub personal access token", "tracking repo", "source control", "forge", "gh cli", "issue tracking"] },
+  { id: "global-mcp", label: "MCP Servers · Global", labelKey: "settings.nav.globalMcp", scope: "global", searchableText: ["global MCP servers", "shared MCP", "user MCP", "tool servers"] },
+  { id: "mcp", label: "MCP Servers · Project", labelKey: "settings.nav.mcp", scope: "project", searchableText: ["project MCP servers", "workspace MCP", "project tool servers", "mcp config"] },
   { id: "plugins", label: "Plugins", labelKey: "settings.nav.plugins", scope: "project", searchableText: ["Fusion plugins", "Pi extensions", "plugin manager", "extension marketplace"] },
+  { id: "hermes-runtime", label: "Hermes", labelKey: "settings.nav.hermesRuntime", scope: "global", searchableText: ["Hermes runtime", "plugin runtime", "printer runtime"] },
+  { id: "openclaw-runtime", label: "OpenClaw", labelKey: "settings.nav.openclawRuntime", scope: "global", searchableText: ["OpenClaw runtime", "plugin runtime", "open claw"] },
+  { id: "paperclip-runtime", label: "Paperclip", labelKey: "settings.nav.paperclipRuntime", scope: "global", searchableText: ["Paperclip runtime", "plugin runtime"] },
+  { id: "secrets", label: "Secrets", labelKey: "settings.nav.secrets", scope: "project", searchableText: ["secrets", "secret storage", "environment", "credentials"] },
+
+  { id: "__infrastructure_header", label: "Infrastructure", labelKey: "settings.nav.infrastructureHeader", scope: undefined, isGroupHeader: true },
+  { id: "node-sync", label: "Node Sync", labelKey: "settings.nav.nodeSync", scope: "global", searchableText: ["sync", "node", "distributed", "heartbeat", "coordination"] },
+  { id: "node-routing", label: "Node Routing", labelKey: "settings.nav.nodeRouting", scope: "project", searchableText: ["node routing", "routing rules", "node selection", "execution nodes"] },
+  /*
+  FNXC:SettingsNavigation 2026-06-26-09:20:
+  FN-7062 requires the remote settings nav entry to read "Remote Access" only. The stale "& Node Sync" suffix belongs to the separate Node Sync settings section, while this section body already uses the Remote Access heading.
+  */
+  { id: "remote", label: "Remote Access", labelKey: "settings.nav.remote", scope: "global", searchableText: ["cloudflared", "tunnel", "QR", "persistent token", "remote URL"] },
+  { id: "backups", label: "Backups", labelKey: "settings.nav.backups", scope: "project", searchableText: ["backup", "restore", "settings export", "settings import"] },
+
+  { id: "__advanced_header", label: "Advanced", labelKey: "settings.nav.advancedHeader", scope: undefined, isGroupHeader: true },
+  { id: "experimental", label: "Experimental Features", labelKey: "settings.nav.experimental", scope: "global", searchableText: ["feature flags", "experiments", "research view", "evals view", "sandbox", "subtask breakdown"] },
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:00:
+  Last entry in the nav, and advanced-only. The `fn` binary panel used to render at the TOP of "General · Global", so machine plumbing was the first thing an operator saw on opening Settings. It is install/version/path maintenance touched once or when something breaks — the definition of what the Advanced switch hides.
+  */
+  { id: "cli-binary", label: "CLI Binary", labelKey: "settings.nav.cliBinary", scope: "global", searchableText: ["fn binary", "cli", "install", "version", "path", "upgrade", "homebrew", "binary check"] },
 ];
 
 // FNXC:SettingsNavigation 2026-07-04-00:00: sectionId -> owning group label ("Global"/"Runtimes"/"Project"),
 // derived once from SETTINGS_SECTIONS order. Used by resolveSettingsSectionOptionLabel to prefix
 // storage-less (scope: undefined) sections like "authentication" that belong to the Global group (FN-7552).
-const SETTINGS_SECTION_GROUP_LABEL_BY_ID = buildSettingsSectionGroupLabelMap(SETTINGS_SECTIONS);
 
 /** Well-known experimental feature flags with display labels.
  *  These always appear in the Experimental Features settings tab,
@@ -702,7 +743,12 @@ function normalizeWorktreeCopyFilesForSave(paths?: string[]): string[] {
 type LegacySectionId = "pi-extensions";
 export type SectionId = SettingsSection["id"] | LegacySectionId;
 
-const DEFAULT_SETTINGS_SECTION: SectionId = "global-general";
+/*
+FNXC:SettingsNavigation 2026-07-16-01:00:
+Settings opens on Authentication. It is the section an operator actually needs first — nothing else in the product works until a provider is connected, and the dashboard's own empty state points here ("Set one up in Settings → AI Setup"). The previous landing section was "General · Global", a page of app preferences (and, until this change, the `fn` binary panel) that nobody opens Settings to find.
+It is also always visible: Authentication is not behind the Advanced switch, so the default landing section cannot be one the operator has hidden.
+*/
+const DEFAULT_SETTINGS_SECTION: SectionId = "authentication";
 
 type PluginsSubsectionId = "fusion-plugins" | "pi-extensions";
 
@@ -1151,6 +1197,13 @@ export function SettingsModal({
   FNXC:Settings 2026-07-09-00:00:
   Mobile Settings navigation is controlled by both the viewport hook and the CSS media query because tests and embedded shells can mock one surface independently. Treat either mobile signal as sufficient so the compact picker/search-toggle path stays available whenever Settings is in mobile mode.
   */
+  /*
+  FNXC:SettingsSearch 2026-07-15-17:35:
+  The setting a search result asked to land on. Held here rather than in the sections because the modal owns both halves of the jump: it switches the active section AND scrolls to the row, and only the row itself knows how to flag the match (via SettingsSearchHighlightProvider).
+  */
+  const [highlightedSettingKey, setHighlightedSettingKey] = useState<string | null>(null);
+  /** Set when a search result drives the next section change; see the scroll-to-top effect. */
+  const settingsJumpPendingRef = useRef(false);
   const [showMobileSectionPicker, setShowMobileSectionPicker] = useState(() =>
     viewportMode === "mobile" ||
     (typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -1277,12 +1330,34 @@ export function SettingsModal({
   FNXC:SettingsSearch 2026-07-04-00:00:
   Operators need Settings search to find the section containing a setting without bypassing feature gates. Search filters only the already-visible section list, matches section labels plus real setting-label/help i18n keys and curated keywords, suppresses empty group headers, and keeps duplicate global/project labels distinguishable in the mobile picker.
   */
+  /*
+  FNXC:SettingsSearch 2026-07-15-17:35:
+  Search resolves to individual settings, not just sections: the index carries every control's label and help text, so a query lands on the control instead of on a section the operator must then re-scan by eye.
+  Results are restricted to `visibleSections` so search never surfaces a setting behind a feature gate or hidden by the Advanced switch — the pre-existing contract above, now enforced on the per-setting list as well as the nav.
+  `t` is threaded in as the resolver so results follow the active locale; the index stores i18n keys plus English fallbacks rather than resolved strings.
+  */
+  const settingsSearchResults = useMemo(() => {
+    if (!normalizedSettingsSearchQuery) return [];
+    const visibleSectionIds = new Set(visibleSections.map((section) => section.id));
+    return rankSettingsSearchResults(
+      SETTINGS_SEARCH_ENTRIES.filter((entry) => visibleSectionIds.has(entry.sectionId)),
+      normalizedSettingsSearchQuery,
+      (key, fallback) => t(key, fallback),
+    );
+  }, [normalizedSettingsSearchQuery, t, visibleSections]);
+
+  const entryMatchedSectionIds = useMemo(
+    () => matchedSectionIds(settingsSearchResults),
+    [settingsSearchResults],
+  );
+
   const searchMatchedSections = useMemo(() => filterSettingsSectionsForSearch(
     visibleSections,
     normalizedSettingsSearchQuery,
     (section) => t(section.labelKey, section.label),
     (key) => t(key),
-  ), [normalizedSettingsSearchQuery, t, visibleSections]);
+    entryMatchedSectionIds,
+  ), [normalizedSettingsSearchQuery, t, visibleSections, entryMatchedSectionIds]);
   const searchableSectionOptions = searchMatchedSections.filter((section) => !section.isGroupHeader);
   const hasSettingsSearchQuery = normalizedSettingsSearchQuery.length > 0;
   const hasSettingsSearchResults = searchableSectionOptions.length > 0;
@@ -1291,6 +1366,68 @@ export function SettingsModal({
   const isMobileSettingsSearch = viewportMode === "mobile";
   const settingsSearchRowVisible = !isMobileSettingsSearch || mobileSearchRowExpanded;
   const firstSearchMatchedSectionId = resolveFirstSelectableSettingsSection(searchMatchedSections, firstVisibleSectionId);
+
+  /*
+  FNXC:SettingsSearch 2026-07-15-17:35:
+  Landing a search result is two steps that cannot happen in one: switching section unmounts the old one and mounts the target, so the row does not exist in the DOM until React commits. The click sets section + key, and the effect below scrolls once the row is actually there.
+  */
+  const handleSettingsSearchResultSelect = useCallback((sectionId: string, key: string) => {
+    // Claims the upcoming section change so the scroll-to-top below yields to the
+    // jump; otherwise the row we just scrolled to would be scrolled away from.
+    settingsJumpPendingRef.current = true;
+    setActiveSection(sectionId);
+    setHighlightedSettingKey(key);
+  }, []);
+
+  /*
+  FNXC:SettingsNavigation 2026-07-16-01:10:
+  Switching section starts you at the top of it.
+  Sections keep no scroll of their own, so the container's offset carried over: leaving a long section scrolled halfway (Scheduling, General) and picking a short one landed mid-content — on mobile, often past everything, on an apparently blank screen with no hint to scroll up.
+  Guarded by a ref rather than by reading `highlightedSettingKey`: a search jump also changes `activeSection`, and that key clears itself ~1.6s later, which would re-run this effect and yank the operator away from the row they had just jumped to. The ref is consumed once, so only the jump's own section change is exempt.
+  */
+  useEffect(() => {
+    if (settingsJumpPendingRef.current) {
+      settingsJumpPendingRef.current = false;
+      return;
+    }
+    /*
+    FNXC:SettingsNavigation 2026-07-16-01:10:
+    Assigns `scrollTop` rather than calling `scrollTo({top:0})`: jsdom implements the property but not the method, so the smarter-looking call throws "scrollTo is not a function" in component tests. The jump is instant either way — a section change is a context switch, not a movement the eye should follow.
+    */
+    if (settingsContentRef.current) settingsContentRef.current.scrollTop = 0;
+  }, [activeSection]);
+
+  useEffect(() => {
+    if (!highlightedSettingKey) return;
+    const container = settingsContentRef.current;
+    if (!container) return;
+
+    const row = container.querySelector<HTMLElement>(`[data-settings-key="${CSS.escape(highlightedSettingKey)}"]`);
+    /*
+    FNXC:SettingsSearch 2026-07-15-17:35:
+    A result can point at a control the active section does not render at all right now — a conditional field whose dependency is off. Scrolling is skipped rather than guessed at; the section still opens, which is strictly better than the pre-rewrite behavior of only ever opening the section.
+    `CSS.escape` because setting keys reach this selector unsanitized; a key with a dot or colon would otherwise build a selector that throws and take the modal down.
+    */
+    if (!row) return;
+
+    /*
+    FNXC:SettingsSearch 2026-07-15-18:52:
+    Reveal every `<details>` ancestor before scrolling. Rows inside a collapsed disclosure are in the DOM but not visible, so the jump would scroll to — and highlight — a control the operator cannot see, which reads as search doing nothing.
+    This is not a rare edge: the settings most worth searching for are the ones tucked behind "Advanced" (the ntfy access token, the Cloudflare named-tunnel trio, the Merge option details).
+    Walks ancestors rather than just the nearest one, since disclosures can nest.
+    */
+    for (let node = row.parentElement; node; node = node.parentElement) {
+      if (node instanceof HTMLDetailsElement) node.open = true;
+    }
+
+    row.scrollIntoView({ block: "center", behavior: settingsSearchScrollBehavior() });
+
+    /*
+    The highlight is a one-shot: it clears itself after the row's wash finishes so it does not persist behind the operator's next query, and so re-selecting the same result re-triggers the animation (an unchanged key would not restart it).
+    */
+    const timer = window.setTimeout(() => setHighlightedSettingKey(null), SETTINGS_SEARCH_HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [highlightedSettingKey, activeSection]);
 
   /** Get the scope of the currently active section */
   const activeSectionScope = visibleSections.find((s) => s.id === activeSection)?.scope;
@@ -1581,8 +1718,13 @@ export function SettingsModal({
     void refreshSettingsForm(true);
   }, [addToast, projectId]);
 
+  /*
+  FNXC:SettingsConcurrency 2026-07-15-18:52:
+  Fetches for EITHER scheduling section. `scheduling-global` renders the cap itself, and `scheduling` (project) gates its own concurrency inputs on this load — the FN-era invariant that a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback.
+  Gating on `"scheduling"` alone (the id before the Global/Project split) would leave the global cap's own section waiting on a fetch that never fires, disabling the only control it renders.
+  */
   useEffect(() => {
-    if (activeSection !== "scheduling" || hasFetchedGlobalConcurrencyRef.current) {
+    if ((activeSection !== "scheduling" && activeSection !== "scheduling-global") || hasFetchedGlobalConcurrencyRef.current) {
       return;
     }
 
@@ -1950,7 +2092,8 @@ export function SettingsModal({
   }, [activeSection, projectId]);
 
   useEffect(() => {
-    if (activeSection !== "general") {
+    // FNXC:SourceControl 2026-07-15-20:30: The tracking-repo select moved to the project source-control section; this loader must follow the control it populates or the select renders with no options.
+    if (activeSection !== "source-control") {
       return;
     }
 
@@ -1984,7 +2127,8 @@ export function SettingsModal({
   }, [activeSection, projectId]);
 
   useEffect(() => {
-    if (activeSection !== "global-general" || globalTrackingRepoLoadedRef.current) {
+    // FNXC:SourceControl 2026-07-15-20:30: Follows the global tracking-repo select into the global source-control section.
+    if (activeSection !== "source-control-global" || globalTrackingRepoLoadedRef.current) {
       return;
     }
 
@@ -3131,9 +3275,12 @@ export function SettingsModal({
       }
       /*
       FNXC:GitLabEnablement 2026-07-02-00:00:
-      The Global General section must edit raw global GitLab settings, not the merged project-effective form. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
+      The global source-control section must edit raw global GitLab settings, not the merged project-effective form. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
+
+      FNXC:SourceControl 2026-07-15-20:30:
+      Section id moved with the controls (was "global-general"). This must name whichever section renders the global GitLab rows: a stale id here would send the merged, project-effective values to the global patch — the exact overwrite the scoped-state indirection exists to prevent.
       */
-      const gitlabFormForSave = activeSection === "global-general" && globalGitlabSettings ? globalGitlabSettings : form;
+      const gitlabFormForSave = activeSection === "source-control-global" && globalGitlabSettings ? globalGitlabSettings : form;
       const payload = {
         ...form,
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
@@ -3174,7 +3321,8 @@ export function SettingsModal({
         experimentalFeatures: normalizeExperimentalFeaturesForSave(form.experimentalFeatures),
       };
 
-      if (activeSection === "general") {
+      // FNXC:SourceControl 2026-07-15-20:30: Both GitLab URL-cache refreshes follow their editing sections ("general"/"global-general" before the move).
+      if (activeSection === "source-control") {
         resolveGitlabConfig({
           project: {
             gitlabInstanceUrl: payload.gitlabInstanceUrl,
@@ -3182,7 +3330,7 @@ export function SettingsModal({
           },
         });
       }
-      if (activeSection === "global-general") {
+      if (activeSection === "source-control-global") {
         resolveGitlabConfig({
           global: {
             gitlabInstanceUrl: payload.gitlabInstanceUrl,
@@ -3500,56 +3648,35 @@ export function SettingsModal({
     }
   }, [addToast, projectId]);
 
-  /** Render a scope indicator banner for the current section with theme-aware Lucide icons */
-  const renderScopeBanner = () => {
-    if (activeSectionScope === "global") {
-      return (
-        <div className="settings-scope-banner settings-scope-global">
-          <span className="settings-scope-icon"><Globe size={14} /></span>
-          <span>{t("settings.scope.globalBanner", "These settings are shared across all your Fusion projects.")}</span>
-        </div>
-      );
-    }
-    if (activeSectionScope === "project") {
-      return (
-        <div className="settings-scope-banner settings-scope-project">
-          <span className="settings-scope-icon"><Folder size={14} /></span>
-          <span>{t("settings.scope.projectBanner", "These settings only affect this project.")}</span>
-        </div>
-      );
-    }
-    return null;
-  };
-
   const renderSectionFields = () => {
     switch (activeSection) {
       case "cli-agents":
-        return (
-          <>
-            {renderScopeBanner()}
-            <CliAgentsSettingsSection projectId={projectId} addToast={addToast} />
-          </>
-        );
+        return <CliAgentsSettingsSection projectId={projectId} addToast={addToast} />;
       case "general":
         return (
           <GeneralSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             projectId={projectId}
             addToast={addToast}
             prefixError={prefixError}
             setPrefixError={setPrefixError}
-            projectTrackingRepoOptions={projectTrackingRepoOptions}
-            projectTrackingRepoLoading={projectTrackingRepoLoading}
-            projectTrackingRepoError={projectTrackingRepoError}
             onQuickChatButtonModeChange={onQuickChatButtonModeChange}
           />
         );
-      case "global-general":
+      case "source-control":
         return (
-          <GlobalGeneralSection
-            scopeBanner={renderScopeBanner()}
+          <SourceControlSection
+            form={form}
+            setForm={setForm}
+            projectTrackingRepoOptions={projectTrackingRepoOptions}
+            projectTrackingRepoLoading={projectTrackingRepoLoading}
+            projectTrackingRepoError={projectTrackingRepoError}
+          />
+        );
+      case "source-control-global":
+        return (
+          <SourceControlGlobalSection
             form={form}
             setForm={setForm}
             globalSettings={globalGitlabSettings}
@@ -3566,10 +3693,16 @@ export function SettingsModal({
             globalTrackingRepoError={globalTrackingRepoError}
           />
         );
+      case "global-general":
+        return (
+          <GlobalGeneralSection
+            form={form}
+            setForm={setForm}
+          />
+        );
       case "keyboard-shortcuts":
         return (
           <KeyboardShortcutsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3577,7 +3710,6 @@ export function SettingsModal({
       case "global-models":
         return (
           <GlobalModelsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             availableModels={availableModels}
@@ -3596,11 +3728,10 @@ export function SettingsModal({
         );
 
       case "secrets":
-        return <SecretsSection scopeBanner={renderScopeBanner()} addToast={addToast} />;
+        return <SecretsSection addToast={addToast} />;
       case "global-mcp":
         return (
           <GlobalMcpSection
-            scopeBanner={renderScopeBanner()}
             form={mcpFormForScope("global")}
             setForm={setMcpFormForScope("global")}
             projectId={projectId}
@@ -3610,7 +3741,6 @@ export function SettingsModal({
       case "mcp":
         return (
           <ProjectMcpSection
-            scopeBanner={renderScopeBanner()}
             form={mcpFormForScope("project")}
             setForm={setMcpFormForScope("project")}
             globalSettings={scopedSettings?.global ?? null}
@@ -3622,7 +3752,6 @@ export function SettingsModal({
       case "project-models":
         return (
           <ProjectModelsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             projectId={projectId}
@@ -3656,7 +3785,6 @@ export function SettingsModal({
       case "appearance":
         return (
           <AppearanceSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             themeMode={themeMode}
@@ -3672,18 +3800,23 @@ export function SettingsModal({
             setSessionBannersHidden={setSessionBannersHidden}
           />
         );
-      case "scheduling":
+      case "scheduling-global":
         return (
-          <SchedulingSection
-            scopeBanner={renderScopeBanner()}
-            form={form}
-            setForm={setForm}
+          <SchedulingGlobalSection
             globalMaxConcurrent={globalMaxConcurrent}
-            concurrencyLoading={activeSection === "scheduling" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
+            concurrencyLoading={activeSection === "scheduling-global" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
             onGlobalMaxConcurrentChange={(value) => {
               globalConcurrencyDirtyRef.current = true;
               setGlobalMaxConcurrent(value);
             }}
+          />
+        );
+      case "scheduling":
+        return (
+          <SchedulingSection
+            form={form}
+            setForm={setForm}
+            concurrencyLoading={activeSection === "scheduling" && !globalConcurrencyLoaded && !globalConcurrencyDirtyRef.current}
             onOverlapIgnorePathChange={handleOverlapIgnorePathChange}
             onOpenOverlapPathPicker={openOverlapPathPicker}
             onRemoveOverlapIgnorePath={handleRemoveOverlapIgnorePath}
@@ -3694,7 +3827,6 @@ export function SettingsModal({
       case "scheduled-evals":
         return (
           <ScheduledEvalsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3702,7 +3834,6 @@ export function SettingsModal({
       case "node-routing":
         return (
           <NodeRoutingSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             nodes={nodes}
@@ -3711,7 +3842,6 @@ export function SettingsModal({
       case "worktrees":
         return (
           <WorktreesSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             gitRemotes={gitRemotes}
@@ -3728,7 +3858,6 @@ export function SettingsModal({
       case "commands":
         return (
           <CommandsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3736,7 +3865,6 @@ export function SettingsModal({
       case "merge":
         return (
           <MergeSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             integrationBranchOptions={integrationBranchOptions}
@@ -3750,7 +3878,6 @@ export function SettingsModal({
       case "agent-permissions":
         return (
           <AgentPermissionsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3758,7 +3885,6 @@ export function SettingsModal({
       case "memory":
         return (
           <MemorySection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             memory={{
@@ -3792,7 +3918,6 @@ export function SettingsModal({
       case "research-global":
         return (
           <ResearchGlobalSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             authProviders={authProviders}
@@ -3802,16 +3927,16 @@ export function SettingsModal({
       case "research-project":
         return (
           <ResearchProjectSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             researchLimitError={researchLimitError}
           />
         );
+      case "cli-binary":
+        return <CliBinarySection />;
       case "experimental":
         return (
           <ExperimentalSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             knownFeatures={KNOWN_EXPERIMENTAL_FEATURES}
@@ -3824,7 +3949,6 @@ export function SettingsModal({
       case "backups":
         return (
           <BackupsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             backupInfo={backupInfo}
@@ -3835,7 +3959,6 @@ export function SettingsModal({
       case "notifications":
         return (
           <NotificationsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             testNotificationLoading={testNotificationLoading}
@@ -3846,7 +3969,6 @@ export function SettingsModal({
       case "node-sync":
         return (
           <NodeSyncSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
           />
@@ -3854,7 +3976,6 @@ export function SettingsModal({
       case "remote":
         return (
           <RemoteSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             remote={{
@@ -3884,7 +4005,6 @@ export function SettingsModal({
       case "prompts":
         return (
           <PromptsSection
-            scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
             onOpenWorkflowSettings={onOpenWorkflowSettings}
@@ -3893,7 +4013,6 @@ export function SettingsModal({
       case "plugins":
         return (
           <PluginsSection
-            scopeBanner={renderScopeBanner()}
             projectId={projectId}
             addToast={addToast}
             activePluginsSubsection={activePluginsSubsection}
@@ -4122,11 +4241,59 @@ export function SettingsModal({
                         </button>
                       )}
                     </div>
+                    {/*
+                    FNXC:SettingsSearch 2026-07-15-17:35:
+                    The count reports matching settings, not matching sections: search now resolves to controls, and "3 matching sections" told an operator nothing about whether the setting they wanted was among them.
+                    It falls back to the section count while any matched section is still keyword-only (an unmigrated section matches without contributing entries), so the number never under-reports what the nav is showing during the rollout.
+                    */}
                     <div id="settings-search-results" className="settings-search-results" aria-live="polite">
+                      {/*
+                      FNXC:SettingsSearch 2026-07-15-17:35:
+                      Counts read through i18next's plural resolution (`_one`/`_other` in the catalog) rather than a single hardcoded string, which is why no inline English fallback is passed here: a literal defaultValue would win over the catalog's singular form and reinstate "1 matching settings".
+                      */}
                       {hasSettingsSearchQuery
-                        ? t("settings.search.resultCount", "{{count}} matching sections", { count: searchableSectionOptions.length })
+                        ? settingsSearchResults.length > 0
+                          ? t("settings.search.settingResultCount", { count: settingsSearchResults.length })
+                          : t("settings.search.resultCount", { count: searchableSectionOptions.length })
                         : t("settings.search.allSections", "Showing all settings sections")}
                     </div>
+                    {/*
+                    FNXC:SettingsSearch 2026-07-15-17:35:
+                    Per-setting results: each row names the control and the section holding it, so an operator can tell two similarly-named settings apart before navigating (several sections carry their own "default model").
+                    Rendered as a list of buttons rather than a listbox/combobox because selecting one navigates the modal rather than filling the input — the input keeps its own value, and announcing it as a combobox would promise a completion that never happens.
+                    Capped for the same reason a nav is: a two-character query matches most of the index, and an unbounded list would bury the search box. The cap is announced below rather than silently truncating.
+                    */}
+                    {settingsSearchResults.length > 0 && (
+                      <ul className="settings-search-hits" data-testid="settings-search-hits">
+                        {settingsSearchResults.slice(0, SETTINGS_SEARCH_MAX_RESULTS).map((result) => {
+                          const section = visibleSections.find((s) => s.id === result.sectionId);
+                          return (
+                            <li key={`${result.sectionId}:${result.key}`}>
+                              <button
+                                type="button"
+                                className="settings-search-hit"
+                                data-testid={`settings-search-hit-${result.key}`}
+                                onClick={() => handleSettingsSearchResultSelect(result.sectionId, result.key)}
+                              >
+                                <span className="settings-search-hit-label">{result.label}</span>
+                                {section && (
+                                  <span className="settings-search-hit-section">
+                                    {t(section.labelKey, section.label)}
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
+                        {settingsSearchResults.length > SETTINGS_SEARCH_MAX_RESULTS && (
+                          <li className="settings-search-hits-more">
+                            {t("settings.search.moreResults", "{{count}} more — keep typing to narrow", {
+                              count: settingsSearchResults.length - SETTINGS_SEARCH_MAX_RESULTS,
+                            })}
+                          </li>
+                        )}
+                      </ul>
+                    )}
                   </div>
                 </div>
               )}
@@ -4153,10 +4320,27 @@ export function SettingsModal({
                             : undefined
                       }
                     >
-                      {section.scope === "global" && <Globe className="settings-scope-icon" aria-label={t("settings.nav.aria.global", "Global setting")} size={16} />}
-                      {section.scope === "project" && <Folder className="settings-scope-icon" aria-label={t("settings.nav.aria.project", "Project setting")} size={16} />}
-                      {section.icon && !section.scope && (
-                        <section.icon className="settings-scope-icon" aria-label={t("settings.nav.aria.global", "Global setting")} size={16} />
+                      {/*
+                      FNXC:SettingsNavigation 2026-07-16-01:30:
+                      A section's own icon wins over the generic scope glyph; the glyph is the fallback.
+                      Previously `icon` only rendered when `scope` was undefined, so any scoped section was forced to the globe/folder pair and could not identify itself — Source Control looked exactly like MCP Servers and Scheduling in the nav.
+                      Nothing is lost by yielding the glyph: these sections spell their tier out in the label ("Source Control · Global"), and the aria-label + tooltip below still announce it, so scope survives for assistive tech and hover.
+                      */}
+                      {section.icon ? (
+                        <section.icon
+                          className="settings-scope-icon"
+                          aria-label={
+                            section.scope === "project"
+                              ? t("settings.nav.aria.project", "Project setting")
+                              : t("settings.nav.aria.global", "Global setting")
+                          }
+                          size={16}
+                        />
+                      ) : (
+                        <>
+                          {section.scope === "global" && <Globe className="settings-scope-icon" aria-label={t("settings.nav.aria.global", "Global setting")} size={16} />}
+                          {section.scope === "project" && <Folder className="settings-scope-icon" aria-label={t("settings.nav.aria.project", "Project setting")} size={16} />}
+                        </>
                       )}
                       {t(section.labelKey, section.label)}
                     </button>
@@ -4188,7 +4372,15 @@ export function SettingsModal({
               ref={settingsContentRef}
               data-show-advanced={showAdvancedSettings ? "true" : "false"}
             >
-              {hasSettingsSearchResults ? renderSectionFields() : (
+              {/*
+              FNXC:SettingsSearch 2026-07-15-17:35:
+              Wraps only the section content: the provider's value is the setting a search result asked to highlight, and the rows that consume it all render below here. Scoping it this tightly keeps a highlight change from re-rendering the nav and search box on every jump.
+              */}
+              {hasSettingsSearchResults ? (
+                <SettingsSearchHighlightProvider highlightedKey={highlightedSettingKey}>
+                  {renderSectionFields()}
+                </SettingsSearchHighlightProvider>
+              ) : (
                 <div className="settings-empty-state settings-search-content-empty" role="status">
                   <p>{t("settings.search.noResults", "No settings sections match \"{{query}}\".", { query: settingsSearchQuery.trim() })}</p>
                   <button type="button" className="btn" onClick={() => setSettingsSearchQuery("")}>{t("settings.search.clear", "Clear settings search")}</button>

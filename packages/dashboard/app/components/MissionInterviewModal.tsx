@@ -811,7 +811,11 @@ export function MissionInterviewModal({
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
-          {isReconnecting && <div className="form-hint text-muted">{t("missions.reconnecting", "Reconnecting…")}</div>}
+          {/*
+          FNXC:MissionInterviewModal 2026-07-15-00:00:
+          Awaiting-input questions render persisted database state, so transient idle SSE reconnects must not imply that the question is being regenerated. Reserve this hint for the active loading view, mirroring the FN-8002 Planning Mode invariant.
+          */}
+          {isReconnecting && view.type === "loading" && <div className="form-hint text-muted">{t("missions.reconnecting", "Reconnecting…")}</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">

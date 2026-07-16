@@ -1,6 +1,169 @@
 /* === GitHub Import Modal ===
    Note: Some hardcoded colors below (e.g. #238636, #2ea043, #f0883e, #1f6feb)
    are intentional GitHub brand colors and should NOT be replaced with design tokens. */
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+One control row instead of three stacked bands. The import screen previously spent its vertical
+budget on a provider row, a tab row, and a boxed origin+filter+Load stack — on a phone that left only
+a few issues visible. Provider, type tabs, origin, filter, and Load now share this row so the list
+gets the space back.
+
+`flex-wrap: wrap` is deliberate: at the narrowest widths the row reflows to a second line rather than
+clipping controls (the failure mode the composer Save button hit). The toolbar keeps its own box
+styling but is now an inline member of this row instead of a full-width band.
+*/
+.github-import-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+/*
+The toolbar is a row member now, not a band. Its own box chrome (border/background/padding) is
+dropped here: nested inside this row it drew a second frame around origin+filter+Load and forced
+them onto their own line, which is exactly the wasted vertical space this change removes. It keeps
+its internal flex layout and simply flows as more chips in the row.
+*/
+.github-import-controls .github-import-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--space-sm);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  flex-wrap: wrap;
+}
+
+/* Zones stop reserving their own width now that they are inline chips. */
+.github-import-controls .github-import-toolbar__zone--remote {
+  min-width: 0;
+}
+
+.github-import-controls .github-import-toolbar__zone--filter {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+Origin stays VISIBLE (operator decision) but flattens from a stacked ORIGIN/repo block into one
+inline chip — it is context for what you are importing, not a section header, so it should cost a
+few characters of a shared row rather than two rows of its own.
+*/
+.github-import-controls .github-import-remote-pill {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+/* The uppercase "ORIGIN" caption is redundant once the repo sits inline in the control row. */
+.github-import-controls .github-import-remote-pill__name {
+  display: none;
+}
+
+.github-import-controls .github-import-remote-pill__repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18ch;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/*
+Row members sit inline and never stretch. Written as a child selector rather than naming
+`.github-import-provider`/`.github-import-tabs` on purpose: GitHubImportModal.test.tsx extracts
+those base rules with a naive first-match regex (/\.github-import-tabs\s*\{[^}]*\}/), so a rule
+mentioning them ABOVE the originals would silently hijack that assertion. The toolbar opts back
+into growing via its own higher-specificity rule below.
+*/
+.github-import-controls > * {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+Filter popover. The trigger doubles as the filter's readout (it renders the active labels), so a
+collapsed filter never hides applied state; `is-active` gives it an accent cue. `position: relative`
+anchors the panel, which is width-clamped to the viewport so it cannot overflow on a phone.
+*/
+.github-import-filter-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.github-import-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 36px;
+  max-width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 13px;
+}
+
+/* The readout must ellipsize, never widen the row or wrap mid-label. */
+.github-import-filter-trigger__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12ch;
+}
+
+.github-import-filter-trigger.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.github-import-filter-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  width: max(220px, 100%);
+  max-width: calc(100vw - var(--space-xl));
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 18%));
+}
+
+.github-import-filter-panel__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.github-import-filter-panel input {
+  width: 100%;
+  min-height: 36px;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+Load is icon-only — its label lives in aria-label/title. Square so it reads as an icon affordance and
+holds a 36px touch target without claiming a row of its own.
+*/
+.github-import-controls .github-import-load-button {
+  flex: 0 0 auto;
+  gap: 0;
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+}
+
 /* Compact Toolbar Layout */
 .github-import-toolbar {
   display: flex;
@@ -146,54 +309,100 @@
   overflow: hidden;
 }
 
+/*
+FNXC:GitHubImport 2026-07-15-18:20:
+The detail panel is the FloatingWindow's only child and owns its own inset — without one the Preview header rendered flush against the window's left edge while FN-8015's resize gutter left a lone gap on the right, so the header read as mis-aligned on both the desktop window and the mobile sheet.
+padding-inline-end is deliberately 0: FN-8015 already reserves var(--space-lg) of inline-end margin on the shared .floating-window__body to hold a hosted scrollbar clear of the east/north-east/south-east resize hot zones, and that gutter supplies this panel's right inset. Matching padding-inline-start to the same token makes the inset symmetric without overriding the shared body (which would push the inner scroller back into the hot zone).
+If that body gutter ever changes token, change padding-inline-start with it.
+Padding lives on the panel rather than the pane content so header, toast, and scrolling body share one inset and the header divider is inset with them.
+*/
 .github-import-detail-panel {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  padding: var(--space-lg);
+  padding-inline-end: 0;
   overflow: hidden;
 }
 
+/*
+FNXC:GitHubImport 2026-07-15-23:25:
+Bottom action bar for the detail preview. Import/Close issue moved here from the pane header —
+commit actions belong below the content they act on and within thumb reach on a phone, and this
+mirrors the modal's own Cancel bar. `margin-top: auto` pins it to the bottom of the flex panel even
+when the preview is short; the top border separates it from scrolling content.
+*/
+.github-import-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: auto;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+/* Never let the primary action's label clip when the bar is narrow. */
+.github-import-detail-actions .btn {
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-height: 36px;
+}
+
+/*
+FNXC:GitHubImport 2026-07-15-18:20 (superseded 2026-07-15-23:25):
+Supersedes #551a2a3c1's note here. That change dropped `justify-content: space-between` and gave the
+label `margin-inline-end: auto` so Close issue and Import stayed grouped as a pair at the END of this
+header rather than Close issue being flung to the middle. Those actions now live in
+`.github-import-detail-actions` below the content, so the header holds ONLY the label. The rules are
+kept as-is because they remain correct for a lone label (it simply takes the free space), and they
+are what a future action returning to this header would need — but the grouping rationale no longer
+applies here. Do not re-add actions to this header without revisiting the bottom-bar decision.
+*/
 .github-import-pane-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-sm);
   padding-bottom: var(--space-sm);
-  margin-bottom: var(--space-sm);
+  margin-bottom: var(--space-md);
   border-bottom: 1px solid var(--border);
 }
 
+/*
+FNXC:GitHubImport 2026-07-15-18:20:
+"Preview" / "Issues" is a section label, not a peer of the issue title inside the card. The muted uppercase eyebrow matches .preview-meta so the two read as one type system, and it stops the label competing with the primary Import action for emphasis.
+*/
 .github-import-pane-header h4 {
-  font-size: 13px;
+  margin-inline-end: auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
-FNXC:GitHubImport 2026-06-23-02:00:
-Top import action sits at the end of the non-scrolling preview-pane header (space-between pushes it opposite the Preview title / Back button).
-margin-left:auto keeps it pinned right even when the mobile Back button is absent. The button height stays compact so the header does not grow taller than the prior single-line heading.
+FNXC:GitHubImport 2026-07-15-18:20:
+Both header actions size from one rule so the secondary Close issue and the primary Import share a baseline and an identical height — previously each inherited only .btn/.btn-primary defaults and rendered visibly mismatched. min-height keeps the pair a comfortable target without growing the header past the single-line label.
 */
-.github-import-action-top {
-  margin-left: auto;
+.github-import-pane-header .btn {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-xs);
-}
-
-/*
-FNXC:GitHubImport 2026-06-23-03:15:
-Close-issue action sits just left of the top Import action in the preview header. It is the lighter (non-primary) button; flex-shrink:0 keeps it on one line next to Import even on a narrow preview pane.
-*/
-.github-import-issue-close-top {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
+  min-height: 30px;
+  padding: 0 var(--space-md);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 /*
@@ -1136,6 +1345,20 @@ Across the thread: a top filter (All/Human/Bot) and prev/next chevrons live in t
   border-bottom-color: var(--border);
 }
 
+/*
+FNXC:GitHubImport 2026-07-15-23:35:
+Theme-scoped companion to the de-boxing above. The base rule dropped the toolbar's band chrome, but
+this light-theme rule re-applied a background later in the cascade at equal specificity, so the band
+survived in light mode only. Nested in the control row the toolbar is a group of inline chips, not a
+surface — it must carry no fill in EITHER theme. Both selectors are listed so a dark-theme
+counterpart added later cannot silently reintroduce the band.
+*/
+[data-theme="light"] .github-import-controls .github-import-toolbar,
+[data-theme="dark"] .github-import-controls .github-import-toolbar {
+  background: none;
+  border: 0;
+}
+
 [data-theme="light"] .github-import-toolbar__zone--filter input {
   background: var(--card);
   border-color: var(--border);
@@ -1223,15 +1446,25 @@ Across the thread: a top filter (All/Human/Bot) and prev/next chevrons live in t
     padding: var(--space-sm);
   }
 
+  /*
+  FNXC:GitHubImport 2026-07-15-23:40:
+  These stacked the toolbar one-zone-per-row back when it was a full-width band. Inside the control
+  row that is now actively wrong: `flex: 1 1 100%` forced origin to claim an entire line, pushing
+  Filter and Load onto yet another — the exact vertical waste this change removes. Origin now shares
+  the row and simply ellipsizes; `min-width: 140px` on the filter is dropped for the same reason (it
+  reserved a full input's width for what is now a compact trigger). Order is preserved so the reading
+  order stays origin → filter → load.
+  */
   .github-import-toolbar__zone--remote {
-    flex: 1 1 100%;
+    flex: 0 1 auto;
     order: 1;
+    min-width: 0;
   }
 
   .github-import-toolbar__zone--filter {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     order: 2;
-    min-width: 140px;
+    min-width: 0;
   }
 
   .github-import-toolbar__zone--action {
@@ -1395,5 +1628,15 @@ Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge
 
   .github-import-gitlab__workspace {
     grid-template-columns: 1fr;
+  }
+
+  /*
+  FNXC:GitHubImport 2026-07-15-18:20:
+  This is the breakpoint where the detail FloatingWindow becomes a full-screen sheet. The panel's var(--space-lg) inset already reads as a conventional mobile gutter, so only the actions change: they grow to a 40px touch target because the desktop 30px pair is a mouse-sized hit area and Import is the sheet's primary action.
+  */
+  .github-import-pane-header .btn {
+    min-height: 40px;
+    padding: 0 var(--space-md);
+    font-size: 13px;
   }
 }

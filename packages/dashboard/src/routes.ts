@@ -1239,6 +1239,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
             rootDir: engine.getWorkingDirectory(),
             reconcileInReviewBranchRebind: selfHealing.reconcileInReviewBranchRebind.bind(selfHealing),
             getActiveMergeTaskId: selfHealing.getActiveMergeTaskId.bind(selfHealing),
+            getStaleMergingStatusMinAgeMs: selfHealing.getStaleMergingStatusMinAgeMs.bind(selfHealing),
           };
         }
       }

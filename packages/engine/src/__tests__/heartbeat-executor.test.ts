@@ -465,6 +465,37 @@ describe("executeHeartbeat", () => {
       expect(section).toContain("**stale**");
     });
 
+    it("classifies the FN-8018 field ages as stale using persisted timestamps", async () => {
+      const now = Date.now();
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getCachedAgent).mockImplementation((id: string) => ({
+        id,
+        runtimeConfig: { heartbeatIntervalMs: 60 * 60_000 },
+      }) as unknown as Agent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        { id: "agent-backend", name: "Backend Engineer", state: "active", taskId: null, lastHeartbeatAt: new Date(now - (6 * 60 + 32) * 60_000).toISOString(), updatedAt: new Date(now - (6 * 60 + 32) * 60_000).toISOString() } as Agent,
+        { id: "agent-frontend", name: "Frontend Engineer", state: "active", taskId: null, lastHeartbeatAt: new Date(now - (5 * 60 + 59) * 60_000).toISOString(), updatedAt: new Date(now - (5 * 60 + 59) * 60_000).toISOString() } as Agent,
+        { id: "agent-writer", name: "Technical Writer", state: "active", taskId: null, lastHeartbeatAt: new Date(now - (6 * 60 + 34) * 60_000).toISOString(), updatedAt: new Date(now - (6 * 60 + 34) * 60_000).toISOString() } as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toMatch(/\| Backend Engineer \| active \| — \| .* \| \*\*stale\*\* \|/);
+      expect(section).toMatch(/\| Frontend Engineer \| active \| — \| .* \| \*\*stale\*\* \|/);
+      expect(section).toMatch(/\| Technical Writer \| active \| — \| .* \| \*\*stale\*\* \|/);
+    });
+
+    it("classifies an invalid persisted heartbeat as stale", async () => {
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        { id: "agent-invalid-heartbeat", name: "Invalid Heartbeat", state: "active", taskId: null, lastHeartbeatAt: "not-a-timestamp", updatedAt: new Date().toISOString() } as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toMatch(/\| Invalid Heartbeat \| active \| — \| unknown \| \*\*stale\*\* \|/);
+    });
+
     it.each([
       {
         name: "60-minute interval stays healthy at 45 minutes",

@@ -38,6 +38,7 @@ import {
   unauthorized,
 } from "../api-error.js";
 import { GitHubClient, buildGitHubIssueSource, isGitHubIssueAlreadyImported, type PrReviewSnapshot, parseBadgeUrl } from "../github.js";
+import { importIssueImageAttachments, githubImagePolicy } from "../issue-image-attachments.js";
 import { GitHubIssueCommentService } from "../github-issue-comment.js";
 import { GitHubTrackingCommentService } from "../github-tracking-comments.js";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
@@ -4114,7 +4115,47 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       // Log the import action
       await scopedStore.logEntry(task.id, "Imported from GitHub", sourceUrl);
 
-      res.status(201).json(task);
+      /*
+      FNXC:IssueImportAttachments 2026-07-15-11:20:
+      Screenshots embedded in the issue are downloaded into the task's attachments so the agent can actually SEE them: the executor lists `.fusion/tasks/<id>/attachments/` in its `## Attachments` section and triage inlines images as vision blocks. Left as bare markdown URLs they are unreachable — `user-attachments` assets need repo credentials, which only exist here at import time.
+      Extract from the ORIGINAL body, never the translated one: the translation model may rewrite or drop image URLs (same reasoning as the `Source:` suffix above).
+      Best-effort and post-createTask: a screenshot that fails to download must not fail an import that already produced the task.
+
+      FNXC:IssueImportAttachments 2026-07-15-13:40:
+      Comments are scanned too: "here's the screenshot" is a comment far more often than it is the original body, so a body-only scan misses the common case. Comments are fetched best-effort — the issue itself already imported fine without them, so a comment-fetch failure must not fail the import or lose the body's own images.
+      */
+      const issueImageBodies: Array<string | null | undefined> = [issue.body];
+      try {
+        const detail = await client.getIssueDetail(owner, repo, issueNumber);
+        issueImageBodies.push(...detail.comments.map((comment) => comment.body));
+      } catch (err) {
+        console.warn(
+          `[fusion:github-import] Could not fetch comments for ${owner}/${repo}#${issueNumber}; importing body images only: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      const imageImport = await importIssueImageAttachments(
+        scopedStore,
+        task.id,
+        issueImageBodies,
+        githubImagePolicy(),
+      );
+      if (imageImport.attached > 0) {
+        try {
+          await scopedStore.logEntry(
+            task.id,
+            `Imported ${imageImport.attached} image attachment${imageImport.attached === 1 ? "" : "s"} from GitHub issue`,
+            sourceUrl,
+          );
+        } catch (error) {
+          // FNXC:IssueImportAttachments 2026-07-15-14:10: Post-create audit
+          // telemetry is best-effort; never turn a stored task into a failed import.
+          console.warn(`[fusion:github-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      const importedTask = (await scopedStore.getTask(task.id)) ?? task;
+      res.status(201).json(importedTask);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -4292,12 +4333,17 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         FNXC:GitHubImportTranslate 2026-07-15-09:30:
         `state` is surfaced on the batch fetch so batch import applies the same closed-issue rule as single import: a closed issue never serves a cached translation.
         */
+        /*
+        FNXC:IssueImportAttachments 2026-07-15-13:40:
+        `comments` (a count, free on the REST issue payload) is surfaced so batch import can skip the comment fetch entirely for issues that have none — a 50-issue batch must not pay 50 extra round trips to discover empty threads.
+        */
         const fetchResult = await githubClient.fetchThrottled<{
           number: number;
           title: string;
           body: string | null;
           html_url: string;
           state?: "open" | "closed";
+          comments?: number;
           pull_request?: unknown;
         }>(url, {}, { delayMs: delayMs ?? 1000, maxRetries: 3 });
 
@@ -4369,6 +4415,45 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
           // Log the import action
           await scopedStore.logEntry(task.id, "Imported from GitHub", sourceUrl);
+
+          /*
+          FNXC:IssueImportAttachments 2026-07-15-11:20:
+          Batch import attaches issue screenshots exactly like single import (shared helper) — the requirement is about imported issues, not about which import button was used.
+          Comments are only fetched when the issue reports a non-zero comment count, so a batch of comment-free issues costs no extra requests.
+          */
+          const batchImageBodies: Array<string | null | undefined> = [issue.body];
+          if ((issue.comments ?? 0) > 0) {
+            try {
+              const detail = await githubClient.getIssueDetail(owner, repo, issueNumber);
+              batchImageBodies.push(...detail.comments.map((comment) => comment.body));
+            } catch (err) {
+              console.warn(
+                `[fusion:github-import] Could not fetch comments for ${owner}/${repo}#${issueNumber}; importing body images only: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+
+          const batchImageImport = await importIssueImageAttachments(
+            scopedStore,
+            task.id,
+            batchImageBodies,
+            githubImagePolicy({ token }),
+          );
+          if (batchImageImport.attached > 0) {
+            /*
+            FNXC:GitHubImportAttachments 2026-07-15-14:18:
+            Attachment audit history is observability, not part of persistence. A failed log must not turn an already-created batch task into a reported failure that retries as a duplicate.
+            */
+            try {
+              await scopedStore.logEntry(
+                task.id,
+                `Imported ${batchImageImport.attached} image attachment${batchImageImport.attached === 1 ? "" : "s"} from GitHub issue`,
+                sourceUrl,
+              );
+            } catch (error) {
+              console.warn(`[fusion:github-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
 
           results.push({
             issueNumber,

@@ -100,8 +100,8 @@ function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
  * - "Heartbeat Disabled" — durable agent with `runtimeConfig.enabled === false`
  * - "Starting..." — state === "active" && no lastHeartbeatAt
  * - "Idle" — state !== "active" && no lastHeartbeatAt
- * - "Healthy" — heartbeat is fresh within 2× the configured interval
- * - "Unresponsive" — heartbeat exceeded 2× the configured interval
+ * - "Healthy" — heartbeat is fresh within the configured interval's 4× grace window
+ * - "Unresponsive" — heartbeat exceeded the configured interval's 4× grace window
  *
  * @param agent - The agent object (partial Agent shape is accepted)
  * @returns A health status object with label, icon, color, and stateDerived metadata
@@ -194,9 +194,27 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
   // configured, or the scheduler's 1h default. Compare elapsed time to that
   // interval (with grace) rather than to `heartbeatTimeoutMs`, which is the
   // per-run work budget and has nothing to do with between-tick freshness.
-  const lastHeartbeat = new Date(lastHeartbeatAt).getTime();
-  const elapsed = Date.now() - lastHeartbeat;
+  const lastHeartbeat = Date.parse(lastHeartbeatAt);
   const stalenessThresholdMs = getStalenessThresholdMs(runtimeConfig);
+
+  /*
+  FNXC:AgentHeartbeat 2026-07-15-18:00:
+  A persisted but unparseable heartbeat cannot prove agent freshness. Treat it
+  as Unresponsive rather than letting NaN bypass the elapsed-time comparison,
+  matching the engine's persisted-heartbeat classification surfaces. Future
+  timestamps clamp to zero so clock skew does not create a false stale label.
+  */
+  if (!Number.isFinite(lastHeartbeat)) {
+    return {
+      label: "Unresponsive",
+      icon: <Activity size={14} />,
+      color: "var(--state-error-text)",
+      stateDerived: false,
+      reason: "Last heartbeat timestamp is invalid",
+    };
+  }
+
+  const elapsed = Math.max(0, Date.now() - lastHeartbeat);
 
   if (elapsed > stalenessThresholdMs) {
     const reason = `No heartbeat for ${formatDuration(elapsed)} (threshold: ${formatDuration(stalenessThresholdMs)})`;

@@ -932,7 +932,6 @@ function TaskCardComponent({
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [showSendBackMenu, setShowSendBackMenu] = useState(false);
-  const [showDoneActionsMenu, setShowDoneActionsMenu] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPrCreateOpen, setIsPrCreateOpen] = useState(false);
@@ -952,7 +951,6 @@ function TaskCardComponent({
   */
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const sendBackRef = useRef<HTMLDivElement>(null);
-  const doneActionsRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
   const { agentsMap } = useAgentsMapCache(projectId);
@@ -997,17 +995,6 @@ function TaskCardComponent({
     return () => document.removeEventListener("click", handleClick);
   }, [showSendBackMenu]);
 
-  // Close done-actions menu on outside click
-  useEffect(() => {
-    if (!showDoneActionsMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (doneActionsRef.current && !doneActionsRef.current.contains(e.target as Node)) {
-        setShowDoneActionsMenu(false);
-      }
-    };
-    document.addEventListener("click", handleClick);
-    return () => document.removeEventListener("click", handleClick);
-  }, [showDoneActionsMenu]);
 
   // Fetch mission title when missionId is set
   useEffect(() => {
@@ -2467,7 +2454,6 @@ function TaskCardComponent({
   const openContextMenuAt = useCallback((clientX: number, clientY: number) => {
     if (!hasContextMenuActions || isEditing) return;
     setShowSendBackMenu(false);
-    setShowDoneActionsMenu(false);
     setContextMenuPosition({
       x: Math.max(CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(clientX, window.innerWidth - CONTEXT_MENU_VIEWPORT_MARGIN)),
       y: Math.max(CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(clientY, window.innerHeight - CONTEXT_MENU_VIEWPORT_MARGIN)),
@@ -2622,10 +2608,6 @@ function TaskCardComponent({
     setShowSendBackMenu((current) => !current);
   }, []);
 
-  const handleDoneActionsToggle = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowDoneActionsMenu((current) => !current);
-  }, []);
 
   const handleSendBackOptionClick = useCallback(async (e: React.MouseEvent, column: Column) => {
     e.stopPropagation();
@@ -3364,57 +3346,6 @@ function TaskCardComponent({
               <Trash2 size={12} />
             </button>
           )}
-          {task.column === "done" && (onArchiveTask || (onRevertTask && isRevertable)) && (
-            <div className="card-send-back card-done-actions" ref={doneActionsRef}>
-              {/*
-              FNXC:BoardCardActions 2026-07-11-00:00 (FN-7839):
-              Done-card Archive + Revert are grouped behind one dropdown that mirrors the
-              in-progress "Send back" control, replacing two standalone inline buttons.
-              Revert only appears when the task is revertable (isRevertable); the trigger
-              only renders when at least one action is available so no empty shell is left.
-              Reuses .card-send-back* styling so no new one-off CSS/colors are introduced.
-              */}
-              <button
-                className="card-send-back-btn"
-                onClick={handleDoneActionsToggle}
-                title={t("tasks.doneActions", "Actions")}
-                aria-label={t("tasks.doneActions", "Actions")}
-                aria-haspopup="menu"
-                aria-expanded={showDoneActionsMenu}
-              >
-                {t("tasks.doneActions", "Actions")}
-                <ChevronDown size={10} />
-              </button>
-              {showDoneActionsMenu && (
-                <div className="card-send-back-menu" role="menu">
-                  {onArchiveTask && (
-                    <button
-                      className="card-send-back-menu-item"
-                      role="menuitem"
-                      onClick={(e) => {
-                        setShowDoneActionsMenu(false);
-                        handleArchiveClick(e);
-                      }}
-                    >
-                      {t("tasks.archive", "Archive")}
-                    </button>
-                  )}
-                  {onRevertTask && isRevertable && (
-                    <button
-                      className="card-send-back-menu-item"
-                      role="menuitem"
-                      onClick={(e) => {
-                        setShowDoneActionsMenu(false);
-                        handleRevertClick(e);
-                      }}
-                    >
-                      {t("tasks.revert", "Revert")}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           {task.column === "archived" && onUnarchiveTask && (
             <button
               className="card-unarchive-btn"
@@ -3477,6 +3408,11 @@ function TaskCardComponent({
             </div>
           )}
           {/*
+          FNXC:BoardCardActions 2026-07-15-00:00 (FN-8035):
+          Done-card Archive and Revert are consolidated into this single three-dot TaskContextMenu;
+          do not add a duplicate inline Actions dropdown. The menu model preserves both handlers and
+          keeps Revert disabled when no landed commit is available.
+
           FNXC:TaskCardMenu 2026-07-10-12:00:
           Visible entry point for the card's action menu (Edit/Delete/Review/New chat/Interventions…)
           — previously right-click/long-press only and therefore undiscoverable. Opens the same

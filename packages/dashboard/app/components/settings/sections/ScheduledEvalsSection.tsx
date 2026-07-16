@@ -1,86 +1,138 @@
-import type { ReactNode } from "react";
+import { SettingsToggleRow } from "../SettingsToggleRow";
+import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsTextRow } from "../SettingsTextRow";
+import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
-export interface ScheduledEvalsSectionProps extends SectionBaseProps {
-    scopeBanner: ReactNode;
-}
-export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledEvalsSectionProps) {
+export type ScheduledEvalsSectionProps = SectionBaseProps;
+/*
+FNXC:SettingsScope 2026-07-15-17:35:
+Eval scheduling is project-scoped (`evalSettings` in DEFAULT_PROJECT_SETTINGS): each project schedules its own runs against its own validator lane, so nothing here travels between projects.
+
+FNXC:SettingsSearch 2026-07-15-17:35:
+Descriptor keys are dotted paths (`evalSettings.enabled`) because the six controls share one stored blob. The key must stay unique per row — it is both the control's element id and the row's search anchor — and the dotted path is the honest name of what each row writes, so an operator searching the config field name still lands on the right control.
+
+FNXC:ScheduledEvals 2026-07-15-17:35:
+Interval, follow-up policy, and retention are disabled while scheduling is off, but provider and model deliberately are not: they are inherited-lane overrides an operator can stage before ever enabling runs.
+*/
+export function ScheduledEvalsSection({ form, setForm }: ScheduledEvalsSectionProps) {
     const { t } = useTranslation("app");
     const evalSettings = form.evalSettings ?? {};
     const isScheduledEvalEnabled = evalSettings.enabled ?? false;
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.scheduledEvals.scheduledEvals", "Scheduled Evals")}</h4>
-      <div className="form-group">
-        <label htmlFor="scheduled-evals-enabled" className="checkbox-label">
-          <input id="scheduled-evals-enabled" type="checkbox" checked={isScheduledEvalEnabled} onChange={(event) => setForm((current) => ({
+      <SettingsToggleRow
+        descriptor={{
+          key: "evalSettings.enabled",
+          label: t("settings.scheduledEvals.enableScheduledEvalRunsForThisProject", " Enable scheduled eval runs for this project "),
+          help: t("settings.scheduledEvals.enabledHint", "Default: disabled."),
+          scope: "project",
+        }}
+        value={isScheduledEvalEnabled}
+        onChange={(v) => setForm((current) => ({
             ...current,
             evalSettings: {
                 ...(current.evalSettings ?? {}),
-                enabled: event.target.checked,
+                enabled: v === true,
             },
-        }))}/>{t("settings.scheduledEvals.enableScheduledEvalRunsForThisProject", " Enable scheduled eval runs for this project ")}</label>
-        <small>{t("settings.scheduledEvals.enabledHint", "Default: disabled.")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="scheduled-evals-interval">{t("settings.scheduledEvals.intervalMs", "Interval (ms)")}</label>
-        <input id="scheduled-evals-interval" className="input" type="number" min={60000} max={604800000} step={1000} disabled={!isScheduledEvalEnabled} value={evalSettings.intervalMs ?? 86400000} onChange={(event) => setForm((current) => ({
+        }))}
+      />
+      <SettingsNumberRow
+        descriptor={{
+          key: "evalSettings.intervalMs",
+          label: t("settings.scheduledEvals.intervalMs", "Interval (ms)"),
+          help: t("settings.scheduledEvals.intervalMsHint", "Default: 86400000 (24 hours)."),
+          scope: "project",
+          disabled: !isScheduledEvalEnabled,
+          min: 60000,
+          max: 604800000,
+          step: 1000,
+        }}
+        value={evalSettings.intervalMs ?? 86400000}
+        onChange={(v) => setForm((current) => ({
             ...current,
             evalSettings: {
                 ...(current.evalSettings ?? {}),
-                intervalMs: event.target.value === "" ? undefined : Number(event.target.value),
+                intervalMs: v === null ? undefined : v,
             },
-        }))}/>
-        <small>{t("settings.scheduledEvals.intervalMsHint", "Default: 86400000 (24 hours).")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="scheduled-evals-provider">{t("settings.scheduledEvals.evaluatorProvider", "Evaluator Provider")}</label>
-        <input id="scheduled-evals-provider" className="input" value={evalSettings.evaluatorProvider ?? ""} onChange={(event) => setForm((current) => ({
+        }))}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "evalSettings.evaluatorProvider",
+          label: t("settings.scheduledEvals.evaluatorProvider", "Evaluator Provider"),
+          help: t("settings.scheduledEvals.evaluatorProviderHint", "No default — unset (inherits the project validator lane provider)."),
+          scope: "project",
+          placeholder: t("settings.scheduledEvals.openai", "openai"),
+        }}
+        value={evalSettings.evaluatorProvider ?? ""}
+        onChange={(v) => setForm((current) => ({
             ...current,
             evalSettings: {
                 ...(current.evalSettings ?? {}),
-                evaluatorProvider: event.target.value.trim() === "" ? undefined : event.target.value,
+                evaluatorProvider: (v ?? "").trim() === "" ? undefined : (v ?? undefined),
             },
-        }))} placeholder={t("settings.scheduledEvals.openai", "openai")}/>
-        <small>{t("settings.scheduledEvals.evaluatorProviderHint", "No default \u2014 unset (inherits the project validator lane provider).")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="scheduled-evals-model">{t("settings.scheduledEvals.evaluatorModel", "Evaluator Model")}</label>
-        <input id="scheduled-evals-model" className="input" value={evalSettings.evaluatorModelId ?? ""} onChange={(event) => setForm((current) => ({
+        }))}
+      />
+      <SettingsTextRow
+        descriptor={{
+          key: "evalSettings.evaluatorModelId",
+          label: t("settings.scheduledEvals.evaluatorModel", "Evaluator Model"),
+          help: t("settings.scheduledEvals.leaveProviderAndModelBlankToInheritThe", " Leave provider and model blank to inherit the project validator lane model settings. No default — unset. "),
+          scope: "project",
+          placeholder: t("settings.scheduledEvals.gpt5", "gpt-5"),
+        }}
+        value={evalSettings.evaluatorModelId ?? ""}
+        onChange={(v) => setForm((current) => ({
             ...current,
             evalSettings: {
                 ...(current.evalSettings ?? {}),
-                evaluatorModelId: event.target.value.trim() === "" ? undefined : event.target.value,
+                evaluatorModelId: (v ?? "").trim() === "" ? undefined : (v ?? undefined),
             },
-        }))} placeholder={t("settings.scheduledEvals.gpt5", "gpt-5")}/>
-        <small className="form-text text-muted">{t("settings.scheduledEvals.leaveProviderAndModelBlankToInheritThe", " Leave provider and model blank to inherit the project validator lane model settings. No default \u2014 unset. ")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="scheduled-evals-follow-up-policy">{t("settings.scheduledEvals.followUpPolicy", "Follow-up Policy")}</label>
-        <select id="scheduled-evals-follow-up-policy" className="select" disabled={!isScheduledEvalEnabled} value={evalSettings.followUpPolicy ?? "suggest-only"} onChange={(event) => setForm((current) => ({
+        }))}
+      />
+      <SettingsSelectRow
+        descriptor={{
+          key: "evalSettings.followUpPolicy",
+          label: t("settings.scheduledEvals.followUpPolicy", "Follow-up Policy"),
+          help: t("settings.scheduledEvals.followUpPolicyHint", "Default: suggest only."),
+          scope: "project",
+          disabled: !isScheduledEvalEnabled,
+          options: [
+            { value: "disabled", label: t("settings.scheduledEvals.disabled", "Disabled") },
+            { value: "suggest-only", label: t("settings.scheduledEvals.suggestOnly", "Suggest only") },
+            { value: "auto-create", label: t("settings.scheduledEvals.autoCreateTasks", "Auto-create tasks") },
+          ],
+        }}
+        value={evalSettings.followUpPolicy ?? "suggest-only"}
+        onChange={(v) => setForm((current) => ({
             ...current,
             evalSettings: {
                 ...(current.evalSettings ?? {}),
-                followUpPolicy: event.target.value as "disabled" | "suggest-only" | "auto-create",
+                followUpPolicy: v as "disabled" | "suggest-only" | "auto-create",
             },
-        }))}>
-          <option value="disabled">{t("settings.scheduledEvals.disabled", "Disabled")}</option>
-          <option value="suggest-only">{t("settings.scheduledEvals.suggestOnly", "Suggest only")}</option>
-          <option value="auto-create">{t("settings.scheduledEvals.autoCreateTasks", "Auto-create tasks")}</option>
-        </select>
-        <small>{t("settings.scheduledEvals.followUpPolicyHint", "Default: suggest only.")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="scheduled-evals-retention-days">{t("settings.scheduledEvals.retentionDays", "Retention (days)")}</label>
-        <input id="scheduled-evals-retention-days" className="input" type="number" min={1} max={365} step={1} disabled={!isScheduledEvalEnabled} value={evalSettings.retentionDays ?? 30} onChange={(event) => setForm((current) => ({
+        }))}
+      />
+      <SettingsNumberRow
+        descriptor={{
+          key: "evalSettings.retentionDays",
+          label: t("settings.scheduledEvals.retentionDays", "Retention (days)"),
+          help: t("settings.scheduledEvals.retentionDaysHint", "Default: 30."),
+          scope: "project",
+          disabled: !isScheduledEvalEnabled,
+          min: 1,
+          max: 365,
+          step: 1,
+        }}
+        value={evalSettings.retentionDays ?? 30}
+        onChange={(v) => setForm((current) => ({
             ...current,
             evalSettings: {
                 ...(current.evalSettings ?? {}),
-                retentionDays: event.target.value === "" ? undefined : Number(event.target.value),
+                retentionDays: v === null ? undefined : v,
             },
-        }))}/>
-        <small>{t("settings.scheduledEvals.retentionDaysHint", "Default: 30.")}</small>
-      </div>
+        }))}
+      />
     </>);
 }
 export default ScheduledEvalsSection;

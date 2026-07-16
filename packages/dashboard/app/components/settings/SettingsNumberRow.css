@@ -1,5 +1,6 @@
 /* SettingsNumberRow (U8 / KTD-10) — numeric input control slot. */
 
+/* FNXC:SettingsStyling 2026-07-15-18:52: Pairs `.input` (the dashboard-wide control appearance) with this width-only modifier — see SettingsTextRow.css for why the shared class is named rather than duplicated. */
 .settings-number {
   width: 100%;
 }

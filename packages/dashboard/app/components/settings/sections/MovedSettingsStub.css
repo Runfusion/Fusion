@@ -1,3 +1,4 @@
+/* FNXC:SettingsStyling 2026-07-15-17:35: The stub's message and action used a raw 0.85rem that only coincidentally matched the control-label rung. Both now name --font-size-sm so the redirect stub stays visually consistent with the sections it replaces. */
 /* MovedSettingsStub (U9 / KTD-5) — redirect stub for hard-moved settings. */
 
 .settings-moved-stub {
@@ -12,14 +13,14 @@
 
 .settings-moved-stub__message {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
 .settings-moved-stub__action {
   align-self: flex-start;
   padding: var(--space-xs) var(--space-md);
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text);
   background: var(--surface);

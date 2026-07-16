@@ -121,13 +121,20 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "notificationProviders",
   ]),
   experimental: new Set(["experimentalFeatures"]),
-  "global-general": new Set([
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  The global GitLab fallbacks and the global default tracking repo moved out of "global-general" into their own "source-control-global" section, paired with the project "source-control" section under the Integrations nav group.
+  This set is not just reset bookkeeping: `isGlobalKeyAllowedForSection` gates the SAVE path on it, so these keys reach the global patch only while their owning section is active.
+  */
+  "source-control-global": new Set([
     "githubTrackingDefaultRepo",
     "gitlabEnabled",
     "gitlabInstanceUrl",
     "gitlabApiBaseUrl",
     "gitlabAuthToken",
     "gitlabAuthTokenType",
+  ]),
+  "global-general": new Set([
     "language",
     "dismissModalsOnOutsideClick",
     "persistAgentToolOutput",
@@ -417,10 +424,14 @@ export function splitSettingsSave({
   }
 
   for (const [key, value] of Object.entries(payload)) {
-    if (key === "githubTrackingDefaultRepo" && activeSection !== "global-general") {
+    /*
+    FNXC:SourceControl 2026-07-15-20:30:
+    These six keys are dual-scope (declared in both DEFAULT_GLOBAL_SETTINGS and DEFAULT_PROJECT_SETTINGS), so the ACTIVE SECTION — not the key — decides which patch they land in: the global fallbacks are editable only from "source-control-global", and every other section's copy of the key is the project override. The id moved with the controls (was "global-general"); it must track whichever section renders the global GitLab/tracking-repo rows, or a global edit would silently be written as a project override.
+    */
+    if (key === "githubTrackingDefaultRepo" && activeSection !== "source-control-global") {
       continue;
     }
-    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "global-general") {
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "source-control-global") {
       continue;
     }
     if (key === "mcpServers" && scopedMcpValues) {
@@ -484,8 +495,11 @@ export function splitSettingsSave({
   for (const [key, value] of Object.entries(payload)) {
     if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only
     if (key === "customProviders") continue; // persisted via dedicated routes, not save-split (see global branch above)
-    if (key === "githubTrackingDefaultRepo" && activeSection === "global-general") continue;
-    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "global-general") continue;
+    // Mirror of the global branch's dual-scope gate: while the global source-control
+    // section is active these six keys are the GLOBAL fallbacks, so they must not
+    // also be written as project overrides. See the FNXC note in the global branch.
+    if (key === "githubTrackingDefaultRepo" && activeSection === "source-control-global") continue;
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "source-control-global") continue;
     if (key === "mcpServers" && scopedMcpValues) continue;
     if (key === "mcpServers" && activeSection === "global-mcp") continue;
     if (!isProjectSettingsKey(key)) continue;

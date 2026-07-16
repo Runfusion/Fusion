@@ -178,11 +178,15 @@ On mobile/narrow app viewports, opening Quick Chat should present the full Chat 
   }
 }
 
+/*
+FNXC:FloatingWindow 2026-07-15-18:20:
+Long titles (e.g. the GitHub import detail's "#2159 — <issue title>") must truncate with an ellipsis rather than hard-cut mid-word against the close button.
+display MUST stay block, not flex: every caller passes a plain string, so under flex the text became an anonymous flex item, which text-overflow cannot act on — the ellipsis declared here silently never rendered. A block box makes the existing overflow/text-overflow/white-space trio work as written.
+Reintroducing flex here (e.g. to lay out an element title) re-breaks truncation for all callers; give the title an inner element instead.
+*/
 .floating-window__title {
-  display: flex;
+  display: block;
   flex: 1;
-  align-items: center;
-  gap: var(--space-sm);
   min-width: 0;
   overflow: hidden;
   font-weight: 600;
@@ -210,12 +214,16 @@ On mobile/narrow app viewports, opening Quick Chat should present the full Chat 
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
 Body is a flex host that lets its single child stretch to the full panel width/height (min-width/min-height:0 so a wide child cannot collapse the flex line, and the child's own overflow can engage).
+
+FNXC:FloatingWindow 2026-07-15-00:00:
+FN-8015 / issue #2140 requires every shared FloatingWindow caller to keep its hosted vertical scrollbar clear of the right-edge and right-corner resize hot zones. Reserve the corner-width gutter on the body rather than specializing task detail: this applies equally when the body itself scrolls and when a headerless caller delegates scrolling to its full-size child. The panel border and its right handles remain available for desktop resizing, while the scrollbar is always inboard of the east, north-east, and south-east hit targets.
 */
 .floating-window__body {
   display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
+  margin-inline-end: var(--space-lg);
   overflow: auto;
 }
 

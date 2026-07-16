@@ -26,11 +26,18 @@
  *      null-as-delete (write `null`) so an inherited/overridable project
  *      setting reverts to its inherited/default value, matching the existing
  *      null-as-delete convention already used by `splitSettingsSave`.
- *   4. Some field names are edited from more than one section in the UI
- *      (e.g. `gitlabEnabled`'s enable toggle + URL fields live in "general",
- *      while its auth token fields live in "merge"). Each such key is
- *      assigned to exactly ONE canonical owning section below to keep every
- *      section's reset scoped to a disjoint key set; see the inline notes.
+ *   4. Each key is assigned to exactly ONE canonical owning section per scope,
+ *      so every section's reset is scoped to a disjoint key set. A key may
+ *      still appear once at each scope when it is genuinely dual-scope (e.g.
+ *      `githubTrackingDefaultRepo`); the disjointness guard is per-scope.
+ *
+ * FNXC:SourceControl 2026-07-15-20:30:
+ * Rule 4 used to arbitrate a real UI duplicate rather than a naming overlap:
+ * `gitlabEnabled` was rendered and written from BOTH "general" and "merge", so
+ * the registry awarded it to "general" to keep reset sets disjoint while the
+ * duplicate toggle stayed on screen. Both sections' GitHub/GitLab controls now
+ * live in the "source-control"/"source-control-global" pair, which owns those
+ * keys outright — the arbitration is no longer needed.
  */
 import { GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "@fusion/core";
 import { GLOBAL_SECTION_KEYS, MODEL_LANE_KEYS } from "./save-split";
@@ -60,16 +67,7 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "enabledBuiltinWorkflowIds",
     "ephemeralAgentsCanCreateTasks",
     "ephemeralAgentsEnabled",
-    "githubLinkImportedIssuesToTracking",
-    "githubTrackingDedupEnabled",
-    "githubTrackingDefaultRepo",
-    "githubTrackingEnabledByDefault",
     "sessionAdvisorEnabledByDefault",
-    // gitlabEnabled/gitlabInstanceUrl/gitlabApiBaseUrl's enable+URL fields are
-    // owned here; gitlabAuthToken/gitlabAuthTokenType are owned by "merge".
-    "gitlabApiBaseUrl",
-    "gitlabEnabled",
-    "gitlabInstanceUrl",
     "mailAutoCleanupDays",
     "operationalLogRetentionDays",
     "quickChatButtonMode",
@@ -78,6 +76,24 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "showTaskChatsInCommonFeed",
     "taskPrefix",
     "workspaceMode",
+  ],
+  /*
+  FNXC:SourceControl 2026-07-15-20:30:
+  Every project-scoped GitHub/GitLab key is owned here, by the one section that now renders them all. This entry is what replaced the split ownership the notes above used to describe: `gitlabEnabled`'s toggle was rendered from BOTH "general" and "merge", so the registry had to arbitrarily award the key to "general" to keep the per-section reset sets disjoint — a bookkeeping fix for a UI duplicate. With a single owning section the arbitration is gone.
+  `githubTrackingDefaultRepo` also appears in "source-control-global" (GLOBAL_SECTION_KEYS): it is a real dual-scope key, and the disjointness guard is per-scope, so the project row here and the global row there are two different settings, not a duplicate.
+  */
+  "source-control": [
+    "githubAuthMode",
+    "githubAuthToken",
+    "githubLinkImportedIssuesToTracking",
+    "githubTrackingDedupEnabled",
+    "githubTrackingDefaultRepo",
+    "githubTrackingEnabledByDefault",
+    "gitlabApiBaseUrl",
+    "gitlabAuthToken",
+    "gitlabAuthTokenType",
+    "gitlabEnabled",
+    "gitlabInstanceUrl",
   ],
   commands: ["buildCommand", "testCommand"],
   worktrees: [
@@ -123,12 +139,6 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "commitAuthorEnabled",
     "commitAuthorName",
     "directMergeCommitStrategy",
-    "githubAuthMode",
-    "githubAuthToken",
-    // gitlabAuthToken/gitlabAuthTokenType are owned here; gitlabEnabled's
-    // enable+URL fields are owned by "general" (see above).
-    "gitlabAuthToken",
-    "gitlabAuthTokenType",
     "includeTaskIdInCommit",
     "integrationBranch",
     "maxAutoMergeRetries",
@@ -181,6 +191,12 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
  * is disabled for these with a documented reason (surfaced in the dialog).
  */
 export const EXCLUDED_RESET_SECTIONS: Record<string, string> = {
+  /*
+  FNXC:SettingsReset 2026-07-15-18:52:
+  scheduling-global owns exactly one control (`globalMaxConcurrent`), and it is not a settings-blob key: it is read and written through the dedicated global-concurrency endpoint, so per-menu reset has nothing here to reset.
+  Listed explicitly rather than left to the unknown-id fallback: an unregistered id is reset-ineligible with NO reason, which renders the dialog without telling the operator why the button is unavailable.
+  */
+  "scheduling-global": "The global concurrency cap is managed by the global-concurrency endpoint, not the settings form.",
   secrets: "Secrets are managed by the Secrets store, not the settings form.",
   "global-mcp": "MCP servers are managed by their own add/edit/remove flow.",
   mcp: "MCP servers are managed by their own add/edit/remove flow.",

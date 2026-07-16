@@ -37,7 +37,7 @@ export function SettingsTextareaRow({
     >
       <textarea
         id={key}
-        className="settings-textarea"
+        className="input settings-textarea"
         value={value ?? ""}
         placeholder={placeholder}
         disabled={disabled}

@@ -613,7 +613,11 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
-          {isReconnecting && <div className="form-hint text-muted">{t("subtasks.reconnecting", "Reconnecting…")}</div>}
+          {/*
+          FNXC:SubtaskBreakdown 2026-07-15-00:00:
+          The persisted editing stored-review screen and in-flight creating state render from state, so transient SSE reconnects must not imply regeneration. Reserve the shared hint for active generating, which retains its intentional inline indicator.
+          */}
+          {isReconnecting && view.type === "generating" && <div className="form-hint text-muted">{t("subtasks.reconnecting", "Reconnecting…")}</div>}
 
           {view.type === "initial" && (
             <div className="planning-loading" data-testid="subtask-progress-state">

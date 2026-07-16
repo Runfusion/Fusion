@@ -3206,6 +3206,43 @@ describe("requirePlanApproval setting", () => {
       );
     });
 
+    /*
+     * FNXC:PlanApproval 2026-07-15-21:10:
+     * FN-8009 requires the as-approved comparison to cover both deterministic hygiene
+     * mutations. A legacy operator-approved plan may lack both its original request and
+     * the frontend checklist; these injections must not turn an unchanged plan into a
+     * new manual approval request.
+     */
+    it("auto-approves a pre-hygiene plan after Original Description and Frontend UX injection", async () => {
+      const frontendPlan = "# Task: FN-FRONTEND-HYGIENE - Frontend plan\n\n## Mission\n\nUpdate the dashboard.\n\n## File Scope\n\n- `packages/dashboard/app/TaskCard.tsx`\n";
+      const task = createTriageTask({
+        id: "FN-FRONTEND-HYGIENE",
+        description: "The original dashboard request is absent from this planner output.",
+        status: "planning",
+        approvedPlanFingerprint: computePlanApprovalFingerprint(frontendPlan),
+      } as Partial<Task>);
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      } as Partial<TaskStore>);
+      await mkdir(join(rootDir, ".fusion", "tasks", task.id), { recursive: true });
+      await writeFile(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), frontendPlan);
+      const processor = new TriageProcessor(store, rootDir);
+
+      await (processor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        frontendPlan,
+        { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
+      );
+
+      expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo");
+      expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "awaiting-approval" }));
+      const persisted = readFileSync(join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), "utf8");
+      expect(persisted).toContain("## Original Description");
+      expect(persisted).toContain("## Frontend UX Criteria");
+    });
+
     it("still re-asks approval for a CHANGED plan when the prior approval predates prompt hygiene", async () => {
       // The safety edge: legacy tolerance must not approve a plan the operator never saw.
       const legacyFingerprint = computePlanApprovalFingerprint(planText);

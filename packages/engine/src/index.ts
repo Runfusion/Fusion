@@ -852,6 +852,18 @@ export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSessio
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./token-cap-detector.js";
 export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
+/*
+FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
+Exported for the dashboard's manual Retry gate, which must share ONE definition of "orphaned
+merge-active stamp" with SelfHealingManager.recoverStaleMergingStatus. Two copies is how the
+manual path drifted into refusing every merge-active status while the sweep cleared it.
+*/
+export {
+  ACTIVE_MERGE_STATUSES,
+  DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
+  isMergeActiveStatus,
+  isStaleMergeActiveStatus,
+} from "./merge-active-status.js";
 export { PluginRunner, type PluginRunnerOptions } from "./plugin-runner.js";
 export {
   registerPluginTraits,

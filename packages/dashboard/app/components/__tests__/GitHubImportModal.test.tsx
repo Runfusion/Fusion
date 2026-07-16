@@ -396,9 +396,14 @@ describe("GitHubImportModal", () => {
       expect(toolbar).toBeTruthy();
       // Remote pill should be in toolbar
       expect(within(toolbar).getByTestId("github-import-single-remote")).toBeTruthy();
-      // Filter input
-      expect(within(toolbar).getByPlaceholderText(/Filter:/)).toBeTruthy();
-      // Load button
+      /*
+      FNXC:GitHubImport 2026-07-15-23:50:
+      The filter is a popover now, so its input is absent until the trigger is used — assert the
+      trigger instead. Load is icon-only; its accessible name still carries "Load", so the same
+      role+name query keeps working and proves the label was not lost for screen readers.
+      */
+      expect(within(toolbar).getByTestId("github-import-filter-trigger")).toBeTruthy();
+      expect(within(toolbar).queryByPlaceholderText(/Filter:/)).toBeNull();
       expect(within(toolbar).getByRole("button", { name: /Load/i })).toBeTruthy();
     });
   });
@@ -429,6 +434,9 @@ describe("GitHubImportModal", () => {
   /*
   FNXC:GitHubImportTranslate 2026-07-14-12:00:
   When selected issue prose is not the dashboard language, the preview must offer Translate / Dismiss and swap title+body after a successful AI translation without changing import provenance.
+
+  FNXC:GitHubImportTranslate 2026-07-15-18:40:
+  The swap must cover EVERY surface showing the title, not just the preview card: the detail window's title bar reads from the same translated source, so one item can never display the translated title in the card and the raw upstream title in the bar at the same time. Both surfaces are asserted in both directions (translated, then toggled back).
   */
   it("offers translation when selected issue content is not the dashboard language", async () => {
     const frenchBody =
@@ -468,10 +476,17 @@ describe("GitHubImportModal", () => {
       expect(screen.getByText("Import preview problem")).toBeTruthy();
     });
 
+    // The detail window's title bar swaps with the card, keeping the issue number paired with the title it belongs to.
+    const titleBar = screen.getByTestId("floating-window-drag-handle-github-import-detail");
+    expect(titleBar.textContent).toContain("#7 — Import preview problem");
+    expect(titleBar.textContent).not.toContain("Problème d'aperçu d'importation");
+
     expect(screen.getByTestId("github-import-translate-toggle")).toBeTruthy();
     fireEvent.click(screen.getByTestId("github-import-translate-toggle"));
     const previewCard = screen.getByTestId("github-import-preview-card");
     expect(within(previewCard).getByText(/Problème d'aperçu d'importation/)).toBeTruthy();
+    // Toggling back to the original must revert the bar too, not strand it on the translation.
+    expect(titleBar.textContent).toContain("#7 — Problème d'aperçu d'importation");
   });
 
   it("does not show translate controls for English content when dashboard language is English", async () => {
@@ -522,13 +537,42 @@ describe("GitHubImportModal", () => {
     expect(within(previewCard).getByText("(no description)")).toBeTruthy();
   });
 
-  it("has optional labels input with filter placeholder", async () => {
+  /*
+  FNXC:GitHubImport 2026-07-15-23:50:
+  The labels filter collapsed into a popover to give the issue list back its vertical space, so the
+  input is no longer in the DOM until the trigger is used. This now tests the whole affordance —
+  reachable, opens, and still filters — rather than just the input's existence.
+  */
+  it("reveals the labels filter input from the filter popover", async () => {
     vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
     render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/Filter:/)).toBeTruthy();
+      expect(screen.getByTestId("github-import-filter-trigger")).toBeTruthy();
     });
+    // Collapsed by default — this is the vertical space the redesign reclaims.
+    expect(screen.queryByPlaceholderText(/Filter:/)).toBeNull();
+
+    fireEvent.click(screen.getByTestId("github-import-filter-trigger"));
+
+    expect(screen.getByTestId("github-import-filter-panel")).toBeTruthy();
+    expect(screen.getByPlaceholderText(/Filter:/)).toBeTruthy();
+  });
+
+  it("surfaces the active filter on the trigger so collapsing never hides applied state", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    await waitFor(() => expect(screen.getByTestId("github-import-filter-trigger")).toBeTruthy());
+    const trigger = screen.getByTestId("github-import-filter-trigger");
+    expect(trigger.textContent).toMatch(/Filter/);
+
+    fireEvent.click(trigger);
+    fireEvent.change(screen.getByPlaceholderText(/Filter:/), { target: { value: "bug,enhancement" } });
+
+    // The trigger doubles as the readout: a collapsed filter must still be visible state.
+    expect(screen.getByTestId("github-import-filter-trigger").textContent).toContain("bug,enhancement");
+    expect(screen.getByTestId("github-import-filter-trigger").className).toContain("is-active");
   });
 
   describe("with no remotes", () => {
@@ -943,7 +987,8 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Issue without labels")).toBeTruthy();
       });
 
-      // Enter label filter
+      // Enter label filter — the input now lives behind the filter popover trigger.
+      fireEvent.click(screen.getByTestId("github-import-filter-trigger"));
       const labelsInput = screen.getByPlaceholderText(/Filter:/);
       fireEvent.change(labelsInput, { target: { value: "bug" } });
 
@@ -1412,20 +1457,21 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("shows filter input for Issues tab, hint text for Pulls tab", async () => {
+    it("shows filter control for Issues tab, hint text for Pulls tab", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
       await waitFor(() => {
-        // Default is Issues tab, should show filter input
-        expect(screen.getByPlaceholderText(/Filter:/)).toBeTruthy();
+        // Default is Issues tab. The filter is a popover now, so assert its trigger.
+        expect(screen.getByTestId("github-import-filter-trigger")).toBeTruthy();
       });
 
       // Click on Pull Requests tab
       fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
 
       await waitFor(() => {
-        // Should show hint text instead of filter input
+        // Should show hint text instead of the filter control (trigger AND input both gone).
+        expect(screen.queryByTestId("github-import-filter-trigger")).toBeNull();
         expect(screen.queryByPlaceholderText(/Filter:/)).toBeNull();
         expect(screen.getByText(/Open pull requests from/i)).toBeTruthy();
       });
@@ -1677,6 +1723,8 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Persisted Issue")).toBeTruthy();
       });
 
+      // FN-8004-era redesign: the filter input lives behind a popover trigger now.
+      fireEvent.click(screen.getByTestId("github-import-filter-trigger"));
       fireEvent.change(screen.getByPlaceholderText(/Filter:/), { target: { value: "bug" } });
       // The label change re-triggers auto-load (briefly disabling the list); wait for it to settle before selecting.
       await waitFor(() => {
@@ -1697,7 +1745,14 @@ describe("GitHubImportModal", () => {
       );
 
       await waitFor(() => {
-        expect((screen.getByPlaceholderText(/Filter:/) as HTMLInputElement).value).toBe("bug");
+        /*
+        FNXC:GitHubImport 2026-07-15-23:55:
+        Assert restoration via the collapsed trigger rather than by reopening the popover. The
+        trigger renders the persisted filter, so this proves BOTH that FN-7657 persistence survived
+        the remount AND that a restored filter is visible without the operator hunting for it — the
+        real risk when a control collapses.
+        */
+        expect(screen.getByTestId("github-import-filter-trigger").textContent).toContain("bug");
       });
       await waitFor(() => {
         expect(within(screen.getByTestId("github-import-preview-card")).getByText("Persisted Issue")).toBeTruthy();
@@ -1802,6 +1857,8 @@ describe("GitHubImportModal", () => {
         <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" presentation="embedded" />,
       );
       await waitFor(() => expect(screen.getByText("Project One Issue")).toBeTruthy());
+      // FN-8004-era redesign: the filter input lives behind a popover trigger now.
+      fireEvent.click(screen.getByTestId("github-import-filter-trigger"));
       fireEvent.change(screen.getByPlaceholderText(/Filter:/), { target: { value: "bug" } });
       // The label change re-triggers auto-load (briefly disabling the list); wait for it to settle before selecting.
       await waitFor(() => {
@@ -1820,7 +1877,7 @@ describe("GitHubImportModal", () => {
       );
 
       await waitFor(() => {
-        expect((screen.getByPlaceholderText(/Filter:/) as HTMLInputElement).value).toBe("");
+        expect(screen.getByTestId("github-import-filter-trigger").textContent).not.toContain("bug");
       });
       expect(screen.queryByTestId("floating-window-github-import-detail")).toBeNull();
     });
@@ -2020,4 +2077,160 @@ describe("GitHubImportModal", () => {
       window.dispatchEvent(new Event("resize"));
     });
   });
+
+/*
+FNXC:GitHubImport 2026-07-16-00:05:
+
+## Symptom Verification
+
+Original symptom (mobile operator report): the import screen spent ~4 rows on chrome — a provider
+row, a tab row, and a boxed ORIGIN/filter/Load stack — leaving ~9 issues visible; and Import lived
+ABOVE the preview it acts on, while a second Import in the list footer let you import an issue whose
+body you had never opened.
+
+Assertion it is gone: verified in a real browser at 412px (jsdom has no layout, so these tests pin
+STRUCTURE and BEHAVIOUR, not geometry). Post-change measurements: control chrome 93px -> 70px (two
+rows), toolbar a single 36px row, ~13 issues visible, filter popover clamped inside the viewport,
+and the detail action bar sitting below the preview content with an unclipped Import label.
+
+## Surface Enumeration
+
+- Issues tab AND Pull Requests tab (the filter exists only on Issues; the detail bar serves both).
+- List footer (Cancel only) vs detail bar (the sole Import).
+- Filter collapsed vs open, and the restored-from-persistence case (FN-7657).
+- Close issue stays hidden on the PR tab and for already-closed issues — unchanged by the move.
+*/
+describe("GitHubImportModal — compact mobile layout (operator report)", () => {
+  // Inherits the suite's beforeEach (mock reset + defaults); only the remote needs pinning here.
+  beforeEach(() => {
+    vi.mocked(fetchGitRemotes).mockResolvedValue(singleRemote);
+  });
+
+  it("puts provider, type tabs, origin, filter and load in ONE control row", async () => {
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    const controls = await screen.findByTestId("github-import-controls");
+    // The row is the whole point: chrome that used to be four stacked bands is one container.
+    expect(within(controls).getByRole("button", { name: "GitHub" })).toBeTruthy();
+    expect(within(controls).getByRole("tab", { name: /Issues/i })).toBeTruthy();
+    expect(within(controls).getByRole("tab", { name: /Pull Requests/i })).toBeTruthy();
+    await waitFor(() => {
+      expect(within(controls).getByTestId("github-import-single-remote")).toBeTruthy();
+    });
+    expect(within(controls).getByTestId("github-import-filter-trigger")).toBeTruthy();
+    expect(within(controls).getByRole("button", { name: /Load/i })).toBeTruthy();
+  });
+
+  it("keeps Load reachable by name even though it is icon-only", async () => {
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+    await waitFor(() => expect(screen.getByTestId("github-import-toolbar")).toBeTruthy());
+
+    // Dropping the visible label must not drop the accessible name.
+    const load = screen.getByRole("button", { name: /Load/i });
+    expect(load.textContent?.trim()).toBe("");
+    expect(load.getAttribute("aria-label")).toMatch(/Load/i);
+  });
+
+  it("keeps origin visible rather than hiding it inside the filter popover", async () => {
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+    // Operator decision: origin is context for what you are importing, so it must stay on the row.
+    const remote = await screen.findByTestId("github-import-single-remote");
+    expect(remote.textContent).toContain("dustinbyrne/kb");
+    expect(screen.queryByTestId("github-import-filter-panel")).toBeNull();
+  });
+
+  it("closes the filter popover on Escape without closing the modal", async () => {
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+    await waitFor(() => expect(screen.getByTestId("github-import-filter-trigger")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("github-import-filter-trigger"));
+    expect(screen.getByTestId("github-import-filter-panel")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    // The popover is the innermost layer: Escape dismisses IT, and must not also close the modal.
+    expect(screen.queryByTestId("github-import-filter-panel")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("offers Import ONLY in the detail preview, never in the list footer", async () => {
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+    await waitFor(() => expect(screen.getByTestId("github-import-toolbar")).toBeTruthy());
+
+    /*
+    Two Imports (footer + preview) split the action across two places and let an operator import an
+    issue sight-unseen. The footer keeps Cancel — the modal still needs a dismiss — but Import is
+    now exclusively the detail bar's.
+    */
+    const footer = document.querySelector(".github-import-modal__actions");
+    expect(footer).toBeTruthy();
+    const footerButtons = [...footer!.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(footerButtons).toEqual(["Cancel"]);
+    expect(footerButtons).not.toContain("Import");
+  });
+});
+
+describe("GitHubImportModal — detail actions sit at the bottom (operator report)", () => {
+  // Inherits the suite's beforeEach (mock reset + defaults); only the remote needs pinning here.
+  beforeEach(() => {
+    vi.mocked(fetchGitRemotes).mockResolvedValue(singleRemote);
+  });
+
+  const openDetail = async () => {
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+      { number: 1, title: "First Issue", body: "Body 1", html_url: "https://github.com/dustinbyrne/kb/issues/1", labels: [], state: "open" },
+    ]);
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+    await waitFor(() => expect(screen.getByText("First Issue")).toBeTruthy());
+    fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+    return screen.findByTestId("github-import-preview-card");
+  };
+
+  it("renders Import and Close issue AFTER the preview content, not above it", async () => {
+    await openDetail();
+
+    const bar = await screen.findByTestId("github-import-detail-actions");
+    const content = document.querySelector(".github-import-pane-content");
+    expect(content).toBeTruthy();
+
+    /*
+    The operator's ask: commit actions belong below the content they act on. jsdom has no layout, so
+    assert DOM ORDER — the bar must follow the content — which is what the CSS then pins to the
+    bottom of the flex panel. Geometry itself was verified in a real browser at 412px.
+    */
+    expect(content!.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: /^Import$/i })).toBeTruthy();
+    expect(within(bar).getByTestId("github-import-issue-close")).toBeTruthy();
+  });
+
+  it("leaves no action buttons stranded in the preview header", async () => {
+    await openDetail();
+    await screen.findByTestId("github-import-detail-actions");
+
+    /*
+    Guard against the FN-6115-style empty shell: the DETAIL header must be a heading now, nothing
+    else. Scope to `.github-import-detail-panel` — `.github-import-pane-header` is shared with the
+    LIST pane, so an unscoped query silently asserts against the wrong header.
+    */
+    const header = document.querySelector(".github-import-detail-panel .github-import-pane-header");
+    expect(header).toBeTruthy();
+    expect(header!.textContent).toContain("Preview");
+    expect(header!.querySelectorAll("button").length).toBe(0);
+  });
+
+  it("keeps Close issue off the Pull Requests tab", async () => {
+    await openDetail();
+    await screen.findByTestId("github-import-detail-actions");
+    expect(screen.getByTestId("github-import-issue-close")).toBeTruthy();
+
+    vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+    // Moving the buttons must not change WHEN close-issue is offered.
+    await waitFor(() => {
+      expect(screen.queryByTestId("github-import-issue-close")).toBeNull();
+    });
+  });
+});
 });

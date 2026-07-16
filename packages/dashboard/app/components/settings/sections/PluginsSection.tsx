@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
 import { PluginSlot } from "../../PluginSlot";
 import type { ToastType } from "../../../hooks/useToast";
 import { useTranslation } from "react-i18next";
@@ -6,16 +6,14 @@ const PluginManager = lazy(() => import("../../PluginManager").then((m) => ({ de
 const PiExtensionsManager = lazy(() => import("../../PiExtensionsManager").then((m) => ({ default: m.PiExtensionsManager })));
 export type PluginsSubsectionId = "fusion-plugins" | "pi-extensions";
 export interface PluginsSectionProps {
-    scopeBanner: ReactNode;
     projectId?: string;
     addToast: (message: string, type?: ToastType) => void;
     activePluginsSubsection: PluginsSubsectionId;
     setActivePluginsSubsection: (id: PluginsSubsectionId) => void;
 }
-export function PluginsSection({ scopeBanner, projectId, addToast, activePluginsSubsection, setActivePluginsSubsection, }: PluginsSectionProps) {
+export function PluginsSection({ projectId, addToast, activePluginsSubsection, setActivePluginsSubsection, }: PluginsSectionProps) {
     const { t } = useTranslation("app");
     return (<>
-      {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.plugins.plugins", "Plugins")}</h4>
       <div className="settings-plugins-subsection-toggle" role="tablist" aria-label={t("settings.plugins.pluginManagerType", "Plugin manager type")}>
         <button type="button" id="plugins-tab-fusion-plugins" role="tab" aria-controls="plugins-panel-fusion-plugins" aria-selected={activePluginsSubsection === "fusion-plugins"} tabIndex={activePluginsSubsection === "fusion-plugins" ? 0 : -1} className={`settings-plugins-subsection-btn${activePluginsSubsection === "fusion-plugins" ? " active" : ""}`} onClick={() => setActivePluginsSubsection("fusion-plugins")}>{t("settings.plugins.fusionPlugins", " Fusion Plugins ")}</button>

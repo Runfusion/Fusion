@@ -51,7 +51,6 @@ function GeneralHost({ initialForm, onSetForm }: {
   const [form, setForm] = useState(initialForm as SettingsFormState);
   return (
     <GeneralSection
-      scopeBanner={null}
       form={form}
       setForm={(updater) => {
         setForm((prev) => {

@@ -164,6 +164,14 @@ pnpm verify:workspace  # deep opt-in verification (lint -> test:full -> build); 
 - Default to a **file-scoped** command targeting only the tests affected by the diff, e.g. `pnpm --filter @fusion/<pkg> exec vitest run src/path/to/changed.test.ts --silent=passed-only --reporter=dot`. The marathon soft-cap exists to push you toward this.
 - `allowFullSuite: true` is justified only for a genuinely full run with no targetable test set (e.g. a cross-cutting infra change) — and then state the reason. The thin merge gate (`pnpm test:gate`) is the cross-cutting safety net, not per-task verification.
 
+### Standing Rule: Reuse Components, Design Tokens, and Systems (No Drift)
+
+- Before adding UI/CSS, reuse existing components and primitives; extend their `:hover`, `:focus-visible`, or `:active` states instead of forking parallel button, form, or card variants.
+- Always use design tokens (`--space-*`, `--radius-*`, `--shadow-*`, `--duration-*`, `--transition-*`, `--font-*`, and color/status/semantic tokens); never hardcode pixels, hex, or `rgba()` in component CSS. Use `color-mix(...)` for translucency.
+- Put new component CSS in `packages/dashboard/app/components/ComponentName.css`, not `styles.css`; the global file is only for tokens, primitives, and cross-component `@media` overrides.
+- Reuse existing systems, helpers, and hooks after searching for an equivalent before adding a new one. If a new primitive is genuinely necessary, justify it in the change and first check documented patterns in `docs/solutions/`.
+- Authoritative references: [Styling Guide — Design tokens and Component classes](docs/dashboard-guide.md#styling-guide), `packages/dashboard/app/styles.css` (token/primitive source of truth), and `docs/solutions/`.
+
 ### Standing Rule: Fix the Invariant, Not the Repro (FN-5893)
 
 - When fixing a bug, the regression test must assert the general invariant across ALL known surfaces — not only the single reported reproduction.

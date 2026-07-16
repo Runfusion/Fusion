@@ -302,28 +302,27 @@ describe("SubtaskBreakdownModal", () => {
     expect(screen.getByDisplayValue("Do second")).toBeInTheDocument();
   });
 
-  it("shows reconnecting indicator without clearing subtask state", async () => {
+  it("shows reconnecting only during generation, not on persisted subtask review", async () => {
     renderModal();
     await waitFor(() => expect(streamHandlers).toBeDefined());
 
-    streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("reconnecting");
+    });
+    expect(screen.getAllByText("Reconnecting…")).toHaveLength(2);
+
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("connected");
+      streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    });
     expect(await screen.findByDisplayValue("First")).toBeInTheDocument();
 
     act(() => {
       streamHandlers.onConnectionStateChange?.("reconnecting");
     });
-    await waitFor(() => {
-      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
-    });
-    expect(screen.getByDisplayValue("First")).toBeInTheDocument();
 
-    act(() => {
-      streamHandlers.onConnectionStateChange?.("connected");
-    });
-    await waitFor(() => {
-      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
-    });
     expect(screen.getByDisplayValue("First")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
   });
 
   it("preserves thinking output while reconnecting in generating state", async () => {

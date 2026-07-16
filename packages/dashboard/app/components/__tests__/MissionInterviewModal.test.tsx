@@ -259,7 +259,7 @@ describe("MissionInterviewModal", () => {
     expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
   });
 
-  it("shows reconnecting indicator without clearing current question", async () => {
+  it("shows reconnecting only during active generation, not on persisted questions", async () => {
     renderModal();
 
     fireEvent.change(screen.getByLabelText("What do you want to build?"), {
@@ -273,26 +273,22 @@ describe("MissionInterviewModal", () => {
     });
 
     act(() => {
+      streamHandlers.onConnectionStateChange?.("reconnecting");
+    });
+    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+
+    act(() => {
+      streamHandlers.onConnectionStateChange?.("connected");
       streamHandlers.onQuestion?.(SAMPLE_QUESTION);
     });
-
     expect(await screen.findByText("What is the target scope?")).toBeInTheDocument();
 
     act(() => {
       streamHandlers.onConnectionStateChange?.("reconnecting");
     });
 
-    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
     expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
-
-    act(() => {
-      streamHandlers.onConnectionStateChange?.("connected");
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
-    });
-    expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
   });
 
   it("preserves streaming thinking output while reconnecting", async () => {
@@ -390,7 +386,7 @@ describe("MissionInterviewModal", () => {
       streamHandlers.onError?.("Stream error");
     });
 
-    expect(await screen.findByText("Reconnecting…")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
     expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
     expect(screen.queryByText("Stream error")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();

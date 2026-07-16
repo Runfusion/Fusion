@@ -1305,7 +1305,7 @@ describe("TaskCard", () => {
     });
   });
 
-  it("hides delete button for done tasks while keeping archive action in the actions dropdown", () => {
+  it("hides delete button for done tasks while keeping archive in the three-dot menu", async () => {
     const onDeleteTask = vi.fn(async () => makeTask());
     const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
 
@@ -1320,8 +1320,9 @@ describe("TaskCard", () => {
     );
 
     expect(screen.queryByLabelText("Delete task")).toBeNull();
-    expect(screen.getByRole("button", { name: "Actions" })).toBeDefined();
-    expect(screen.queryByLabelText("Archive task")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+    expect(await screen.findByRole("menuitem", { name: "Archive" })).toBeDefined();
   });
 
   it.each(["triage", "todo", "in-progress", "in-review"] as const)(
@@ -1341,7 +1342,7 @@ describe("TaskCard", () => {
     },
   );
 
-  it("renders archive action for done tasks inside the actions dropdown", async () => {
+  it("renders archive action for done tasks inside the three-dot menu", async () => {
     const onArchiveTask = vi.fn(async () => makeTask({ column: "archived" }));
 
     render(
@@ -1353,12 +1354,11 @@ describe("TaskCard", () => {
       />,
     );
 
-    const actionsButton = screen.getByRole("button", { name: "Actions" });
     expect(screen.queryByLabelText("Archive task")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
-    fireEvent.click(actionsButton);
-
-    const menu = screen.getByRole("menu");
+    const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
 
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Archive" }));
@@ -1366,7 +1366,7 @@ describe("TaskCard", () => {
     await waitFor(() => expect(onArchiveTask).toHaveBeenCalledWith("FN-001"));
   });
 
-  it("does not render an empty done actions dropdown when no done action is available", () => {
+  it("renders no action-menu shell when neither done action is available", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "done", mergeDetails: undefined })}
@@ -1377,6 +1377,7 @@ describe("TaskCard", () => {
 
     expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
     expect(container.querySelector(".card-done-actions")).toBeNull();
+    expect(screen.queryByTestId("card-menu-btn-FN-001")).toBeNull();
   });
 
   it("does not render archive action for archived tasks", () => {
@@ -1396,14 +1397,13 @@ describe("TaskCard", () => {
   });
 
   /*
-  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
-  Coverage for the Revert affordance: presence/absence on done + archived
-  cards (done-actions dropdown, archived inline row, and context menu), the
-  disabled/omitted no-commit-to-revert guard, the auto→clean-success path,
-  and the auto→conflict→confirm→AI-undo fallback path.
+  FNXC:TaskRevert 2026-07-15-00:00 (FN-8035):
+  Coverage for the Revert affordance across done + archived cards. Done-card
+  actions are available only through the three-dot context menu; archived cards
+  retain their inline row. The no-commit guard remains disabled in the menu.
   */
   describe("Revert affordance", () => {
-    it("renders Revert inside the done actions dropdown for a done card with a landed commit", () => {
+    it("renders Archive and Revert in the done card three-dot menu when both are available", async () => {
       const { container } = render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
@@ -1415,8 +1415,9 @@ describe("TaskCard", () => {
       );
 
       expect(container.querySelector(".card-revert-btn")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      const menu = screen.getByRole("menu");
+      expect(container.querySelector(".card-done-actions")).toBeNull();
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      const menu = await screen.findByRole("menu");
       expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
       expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeDefined();
     });
@@ -1446,7 +1447,7 @@ describe("TaskCard", () => {
       expect(screen.queryByLabelText("Revert this task's changes")).toBeNull();
     });
 
-    it("omits Revert from the done actions dropdown when the task has no landed commit", () => {
+    it("renders Archive and disabled Revert in the done three-dot menu without a landed commit", async () => {
       const { container } = render(
         <TaskCard
           task={makeTask({ column: "done", mergeDetails: undefined })}
@@ -1458,10 +1459,26 @@ describe("TaskCard", () => {
       );
 
       expect(container.querySelector(".card-revert-btn")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
-      const menu = screen.getByRole("menu");
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      const menu = await screen.findByRole("menu");
       expect(within(menu).getByRole("menuitem", { name: "Archive" })).toBeDefined();
-      expect(within(menu).queryByRole("menuitem", { name: "Revert" })).toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeDisabled();
+    });
+
+    it("renders only Revert in the done three-dot menu when archive is unavailable", async () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      const menu = await screen.findByRole("menu");
+      expect(within(menu).queryByRole("menuitem", { name: "Archive" })).toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeEnabled();
     });
 
     it("shows a disabled Revert context-menu entry when the task has no landed commit", () => {
@@ -1506,7 +1523,7 @@ describe("TaskCard", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
       await act(async () => {
         fireEvent.click(screen.getByRole("menuitem", { name: "Revert" }));
@@ -1539,7 +1556,7 @@ describe("TaskCard", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
       await act(async () => {
         fireEvent.click(screen.getByRole("menuitem", { name: "Revert" }));
@@ -3738,7 +3755,7 @@ describe("TaskCard", () => {
     expect(actionsContainer?.contains(editBtn)).toBe(true);
   });
 
-  it("renders done actions dropdown inside card-header-actions for done columns", () => {
+  it("renders the done-card three-dot menu inside card-header-actions", () => {
     const { container } = render(
       <TaskCard 
         task={makeTask({ column: "done", size: "L" })} 
@@ -3748,11 +3765,13 @@ describe("TaskCard", () => {
       />,
     );
     const actionsContainer = container.querySelector(".card-header-actions");
-    const actionsButton = screen.getByRole("button", { name: "Actions" });
+    const menuButton = screen.getByTestId("card-menu-btn-FN-001");
     
     expect(actionsContainer).not.toBeNull();
     expect(container.querySelector(".card-archive-btn")).toBeNull();
-    expect(actionsContainer?.contains(actionsButton)).toBe(true);
+    expect(container.querySelector(".card-done-actions")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    expect(actionsContainer?.contains(menuButton)).toBe(true);
   });
 
   it("renders in-review Move control inline in card-meta for overlap-blocked tasks", () => {

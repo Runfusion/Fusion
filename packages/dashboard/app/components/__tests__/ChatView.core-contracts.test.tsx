@@ -453,7 +453,7 @@ describe("ChatView CSS — responsive bubble width", () => {
     expect(userRule?.[1]).toContain("align-self: flex-end");
     expect(userRule?.[1]).not.toContain("max-width");
     expect(tabletRule?.[1]).toMatch(
-      /\.chat-message--assistant,\s*\.chat-message--streaming,\s*\.chat-message--failure\s*\{[^}]*max-width:\s*88%/,
+      /\.chat-message--assistant,\s*\.chat-message--streaming,\s*\.chat-message--failure\s*\{[^}]*max-width:\s*92%/,
     );
     expect(tabletRule?.[1]).not.toMatch(/\.chat-message--user\s*\{[^}]*max-width/);
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-message\s*\{[^}]*max-width:\s*100%/);
@@ -469,7 +469,7 @@ describe("ChatView CSS — responsive bubble width", () => {
     expect(baseMessageRule?.[1]).toContain("max-width: 75%");
     expect(narrowRule?.[1]).toMatch(/\.chat-message\s*\{[^}]*max-width:\s*100%/);
     expect(tabletRule?.[1]).toMatch(
-      /\.chat-message--assistant,\s*\.chat-message--streaming,\s*\.chat-message--failure\s*\{[^}]*max-width:\s*88%/,
+      /\.chat-message--assistant,\s*\.chat-message--streaming,\s*\.chat-message--failure\s*\{[^}]*max-width:\s*92%/,
     );
   });
 });

@@ -26,7 +26,7 @@ import {
   type GitRemote,
   type GitLabImportItem,
 } from "../api";
-import { Loader2, RefreshCw, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User } from "lucide-react";
+import { Loader2, RefreshCw, GitPullRequest, CircleDot, ChevronUp, ChevronDown, Bot, User, Filter } from "lucide-react";
 import { GithubIcon } from "./GithubIcon";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import {
@@ -336,6 +336,39 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [labels, setLabels] = useState("");
+  /*
+  FNXC:GitHubImport 2026-07-15-23:20:
+  The labels filter collapses into a popover so the control row stays one line and the issue list
+  keeps the vertical space. `filterOpen` drives the popover; the trigger summarises the active
+  filter so a collapsed filter is never invisible state.
+  */
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterMenuRef = useRef<HTMLDivElement | null>(null);
+
+  /*
+  FNXC:GitHubImport 2026-07-15-23:20:
+  Dismiss the filter popover on outside pointerdown or Escape. Bound only while open so the modal
+  does not carry idle global listeners. Escape stops propagation: the popover is the innermost
+  dismissible layer, and without this the modal itself would close on the same key.
+  */
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!filterMenuRef.current?.contains(event.target as Node)) setFilterOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setFilterOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [filterOpen]);
   const [loading, setLoading] = useState(false);
   const [provider, setProvider] = useState<ImportProvider>("github");
   const [gitlabResource, setGitlabResource] = useState<GitLabResourceTab>("project_issue");
@@ -1238,12 +1271,21 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       )}
 
         <div className="modal-body github-import-modal__body">
+          {/*
+          FNXC:GitHubImport 2026-07-15-23:20:
+          Mobile operator report: the import screen spent most of its vertical budget on chrome —
+          provider row, tab row, and a boxed origin+filter+Load stack — leaving only a few issues
+          visible. Provider, type tabs, origin, filter, and Load now share ONE control row so the
+          issue list gets the reclaimed space. The row wraps on narrow widths rather than clipping.
+          Origin stays VISIBLE as a compact chip (operator decision) — it is load-bearing context for
+          what you are about to import, so it must not hide inside the filter popover.
+          */}
+          <div className="github-import-controls" data-testid="github-import-controls">
           <div className="github-import-provider" role="group" aria-label={t("git.providerAriaLabel", "Import provider")}>
             <button type="button" className={`github-import-tab ${provider === "github" ? "active" : ""}`} aria-pressed={provider === "github"} onClick={() => setProvider("github")} disabled={loading || importing}>GitHub</button>
             {gitlabEnabled ? <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing}>GitLab</button> : null}
           </div>
-          {provider === "github" ? (
-          <>
+          {provider === "github" && (<>
           {/* Tab Navigation */}
           <div className="github-import-tabs" role="tablist" aria-label={t("git.importTypeAriaLabel", "Import type")}>
             <button
@@ -1316,19 +1358,50 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
             {/* Center: Labels filter (only for issues) */}
             <div className="github-import-toolbar__zone github-import-toolbar__zone--filter">
               {activeTab === "issues" ? (
-                <>
-                  <label htmlFor="gh-labels" className="visually-hidden">{t("git.filterByLabelsLabel", "Filter by labels")}</label>
-                  <input
-                    id="gh-labels"
-                    type="text"
-                    placeholder={t("git.filterByLabelsPlaceholder", "Filter: bug,enhancement…")}
-                    value={labels}
-                    onChange={(e) => setLabels(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleLoad()}
+                /*
+                FNXC:GitHubImport 2026-07-15-23:20:
+                The always-open filter input cost a full row for a control most imports never touch.
+                It is now a popover. The trigger doubles as the filter's readout — it shows the active
+                labels instead of the word "Filter" — so collapsing never hides applied state, and it
+                carries an `is-active` class for a visual cue.
+                */
+                <div className="github-import-filter-menu" ref={filterMenuRef}>
+                  <button
+                    type="button"
+                    className={`btn github-import-filter-trigger ${labels.trim() ? "is-active" : ""}`}
+                    data-testid="github-import-filter-trigger"
+                    aria-haspopup="dialog"
+                    aria-expanded={filterOpen}
+                    onClick={() => setFilterOpen((open) => !open)}
                     disabled={loading || importing || !hasRemotes}
-                    aria-label={t("git.filterIssuesByLabels", "Filter issues by labels")}
-                  />
-                </>
+                    title={t("git.filterByLabelsLabel", "Filter by labels")}
+                  >
+                    <Filter size={14} aria-hidden="true" />
+                    <span className="github-import-filter-trigger__text">
+                      {labels.trim() || t("git.filter", "Filter")}
+                    </span>
+                    <ChevronDown size={12} aria-hidden="true" />
+                  </button>
+                  {filterOpen && (
+                    <div className="github-import-filter-panel" data-testid="github-import-filter-panel" role="dialog" aria-label={t("git.filterByLabelsLabel", "Filter by labels")}>
+                      <label htmlFor="gh-labels" className="github-import-filter-panel__label">{t("git.filterByLabelsLabel", "Filter by labels")}</label>
+                      <input
+                        id="gh-labels"
+                        type="text"
+                        autoFocus
+                        placeholder={t("git.filterByLabelsPlaceholder", "Filter: bug,enhancement…")}
+                        value={labels}
+                        onChange={(e) => setLabels(e.target.value)}
+                        onKeyDown={(e) => {
+                          // Enter applies the filter AND dismisses — the reload is the confirmation.
+                          if (e.key === "Enter") { setFilterOpen(false); handleLoad(); }
+                        }}
+                        disabled={loading || importing || !hasRemotes}
+                        aria-label={t("git.filterIssuesByLabels", "Filter issues by labels")}
+                      />
+                    </div>
+                  )}
+                </div>
               ) : (
                 <span className="github-import-filter-hint">
                   {t("git.openPullsFrom", "Open pull requests from {{remote}}", { remote: owner || t("git.selectedRemote", "selected remote") })}
@@ -1346,11 +1419,20 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 aria-label={loading ? t("git.loadingAriaLabel", "Loading {{tab}}", { tab: activeTab }) : t("git.loadFromRepoAriaLabel", "Load {{tab}} from repository", { tab: activeTab })}
                 title={loading ? t("git.loadingTitle", "Loading…") : t("git.loadTabTitle", "Load {{tab}}", { tab: activeTab })}
               >
+                {/*
+                FNXC:GitHubImport 2026-07-15-23:20:
+                Load is icon-only. The full-width labelled button owned a whole row of vertical space
+                for an action whose meaning the refresh glyph already carries; the label survives as
+                the accessible name + tooltip (both set above), so nothing is lost for screen readers.
+                */}
                 {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                <span>{loading ? t("git.loading", "Loading…") : t("git.load", "Load")}</span>
               </button>
             </div>
           </div>
+          </>)}
+          </div>
+          {provider === "github" ? (
+          <>
 
           {/* Warning/Error states below toolbar */}
           {!loadingRemotes && !hasRemotes && (
@@ -1544,7 +1626,18 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
             {(selectedIssue || selectedPull) && (
             <FloatingWindow
               windowKey="github-import-detail"
-              title={selectedIssue ? `#${selectedIssue.number} — ${selectedIssue.title}` : selectedPull ? `#${selectedPull.number} — ${selectedPull.title}` : t("git.importFromGitHub", "Import from GitHub")}
+              /*
+              FNXC:GitHubImport 2026-07-15-18:40:
+              Window title tracks importTranslation.display.title, so a translated issue/PR reads in the dashboard locale in the title bar exactly as it already does in the preview card below — previously the bar kept the raw upstream title while the card showed the translation, so one item displayed two different titles at once. display.title falls back to the original when nothing is translated.
+              Gating mirrors translateSelection (activeTab AND selection) rather than checking selectedIssue first: display.title follows the active tab, so an issue-first check would pair the issue's number with the pull's translated title whenever both tabs hold a selection.
+              */
+              title={
+                activeTab === "issues" && selectedIssue
+                  ? `#${selectedIssue.number} — ${importTranslation.display.title}`
+                  : activeTab === "pulls" && selectedPull
+                    ? `#${selectedPull.number} — ${importTranslation.display.title}`
+                    : t("git.importFromGitHub", "Import from GitHub")
+              }
               onClose={() => { setSelectedIssueNumber(null); setSelectedPullNumber(null); }}
               defaultSize={{ width: 760, height: 680 }}
               minSize={{ width: 420, height: 360 }}
@@ -1552,34 +1645,16 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
               className="floating-window--github-import-detail"
             >
               <div className="github-import-detail-panel">
+              {/*
+              FNXC:GitHubImport 2026-07-15-23:20:
+              Import and Close issue moved OUT of this header to a bottom action bar (see
+              `github-import-detail-actions`). Operator report: actions above the content they act on
+              read as navigation and are awkward to reach on a phone; a dialog's commit actions belong
+              at the bottom, which also matches the modal's own Cancel bar. The header is now purely a
+              heading.
+              */}
               <div className="github-import-pane-header">
                 <h4 id="github-import-preview-heading">{t("git.previewHeading", "Preview")}</h4>
-                {/*
-                FNXC:GitHubImport 2026-06-23-03:15:
-                Close-issue action sits next to the top Import action and acts on the selected OPEN issue. Hidden for the PR tab and for already-closed issues; disabled while a close request is in flight.
-                Closing reflects locally (badge flips to closed) without dismissing the preview.
-                */}
-                {activeTab === "issues" && selectedIssue && !selectedIssueClosed && (
-                  <button
-                    className="btn github-import-issue-close-top"
-                    data-testid="github-import-issue-close"
-                    onClick={handleCloseIssue}
-                    disabled={closingIssue}
-                    title={t("git.closeIssueTitle", "Close issue #{{number}}", { number: selectedIssue.number })}
-                  >
-                    {closingIssue ? <Loader2 size={14} className="spin" /> : t("git.closeIssue", "Close issue")}
-                  </button>
-                )}
-                <button
-                  className="btn btn-primary github-import-action-top"
-                  data-testid="github-import-action-top"
-                  onClick={handleImport}
-                  disabled={
-                    (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
-                  }
-                >
-                  {importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}
-                </button>
               </div>
               {/*
               FNXC:GitHubImport 2026-06-23-03:15:
@@ -1770,6 +1845,38 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                   </div>
                 ) : null}
               </div>
+              {/*
+              FNXC:GitHubImport 2026-07-15-23:20:
+              Bottom action bar for the detail preview — the ONLY place an import is committed now
+              (the list's footer Import was removed, so you can no longer import an issue whose body
+              you never opened). Import stays last/right as the primary action; Close issue sits to
+              its LEFT and still acts on the selected OPEN issue: hidden on the PR tab and for
+              already-closed issues, disabled while a close is in flight, and closing reflects
+              locally (the badge flips) without dismissing the preview.
+              */}
+              <div className="github-import-detail-actions" data-testid="github-import-detail-actions">
+                {activeTab === "issues" && selectedIssue && !selectedIssueClosed && (
+                  <button
+                    className="btn github-import-issue-close"
+                    data-testid="github-import-issue-close"
+                    onClick={handleCloseIssue}
+                    disabled={closingIssue}
+                    title={t("git.closeIssueTitle", "Close issue #{{number}}", { number: selectedIssue.number })}
+                  >
+                    {closingIssue ? <Loader2 size={14} className="spin" /> : t("git.closeIssue", "Close issue")}
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary github-import-action"
+                  data-testid="github-import-action-top"
+                  onClick={handleImport}
+                  disabled={
+                    (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
+                  }
+                >
+                  {importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}
+                </button>
+              </div>
               </div>
             </FloatingWindow>
             )}
@@ -1826,7 +1933,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 {selectedGitlabItem && (
                   <FloatingWindow
                     windowKey="github-import-detail"
-                    title={`${selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}${selectedGitlabItem.iid} — ${selectedGitlabItem.title}`}
+                    /* FNXC:GitHubImport 2026-07-15-18:40: Mirrors the GitHub detail window — the title bar shows the same translated title as the card below rather than the raw upstream one. */
+                    title={`${selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}${selectedGitlabItem.iid} — ${importTranslation.display.title}`}
                     onClose={() => setSelectedGitlabKey(null)}
                     defaultSize={{ width: 760, height: 680 }}
                     minSize={{ width: 420, height: 360 }}
@@ -1850,25 +1958,19 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         </div>
 
         {/*
-        FNXC:GitHubImport 2026-06-23-02:00:
-        Bottom Cancel+Import bar is kept ONLY for the non-embedded modal presentation, which needs a Cancel to dismiss the dialog.
-        In the embedded sidebar (isEmbedded) there is no modal to cancel and the Import action now lives in the preview-pane top header, so the bottom bar is removed entirely.
+        FNXC:GitHubImport 2026-06-23-02:00 (revised 2026-07-15-23:20):
+        The bottom bar exists ONLY for the non-embedded modal, which needs a Cancel to dismiss the
+        dialog; the embedded sidebar has nothing to cancel, so it has no bar at all.
+
+        Import no longer lives here. There were two ways to import — this footer (acting on the
+        radio selection) and the preview pane — which split the action across two places and let you
+        import an issue whose body you had never opened. Import is now ONLY in the detail preview's
+        bottom action bar, so the list is purely for choosing what to look at. Cancel stays.
         */}
         {!isEmbedded && (
           <div className="modal-actions github-import-modal__actions">
             <button className="btn" onClick={onClose} disabled={importing}>
               {t("common.cancel", "Cancel")}
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={provider === "gitlab" ? handleImportGitLab : handleImport}
-              disabled={
-                provider === "gitlab"
-                  ? !gitlabEnabled || selectedGitlabItem === null || importing || (selectedGitlabItem ? isUrlImported(selectedGitlabItem.webUrl) : false)
-                  : (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
-              }
-            >
-              {importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}
             </button>
           </div>
         )}

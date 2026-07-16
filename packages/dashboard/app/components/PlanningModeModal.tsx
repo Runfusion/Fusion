@@ -3018,7 +3018,11 @@ function SummaryView({
   const { t } = useTranslation("app");
   const summary = normalizePlanningSummary(rawSummary);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [renderMarkdown, setRenderMarkdown] = useState(false);
+  /*
+  FNXC:PlanningSummaryDescription 2026-07-15-12:00:
+  Planning summaries must show formatted Markdown on first display. The existing toggle switches to raw Plain text for editing and back to the preview.
+  */
+  const [renderMarkdown, setRenderMarkdown] = useState(true);
   const [selectedDependencies, setSelectedDependencies] = useState<string[]>(
     summary.suggestedDependencies
   );

@@ -393,6 +393,43 @@ describe("MilestoneSliceInterviewModal", () => {
         expect(screen.getByText("Pick the size for this feature.")).toBeDefined();
       });
     });
+
+    it("shows reconnecting only during active generation, not on persisted questions", async () => {
+      mockStartMilestoneInterview.mockResolvedValue({ sessionId: "session-123" });
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType="milestone"
+          targetId="MS-001"
+          targetTitle="Test Milestone"
+          projectId="test-project"
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Start Interview"));
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("connected");
+        streamHandlers.onQuestion?.(SAMPLE_QUESTION);
+      });
+      expect(await screen.findByText("What is the target scope?")).toBeInTheDocument();
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+
+      expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
+      expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+    });
   });
 
   describe("summary and apply", () => {

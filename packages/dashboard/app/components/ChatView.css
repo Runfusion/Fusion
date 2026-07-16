@@ -1042,12 +1042,15 @@ The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle
 /*
 FNXC:ChatView 2026-06-23-11:40:
 Tablet Chat View has enough message-pane width for assistant prose, markdown, tool output, failure details, and attachments, so agent-side bubbles need a wider reading measure than the shared desktop/user cap. Use the ChatView container width instead of the viewport so floating Quick Chat and other narrow hosts keep their bounded bubble layout.
+
+FNXC:ChatView 2026-07-15-00:00:
+FN-8028 widens the tablet agent-side cap from 88% to 92% for a slightly wider reading measure while keeping it container-keyed, so Quick Chat and the right dock remain bounded by their narrow-host rule.
 */
 @container chat-view (min-width: 48.0625rem) and (max-width: 64rem) {
   .chat-message--assistant,
   .chat-message--streaming,
   .chat-message--failure {
-    max-width: 88%;
+    max-width: 92%;
   }
 }
 
