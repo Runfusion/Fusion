@@ -621,8 +621,9 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     };
     const layer = this.asyncLayer;
     /* FNXC:PostgresChatUsage 2026-07-14-18:49: Token accounting is durable before a chat turn reports completion; callers await the insert so shutdown and immediate analytics cannot lose or race the record. */
+    /* FNXC:MultiProjectIsolation 2026-07-15-23:40: the record's domain projectId is written to owner_project_id; project_id (the RLS partition) is omitted so the fusion_assign_project_id trigger/GUC owns it (migration 0011). */
     await layer.db.execute(sql`INSERT INTO project.chat_token_usage (
-      id, source_kind, chat_session_id, room_id, message_id, project_id, agent_id,
+      id, source_kind, chat_session_id, room_id, message_id, owner_project_id, agent_id,
       model_provider, model_id, input_tokens, output_tokens, cached_tokens,
       cache_write_tokens, total_tokens, created_at
     ) VALUES (
@@ -644,7 +645,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     return rows.map((row) => ({
       id: row.id, sourceKind: row.sourceKind as ChatTokenUsageSourceKind,
       chatSessionId: row.chatSessionId, roomId: row.roomId, messageId: row.messageId,
-      projectId: row.projectId, agentId: row.agentId, modelProvider: row.modelProvider,
+      projectId: row.ownerProjectId, agentId: row.agentId, modelProvider: row.modelProvider,
       modelId: row.modelId, inputTokens: row.inputTokens, outputTokens: row.outputTokens,
       cachedTokens: row.cachedTokens, cacheWriteTokens: row.cacheWriteTokens,
       totalTokens: row.totalTokens, createdAt: row.createdAt,

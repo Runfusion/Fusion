@@ -28,10 +28,10 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 
 /** The latest PostgreSQL schema version known to this applier. */
 /*
-FNXC:GitHubImportTranslate 2026-07-15-09:30:
-Advances to 0010 with the import-translation cache. Per-migration identities above stay fixed; only this latest-version marker moves.
+FNXC:MultiProjectIsolation 2026-07-15-23:40:
+Advances to 0011 with the owner_project_id domain/partition split. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0010";
+export const SCHEMA_BASELINE_VERSION = "0011";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -56,6 +56,16 @@ FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Import-translation cache advances to 0010. Migrations are registered here explicitly (not auto-discovered from the migrations dir), so a new .sql file that is not wired through a version constant + bookkeeping check silently never runs.
 */
 export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
+/*
+FNXC:MultiProjectIsolation 2026-07-15-23:40:
+Version 0011 splits the domain "project" field from the RLS partition on the tables
+that conflated them: `project_id` stays the trigger/GUC-owned isolation partition,
+`owner_project_id` becomes the caller-supplied domain field. Writing domain values
+into the partition put parent rows and child rows in different partitions and broke
+the composite FKs (SQLSTATE 23503). Keep this identity fixed when
+SCHEMA_BASELINE_VERSION advances.
+*/
+export const OWNER_PROJECT_ID_SPLIT_VERSION = "0011";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -111,6 +121,11 @@ const IMPORT_TRANSLATION_CACHE_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0010_import_translation_cache.sql",
+);
+const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0011_owner_project_id.sql",
 );
 
 /**
@@ -179,6 +194,7 @@ export async function applySchemaBaseline(
     const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
+    const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -411,6 +427,22 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(importTranslationCacheSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MultiProjectIsolation 2026-07-15-23:40:
+    Apply the owner_project_id domain/partition split independently of earlier
+    schema versions so existing databases gain the domain column (backfilled from
+    the previously conflated partition value) before any store read/write path
+    that now targets owner_project_id runs on boot.
+    */
+    if (!ownerProjectIdSplitAlreadyApplied) {
+      const ownerProjectIdSplitSql = await readFile(OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(ownerProjectIdSplitSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OWNER_PROJECT_ID_SPLIT_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }
