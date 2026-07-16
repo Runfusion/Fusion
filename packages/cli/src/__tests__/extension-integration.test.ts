@@ -280,29 +280,40 @@ pgDescribe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension inte
   });
 
   /*
-   * FNXC:PostgresCutover 2026-07-16-16:00:
-   * SQLite triggers were removed with the backend cutover. Inject the collision
-   * at the shared PostgreSQL TaskStore boundary so this built-extension test
-   * continues to prove the user-facing delegate error rather than skipping it.
+   * FNXC:CliTests 2026-07-16-09:00:
+   * FN-8100 restores built `fn_delegate_task` collision coverage after SQLite
+   * trigger support was removed. Re-issue an occupied id through the injected
+   * PostgreSQL store's allocator so the real insert translates unique_violation
+   * into the structured task-id collision error.
    */
   it("returns explicit error when fn_delegate_task hits task-id collision", async () => {
+    const store = h.store();
     const agent = await seedAgent(tmpDir, h.layer(), { name: "release-agent" });
-    const createTask = vi
-      .spyOn(h.store(), "createTask")
-      .mockRejectedValueOnce(new Error("Task ID already exists: FN-001"));
+    const existing = await store.createTask({ description: "occupied", column: "todo" });
+    const realAllocator = store.getDistributedTaskIdAllocator();
+    const allocatorSpy = vi.spyOn(store, "getDistributedTaskIdAllocator").mockReturnValue({
+      ...realAllocator,
+      reserveDistributedTaskId: async (input) => {
+        const reservation = await realAllocator.reserveDistributedTaskId(input);
+        return { ...reservation, taskId: existing.id };
+      },
+    });
 
-    const delegateTool = api.tools.get("fn_delegate_task")!;
-    const result = await delegateTool.execute(
-      "delegate-collision",
-      { agent_id: agent.id, description: "collision task" },
-      undefined,
-      undefined,
-      makeCtx(tmpDir),
-    );
+    try {
+      const delegateTool = api.tools.get("fn_delegate_task")!;
+      const result = await delegateTool.execute(
+        "delegate-collision",
+        { agent_id: agent.id, description: "collision task" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
 
-    expect(createTask).toHaveBeenCalledTimes(1);
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Task ID already exists: FN-001");
-    expect(result.details.error).toContain("Task ID already exists: FN-001");
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(`Task ID already exists: ${existing.id}`);
+      expect(result.details.error).toContain(`Task ID already exists: ${existing.id}`);
+    } finally {
+      allocatorSpy.mockRestore();
+    }
   });
 });
