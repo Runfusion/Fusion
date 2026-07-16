@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { resolvePersistAgentThinkingLog } from "@fusion/core";
+import { resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -27,6 +27,7 @@ import {
   promptWithAutoRetry,
   resolveExecutorSessionModel,
   resolveExecutorThinkingLevel,
+  resolveExecutorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
@@ -1359,8 +1360,9 @@ Your role:
 Follow instructions precisely and avoid unrelated changes.`,
               defaultProvider: executorProvider,
               defaultModelId: executorModelId,
-              fallbackProvider: settings.fallbackProvider,
-              fallbackModelId: settings.fallbackModelId,
+              fallbackProvider: resolveExecutorFallbackModel(settings).provider,
+              fallbackModelId: resolveExecutorFallbackModel(settings).modelId,
+              fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(taskDetail.thinkingLevel, settings),
               defaultThinkingLevel: effectiveThinkingLevel,
               runAuditor: createRunAuditor(this.store, {
                 runId: generateSyntheticRunId("workflow-step", taskDetail.id),

@@ -3377,6 +3377,17 @@ export interface ProjectSettings {
   executionModelId?: string;
   /** Workflow-declared execution-lane thinking override. Inherits through task/default thinking when unset. */
   executionThinkingLevel?: ThinkingLevel;
+  /*
+   * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+   * FN-8098 lets execution sessions select their own recovery model before the shared
+   * fallback pair, so reviewer, merger, planning, and executor lanes can recover independently.
+   */
+  /** Workflow fallback provider for executor sessions. Must pair with `executionFallbackModelId`; resolves before the shared global fallback pair. */
+  executionFallbackProvider?: string;
+  /** Workflow fallback model ID for executor sessions. Must pair with `executionFallbackProvider`; resolves before the shared global fallback pair. */
+  executionFallbackModelId?: string;
+  /** Workflow executor-fallback thinking override. Inherits shared fallback thinking, then executor primary thinking. */
+  executionFallbackThinkingLevel?: ThinkingLevel;
   /** Workflow-declared planning-lane thinking override. Inherits through task/default thinking when unset. */
   planningThinkingLevel?: ThinkingLevel;
   /** AI model provider for validator/reviewer agent.

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyTestModeOverrides,
   resolveExecutionSettingsModel,
+  resolveExecutorFallbackModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
@@ -15,6 +16,18 @@ import {
 } from "../model-resolution.js";
 
 describe("model-resolution", () => {
+  it("resolves executor fallback before the shared fallback and forces mock in test mode", () => {
+    expect(resolveExecutorFallbackModel({
+      executionFallbackProvider: "executor-provider",
+      executionFallbackModelId: "executor-model",
+      fallbackProvider: "global-provider",
+      fallbackModelId: "global-model",
+    })).toEqual({ provider: "executor-provider", modelId: "executor-model" });
+    expect(resolveExecutorFallbackModel({ fallbackProvider: "global-provider", fallbackModelId: "global-model" })).toEqual({ provider: "global-provider", modelId: "global-model" });
+    expect(resolveExecutorFallbackModel({})).toEqual({ provider: undefined, modelId: undefined });
+    expect(resolveExecutorFallbackModel({ testMode: true, fallbackProvider: "global-provider", fallbackModelId: "global-model" })).toEqual(TEST_MODE_RESOLVED);
+  });
+
   it("prefers the project default override over the global default", () => {
     expect(
       resolveProjectDefaultModel({

@@ -7,6 +7,11 @@
  * redirected to the harness's PG-backed store, and the full retry lifecycle
  * (moveTask / updateTask / getTask / logEntry) runs against real PostgreSQL
  * state instead of the removed SQLite runtime.
+ *
+ * FNXC:CliTests 2026-07-16-08:45:
+ * FN-8102 repairs stale retry scaffolding left after the PG migration: every
+ * lifecycle seed and verification read must use the initialized harness store,
+ * rather than the removed `createStore()` helper.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -18,11 +23,12 @@ import { createPgExtensionHarness } from "./pg-extension-harness.js";
 // injects. Redirect resolveProject to the harness PG store so the command path
 // and the seeded task share one isolated PostgreSQL database.
 const resolveProjectMock = vi.hoisted(() => vi.fn());
+const closeProjectStoreMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../project-context.js", () => ({
   resolveProject: resolveProjectMock,
-  closeProjectStore: vi.fn(async () => undefined),
-  asLocalProjectContext: vi.fn((store: unknown) => ({ projectId: "test", projectPath: "test", projectName: "test", isRegistered: false, store })),
-  createLocalStore: vi.fn(async () => null),
+  // FNXC:CliTests 2026-07-16-08:47: FN-8102 keeps command-finally cleanup
+  // awaitable while the PG harness retains ownership of the test store lifecycle.
+  closeProjectStore: closeProjectStoreMock,
 }));
 
 import { runTaskRetry } from "../commands/task.js";
@@ -47,6 +53,7 @@ pgTest("runTaskRetry", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     resolveProjectMock.mockReset();
+    closeProjectStoreMock.mockClear();
     await h.afterEach();
   });
   afterAll(h.afterAll);
@@ -73,7 +80,8 @@ pgTest("runTaskRetry", () => {
 
     await runTaskRetry(task.id);
 
-    const updated = await h.store().getTask(task.id);
+    const verificationStore = h.store();
+    const updated = await verificationStore.getTask(task.id);
     expect(updated.column).toBe("todo");
     expect(updated.status).toBeUndefined();
     expect(updated.error).toBeUndefined();

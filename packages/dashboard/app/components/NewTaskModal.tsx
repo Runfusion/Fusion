@@ -143,7 +143,13 @@ function writeFloatPosition(position: FloatPosition, size: FloatSize): FloatPosi
 
 type FloatResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const NEW_TASK_RESIZE_DIRECTIONS: FloatResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
-const NEW_TASK_GITHUB_REFERENCE_LIMIT = 30;
+/*
+FNXC:GitHubImport 2026-07-16-15:20:
+Reference picker must surface all of a normal repo's open issues/PRs, not just the first 30.
+The server + GitHubClient clamp a single fetch at 100 (one GitHub page), so 100 is the effective ceiling here.
+Was 30, which silently hid every issue past the 30th for any repo with more open issues.
+*/
+const NEW_TASK_GITHUB_REFERENCE_LIMIT = 100;
 
 type GitHubReferenceOption =
   | { type: "issue"; number: number; title: string; url: string }

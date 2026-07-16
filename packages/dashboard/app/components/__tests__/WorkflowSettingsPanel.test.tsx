@@ -558,7 +558,6 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(screen.getByLabelText("Code Review revision cap")).toHaveValue(0);
 
     const planRow = screen.getByTestId("wf-settings-value-planReviewMaxRevisions");
-    // FNXC:SettingsHelp 2026-07-15-23:15: SettingsFieldRow now also mounts a help "?" button, so clear must be selected by its reset label rather than any role=button.
     fireEvent.click(within(planRow).getByRole("button", { name: "Reset to default" }));
     fireEvent.click(screen.getByTestId("wf-settings-save-values"));
     await waitFor(() => expect(mockUpdateValues).toHaveBeenLastCalledWith(
@@ -576,7 +575,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
 
     // The clear/reset affordance lives on the row (SettingsFieldRow onClear).
     const row = screen.getByTestId("wf-settings-value-timeout-ms");
-    const clearBtn = within(row).getByRole("button", { name: "Reset to default" });
+    const clearBtn = within(row).getByRole("button");
     fireEvent.click(clearBtn);
     fireEvent.click(screen.getByTestId("wf-settings-save-values"));
     await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledWith("wf-1", { "timeout-ms": null }, "proj-1"));

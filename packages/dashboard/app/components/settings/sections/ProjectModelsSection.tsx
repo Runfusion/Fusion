@@ -15,7 +15,7 @@ import { LoadingSpinner } from "../../LoadingSpinner";
 import { useAgentsMapCache } from "../../../hooks/useAgentsMapCache";
 type LaneStatus = "inherited" | "overridden";
 type WorkflowModelPair = {
-    id: "planning" | "execution" | "validator" | "planning-fallback" | "validator-fallback";
+    id: "planning" | "execution" | "validator" | "execution-fallback" | "planning-fallback" | "validator-fallback";
     providerId: string;
     modelId: string;
     thinkingId?: string;
@@ -54,6 +54,14 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         thinkingId: "validatorThinkingLevel",
         label: "Reviewer Model",
         help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
+    },
+    {
+        id: "execution-fallback",
+        providerId: "executionFallbackProvider",
+        modelId: "executionFallbackModelId",
+        thinkingId: "executionFallbackThinkingLevel",
+        label: "Executor Fallback Model",
+        help: "Fallback provider and model used when the primary Executor model cannot be used.",
     },
     {
         id: "planning-fallback",

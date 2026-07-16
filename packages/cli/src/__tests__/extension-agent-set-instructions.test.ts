@@ -1,57 +1,65 @@
-/**
- * FNXC:PostgresCutover 2026-07-15-12:00:
- * Migrated off `new AgentStore({ rootDir })` (SQLite removed VAL-REMOVAL-005) onto
- * createPgExtensionHarness + AgentStore({ asyncLayer }).
- */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { join } from "node:path";
 import { AgentStore } from "@fusion/core";
 import {
-  createPgExtensionHarness,
   createMockApi,
+  createPgExtensionHarness,
+  pgDescribe,
   registerExtension,
   requireTool,
-  pgDescribe,
-} from "./pg-extension-harness.js";
+} from "./pg-extension-harness";
 
-const h = createPgExtensionHarness("fn-ext-agent-instructions");
+/*
+FNXC:PostgresCutover 2026-07-16-08:45:
+Instruction-tool fixtures seed the PG TaskStore cache injected for the extension,
+so its AgentStore avoids the removed SQLite path and tools observe the same data.
+*/
+
+const h = createPgExtensionHarness("extension-agent-set-instructions");
 
 async function withOrg(
   run: (ctx: {
     cwd: string;
-    tool: ReturnType<typeof requireTool>;
+    tool: any;
     agentStore: AgentStore;
     ids: { manager: string; middle: string; leaf: string; peer: string };
   }) => Promise<void>,
 ): Promise<void> {
   const cwd = h.rootDir();
-  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
-  await agentStore.init();
-  const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
-  const middle = await agentStore.createAgent({
-    name: "middle-manager",
-    role: "engineer",
-    reportsTo: manager.id,
-    metadata: {},
+  const agentStore = new AgentStore({
+    rootDir: join(cwd, ".fusion"),
+    asyncLayer: h.store().getAsyncLayer()!,
   });
-  const leaf = await agentStore.createAgent({
-    name: "leaf-agent",
-    role: "executor",
-    reportsTo: middle.id,
-    metadata: {},
-  });
-  const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
+  try {
+    await agentStore.init();
+    const manager = await agentStore.createAgent({ name: "manager", role: "engineer", metadata: {} });
+    const middle = await agentStore.createAgent({
+      name: "middle-manager",
+      role: "engineer",
+      reportsTo: manager.id,
+      metadata: {},
+    });
+    const leaf = await agentStore.createAgent({
+      name: "leaf-agent",
+      role: "executor",
+      reportsTo: middle.id,
+      metadata: {},
+    });
+    const peer = await agentStore.createAgent({ name: "peer-agent", role: "executor", metadata: {} });
 
-  const api = createMockApi();
-  registerExtension(api);
-  const tool = requireTool(api, "fn_agent_set_instructions");
+    const api = createMockApi();
+    registerExtension(api);
+    const tool = requireTool(api, "fn_agent_set_instructions");
 
-  await run({
-    cwd,
-    tool,
-    agentStore,
-    ids: { manager: manager.id, middle: middle.id, leaf: leaf.id, peer: peer.id },
-  });
+    await run({
+      cwd,
+      tool,
+      agentStore,
+      ids: { manager: manager.id, middle: middle.id, leaf: leaf.id, peer: peer.id },
+    });
+  } finally {
+    agentStore.close();
+  }
 }
 
 pgDescribe("fn_agent_set_instructions", () => {
@@ -59,7 +67,6 @@ pgDescribe("fn_agent_set_instructions", () => {
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);
   afterAll(h.afterAll);
-
   it("allows a manager to set inline instructions for a direct report", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
@@ -72,9 +79,10 @@ pgDescribe("fn_agent_set_instructions", () => {
 
       expect(result.isError).not.toBe(true);
       expect(result.details).toMatchObject({ outcome: "updated", agentId: ids.middle });
-      expect(result.details?.updatedFields).toEqual(["instructionsText"]);
-      const updated = await agentStore.getAgent(ids.middle);
-      expect(updated?.instructionsText).toBe("Direct report instructions");
+      expect(result.details.updatedFields).toEqual(["instructionsText"]);
+      await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
+        instructionsText: "Direct report instructions",
+      });
     });
   });
 
@@ -82,58 +90,69 @@ pgDescribe("fn_agent_set_instructions", () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
         "call-2",
-        { agent_id: ids.leaf, instructions_text: "Indirect report instructions" },
+        { agent_id: ids.leaf, instructions_text: "Grandchild instructions" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
 
       expect(result.isError).not.toBe(true);
-      const updated = await agentStore.getAgent(ids.leaf);
-      expect(updated?.instructionsText).toBe("Indirect report instructions");
+      expect(result.details).toMatchObject({ outcome: "updated", agentId: ids.leaf });
+      await expect(agentStore.getAgent(ids.leaf)).resolves.toMatchObject({
+        instructionsText: "Grandchild instructions",
+      });
     });
   });
 
   it("rejects peer or unrelated targets and leaves instructions unchanged", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
-      await agentStore.updateAgent(ids.peer, { instructionsText: "keep me" });
+      await agentStore.updateAgent(ids.peer, { instructionsText: "Original peer instructions" });
+
       const result = await tool.execute(
         "call-3",
-        { agent_id: ids.peer, instructions_text: "should not apply" },
+        { agent_id: ids.peer, instructions_text: "Unauthorized edit" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
 
       expect(result.isError).toBe(true);
-      const peer = await agentStore.getAgent(ids.peer);
-      expect(peer?.instructionsText).toBe("keep me");
+      expect(result.details).toMatchObject({ outcome: "denied", rule: "direct-or-indirect-reports-only" });
+      await expect(agentStore.getAgent(ids.peer)).resolves.toMatchObject({
+        instructionsText: "Original peer instructions",
+      });
     });
   });
 
   it("rejects self-targeting", async () => {
-    await withOrg(async ({ cwd, tool, ids }) => {
+    await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
         "call-4",
-        { agent_id: ids.manager, instructions_text: "self" },
+        { agent_id: ids.manager, instructions_text: "Self edit" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
+
       expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("direct or indirect reports");
+      expect((await agentStore.getAgent(ids.manager))?.instructionsText).toBeUndefined();
     });
   });
 
   it("rejects upward edits from a subordinate to its manager", async () => {
-    await withOrg(async ({ cwd, tool, ids }) => {
+    await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
         "call-5",
-        { agent_id: ids.manager, instructions_text: "upward" },
+        { agent_id: ids.manager, instructions_text: "Upward edit" },
         undefined,
         undefined,
         { cwd, agentId: ids.leaf },
       );
+
       expect(result.isError).toBe(true);
+      expect(result.details).toMatchObject({ outcome: "denied", rule: "direct-or-indirect-reports-only" });
+      expect((await agentStore.getAgent(ids.manager))?.instructionsText).toBeUndefined();
     });
   });
 
@@ -141,31 +160,40 @@ pgDescribe("fn_agent_set_instructions", () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
       const result = await tool.execute(
         "call-6",
-        { agent_id: ids.peer, instructions_text: "operator set" },
+        { agent_id: ids.peer, instructions_text: "Privileged user edit" },
         undefined,
         undefined,
         { cwd },
       );
+
       expect(result.isError).not.toBe(true);
-      const peer = await agentStore.getAgent(ids.peer);
-      expect(peer?.instructionsText).toBe("operator set");
+      await expect(agentStore.getAgent(ids.peer)).resolves.toMatchObject({
+        instructionsText: "Privileged user edit",
+      });
     });
   });
 
   it("sets instructions_path without changing text and clears fields with explicit empty strings", async () => {
     await withOrg(async ({ cwd, tool, agentStore, ids }) => {
-      await agentStore.updateAgent(ids.middle, { instructionsText: "before" });
-      const pathResult = await tool.execute(
+      await agentStore.updateAgent(ids.middle, {
+        instructionsText: "Keep this text",
+        instructionsPath: "old.md",
+      });
+
+      const setPathResult = await tool.execute(
         "call-7",
-        { agent_id: ids.middle, instructions_path: "/tmp/instructions.md" },
+        { agent_id: ids.middle, instructions_path: "new.md" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-      expect(pathResult.isError).not.toBe(true);
-      let middle = await agentStore.getAgent(ids.middle);
-      expect(middle?.instructionsPath).toBe("/tmp/instructions.md");
-      expect(middle?.instructionsText).toBe("before");
+
+      expect(setPathResult.isError).not.toBe(true);
+      expect(setPathResult.details.updatedFields).toEqual(["instructionsPath"]);
+      await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
+        instructionsText: "Keep this text",
+        instructionsPath: "new.md",
+      });
 
       const clearResult = await tool.execute(
         "call-8",
@@ -174,32 +202,37 @@ pgDescribe("fn_agent_set_instructions", () => {
         undefined,
         { cwd, agentId: ids.manager },
       );
+
       expect(clearResult.isError).not.toBe(true);
-      middle = await agentStore.getAgent(ids.middle);
-      expect(middle?.instructionsText ?? "").toBe("");
-      expect(middle?.instructionsPath ?? "").toBe("");
+      await expect(agentStore.getAgent(ids.middle)).resolves.toMatchObject({
+        instructionsText: "",
+        instructionsPath: "",
+      });
     });
   });
 
   it("returns validation errors for missing agents and omitted instruction fields", async () => {
-    await withOrg(async ({ cwd, tool, ids }) => {
-      const missing = await tool.execute(
+    await withOrg(async ({ cwd, tool, agentStore, ids }) => {
+      const missingTarget = await tool.execute(
         "call-9",
-        { agent_id: "missing-agent", instructions_text: "x" },
+        { agent_id: "agent-does-not-exist", instructions_text: "No target" },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-      expect(missing.isError).toBe(true);
+      expect(missingTarget.isError).toBe(true);
+      expect(missingTarget.details.outcome).toBe("not_found");
 
-      const omitted = await tool.execute(
+      const missingFields = await tool.execute(
         "call-10",
         { agent_id: ids.middle },
         undefined,
         undefined,
         { cwd, agentId: ids.manager },
       );
-      expect(omitted.isError).toBe(true);
+      expect(missingFields.isError).toBe(true);
+      expect(missingFields.details.outcome).toBe("invalid");
+      expect((await agentStore.getAgent(ids.middle))?.instructionsText).toBeUndefined();
     });
   });
 });

@@ -241,6 +241,16 @@ export interface PrComment {
 const PR_REVIEW_PAGE_SIZE = 100;
 const MAX_PR_REVIEW_PAGES = 10;
 
+/*
+FNXC:GitHubImport 2026-07-16-16:20:
+Upper bound on issues returned by listIssues for the import picker. The picker pages this set client-side,
+so this cap bounds one fetch: gh's `--limit` paginates internally to reach it, and the REST path loops
+`page` at ISSUE_LIST_PAGE_SIZE (100, GitHub's per_page max) until the cap or exhaustion. Keeps a huge repo
+from returning an unbounded body while still surfacing far more than the old single 30/100-issue page.
+*/
+const MAX_LIST_ISSUES = 300;
+const ISSUE_LIST_PAGE_SIZE = 100;
+
 export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
 export type PrCheckState =
   | "success"
@@ -3204,10 +3214,19 @@ export class GitHubClient {
     updatedAt?: string;
     author?: string | null;
   }>> {
-    const limit = options?.limit ?? 30;
+    const limit = Math.min(options?.limit ?? 30, MAX_LIST_ISSUES);
     const state = options?.state ?? "open";
 
-    // gh issue list doesn't support label filtering directly, so we fetch and filter client-side
+    /*
+    FNXC:GitHubImport 2026-07-16-16:20:
+    Label filtering is client-side (OR across labels, matching the historical `.some()` semantics that `gh --label`'s AND cannot express).
+    Because filtering happens AFTER the fetch, the fetch must pull the full cap when labels are set — otherwise `gh` returns the first `limit` UNFILTERED issues and the post-filter `.slice(0, limit)` starves, hiding labeled issues that sort past the first `limit` rows.
+    Without labels there is nothing to filter, so fetch exactly `limit`. `gh --limit` paginates internally past 100 to reach the requested count.
+    */
+    const hasLabelFilter = Boolean(options?.labels && options.labels.length > 0);
+    const fetchCount = hasLabelFilter ? MAX_LIST_ISSUES : limit;
+
+    // gh issue list doesn't support OR label filtering directly, so we fetch and filter client-side
     const issues = await runGhJsonAsync<Array<{
       number: number;
       title: string;
@@ -3221,7 +3240,7 @@ export class GitHubClient {
       "issue", "list",
       "--repo", `${owner}/${repo}`,
       "--state", state,
-      "--limit", String(Math.min(limit, 100)),
+      "--limit", String(fetchCount),
       // FNXC:GitHubImport 2026-06-22-18:30: Request `author` so the import preview pane can show full issue metadata (author/state alongside the already-present full body) without a per-item detail fetch.
       "--json", "number,title,body,url,labels,state,updatedAt,author",
     ]);
@@ -3263,54 +3282,79 @@ export class GitHubClient {
     updatedAt?: string;
     author?: string | null;
   }>> {
-    const limit = options?.limit ?? 30;
+    const limit = Math.min(options?.limit ?? 30, MAX_LIST_ISSUES);
     const state = options?.state ?? "open";
-
-    const params = new URLSearchParams();
-    params.append("state", state);
-    params.append("per_page", String(Math.min(limit, 100)));
-    if (options?.labels && options.labels.length > 0) {
-      params.append("labels", options.labels.join(","));
-    }
-
-    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${params}`;
     const headers = this.buildHeaders();
 
-    const response = await fetch(url, { headers });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(`Repository not found: ${owner}/${repo}`);
-      }
-      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = (await response.json()) as Array<{
+    /*
+    FNXC:GitHubImport 2026-07-16-16:20:
+    REST `/issues` caps per_page at 100, so loop `page` until we collect `limit` real issues or a short page
+    signals exhaustion. Pull requests share the `/issues` feed and are dropped here, which can shrink a page
+    below per_page — so keep paging on a full 100-item page even after PR filtering, and stop only on a genuinely
+    short page. Bounded by MAX_LIST_ISSUES pages-worth so a huge repo can't loop unbounded.
+    */
+    const perPage = Math.min(limit, ISSUE_LIST_PAGE_SIZE);
+    const collected: Array<{
       number: number;
       title: string;
       body: string | null;
       html_url: string;
       labels: Array<{ name: string }>;
-      state: string;
-      updated_at: string;
-      user?: { login?: string } | null;
-      pull_request?: unknown;
-    }>;
+      state?: "open" | "closed";
+      updatedAt?: string;
+      author?: string | null;
+    }> = [];
 
-    // Filter out pull requests (they have a pull_request property)
-    return data
-      .filter((issue) => !issue.pull_request)
-      .map((issue) => ({
-        number: issue.number,
-        title: issue.title,
-        body: issue.body,
-        html_url: issue.html_url,
-        labels: issue.labels,
-        state: this.mapIssueState(issue.state),
-        updatedAt: issue.updated_at,
-        author: issue.user?.login ?? null,
-      }))
-      .slice(0, limit);
+    for (let page = 1; collected.length < limit; page += 1) {
+      const params = new URLSearchParams();
+      params.append("state", state);
+      params.append("per_page", String(perPage));
+      params.append("page", String(page));
+      if (options?.labels && options.labels.length > 0) {
+        params.append("labels", options.labels.join(","));
+      }
+
+      const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${params}`;
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(`Repository not found: ${owner}/${repo}`);
+        }
+        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = (await response.json()) as Array<{
+        number: number;
+        title: string;
+        body: string | null;
+        html_url: string;
+        labels: Array<{ name: string }>;
+        state: string;
+        updated_at: string;
+        user?: { login?: string } | null;
+        pull_request?: unknown;
+      }>;
+
+      for (const issue of data) {
+        if (issue.pull_request) continue; // PRs share the /issues feed; exclude them
+        collected.push({
+          number: issue.number,
+          title: issue.title,
+          body: issue.body,
+          html_url: issue.html_url,
+          labels: issue.labels,
+          state: this.mapIssueState(issue.state),
+          updatedAt: issue.updated_at,
+          author: issue.user?.login ?? null,
+        });
+      }
+
+      // A page shorter than per_page means GitHub has no further issues to return.
+      if (data.length < perPage) break;
+    }
+
+    return collected.slice(0, limit);
   }
 
   async searchIssues(

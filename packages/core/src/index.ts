@@ -1423,6 +1423,7 @@ export {
   applyTestModeOverrides,
   isTestModeActive,
   resolveExecutionSettingsModel,
+  resolveExecutorFallbackModel,
   resolveMergerFallbackModel,
   resolveMergerSettingsModel,
   resolvePhaseThinkingLevel,

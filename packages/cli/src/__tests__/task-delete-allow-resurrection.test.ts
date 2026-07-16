@@ -5,6 +5,10 @@
  * via `getStore(cwd)` (injected by the harness), and task state is read back
  * through `store.getTask(id, { includeDeleted: true })` instead of the removed
  * sync `readTaskFromDb` path.
+ *
+ * FNXC:CliTests 2026-07-16-08:50:
+ * FN-8102 preserves the self-delete rejection contract after extension tools
+ * began returning structured MCP errors rather than rejecting their promises.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
@@ -62,10 +66,6 @@ pgTest("task delete allowResurrection plumbing", () => {
     registerExtension(api);
     const tool = requireTool(api, "fn_task_delete");
 
-    /*
-    FNXC:CliTests 2026-07-15-12:05:
-    fn_task_delete returns a structured isError tool result for self-delete (does not throw).
-    */
     const result = await tool.execute("call-self", { id: task.id }, undefined, undefined, {
       cwd: h.rootDir(),
       taskId: task.id,
@@ -73,10 +73,10 @@ pgTest("task delete allowResurrection plumbing", () => {
       runId: "run-test",
     });
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toContain(`Task ${task.id} cannot delete itself`);
+    expect(result.content[0]?.text).toMatch(new RegExp(`Task ${task.id} cannot delete itself`));
 
     const row = await store.getTask(task.id, { includeDeleted: true });
-    expect(row?.deletedAt).toBeUndefined();
+    expect(row.deletedAt).toBeUndefined();
   });
 
   it("fn_task_delete lets a task-bound caller delete a different task", async () => {

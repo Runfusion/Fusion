@@ -290,6 +290,18 @@ The list endpoint already returns the complete (untruncated) body, so no per-ite
 The full body renders as GitHub-flavored markdown via the shared MailboxMessageContent component; the preview pane is already scrollable (prior fix), so the body takes full height with no line clamping.
 */
 
+/*
+FNXC:GitHubImport 2026-07-16-16:20:
+Repos with >100 open issues need page controls, not a silently-truncated single fetch. Design: fetch up
+to ISSUES_FETCH_CAP issues in ONE request (the server + gh paginate internally to reach it), then page the
+result client-side at ISSUES_PAGE_SIZE per page. Client-side paging is used deliberately because the label
+filter (OR semantics) and the "hide imported" toggle both already filter the fetched set in-memory — real
+server-side paging would fight both and the gh CLI has no offset. When a repo exceeds the cap, a truncation
+notice tells the operator to refine by label rather than pretending the list is complete.
+*/
+const ISSUES_FETCH_CAP = 300;
+const ISSUES_PAGE_SIZE = 30;
+
 export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId, presentation = "modal" }: GitHubImportModalProps) {
   const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
@@ -385,6 +397,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   // Issues state
   const [issues, setIssues] = useState<GitHubIssue[]>([]);
   const [selectedIssueNumber, setSelectedIssueNumber] = useState<number | null>(null);
+  // FNXC:GitHubImport 2026-07-16-16:20: 0-based client-side page index for the issues list (reset on every reload/filter change).
+  const [issuePage, setIssuePage] = useState(0);
 
   // Pulls state
   const [pulls, setPulls] = useState<GitHubPull[]>([]);
@@ -477,6 +491,11 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   the local set when its source context is no longer valid.
   */
   const [optimisticImportedUrls, setOptimisticImportedUrls] = useState<Set<string>>(new Set());
+
+  // FNXC:GitHubImport 2026-07-16-16:20: Reset the issues page whenever the filtered set changes shape (tab switch or hide-imported toggle) so the operator always lands on page 1 of the new view.
+  useEffect(() => {
+    setIssuePage(0);
+  }, [hideImported, activeTab]);
 
   // Build set of already imported URLs from existing tasks
   const importedUrls = new Set<string>();
@@ -675,13 +694,19 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     setIsIssuesEmptyState(false);
     setIssues([]);
     setSelectedIssueNumber(null);
+    setIssuePage(0);
 
     try {
       const labelArray = labels
         .split(",")
         .map((l) => l.trim())
         .filter(Boolean);
-      const fetchedIssues = await apiFetchGitHubIssues(owner.trim(), repo.trim(), 30, labelArray.length > 0 ? labelArray : undefined);
+      /*
+      FNXC:GitHubImport 2026-07-16-16:20:
+      Fetch up to ISSUES_FETCH_CAP in one request (server + gh paginate internally to reach it), then page
+      the result client-side. Replaces the earlier hardcoded 30/100 caps that silently hid issues past the limit.
+      */
+      const fetchedIssues = await apiFetchGitHubIssues(owner.trim(), repo.trim(), ISSUES_FETCH_CAP, labelArray.length > 0 ? labelArray : undefined);
       setIssues(fetchedIssues);
       if (fetchedIssues.length === 0) {
         setIsIssuesEmptyState(true);
@@ -1212,6 +1237,17 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   imported counts always use the full fetched sets. Use `isUrlImported` so optimistic imports also disappear immediately.
   */
   const visibleIssues = hideImported ? issues.filter((issue) => !isUrlImported(issue.html_url)) : issues;
+  /*
+  FNXC:GitHubImport 2026-07-16-16:20:
+  Client-side page window over the (already label/hide-imported filtered) visible issues. issuePage is
+  clamped here so shrinking the filtered set (e.g. toggling "hide imported") can never strand the view on
+  an out-of-range page. isIssuesTruncated flags that the repo hit ISSUES_FETCH_CAP so the operator knows
+  the list is bounded, not complete.
+  */
+  const issuePageCount = Math.max(1, Math.ceil(visibleIssues.length / ISSUES_PAGE_SIZE));
+  const clampedIssuePage = Math.min(issuePage, issuePageCount - 1);
+  const pagedIssues = visibleIssues.slice(clampedIssuePage * ISSUES_PAGE_SIZE, (clampedIssuePage + 1) * ISSUES_PAGE_SIZE);
+  const isIssuesTruncated = issues.length >= ISSUES_FETCH_CAP;
   const visiblePulls = hideImported ? pulls.filter((pull) => !isUrlImported(pull.html_url)) : pulls;
   const visibleGitlabItems = hideImported ? gitlabItems.filter((item) => !isUrlImported(item.webUrl)) : gitlabItems;
   const allIssuesHidden = hideImported && issues.length > 0 && visibleIssues.length === 0;
@@ -1532,7 +1568,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 {/* Issues list */}
                 {activeTab === "issues" && visibleIssues.length > 0 && (
                   <div className="issues-list" aria-live="polite">
-                    {visibleIssues.map((issue) => {
+                    {pagedIssues.map((issue) => {
                       const isImported = isUrlImported(issue.html_url);
                       return (
                         <div
@@ -1577,6 +1613,44 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {/*
+                FNXC:GitHubImport 2026-07-16-16:20:
+                Page controls appear only when the filtered set exceeds one page. Prev/Next are gated on
+                clampedIssuePage so they can never navigate out of range. The truncation notice renders when the
+                fetch hit ISSUES_FETCH_CAP, telling the operator the list is bounded and to refine by label.
+                */}
+                {activeTab === "issues" && visibleIssues.length > ISSUES_PAGE_SIZE && (
+                  <div className="github-import-pagination" role="navigation" aria-label={t("git.issuesPaginationAria", "Issues pages")}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setIssuePage((p) => Math.max(0, p - 1))}
+                      disabled={clampedIssuePage <= 0}
+                    >
+                      {t("git.prevPage", "Previous")}
+                    </button>
+                    <span className="github-import-pagination__status" aria-live="polite">
+                      {t("git.pageStatus", "Page {{page}} of {{total}}", { page: clampedIssuePage + 1, total: issuePageCount })}
+                      {" · "}
+                      {t("git.issuesCount", "{{count}} issues", { count: visibleIssues.length })}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setIssuePage((p) => Math.min(issuePageCount - 1, p + 1))}
+                      disabled={clampedIssuePage >= issuePageCount - 1}
+                    >
+                      {t("git.nextPage", "Next")}
+                    </button>
+                  </div>
+                )}
+
+                {activeTab === "issues" && isIssuesTruncated && (
+                  <div className="github-import-pagination__truncation" role="status">
+                    {t("git.issuesTruncated", "Showing the first {{cap}} open issues. Refine with a label filter to narrow the list.", { cap: ISSUES_FETCH_CAP })}
                   </div>
                 )}
 

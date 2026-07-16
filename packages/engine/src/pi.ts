@@ -2555,8 +2555,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   };
 
   /*
-   * FNXC:ModelFallback 2026-07-02-00:00:
-   * Planner and shared AI lanes may try one distinct fallback model for a logical model-selection failure, but they must then throw ModelFallbackExhaustedError instead of swapping back or relying on scheduler re-pick loops. This keeps transient fallback useful while making exhausted model configuration actionable for operators.
+   * FNXC:ModelFallback 2026-07-16-00:00:
+   * FN-8098 requires a distinct fallback failure to get one final primary retry before
+   * blocking. This bounded primary → fallback → primary sequence prevents fallback loops
+   * while still surfacing an operator-actionable ModelFallbackExhaustedError after three attempts.
    */
   let sessionResult;
   let usingFallback = false;
@@ -2572,8 +2574,14 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     usingFallback = true;
     try {
       sessionResult = await createSessionWithModel(fallbackModel);
-    } catch (fallbackErr: unknown) {
-      throw makeFallbackExhaustedError("session-creation", 2, fallbackErr);
+    } catch (_fallbackErr: unknown) {
+      // The final retry is intentionally primary and terminal even when fallback failed non-retryably.
+      usingFallback = false;
+      try {
+        sessionResult = await createSessionWithModel(selectedModel);
+      } catch (primaryRetryErr: unknown) {
+        throw makeFallbackExhaustedError("session-creation", 3, primaryRetryErr);
+      }
     }
     await emitFallbackUsed("session-creation", err);
     piLog.log("Fallback session created successfully");
@@ -2736,50 +2744,21 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       try {
         await promptSessionAndCheck(fallbackSession, prompt, effectivePromptOptions);
         return;
-      } catch (fallbackErr: any) {
-        const fallbackErrorMessage = fallbackErr?.message || "";
-        if (isContextLimitError(fallbackErrorMessage)) {
-          const promptMemoryRetry = await retryWithCompactedPromptMemory(fallbackSession, prompt, effectivePromptOptions);
-          if (promptMemoryRetry.recovered) {
-            return;
-          }
-          if (promptMemoryRetry.error) {
-            const retryMessage = promptMemoryRetry.error instanceof Error ? promptMemoryRetry.error.message : String(promptMemoryRetry.error);
-            if (!isContextLimitError(retryMessage)) {
-              throw promptMemoryRetry.error;
-            }
-          }
-
-          const promptSectionRetry = await retryWithCompactedPromptSections(fallbackSession, prompt, effectivePromptOptions);
-          if (promptSectionRetry.recovered) {
-            return;
-          }
-          if (promptSectionRetry.error) {
-            const retryMessage = promptSectionRetry.error instanceof Error ? promptSectionRetry.error.message : String(promptSectionRetry.error);
-            if (!isContextLimitError(retryMessage)) {
-              throw promptSectionRetry.error;
-            }
-          }
-
-          piLog.warn("promptWithFallback: fallback session context limit error — attempting auto-compaction");
-          await flushMemoryBeforeSessionCompaction(fallbackSession);
-          const compactResult = await compactSessionContext(fallbackSession);
-          if (compactResult) {
-            piLog.log(`promptWithFallback: fallback compaction succeeded (${compactResult.tokensBefore} tokens) — retrying`);
-            try {
-              await promptSessionAndCheck(fallbackSession, prompt, effectivePromptOptions);
-              return;
-            } catch (retryErr: any) {
-              const retryErrorMessage = retryErr?.message || "";
-              piLog.error(`promptWithFallback: fallback retry after auto-compaction failed: ${retryErrorMessage}`);
-              throw fallbackErr; // Throw original fallback error
-            }
-          } else {
-            piLog.error("promptWithFallback: fallback compaction unavailable — propagating original error");
-            throw fallbackErr;
-          }
+      } catch (_fallbackErr: unknown) {
+        /*
+         * FNXC:ModelFallback 2026-07-16-00:00:
+         * Once a distinct fallback has failed, retry the primary exactly once regardless
+         * of whether the fallback error is retryable or a context/compaction failure.
+         * Resetting `usingFallback` ensures the final primary receives primary thinking.
+         */
+        usingFallback = false;
+        try {
+          const primaryRetrySession = await swapPromptSession(selectedModel);
+          await promptSessionAndCheck(primaryRetrySession, prompt, effectivePromptOptions);
+          return;
+        } catch (primaryRetryErr: unknown) {
+          throw makeFallbackExhaustedError("prompt-time", 3, primaryRetryErr);
         }
-        throw makeFallbackExhaustedError("prompt-time", 2, fallbackErr);
       }
     }
   };

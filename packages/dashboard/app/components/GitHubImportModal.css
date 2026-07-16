@@ -1640,3 +1640,30 @@ Import Tasks embedded header now adopts the canonical ViewHeader chrome — edge
     font-size: 13px;
   }
 }
+
+/*
+FNXC:GitHubImport 2026-07-16-16:20:
+Page controls for the issues list. Reuses the shared `.btn`/`.btn-secondary`/`.btn-sm` primitives (only layout
+lives here) and design tokens for spacing/color so the bar matches the modal's other footers in light and dark.
+*/
+.github-import-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-xs) 0;
+}
+
+.github-import-pagination__status {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 13px);
+  text-align: center;
+  flex: 1 1 auto;
+}
+
+.github-import-pagination__truncation {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 13px);
+  padding: var(--space-xs) var(--space-xs) 0;
+  text-align: center;
+}

@@ -49,6 +49,12 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       prInfos: task.prInfos,
       issueInfo: task.issueInfo,
       githubTracking: task.githubTracking,
+      /*
+      FNXC:GitLabTracking 2026-07-16-13:00:
+      Archiving must retain GitLab provenance just as live TaskStore persistence does;
+      restored imports need their original GitLab tracking item for reconciliation.
+      */
+      gitlabTracking: task.gitlabTracking,
       sourceIssue: task.sourceIssue,
       attachments: task.attachments,
       comments: task.comments,
@@ -410,6 +416,7 @@ export async function restoreFromArchiveImpl(store: TaskStore, entry: import("..
       review: entry.review,
       issueInfo: entry.issueInfo,
       githubTracking: entry.githubTracking,
+      gitlabTracking: entry.gitlabTracking,
       sourceIssue: entry.sourceIssue,
       attachments: entry.attachments,
       log: [...entry.log, { timestamp: new Date().toISOString(), action: "Task restored from archive" }],

@@ -542,6 +542,14 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
   },
   {
+    id: "execution-fallback",
+    providerId: "executionFallbackProvider",
+    modelId: "executionFallbackModelId",
+    thinkingId: "executionFallbackThinkingLevel",
+    label: "Executor Fallback Model",
+    help: "Fallback provider and model used when the primary Executor model cannot be used.",
+  },
+  {
     id: "planning-fallback",
     providerId: "planningFallbackProvider",
     modelId: "planningFallbackModelId",

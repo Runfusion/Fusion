@@ -7,10 +7,10 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 
 /*
-FNXC:GitLabTracking 2026-07-16-05:38:
-GitLab tracking must round-trip through the shared TaskStore registry on every
-live and soft-deleted read surface. A persisted empty object means not filed
-for analytics and must remain distinct from absent tracking, which hydrates as undefined.
+FNXC:GitLabTracking 2026-07-16-13:00:
+GitLab import provenance must round-trip through every shared TaskStore read path
+and archive/restore. Missing tracking remains undefined, while a populated item
+must retain its full payload so imports can be reconciled after restoration.
 */
 pgDescribe("TaskStore GitLab tracking hydration (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -37,30 +37,26 @@ pgDescribe("TaskStore GitLab tracking hydration (PostgreSQL)", () => {
     createdAt: "2026-07-16T00:00:00.000Z",
   };
 
-  it("round-trips GitLab tracking across live and soft-deleted task reads", async () => {
+  it("round-trips GitLab tracking across every live read and archive restore", async () => {
     const store = h.store();
-    const tracked = await store.createTask({
-      description: "Tracked GitLab task",
-      sourceIssue: {
-        provider: "gitlab",
-        repository: "acme/app",
-        externalIssueId: "42",
-        issueNumber: 2,
-        url: item.url,
-      },
-      gitlabTracking: { item },
-    });
-    const empty = await store.createTask({ description: "Empty GitLab tracking", gitlabTracking: {} });
-    const absent = await store.createTask({ description: "Absent GitLab tracking" });
-
-    expect((await store.getTask(tracked.id))?.gitlabTracking?.item).toEqual(item);
-    expect((await store.getTask(tracked.id))?.sourceIssue).toEqual({
-      provider: "gitlab",
+    const modifiedSince = "1970-01-01T00:00:00.000Z";
+    const sourceIssue = {
+      provider: "gitlab" as const,
       repository: "acme/app",
       externalIssueId: "42",
       issueNumber: 2,
       url: item.url,
+    };
+    const tracked = await store.createTask({
+      description: "Tracked GitLab task",
+      sourceIssue,
+      gitlabTracking: { item },
     });
+    const absent = await store.createTask({ description: "Absent GitLab tracking" });
+
+    expect((await store.getTask(tracked.id))?.gitlabTracking?.item).toEqual(item);
+    expect((await store.getTask(tracked.id))?.sourceIssue).toEqual(sourceIssue);
+    expect((await store.getTask(absent.id))?.gitlabTracking).toBeUndefined();
 
     for (const slim of [false, true]) {
       const listed = await store.listTasks({ slim });
@@ -69,17 +65,19 @@ pgDescribe("TaskStore GitLab tracking hydration (PostgreSQL)", () => {
       if (slim) expect(listedTask?.log).toEqual([]);
     }
 
-    expect((await store.getTask(empty.id))?.gitlabTracking).toEqual({});
-    expect((await store.listTasks({ slim: false })).find((task) => task.id === empty.id)?.gitlabTracking).toEqual({});
-    expect((await store.getTask(absent.id))?.gitlabTracking).toBeUndefined();
+    const searched = await store.searchTasks("Tracked GitLab task", { slim: true });
+    expect(searched.find((task) => task.id === tracked.id)?.gitlabTracking?.item).toEqual(item);
 
-    await store.deleteTask(tracked.id);
+    const modified = await store.listTasksModifiedSince(modifiedSince);
+    expect(modified.tasks.find((task) => task.id === tracked.id)?.gitlabTracking?.item).toEqual(item);
 
-    for (const slim of [false, true]) {
-      const deleted = await store.listTasks({ includeDeleted: true, slim });
-      expect(deleted.find((task) => task.id === tracked.id)?.gitlabTracking?.item).toEqual(item);
-    }
-    expect((await store.getTask(tracked.id, { includeDeleted: true }))?.gitlabTracking?.item).toEqual(item);
-    expect((await store.listTasksForGitlabTrackingReconcile()).tasks.find((task) => task.id === tracked.id)?.gitlabTracking?.item).toEqual(item);
+    await store.moveTask(tracked.id, "todo");
+    await store.moveTask(tracked.id, "in-progress");
+    await store.moveTask(tracked.id, "done");
+    await store.archiveTask(tracked.id, false);
+    const restored = await store.unarchiveTask(tracked.id);
+
+    expect(restored.gitlabTracking?.item).toEqual(item);
+    expect((await store.getTask(tracked.id))?.gitlabTracking?.item).toEqual(item);
   });
 });

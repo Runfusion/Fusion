@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingsModal, SettingsView } from "../SettingsModal";
@@ -153,6 +153,11 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
 
 import { fetchDashboardHealth, fetchSettings, updateSettings } from "../../api";
 
+function setDocumentHidden(hidden: boolean): void {
+  Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: hidden ? "hidden" : "visible" });
+}
+
 function mockSettingsViewport(matches: boolean): void {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -221,10 +226,15 @@ function expectBaseRule(css: string, selector: string, declaration: string): voi
 describe("SettingsModal mobile adaptations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setDocumentHidden(false);
     localStorage.removeItem("fusion_github_star_count");
     localStorage.removeItem("fusion:github-star-clicked");
     localStorage.setItem("fusion:settings:show-advanced", "true");
     mockSettingsViewport(false);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders mobile-targeted settings layout classes", async () => {
@@ -658,6 +668,53 @@ describe("SettingsModal mobile adaptations", () => {
     expect(embeddedCount?.textContent).toBe("1.2k");
     embeddedRender.unmount();
     localStorage.removeItem("fusion_github_star_count");
+  });
+
+  it.each([
+    ["modal", (props: { onClose: () => void; addToast: () => void }) => <SettingsModal {...props} />],
+    ["embedded", (props: { onClose: () => void; addToast: () => void }) => <SettingsView {...props} />],
+  ])("refreshes a stale GitHub star count in the %s Settings surface", async (_surface, Surface) => {
+    localStorage.setItem("fusion_github_star_count", JSON.stringify({ count: 999, fetchedAt: Date.now() - (16 * 60 * 1000) }));
+    let resolveGitHubFetch: ((value: Response) => void) | undefined;
+    const githubFetch = vi.fn(() => new Promise<Response>((resolve) => { resolveGitHubFetch = resolve; }));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => (
+      String(input).includes("api.github.com/repos/Runfusion/Fusion")
+        ? githubFetch()
+        : Promise.resolve({ ok: true, json: async () => ({}) } as Response)
+    )));
+
+    const renderResult = render(<Surface onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(githubFetch).toHaveBeenCalledTimes(1));
+    expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("999");
+
+    resolveGitHubFetch?.({ ok: true, json: async () => ({ stargazers_count: 123 }) } as Response);
+    await waitFor(() => expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("123"));
+    renderResult.unmount();
+  });
+
+  it.each([
+    ["modal", (props: { onClose: () => void; addToast: () => void }) => <SettingsModal {...props} />],
+    ["embedded", (props: { onClose: () => void; addToast: () => void }) => <SettingsView {...props} />],
+  ])("refreshes stale GitHub stars when the hidden %s Settings surface returns", async (_surface, Surface) => {
+    localStorage.setItem("fusion_github_star_count", JSON.stringify({ count: 999, fetchedAt: Date.now() - (16 * 60 * 1000) }));
+    setDocumentHidden(true);
+    const githubFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ stargazers_count: 456 }) } as Response);
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => (
+      String(input).includes("api.github.com/repos/Runfusion/Fusion")
+        ? githubFetch()
+        : Promise.resolve({ ok: true, json: async () => ({}) } as Response)
+    )));
+
+    const renderResult = render(<Surface onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    expect(githubFetch).not.toHaveBeenCalled();
+
+    setDocumentHidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(renderResult.container.querySelector(".settings-github-star-btn__count")?.textContent).toBe("456"));
+    expect(githubFetch).toHaveBeenCalledTimes(1);
+    renderResult.unmount();
   });
 
   it("contains required mobile settings CSS overrides", () => {

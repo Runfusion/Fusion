@@ -317,6 +317,9 @@ describe("settings key parity", () => {
       "reflectionEnabled",
       "executionProvider",
       "executionModelId",
+      "executionFallbackProvider",
+      "executionFallbackModelId",
+      "executionFallbackThinkingLevel",
       "planningProvider",
       "planningModelId",
       "planningFallbackProvider",
@@ -574,6 +577,8 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "planningProvider", modelId: "planningModelId", expectedScope: "workflow" },
     { provider: "planningGlobalProvider", modelId: "planningGlobalModelId", expectedScope: "global" },
     { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "workflow" },
+    // Executor fallback lane
+    { provider: "executionFallbackProvider", modelId: "executionFallbackModelId", expectedScope: "workflow" },
     // Validator lane
     { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "workflow" },
     { provider: "validatorGlobalProvider", modelId: "validatorGlobalModelId", expectedScope: "global" },

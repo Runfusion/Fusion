@@ -1177,6 +1177,72 @@ describe("GitHubClient", () => {
 
       vi.restoreAllMocks();
     });
+
+    /*
+    FNXC:GitHubImport 2026-07-16-16:20:
+    Regression: the REST path used to fetch a single page (per_page capped at 100), so repos with >100 open
+    issues silently lost everything past the first page. It now pages `page` until the limit or a short page.
+    */
+    it("pages the REST API across multiple pages up to the requested limit", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+
+      const makeIssue = (n: number) => ({
+        number: n, title: `Issue ${n}`, body: null,
+        html_url: `https://github.com/owner/repo/issues/${n}`,
+        labels: [], state: "open", updated_at: "2026-01-01T00:00:00Z",
+      });
+      const page1 = Array.from({ length: 100 }, (_, i) => makeIssue(i + 1));
+      const page2 = Array.from({ length: 50 }, (_, i) => makeIssue(101 + i));
+
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        const page = new URL(url).searchParams.get("page");
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(page === "1" ? page1 : page2) });
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.listIssues("owner", "repo", { limit: 150 });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(new URL(mockFetch.mock.calls[0][0]).searchParams.get("page")).toBe("1");
+      expect(new URL(mockFetch.mock.calls[1][0]).searchParams.get("page")).toBe("2");
+      expect(result).toHaveLength(150);
+      expect(result[0].number).toBe(1);
+      expect(result[149].number).toBe(150);
+
+      vi.restoreAllMocks();
+    });
+
+    it("keeps paging when a full page is entirely pull requests (does not stop early)", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const clientWithToken = new GitHubClient("ghp_token");
+
+      // Page 1 is 100 PRs (all filtered out) — a naive "stop when this page yields no issues" would return [].
+      const prPage = Array.from({ length: 100 }, (_, i) => ({
+        number: i + 1, title: `PR ${i + 1}`, body: null,
+        html_url: `https://github.com/owner/repo/issues/${i + 1}`,
+        labels: [], state: "open", updated_at: "2026-01-01T00:00:00Z", pull_request: {},
+      }));
+      const issuePage = Array.from({ length: 30 }, (_, i) => ({
+        number: 200 + i, title: `Issue ${200 + i}`, body: null,
+        html_url: `https://github.com/owner/repo/issues/${200 + i}`,
+        labels: [], state: "open", updated_at: "2026-01-01T00:00:00Z",
+      }));
+
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        const page = new URL(url).searchParams.get("page");
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(page === "1" ? prPage : issuePage) });
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.listIssues("owner", "repo", { limit: 150 });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result).toHaveLength(30);
+      expect(result.every((r) => r.number >= 200)).toBe(true);
+
+      vi.restoreAllMocks();
+    });
   });
 
   describe("getIssue", () => {
