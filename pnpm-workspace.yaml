@@ -15,6 +15,9 @@ onlyBuiltDependencies:
   - esbuild
   - koffi
   - protobufjs
+overrides:
+  '@types/node': ^25.5.2
+  protobufjs: ^7.5.8
 # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
 # Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
 # optional native payloads for both CPU families on the current OS so each
