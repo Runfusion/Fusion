@@ -69,21 +69,29 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
       FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
       Recycling and Task-ID naming are MUTUALLY EXCLUSIVE (the settings API/store reject the combination):
       "task-id" naming pins each task to its own worktree directory, which is incompatible with the cross-task
-      recycle pool. The exclusivity is enforced bidirectionally in the UI so the conflicting state is
-      unreachable — this toggle is disabled while naming is "task-id" (help explains why), and the naming
-      select below is disabled while recycling is on. Together they prevent a save that the backend would 400.
+      recycle pool. The exclusivity is enforced bidirectionally in the UI so a NEW conflict is unreachable —
+      this toggle is disabled while naming is "task-id" AND recycling is not already on, and the naming select
+      below is disabled while recycling is on. Together they prevent a save that the backend would 400.
+
+      FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
+      Legacy-conflict escape hatch: when a stored config already carries BOTH (recycle on + "task-id"), do NOT
+      lock both controls — that would strand the operator (unchanged save preserves a state the runtime treats
+      as recycling). The runtime backstop makes recycling win in that conflict, so mirror it here: keep this
+      toggle ENABLED and CHECKED (its true value, un-coerced) so the operator can turn recycling off, which
+      then re-enables the naming select below. The toggle only greys out for the forward-prevention case
+      ("task-id" naming while recycling is already off).
       */}
       <SettingsToggleRow
         descriptor={{
           key: "recycleWorktrees",
           label: t("settings.worktrees.recycleWorktrees", " Recycle worktrees "),
-          help: form.worktreeNaming === "task-id"
+          help: form.worktreeNaming === "task-id" && form.recycleWorktrees !== true
             ? t("settings.worktrees.recycleNotApplicableWithTaskIdNaming", "Not available with Task ID worktree naming — that mode pins each task to its own worktree directory, which is mutually exclusive with the recycle pool. Switch naming to Random or Task title to enable recycling.")
             : t("settings.worktrees.offByDefaultOptInWhenEnabledCompleted", "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup. Mutually exclusive with Task ID worktree naming."),
           scope: "project",
-          disabled: form.worktreeNaming === "task-id",
+          disabled: form.worktreeNaming === "task-id" && form.recycleWorktrees !== true,
         }}
-        value={form.recycleWorktrees === true && form.worktreeNaming !== "task-id"}
+        value={form.recycleWorktrees === true}
         onChange={(v) => setForm((f) => ({ ...f, recycleWorktrees: v === true }))}
       />
       <SettingsToggleRow

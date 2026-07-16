@@ -387,6 +387,17 @@ describe("WorktreesSection", () => {
     expect((screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement).disabled).toBe(false);
     expect((screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement).disabled).toBe(false);
   });
+
+  it("legacy conflict (both set): keeps the recycle toggle enabled+checked so it can be repaired", () => {
+    // Runtime treats this state as recycling (pinning off); the UI mirrors that and offers an escape hatch —
+    // turning recycling off re-enables the naming select. Both controls must never lock together.
+    renderWorktrees({ recycleWorktrees: true, worktreeNaming: "task-id" });
+    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
+    expect(recycle.disabled).toBe(false);
+    expect(recycle.checked).toBe(true);
+    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
+    expect(naming.disabled).toBe(true);
+  });
 });
 
 describe("GlobalModelsSection", () => {

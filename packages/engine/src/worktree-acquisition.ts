@@ -578,7 +578,18 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             audit: undefined,
           });
         } catch (removeErr) {
+          /*
+           * FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
+           * Reclaim-in-place must FAIL LOUD when removal fails, not swallow-and-recreate. If removeWorktree
+           * rejected (e.g. ActiveSessionWorktreeRemovalError — a live session still owns the path) or otherwise
+           * left the stale checkout registered, the path is still occupied: proceeding would clobber a live
+           * session, and `git worktree add` would then reject the occupied path AFTER we cleared sessionFile —
+           * stranding the task with no worktree and no resume metadata. Rethrow before the sessionFile clear so
+           * sessionFile is preserved and the executor's retry/self-healing owns recovery.
+           */
           logger?.warn(`${task.id}: failed to remove stale pinned worktree ${pinnedPath}: ${formatError(removeErr)}`);
+          await store.logEntry(task.id, `Failed to reclaim task-pinned worktree ${pinnedPath}; leaving resume metadata intact for retry`, formatError(removeErr).detail ?? undefined, runContext);
+          throw removeErr;
         }
       }
       // The removed worktree's session cannot resume into a fresh checkout — clear it so the executor starts clean.
