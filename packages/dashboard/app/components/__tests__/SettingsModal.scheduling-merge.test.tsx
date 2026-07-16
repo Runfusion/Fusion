@@ -1204,20 +1204,24 @@ describe("SettingsModal", () => {
         expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
       });
 
-      it("merge option descriptions are hidden behind disclosure by default", () => {
+      /*
+      FNXC:SettingsHelp 2026-07-15-23:20:
+      Merge's bespoke "More details" `<details>` disclosures were replaced by the shared help tip, so these two tests are re-pointed at the COPY and the tip's open/closed state rather than at the removed `<details>`/`<summary>` elements. The intent is unchanged: this help is deferred by default and revealed on demand.
+      Visibility is asserted via the trigger's `aria-expanded`, not `toBeVisible()`: the bubble's collapsed state is CSS-driven and the copy stays in the DOM at all times (so find-in-page, assistive tech, and settings search still reach it), which jsdom reports as visible either way.
+      */
+      it("merge option descriptions are hidden behind the help tip by default", () => {
         const autoMergeDescription = screen.getByText(/When enabled, tasks that pass review are automatically merged/i);
-        const disclosure = autoMergeDescription.closest("details");
 
-        expect(disclosure).not.toBeNull();
-        expect(disclosure).not.toHaveAttribute("open");
-        expect(autoMergeDescription).not.toBeVisible();
+        expect(autoMergeDescription.closest(".settings-help-bubble")).toBeTruthy();
+        expect(screen.getByTestId("settings-help-autoMerge")).toHaveAttribute("aria-expanded", "false");
       });
 
-      it("merge option descriptions are revealed when clicking More details", async () => {
-        const moreDetailsSummaries = screen.getAllByText("More details");
-        await settingsModalUser.click(moreDetailsSummaries[0]);
+      it("merge option descriptions are revealed when clicking the help tip", async () => {
+        const helpTrigger = screen.getByTestId("settings-help-autoMerge");
+        await settingsModalUser.click(helpTrigger);
 
-        expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeVisible();
+        expect(helpTrigger).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeInTheDocument();
       });
 
       it("no longer renders the moved workflow revision fork checkbox", () => {
