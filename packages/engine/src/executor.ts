@@ -8378,29 +8378,33 @@ export class TaskExecutor {
   private extractUnusableWorktreeGraphFailure(result: WorkflowGraphTaskRunResult): string | null {
     if (!result.context) return null;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    const candidateKeys: string[] = [];
-    if (failedNode) {
-      candidateKeys.push(`node:${failedNode}:error`);
-      const groupInstanceDelimiter = failedNode.indexOf("::");
-      if (groupInstanceDelimiter !== -1) {
-        // runOptionalGroup publishes template context under the UNQUALIFIED template id.
-        candidateKeys.push(`node:${failedNode.slice(groupInstanceDelimiter + 2)}:error`);
-        candidateKeys.push(`node:${failedNode.slice(0, groupInstanceDelimiter)}:error`);
+    if (!failedNode) return null;
+    /*
+    FNXC:MissingWorktreeRecovery 2026-07-16-19:40:
+    Detection is scoped to the FAILED node's error keys only (exact id, plus the
+    `group::template` / `container#N:template` materialized-id derivations under which
+    runOptionalGroup/foreach publish template context). A catch-all scan over every
+    `node:*:error` entry would match a STALE error left by an earlier, already-handled node
+    and misroute an unrelated later failure into worktree recovery (greptile PR#2231 P1).
+    */
+    const candidateKeys: string[] = [`node:${failedNode}:error`];
+    const groupInstanceDelimiter = failedNode.indexOf("::");
+    if (groupInstanceDelimiter !== -1) {
+      candidateKeys.push(`node:${failedNode.slice(groupInstanceDelimiter + 2)}:error`);
+      candidateKeys.push(`node:${failedNode.slice(0, groupInstanceDelimiter)}:error`);
+    }
+    const foreachInstanceDelimiter = failedNode.indexOf("#");
+    if (foreachInstanceDelimiter !== -1) {
+      candidateKeys.push(`node:${failedNode.slice(0, foreachInstanceDelimiter)}:error`);
+      const instanceRest = failedNode.slice(foreachInstanceDelimiter + 1);
+      const templateDelimiter = instanceRest.indexOf(":");
+      if (templateDelimiter !== -1) {
+        candidateKeys.push(`node:${instanceRest.slice(templateDelimiter + 1)}:error`);
       }
     }
     for (const key of candidateKeys) {
       const value = result.context[key];
       if (typeof value === "string" && isMissingWorktreeSessionStartFailure(value)) return value;
-    }
-    for (const [key, value] of Object.entries(result.context)) {
-      if (
-        key.startsWith("node:")
-        && key.endsWith(":error")
-        && typeof value === "string"
-        && isMissingWorktreeSessionStartFailure(value)
-      ) {
-        return value;
-      }
     }
     return null;
   }
@@ -8418,6 +8422,16 @@ export class TaskExecutor {
     if (this.pausedAborted.has(task.id)) return false;
     const errorText = this.extractUnusableWorktreeGraphFailure(result);
     if (!errorText) return false;
+    /*
+    FNXC:MissingWorktreeRecovery 2026-07-16-19:40:
+    FN-5147: with auto-merge off, `in-review` is terminal-until-human-merged — recovery must
+    not move those tasks backward or re-enqueue them. Mirrors the gating the in-review
+    self-healing sweep (recoverMissingWorktreeReviewFailures) applies before the same recovery.
+    */
+    if (live.column === "in-review") {
+      const settings = await this.store.getSettings();
+      if (!allowsAutoMergeProcessing(live, settings)) return false;
+    }
     const stalePath = extractMissingWorktreePathFromSessionStartFailure(errorText) ?? live.worktree ?? "";
     const audit = createRunAuditor(this.store, {
       runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("graph-worktree-recovery", task.id),

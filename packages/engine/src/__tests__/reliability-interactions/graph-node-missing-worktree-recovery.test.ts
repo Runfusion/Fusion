@@ -181,6 +181,87 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
+  it("ignores stale error keys from earlier nodes when a later node failed differently", async () => {
+    const initial = makeTask();
+    const { store } = trackingStore(initial);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const handled = await (executor as any).routeUnusableWorktreeGraphFailureToRecovery(
+      initial,
+      initial,
+      {
+        disposition: "failed",
+        outcome: "failure",
+        visitedNodeIds: ["start", "plan-review", "plan-review::plan-review-step", "merge"],
+        context: {
+          // Earlier, already-handled node error must not misroute the merge failure.
+          "node:plan-review-step:error": MISSING_WT_ERROR,
+          "node:merge:error": "merge conflict in packages/engine/src/executor.ts",
+        },
+      },
+    );
+
+    expect(handled).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("detects the refusal on foreach `container#N:template` materialized ids", async () => {
+    const initial = makeTask();
+    const { store, getLive } = trackingStore(initial);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const handled = await (executor as any).routeUnusableWorktreeGraphFailureToRecovery(
+      initial,
+      initial,
+      {
+        disposition: "failed",
+        outcome: "failure",
+        visitedNodeIds: ["steps#0:step-execute"],
+        context: { "node:step-execute:error": MISSING_WT_ERROR },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(getLive().column).toBe("todo");
+  });
+
+  it("leaves auto-merge-off in-review tasks terminal for human merge (FN-5147)", async () => {
+    const initial = makeTask({ column: "in-review" as const, status: "failed" });
+    const { store } = trackingStore(initial);
+    store.getSettings.mockResolvedValue({ autoMerge: false } as any);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const handled = await (executor as any).routeUnusableWorktreeGraphFailureToRecovery(
+      initial,
+      initial,
+      planReviewGraphFailure({ "node:plan-review-step:error": MISSING_WT_ERROR }),
+    );
+
+    expect(handled).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      initial.id,
+      expect.objectContaining({ worktree: null }),
+      expect.anything(),
+    );
+  });
+
+  it("still recovers in-review tasks when auto-merge processing is allowed", async () => {
+    const initial = makeTask({ column: "in-review" as const, status: "failed" });
+    const { store, getLive } = trackingStore(initial);
+    store.getSettings.mockResolvedValue({ autoMerge: true } as any);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const handled = await (executor as any).routeUnusableWorktreeGraphFailureToRecovery(
+      initial,
+      initial,
+      planReviewGraphFailure({ "node:plan-review-step:error": MISSING_WT_ERROR }),
+    );
+
+    expect(handled).toBe(true);
+    expect(getLive().column).toBe("todo");
+  });
+
   it.each([
     ["paused", { paused: true }],
     ["user-paused", { userPaused: true }],
