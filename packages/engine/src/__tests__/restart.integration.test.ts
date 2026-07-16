@@ -1851,7 +1851,16 @@ describe("Engine pause/unpause cycle", () => {
   });
 
   it("triage: agents NOT terminated on enginePaused (soft pause), session continues", async () => {
-    const store = createMockStore();
+    /*
+    FNXC:EngineTests 2026-07-15-17:20:
+    FN-7977 gates planning writes with isTaskStillInPlanningStage via getTask.
+    The default createMockStore getTask returns an in-progress FN-001 detail, which
+    aborts specifyTask before createFnAgent. Return the live triage task under test.
+    */
+    const task = makeTask("FN-EP2", "triage");
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue(makeTaskDetail("FN-EP2", "triage")),
+    });
     const disposeFn = vi.fn();
     let sessionContinued = false;
 
@@ -1875,7 +1884,7 @@ describe("Engine pause/unpause cycle", () => {
     } as any));
 
     const triage = new TriageProcessor(store, "/tmp/test");
-    await triage.specifyTask(makeTask("FN-EP2", "triage"));
+    await triage.specifyTask(task);
 
     // Session should have continued past the enginePaused event
     expect(sessionContinued).toBe(true);
