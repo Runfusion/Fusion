@@ -809,9 +809,28 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
   Touch-target HEIGHT is untouched (the 36px fixed-box rule above still owns it), so the controls
   remain tappable; only horizontal footprint shrinks. flex-wrap stays as the safety net for
   columns even narrower than this recovers.
+
+  FNXC:QuickAddActionRow 2026-07-16-12:50:
+  Operator follow-up: on mobile, every control row below the quick-add textarea must be CENTERED
+  with equal left/right insets — the wrapped rows read lopsided when the option rows hug the left
+  edge while the icons+Save row hugs the right. The container's own horizontal padding is already
+  symmetric (8px 10px on .quick-entry-box), so the fix is row alignment, not padding: center the
+  flex items on each wrapped line of the actions row and inside both groups, and drop the
+  primary group's `margin-left: auto` right-pinning at this breakpoint. Desktop/tablet keep the
+  left-options / right-Save toolbar layout.
   */
+  .quick-entry-actions {
+    justify-content: center;
+  }
+
+  .quick-entry-options-group {
+    justify-content: center;
+  }
+
   .quick-entry-primary-group {
     gap: var(--space-xs);
+    justify-content: center;
+    margin-left: 0;
   }
 
   .quick-entry-primary-group .btn-icon {
