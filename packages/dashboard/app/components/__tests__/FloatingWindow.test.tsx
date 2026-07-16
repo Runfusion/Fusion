@@ -33,6 +33,11 @@ function cssRuleContaining(css: string, selector: string, declaration: string): 
   return "";
 }
 
+function cssRulesForClass(css: string, className: string): string[] {
+  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...css.matchAll(new RegExp(`\\.${escaped}[^{}]*\\{[^}]*\\}`, "g"))].map((match) => match[0]);
+}
+
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
 Contract tests for the reusable non-blocking floating window:
@@ -74,6 +79,91 @@ describe("FloatingWindow", () => {
     for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
       expect(screen.getByTestId(`floating-window-resize-${dir}`)).toBeTruthy();
     }
+  });
+
+  it("keeps every shared floating-window scrollbar inboard of the right resize hot zones", () => {
+    const bodyRule = floatingWindowCss.match(/(?:^|\n)\.floating-window__body\s*\{[^}]*\}/)?.[0] ?? "";
+
+    // The global scrollbar is 8px wide; the shared body reserves the 12px corner-handle gutter.
+    expect(stylesCss).toContain("*::-webkit-scrollbar {");
+    expect(stylesCss).toContain("width: 8px;");
+    expect(bodyRule).toContain("overflow: auto;");
+    expect(bodyRule).toContain("margin-inline-end: var(--space-lg);");
+    expect(cssRuleFor(floatingWindowCss, ".floating-window__resize-handle--e")).toContain("right: 0;");
+    expect(cssRuleFor(floatingWindowCss, ".floating-window__resize-handle--ne")).toContain("right: 0;");
+    expect(cssRuleFor(floatingWindowCss, ".floating-window__resize-handle--se")).toContain("right: 0;");
+
+    // No shared caller may move a right handle back into the reserved scrollbar gutter.
+    for (const callerClass of [
+      "floating-window--task-detail",
+      "floating-window--automation",
+      "floating-window--mission-interview",
+      "floating-window--pr-create",
+      "floating-window--file-browser",
+      "floating-window--workflow-editor",
+      "artifacts-gallery-window",
+    ]) {
+      const rules = cssRulesForClass(allAppCss, callerClass);
+      const rightHandleRules = rules.filter((rule) => /floating-window__resize-handle(?:--(?:e|ne|se))?/.test(rule));
+      const bodyRules = rules.filter((rule) => rule.includes("floating-window__body"));
+
+      expect(rightHandleRules.some((rule) => /(?:right|width)\s*:/.test(rule)), callerClass).toBe(false);
+      expect(bodyRules.some((rule) => /margin-inline-end\s*:/.test(rule)), callerClass).toBe(false);
+    }
+
+    // Headerless and chat variants replace only body overflow; the inherited gutter remains intact for their inner scrollers.
+    expect(cssRuleFor(floatingWindowCss, ".floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
+    expect(cssRuleFor(floatingWindowCss, ".floating-window--chat.floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
+  });
+
+  it("keeps task-detail long content clear of right handles while preserving short-content right-edge resize", () => {
+    const longContent = Array.from({ length: 40 }, (_, index) => <p key={index}>Scrollable task detail {index}</p>);
+    const { unmount } = render(
+      <FloatingWindow
+        windowKey="task-long-content"
+        title="FN-8015"
+        onClose={() => {}}
+        hideHeader
+        dragHandleSelector=".task-detail-content--embedded > .modal-header"
+        className="floating-window--task-detail"
+      >
+        <div className="task-detail-content--embedded">
+          <div className="modal-header">FN-8015</div>
+          <div>{longContent}</div>
+        </div>
+      </FloatingWindow>
+    );
+
+    expect(screen.getByTestId("floating-window-body-task-long-content")).toHaveClass("floating-window__body");
+    for (const direction of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
+      expect(screen.getByTestId(`floating-window-resize-${direction}`)).toBeTruthy();
+    }
+    unmount();
+
+    render(
+      <FloatingWindow
+        windowKey="task-short-content"
+        title="FN-8015"
+        onClose={() => {}}
+        defaultSize={{ width: 320, height: 240 }}
+        defaultPosition={{ x: 80, y: 90 }}
+        minSize={{ width: 240, height: 180 }}
+        className="floating-window--task-detail"
+      >
+        <div>Short task detail</div>
+      </FloatingWindow>
+    );
+
+    const panel = screen.getByTestId("floating-window-task-short-content");
+    const eastHandle = screen.getByTestId("floating-window-resize-e");
+    Object.defineProperty(eastHandle, "setPointerCapture", { configurable: true, value: vi.fn() });
+    Object.defineProperty(eastHandle, "releasePointerCapture", { configurable: true, value: vi.fn() });
+
+    fireEvent.pointerDown(eastHandle, { pointerId: 31, clientX: 400, clientY: 180 });
+    fireEvent.pointerMove(eastHandle, { pointerId: 31, clientX: 440, clientY: 180 });
+    fireEvent.pointerUp(eastHandle, { pointerId: 31, clientX: 440, clientY: 180 });
+
+    expect(panel.style.width).toBe("360px");
   });
 
   it("uses a theme-overridable gentle shadow token instead of an undefined shadow", () => {
