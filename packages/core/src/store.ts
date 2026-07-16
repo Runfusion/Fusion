@@ -2478,9 +2478,10 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
 
   /**
-   * FNXC:AsyncDataLayer 2026-06-24-11:00: CONTRACT CHANGE (U4, VAL-DATA-001): Returns synchronous Database during migration (U12-U15).
-   * U15 flips to AsyncDataLayer. New code should target AsyncDataLayer (transactionImmediate, transaction, recordRunAuditEventWithinTransaction).
-   * Async foundation in packages/core/src/postgres/data-layer.ts preserves BEGIN IMMEDIATE atomicity (VAL-DATA-002/003) and no partial writes (VAL-DATA-004).
+   * FNXC:PostgresOnlyDataAccess 2026-07-16-10:20:
+   * This legacy synchronous SQLite accessor is unavailable in backend mode and
+   * must not be used by plugin, dashboard, engine, or feature data paths.
+   * Durable production access uses getAsyncLayer() and an async store.
    */
   getDatabase(): Database {
     return this.db;

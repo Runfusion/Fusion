@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendAgentLogBatchImpl, flushAgentLogBufferImpl } from "../task-store/agent-logs.js";
 import { appendAgentLogImpl } from "../task-store/workflow-integrity.js";
 import { getAgentLogCountImpl, getAgentLogsImpl } from "../task-store/remaining-ops-7.js";
+import { dbImpl } from "../task-store/remaining-ops-5.js";
 import { readAgentLogEntries } from "../agent-log-file-store.js";
 
 /**
@@ -72,6 +73,12 @@ function makeBackendStore(fusionDir: string): { store: any; dbTouched: () => boo
   };
   return { store, dbTouched: () => touched };
 }
+
+describe("backend-mode SQLite access guidance", () => {
+  it("directs backend callers to AsyncDataLayer plugin authoring guidance", () => {
+    expect(() => dbImpl({ backendMode: true } as never)).toThrow(/getAsyncLayer\(\).*docs\/PLUGIN_AUTHORING\.md/);
+  });
+});
 
 describe("agent-log read filtering", () => {
   it("filters before pagination and counts the filtered result", async () => {

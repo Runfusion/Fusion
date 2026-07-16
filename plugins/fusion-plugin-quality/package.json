@@ -26,6 +26,7 @@
   "dependencies": {
     "@fusion/core": "workspace:*",
     "@fusion/plugin-sdk": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "lucide-react": "^0.542.0"
   },
   "devDependencies": {

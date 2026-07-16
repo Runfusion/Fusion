@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "file": "packages/core/src/store.ts",
+      "line": 2604,
+      "snippet": "await this.getDatabase().runPluginSchemaInits(",
+      "reason": "FN-8104: Backend-guarded SQLite plugin-schema fallback; remove with the coordinated SQLite/U15 retirement.",
+      "allowlistedAt": "2026-07-16"
+    },
+    {
+      "file": "packages/engine/src/self-healing.ts",
+      "line": 5294,
+      "snippet": "const db = this.store.getDatabase();",
+      "reason": "FN-8104: Backend-guarded SQLite self-healing fallback; remove with the coordinated SQLite/U15 retirement.",
+      "allowlistedAt": "2026-07-16"
+    }
+  ]
+}

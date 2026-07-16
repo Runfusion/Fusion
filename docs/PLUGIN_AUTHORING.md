@@ -997,6 +997,26 @@ interface PluginContext {
 | `emitEvent` | `(event, data) => void` | Emit custom events |
 | `createAiSession` | `CreateAiSessionFactory \| undefined` | Engine-injected AI session factory (undefined when engine isn't loaded) |
 
+### Durable data access: PostgreSQL / `AsyncDataLayer`
+
+Production Fusion hosts are PostgreSQL-only. **Plugin routes, hooks, and dashboard-backed feature paths must not call `ctx.taskStore.getDatabase()`**: it is the legacy synchronous SQLite accessor and throws in backend mode. Use a project-bound `AsyncDataLayer` and make store methods asynchronous instead.
+
+```typescript
+function getWidgetStore(ctx: PluginContext): AsyncWidgetStore {
+  const asyncLayer = ctx.taskStore.getAsyncLayer();
+  if (!asyncLayer) {
+    throw new Error("Widget plugin requires PostgreSQL AsyncDataLayer");
+  }
+  return new AsyncWidgetStore(asyncLayer);
+}
+
+const widget = await getWidgetStore(ctx).getWidget(widgetId);
+```
+
+Use a direct `drizzle-orm` dependency for plugin-owned PostgreSQL tables and scope every query by `asyncLayer.projectId`. See Reports' `getReportStore` / `ReportStore` async siblings and Quality's `AsyncQualityStore` for production patterns. SQLite/`DatabaseSync` is permitted only inside intentional unit harnesses, never as a production fallback.
+
+The repository gate `scripts/check-no-getdatabase.mjs` scans tracked plugin, dashboard, engine, and core paths. A legitimate transitional exception must be reviewed in `scripts/lib/getdatabase-allowlist.json` and pin the exact `file`, one-based `line`, and trimmed `snippet`; there is no file-level or inline exemption. New plugin feature code is not eligible for that allowlist.
+
 ### Logger Methods
 
 ```typescript

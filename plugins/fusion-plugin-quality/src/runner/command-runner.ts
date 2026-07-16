@@ -1,5 +1,8 @@
 import { superviseSpawn } from "@fusion/core";
 import type { QualityStore } from "../store/quality-store.js";
+import type { AsyncQualityStore } from "../store/async-quality-store.js";
+
+type QualityPersistence = QualityStore | AsyncQualityStore;
 import type { TestRun, TestRunStatus } from "../store/quality-types.js";
 
 /*
@@ -24,12 +27,12 @@ Keep each live supervisor by project/run so the cancel route can terminate its
 process group, while the runner's final write preserves the cancelled terminal
 state if the child closes after that request.
 */
-export function cancelQualityRun(store: QualityStore, projectId: string, runId: string): TestRun | null {
-  const current = store.getRun(projectId, runId);
+export async function cancelQualityRun(store: QualityPersistence, projectId: string, runId: string): Promise<TestRun | null> {
+  const current = await store.getRun(projectId, runId);
   if (!current || (current.status !== "queued" && current.status !== "running")) return current;
 
   activeQualityRuns.get(activeRunKey(projectId, runId))?.kill("SIGTERM");
-  return store.updateRun(projectId, runId, {
+  return await store.updateRun(projectId, runId, {
     status: "cancelled",
     finishedAt: new Date().toISOString(),
     errorMessage: "Cancelled by operator",
@@ -45,7 +48,7 @@ export function __registerActiveQualityRunForTests(projectId: string, runId: str
 }
 
 export interface RunCommandOptions {
-  store: QualityStore;
+  store: QualityPersistence;
   projectId: string;
   runId: string;
   command: string;
@@ -65,7 +68,7 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
   const { store, projectId, runId, command, cwd } = opts;
   const timeoutMs = Math.min(Math.max(opts.timeoutMs, 1_000), HARD_TIMEOUT_MS);
   const startedAt = new Date().toISOString();
-  store.updateRun(projectId, runId, { status: "running", startedAt });
+  await store.updateRun(projectId, runId, { status: "running", startedAt });
 
   let stdout = "";
   let stderr = "";
@@ -128,9 +131,9 @@ export async function executeQualityRun(opts: RunCommandOptions): Promise<TestRu
 
   const finishedAt = new Date().toISOString();
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
-  const current = store.getRun(projectId, runId);
+  const current = await store.getRun(projectId, runId);
   const wasCancelled = current?.status === "cancelled";
-  const updated = store.updateRun(projectId, runId, {
+  const updated = await store.updateRun(projectId, runId, {
     status: wasCancelled ? "cancelled" : status,
     exitCode,
     errorMessage: wasCancelled ? current.errorMessage ?? "Cancelled by operator" : errorMessage,
