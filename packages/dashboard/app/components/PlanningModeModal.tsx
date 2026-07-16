@@ -2174,7 +2174,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
           <div className="planning-detail">
           {error && <div className="form-error planning-error">{error}</div>}
-          {isReconnecting && <div className="form-hint text-muted">{t("planning.reconnecting", "Reconnecting…")}</div>}
+          {/*
+          FNXC:PlanningMode 2026-07-15-00:00:
+          Awaiting-input questions are persisted database state, so transient idle SSE reconnects must not imply that the question is being regenerated. Reserve this hint for the active loading view, where live generation genuinely depends on the stream.
+          */}
+          {isReconnecting && view.type === "loading" && <div className="form-hint text-muted">{t("planning.reconnecting", "Reconnecting…")}</div>}
 
           {view.type === "initial" && (
             <div className="planning-initial">

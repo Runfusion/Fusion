@@ -1935,6 +1935,79 @@ describe("PlanningModeModal", () => {
       expect(screen.queryByRole("button", { name: "Refine Further" })).toBeNull();
     });
 
+    it.each(["desktop", "mobile"] as const)("keeps persisted awaiting-input questions free of reconnecting hints on %s", async (viewportMode) => {
+      mockViewport(viewportMode);
+      let streamHandlers: any;
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+      });
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: `session-reconnect-question-${viewportMode}`,
+        type: "planning",
+        status: "awaiting_input",
+        title: "Persisted question",
+        inputPayload: JSON.stringify({ initialPlan: "Resume persisted question" }),
+        conversationHistory: "[]",
+        currentQuestion: JSON.stringify(mockQuestion),
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId={`session-reconnect-question-${viewportMode}`}
+        />,
+      );
+
+      expect(await screen.findByText(mockQuestion.question)).toBeInTheDocument();
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+
+      expect(screen.getByText(mockQuestion.question)).toBeInTheDocument();
+      expect(screen.queryByText("Reconnecting…")).toBeNull();
+    });
+
+    it("shows the reconnecting hint while active generation is loading", async () => {
+      let streamHandlers: any;
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        return { close: vi.fn(), isConnected: vi.fn().mockReturnValue(true) };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Generate a planning task" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+      await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledTimes(1));
+
+      act(() => {
+        streamHandlers.onConnectionStateChange?.("reconnecting");
+      });
+
+      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+    });
+
     it("shows summary view when resuming a complete persisted session", async () => {
       const resumedSummary: PlanningSummary = {
         title: "Resume-ready planning output",
