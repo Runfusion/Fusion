@@ -233,14 +233,24 @@ describe("MockAgentRuntime", () => {
     await accumulateSessionTokenUsage(store as never, taskId, session);
 
     expect(store.updateTask).toHaveBeenCalledTimes(1);
-    expect(store.updateTask).toHaveBeenCalledWith(taskId, {
-      tokenUsage: expect.objectContaining({
-        inputTokens: MOCK_SYNTHETIC_TOKEN_USAGE.input,
-        outputTokens: MOCK_SYNTHETIC_TOKEN_USAGE.output,
-        cachedTokens: MOCK_SYNTHETIC_TOKEN_USAGE.cacheRead,
-        cacheWriteTokens: MOCK_SYNTHETIC_TOKEN_USAGE.cacheWrite,
-      }),
-    });
+    /*
+    FNXC:MockProvider 2026-07-16-08:10:
+    accumulateSessionTokenUsage may pass a third options/context argument (undefined
+    here). Match on the task id + tokenUsage fields rather than exact arity so the
+    synthetic baseline contract stays stable.
+    */
+    expect(store.updateTask).toHaveBeenCalledWith(
+      taskId,
+      {
+        tokenUsage: expect.objectContaining({
+          inputTokens: MOCK_SYNTHETIC_TOKEN_USAGE.input,
+          outputTokens: MOCK_SYNTHETIC_TOKEN_USAGE.output,
+          cachedTokens: MOCK_SYNTHETIC_TOKEN_USAGE.cacheRead,
+          cacheWriteTokens: MOCK_SYNTHETIC_TOKEN_USAGE.cacheWrite,
+        }),
+      },
+      undefined,
+    );
   });
 
   it("never makes network calls and does not import network SDKs", async () => {

@@ -3038,7 +3038,11 @@ describe("aiMergeTask post-squash audit gate", () => {
       if (cmdStr.includes("diff --name-only --diff-filter=U")) {
         return hasConflicts ? "src/complex.ts\n" : "";
       }
-      if (cmdStr.includes("diff-tree")) {
+      // FNXC:MergeSafety 2026-07-16-08:10: whitespace classification uses `git diff -p -w :2: :3:` via execFile.
+      if (
+        cmdStr.includes("diff-tree")
+        || (cmdStr.includes("git diff") && cmdStr.includes("-w") && cmdStr.includes(":2:"))
+      ) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
