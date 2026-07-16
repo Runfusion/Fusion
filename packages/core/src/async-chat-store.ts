@@ -51,6 +51,7 @@ function rowToSession(row: Record<string, unknown>): ChatSession {
     thinkingLevel: (row.thinkingLevel as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
+    pinnedAt: (row.pinnedAt as string | null) ?? null,
     cliSessionFile: (row.cliSessionFile as string | null) ?? null,
     inFlightGeneration: (row.inFlightGeneration as ChatInFlightGenerationState | null) ?? null,
     cliExecutorAdapterId: (row.cliExecutorAdapterId as string | null) ?? null,
@@ -129,6 +130,7 @@ export async function createChatSession(handle: QueryHandle, session: ChatSessio
     thinkingLevel: session.thinkingLevel ?? null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    pinnedAt: session.pinnedAt,
     cliSessionFile: session.cliSessionFile,
     inFlightGeneration: session.inFlightGeneration,
     cliExecutorAdapterId: session.cliExecutorAdapterId,
@@ -504,6 +506,26 @@ export async function clearChatRoomMessages(handle: QueryHandle, roomId: string)
 // backend-mode branches in chat-store.ts call these helpers instead of throwing.
 
 /**
+ * Lock a session row before a pin or archive mutation.
+ *
+ * FNXC:ChatPinned 2026-07-16-12:30: Pinning and archiving must serialize on
+ * the same session row. Reading under this lock prevents an archive from
+ * clearing a pin before a concurrent pin request writes it back.
+ */
+export async function getChatSessionForUpdate(
+  tx: DbTransaction,
+  id: string,
+): Promise<ChatSession | undefined> {
+  const rows = await tx
+    .select()
+    .from(schema.project.chatSessions)
+    .where(eq(schema.project.chatSessions.id, id))
+    .for("update");
+  const row = rows[0];
+  return row ? rowToSession(row) : undefined;
+}
+
+/**
  * FNXC:ChatStore 2026-06-24-22:05:
  * Update a chat session's mutable fields (title, status, modelProvider,
  * modelId) and bump updatedAt. Returns the updated session, or undefined if
@@ -518,6 +540,7 @@ export async function updateChatSession(
     modelProvider?: string | null;
     modelId?: string | null;
     thinkingLevel?: string | null;
+    pinnedAt?: string | null;
   },
 ): Promise<ChatSession | undefined> {
   const existing = await getChatSession(handle, id);
@@ -530,6 +553,10 @@ export async function updateChatSession(
   if (input.modelProvider !== undefined) setValues.modelProvider = input.modelProvider;
   if (input.modelId !== undefined) setValues.modelId = input.modelId;
   if (input.thinkingLevel !== undefined) setValues.thinkingLevel = input.thinkingLevel;
+  if (input.pinnedAt !== undefined) setValues.pinnedAt = input.pinnedAt;
+  // FNXC:ChatPinned 2026-07-16-12:00: archiving clears the persisted pin in
+  // this same update, including callers that bypass archiveChatSession.
+  if (input.status === "archived") setValues.pinnedAt = null;
 
   await handle
     .update(schema.project.chatSessions)

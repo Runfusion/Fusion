@@ -1,23 +1,9 @@
 import type { Agent, AgentLogEntry, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
 import { resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
+import { ACTIVE_STATUSES } from "../utils/taskActivity";
 
 export type ModelSelection = ResolvedModelSelection;
-
-/*
-FNXC:MergeQueue 2026-07-15-10:40:
-Treat AI-merge reviewing/landing as active so model/resolution surfaces and cards stay in the live-agent visual state while the merger owns the pump.
-*/
-export const ACTIVE_STATUSES = new Set([
-  "planning",
-  "researching",
-  "executing",
-  "finalizing",
-  "merging",
-  "merging-pr",
-  "merging-fix",
-  "reviewing",
-  "landing",
-]);
+export { ACTIVE_STATUSES };
 
 const STRING_OBJECT_TAG = "[object String]";
 

@@ -220,6 +220,22 @@ FN-7231 requires task-detail chat text, user, tool, and thinking blocks to keep 
   overflow-wrap: anywhere;
 }
 
+/*
+FNXC:ProactiveChatStatus 2026-07-16-12:05:
+FN-8064 makes engine status rows a real-time task-progress report. Give complete status
+messages a tokenized warning-toned distinction and reuse the shared status-dot convention;
+the existing compact padding rule keeps the affordance usable below the mobile breakpoint.
+*/
+.task-chat-entry--status {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--surface));
+}
+
+.task-chat-entry--status .task-chat-entry-label-row {
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+
 .task-chat-entry--user {
   max-width: min(100%, calc(var(--space-2xl) * 18));
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));

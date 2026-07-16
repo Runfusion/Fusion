@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
 import { accumulateSessionTokenUsage, computeCacheHitRatio } from "../session-token-usage.js";
+import { enforceTaskTokenBudgetForPersist } from "../token-budget-enforcer.js";
 import { TaskExecutor } from "../executor.js";
+
+const { notificationService } = vi.hoisted(() => ({ notificationService: { dispatch: vi.fn() } }));
+vi.mock("../notifier.js", () => ({ getActiveNotificationService: () => notificationService }));
 
 interface MockSessionStats {
   tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
@@ -14,17 +18,32 @@ function createSession(
   return { getSessionStats: vi.fn(() => stats), ...(model ? { model } : {}) } as unknown as Parameters<typeof accumulateSessionTokenUsage>[2];
 }
 
-function createStore(initial: Task["tokenUsage"]): TaskStore & { _task: Task; updateTask: ReturnType<typeof vi.fn> } {
-  const task = { id: "FN-1", tokenUsage: initial } as Task;
+function createStore(initial: Task["tokenUsage"], budget?: { soft?: number; hard?: number }): TaskStore & { _task: Task; updateTask: ReturnType<typeof vi.fn>; pauseTask: ReturnType<typeof vi.fn> } {
+  const task = { id: "FN-1", title: "Budget task", tokenUsage: initial } as Task;
   const updateTask = vi.fn(async (_id: string, updates: Partial<Task>) => {
-    if (updates.tokenUsage !== undefined) task.tokenUsage = updates.tokenUsage as Task["tokenUsage"];
+    Object.assign(task, updates);
     return task;
+  });
+  const pauseTask = vi.fn(async () => task);
+  // Model TaskStore's atomic transaction boundary: each updater observes the latest row.
+  let atomicQueue: Promise<void> = Promise.resolve();
+  const updateTaskAtomic = vi.fn((_id: string, updater: (current: Task) => Partial<Task> | null) => {
+    const result = atomicQueue.then(async () => {
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    });
+    atomicQueue = result.then(() => undefined, () => undefined);
+    return result;
   });
   const store = {
     _task: task,
     getTask: vi.fn(async () => task),
+    getSettingsByScope: vi.fn(async () => ({ project: budget ? { taskTokenBudget: budget } : {}, global: {} })),
     updateTask,
-  } as unknown as TaskStore & { _task: Task; updateTask: ReturnType<typeof vi.fn> };
+    updateTaskAtomic,
+    pauseTask,
+  } as unknown as TaskStore & { _task: Task; updateTask: ReturnType<typeof vi.fn>; pauseTask: ReturnType<typeof vi.fn> };
   return store;
 }
 
@@ -32,6 +51,7 @@ describe("accumulateSessionTokenUsage", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    notificationService.dispatch.mockReset();
   });
 
   it("writes initial token usage and emits cache metrics log", async () => {
@@ -155,6 +175,7 @@ describe("accumulateSessionTokenUsage", () => {
     executor.store = store;
     executor.tokenUsageBaselines = new Map();
     executor.activeSessions = new Map();
+    executor.currentRunContexts = new Map();
 
     await executor.persistTokenUsage("FN-1", {
       getSessionStats: () => ({ tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, total: 6 } }),
@@ -165,6 +186,78 @@ describe("accumulateSessionTokenUsage", () => {
     expect(cacheLogCall).toBeTruthy();
     const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
     expect(call.tokenUsage).toMatchObject({ modelProvider: "mock", modelId: "scripted" });
+  });
+
+  it("enforces soft and hard budgets through the real persist helper exactly once", async () => {
+    const store = createStore(undefined, { soft: 10, hard: 20 });
+    const session = createSession({ tokens: { input: 12, output: 0, cacheRead: 0, cacheWrite: 0 } });
+
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+    session.getSessionStats.mockReturnValue({ tokens: { input: 25, output: 0, cacheRead: 0, cacheWrite: 0 } });
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+    session.getSessionStats.mockReturnValue({ tokens: { input: 30, output: 0, cacheRead: 0, cacheWrite: 0 } });
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+
+    expect(store._task.tokenBudgetSoftAlertedAt).toBeTruthy();
+    expect(store._task.tokenBudgetHardAlertedAt).toBeTruthy();
+    expect(store.pauseTask).toHaveBeenCalledOnce();
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-1", true, undefined, { pausedReason: "token_budget_exceeded" });
+    expect(notificationService.dispatch).toHaveBeenCalledTimes(2);
+    expect(notificationService.dispatch).toHaveBeenNthCalledWith(1, "token-budget", expect.objectContaining({ metadata: expect.objectContaining({ kind: "soft" }) }));
+    expect(notificationService.dispatch).toHaveBeenNthCalledWith(2, "token-budget", expect.objectContaining({ metadata: expect.objectContaining({ kind: "hard" }) }));
+  });
+
+  it("atomically claims concurrent soft and hard enforcement once", async () => {
+    const store = createStore({ inputTokens: 25, outputTokens: 0, cacheWriteTokens: 0, totalTokens: 25 }, { soft: 10, hard: 20 });
+
+    await Promise.all(Array.from({ length: 8 }, () => enforceTaskTokenBudgetForPersist(store, "FN-1")));
+
+    expect(store.pauseTask).toHaveBeenCalledOnce();
+    expect(notificationService.dispatch).toHaveBeenCalledTimes(2);
+    expect(store._task.tokenBudgetSoftAlertedAt).toBeTruthy();
+    expect(store._task.tokenBudgetHardAlertedAt).toBeTruthy();
+  });
+
+  it("enforces direct executor token persistence through its shared seam", async () => {
+    const store = createStore(undefined, { hard: 10 });
+    const executor = Object.create(TaskExecutor.prototype) as any;
+    executor.store = store;
+    executor.currentRunContexts = new Map();
+
+    await executor.persistTaskTokenUsage("FN-1", { inputTokens: 20, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 20 });
+
+    expect(store.pauseTask).toHaveBeenCalledOnce();
+    expect(notificationService.dispatch).toHaveBeenCalledWith("token-budget", expect.objectContaining({ metadata: expect.objectContaining({ kind: "hard" }) }));
+  });
+
+  it("retries a hard pause after a failed persisted enforcement attempt", async () => {
+    const store = createStore({ inputTokens: 20, outputTokens: 0, cacheWriteTokens: 0, totalTokens: 20 }, { hard: 10 });
+    store.pauseTask.mockRejectedValueOnce(new Error("temporary pause failure"));
+
+    await expect(enforceTaskTokenBudgetForPersist(store, "FN-1")).resolves.toBeUndefined();
+    expect(store._task.tokenBudgetHardAlertedAt).toBeNull();
+    await enforceTaskTokenBudgetForPersist(store, "FN-1");
+
+    expect(store.pauseTask).toHaveBeenCalledTimes(2);
+    expect(store._task.tokenBudgetHardAlertedAt).toBeTruthy();
+    expect(notificationService.dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a successful hard pause durable when notification dispatch fails", async () => {
+    notificationService.dispatch.mockRejectedValueOnce(new Error("notification unavailable"));
+    const store = createStore(undefined, { hard: 10 });
+
+    await expect(accumulateSessionTokenUsage(store, "FN-1", createSession({ tokens: { input: 20, output: 0, cacheRead: 0, cacheWrite: 0 } }))).resolves.toBeUndefined();
+
+    expect(store.pauseTask).toHaveBeenCalledOnce();
+    expect(store._task.tokenBudgetHardAlertedAt).toBeTruthy();
+  });
+
+  it("does not enforce when no budget is configured", async () => {
+    const store = createStore(undefined);
+    await accumulateSessionTokenUsage(store, "FN-1", createSession({ tokens: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0 } }));
+    expect(store.pauseTask).not.toHaveBeenCalled();
+    expect(notificationService.dispatch).not.toHaveBeenCalled();
   });
 
   it("swallows store errors instead of throwing", async () => {

@@ -9987,6 +9987,7 @@ export function updateChatSession(
     modelId?: string | null;
     agentId?: string;
     thinkingLevel?: string | null;
+    pinned?: boolean;
   },
   projectId?: string,
 ): Promise<ChatSessionResponse> {

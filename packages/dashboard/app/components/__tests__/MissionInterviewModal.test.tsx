@@ -61,6 +61,21 @@ const SECOND_QUESTION = {
   description: "List the product surfaces that need support.",
 };
 
+const MARKDOWN_QUESTION = {
+  id: "markdown-question",
+  type: "text" as const,
+  question: "Do you want **fast** mode?\n\nfirst line  \nsecond line\n\n- Option A\n- Option B",
+  description: "Choose the mode before continuing.",
+};
+
+function expectMarkdownQuestionFormatting() {
+  const question = screen.getByTestId("planning-question-text");
+  expect(question.querySelector("strong")).toHaveTextContent("fast");
+  expect([...question.querySelectorAll("p")].find((paragraph) => paragraph.textContent?.includes("first line"))?.querySelector("br")).not.toBeNull();
+  expect([...question.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Option A", "Option B"]);
+  expect(question).not.toHaveTextContent("**fast**");
+}
+
 const SAMPLE_SUMMARY = {
   missionTitle: "Resilient mission planning",
   missionDescription: "Recover mission AI planning after transient stream interruptions.",
@@ -289,6 +304,22 @@ describe("MissionInterviewModal", () => {
 
     expect(screen.getByText("What is the target scope?")).toBeInTheDocument();
     expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+  });
+
+  it("renders markdown formatting in AI mission interview questions", async () => {
+    renderModal();
+
+    fireEvent.change(screen.getByLabelText("What do you want to build?"), {
+      target: { value: "Format a mission interview question" },
+    });
+    fireEvent.click(screen.getByText("Start Interview"));
+
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+    act(() => {
+      streamHandlers.onQuestion?.(MARKDOWN_QUESTION);
+    });
+
+    await waitFor(expectMarkdownQuestionFormatting);
   });
 
   it("preserves streaming thinking output while reconnecting", async () => {

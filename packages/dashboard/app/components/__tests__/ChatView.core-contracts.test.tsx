@@ -366,6 +366,15 @@ describe("Chat Session Delete Button", () => {
 
       const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
+      /*
+      FNXC:ChatHeader 2026-07-16-00:00:
+      The mobile session switcher belongs to the direct-thread pane, not the visible session list. Drill into the active session before asserting its header controls so this rename contract matches the user flow.
+      */
+      await userEvent.click(screen.getByTestId("chat-session-session-001"));
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+      });
+
       expect(screen.getByTestId("chat-mobile-session-trigger")).toHaveTextContent("Mobile Chat");
       expect(screen.getByTestId("chat-mobile-session-trigger")).not.toHaveTextContent("M3");
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));

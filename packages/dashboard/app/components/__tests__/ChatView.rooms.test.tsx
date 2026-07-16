@@ -257,6 +257,32 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     setup();
   });
 
+  it.each([
+    ["desktop", () => mockDesktopViewport(), {}],
+    ["mobile/narrow", () => mockMobileViewport(), {}],
+    ["floating/compact", () => mockDesktopViewport(), { floating: true, compactLayout: true }],
+  ])("renders normalized room transcript oldest-first in the %s host", async (_host, setViewport, hostProps) => {
+    setViewport();
+    // This state is the ascending result of the newest-first API fixture covered by useChatRooms.
+    setup({}, {
+      messages: [
+        { id: "room-user-hi", roomId: roomA.id, role: "user", content: "Old user Hi", createdAt: "2026-04-08T00:00:00.000Z", senderAgentId: null, mentions: [] },
+        { id: "room-cto-reply", roomId: roomA.id, role: "assistant", content: "Newer CTO reply", createdAt: "2026-04-08T00:02:00.000Z", senderAgentId: "cto", mentions: [] },
+        { id: "room-pm-reply", roomId: roomA.id, role: "assistant", content: "Newest PM reply", createdAt: "2026-04-08T00:02:01.000Z", senderAgentId: "pm", mentions: [] },
+      ],
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} {...hostProps} />);
+
+    const rendered = [
+      screen.getByText("Old user Hi"),
+      screen.getByText("Newer CTO reply"),
+      screen.getByText("Newest PM reply"),
+    ];
+    expect(rendered[0]!.compareDocumentPosition(rendered[1]!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(rendered[1]!.compareDocumentPosition(rendered[2]!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("renders Direct/Rooms toggle and allows room selection without message leakage", async () => {
     const selectRoom = vi.fn();
     const roomB = { ...roomA, id: "room-b", name: "Room B", slug: "room-b" };

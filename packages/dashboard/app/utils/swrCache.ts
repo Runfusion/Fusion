@@ -22,7 +22,8 @@ export const SWR_CACHE_KEYS = {
   CHAT_ROOMS: "kb-dashboard-chat-rooms-cache",
   CHAT_SESSIONS_PREFIX: "kb-dashboard-chat-sessions-cache:",
   CHAT_MESSAGES_PREFIX: "kb-dashboard-chat-messages-cache:",
-  CHAT_ROOM_MESSAGES_PREFIX: "kb-dashboard-chat-room-messages-cache:",
+  // FNXC:ChatRooms 2026-07-16-00:00: FN-8062 changes room message snapshots from server-descending to display-ascending; namespace the cache so an old 60-second snapshot never flashes out of order after deploy.
+  CHAT_ROOM_MESSAGES_PREFIX: "kb-dashboard-chat-room-messages-cache:v2:",
   CHAT_ROOM_MEMBERS_PREFIX: "kb-dashboard-chat-room-members-cache:",
   CHAT_AGENTS_MAP_PREFIX: "kb-dashboard-chat-agents-map-cache:",
   MODELS: "kb-dashboard-models-cache",

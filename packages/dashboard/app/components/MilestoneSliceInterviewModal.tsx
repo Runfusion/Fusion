@@ -28,6 +28,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
+import { MailboxMessageContent } from "./MailboxMessageContent";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
@@ -685,9 +686,16 @@ function InterviewQuestionForm({ question, progress, historyEntries, onSubmit }:
           </div>
 
           <div className="planning-question-content">
-            <h4 className="planning-question-text">{question.question}</h4>
+            <MailboxMessageContent
+              className="planning-question-text markdown-body"
+              content={question.question}
+              testId="planning-question-text"
+            />
             {question.description && (
-              <p className="planning-question-desc">{question.description}</p>
+              <MailboxMessageContent
+                className="planning-question-desc markdown-body"
+                content={question.description}
+              />
             )}
 
             <div className="planning-options">

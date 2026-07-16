@@ -405,7 +405,14 @@ function TaskChatText({ entries }: { entries: AgentLogEntry[] }) {
       className={`task-chat-entry task-chat-entry--${firstEntry.type.replace("_", "-")}`}
       data-testid={`task-chat-entry-${firstEntry.type}`}
     >
-      <TaskChatTimestampMeta timestamp={getLatestEntryTimestamp(entries)} label="Text block timestamp" />
+      {firstEntry.type === "status" && (
+        <div className="task-chat-entry-label-row">
+          <span className="status-dot status-dot--pending" aria-hidden="true" />
+          <span className="task-chat-entry-kicker">Status update</span>
+          <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Status update timestamp" />
+        </div>
+      )}
+      {firstEntry.type !== "status" && <TaskChatTimestampMeta timestamp={getLatestEntryTimestamp(entries)} label="Text block timestamp" />}
       <div className="markdown-body task-chat-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
           {entries.map((entry) => entry.text).join("")}

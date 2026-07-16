@@ -762,6 +762,8 @@ Backlog health is the alert family for scheduler/backlog imbalance, dependency-b
 4. Global per-size (`global.taskTokenBudget.perSize[task.size]`)
 5. Global base (`global.taskTokenBudget.soft/hard`)
 
+Budgets measure **input + output + cache-write tokens**. Cache-read tokens are deliberately excluded: reading a cached prompt can be very large without representing newly processed model work. A soft cap records one alert timestamp and dispatches one `token-budget` notification; a hard cap records its timestamp, pauses the task with `pausedReason: "token_budget_exceeded"`, then dispatches one notification. These transitions are atomic and are not repeated on later token persists.
+
 Example:
 
 ```json

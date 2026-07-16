@@ -1715,6 +1715,9 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   planningThinkingLevel: text("planning_thinking_level"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  // FNXC:ChatPinned 2026-07-16-12:00: nullable timestamp persists the active
+  // Direct-session pin; the ChatStore enforces the per-scope max-three invariant.
+  pinnedAt: text("pinned_at"),
   cliSessionFile: text("cli_session_file"),
   inFlightGeneration: jsonb("in_flight_generation"),
   cliExecutorAdapterId: text("cli_executor_adapter_id"),

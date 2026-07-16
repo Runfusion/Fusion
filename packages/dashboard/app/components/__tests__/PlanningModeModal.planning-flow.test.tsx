@@ -240,6 +240,11 @@ describe("PlanningModeModal", () => {
               { id: "theme-ux", label: "UX and interaction details" },
               { id: "theme-testing", label: "Testing and verification" },
             ],
+            planPreview: {
+              title: "Checkpoint preview title",
+              description: "Checkpoint **Markdown** description",
+              keyDeliverables: ["Preview deliverable one", "Preview deliverable two"],
+            },
           });
         }, 0);
         return { close: vi.fn() };
@@ -260,7 +265,12 @@ describe("PlanningModeModal", () => {
       });
       fireEvent.click(screen.getByText("Start Planning"));
 
-      expect(await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION)).toBeInTheDocument();
+      const checkpointQuestion = await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+      const previewTitle = screen.getByText("Checkpoint preview title");
+      expect(previewTitle.compareDocumentPosition(checkpointQuestion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByText("Markdown").tagName).toBe("STRONG");
+      expect(screen.getByText("Preview deliverable one")).toBeInTheDocument();
+      expect(screen.getByText("Preview deliverable two")).toBeInTheDocument();
       expect(screen.queryByText("Planning Complete!")).toBeNull();
       expect(screen.queryByRole("button", { name: "Create Single Task" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Break into Tasks" })).toBeNull();
@@ -435,6 +445,7 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(screen.getByText("What is the scope?")).toBeDefined();
       });
+      expect(screen.queryByText("Your plan so far")).toBeNull();
     });
 
     /*
@@ -1914,6 +1925,11 @@ describe("PlanningModeModal", () => {
             { id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan" },
             { id: "theme-testing", label: "Testing and verification" },
           ],
+          planPreview: {
+            title: "Restored checkpoint plan",
+            description: "Restored plan description",
+            keyDeliverables: ["Restored deliverable"],
+          },
         }),
         result: null,
         thinkingOutput: "",
@@ -1934,7 +1950,11 @@ describe("PlanningModeModal", () => {
         />
       );
 
-      expect(await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION)).toBeInTheDocument();
+      const checkpointQuestion = await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+      const previewTitle = screen.getByText("Restored checkpoint plan");
+      expect(previewTitle.compareDocumentPosition(checkpointQuestion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByText("Restored plan description")).toBeInTheDocument();
+      expect(screen.getByText("Restored deliverable")).toBeInTheDocument();
       expect(screen.getByText("Proceed to final plan")).toBeInTheDocument();
       expect(screen.queryByText("Planning Complete!")).toBeNull();
       expect(screen.queryByRole("button", { name: "Create Single Task" })).toBeNull();

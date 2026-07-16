@@ -18,6 +18,8 @@ import {
   Minimize2,
   X,
   Hash,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { FN_AGENT_ID, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
@@ -580,6 +582,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     createSession,
     archiveSession,
     renameSession,
+    pinSession,
+    pinnedCount,
     setSessionModel,
     setSessionThinkingLevel,
     deleteSession,
@@ -2248,6 +2252,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
   }, [addToast, renameDialog, renameSession, renameTitle, t]);
 
+  const handlePin = useCallback(
+    async (id: string, pinned: boolean) => {
+      setContextMenu(null);
+      setMobileSessionMenuOpen(false);
+      try {
+        await pinSession(id, pinned);
+        addToast(pinned ? t("chat.conversationPinned", "Conversation pinned") : t("chat.conversationUnpinned", "Conversation unpinned"), "success");
+      } catch {
+        // useChat restores optimistic state and reports the server rejection.
+      }
+    },
+    [addToast, pinSession, t],
+  );
+
   // Handle delete
   const handleDelete = useCallback(
     async (id: string) => {
@@ -2925,6 +2943,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatHeader 2026-06-22-18:44:
   Very narrow chat headers collapse Direct/Rooms to icons while retaining aria-selected tabs and text labels for wider headers. The segmented control must stay height-aligned with the ViewHeader action row, so icon+label markup is stable and CSS hides only the label.
   */
+  const pinnedFilteredSessions = filteredSessions.filter((session) => session.pinnedAt != null);
+  const unpinnedFilteredSessions = filteredSessions.filter((session) => session.pinnedAt == null);
+  const contextMenuSession = contextMenu
+    ? filteredSessions.find((session) => session.id === contextMenu.sessionId) ?? (activeSession?.id === contextMenu.sessionId ? activeSession : undefined)
+    : undefined;
+
   const mobileDirectSessionSwitcher = showMobileSessionSwitcher ? (
     <div className="chat-mobile-session-menu" ref={mobileSessionMenuRef}>
       <button
@@ -2945,7 +2969,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       </button>
       {mobileSessionMenuOpen && (
         <div className="chat-mobile-session-dropdown" role="menu" data-testid="chat-mobile-session-dropdown">
-          {filteredSessions.map((session) => (
+          {pinnedFilteredSessions.length > 0 ? <div className="chat-pinned-divider" data-testid="chat-mobile-pinned-divider">{t("chat.pinned", "Pinned")}</div> : null}
+          {[...pinnedFilteredSessions, ...unpinnedFilteredSessions].map((session) => (
             <div
               key={session.id}
               className={`chat-mobile-session-option-row${activeSession?.id === session.id ? " chat-mobile-session-option-row--active" : ""}`}
@@ -2958,7 +2983,18 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 data-testid={`chat-mobile-session-option-${session.id}`}
                 onClick={() => handleSessionClick(session.id)}
               >
-                <span className="chat-mobile-session-option-title">{session.title || t("chat.untitledSession", "Untitled")}</span>
+                <span className="chat-mobile-session-option-title">{session.title || t("chat.untitledSession", "Untitled")}{session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-icon chat-mobile-session-pin"
+                data-testid={`chat-mobile-session-pin-${session.id}`}
+                aria-label={session.pinnedAt ? t("chat.unpinConversationAria", "Unpin conversation {{title}}", { title: session.title || t("chat.untitledSession", "Untitled") }) : t("chat.pinConversationAria", "Pin conversation {{title}}", { title: session.title || t("chat.untitledSession", "Untitled") })}
+                title={!session.pinnedAt && pinnedCount >= 3 ? t("chat.pinLimit", "You can pin up to 3 conversations") : undefined}
+                disabled={!session.pinnedAt && pinnedCount >= 3}
+                onClick={() => handlePin(session.id, !session.pinnedAt)}
+              >
+                {session.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
               </button>
               <button
                 type="button"
@@ -3144,7 +3180,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               ) : filteredSessions.length === 0 ? (
                 <div className="chat-empty-state chat-empty-state--padded">{t("chat.noConversationsYet", "No conversations yet")}</div>
               ) : (
-                filteredSessions.map((session) => {
+                <>
+                  {/* FNXC:ChatPinned 2026-07-16-12:00: Direct-session pins are grouped on desktop and mobile; the store caps each scope at three. */}
+                  {pinnedFilteredSessions.length > 0 ? <div className="chat-pinned-divider" data-testid="chat-pinned-divider">{t("chat.pinned", "Pinned")}</div> : null}
+                  {filteredSessions.map((session) => {
                   const isActive = activeSession?.id === session.id;
                   const showUnreadDot = !isActive && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
                   const sessionResolvedModel = resolveSessionProvider(
@@ -3173,6 +3212,20 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       <div className="chat-session-actions">
                         <button
                           type="button"
+                          className="btn-icon chat-session-action-btn chat-session-pin-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handlePin(session.id, !session.pinnedAt);
+                          }}
+                          data-testid="chat-session-pin-btn"
+                          aria-label={session.pinnedAt ? t("chat.unpinConversationAria", "Unpin conversation {{title}}", { title: sessionTitle }) : t("chat.pinConversationAria", "Pin conversation {{title}}", { title: sessionTitle })}
+                          title={!session.pinnedAt && pinnedCount >= 3 ? t("chat.pinLimit", "You can pin up to 3 conversations") : undefined}
+                          disabled={!session.pinnedAt && pinnedCount >= 3}
+                        >
+                          {session.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
+                        </button>
+                        <button
+                          type="button"
                           className="btn-icon chat-session-action-btn chat-session-rename-btn"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -3198,6 +3251,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       </div>
                       <div className="chat-session-title">
                         {sessionTitle}
+                        {session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}
                         {showUnreadDot ? (
                           <span
                             className="chat-unread-dot"
@@ -3226,7 +3280,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       </div>
                     </div>
                   );
-                })
+                  })}
+                </>
               )}
             </div>
           </>
@@ -3367,6 +3422,17 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            onClick={() => handlePin(
+              contextMenu.sessionId,
+              !contextMenuSession?.pinnedAt,
+            )}
+            data-testid="chat-context-pin"
+            disabled={pinnedCount >= 3 && !contextMenuSession?.pinnedAt}
+          >
+            {contextMenuSession?.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
+            {contextMenuSession?.pinnedAt ? t("chat.unpin", "Unpin") : t("chat.pin", "Pin")}
+          </button>
           <button
             onClick={() => openRenameDialog(contextMenu.sessionId)}
             data-testid="chat-context-rename"

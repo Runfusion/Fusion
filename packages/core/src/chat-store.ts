@@ -11,8 +11,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { sql } from "drizzle-orm";
-import { asc } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import * as asyncChatStore from "./async-chat-store.js";
 import type {
@@ -120,6 +119,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
       thinkingLevel: input.thinkingLevel ?? null,
       createdAt: now,
       updatedAt: now,
+      pinnedAt: null,
       cliSessionFile: null,
       inFlightGeneration: null,
       cliExecutorAdapterId: input.cliExecutorAdapterId ?? null,
@@ -177,7 +177,22 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The updated session, or undefined if not found
    */
   async updateSession(id: string, input: ChatSessionUpdateInput): Promise<ChatSession | undefined> {
-    const updated = await asyncChatStore.updateChatSession(this.asyncLayer.db, id, input);
+    const update = {
+      ...input,
+      ...(input.status === "archived" ? { pinnedAt: null } : {}),
+    };
+    /*
+    FNXC:ChatPinned 2026-07-16-12:30:
+    Archive and pin operations lock the target row in their transactions.
+    This prevents an archive from clearing a pin while a prior pin read later
+    writes it back, preserving both archived-session pin invariants.
+    */
+    const updated = input.status === "archived"
+      ? await this.asyncLayer.transactionImmediate(async (tx) => {
+        const session = await asyncChatStore.getChatSessionForUpdate(tx, id);
+        return session ? asyncChatStore.updateChatSession(tx, id, update) : undefined;
+      })
+      : await asyncChatStore.updateChatSession(this.asyncLayer.db, id, update);
     if (updated) this.emit("chat:session:updated", updated);
     return updated;
   }
@@ -190,7 +205,47 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
    * @returns The archived session, or undefined if not found
    */
   async archiveSession(id: string): Promise<ChatSession | undefined> {
-    return this.updateSession(id, { status: "archived" });
+    return this.updateSession(id, { status: "archived", pinnedAt: null });
+  }
+
+  /**
+   * Pin or unpin a Direct chat session.
+   *
+   * FNXC:ChatPinned 2026-07-16-12:00:
+   * PostgreSQL READ COMMITTED transactions do not serialize count-and-write
+   * operations. The non-null, namespaced advisory key serializes mutations for
+   * one scope; null ownerProjectId is counted with isNull and canonicalized as
+   * `default`, while a real project named default remains collision-safe.
+   */
+  async setSessionPinned(id: string, pinned: boolean, _options?: { projectId?: string }): Promise<ChatSession | undefined> {
+    const updated = await this.asyncLayer.transactionImmediate(async (tx) => {
+      const session = await asyncChatStore.getChatSessionForUpdate(tx, id);
+      if (!session) return undefined;
+      if (!pinned) return asyncChatStore.updateChatSession(tx, id, { pinnedAt: null });
+      if (session.status === "archived") {
+        throw new Error("Archived conversations cannot be pinned");
+      }
+
+      const scopeKey = session.projectId ?? "default";
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`chat-pin:${scopeKey}`}, 0))`);
+      const scopePredicate = session.projectId === null
+        ? isNull(schema.project.chatSessions.ownerProjectId)
+        : eq(schema.project.chatSessions.ownerProjectId, session.projectId);
+      const existingPins = await tx
+        .select({ id: schema.project.chatSessions.id })
+        .from(schema.project.chatSessions)
+        .where(and(
+          scopePredicate,
+          eq(schema.project.chatSessions.status, "active"),
+          isNotNull(schema.project.chatSessions.pinnedAt),
+        ));
+      if (existingPins.length >= 3 && session.pinnedAt === null) {
+        throw new Error("You can pin up to 3 conversations per project");
+      }
+      return asyncChatStore.updateChatSession(tx, id, { pinnedAt: session.pinnedAt ?? new Date().toISOString() });
+    });
+    if (updated) this.emit("chat:session:updated", updated);
+    return updated;
   }
 
   /**

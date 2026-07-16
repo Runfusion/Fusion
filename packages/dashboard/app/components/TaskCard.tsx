@@ -40,6 +40,7 @@ import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inR
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy, shouldShowTaskAgeStalenessBadge } from "../utils/taskAgeStalenessCopy";
 import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
+import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel } from "../utils/taskStatusBadgeLabel";
@@ -263,22 +264,9 @@ function isAgentCreatedTask(task: Task): boolean {
 // (which are not members and correctly resolve to false).
 const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
 
-/*
-FNXC:MergeQueue 2026-07-15-10:40:
-AI merge is live for most of its window under status reviewing (clean-room review) and landing (advance main / cleanup), not only merging*. Keep card pulse, merge timer, and status badge on for the full pipeline so operators always see a Merging badge on the single-flight owner.
-*/
-const ACTIVE_STATUSES = new Set([
-  "planning",
-  "researching",
-  "executing",
-  "finalizing",
-  "merging",
-  "merging-pr",
-  "merging-fix",
-  "reviewing",
-  "landing",
-]);
-const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix", "reviewing", "landing"]);
+const ACTIVE_MERGE_STATUSES = new Set(
+  [...ACTIVE_STATUSES].filter((status) => ["merging", "merging-pr", "merging-fix", "reviewing", "landing"].includes(status)),
+);
 
 const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -1335,7 +1323,7 @@ function TaskCardComponent({
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
-  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && !isAwaitingInput && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
+  const isAgentActive = isTaskAgentActive(task, { globalPaused, queued, isStuck });
   // Native HTML5 drag is desktop-mouse only — it doesn't move cards via touch.
   // On touch-primary devices the `draggable` attribute still arms the browser's
   // touch-drag heuristic, which intermittently hijacks horizontal swipes meant
@@ -2931,7 +2919,7 @@ function TaskCardComponent({
     || showOversightBadge;
   const hasHeaderBadges = Boolean(isPaused)
     || Boolean(!isPaused && visualStatus && visualStatus !== "queued")
-    || planReviewRunning
+    || (planReviewRunning && isAgentActive)
     || Boolean(!isPaused && task.column === "todo" && !visualStatus && (task.steps?.length ?? 0) > 0)
     || Boolean(hasInReviewStall && stallCopy)
     || cliWaitingOnInput
@@ -3049,7 +3037,7 @@ function TaskCardComponent({
         )}
         {!isPaused && visualStatus && visualStatus !== "queued" && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${isAgentActive ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
             title={
               isPlanReviewReplanCapApproval
                 ? t(
@@ -3079,7 +3067,7 @@ function TaskCardComponent({
                       : getTaskStatusLabel(visualStatus, t)}
           </span>
         )}
-        {planReviewRunning && (
+        {planReviewRunning && isAgentActive && (
           /*
           FNXC:TaskCardPlanReviewBadge 2026-07-11-12:06:
           The Reviewing badge is additive to the normal header status badge so operators can distinguish "planning" from active Plan Review without hiding paused/stuck/status affordances.

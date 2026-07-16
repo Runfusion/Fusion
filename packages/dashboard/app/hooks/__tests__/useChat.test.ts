@@ -73,6 +73,10 @@ function makeSession(overrides: Partial<ChatSession> & Pick<ChatSession, "id" | 
     thinkingLevel: overrides.thinkingLevel ?? null,
     createdAt: overrides.createdAt ?? "2026-04-08T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
+    pinnedAt: overrides.pinnedAt ?? null,
+    cliSessionFile: null,
+    cliExecutorAdapterId: null,
+    inFlightGeneration: null,
   };
 }
 
@@ -1020,6 +1024,23 @@ describe("useChat", () => {
     expect(result.current.sessions[0]?.title).toBe("Keep me");
     expect(result.current.activeSession?.title).toBe("Keep me");
     expect(addToast).toHaveBeenCalledWith("Failed to rename conversation", "error");
+  });
+
+  it("pins optimistically, reconciles the server timestamp, and sorts pinned sessions first", async () => {
+    const newer = makeSession({ id: "newer", agentId: "agent-001", updatedAt: "2026-04-10T00:00:00.000Z" });
+    const older = makeSession({ id: "older", agentId: "agent-001", updatedAt: "2026-04-09T00:00:00.000Z" });
+    const pinnedAt = "2026-04-08T00:00:00.000Z";
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [newer, older] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockUpdateChatSession.mockResolvedValueOnce({ session: makeSession({ ...older, pinnedAt }) });
+
+    const { result } = renderHook(() => useChat("proj-123"));
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+    await act(async () => { await result.current.pinSession("older", true); });
+
+    expect(mockUpdateChatSession).toHaveBeenCalledWith("older", { pinned: true }, "proj-123");
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["older", "newer"]);
+    expect(result.current.pinnedCount).toBe(1);
   });
 
   describe("setSessionModel", () => {

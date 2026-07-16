@@ -2220,6 +2220,50 @@ describe("TaskCard", () => {
     }
   });
 
+  it("keeps the card border and Reviewing badge in agreement for a status-null running Plan Review", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8055",
+          column: "triage",
+          status: null as any,
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            status: "pending",
+            startedAt: "2026-07-16T00:00:00.000Z",
+          }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")?.className).toContain("agent-active");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-8055"]')?.className).toContain("pulsing");
+  });
+
+  it("turns off both border and Reviewing pulse when the render queue gate is active", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8055-queued",
+          column: "triage",
+          status: null as any,
+          enabledWorkflowSteps: ["plan-review"],
+          workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending", startedAt: "2026-07-16T00:00:00.000Z" }],
+        })}
+        queued
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card")?.className).not.toContain("agent-active");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-8055-queued"]')).toBeNull();
+  });
+
   it("renders the status badge after the card ID in DOM order", () => {
     const { container } = render(
       <TaskCard

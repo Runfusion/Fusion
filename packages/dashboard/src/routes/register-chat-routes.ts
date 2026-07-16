@@ -491,7 +491,12 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    * PATCH /api/chat/sessions/:id
    * Update a chat session (title, status, thinkingLevel, model, or agent target).
    * Body: { title?: string, status?: "active" | "archived", thinkingLevel?: string | null,
-   *         modelProvider?: string | null, modelId?: string | null, agentId?: string }
+   *         modelProvider?: string | null, modelId?: string | null, agentId?: string, pinned?: boolean }
+   *
+   * FNXC:ChatPinned 2026-07-16-12:00:
+   * `pinned` delegates to ChatStore's advisory-lock-protected max-three check.
+   * Null project sessions use its default scope safely, and archiving clears
+   * pinnedAt in the same store update so archived sessions cannot retain pins.
    *
    * FNXC:Chat-ThinkingLevel 2026-07-12-19:30:
    * FN-7775 only let a user pick a session's thinking level at creation time
@@ -526,6 +531,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         modelProvider: rawModelProvider,
         modelId: rawModelId,
         agentId: rawAgentId,
+        pinned: rawPinned,
       } = req.body as {
         title?: string;
         status?: string;
@@ -533,11 +539,16 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         modelProvider?: string | null;
         modelId?: string | null;
         agentId?: string;
+        pinned?: boolean;
       };
 
       // Validate status if provided
       if (status !== undefined && status !== "active" && status !== "archived") {
         throw badRequest("status must be 'active' or 'archived'");
+      }
+
+      if (rawPinned !== undefined && typeof rawPinned !== "boolean") {
+        throw badRequest("pinned must be a boolean");
       }
 
       // Normalize thinkingLevel before persisting: undefined leaves the field
@@ -572,7 +583,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         normalizedAgentId = rawAgentId.trim();
       }
 
-      const session = await chatStore.updateSession(sessionId, {
+      let session = await chatStore.updateSession(sessionId, {
         ...(title !== undefined && { title: title?.trim() || null }),
         ...(status !== undefined && { status }),
         ...(normalizedThinkingLevel !== undefined && { thinkingLevel: normalizedThinkingLevel }),
@@ -582,6 +593,16 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
+      }
+      if (rawPinned !== undefined) {
+        try {
+          session = await chatStore.setSessionPinned(sessionId, rawPinned);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unable to update conversation pin";
+          if (message.includes("pin") || message.includes("Archived")) throw badRequest(message);
+          throw err;
+        }
+        if (!session) throw notFound(`Chat session ${sessionId} not found`);
       }
 
       res.json({ session });

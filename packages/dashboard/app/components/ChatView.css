@@ -418,6 +418,31 @@ Direct conversation rows expose edit and delete as a compact action pair. Keep t
   color: var(--text);
 }
 
+.chat-session-action-btn:disabled,
+.chat-mobile-session-pin:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.chat-session-pinned-indicator {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+}
+
+.chat-pinned-divider {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--space-md) * 2);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+  border-bottom: 1px solid var(--border);
+}
+
 .chat-session-delete-btn:hover,
 .chat-session-delete-btn:focus-visible {
   color: var(--color-error);
@@ -696,12 +721,15 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
   line-height: normal;
 }
 
+.chat-mobile-session-pin,
 .chat-mobile-session-rename {
   flex-shrink: 0;
   align-self: stretch;
   color: var(--text-muted);
 }
 
+.chat-mobile-session-pin:hover,
+.chat-mobile-session-pin:focus-visible,
 .chat-mobile-session-rename:hover {
   color: var(--text);
   background: var(--card-hover);
@@ -753,7 +781,9 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
 
 .chat-mobile-session-option-title {
   width: 100%;
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
   line-height: normal;
   white-space: normal;
   overflow-wrap: anywhere;

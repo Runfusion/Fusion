@@ -1111,9 +1111,9 @@ export interface TaskTokenUsage {
 }
 
 export interface TaskTokenBudget {
-  /** Total-token soft cap. When reached, emits one notification and continues. */
+  /** Input, output, and cache-write token soft cap (cache reads excluded). When reached, emits one notification and continues. */
   soft?: number;
-  /** Total-token hard cap. When reached, pauses the task with pausedReason="token_budget_exceeded". */
+  /** Input, output, and cache-write token hard cap (cache reads excluded). When reached, pauses the task with pausedReason="token_budget_exceeded". */
   hard?: number;
   /** Optional per-size overrides keyed by Task.size (S/M/L). Falls back to soft/hard when absent. */
   perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } };
@@ -5621,6 +5621,17 @@ export interface PlanningQuestion {
   question: string;
   description?: string;
   options?: Array<{ id: string; label: string; description?: string }>;
+  /**
+   * FNXC:PlanningMode 2026-07-16-00:00:
+   * FN-8065 / GitHub #2150 requires the deepening checkpoint to carry a read-only preview
+   * of its withheld pendingSummary. Keeping this optional preserves legacy persisted
+   * currentQuestion rows and leaves ordinary interview questions unchanged.
+   */
+  planPreview?: {
+    title: string;
+    description: string;
+    keyDeliverables: string[];
+  };
 }
 
 /** The final summary generated after planning conversation completes */

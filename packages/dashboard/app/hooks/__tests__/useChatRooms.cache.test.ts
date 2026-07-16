@@ -131,21 +131,21 @@ describe("useChatRooms cache behavior", () => {
     expect(result.current.messages[0]?.roomId).toBe("room-b");
   });
 
-  it("SSE message add writes cache and preserves desc order", async () => {
+  it("SSE message add writes an ascending cache snapshot", async () => {
     mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [message("m2", "room-a", "newer"), message("m1", "room-a", "older")] });
     const { result } = renderHook(() => useChatRooms("proj-1"));
     await waitFor(() => expect(result.current.rooms.length).toBeGreaterThan(0));
 
     act(() => result.current.selectRoom("room-a"));
-    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(["m2", "m1"]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(["m1", "m2"]));
 
     act(() => {
       events["chat:room:message:added"]?.({ data: JSON.stringify(message("m3", "room-a", "latest")) } as MessageEvent);
     });
 
     const cached = readCache<ChatRoomMessage[]>(`${SWR_CACHE_KEYS.CHAT_ROOM_MESSAGES_PREFIX}proj-1:room-a`);
-    expect(cached?.map((m) => m.id)).toEqual(["m2", "m1", "m3"]);
-    expect(result.current.messages.map((m) => m.id)).toEqual(["m2", "m1", "m3"]);
+    expect(cached?.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+    expect(result.current.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
   });
 
   it("refreshRooms uses persisted room id and warm cache", async () => {

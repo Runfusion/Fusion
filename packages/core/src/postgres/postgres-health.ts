@@ -193,6 +193,9 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS alone never
   // upgrades an existing table).
   { table: "chat_sessions", column: "thinking_level", type: "text" },
+  // FNXC:ChatPinned 2026-07-16-12:00: CREATE TABLE IF NOT EXISTS cannot add
+  // this nullable persisted Direct-chat pin timestamp to existing embedded DBs.
+  { table: "chat_sessions", column: "pinned_at", type: "text" },
   { table: "chat_sessions", column: "validator_thinking_level", type: "text" },
   { table: "chat_sessions", column: "planning_thinking_level", type: "text" },
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): sqlite v143-145 additive

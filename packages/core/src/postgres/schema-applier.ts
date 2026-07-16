@@ -29,9 +29,9 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 /** The latest PostgreSQL schema version known to this applier. */
 /*
 FNXC:MultiProjectIsolation 2026-07-15-23:40:
-Advances to 0011 with the owner_project_id domain/partition split. Per-migration identities above stay fixed; only this latest-version marker moves.
+Advances to 0012 after the owner_project_id domain/partition split and chat pin timestamp. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0011";
+export const SCHEMA_BASELINE_VERSION = "0012";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -66,6 +66,12 @@ the composite FKs (SQLSTATE 23503). Keep this identity fixed when
 SCHEMA_BASELINE_VERSION advances.
 */
 export const OWNER_PROJECT_ID_SPLIT_VERSION = "0011";
+/*
+FNXC:ChatPinned 2026-07-16-12:30:
+Version 0012 makes the persisted pin timestamp available on databases that
+already applied the baseline before Direct conversations can be pinned.
+*/
+export const CHAT_SESSION_PINS_VERSION = "0012";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -126,6 +132,11 @@ const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0011_owner_project_id.sql",
+);
+const CHAT_SESSION_PINS_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0012_chat_session_pins.sql",
 );
 
 /**
@@ -207,6 +218,7 @@ export async function applySchemaBaseline(
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
     const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
+    const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -455,6 +467,20 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(ownerProjectIdSplitSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${OWNER_PROJECT_ID_SPLIT_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:ChatPinned 2026-07-16-12:30:
+    Apply the pin timestamp separately from the baseline so all pre-existing
+    databases can safely read and write Direct chat pins after this rollout.
+    */
+    if (!chatSessionPinsAlreadyApplied) {
+      const chatSessionPinsSql = await readFile(CHAT_SESSION_PINS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(chatSessionPinsSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_PINS_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

@@ -1273,6 +1273,7 @@ CREATE TABLE IF NOT EXISTS project.chat_sessions (
   planning_thinking_level text,
   created_at text NOT NULL,
   updated_at text NOT NULL,
+  pinned_at text,
   cli_session_file text,
   in_flight_generation jsonb,
   cli_executor_adapter_id text

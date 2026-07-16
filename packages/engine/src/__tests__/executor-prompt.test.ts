@@ -2613,14 +2613,13 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
   // createTaskUpdateTool is a private executor method; the bare-call guard runs
   // before any store access, so we reach it via the lowest-cost seam: construct
   // a TaskExecutor over a mock store and invoke the private method with `as any`.
-  function makeTool() {
-    const store = createMockStore();
+  function makeTool(store = createMockStore()) {
     const executor = new TaskExecutor(store, "/tmp/test");
-    return (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }, new Map());
+    return { store, tool: (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }, new Map()) };
   }
 
   it("returns isError with a self-describing message when no fields are supplied", async () => {
-    const tool = makeTool();
+    const { tool } = makeTool();
     const result = await tool.execute("call-1", {});
     expect(result.isError).toBe(true);
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
@@ -2630,12 +2629,31 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
   });
 
   it("does not trigger the guard when a dependencies-only patch is supplied", async () => {
-    const tool = makeTool();
+    const { tool } = makeTool();
     const result = await tool.execute("call-1", { dependencies: [] });
     // Reaches the dependencies path, not the bare-call guard.
     expect(result.isError).not.toBe(true);
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).not.toContain("fn_task_update requires at least one of");
+  });
+
+  it("narrates a store-accepted skipped transition exactly once", async () => {
+    const { store, tool } = makeTool();
+    store.updateStep.mockResolvedValue(createMockTaskDetail({
+      steps: [{ name: "No code change needed", status: "skipped", dependsOn: [] }],
+    }));
+
+    const result = await tool.execute("call-1", { step: 0, status: "skipped" });
+
+    expect(result.isError).not.toBe(true);
+    expect(store.appendAgentLog).toHaveBeenCalledTimes(1);
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-001",
+      "Step 0 was skipped — No code change needed.",
+      "status",
+      undefined,
+      "executor",
+    );
   });
 });
 
