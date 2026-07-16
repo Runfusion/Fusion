@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
-import { Globe, Folder, GitBranch, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
+import { Globe, Folder, GitBranch, RefreshCw, Star, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
   getErrorMessage,
   resolveGitlabConfig,
@@ -4427,7 +4427,6 @@ export function SettingsModal({
               aria-label={t("settings.footer.helpDiscussions", "Help and discussions")}
               title={t("settings.footer.helpDiscussions", "Help and discussions")}
             >
-              <HelpCircle size={13} aria-hidden="true" />
               {t("settings.footer.help", "Help")}
             </a>
             <div className="settings-update-check">

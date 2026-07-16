@@ -26,6 +26,8 @@
 .settings-footer-help-btn {
   display: inline-flex;
   align-items: center;
+  /* These are <a> tags styled as .btn — .btn never resets link underline, so without this the browser's default underline paints under the icon+label box. */
+  text-decoration: none;
 }
 
 @media (max-width: 768px) {
@@ -404,6 +406,22 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
     flex-shrink: 0;
     line-height: 1;
     white-space: nowrap;
+  }
+
+  /*
+  FNXC:Settings 2026-07-16-00:20:
+  Help/Export/Import/Reset/Cancel/Save all share `.btn-sm`, which the global mobile
+  touch-target rule (`.btn:not(...):not(.btn-sm)...{min-height:36px}` in styles.css)
+  deliberately skips so dense table/card rows of small buttons stay compact. That
+  exclusion also caught this footer, so these rendered at their ~24px unpadded height
+  on mobile — visibly smaller and misaligned against the 36px auth Test/Disable buttons
+  sitting on the same screen. Re-apply the 36px touch target scoped to this footer only,
+  so the exclusion keeps holding everywhere else that intentionally wants compact `.btn-sm`.
+  */
+  .settings-modal .modal-actions-left .btn-sm,
+  .settings-modal .modal-actions-right .btn-sm,
+  .settings-modal .settings-footer-help-btn {
+    min-height: 36px;
   }
 }
 
