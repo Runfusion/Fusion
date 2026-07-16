@@ -5,6 +5,7 @@ import { fetchGitRemoteBranches } from "../../../api";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
+import { SettingsHelpTip } from "../SettingsHelpTip";
 import type { SectionBaseProps } from "./context";
 /*
 FNXC:MergePush 2026-07-11-23:00:
@@ -58,10 +59,16 @@ The plain label+control+help rows here render through the shared settings primit
 FNXC:SettingsScope 2026-07-15-17:35:
 Every migrated key here is project-scoped (`DEFAULT_PROJECT_SETTINGS`): merge policy, retry caps, and auth mode describe one repository's landing strategy. The badges restate that per row because settings search can land an operator on a single control with no section chrome in view.
 
+FNXC:SettingsHelp 2026-07-15-23:20:
+The per-row "More details" `<details className="settings-option-details">` disclosures this section invented are gone; their help now hangs off the shared "?" (`.settings-field-label-row` + `SettingsHelpTip`), the same affordance every other section uses. This supersedes the earlier reasoning that Merge help was too long to render inline and therefore had to keep its own progressive-disclosure widget:
+- The length premise did not hold. Merge's median help is ~103 characters — identical to Scheduling and SHORTER than Appearance (~168) and General (~123), both of which show help through the "?" without becoming a wall of prose.
+- Progressive disclosure is not lost, only unified. The tip still defers the copy visually; it just does so through one section-agnostic control instead of a Merge-only "▸ More details" summary. Merge was the last holdout, and the split was visible: 17 disclosures here against 2 tips.
+- No copy was deleted or reworded. `SettingsHelpTip` takes `ReactNode`, so the rows composing help from several `t()` fragments interleaved with `<code>`/`<strong>` (`mergeIntegrationWorktree`, `mergeConflictStrategy`, `postMergeAuditMode`, `commitAuthorName`, `commitAuthorEmail`) pass it through verbatim — the constraint that once forced them to a single-string descriptor `help` does not apply to the tip.
+The tip is a SIBLING of the `<label>`, never a child: a nested `<button>` swallows the label's click-to-focus and is invalid markup.
+
 FNXC:SettingsStyling 2026-07-15-17:35:
 Most of this section deliberately keeps its bespoke markup, because Merge is not a section of plain label+control+help rows:
-- Every row whose help lives in a `<details className="settings-option-details">` "More details" disclosure keeps it. Merge help copy is long enough that it is collapsed by default; a descriptor `help` renders unconditionally, so migrating those rows would silently delete a progressive-disclosure affordance across the section and turn Merge into a wall of prose. That is a UX change, not a styling one.
-- `mergeIntegrationWorktree`, `mergeConflictStrategy`, `postMergeAuditMode`, `commitAuthorName`, and `commitAuthorEmail` compose help from several `t()` fragments interleaved with `<code>`/`<strong>` elements; a descriptor `help` is a single string and flattening that copy would reword operator-facing text. `mergeIntegrationWorktree` additionally renders an adjacent live warning banner the primitive has no slot for.
+- `mergeIntegrationWorktree` renders a live warning banner adjacent to its control that the shared primitive has no slot for, and its rich multi-fragment help rules out a single-string descriptor `help`; same for `mergeConflictStrategy`, `postMergeAuditMode`, `commitAuthorName`, and `commitAuthorEmail`.
 - `integrationBranch` and the push remote/branch pair are custom dropdown+Custom…-escape-hatch widgets, not plain selects.
 - `planApprovalMode` keeps its `data-testid="plan-approval-mode-select"`, which the primitives have no slot for and MergeSection.legacy-automerge-cleanup.test.tsx reads.
 - `testMode` is declared in BOTH `DEFAULT_GLOBAL_SETTINGS` and `DEFAULT_PROJECT_SETTINGS`, so its scope is ambiguous and no badge can be stamped honestly.
@@ -139,12 +146,11 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
     return (<>
       <h4 className="settings-section-heading">{t("settings.merge.merge", "Merge")}</h4>
       <div className="form-group">
-        <label htmlFor="autoMerge" className="checkbox-label">
-          <input id="autoMerge" type="checkbox" checked={form.autoMerge} onChange={(e) => setForm((f) => ({ ...f, autoMerge: e.target.checked }))}/>{t("settings.merge.autoMergeCompletedTasks", " Auto-merge completed tasks ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledTasksThatPassReviewAreAutomatically", "When enabled, tasks that pass review are automatically merged into the main branch. Default: enabled.")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="autoMerge" className="checkbox-label">
+            <input id="autoMerge" type="checkbox" checked={form.autoMerge} onChange={(e) => setForm((f) => ({ ...f, autoMerge: e.target.checked }))}/>{t("settings.merge.autoMergeCompletedTasks", " Auto-merge completed tasks ")}</label>
+          <SettingsHelpTip settingKey="autoMerge">{t("settings.merge.whenEnabledTasksThatPassReviewAreAutomatically", "When enabled, tasks that pass review are automatically merged into the main branch. Default: enabled.")}</SettingsHelpTip>
+        </div>
       </div>
       <div className="form-group">
         {/*
@@ -154,7 +160,10 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
           FNXC:PlanApproval 2026-07-04-00:00:
           FN-7557: auto-approve-all is now the project default (previously workflow), so the select fallback and "(default)" label marker move to the auto-approve option to keep the dropdown truthful.
         */}
-        <label htmlFor="planApprovalMode">{t("settings.merge.planApprovalMode", "Plan approval mode")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="planApprovalMode">{t("settings.merge.planApprovalMode", "Plan approval mode")}</label>
+          <SettingsHelpTip settingKey="planApprovalMode">{t("settings.merge.planApprovalModeHelp", "Project-wide override for the planning approval gate. Leave on workflow to use each workflow's Require plan approval setting, or force all approved specs to bypass or wait for manual approval.")}</SettingsHelpTip>
+        </div>
         <select id="planApprovalMode" className="select" value={form.planApprovalMode ?? "auto-approve-all"} onChange={(e) => {
             const nextMode = e.target.value as Settings["planApprovalMode"];
             setForm((f) => ({ ...f, planApprovalMode: nextMode }));
@@ -163,10 +172,6 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
           <option value="auto-approve-all">{t("settings.merge.planApprovalModeAutoApproveAll", "Auto-approve all tasks (default)")}</option>
           <option value="require-all">{t("settings.merge.planApprovalModeRequireAll", "Require approval for all tasks")}</option>
         </select>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.planApprovalModeHelp", "Project-wide override for the planning approval gate. Leave on workflow to use each workflow's Require plan approval setting, or force all approved specs to bypass or wait for manual approval.")}</small>
-        </details>
       </div>
       {/*
         FNXC:AutoMergeRetries 2026-06-17-04:20:
@@ -205,16 +210,14 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
         {legacyStampError ? <small className="settings-error" role="alert">{legacyStampError}</small> : null}
       </div>
       <div className="form-group">
-        <label htmlFor="mergerMode">{t("settings.merge.aIMerge", "AI merge")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="mergerMode">{t("settings.merge.aIMerge", "AI merge")}</label>
+          <SettingsHelpTip settingKey="mergerMode">{t("settings.merge.aIModeMergesTheTaskBranchIntoAn", " AI mode merges the task branch into an isolated clean-room checkout at the target branch's tip, has an AI reviewer audit the squash (with corrective retries \u2014 advisory concerns land with a logged warning, an unfixable correctness concern hard-fails), then fast-forwards the target branch and syncs your local checkout (AI reconciles a conflicting restore). Each task merges to its own target branch, or the default integration branch. ")}<strong>{t("settings.merge.theLegacyMergeSettingsBelowDoNotApply", "The legacy merge settings below do not apply while AI merge is on.")}</strong></SettingsHelpTip>
+        </div>
         <select id="mergerMode" className="select" value={form.merger?.mode ?? "ai"} onChange={(e) => setForm((f) => ({ ...f, merger: { ...(f.merger ?? {}), mode: e.target.value as "ai" | "deterministic" } }))}>
           <option value="ai">{t("settings.merge.aIMergeDefaultAIMergesInAClean", "AI merge (default) \u2014 AI merges in a clean room, an AI reviewer audits with retries, then lands")}</option>
           <option value="deterministic">{t("settings.merge.deterministicLegacyRebaseConflictStrategyAuditPipeline", "Deterministic (legacy) \u2014 rebase / conflict-strategy / audit pipeline")}</option>
         </select>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.aIModeMergesTheTaskBranchIntoAn", " AI mode merges the task branch into an isolated clean-room checkout at the target branch's tip, has an AI reviewer audit the squash (with corrective retries \u2014 advisory concerns land with a logged warning, an unfixable correctness concern hard-fails), then fast-forwards the target branch and syncs your local checkout (AI reconciles a conflicting restore). Each task merges to its own target branch, or the default integration branch. ")}<strong>{t("settings.merge.theLegacyMergeSettingsBelowDoNotApply", "The legacy merge settings below do not apply while AI merge is on.")}</strong>
-          </small>
-        </details>
       </div>
       {(form.merger?.mode ?? "ai") === "ai" && (<>
           {/* FNXC:AIMerge 2026-07-15-17:35: Dotted descriptor key because this is a leaf of the nested project-scoped `merger` blob, not a top-level settings field; the row's anchor and control id follow the same `merger.maxReviewPasses` path the settings blob uses. */}
@@ -231,39 +234,41 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
             onChange={(v) => setForm((f) => ({ ...f, merger: { ...(f.merger ?? {}), maxReviewPasses: v ?? undefined } }))}
           />
           <div className="form-group">
-            <label htmlFor="mergerAllowDirtyLocalCheckoutSync" className="checkbox-label">
-              <input id="mergerAllowDirtyLocalCheckoutSync" type="checkbox" checked={form.merger?.allowDirtyLocalCheckoutSync === true} onChange={(e) => setForm((f) => ({
+            <div className="settings-field-label-row">
+              <label htmlFor="mergerAllowDirtyLocalCheckoutSync" className="checkbox-label">
+                <input id="mergerAllowDirtyLocalCheckoutSync" type="checkbox" checked={form.merger?.allowDirtyLocalCheckoutSync === true} onChange={(e) => setForm((f) => ({
                 ...f,
                 merger: { ...(f.merger ?? {}), allowDirtyLocalCheckoutSync: e.target.checked },
             }))}/>{t("settings.merge.allowAIMergeToSyncADirtyChecked", " Allow AI merge to sync a dirty checked-out integration branch ")}</label>
-            <details className="settings-option-details">
-              <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-              <small>{t("settings.merge.dangerousCompatibilityEscapeHatchLeaveOffUnlessYou", " Dangerous compatibility escape hatch \u2014 restores the legacy stash \u2192 fast-forward \u2192 restore behavior when your checked-out integration branch has unrelated local edits. When off, AI merge blocks before advancing the branch so dirty project-root edits cannot contaminate a completed merge. Default: enabled (new/unconfigured projects sync a dirty checkout). ")}</small>
-            </details>
+              <SettingsHelpTip settingKey="merger.allowDirtyLocalCheckoutSync">{t("settings.merge.dangerousCompatibilityEscapeHatchLeaveOffUnlessYou", " Dangerous compatibility escape hatch \u2014 restores the legacy stash \u2192 fast-forward \u2192 restore behavior when your checked-out integration branch has unrelated local edits. When off, AI merge blocks before advancing the branch so dirty project-root edits cannot contaminate a completed merge. Default: enabled (new/unconfigured projects sync a dirty checkout). ")}</SettingsHelpTip>
+            </div>
           </div>
         </>)}
       <div className="form-group">
-        <label htmlFor="testMode" className="checkbox-label">
-          <input id="testMode" type="checkbox" checked={form.testMode === true} onChange={(e) => setForm((f) => ({ ...f, testMode: e.target.checked }))}/>{t("settings.merge.enableTestMode", " Enable test mode ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.forcesAllAILanesToUseTheDeterministic", "Forces all AI lanes to use the deterministic mock provider. No network calls, zero token cost. No default \u2014 unset (disabled).")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="testMode" className="checkbox-label">
+            <input id="testMode" type="checkbox" checked={form.testMode === true} onChange={(e) => setForm((f) => ({ ...f, testMode: e.target.checked }))}/>{t("settings.merge.enableTestMode", " Enable test mode ")}</label>
+          <SettingsHelpTip settingKey="testMode">{t("settings.merge.forcesAllAILanesToUseTheDeterministic", "Forces all AI lanes to use the deterministic mock provider. No network calls, zero token cost. No default \u2014 unset (disabled).")}</SettingsHelpTip>
+        </div>
       </div>
       <MovedSettingsStub message={t("settings.movedStub.reviewVerification", "Review, verification auto-fix, and scope-enforcement settings now live on the workflow.")} onOpenWorkflowSettings={onOpenWorkflowSettings}/>
       <div className="form-group">
-        <label htmlFor="mergeStrategy">{t("settings.merge.autoCompletionMode", "Auto-completion mode")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="mergeStrategy">{t("settings.merge.autoCompletionMode", "Auto-completion mode")}</label>
+          <SettingsHelpTip settingKey="mergeStrategy">{t("settings.merge.controlsWhatHappensAfterATaskReachesIn", " Controls what happens after a task reaches In Review. Direct mode merges into the current branch locally. Pull request mode keeps the task in In Review while Fusion waits for GitHub reviews and required checks before merging the PR. ")}</SettingsHelpTip>
+        </div>
         <select id="mergeStrategy" value={form.mergeStrategy || "direct"} onChange={(e) => setForm((f) => ({ ...f, mergeStrategy: e.target.value as Settings["mergeStrategy"] }))}>
           <option value="direct">{t("settings.merge.directMergeIntoTheCurrentBranch", "Direct merge into the current branch (default)")}</option>
           <option value="pull-request">{t("settings.merge.createMonitorAndMergeAGitHubPullRequest", "Create, monitor, and merge a GitHub pull request")}</option>
         </select>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.controlsWhatHappensAfterATaskReachesIn", " Controls what happens after a task reaches In Review. Direct mode merges into the current branch locally. Pull request mode keeps the task in In Review while Fusion waits for GitHub reviews and required checks before merging the PR. ")}</small>
-        </details>
       </div>
       <div className="form-group">
-        <label htmlFor="integrationBranch">{t("settings.merge.integrationBranch", "Integration branch")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="integrationBranch">{t("settings.merge.integrationBranch", "Integration branch")}</label>
+          <SettingsHelpTip settingKey="integrationBranch">{t("settings.merge.theCanonicalBranchFusionMergesTasksIntoAnd", " No default \u2014 unset (auto-detect). The canonical branch Fusion merges tasks into and uses as the reference for all ahead/behind / overlap / pre-rebase computations. Leave on ")}<em>{t("settings.merge.autoDetect", "auto-detect")}</em>{t("settings.merge.toResolveViaTheStandardCascade", " to resolve via the standard cascade (")}<code>integrationBranch</code>{t("settings.merge.legacy", " \u2192 legacy ")}<code>baseBranch</code> →
+            <code>origin/HEAD</code>{t("settings.merge.symbolicRefFallback", " symbolic ref \u2192 fallback ")}<code>main</code>{t("settings.merge.pickALocalBranchFromTheDropdownCommon", "). Pick a local branch from the dropdown \u2014 common integration names like ")}<code>main</code>,
+            <code>master</code>, <code>trunk</code>{t("settings.merge.and", ", and ")}<code>develop</code>{t("settings.merge.areListedFirstOrChoose", " are listed first \u2014 or choose ")}<em>{t("settings.merge.custom", "Custom\u2026")}</em>{t("settings.merge.toTypeABranchThatDoesnAposT", " to type a branch that doesn't exist locally yet. Applies to both direct merges and pull-request mode; individual tasks can still override via task metadata. ")}</SettingsHelpTip>
+        </div>
         {(() => {
             const currentValue = form.integrationBranch ?? "";
             const valueIsKnown = currentValue.length > 0 && integrationBranchOptions.includes(currentValue);
@@ -301,16 +306,14 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
               <option value={CUSTOM}>{t("settings.merge.custom", "Custom\u2026")}</option>
             </select>);
         })()}
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.theCanonicalBranchFusionMergesTasksIntoAnd", " No default \u2014 unset (auto-detect). The canonical branch Fusion merges tasks into and uses as the reference for all ahead/behind / overlap / pre-rebase computations. Leave on ")}<em>{t("settings.merge.autoDetect", "auto-detect")}</em>{t("settings.merge.toResolveViaTheStandardCascade", " to resolve via the standard cascade (")}<code>integrationBranch</code>{t("settings.merge.legacy", " \u2192 legacy ")}<code>baseBranch</code> →
-            <code>origin/HEAD</code>{t("settings.merge.symbolicRefFallback", " symbolic ref \u2192 fallback ")}<code>main</code>{t("settings.merge.pickALocalBranchFromTheDropdownCommon", "). Pick a local branch from the dropdown \u2014 common integration names like ")}<code>main</code>,
-            <code>master</code>, <code>trunk</code>{t("settings.merge.and", ", and ")}<code>develop</code>{t("settings.merge.areListedFirstOrChoose", " are listed first \u2014 or choose ")}<em>{t("settings.merge.custom", "Custom\u2026")}</em>{t("settings.merge.toTypeABranchThatDoesnAposT", " to type a branch that doesn't exist locally yet. Applies to both direct merges and pull-request mode; individual tasks can still override via task metadata. ")}</small>
-        </details>
       </div>
       {form.mergeStrategy !== "pull-request" && (form.merger?.mode ?? "ai") !== "ai" && (<>
           <div className="form-group">
-            <label htmlFor="directMergeCommitStrategy">{t("settings.merge.directMergeCommitRouting", "Direct merge commit routing")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="directMergeCommitStrategy">{t("settings.merge.directMergeCommitRouting", "Direct merge commit routing")}</label>
+              <SettingsHelpTip settingKey="directMergeCommitStrategy">{t("settings.merge.autoKeepsTodayAposSSquashBehaviorFor", " Auto keeps today's squash behavior for branches with zero or one substantive commit, but switches multi-substantive branches to a history-preserving rebase-and-merge path. Individual tasks can override this in PROMPT.md with ")}<code>**Direct Merge Commit Strategy:** auto|always-squash|always-rebase</code>.
+              </SettingsHelpTip>
+            </div>
             <select id="directMergeCommitStrategy" className="select" value={form.directMergeCommitStrategy ?? "always-squash"} onChange={(e) => setForm((f) => ({
                 ...f,
                 directMergeCommitStrategy: e.target.value as "auto" | "always-squash" | "always-rebase",
@@ -319,14 +322,12 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
               <option value="always-squash">{t("settings.merge.alwaysSquashDirectMerges", "Always squash direct merges (default)")}</option>
               <option value="always-rebase">{t("settings.merge.alwaysPreserveDirectMergeCommitHistory", "Always preserve direct-merge commit history")}</option>
             </select>
-            <details className="settings-option-details">
-              <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-              <small>{t("settings.merge.autoKeepsTodayAposSSquashBehaviorFor", " Auto keeps today's squash behavior for branches with zero or one substantive commit, but switches multi-substantive branches to a history-preserving rebase-and-merge path. Individual tasks can override this in PROMPT.md with ")}<code>**Direct Merge Commit Strategy:** auto|always-squash|always-rebase</code>.
-              </small>
-            </details>
           </div>
           <div className="form-group">
-            <label htmlFor="mergeIntegrationWorktree">{t("settings.merge.integrationWorktree", "Integration worktree")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="mergeIntegrationWorktree">{t("settings.merge.integrationWorktree", "Integration worktree")}</label>
+              <SettingsHelpTip settingKey="mergeIntegrationWorktree">{t("settings.merge.autoMergeRunsInTheTaskWorktreeBy", " Auto-merge runs in the task worktree by default. Switch to the legacy project-root path only if you need the pre-FN-5279 fallback; worktrunk-managed projects still defer to worktrunk. ")}</SettingsHelpTip>
+            </div>
             <select id="mergeIntegrationWorktree" className="select" value={form.mergeIntegrationWorktree ?? "reuse-task-worktree"} onChange={(e) => setForm((f) => ({
                 ...f,
                 mergeIntegrationWorktree: e.target.value as Settings["mergeIntegrationWorktree"],
@@ -334,12 +335,14 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
               <option value="reuse-task-worktree">{t("settings.merge.reuseTaskWorktreeDefault", "Reuse task worktree (default)")}</option>
               <option value="cwd-main">{t("settings.merge.useProjectRootLegacy", "Use project root (legacy)")}</option>
             </select>
-            <small>{t("settings.merge.autoMergeRunsInTheTaskWorktreeBy", " Auto-merge runs in the task worktree by default. Switch to the legacy project-root path only if you need the pre-FN-5279 fallback; worktrunk-managed projects still defer to worktrunk. ")}</small>
             {(form.mergeIntegrationWorktree ?? "reuse-task-worktree") !== "reuse-task-worktree" && (<div className="settings-warning-banner" role="alert" aria-live="polite" data-testid="merge-integration-worktree-warning">
                 <strong>{t("settings.merge.legacyIntegrationBranchMode", "Legacy integration-branch mode.")}</strong>{" "}{t("settings.merge.autoMergeWillRunRebaseConflictResolutionAnd", " Auto-merge will run rebase, conflict resolution, and squash commits inside the project root (the user's checked-out integration-branch worktree) instead of the task worktree. Fusion assumes that directory is already on the integration branch and clean; if it isn't, merges may fail or touch the user's working tree. Reuse-task-worktree is the recommended default (FN-5279). Switch back unless you have a specific reason to opt in (FN-5348). ")}</div>)}
           </div>
           <div className="form-group">
-            <label htmlFor="mergeAdvanceAutoSync">{t("settings.merge.autoSyncProjectCheckoutAfterMerge", "Auto-sync project checkout after merge")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="mergeAdvanceAutoSync">{t("settings.merge.autoSyncProjectCheckoutAfterMerge", "Auto-sync project checkout after merge")}</label>
+              <SettingsHelpTip settingKey="mergeAdvanceAutoSync">{t("settings.merge.afterFusionAdvancesTheIntegrationBranchRefThe", " After Fusion advances the integration branch ref, the merger can auto-sync other worktrees still checked out on that branch (typically your project-root checkout). ")}<code>Stash + fast-forward</code>{t("settings.merge.snapshotsRealLocalEditsAsAPatchAgainst", " snapshots real local edits as a patch against the previous tip, snaps the worktree to the new tip, then reapplies the patch \u2014 untracked files that collide with newly-tracked paths are left in a temp dir for manual recovery. ")}<code>Fast-forward only</code>{t("settings.merge.snapsCleanlyWhenTheWorktreeHasNoEdits", " snaps cleanly when the worktree has no edits and skips otherwise. ")}<code>Off</code>{t("settings.merge.isTheLegacyBehavior", " is the legacy behavior: ")}<code>git status</code>{t("settings.merge.inYourProjectRootWillShowTheNew", " in your project root will show the new commits inverted as &quot;staged changes&quot; until you pull manually. Only applies to direct merges. ")}</SettingsHelpTip>
+            </div>
             <select id="mergeAdvanceAutoSync" className="select" value={form.mergeAdvanceAutoSync ?? "stash-and-ff"} onChange={(e) => setForm((f) => ({
                 ...f,
                 mergeAdvanceAutoSync: e.target.value as "off" | "ff-only" | "stash-and-ff",
@@ -348,10 +351,6 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
               <option value="ff-only">{t("settings.merge.fastForwardOnlySkipDirtyWorktrees", "Fast-forward only \u2014 skip dirty worktrees")}</option>
               <option value="off">{t("settings.merge.offLeaveTheProjectRootStaleLegacyBehavior", "Off \u2014 leave the project root stale (legacy behavior)")}</option>
             </select>
-            <details className="settings-option-details">
-              <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-              <small>{t("settings.merge.afterFusionAdvancesTheIntegrationBranchRefThe", " After Fusion advances the integration branch ref, the merger can auto-sync other worktrees still checked out on that branch (typically your project-root checkout). ")}<code>Stash + fast-forward</code>{t("settings.merge.snapshotsRealLocalEditsAsAPatchAgainst", " snapshots real local edits as a patch against the previous tip, snaps the worktree to the new tip, then reapplies the patch \u2014 untracked files that collide with newly-tracked paths are left in a temp dir for manual recovery. ")}<code>Fast-forward only</code>{t("settings.merge.snapsCleanlyWhenTheWorktreeHasNoEdits", " snaps cleanly when the worktree has no edits and skips otherwise. ")}<code>Off</code>{t("settings.merge.isTheLegacyBehavior", " is the legacy behavior: ")}<code>git status</code>{t("settings.merge.inYourProjectRootWillShowTheNew", " in your project root will show the new commits inverted as &quot;staged changes&quot; until you pull manually. Only applies to direct merges. ")}</small>
-            </details>
           </div>
         </>)}
       {/*
@@ -360,77 +359,76 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
         This section's GitLab auth disclosure carried a SECOND `gitlabEnabled` toggle (id `mergeGitlabEnabled`) writing the same key as General's — removing it here is what resolves that duplicate, so do not reintroduce a forge auth control in Merge.
       */}
       <div className="form-group">
-        <label htmlFor="includeTaskIdInCommit" className="checkbox-label">
-          <input id="includeTaskIdInCommit" type="checkbox" checked={form.includeTaskIdInCommit !== false} onChange={(e) => setForm((f) => ({ ...f, includeTaskIdInCommit: e.target.checked }))}/>{t("settings.merge.includeTaskIDInCommitScope", " Include task ID in commit scope ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenDisabledMergeCommitMessagesOmitTheTask", "When disabled, merge commit messages omit the task ID from the scope (e.g. ")}<code>feat: ...</code>{t("settings.merge.insteadOf", " instead of ")}<code>feat(KB-001): ...</code>{t("settings.merge.includeTaskIdInCommitDefault", "). Default: enabled.")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="includeTaskIdInCommit" className="checkbox-label">
+            <input id="includeTaskIdInCommit" type="checkbox" checked={form.includeTaskIdInCommit !== false} onChange={(e) => setForm((f) => ({ ...f, includeTaskIdInCommit: e.target.checked }))}/>{t("settings.merge.includeTaskIDInCommitScope", " Include task ID in commit scope ")}</label>
+          <SettingsHelpTip settingKey="includeTaskIdInCommit">{t("settings.merge.whenDisabledMergeCommitMessagesOmitTheTask", "When disabled, merge commit messages omit the task ID from the scope (e.g. ")}<code>feat: ...</code>{t("settings.merge.insteadOf", " instead of ")}<code>feat(KB-001): ...</code>{t("settings.merge.includeTaskIdInCommitDefault", "). Default: enabled.")}</SettingsHelpTip>
+        </div>
       </div>
       <div className="form-group">
-        <label htmlFor="commitAuthorEnabled" className="checkbox-label">
-          <input id="commitAuthorEnabled" type="checkbox" checked={form.commitAuthorEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, commitAuthorEnabled: e.target.checked }))}/>{t("settings.merge.addFusionAsCoAuthorOnCommits", " Add Fusion as co-author on commits ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledCommitsMadeByFusionKeepYour", " When enabled, commits made by Fusion keep your git identity as the primary author and append a ")}<code>Co-authored-by</code>{t("settings.merge.trailerCreditingFusionRecognizedByGitHubForShared", " trailer crediting Fusion (recognized by GitHub for shared attribution). Default: enabled. ")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="commitAuthorEnabled" className="checkbox-label">
+            <input id="commitAuthorEnabled" type="checkbox" checked={form.commitAuthorEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, commitAuthorEnabled: e.target.checked }))}/>{t("settings.merge.addFusionAsCoAuthorOnCommits", " Add Fusion as co-author on commits ")}</label>
+          <SettingsHelpTip settingKey="commitAuthorEnabled">{t("settings.merge.whenEnabledCommitsMadeByFusionKeepYour", " When enabled, commits made by Fusion keep your git identity as the primary author and append a ")}<code>Co-authored-by</code>{t("settings.merge.trailerCreditingFusionRecognizedByGitHubForShared", " trailer crediting Fusion (recognized by GitHub for shared attribution). Default: enabled. ")}</SettingsHelpTip>
+        </div>
       </div>
 
       {form.commitAuthorEnabled !== false && (<>
           <div className="form-group">
-            <label htmlFor="commitAuthorName">{t("settings.merge.coAuthorName", "Co-author Name")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="commitAuthorName">{t("settings.merge.coAuthorName", "Co-author Name")}</label>
+              <SettingsHelpTip settingKey="commitAuthorName">{t("settings.merge.nameUsedInThe", "Name used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailer", " trailer. Default: Fusion.")}</SettingsHelpTip>
+            </div>
             <input id="commitAuthorName" type="text" value={form.commitAuthorName ?? ""} placeholder={t("settings.merge.fusion", "Fusion")} onChange={(e) => setForm((f) => ({
                 ...f,
                 commitAuthorName: e.target.value || undefined,
             }))}/>
-            <small>{t("settings.merge.nameUsedInThe", "Name used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailer", " trailer. Default: Fusion.")}</small>
           </div>
           <div className="form-group">
-            <label htmlFor="commitAuthorEmail">{t("settings.merge.coAuthorEmail", "Co-author Email")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="commitAuthorEmail">{t("settings.merge.coAuthorEmail", "Co-author Email")}</label>
+              <SettingsHelpTip settingKey="commitAuthorEmail">{t("settings.merge.emailUsedInThe", "Email used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailerEmail", " trailer. Default: noreply@runfusion.ai.")}</SettingsHelpTip>
+            </div>
             <input id="commitAuthorEmail" type="email" value={form.commitAuthorEmail ?? ""} placeholder={t("settings.merge.noreplyRunfusionAi", "noreply@runfusion.ai")} onChange={(e) => setForm((f) => ({
                 ...f,
                 commitAuthorEmail: e.target.value || undefined,
             }))}/>
-            <small>{t("settings.merge.emailUsedInThe", "Email used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailerEmail", " trailer. Default: noreply@runfusion.ai.")}</small>
           </div>
         </>)}
 
       <div className="form-group">
-        <label htmlFor="autoResolveConflicts" className="checkbox-label">
-          <input id="autoResolveConflicts" type="checkbox" checked={form.autoResolveConflicts !== false} onChange={(e) => setForm((f) => ({ ...f, autoResolveConflicts: e.target.checked }))}/>{t("settings.merge.autoResolveConflictsInLockFilesAndGenerated", " Auto-resolve conflicts in lock files and generated files ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review. Default: enabled.")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="autoResolveConflicts" className="checkbox-label">
+            <input id="autoResolveConflicts" type="checkbox" checked={form.autoResolveConflicts !== false} onChange={(e) => setForm((f) => ({ ...f, autoResolveConflicts: e.target.checked }))}/>{t("settings.merge.autoResolveConflictsInLockFilesAndGenerated", " Auto-resolve conflicts in lock files and generated files ")}</label>
+          <SettingsHelpTip settingKey="autoResolveConflicts">{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review. Default: enabled.")}</SettingsHelpTip>
+        </div>
       </div>
       {(form.merger?.mode ?? "ai") !== "ai" && (<>
       <div className="form-group">
-        <label htmlFor="smartConflictResolution" className="checkbox-label">
-          <input id="smartConflictResolution" type="checkbox" checked={form.smartConflictResolution !== false} onChange={(e) => setForm((f) => ({ ...f, smartConflictResolution: e.target.checked }))}/>{t("settings.merge.smartConflictResolution", " Smart conflict resolution ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm2", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review. Default: enabled.")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="smartConflictResolution" className="checkbox-label">
+            <input id="smartConflictResolution" type="checkbox" checked={form.smartConflictResolution !== false} onChange={(e) => setForm((f) => ({ ...f, smartConflictResolution: e.target.checked }))}/>{t("settings.merge.smartConflictResolution", " Smart conflict resolution ")}</label>
+          <SettingsHelpTip settingKey="smartConflictResolution">{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm2", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review. Default: enabled.")}</SettingsHelpTip>
+        </div>
       </div>
       <div className="form-group">
-        <label htmlFor="mergeConflictStrategy">{t("settings.merge.conflictFallbackStrategy", "Conflict Fallback Strategy")}</label>
-        <select id="mergeConflictStrategy" value={form.mergeConflictStrategy ?? "smart-prefer-main"} onChange={(e) => setForm((f) => ({ ...f, mergeConflictStrategy: e.target.value as "smart-prefer-main" | "smart-prefer-branch" | "ai-only" | "abort" }))}>
-          <option value="smart-prefer-main">{t("settings.merge.smartPreferMainOnFallbackFetchFfOrigin", "Smart, prefer main on fallback \u2014 fetch+ff origin \u2192 AI \u2192 auto-resolve \u2192 -X ours (default; protects just-merged sibling work)")}</option>
-          <option value="smart-prefer-branch">{t("settings.merge.smartPreferTaskOnFallbackFetchFfOrigin", "Smart, prefer task on fallback \u2014 fetch+ff origin \u2192 AI \u2192 auto-resolve \u2192 -X theirs (legacy \"smart\" behavior; task branch wins)")}</option>
-          <option value="ai-only">{t("settings.merge.aIOnlyAIAutoResolveAIRetryNever", "AI only \u2014 AI \u2192 auto-resolve \u2192 AI retry; never silently pick a side")}</option>
-          <option value="abort">{t("settings.merge.abortOneAIAttemptRequireManualResolutionIf", "Abort \u2014 one AI attempt; require manual resolution if it fails")}</option>
-        </select>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.both", " Both ")}<strong>{t("settings.merge.smart", "Smart")}</strong>{t("settings.merge.optionsStartWithABestEffort", " options start with a best-effort ")}<code>git fetch</code>{t("settings.merge.fastForwardOfLocalMainFrom", " + fast-forward of local main from ")}<code>origin</code>{t("settings.merge.soAFreshlyPushedSiblingCommitDoesntGet", " (so a freshly-pushed sibling commit doesn't get clobbered), then run an AI agent, then auto-resolve handles lock/generated/trivial files. They differ only in the ")}<em>{t("settings.merge.finalFallback", "final fallback")}</em>:
+        <div className="settings-field-label-row">
+          <label htmlFor="mergeConflictStrategy">{t("settings.merge.conflictFallbackStrategy", "Conflict Fallback Strategy")}</label>
+          <SettingsHelpTip settingKey="mergeConflictStrategy">{t("settings.merge.both", " Both ")}<strong>{t("settings.merge.smart", "Smart")}</strong>{t("settings.merge.optionsStartWithABestEffort", " options start with a best-effort ")}<code>git fetch</code>{t("settings.merge.fastForwardOfLocalMainFrom", " + fast-forward of local main from ")}<code>origin</code>{t("settings.merge.soAFreshlyPushedSiblingCommitDoesntGet", " (so a freshly-pushed sibling commit doesn't get clobbered), then run an AI agent, then auto-resolve handles lock/generated/trivial files. They differ only in the ")}<em>{t("settings.merge.finalFallback", "final fallback")}</em>:
             {" "}
             <strong>{t("settings.merge.smartPreferMain", "Smart, prefer main")}</strong>{t("settings.merge.uses", " uses ")}<code>-X ours</code>{t("settings.merge.soMainWinsProtectsJustMergedSiblingWork", " so main wins \u2014 protects just-merged sibling work and is the new default. ")}{" "}
             <strong>{t("settings.merge.smartPreferTask", "Smart, prefer task")}</strong>{t("settings.merge.uses", " uses ")}<code>-X theirs</code>{t("settings.merge.soTheTaskBranchWinsFastButCan", " so the task branch wins \u2014 fast, but can resurrect code an earlier sibling task deleted (the FN-2887 class of regression). ")}{" "}
             <strong>{t("settings.merge.aIOnly", "AI only")}</strong>{t("settings.merge.retriesTheAIAgentRatherThanAutoPicking", " retries the AI agent rather than auto-picking a side. ")}{" "}
             <strong>{t("settings.merge.abort", "Abort")}</strong>{t("settings.merge.stopsAfterTheFirstAIAttemptAndWaits", " stops after the first AI attempt and waits for a human. ")}{" "}
             <em>{t("settings.merge.legacy2", "Legacy ")}<code>"smart"</code>{t("settings.merge.and2", " and ")}<code>"prefer-main"</code>{t("settings.merge.valuesFromOlderSettingsAreMigratedAutomatically", " values from older settings are migrated automatically.")}</em>
-          </small>
-        </details>
+          </SettingsHelpTip>
+        </div>
+        <select id="mergeConflictStrategy" value={form.mergeConflictStrategy ?? "smart-prefer-main"} onChange={(e) => setForm((f) => ({ ...f, mergeConflictStrategy: e.target.value as "smart-prefer-main" | "smart-prefer-branch" | "ai-only" | "abort" }))}>
+          <option value="smart-prefer-main">{t("settings.merge.smartPreferMainOnFallbackFetchFfOrigin", "Smart, prefer main on fallback \u2014 fetch+ff origin \u2192 AI \u2192 auto-resolve \u2192 -X ours (default; protects just-merged sibling work)")}</option>
+          <option value="smart-prefer-branch">{t("settings.merge.smartPreferTaskOnFallbackFetchFfOrigin", "Smart, prefer task on fallback \u2014 fetch+ff origin \u2192 AI \u2192 auto-resolve \u2192 -X theirs (legacy \"smart\" behavior; task branch wins)")}</option>
+          <option value="ai-only">{t("settings.merge.aIOnlyAIAutoResolveAIRetryNever", "AI only \u2014 AI \u2192 auto-resolve \u2192 AI retry; never silently pick a side")}</option>
+          <option value="abort">{t("settings.merge.abortOneAIAttemptRequireManualResolutionIf", "Abort \u2014 one AI attempt; require manual resolution if it fails")}</option>
+        </select>
       </div>
       <SettingsSelectRow
         descriptor={{
@@ -451,7 +449,10 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
             }))}
       />
       <div className="form-group">
-        <label htmlFor="postMergeAuditMode">{t("settings.merge.postMergeAuditMode", "Post-merge audit mode")}</label>
+        <div className="settings-field-label-row">
+          <label htmlFor="postMergeAuditMode">{t("settings.merge.postMergeAuditMode", "Post-merge audit mode")}</label>
+          <SettingsHelpTip settingKey="postMergeAuditMode">{t("settings.merge.controlsThePostMergeAuditGate", " Controls the post-merge audit gate. ")}<strong>{t("settings.merge.warn", "Warn")}</strong>{t("settings.merge.defaultLogsFindingsButAutoCompletesTheMerge", " (default) logs findings but auto-completes the merge. ")}<strong>{t("settings.merge.block", "Block")}</strong>{t("settings.merge.isTheStricterOptInModeThatRefuses", " is the stricter opt-in mode that refuses to auto-complete merges with duplicate-subject or touched-file overlap risks. ")}<strong>{t("settings.merge.off", "Off")}</strong>{t("settings.merge.skipsTheAuditEntirelySwitchingToOffIs", " skips the audit entirely. Switching to Off is recommended only if you trust your branches don't silently drop edits. ")}</SettingsHelpTip>
+        </div>
         <select className="select" id="postMergeAuditMode" value={form.postMergeAuditMode ?? "warn"} onChange={(e) => setForm((f) => ({
                 ...f,
                 postMergeAuditMode: e.target.value as "block" | "warn" | "off",
@@ -460,28 +461,28 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
           <option value="warn">{t("settings.merge.warnDefaultLogFindingsContinue", "Warn (default; log findings, continue)")}</option>
           <option value="off">{t("settings.merge.offSkipAudit", "Off (skip audit)")}</option>
         </select>
-        <small>{t("settings.merge.controlsThePostMergeAuditGate", " Controls the post-merge audit gate. ")}<strong>{t("settings.merge.warn", "Warn")}</strong>{t("settings.merge.defaultLogsFindingsButAutoCompletesTheMerge", " (default) logs findings but auto-completes the merge. ")}<strong>{t("settings.merge.block", "Block")}</strong>{t("settings.merge.isTheStricterOptInModeThatRefuses", " is the stricter opt-in mode that refuses to auto-complete merges with duplicate-subject or touched-file overlap risks. ")}<strong>{t("settings.merge.off", "Off")}</strong>{t("settings.merge.skipsTheAuditEntirelySwitchingToOffIs", " skips the audit entirely. Switching to Off is recommended only if you trust your branches don't silently drop edits. ")}</small>
       </div>
       </>)}
       <div className="form-group">
-        <label htmlFor="pushAfterMerge" className="checkbox-label">
-          <input id="pushAfterMerge" type="checkbox" checked={form.pushAfterMerge === true} onChange={(e) => setForm((f) => ({ ...f, pushAfterMerge: e.target.checked }))}/>{t("settings.merge.pushToRemoteAfterMerge", " Push to remote after merge ")}</label>
-        <details className="settings-option-details">
-          <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledTheMergedResultIsAutomaticallyPushed", "When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed. Default: disabled.")}</small>
-        </details>
+        <div className="settings-field-label-row">
+          <label htmlFor="pushAfterMerge" className="checkbox-label">
+            <input id="pushAfterMerge" type="checkbox" checked={form.pushAfterMerge === true} onChange={(e) => setForm((f) => ({ ...f, pushAfterMerge: e.target.checked }))}/>{t("settings.merge.pushToRemoteAfterMerge", " Push to remote after merge ")}</label>
+          <SettingsHelpTip settingKey="pushAfterMerge">{t("settings.merge.whenEnabledTheMergedResultIsAutomaticallyPushed", "When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed. Default: disabled.")}</SettingsHelpTip>
+        </div>
       </div>
 
       {form.pushAfterMerge && (gitRemoteOptions.length === 0 ? (<div className="form-group">
-          <label htmlFor="pushRemote">{t("settings.merge.pushRemote", "Push Remote")}</label>
+          <div className="settings-field-label-row">
+            <label htmlFor="pushRemote">{t("settings.merge.pushRemote", "Push Remote")}</label>
+            <SettingsHelpTip settingKey="pushRemote">{t("settings.merge.gitRemoteToPushToEGOrigin", "Git remote to push to (e.g. \"origin\"). Can include branch name (e.g. \"origin main\"). Default: \"origin\".")}</SettingsHelpTip>
+          </div>
           <input id="pushRemote" type="text" placeholder={t("settings.merge.origin", "origin")} value={form.pushRemote || ""} onChange={(e) => setForm((f) => ({ ...f, pushRemote: e.target.value || undefined }))}/>
-          <details className="settings-option-details">
-            <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-            <small>{t("settings.merge.gitRemoteToPushToEGOrigin", "Git remote to push to (e.g. \"origin\"). Can include branch name (e.g. \"origin main\"). Default: \"origin\".")}</small>
-          </details>
         </div>) : (<>
           <div className="form-group">
-            <label htmlFor="pushRemote">{t("settings.merge.pushRemote", "Push Remote")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="pushRemote">{t("settings.merge.pushRemote", "Push Remote")}</label>
+              <SettingsHelpTip settingKey="pushRemote">{t("settings.merge.gitRemoteThatMergedResultsArePushedTo", "Git remote that merged results are pushed to. Default: \"origin\".")}</SettingsHelpTip>
+            </div>
             <select id="pushRemote" className="select" value={pushTarget.remote} onChange={(e) => {
                 // Capture eagerly: the deferred setForm updater must not read the
                 // controlled select's value after React resets it on re-render.
@@ -493,13 +494,12 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
               {!gitRemoteOptions.includes(pushTarget.remote) && (<option value={pushTarget.remote}>{pushTarget.remote}</option>)}
               {gitRemoteOptions.map((name) => (<option key={name} value={name}>{name}</option>))}
             </select>
-            <details className="settings-option-details">
-              <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-              <small>{t("settings.merge.gitRemoteThatMergedResultsArePushedTo", "Git remote that merged results are pushed to. Default: \"origin\".")}</small>
-            </details>
           </div>
           <div className="form-group">
-            <label htmlFor="pushRemoteBranch">{t("settings.merge.pushTargetBranch", "Push target branch")}</label>
+            <div className="settings-field-label-row">
+              <label htmlFor="pushRemoteBranch">{t("settings.merge.pushTargetBranch", "Push target branch")}</label>
+              <SettingsHelpTip settingKey="pushRemoteBranch">{t("settings.merge.pushTargetBranchHelp", "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it).")}</SettingsHelpTip>
+            </div>
             {(() => {
                 const currentBranch = pushTarget.branch;
                 const branchIsKnown = currentBranch.length > 0 && pushBranchOptions.includes(currentBranch);
@@ -529,10 +529,6 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
                   <option value={CUSTOM}>{t("settings.merge.custom", "Custom…")}</option>
                 </select>);
             })()}
-            <details className="settings-option-details">
-              <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-              <small>{t("settings.merge.pushTargetBranchHelp", "Branch on the remote that merged results are pushed to. Leave on the default to push the integration branch to its same-named remote branch; pick a listed remote branch or choose Custom… to type one that doesn't exist on the remote yet (the push creates it).")}</small>
-            </details>
           </div>
         </>))}
     </>);
