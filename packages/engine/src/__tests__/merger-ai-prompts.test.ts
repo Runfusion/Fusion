@@ -157,6 +157,20 @@ describe("parseReviewVerdict — reason recovery (FN-8004)", () => {
     expect(result.reasons).toEqual(["genuine defect here"]);
   });
 
+  it("ignores fenced scaffolding on both sides before recovering a preceding reason", () => {
+    const result = parseReviewVerdict(
+      [
+        "- genuine defect here",
+        "```diff",
+        "- raw evidence that is not reviewer feedback",
+        "```",
+        `${REVIEW_VERDICT_MARKER} reject`,
+        "```",
+      ].join("\n")
+    );
+    expect(result.reasons).toEqual(["genuine defect here"]);
+  });
+
   it("caps recovered reasons so a long transcript cannot flood the corrective prompt", () => {
     const body = Array.from({ length: 30 }, (_, i) => `- reason ${i}`);
     const result = parseReviewVerdict(

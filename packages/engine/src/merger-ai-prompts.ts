@@ -101,6 +101,25 @@ function isNonReasonLine(line: string): boolean {
 }
 
 /*
+FNXC:MergerAiReview 2026-07-15-14:45:
+FN-8004 corrective merges must receive reviewer conclusions, never pasted diff or tool output. Track Markdown fences while recovering reasons on either side of a verdict so nearby evidence cannot displace actionable feedback.
+*/
+function collectReasonLines(lines: string[], start: number, end: number, step: 1 | -1): string[] {
+  const reasons: string[] = [];
+  let inFence = false;
+  for (let i = start; step === 1 ? i < end : i >= end; i += step) {
+    if (/^\s*(?:`{3,}|~{3,})/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || isNonReasonLine(lines[i])) continue;
+    reasons.push(cleanReasonLine(lines[i]));
+    if (reasons.length >= MAX_RECOVERED_PRECEDING_REASONS) break;
+  }
+  return reasons;
+}
+
+/*
 FNXC:MergerAiReview 2026-07-15-21:30:
 FN-8004 follow-up. The prompt tells the reviewer to "End with a single decision line", so a
 compliant reviewer writes its reasoning ABOVE `REVIEW_VERDICT: reject` and ends on the verdict.
@@ -128,21 +147,11 @@ function extractRejectReasons(
     .replace(/^[\s:–—-]+/, "")
     .trim();
   if (inline) reasons.push(inline);
-  for (let i = verdictLineIndex + 1; i < lines.length; i++) {
-    if (SEVERITY_LINE_RE.test(lines[i])) continue;
-    const cleaned = cleanReasonLine(lines[i]);
-    if (cleaned) reasons.push(cleaned);
-  }
+  reasons.push(...collectReasonLines(lines, verdictLineIndex + 1, lines.length, 1));
   if (reasons.length === 0) {
     // Walk backwards from the verdict so the reviewer's closing argument — the part
     // most likely to state the blocking defect — is reported first.
-    const preceding: string[] = [];
-    for (let i = verdictLineIndex - 1; i >= 0; i--) {
-      if (isNonReasonLine(lines[i])) continue;
-      preceding.push(cleanReasonLine(lines[i]));
-      if (preceding.length >= MAX_RECOVERED_PRECEDING_REASONS) break;
-    }
-    reasons.push(...preceding);
+    reasons.push(...collectReasonLines(lines, verdictLineIndex - 1, 0, -1));
   }
   if (reasons.length === 0)
     reasons.push("reviewer rejected the merge without a stated reason");

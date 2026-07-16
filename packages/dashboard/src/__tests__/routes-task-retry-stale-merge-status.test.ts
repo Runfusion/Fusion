@@ -61,7 +61,7 @@ function mkMergeTask(overrides: Partial<Task> = {}): Task {
   } as unknown as Task;
 }
 
-function buildApp(input: { task: Task; activeMergeTaskId?: string | null }) {
+function buildApp(input: { task: Task; activeMergeTaskId?: string | null; staleMergingStatusMinAgeMs?: number }) {
   const updateTask = vi.fn(async () => input.task);
   const moveTask = vi.fn(async () => input.task);
   const logEntry = vi.fn(async () => {});
@@ -114,7 +114,10 @@ function buildApp(input: { task: Task; activeMergeTaskId?: string | null }) {
     trimTaskDetailActivityLog: (task: unknown) => task,
     triggerCommentWakeForAssignedAgent: async () => {},
     // The seam the fix reads for live-merge proof.
-    resolveSelfHealingManager: () => ({ getActiveMergeTaskId: () => input.activeMergeTaskId ?? null }),
+    resolveSelfHealingManager: () => ({
+      getActiveMergeTaskId: () => input.activeMergeTaskId ?? null,
+      getStaleMergingStatusMinAgeMs: () => input.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
+    }),
   } as never);
 
   const app = express();
@@ -153,6 +156,18 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
       const res = await performRequest(app, "POST", "/api/tasks/FN-8004/retry", "{}", { "content-type": "application/json" });
       expect(res.status, `status=${status} must be retryable when orphaned`).toBe(200);
     }
+  });
+
+  it("uses the configured staleness floor, matching automatic recovery", async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60_000).toISOString();
+    const { app } = buildApp({
+      task: mkMergeTask({ updatedAt: twoMinutesAgo }),
+      staleMergingStatusMinAgeMs: 60_000,
+    });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-8004/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
   });
 
   it("still REFUSES to retry a merge holding the live in-process lease", async () => {

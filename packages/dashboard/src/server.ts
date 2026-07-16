@@ -354,6 +354,7 @@ export interface ServerOptions {
     rootDir: string;
     reconcileInReviewBranchRebind: (opts?: { includeTaskIds?: Set<string> }) => Promise<import("@fusion/engine").RebindResult>;
     getActiveMergeTaskId: () => string | null;
+    getStaleMergingStatusMinAgeMs: () => number;
   };
   /** Optional PluginStore for plugin management routes */
   pluginStore?: import("@fusion/core").PluginStore;
@@ -907,6 +908,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
             rootDir: engine.getWorkingDirectory(),
             reconcileInReviewBranchRebind: selfHealing.reconcileInReviewBranchRebind.bind(selfHealing),
             getActiveMergeTaskId: selfHealing.getActiveMergeTaskId.bind(selfHealing),
+            getStaleMergingStatusMinAgeMs: selfHealing.getStaleMergingStatusMinAgeMs.bind(selfHealing),
           },
         };
       }

@@ -960,6 +960,11 @@ export class SelfHealingManager {
     return this.options.getActiveMergeTaskId?.() ?? null;
   }
 
+  /** The configured staleness floor shared by automatic recovery and manual Retry. */
+  public getStaleMergingStatusMinAgeMs(): number {
+    return this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS;
+  }
+
   private async isMergeLaneOwned(taskId: string): Promise<boolean> {
     if (this.options.getActiveMergeTaskId?.() === taskId) return true;
 
@@ -3004,7 +3009,7 @@ export class SelfHealingManager {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
-      const minAgeMs = this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS;
+      const minAgeMs = this.getStaleMergingStatusMinAgeMs();
       if (!Number.isFinite(minAgeMs) || minAgeMs <= 0) return 0;
 
       const now = Date.now();

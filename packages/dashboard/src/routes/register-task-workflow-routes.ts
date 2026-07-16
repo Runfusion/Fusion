@@ -641,6 +641,7 @@ interface TaskWorkflowRouteDeps {
     rootDir: string;
     reconcileInReviewBranchRebind: (opts?: { includeTaskIds?: Set<string> }) => Promise<import("@fusion/engine").RebindResult>;
     getActiveMergeTaskId: () => string | null;
+    getStaleMergingStatusMinAgeMs: () => number;
   } | undefined;
 }
 
@@ -2359,8 +2360,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       recoverStaleMergingStatus sweep. Observed on FN-8004: a killed merge left `landing` stamped and
       manual Retry 400'd for the full sweep delay.
 
-      `isStaleMergeActiveStatus` is the SAME predicate that sweep uses, so the manual path can never
-      be looser than the automatic one. A genuinely RUNNING merge stays protected: it holds the
+      `isStaleMergeActiveStatus` and its configured age floor are the SAME inputs that sweep uses, so
+      the manual path can never be looser than the automatic one. A genuinely RUNNING merge stays protected: it holds the
       in-process merge lease (activeMergeTaskId) and refreshes `updatedAt` each phase, so it fails
       both staleness checks and Retry still refuses it.
 
@@ -2371,10 +2372,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       a failed merge. A stale-stamped task that also has incomplete steps still routes to the
       execution branch via isExecutionFailureInReview, which is the correct handling for that case.
       */
+      const selfHealingManager = _resolveSelfHealingManager(scopedStore);
       const isStaleMergeActiveRetry =
         task.column === "in-review" &&
         isStaleMergeActiveStatus(task, {
-          activeMergeTaskId: _resolveSelfHealingManager(scopedStore)?.getActiveMergeTaskId?.() ?? null,
+          activeMergeTaskId: selfHealingManager?.getActiveMergeTaskId?.() ?? null,
+          minAgeMs: selfHealingManager?.getStaleMergingStatusMinAgeMs?.(),
         });
       const isInReviewRetry =
         task.column === "in-review" &&
