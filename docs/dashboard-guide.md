@@ -160,6 +160,8 @@ Open **Automations** from the left sidebar (or the mobile More surfaces) to crea
 When you choose **Run now**, the routine card opens a **Live output** panel while the manual run is active. The panel appends step status, AI text deltas, and tool start/finish activity as the run executes, then the card falls back to the persisted final run output and run history once the server records the result. The same `RoutineCard` surface is used by the floating modal and embedded Automations view, so live output appears in both presentations and collapses into a single-column card layout on mobile.
 
 <!-- FNXC:DatabaseBackup 2026-07-04-00:00: FN-7537 fixed a manual/cron divergence for the built-in "Database Backup" automation/routine: a manual "Run now" now intercepts the in-process backup exactly like the scheduler, instead of shelling out to a possibly-missing global `fn`/`runfusion.ai` binary. -->
+Settings splits **Database Backups** (global shared-cluster policy and `~/.fusion/backups` destination) from project-scoped **Memory Backups**.
+
 The built-in **Database Backup** automation runs the backup in-process (via the engine's already-open task store) on both its scheduled cron trigger and a manual **Run now**, matching behavior identically between the two triggers — it never shells out to a separately-installed `fn`/`runfusion.ai` binary, which could be missing or out of date on the host.
 
 ## Deep Links

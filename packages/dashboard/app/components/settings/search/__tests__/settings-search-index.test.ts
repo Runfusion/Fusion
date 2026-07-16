@@ -39,6 +39,7 @@ function sectionFiles(): string[] {
 const SECTION_FILE_TO_ID: Record<string, string> = {
   "AppearanceSection.tsx": "appearance",
   "BackupsSection.tsx": "backups",
+  "DatabaseBackupsSection.tsx": "backups-global",
   "CommandsSection.tsx": "commands",
   "GeneralSection.tsx": "general",
   "GlobalGeneralSection.tsx": "global-general",

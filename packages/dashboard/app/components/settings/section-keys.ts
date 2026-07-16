@@ -164,10 +164,6 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
   ],
   "agent-permissions": ["agentProvisioning", "defaultAgentPermissionPolicy"],
   backups: [
-    "autoBackupDir",
-    "autoBackupEnabled",
-    "autoBackupRetention",
-    "autoBackupSchedule",
     "memoryBackupDir",
     "memoryBackupEnabled",
     "memoryBackupRetention",

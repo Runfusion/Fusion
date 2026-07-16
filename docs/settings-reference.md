@@ -669,10 +669,12 @@ GitLab enablement defaults effectively to on when `gitlabEnabled` is unset, so e
 GitLab configuration examples: leave both URL fields blank for GitLab.com (`https://gitlab.com`, API `https://gitlab.com/api/v4`); set only `gitlabInstanceUrl=https://gitlab.example.com/gitlab` for a self-managed path-prefix install (API derives `https://gitlab.example.com/gitlab/api/v4`); set both URL fields when a self-managed API gateway differs from the web URL. GitLab auth uses access tokens over the GitLab REST API `PRIVATE-TOKEN` header; Fusion does not require or invoke `glab`. Supported token families are [personal access tokens](https://docs.gitlab.com/user/profile/personal_access_tokens/), [project access tokens](https://docs.gitlab.com/user/project/settings/project_access_tokens/), and [group access tokens](https://docs.gitlab.com/user/group/settings/group_access_tokens/). GitLab issue/MR import and tracking reads need `read_api` or `api`; posting notes/comments and closing/reopening issues or MRs need `api`. Project and group access tokens are constrained to their associated resource and role membership, so the configured token must cover the target project or group. Lifecycle actions use the configured API base URL for GitLab.com and self-managed instances, URL-encode project path identifiers, and skip unsupported targets such as terminal merged merge requests or group issues missing concrete project identity. Command Center signals, research/search providers, and star-prompt behavior remain deferred to later GitLab subtasks tracked from [GitLab Parity Inventory](./gitlab-parity-inventory.md).
 
 | `autoCreatePr` | `boolean` | `false` | Auto-create PRs for completed tasks. |
-| `autoBackupEnabled` | `boolean` | `false` | Enable scheduled DB backups. |
-| `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
-| `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
-| `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
+| `autoBackupEnabled` | `boolean` | `false` | Enable scheduled shared-database backups. |
+| `autoBackupSchedule` | `string` | `"0 2 * * *"` | Shared database backup cron schedule. |
+| `autoBackupRetention` | `number` | `7` | Number of shared database backups to retain. |
+| `autoBackupDir` | `string` | `".fusion/backups"` | Relative directory beneath the global Fusion directory. |
+
+> **Scope:** Database Backups are global because PostgreSQL is one shared cluster. Settings → Database Backups writes one global policy and stores its default dumps under `~/.fusion/backups`; Memory Backups remain project-scoped. Existing project overrides should be reviewed during upgrade before removing them.
 
 Database backups work with both external PostgreSQL and Fusion's default embedded PostgreSQL deployment. `fn backup` and the built-in **Database Backup** cron/routine use `pg_dump` and `pg_restore`; install PostgreSQL client tools or configure their paths so both executables are available on `PATH`. They are not bundled with `embedded-postgres`.
 

@@ -323,6 +323,7 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   migration bookkeeping as engine-managed records, not user-editable Settings descriptions.
   */
   sqliteMigrationNotice: "startup-factory-managed PostgreSQL migration banner record, not a plain description field",
+  backupSettingsMigrationConflicts: "startup migration conflict record is rendered conditionally, not a plain settings row",
   postgresMigrationInboxMessageSentAt: "engine-written PostgreSQL migration inbox completion-message marker, not a plain description field",
   dashboardCurrentNodeId: "dashboard session/PWA restore state, not a setting field",
   dashboardCurrentProjectIdByNode: "dashboard session/PWA restore state, not a setting field",

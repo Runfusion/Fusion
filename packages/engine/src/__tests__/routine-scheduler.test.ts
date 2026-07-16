@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { RoutineScheduler, type RoutineSchedulerOptions } from "../routine-scheduler.js";
-import type { RoutineStore, Routine, TaskStore, RoutineExecutionResult, Settings } from "@fusion/core";
+import type { GlobalRoutineStore, RoutineStore, Routine, TaskStore, RoutineExecutionResult, Settings } from "@fusion/core";
 import type { RoutineRunner } from "../routine-runner.js";
 
 // Default settings inline to avoid @fusion/core build dependency during tests
@@ -91,6 +91,13 @@ function createMockRoutineStore(routines: Routine[] = []): RoutineStore {
 
 function createMockRoutineRunner(): RoutineRunner {
   return {
+    executeGlobalRoutine: vi.fn().mockResolvedValue({
+      routineId: "test-routine",
+      success: true,
+      output: "Success",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    } as RoutineExecutionResult),
     executeRoutine: vi.fn().mockResolvedValue({
       routineId: "test-routine",
       success: true,
@@ -108,7 +115,7 @@ function createRoutineScheduler(
   taskStore?: TaskStore,
   routineStore?: RoutineStore,
   routineRunner?: RoutineRunner,
-  options?: Partial<Pick<RoutineSchedulerOptions, "pollIntervalMs" | "scope">>,
+  options?: Partial<Pick<RoutineSchedulerOptions, "pollIntervalMs" | "scope" | "globalRoutineStore">>,
 ): RoutineScheduler {
   return new RoutineScheduler({
     taskStore: taskStore ?? createMockTaskStore(),
@@ -116,6 +123,7 @@ function createRoutineScheduler(
     routineRunner: routineRunner ?? createMockRoutineRunner(),
     pollIntervalMs: options?.pollIntervalMs,
     scope: options?.scope,
+    globalRoutineStore: options?.globalRoutineStore,
   });
 }
 
@@ -127,6 +135,49 @@ describe("RoutineScheduler", () => {
       scheduler.stop();
     }
     vi.clearAllMocks();
+  });
+
+  describe("central global routines", () => {
+    it("claims and completes a central backup routine once while leaving project routine persistence untouched", async () => {
+      const globalRoutine = createMockRoutine({ id: "central-backup", scope: "global", command: "fn backup --create" });
+      const centralStore = {
+        listDue: vi.fn().mockResolvedValue([globalRoutine]),
+        claimDue: vi.fn().mockResolvedValue(globalRoutine),
+        completeExecution: vi.fn().mockResolvedValue(undefined),
+      } as unknown as GlobalRoutineStore;
+      const runner = createMockRoutineRunner();
+      (runner.executeGlobalRoutine as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue({
+        routineId: globalRoutine.id, success: true, output: "backup complete",
+        startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), triggerType: "cron",
+      });
+      const projectStore = createMockRoutineStore([]);
+      scheduler = createRoutineScheduler(undefined, projectStore, runner, { globalRoutineStore: centralStore });
+
+      await scheduler.tick();
+
+      expect(centralStore.listDue).toHaveBeenCalledOnce();
+      expect(centralStore.claimDue).toHaveBeenCalledWith("central-backup");
+      expect(runner.executeGlobalRoutine).toHaveBeenCalledWith(globalRoutine, "cron");
+      expect(centralStore.completeExecution).toHaveBeenCalledWith("central-backup", expect.objectContaining({ success: true }));
+      expect(projectStore.startRoutineExecution).not.toHaveBeenCalled();
+      expect(projectStore.completeRoutineExecution).not.toHaveBeenCalled();
+    });
+
+    it("does not dispatch when another project engine already claimed the central due window", async () => {
+      const globalRoutine = createMockRoutine({ id: "central-backup", scope: "global" });
+      const centralStore = {
+        listDue: vi.fn().mockResolvedValue([globalRoutine]),
+        claimDue: vi.fn().mockResolvedValue(undefined),
+        completeExecution: vi.fn(),
+      } as unknown as GlobalRoutineStore;
+      const runner = createMockRoutineRunner();
+      scheduler = createRoutineScheduler(undefined, undefined, runner, { globalRoutineStore: centralStore });
+
+      await scheduler.tick();
+
+      expect(runner.executeGlobalRoutine).not.toHaveBeenCalled();
+      expect(centralStore.completeExecution).not.toHaveBeenCalled();
+    });
   });
 
   describe("constructor", () => {

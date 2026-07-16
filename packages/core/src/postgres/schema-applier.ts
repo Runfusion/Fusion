@@ -31,7 +31,7 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 FNXC:MultiProjectIsolation 2026-07-15-23:40:
 Advances to 0012 after the owner_project_id domain/partition split and chat pin timestamp. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0012";
+export const SCHEMA_BASELINE_VERSION = "0015";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -76,6 +76,8 @@ export const CHAT_SESSION_PINS_VERSION = "0012";
 export const EXECUTOR_TOOL_FAILURE_RETRY_VERSION = "0013";
 /** FNXC:ExecutorEscalation 2026-07-16-21:00: Existing clusters need the durable single-shot latch before executor reads it during post-FN-7996 escalation. */
 export const EXECUTOR_ESCALATION_ATTEMPT_VERSION = "0014";
+/** FNXC:PostgresSchema 2026-07-16-22:00: central global routines follow main's already-landed 0014 migration. */
+export const GLOBAL_ROUTINES_SCHEMA_VERSION = "0015";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -151,6 +153,11 @@ const EXECUTOR_ESCALATION_ATTEMPT_MIGRATION_PATH = join(
   __dirname,
   "migrations",
   "0014_executor_escalation_attempt.sql",
+);
+const GLOBAL_ROUTINES_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0015_global_routines.sql",
 );
 
 /**
@@ -235,6 +242,7 @@ export async function applySchemaBaseline(
     const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
     const executorToolFailureRetryAlreadyApplied = applied.includes(EXECUTOR_TOOL_FAILURE_RETRY_VERSION);
     const executorEscalationAttemptAlreadyApplied = applied.includes(EXECUTOR_ESCALATION_ATTEMPT_VERSION);
+    const globalRoutinesAlreadyApplied = applied.includes(GLOBAL_ROUTINES_SCHEMA_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -515,6 +523,15 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(executorEscalationAttemptSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXECUTOR_ESCALATION_ATTEMPT_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!globalRoutinesAlreadyApplied) {
+      const migrationSql = await readFile(GLOBAL_ROUTINES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${GLOBAL_ROUTINES_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

@@ -2,6 +2,7 @@ import {
   BackupManager,
   createBackupManager,
   runBackupCommand,
+  resolveGlobalBackupRoot,
 } from "@fusion/core";
 import { resolveProject, createLocalStore, closeProjectStore, asLocalProjectContext, type ProjectContext } from "../project-context.js";
 import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
@@ -49,7 +50,7 @@ async function getBackupManager(projectName?: string): Promise<{
   try {
     const { store } = context;
     // Access the private fusionDir property via type assertion
-    const fusionDir = (store as unknown as { fusionDir: string }).fusionDir;
+    const fusionDir = resolveGlobalBackupRoot(store);
     const settings = await retryOnLock(async () => store.getSettings(), { id: "backup-settings", action: "read settings" });
     const manager = createBackupManager(fusionDir, settings);
     return { manager, context, fusionDir };

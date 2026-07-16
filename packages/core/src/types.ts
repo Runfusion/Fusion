@@ -2362,6 +2362,19 @@ export interface DashboardKeyboardShortcuts {
   newTask?: string;
 }
 
+export interface BackupSettingsMigrationCandidate {
+  source: "global" | "project";
+  projectId?: string;
+  value: unknown;
+}
+
+/** A preserved operator-choice record when legacy project backup values diverge. */
+export interface BackupSettingsMigrationConflict {
+  key: "autoBackupEnabled" | "autoBackupSchedule" | "autoBackupRetention" | "autoBackupDir";
+  candidates: BackupSettingsMigrationCandidate[];
+  recordedAt: string;
+}
+
 export interface GlobalSettings {
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
@@ -2371,6 +2384,16 @@ export interface GlobalSettings {
   shadcnCustomColors?: Record<string, string>;
   /** Dashboard font size scale percentage. Bounded to 85-125. Default: 100. */
   dashboardFontScalePct?: number;
+  /** When true, automatic database backups for the shared PostgreSQL cluster are enabled. Default: false. */
+  autoBackupEnabled?: boolean;
+  /** Cron expression for the shared database backup schedule. Default: "0 2 * * *". */
+  autoBackupSchedule?: string;
+  /** Number of shared database backup files to retain. Default: 7. */
+  autoBackupRetention?: number;
+  /** Directory for shared database backup files, relative to the global Fusion directory. Default: ".fusion/backups". */
+  autoBackupDir?: string;
+  /** Durable candidates requiring an operator choice after project-to-global backup migration. */
+  backupSettingsMigrationConflicts?: BackupSettingsMigrationConflict[];
   /**
    * FNXC:DashboardShortcuts 2026-07-04-00:00:
    * Dashboard keyboard shortcuts are global operator preferences because they control browser UI affordances, not project execution policy. Defaults keep Space for Quick Chat and Ctrl+` for Terminal; blank values intentionally disable an action.
@@ -3923,14 +3946,6 @@ export interface ProjectSettings {
   /** Personal access token used when githubAuthMode is "token" (FN-3868).
    *  Stored as a plain settings string in this phase. */
   githubAuthToken?: string;
-  /** When true, automatic database backups are enabled. Default: false. */
-  autoBackupEnabled?: boolean;
-  /** Cron expression for backup schedule. Default: "0 2 * * *" (daily at 2 AM). */
-  autoBackupSchedule?: string;
-  /** Number of backup files to retain (oldest deleted when exceeded). Default: 7. */
-  autoBackupRetention?: number;
-  /** Directory for backup files, relative to project root. Default: ".fusion/backups". */
-  autoBackupDir?: string;
   /** When true, scheduled memory backups are enabled. Default: false. */
   memoryBackupEnabled?: boolean;
   /** Cron expression for memory backup schedule. Default: "0 3 * * *" (daily at 3 AM). */

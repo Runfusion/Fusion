@@ -10,46 +10,6 @@ import type { SettingsSearchEntry } from "../search/types";
 export const backupsSearchEntries: SettingsSearchEntry[] = [
   {
     sectionId: "backups",
-    key: "autoBackupEnabled",
-    labelKey: "settings.backups.enableAutomaticDatabaseBackups",
-    labelFallback: " Enable automatic database backups ",
-    helpKey: "settings.backups.whenEnabledTheDatabaseIsBackedUpAutomatically",
-    helpFallback:
-      "When enabled, the database is backed up automatically on a schedule. Default: disabled.",
-    keywords: ["sqlite", "snapshot", "restore"],
-  },
-  {
-    sectionId: "backups",
-    key: "autoBackupSchedule",
-    labelKey: "settings.backups.backupScheduleCron",
-    labelFallback: "Backup Schedule (Cron)",
-    helpKey: "settings.backups.cronExpressionForBackupTimingDefault02",
-    helpFallback:
-      " Cron expression for backup timing. Default: 0 2 * * * (daily at 2 AM). Examples: 0 * * * * (hourly), 0 0 * * 0 (weekly), */15 * * * * (every 15 min) ",
-    keywords: ["timing", "frequency"],
-  },
-  {
-    sectionId: "backups",
-    key: "autoBackupRetention",
-    labelKey: "settings.backups.retentionCount",
-    labelFallback: "Retention Count",
-    helpKey: "settings.backups.numberOfBackupFilesToKeepOldestAre",
-    helpFallback:
-      "Number of backup files to keep (oldest are deleted first). Range: 1-100. Default: 7.",
-    keywords: ["how many", "prune", "rotation"],
-  },
-  {
-    sectionId: "backups",
-    key: "autoBackupDir",
-    labelKey: "settings.backups.backupDirectory",
-    labelFallback: "Backup Directory",
-    helpKey: "settings.backups.directoryForBackupFilesRelativeToProjectRoot",
-    helpFallback:
-      "Directory for backup files, relative to project root. Default: .fusion/backups.",
-    keywords: ["location", "folder", "destination"],
-  },
-  {
-    sectionId: "backups",
     key: "memoryBackupEnabled",
     labelKey: "settings.backups.enableAutomaticMemoryBackups",
     labelFallback: " Enable automatic memory backups ",

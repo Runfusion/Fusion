@@ -306,6 +306,25 @@ export const taskClaims = centralSchema.table("task_claims", {
   index("idxTaskClaimsOwner").on(t.ownerNodeId),
 ]);
 
+/** FNXC:SettingsBackups 2026-07-16-15:00: a unique central name makes a shared-cluster routine impossible to duplicate per project. */
+export const globalRoutines = centralSchema.table("global_routines", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  agentId: text("agent_id").notNull().default(""),
+  triggerType: text("trigger_type").notNull(),
+  triggerConfig: jsonb("trigger_config").notNull(),
+  command: text("command"),
+  enabled: integer("enabled").notNull().default(1),
+  lastRunAt: text("last_run_at"),
+  lastRunResult: jsonb("last_run_result"),
+  nextRunAt: text("next_run_at"),
+  runCount: integer("run_count").notNull().default(0),
+  runHistory: jsonb("run_history").notNull().default([]),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 // ── Schema version meta ──────────────────────────────────────────────
 export const centralMeta = centralSchema.table("__meta", {
   key: text("key").primaryKey(),
@@ -321,5 +340,5 @@ export const centralTableNames = [
   "central_activity_log", "global_concurrency", "central_settings",
   "peer_nodes", "settings_sync_state", "managed_docker_nodes",
   "plugin_installs", "project_plugin_states", "mesh_shared_snapshots",
-  "mesh_write_queue", "secrets_global", "task_claims", "__meta",
+  "mesh_write_queue", "secrets_global", "task_claims", "global_routines", "__meta",
 ] as const;

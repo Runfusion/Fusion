@@ -626,10 +626,10 @@ export class CronRunner {
     error: string | undefined;
   }> {
     try {
-      const { runBackupCommand } = await import("@fusion/core");
+      const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
       const fusionDir = this.store.getFusionDir();
       const settings = await this.store.getSettings();
-      const result = await runBackupCommand(fusionDir, settings);
+      const result = await runBackupCommand(resolveGlobalBackupRoot(this.store), settings);
       const output = truncateOutput(result.output ?? "", "");
       return {
         success: result.success,
