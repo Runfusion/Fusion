@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type WorkflowDefinition } from "@fusion/core";
-import { SettingsToggleRow } from "../SettingsToggleRow";
-import { SettingsSelectRow } from "../SettingsSelectRow";
 /*
 FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Locale labels come from core's shared `localeDisplayName` (endonyms), NOT from the LanguageSelector component: importing a component module for a constant drags its i18n/react-i18next initialization into every consumer of this section, which breaks tests that mock react-i18next narrowly.
@@ -372,6 +370,13 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         <small>{t("settings.general.whenEnabledImportedGitHubIssuesUseTheirSource", "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.")}</small>
       </div>
       {/*
+        FNXC:GitHubImportTranslate 2026-07-15-16:35:
+        These use the section's native `form-group` + `checkbox-label` / `select` markup rather than the
+        SettingsToggleRow/SettingsSelectRow primitives. Those primitives render a right-aligned toggle
+        SWITCH, which read as a foreign control next to the plain left-of-text checkboxes every other
+        GitHub/import setting in this section uses. Matching the neighbours is the point: a settings
+        section with two different checkbox idioms looks broken regardless of which is nicer in isolation.
+
         FNXC:GitHubImportTranslate 2026-07-15-09:30:
         Both controls live beside the other import-scoped GitHub settings because they
         only ever affect the Import Tasks panel, never ordinary task creation.
@@ -383,33 +388,21 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         dashboard language", so an operator who switches the dashboard to Korean gets Korean
         translations without touching this setting twice.
       */}
-      <SettingsToggleRow
-        descriptor={{
-          key: "githubImportAutoTranslate",
-          label: t("settings.general.autoTranslateImportedIssues", "Auto-translate imported issues"),
-          help: t("settings.general.autoTranslateImportedIssuesHelp", "When enabled, the Import Tasks panel automatically translates foreign-language issue titles and bodies into the target language below and shows the translation by default. You can always switch back to the original text, and imported tasks carry the translated text. Default: disabled."),
-          scope: "project",
-        }}
-        value={form.githubImportAutoTranslate === true}
-        onChange={(v) => setForm((f) => ({ ...f, githubImportAutoTranslate: v ?? undefined }))}
-      />
-      <SettingsSelectRow
-        descriptor={{
-          key: "importTranslateTargetLocale",
-          label: t("settings.general.translationTargetLanguage", "Translation target language"),
-          help: t("settings.general.translationTargetLanguageHelp", "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language."),
-          scope: "project",
-          options: [
-            { value: "", label: t("settings.general.followDashboardLanguage", "Follow dashboard language") },
-            ...SUPPORTED_LOCALES.map((locale) => ({ value: locale, label: localeDisplayName(locale) })),
-          ],
-        }}
-        value={form.importTranslateTargetLocale ?? ""}
-        onChange={(v) => setForm((f) => ({
-          ...f,
-          importTranslateTargetLocale: v && isLocale(v) ? v : undefined,
-        }))}
-      />
+      <div className="form-group">
+        <label htmlFor="githubImportAutoTranslate" className="checkbox-label">
+          <input id="githubImportAutoTranslate" type="checkbox" checked={form.githubImportAutoTranslate === true} onChange={(e) => setForm((f) => ({ ...f, githubImportAutoTranslate: e.target.checked || undefined }))}/>{t("settings.general.autoTranslateImportedIssues", " Auto-translate imported issues ")}</label>
+        <small>{t("settings.general.autoTranslateImportedIssuesHelp", "When enabled, the Import Tasks panel automatically translates foreign-language issue titles and bodies into the target language below and shows the translation by default. You can always switch back to the original text, and imported tasks carry the translated text. Default: disabled.")}</small>
+      </div>
+      <div className="form-group">
+        <label htmlFor="importTranslateTargetLocale">{t("settings.general.translationTargetLanguage", "Translation target language")}</label>
+        <select id="importTranslateTargetLocale" className="select" data-testid="import-translate-target-locale-select" value={form.importTranslateTargetLocale ?? ""} onChange={(e) => setForm((f) => ({ ...f, importTranslateTargetLocale: isLocale(e.target.value) ? e.target.value : undefined }))}>
+          <option value="">{t("settings.general.followDashboardLanguage", "Follow dashboard language")}</option>
+          {SUPPORTED_LOCALES.map((locale) => (<option key={locale} value={locale}>
+              {localeDisplayName(locale)}
+            </option>))}
+        </select>
+        <small>{t("settings.general.translationTargetLanguageHelp", "Language imported issues are translated into when auto-translation is enabled. No default — unset inherits the dashboard language.")}</small>
+      </div>
       <div className="form-group">
         <label htmlFor="projectGithubTrackingDefaultRepoGeneral">{t("settings.general.projectDefaultTrackingRepo", "Project default tracking repo")}</label>
         <TrackingRepoSelect id="projectGithubTrackingDefaultRepoGeneral" ariaLabel="Project default tracking repo" value={form.githubTrackingDefaultRepo ?? ""} options={projectTrackingRepoOptions} loading={projectTrackingRepoLoading} error={projectTrackingRepoError ?? undefined} placeholder={t("settings.general.ownerRepo", "owner/repo")} onChange={(nextValue) => setForm((f) => ({ ...f, githubTrackingDefaultRepo: nextValue || undefined }))}/>
