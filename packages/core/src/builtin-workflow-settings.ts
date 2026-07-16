@@ -229,6 +229,30 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
     description: "Thinking effort for the execution phase. Empty inherits from the task or default thinking level.",
   },
+  /*
+   * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+   * FN-8098 makes executor recovery workflow-configurable; unset values deliberately
+   * inherit the shared fallback pair so existing configurations continue to work.
+   */
+  {
+    id: "executionFallbackProvider",
+    name: "Executor fallback provider",
+    type: "string",
+    description: "Fallback provider for the execution phase.",
+  },
+  {
+    id: "executionFallbackModelId",
+    name: "Executor fallback model",
+    type: "string",
+    description: "Fallback model id for the execution phase.",
+  },
+  {
+    id: "executionFallbackThinkingLevel",
+    name: "Executor fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the executor fallback model. Empty inherits from shared fallback or executor thinking.",
+  },
   {
     id: "planningProvider",
     name: "Planning provider",

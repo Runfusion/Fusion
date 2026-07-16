@@ -6671,10 +6671,6 @@
       "maxConcurrentVerificationsHint": "Caps stacked typecheck/build verification across tasks. Default: 1. Range: 1–8.",
       "pollIntervalMsHint": "Default: 15000 (15 seconds)."
     },
-    "scope": {
-      "globalBanner": "These settings are shared across all your Fusion projects.",
-      "projectBanner": "These settings only affect this project."
-    },
     "title": "Settings",
     "worktrees": {
       "allowSilentSiblingBranchRenameDuringExecutorConflicts": " Allow silent sibling branch rename during executor conflicts ",

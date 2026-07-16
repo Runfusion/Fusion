@@ -2624,22 +2624,22 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       reconcileSweepInFlightByStore.set(projectStore, true);
 
       try {
+        /*
+        FNXC:GithubTrackingReconcile 2026-07-16-15:40:
+        Delegate to reconciler.runSweep so the three reconcile passes are isolated — a throw in the
+        deleted/archived pass must not starve the done-task tracking + source-issue passes (the ones
+        that actually close linked issues on Done). Previously they shared this try/catch and the
+        silent swallow below meant a single early throw disabled the entire reconcile backstop, every
+        sweep, with no diagnostic.
+        */
         const offset = options?.startup ? 0 : reconcileSweepOffsetByStore.get(projectStore) ?? 0;
-        const deletedArchivedResult = await githubTrackingReconciler.reconcileDeletedAndArchived(projectStore, {
-          offset,
-          limit: RECONCILE_SCAN_LIMIT,
-        });
-
-        if (deletedArchivedResult.hasMore) {
-          reconcileSweepOffsetByStore.set(projectStore, offset + RECONCILE_SCAN_LIMIT);
-        } else {
-          reconcileSweepOffsetByStore.set(projectStore, 0);
-        }
-
-        await githubTrackingReconciler.reconcile(projectStore);
-        await githubTrackingReconciler.reconcileSourceIssues(projectStore);
-      } catch {
-        // best-effort sweep
+        const { nextOffset } = await githubTrackingReconciler.runSweep(projectStore, { offset });
+        reconcileSweepOffsetByStore.set(projectStore, nextOffset);
+      } catch (err) {
+        // runSweep isolates per-pass failures internally; this guards only unexpected orchestration errors.
+        console.warn(
+          `[github-tracking-reconcile] sweep orchestration error: ${err instanceof Error ? err.message : String(err)}`,
+        );
       } finally {
         reconcileSweepInFlightByStore.set(projectStore, false);
       }

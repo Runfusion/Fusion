@@ -5904,7 +5904,12 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5940,7 +5945,9 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6640,10 +6647,6 @@
       "maxConcurrentVerificationsHint": "",
       "pollIntervalMsHint": ""
     },
-    "scope": {
-      "globalBanner": "Ces paramètres sont partagés entre tous vos projets Fusion.",
-      "projectBanner": "Ces paramètres n'affectent que ce projet."
-    },
     "title": "Paramètres",
     "worktrees": {
       "allowSilentSiblingBranchRenameDuringExecutorConflicts": "",
@@ -6725,8 +6728,10 @@
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": "",
-      "settingResultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
@@ -7673,7 +7678,11 @@
       "rejected": "Plan rejeté — {{id}} renvoyé en planification pour replanning",
       "rejectMessage": "Rejeter ce plan ? La spécification sera supprimée et régénérée.",
       "rejectTitle": "Rejeter le plan",
-      "replanning": "Replanning de {{id}}…"
+      "replanning": "Replanning de {{id}}…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "En attente des vérifications du PR",
@@ -8348,7 +8357,10 @@
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

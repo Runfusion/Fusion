@@ -81,6 +81,10 @@ vi.mock("@fusion/core", () => ({
   // (which imports `isSqliteLockError` from @fusion/core) — stub it per
   // project memory's mocked-module pitfall.
   isSqliteLockError: vi.fn(() => false),
+  // FNXC:CliTests 2026-07-16-08:47: FN-8102 mirrors the current core project
+  // identity surface so runProjectAdd reaches its forced registration behavior.
+  hasProjectIdentity: vi.fn(() => false),
+  isValidSqliteDatabaseFile: vi.fn(() => false),
   countRunningAgentTasks: (tasks: Array<{ column: string; status?: string; paused?: boolean }>) => tasks.filter((task) => (
     task.column === "in-progress" ||
     (task.column === "triage" && task.status === "planning" && !task.paused) ||

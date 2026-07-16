@@ -1,10 +1,8 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { AgentStore, TaskStore } from "@fusion/core";
+import { AgentStore } from "@fusion/core";
+import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import {
   buildCliWithRealDashboardAssets,
   cliRoot,
@@ -72,35 +70,26 @@ function makeCtx(cwd: string) {
   return { cwd } as any;
 }
 
-async function importBuiltExtension() {
-  const mod = await import(`${pathToFileURL(extensionBundlePath).href}?t=${Date.now()}`);
-  const extension = mod.default;
-  if (typeof extension !== "function") {
+interface BuiltExtensionModule {
+  default: (api: MockExtensionApi) => void;
+  __setCachedStoreForTesting: (projectRoot: string, store: unknown) => void;
+  closeCachedStores: () => Promise<void>;
+}
+
+async function importBuiltExtension(): Promise<BuiltExtensionModule> {
+  const mod = await import(`${pathToFileURL(extensionBundlePath).href}?t=${Date.now()}`) as BuiltExtensionModule;
+  if (typeof mod.default !== "function") {
     throw new Error("dist/extension.js did not export the pi extension function");
   }
-  return extension as (api: MockExtensionApi) => void;
+  return mod;
 }
 
-async function removeDirWithRetries(path: string) {
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
-    try {
-      await rm(path, { recursive: true, force: true });
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOTEMPTY" && code !== "EBUSY") {
-        throw error;
-      }
-      if (attempt === 4) {
-        throw error;
-      }
-      await delay(25 * attempt);
-    }
-  }
-}
-
-async function seedAgent(cwd: string, options: { name: string; ephemeral?: boolean }) {
-  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion") });
+async function seedAgent(
+  cwd: string,
+  asyncLayer: ReturnType<typeof h.layer>,
+  options: { name: string; ephemeral?: boolean },
+) {
+  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion"), asyncLayer });
   await agentStore.init();
   return agentStore.createAgent({
     name: options.name,
@@ -109,29 +98,54 @@ async function seedAgent(cwd: string, options: { name: string; ephemeral?: boole
   });
 }
 
-describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integration", () => {
+const h = createSharedPgTaskStoreTestHarness({ prefix: "fusion-built-ext" });
+
+/*
+FNXC:PostgresCutover 2026-07-16-08:08:
+The CI-shape opt-in contract (`describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)`) is
+preserved semantically by pgDescribe, which additionally skips safely without PostgreSQL.
+*/
+pgDescribe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integration", () => {
   let tmpDir: string;
   let api: MockExtensionApi;
   let extension: (api: MockExtensionApi) => void;
+  let builtExtension: BuiltExtensionModule;
 
   beforeAll(async () => {
-    buildCliWithRealDashboardAssets();
-    extension = await importBuiltExtension();
+    await buildCliWithRealDashboardAssets();
+    await h.beforeAll();
+    builtExtension = await importBuiltExtension();
+    extension = builtExtension.default;
   }, 300_000);
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "fusion-built-ext-"));
-    await mkdir(join(tmpDir, ".fusion"), { recursive: true });
+    await h.beforeEach();
+    tmpDir = h.rootDir();
+    /*
+    FNXC:PostgresCutover 2026-07-16-07:56:
+    FN-8081 runs the opt-in built-extension checks against the same injected
+    PostgreSQL TaskStore used for agent seeding and persistence assertions.
+    */
+    builtExtension.__setCachedStoreForTesting(tmpDir, h.store());
     api = createMockAPI();
     extension(api);
   });
 
   afterEach(async () => {
     const shutdown = api.events.get("session_shutdown");
-    if (shutdown) {
-      await shutdown();
-    }
-    await removeDirWithRetries(tmpDir);
+    if (shutdown) await shutdown();
+    /*
+     * FNXC:PostgresCutover 2026-07-16-09:05:
+     * The bundle owns a separate module cache. Clear its externally-owned PG
+     * entry before the shared harness closes that store, even if the shutdown
+     * hook already cleared it, so no built-module cache leaks across tests.
+     */
+    await builtExtension.closeCachedStores();
+    await h.afterEach();
+  });
+
+  afterAll(async () => {
+    await h.afterAll();
   });
 
   it("registers the current public extension surface from dist/extension.js", () => {
@@ -188,9 +202,7 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
     expect(listed.content[0].text).toContain(created.details.taskId);
     expect(listed.content[0].text).toContain("Ship the packed CLI contract");
 
-    const store = new TaskStore(tmpDir);
-    await store.init();
-    const persisted = await store.getTask(created.details.taskId);
+    const persisted = await h.store().getTask(created.details.taskId);
     expect(persisted?.description).toBe("Ship the packed CLI contract");
 
     const urgent = await createTool.execute(
@@ -201,7 +213,7 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
       makeCtx(tmpDir),
     );
     expect(urgent.details.priority).toBe("high");
-    const urgentPersisted = await store.getTask(urgent.details.taskId);
+    const urgentPersisted = await h.store().getTask(urgent.details.taskId);
     expect(urgentPersisted?.priority).toBe("high");
   });
 
@@ -232,8 +244,12 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
   });
 
   it("delegates to real non-ephemeral agents and rejects runtime workers", async () => {
-    const agent = await seedAgent(tmpDir, { name: "release-agent" });
-    const runtimeWorker = await seedAgent(tmpDir, { name: "runtime-worker", ephemeral: true });
+    const agent = await seedAgent(tmpDir, h.layer(), { name: "release-agent" });
+    const runtimeWorker = await seedAgent(
+      tmpDir,
+      h.layer(),
+      { name: "runtime-worker", ephemeral: true },
+    );
 
     const listAgentsTool = api.tools.get("fn_list_agents")!;
     const listedAgents = await listAgentsTool.execute("agents-1", {}, undefined, undefined, makeCtx(tmpDir));
@@ -263,30 +279,41 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
     expect(rejected.content[0].text).toContain("ephemeral/runtime agent");
   });
 
+  /*
+   * FNXC:CliTests 2026-07-16-09:00:
+   * FN-8100 restores built `fn_delegate_task` collision coverage after SQLite
+   * trigger support was removed. Re-issue an occupied id through the injected
+   * PostgreSQL store's allocator so the real insert translates unique_violation
+   * into the structured task-id collision error.
+   */
   it("returns explicit error when fn_delegate_task hits task-id collision", async () => {
-    const agent = await seedAgent(tmpDir, { name: "release-agent" });
-    const store = new TaskStore(tmpDir);
-    await store.init();
-    store.getDatabase().exec(`
-      CREATE TRIGGER force_delegate_collision
-      BEFORE INSERT ON tasks
-      WHEN NEW.description = 'collision task'
-      BEGIN
-        SELECT RAISE(ABORT, 'Task ID already exists: FN-001');
-      END;
-    `);
+    const store = h.store();
+    const agent = await seedAgent(tmpDir, h.layer(), { name: "release-agent" });
+    const existing = await store.createTask({ description: "occupied", column: "todo" });
+    const realAllocator = store.getDistributedTaskIdAllocator();
+    const allocatorSpy = vi.spyOn(store, "getDistributedTaskIdAllocator").mockReturnValue({
+      ...realAllocator,
+      reserveDistributedTaskId: async (input) => {
+        const reservation = await realAllocator.reserveDistributedTaskId(input);
+        return { ...reservation, taskId: existing.id };
+      },
+    });
 
-    const delegateTool = api.tools.get("fn_delegate_task")!;
-    const result = await delegateTool.execute(
-      "delegate-collision",
-      { agent_id: agent.id, description: "collision task" },
-      undefined,
-      undefined,
-      makeCtx(tmpDir),
-    );
+    try {
+      const delegateTool = api.tools.get("fn_delegate_task")!;
+      const result = await delegateTool.execute(
+        "delegate-collision",
+        { agent_id: agent.id, description: "collision task" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Task ID already exists: FN-001");
-    expect(result.details.error).toContain("Task ID already exists: FN-001");
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(`Task ID already exists: ${existing.id}`);
+      expect(result.details.error).toContain(`Task ID already exists: ${existing.id}`);
+    } finally {
+      allocatorSpy.mockRestore();
+    }
   });
 });

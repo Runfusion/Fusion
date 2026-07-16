@@ -89,10 +89,10 @@ import { rankSettingsSearchResults, matchedSectionIds } from "./settings/search/
 import { SettingsSearchHighlightProvider } from "./settings/SettingsSearchHighlightContext";
 
 // ---------------------------------------------------------------------------
-// GitHub star count — fetched once per session, cached in localStorage (1 h).
+// GitHub star count — cached locally and refreshed only while Settings is visible.
 // ---------------------------------------------------------------------------
-const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
-const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+export const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
+export const GITHUB_STAR_CACHE_TTL_MS = 15 * 60 * 1000;
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
 
 function isSlashPrefixedAbsolutePath(path: string): boolean {
@@ -156,56 +156,79 @@ interface StarCache {
   fetchedAt: number;
 }
 
-function useGitHubStarCount(): number | null {
-  const [count, setCount] = useState<number | null>(() => {
-    try {
-      const raw = localStorage.getItem(GITHUB_STAR_CACHE_KEY);
-      if (raw) {
-        const parsed: StarCache = JSON.parse(raw) as StarCache;
-        if (Date.now() - parsed.fetchedAt < GITHUB_STAR_CACHE_TTL_MS) {
-          return parsed.count;
-        }
-      }
-    } catch {
-      // ignore malformed cache
-    }
+function readGitHubStarCache(): StarCache | null {
+  try {
+    const raw = localStorage.getItem(GITHUB_STAR_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed: StarCache = JSON.parse(raw) as StarCache;
+    return Number.isFinite(parsed.count) && Number.isFinite(parsed.fetchedAt) ? parsed : null;
+  } catch {
     return null;
-  });
+  }
+}
 
-  useEffect(() => {
-    // If we already have a fresh count from the initial state, skip the fetch.
-    try {
-      const raw = localStorage.getItem(GITHUB_STAR_CACHE_KEY);
-      if (raw) {
-        const parsed: StarCache = JSON.parse(raw) as StarCache;
-        if (Date.now() - parsed.fetchedAt < GITHUB_STAR_CACHE_TTL_MS) {
-          return;
-        }
-      }
-    } catch {
-      // ignore
+function isGitHubStarCacheFresh(cache: StarCache | null): boolean {
+  return cache !== null && Date.now() - cache.fetchedAt < GITHUB_STAR_CACHE_TTL_MS;
+}
+
+/**
+ * FNXC:SettingsGitHubStar 2026-07-16-07:47:
+ * Keep the Settings star counter current with a visibility-gated, bounded interval refresh.
+ * The hook never fetches while its interface is off-screen, disables HTTP caching to avoid stale
+ * GitHub responses, and shares an in-flight guard so foreground and interval triggers cannot flood the network.
+ */
+export function useGitHubStarCount(): number | null {
+  const [count, setCount] = useState<number | null>(() => readGitHubStarCache()?.count ?? null);
+  const inFlightRef = useRef(false);
+
+  const refresh = useCallback(() => {
+    if (document.hidden || inFlightRef.current || isGitHubStarCacheFresh(readGitHubStarCache())) {
+      return;
     }
 
-    fetch("https://api.github.com/repos/Runfusion/Fusion")
-      .then((res) => {
-        if (!res.ok) return;
-        return res.json() as Promise<{ stargazers_count?: number }>;
+    inFlightRef.current = true;
+    void fetch("https://api.github.com/repos/Runfusion/Fusion", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const data = await response.json() as { stargazers_count?: unknown };
+        return typeof data.stargazers_count === "number" && Number.isFinite(data.stargazers_count)
+          ? data.stargazers_count
+          : null;
       })
-      .then((data) => {
-        if (data && typeof data.stargazers_count === "number") {
-          const cache: StarCache = { count: data.stargazers_count, fetchedAt: Date.now() };
-          try {
-            localStorage.setItem(GITHUB_STAR_CACHE_KEY, JSON.stringify(cache));
-          } catch {
-            // quota exceeded — just skip
-          }
-          setCount(data.stargazers_count);
+      .then((starCount) => {
+        if (starCount === null) return;
+
+        const cache: StarCache = { count: starCount, fetchedAt: Date.now() };
+        try {
+          localStorage.setItem(GITHUB_STAR_CACHE_KEY, JSON.stringify(cache));
+        } catch {
+          // quota exceeded — preserve the displayed value even when persistence is unavailable
         }
+        setCount(starCount);
       })
       .catch(() => {
-        // Network failure — hide count gracefully, no update
+        // Keep the last known value and stale cache so the next eligible trigger can retry.
+      })
+      .finally(() => {
+        inFlightRef.current = false;
       });
   }, []);
+
+  useEffect(() => {
+    refresh();
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const intervalId = window.setInterval(refresh, GITHUB_STAR_CACHE_TTL_MS);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [refresh]);
 
   return count;
 }

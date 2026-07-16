@@ -558,7 +558,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(screen.getByLabelText("Code Review revision cap")).toHaveValue(0);
 
     const planRow = screen.getByTestId("wf-settings-value-planReviewMaxRevisions");
-    fireEvent.click(within(planRow).getByRole("button"));
+    fireEvent.click(within(planRow).getByRole("button", { name: "Reset to default" }));
     fireEvent.click(screen.getByTestId("wf-settings-save-values"));
     await waitFor(() => expect(mockUpdateValues).toHaveBeenLastCalledWith(
       "wf-1",

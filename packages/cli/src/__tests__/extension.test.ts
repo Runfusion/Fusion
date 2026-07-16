@@ -1178,6 +1178,12 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
      * outside the task worktree boundary (ctx.cwd), and must never create an
      * attachment when it does.
      */
+    /*
+     * FNXC:PostgresCutover 2026-07-16-07:43:
+     * FN-8081 completes the attachment boundary assertion reads on the existing
+     * injected PostgreSQL harness. Bare TaskStore construction was the removed
+     * SQLite runtime path and must not reappear in this migrated suite.
+     */
     describe("worktree boundary guard (FN-7619)", () => {
       let outsideDir: string;
       let outsideFile: string;
@@ -1215,8 +1221,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
           ),
         ).rejects.toThrow(/boundary|outside/i);
 
-        const store = new TaskStore(tmpDir);
-        const task = await store.getTask("FN-001");
+        const task = await h.store().getTask("FN-001");
         expect(task?.attachments ?? []).toHaveLength(0);
       });
 
@@ -1241,8 +1246,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
           ),
         ).rejects.toThrow(/boundary|outside/i);
 
-        const store = new TaskStore(tmpDir);
-        const task = await store.getTask("FN-001");
+        const task = await h.store().getTask("FN-001");
         expect(task?.attachments ?? []).toHaveLength(0);
       });
 
@@ -1269,8 +1273,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
           ),
         ).rejects.toThrow(/boundary|outside/i);
 
-        const store = new TaskStore(tmpDir);
-        const task = await store.getTask("FN-001");
+        const task = await h.store().getTask("FN-001");
         expect(task?.attachments ?? []).toHaveLength(0);
       });
     });
@@ -4038,7 +4041,12 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     it("surfaces error and pause diagnostics only for error/paused agents", async () => {
-      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion") });
+      /*
+      FNXC:PostgresCutover 2026-07-16-07:56:
+      FN-8081 completes the diagnostics coverage migration: AgentStore must share
+      the extension harness async layer because SQLite-backed construction was removed.
+      */
+      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
       await agentStore.init();
       const errorAgent = await agentStore.createAgent({ name: "error-agent", role: "executor", metadata: {} });
       const pausedAgent = await agentStore.createAgent({ name: "paused-agent", role: "executor", metadata: {} });
@@ -4296,7 +4304,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     });
 
     it("surfaces lastError, pauseReason, and recovery counters", async () => {
-      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion") });
+      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
       await agentStore.init();
       const agent = await agentStore.createAgent({
         name: "diagnostic-agent",

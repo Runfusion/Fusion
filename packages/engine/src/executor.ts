@@ -13,7 +13,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
@@ -11242,8 +11242,7 @@ export class TaskExecutor {
           settings,
           (identityAgent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined,
         );
-        const executorFallbackProvider = settings.fallbackProvider;
-        const executorFallbackModelId = settings.fallbackModelId;
+        const { provider: executorFallbackProvider, modelId: executorFallbackModelId } = resolveExecutorFallbackModel(settings);
         const executorSessionThinkingSource = this.graphSeamThinkingLevel.get(task.id) ?? detail.thinkingLevel;
         const executorThinkingLevel = resolveExecutorThinkingLevel(executorSessionThinkingSource, settings);
         const executorFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(executorSessionThinkingSource, settings);
@@ -14947,6 +14946,8 @@ export class TaskExecutor {
         assignedRuntimeConfig,
       );
 
+      const executorFallback = resolveExecutorFallbackModel(settings);
+
       // Create the fix agent session
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
@@ -14975,6 +14976,9 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         onToolEnd: logger.onToolEnd,
         defaultProvider: executorProvider,
         defaultModelId: executorModelId,
+        fallbackProvider: executorFallback.provider,
+        fallbackModelId: executorFallback.modelId,
+        fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(task.thinkingLevel, settings),
         defaultThinkingLevel: resolveExecutorThinkingLevel(task.thinkingLevel, settings),
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
         settings,
@@ -15895,8 +15899,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     // own override takes precedence; otherwise use the canonical executor
     // hierarchy: task override → project execution lane → global execution lane
     // → project default override → global default. The fallback is the per-step
-    // override's missing-counterpart settings, then the global validator/fallback
-    // pair, then the executor's `fallbackProvider`.
+    // override's missing-counterpart settings, then the executor fallback lane,
+    // which itself falls through to the shared global fallback pair.
     // FNXC:ModelResolution 2026-06-25-12:00: FN-7039 requires workflow steps to inherit project execution-lane model settings before default settings so configured Execution models reach step sessions unless the step itself overrides them.
     const assignedRuntimeConfig = await this.getAssignedAgentRuntimeConfig(task.assignedAgentId);
     const executorModel = resolveExecutorSessionModel(
@@ -15909,15 +15913,11 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     const primaryModelId = workflowStep.modelId || executorModel.modelId;
     const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
 
-    type ModelTuple = { provider?: string; modelId?: string };
-    type WorkflowStepFallbackLabel = "validatorFallback" | "globalFallback";
-    const fallbackCandidates: Array<ModelTuple & { label: WorkflowStepFallbackLabel }> = [
-      { provider: settings.validatorFallbackProvider, modelId: settings.validatorFallbackModelId, label: "validatorFallback" },
-      { provider: settings.fallbackProvider, modelId: settings.fallbackModelId, label: "globalFallback" },
-    ];
-    const fallback = fallbackCandidates.find(
-      (c) => c.provider && c.modelId && (c.provider !== primaryProvider || c.modelId !== primaryModelId),
-    );
+    const executorFallback = resolveExecutorFallbackModel(settings);
+    const fallback = executorFallback.provider && executorFallback.modelId
+      && (executorFallback.provider !== primaryProvider || executorFallback.modelId !== primaryModelId)
+      ? executorFallback
+      : undefined;
 
     const timeoutMs = Math.max(60_000, settings.workflowStepTimeoutMs ?? 900_000);
 
@@ -16064,9 +16064,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
        */
       const workflowStepThinkingSource = workflowStep.thinkingLevel ?? task.thinkingLevel;
       const workflowStepThinkingLevel = attemptLabel === "fallback"
-        ? (fallback?.label === "validatorFallback"
-          ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
-          : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings))
+        ? resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings)
         : resolveExecutorThinkingLevel(workflowStepThinkingSource, settings);
       const workflowStepFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
       const { session } = await createResolvedAgentSession({
@@ -16078,8 +16076,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         tools: toolMode,
         defaultProvider: provider,
         defaultModelId: modelId,
-        fallbackProvider: settings.fallbackProvider,
-        fallbackModelId: settings.fallbackModelId,
+        fallbackProvider: executorFallback.provider,
+        fallbackModelId: executorFallback.modelId,
         fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
         defaultThinkingLevel: workflowStepThinkingLevel,
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
@@ -16272,7 +16270,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         if (!retryMalformed) return retryOutcome;
         await this.store.logEntry(
           task.id,
-          `Workflow step '${workflowStep.name}' produced malformed output on both the primary attempt and one self-retry — no fallback model configured (set settings.validatorFallbackProvider/Id or fallbackProvider/Id)`,
+          `Workflow step '${workflowStep.name}' produced malformed output on both the primary attempt and one self-retry — no fallback model configured (set settings.executionFallbackProvider/Id or fallbackProvider/Id)`,
         );
         return retryOutcome;
       }
@@ -16280,12 +16278,12 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' ${reason} and no fallback model is configured`);
       await this.store.logEntry(
         task.id,
-        `Workflow step '${workflowStep.name}' ${reason} — no fallback model configured (set settings.validatorFallbackProvider/Id or fallbackProvider/Id)`,
+        `Workflow step '${workflowStep.name}' ${reason} — no fallback model configured (set settings.executionFallbackProvider/Id or fallbackProvider/Id)`,
       );
       return primaryOutcome;
     }
 
-    executorLog.log(`${task.id}: retrying workflow step '${workflowStep.name}' with fallback ${fallback.provider}/${fallback.modelId} (label=${fallback.label}) after primary ${primaryOutcome.timedOut ? "timeout" : "malformed output"}`);
+    executorLog.log(`${task.id}: retrying workflow step '${workflowStep.name}' with executor fallback ${fallback.provider}/${fallback.modelId} after primary ${primaryOutcome.timedOut ? "timeout" : "malformed output"}`);
     return runOnce(fallback.provider, fallback.modelId, "fallback");
   }
 
@@ -18945,6 +18943,8 @@ Child agent: ${agent.id} (${name})`;
           const { provider: childExecutorProvider, modelId: childExecutorModelId } =
             resolveExecutorSessionModel(undefined, undefined, settings, agent.runtimeConfig as Record<string, unknown> | undefined);
 
+          const childExecutorFallback = resolveExecutorFallbackModel(settings);
+
           // Create child agent session
           const { session: childSession } = await createResolvedAgentSession({
             sessionPurpose: "executor",
@@ -18955,8 +18955,8 @@ Child agent: ${agent.id} (${name})`;
             tools: "coding",
             defaultProvider: childExecutorProvider,
             defaultModelId: childExecutorModelId,
-            fallbackProvider: settings.fallbackProvider,
-            fallbackModelId: settings.fallbackModelId,
+            fallbackProvider: childExecutorFallback.provider,
+            fallbackModelId: childExecutorFallback.modelId,
             fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, settings),
             runAuditor: createRunAuditor(this.store, this.getRunContextFor(taskId)),
             settings,

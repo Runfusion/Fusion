@@ -2633,6 +2633,9 @@ describe("runTaskRetry", () => {
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
+      // FNXC:CliTests 2026-07-16-08:55: FN-8102 tracks the current manual
+      // retry reset patch, including the plan-review replan recovery budget.
+      planReviewReplanCount: 0,
       stuckKillCount: 0,
       recoveryRetryCount: 0,
       taskDoneRetryCount: 0,
@@ -2710,6 +2713,9 @@ describe("runTaskRetry", () => {
       baseBranch: null,
       baseCommitSha: null,
       nextRecoveryAt: null,
+      // FNXC:CliTests 2026-07-16-08:55: FN-8102 tracks the current manual
+      // retry reset patch, including the plan-review replan recovery budget.
+      planReviewReplanCount: 0,
       stuckKillCount: 0,
       recoveryRetryCount: 0,
       taskDoneRetryCount: 0,

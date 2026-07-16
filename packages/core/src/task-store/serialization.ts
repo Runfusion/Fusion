@@ -333,6 +333,7 @@ export function archiveEntryToTask(
     prInfos: slim ? undefined : entry.prInfos,
     issueInfo: slim ? undefined : entry.issueInfo,
     githubTracking: entry.githubTracking,
+    gitlabTracking: entry.gitlabTracking,
     sourceIssue: slim ? undefined : entry.sourceIssue,
     attachments: slim ? undefined : entry.attachments,
     comments: entry.comments,

@@ -1176,9 +1176,15 @@ describe("piLog structured diagnostics", () => {
     } as unknown as AgentSession;
 
     createAgentSessionMock.mockReset();
+    const primaryRetrySession = {
+      model: { provider: "openai", id: "gpt-4o" },
+      prompt: vi.fn().mockRejectedValue(new Error("429 Too Many Requests")),
+      subscribe: vi.fn(), dispose: vi.fn(), setThinkingLevel: vi.fn(), sessionFile: undefined,
+    } as unknown as AgentSession;
     createAgentSessionMock
       .mockResolvedValueOnce({ session: primarySession } as any)
-      .mockResolvedValueOnce({ session: fallbackSession } as any);
+      .mockResolvedValueOnce({ session: fallbackSession } as any)
+      .mockResolvedValueOnce({ session: primaryRetrySession } as any);
 
     const { session } = await createFnAgent({
       cwd: "/test/project",
@@ -1193,15 +1199,17 @@ describe("piLog structured diagnostics", () => {
 
     await expect((session as any).promptWithFallback("prompt text")).rejects.toMatchObject({
       name: "ModelFallbackExhaustedError",
-      attempts: 2,
+      attempts: 3,
       primaryModel: "openai/gpt-4o",
       fallbackModel: "anthropic/claude-3-5-haiku-20241022",
       triggerPoint: "prompt-time",
     });
 
-    expect(createAgentSessionMock).toHaveBeenCalledTimes(2);
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(3);
     expect(primarySession.prompt).toHaveBeenCalledTimes(1);
     expect(fallbackSession.prompt).toHaveBeenCalledTimes(1);
+    expect(primaryRetrySession.prompt).toHaveBeenCalledTimes(1);
+    expect((createAgentSessionMock.mock.calls[2]?.[0] as any).model.id).toBe("gpt-4o");
     expect(onFallbackModelUsed).toHaveBeenCalledTimes(1);
     expect(onFallbackModelUsed).toHaveBeenCalledWith(expect.objectContaining({
       triggerPoint: "prompt-time",

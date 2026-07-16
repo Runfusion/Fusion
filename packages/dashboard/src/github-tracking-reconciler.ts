@@ -6,6 +6,44 @@ const RECONCILE_SCAN_LIMIT = 200;
 const RECONCILE_CONCURRENCY_LIMIT = 4;
 
 export class GitHubTrackingReconciler {
+  /*
+  FNXC:GithubTrackingReconcile 2026-07-16-15:40:
+  The three reconcile passes are INDEPENDENT and each MUST run even when another throws.
+  Regression that motivated this: the caller ran all three inside one try/catch with a silent
+  swallow, and the fragile PG-backend `reconcileDeletedAndArchived` pass ran first. When it threw
+  (e.g. an async-layer/row-hydration failure), the done-task `reconcile()` and source-issue
+  `reconcileSourceIssues()` passes never executed — on every sweep, startup and periodic. Net effect:
+  the reconcile safety-net closed ZERO GitHub issues while only the live move-handler worked, so any
+  task the live path missed (moved to Done before tracking adoption was reflected in the move event,
+  or a transient close failure like FN-8066's) kept its linked issue OPEN indefinitely.
+  runSweep isolates each pass and surfaces failures via console.warn instead of hiding them, so one
+  broken pass can never starve the others and a future breakage is observable rather than silent.
+  */
+  async runSweep(store: TaskStore, options: { offset: number }): Promise<{ nextOffset: number }> {
+    let nextOffset = 0;
+    await this.runPass("deleted/archived", async () => {
+      const result = await this.reconcileDeletedAndArchived(store, {
+        offset: options.offset,
+        limit: RECONCILE_SCAN_LIMIT,
+      });
+      nextOffset = result.hasMore ? options.offset + RECONCILE_SCAN_LIMIT : 0;
+    });
+    // Done-task tracking + source-issue passes run regardless of the deleted/archived pass outcome.
+    await this.runPass("done-task tracking", () => this.reconcile(store));
+    await this.runPass("source-issue", () => this.reconcileSourceIssues(store));
+    return { nextOffset };
+  }
+
+  private async runPass(label: string, fn: () => Promise<unknown>): Promise<void> {
+    try {
+      await fn();
+    } catch (err) {
+      console.warn(
+        `[github-tracking-reconcile] ${label} pass failed (other passes still run): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   async reconcile(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
     const listedTasks = await store.listTasks({ slim: true, includeArchived: true });
     const tasks = (Array.isArray(listedTasks) ? listedTasks : [])

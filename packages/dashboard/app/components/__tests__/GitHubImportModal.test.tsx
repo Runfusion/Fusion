@@ -705,7 +705,7 @@ describe("GitHubImportModal", () => {
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
       await waitFor(() => {
-        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
+        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 300, undefined);
       });
 
       expect(screen.getByText("Auto-loaded Issue")).toBeTruthy();
@@ -746,7 +746,7 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         const select = screen.getByRole("combobox") as HTMLSelectElement;
         expect(select.value).toBe("origin");
-        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
+        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 300, undefined);
         expect(screen.getByText("Auto-loaded from origin")).toBeTruthy();
       });
 
@@ -779,14 +779,14 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         const select = screen.getByRole("combobox") as HTMLSelectElement;
         expect(select.value).toBe("origin");
-        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
+        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 300, undefined);
         expect(screen.getByText("Issue from origin")).toBeTruthy();
       });
 
       fireEvent.change(screen.getByRole("combobox"), { target: { value: "upstream" } });
 
       await waitFor(() => {
-        expect(apiFetchGitHubIssues).toHaveBeenLastCalledWith("upstream", "kb", 30, undefined);
+        expect(apiFetchGitHubIssues).toHaveBeenLastCalledWith("upstream", "kb", 300, undefined);
         expect(screen.getByText("Issue from upstream")).toBeTruthy();
       });
     });
@@ -807,6 +807,52 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("First Issue")).toBeTruthy();
         expect(screen.getByText("Second Issue")).toBeTruthy();
       });
+    });
+
+    /*
+    FNXC:GitHubImport 2026-07-16-16:20:
+    Page controls for repos with >1 page (30/page). Asserts page 1 shows only the first 30, the pager reports
+    the right page/total, and Next reveals the next page — the behavior missing when the list was capped at 30.
+    */
+    it("paginates the issue list with Previous/Next controls (30 per page)", async () => {
+      const manyIssues = Array.from({ length: 65 }, (_, i) => ({
+        number: i + 1, title: `Issue ${i + 1}`, body: `Body ${i + 1}`,
+        html_url: `https://github.com/owner/repo/issues/${i + 1}`, labels: [],
+      }));
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(manyIssues);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      // Page 1 shows issues 1–30 only.
+      await waitFor(() => expect(screen.getByText("Issue 1")).toBeTruthy());
+      expect(screen.getByText("Issue 30")).toBeTruthy();
+      expect(screen.queryByText("Issue 31")).toBeNull();
+      expect(screen.getByText(/Page 1 of 3/)).toBeTruthy();
+
+      // Previous is disabled on the first page; Next advances to page 2 (issues 31–60).
+      const prev = screen.getByRole("button", { name: /Previous/i });
+      const next = screen.getByRole("button", { name: /Next/i });
+      expect((prev as HTMLButtonElement).disabled).toBe(true);
+
+      fireEvent.click(next);
+      await waitFor(() => expect(screen.getByText("Issue 31")).toBeTruthy());
+      expect(screen.queryByText("Issue 1")).toBeNull();
+      expect(screen.getByText("Issue 60")).toBeTruthy();
+      expect(screen.getByText(/Page 2 of 3/)).toBeTruthy();
+    });
+
+    it("shows no page controls when the issue list fits on one page", async () => {
+      const issues = [
+        { number: 1, title: "Only Issue", body: "Body", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
+      ];
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => expect(screen.getByText("Only Issue")).toBeTruthy());
+      expect(screen.queryByRole("button", { name: /Next/i })).toBeNull();
     });
 
 
@@ -983,7 +1029,7 @@ describe("GitHubImportModal", () => {
 
       // Wait for initial auto-load without labels
       await waitFor(() => {
-        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
+        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 300, undefined);
         expect(screen.getByText("Issue without labels")).toBeTruthy();
       });
 
@@ -998,7 +1044,7 @@ describe("GitHubImportModal", () => {
 
       // Verify re-fetch with labels
       await waitFor(() => {
-        expect(apiFetchGitHubIssues).toHaveBeenLastCalledWith("dustinbyrne", "kb", 30, ["bug"]);
+        expect(apiFetchGitHubIssues).toHaveBeenLastCalledWith("dustinbyrne", "kb", 300, ["bug"]);
         expect(screen.getByText("Bug issue")).toBeTruthy();
       });
     });
@@ -1845,7 +1891,7 @@ describe("GitHubImportModal", () => {
       // No persisted state exists for this project: the single detected remote is still auto-selected and its issues load.
       await waitFor(() => {
         expect(screen.getByTestId("github-import-single-remote")).toBeTruthy();
-        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
+        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 300, undefined);
         expect(screen.getByText("Fresh Issue")).toBeTruthy();
       });
     });

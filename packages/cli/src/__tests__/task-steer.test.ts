@@ -1,44 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
-  const mock = vi.fn(function () {});
-  const originalMockImplementation = mock.mockImplementation.bind(mock);
-  const originalMockImplementationOnce = mock.mockImplementationOnce.bind(mock);
-  const wrap = (nextImpl: T) => function (this: unknown, ...args: Parameters<T>) {
-    return nextImpl(...args);
-  };
-  mock.mockImplementation = ((nextImpl: T) => originalMockImplementation(wrap(nextImpl))) as typeof mock.mockImplementation;
-  mock.mockImplementationOnce = ((nextImpl: T) => originalMockImplementationOnce(wrap(nextImpl))) as typeof mock.mockImplementationOnce;
-  if (impl) {
-    mock.mockImplementation(impl);
-  }
-  return mock;
-}
-
 // Mock node:readline/promises before importing
 vi.mock("node:readline/promises", () => ({
   createInterface: vi.fn(),
 }));
 
-// Mock @fusion/core before importing
+/*
+FNXC:CliTests 2026-07-16-08:55:
+Steering now writes through a resolved ProjectContext. Keep the real core export
+shape and control only that boundary so the command cannot fall into a real store.
+*/
+const mockResolveProject = vi.fn();
+const mockCloseProjectStore = vi.fn(async () => undefined);
+
 vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
-  TaskStore: makeConstructibleMock(),
-  COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
-  COLUMN_LABELS: {
-    triage: "Triage",
-    todo: "Todo",
-    "in-progress": "In Progress",
-    "in-review": "In Review",
-    done: "Done",
-    archived: "Archived",
-  },
-  deterministicGuardLocks: new Map(),
+}));
+
+vi.mock("../project-context.js", () => ({
+  resolveProject: (...args: unknown[]) => mockResolveProject(...args),
+  createLocalStore: vi.fn(),
+  closeProjectStore: (...args: unknown[]) => mockCloseProjectStore(...args),
 }));
 
 // Import after mocking
 import { createInterface } from "node:readline/promises";
-import { TaskStore } from "@fusion/core";
 import { runTaskSteer } from "../commands/task.js";
 
 describe("runTaskSteer", () => {
@@ -65,11 +51,15 @@ describe("runTaskSteer", () => {
   });
 
   function setupTaskStoreMock(overrides: Record<string, unknown> = {}) {
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      addSteeringComment: mockAddComment,
-      ...overrides,
-    }));
+    mockResolveProject.mockResolvedValue({
+      projectPath: "/test/project",
+      projectName: "test-project",
+      isRegistered: true,
+      store: {
+        addSteeringComment: mockAddComment,
+        ...overrides,
+      },
+    });
   }
 
   it("adds steering comment with message argument", async () => {

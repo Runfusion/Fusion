@@ -262,6 +262,27 @@ export function resolveMergerFallbackModel(settings?: Partial<Settings>): Resolv
   );
 }
 
+/**
+ * FNXC:Settings-ExecutorModel 2026-07-16-00:00:
+ * FN-8098 gives executor work a workflow-specific fallback pair while preserving the
+ * shared fallback as the ultimate default for workflows that leave this lane unset.
+ */
+export function resolveExecutorFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.executionFallbackProvider,
+        modelId: settings?.executionFallbackModelId,
+      },
+      {
+        provider: settings?.fallbackProvider,
+        modelId: settings?.fallbackModelId,
+      },
+    ),
+    settings,
+  );
+}
+
 export function resolveTaskExecutionModel(
   task: TaskModelLike,
   settings?: Partial<Settings>,

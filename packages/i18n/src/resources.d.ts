@@ -5956,6 +5956,8 @@ export default interface Resources {
         "saveAIThinkingForPermanentAgents": " Save AI thinking for permanent agents ",
         "saveAIThinkingLogs": "Save AI thinking logs",
         "saveToolOutputInAgentLogs": " Save tool output in agent logs ",
+        "skipConfirmationDialogs": " Skip confirmation dialogs for critical actions ",
+        "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled",
         "updates": "Updates",
         "weekly": "Weekly",
         "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
@@ -6394,8 +6396,6 @@ export default interface Resources {
         "autoSelectModelPresetHint": "Default: disabled.",
         "autoSelectPresetBasedOnTaskSize": " Auto-select preset based on task size ",
         "autoSummarizeLongDescriptionsAsTitles": " Auto-summarize long descriptions as titles ",
-        "taskDefinitionInInputLanguage": "Write task definitions in the operator's input language",
-        "taskDefinitionInInputLanguageHelp": "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled.",
         "automaticallyCompactContextWhenApproachingThisTokenCount": "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default — unset (no cap).",
         "chatDefaultAgent": "Chat Default Agent",
         "chatDefaultAgentEmpty": "No agents are available for this project yet.",
@@ -6444,6 +6444,8 @@ export default interface Resources {
         "reviewerModel": "Reviewer model",
         "selectChatDefaultAgent": "Select a chat default agent",
         "selectChatDefaultModel": "Select a chat default model",
+        "taskDefinitionInInputLanguage": "Write task definitions in the operator's input language",
+        "taskDefinitionInInputLanguageHelp": "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled.",
         "theseProjectOverridesApplyToTheActiveDefault": " These project overrides apply to the active default workflow. ",
         "tokenCap": "Token Cap",
         "useDefault": "Use default",
@@ -6685,10 +6687,6 @@ export default interface Resources {
         "whenEnabledTasksThatModifyTheSameFiles": "When enabled, tasks that modify the same files are queued serially to avoid merge conflicts. Default: enabled.",
         "whenEnabledTasksWithStalePlansPROMPTMd": "When enabled, tasks with stale plans (PROMPT.md older than the threshold) are automatically sent back to planning for replanning. Default: disabled.",
         "whenTheStuckDetectorKillsAndReQueues": "When the stuck detector kills and re-queues a task, keep completed step statuses so the agent can resume from where it left off. Disable to reset every step to pending on each stuck retry. Default: enabled."
-      },
-      "scope": {
-        "globalBanner": "These settings are shared across all your Fusion projects.",
-        "projectBanner": "These settings only affect this project."
       },
       "search": {
         "allSections": "Showing all settings sections",

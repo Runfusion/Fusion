@@ -5904,7 +5904,12 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5940,7 +5945,9 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6640,10 +6647,6 @@
       "maxConcurrentVerificationsHint": "",
       "pollIntervalMsHint": ""
     },
-    "scope": {
-      "globalBanner": "这些设置在所有 Fusion 项目中共享。",
-      "projectBanner": "这些设置仅影响此项目。"
-    },
     "title": "设置",
     "worktrees": {
       "allowSilentSiblingBranchRenameDuringExecutorConflicts": "",
@@ -6737,8 +6740,10 @@
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": "",
-      "settingResultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
@@ -7673,7 +7678,11 @@
       "rejected": "计划已拒绝 — {{id}} 已返回规划阶段重新规划",
       "rejectMessage": "拒绝此计划？规范将被丢弃并重新生成。",
       "rejectTitle": "拒绝计划",
-      "replanning": "正在为 {{id}} 重新规划…"
+      "replanning": "正在为 {{id}} 重新规划…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "等待 PR 检查",
@@ -8348,7 +8357,10 @@
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

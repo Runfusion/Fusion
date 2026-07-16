@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
-import { GitHubTrackingReconciler, RECONCILE_CONCURRENCY_LIMIT } from "../github-tracking-reconciler.js";
+import { GitHubTrackingReconciler, RECONCILE_CONCURRENCY_LIMIT, RECONCILE_SCAN_LIMIT } from "../github-tracking-reconciler.js";
 
 const { mockGetIssue, mockSetIssueState } = vi.hoisted(() => ({
   mockGetIssue: vi.fn(),
@@ -280,6 +280,65 @@ describe("GitHubTrackingReconciler", () => {
       const result = await new GitHubTrackingReconciler().reconcileDeletedAndArchived(store, { offset: 200, limit: 200 });
       expect(result.hasMore).toBe(true);
       expect(result.skipped).toBe(1);
+    });
+  });
+
+  /*
+  FNXC:GithubTrackingReconcile 2026-07-16-15:40:
+  Regression coverage for the reconcile backstop going fully dark. The bug: a throw in the
+  deleted/archived pass aborted the whole sweep (shared try/catch, silent swallow), so the
+  done-task tracking pass — which closes linked GitHub issues on Done — never ran on any sweep,
+  and imported/linked issues stayed open forever. Invariant asserted below: each pass is isolated,
+  so a throw in ANY one pass never prevents the others from running.
+  */
+  describe("runSweep pass isolation", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    it("runs done-task + source-issue passes even when the deleted/archived pass throws", async () => {
+      const reconciler = new GitHubTrackingReconciler();
+      const deletedArchived = vi
+        .spyOn(reconciler, "reconcileDeletedAndArchived")
+        .mockRejectedValue(new Error("listTasksForGithubTrackingReconcile exploded"));
+      const reconcile = vi
+        .spyOn(reconciler, "reconcile")
+        .mockResolvedValue({ scanned: 1, closed: 1, skipped: 0, errors: 0 });
+      const reconcileSource = vi
+        .spyOn(reconciler, "reconcileSourceIssues")
+        .mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0 });
+
+      const store = createStore({});
+      const { nextOffset } = await reconciler.runSweep(store, { offset: 0 });
+
+      // The critical invariant: the two closing passes still ran despite pass 1 throwing.
+      expect(deletedArchived).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(reconcileSource).toHaveBeenCalledTimes(1);
+      // A failed deleted/archived pass resets the paging offset (retry from 0 next sweep).
+      expect(nextOffset).toBe(0);
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it("runs the source-issue pass even when the done-task pass throws, and advances paging", async () => {
+      const reconciler = new GitHubTrackingReconciler();
+      vi.spyOn(reconciler, "reconcileDeletedAndArchived").mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0, hasMore: true });
+      const reconcile = vi.spyOn(reconciler, "reconcile").mockRejectedValue(new Error("done-task pass boom"));
+      const reconcileSource = vi
+        .spyOn(reconciler, "reconcileSourceIssues")
+        .mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0 });
+
+      const store = createStore({});
+      const { nextOffset } = await reconciler.runSweep(store, { offset: 200 });
+
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(reconcileSource).toHaveBeenCalledTimes(1);
+      // deleted/archived reported hasMore, so paging advances by the scan limit.
+      expect(nextOffset).toBe(200 + RECONCILE_SCAN_LIMIT);
     });
   });
 });

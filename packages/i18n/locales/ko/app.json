@@ -5904,7 +5904,12 @@
       "gitLabEnabledHint": "",
       "allowEphemeralAgentsToCreateTasksHint": "",
       "quickChatCloseOnOutsideClickHint": "",
-      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": "",
+      "autoTranslateImportedIssues": "",
+      "autoTranslateImportedIssuesHelp": "",
+      "translationTargetLanguage": "",
+      "translationTargetLanguageHelp": "",
+      "followDashboardLanguage": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5940,7 +5945,9 @@
       "gitLabApiBaseUrlHint": "",
       "gitLabTokenTypeHint": "",
       "gitLabAuthTokenHint": "",
-      "dismissModalsByClickingOutsideHint": ""
+      "dismissModalsByClickingOutsideHint": "",
+      "skipConfirmationDialogs": "",
+      "skipConfirmationDialogsHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6640,10 +6647,6 @@
       "maxConcurrentVerificationsHint": "",
       "pollIntervalMsHint": ""
     },
-    "scope": {
-      "globalBanner": "이 설정은 모든 Fusion 프로젝트에서 공유됩니다.",
-      "projectBanner": "이 설정은 현재 프로젝트에만 적용됩니다."
-    },
     "title": "설정",
     "worktrees": {
       "allowSilentSiblingBranchRenameDuringExecutorConflicts": "",
@@ -6725,8 +6728,10 @@
       "noMobileOptions": "",
       "noResults": "",
       "placeholder": "",
-      "resultCount": "",
-      "settingResultCount": ""
+      "resultCount_one": "",
+      "resultCount_other": "",
+      "settingResultCount_one": "",
+      "settingResultCount_other": ""
     },
     "prompts": {
       "surfaceExplanation": ""
@@ -7673,7 +7678,11 @@
       "rejected": "계획 거부됨 — {{id}}이(가) 재계획을 위해 Planning으로 반환됨",
       "rejectMessage": "이 계획을 거부하시겠습니까? 명세가 삭제되고 재생성됩니다.",
       "rejectTitle": "계획 거부",
-      "replanning": "{{id}} 재계획 중…"
+      "replanning": "{{id}} 재계획 중…",
+      "approvalCopy": "",
+      "approvalHeadline": "",
+      "replanCapCopy": "",
+      "replanCapHeadline": ""
     },
     "pr": {
       "awaitingChecks": "PR 검사 대기 중",
@@ -8348,7 +8357,10 @@
     "undoOfTitle": "",
     "undoTask": "",
     "costBadgeTitle": "",
-    "costBadgeAriaLabel": ""
+    "costBadgeAriaLabel": "",
+    "awaitingApprovalPlanReviewReplanCapTitle": "",
+    "reviewBudgetExhausted": "",
+    "awaitingApprovalTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

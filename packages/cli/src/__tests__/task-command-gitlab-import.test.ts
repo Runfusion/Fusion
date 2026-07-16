@@ -52,6 +52,26 @@ vi.mock("@fusion/dashboard", () => {
   };
 });
 
+vi.mock("../project-context.js", () => ({
+  // FNXC:CliTests 2026-07-16-08:56: FN-8102 keeps GitLab import on the
+  // controllable command-context seam, preventing fallback startup from
+  // masking provenance assertions behind an embedded PostgreSQL boot.
+  resolveProject: vi.fn(async () => ({
+    store: {
+      getSettings: mocks.getSettings,
+      getGlobalSettingsStore: () => ({ getSettings: mocks.getGlobalSettings }),
+      listTasks: mocks.listTasks,
+      createTask: mocks.createTask,
+      logEntry: mocks.logEntry,
+    },
+    projectId: "test-project",
+    projectPath: process.cwd(),
+    projectName: "test-project",
+    isRegistered: false,
+  })),
+  closeProjectStore: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { runTaskImportFromGitLab } from "../commands/task.js";
 
 /*

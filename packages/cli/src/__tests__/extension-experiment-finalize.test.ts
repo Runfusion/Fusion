@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workflowAuthoringEngineMock } from "./helpers/engine-workflow-authoring-mock.js";
 
 function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) {
@@ -88,11 +88,28 @@ vi.mock("@fusion/engine", () => ({
   ExperimentFinalizeCherryPickConflictError: mockErrors.CherryPickError,
 }));
 
-import kbExtension from "../extension.js";
+import kbExtension, {
+  __setCachedStoreForTesting,
+  closeCachedStores,
+} from "../extension.js";
 
 describe("extension fn_experiment_finalize", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    /*
+    FNXC:CliTests 2026-07-16-08:58:
+    FN-8102 injects the experiment-session store through the extension cache so
+    the test reaches ExperimentFinalizeService instead of booting a real store.
+    The mocked engine error classes therefore remain the exact identities used
+    by the extension's instanceof error-to-code mapping.
+    */
+    __setCachedStoreForTesting(process.cwd(), {
+      getExperimentSessionStore: vi.fn(() => ({})),
+    } as any);
+  });
+
+  afterEach(async () => {
+    await closeCachedStores();
   });
 
   function getTool() {
