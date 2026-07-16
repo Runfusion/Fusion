@@ -977,8 +977,17 @@ describe("PlanningModeModal", () => {
     it("toggles description between plain textarea and formatted markdown preview", async () => {
       const { container } = await renderPlanningSummary("## Heading\n\n- item\n\n**bold**");
 
-      expect(container.querySelector(".planning-textarea")).not.toBeNull();
-      expect(container.querySelector(".planning-description-preview")).toBeNull();
+      expect(container.querySelector(".planning-description-preview")).not.toBeNull();
+      expect(container.querySelector(".planning-textarea")).toBeNull();
+      expect(screen.getByRole("heading", { level: 2, name: "Heading" })).toBeDefined();
+      expect(container.querySelector("strong")?.textContent).toBe("bold");
+
+      fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
+
+      await waitFor(() => {
+        expect(container.querySelector(".planning-textarea")).not.toBeNull();
+        expect(container.querySelector(".planning-description-preview")).toBeNull();
+      });
 
       fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
 
@@ -986,12 +995,6 @@ describe("PlanningModeModal", () => {
         expect(container.querySelector(".planning-description-preview")).not.toBeNull();
         expect(screen.getByRole("heading", { level: 2, name: "Heading" })).toBeDefined();
         expect(container.querySelector("strong")?.textContent).toBe("bold");
-      });
-
-      fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
-
-      await waitFor(() => {
-        expect(container.querySelector(".planning-textarea")).not.toBeNull();
       });
     });
 
@@ -1002,6 +1005,7 @@ describe("PlanningModeModal", () => {
       mockViewport(viewport);
       const user = userEvent.setup();
       await renderPlanningSummary("Generated summary with existing words");
+      fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
 
       const textarea = screen.getByLabelText("Description") as HTMLTextAreaElement;
       textarea.focus();
@@ -1027,6 +1031,11 @@ describe("PlanningModeModal", () => {
       const expandButton = screen.getByRole("button", { name: "Expand description" });
       expect(markdownToggle.closest("label")).toBeNull();
       expect(expandButton.closest("label")).toBeNull();
+
+      expect(container.querySelector(".planning-description-preview")).not.toBeNull();
+      expect(container.querySelector(".planning-textarea")).toBeNull();
+
+      fireEvent.click(markdownToggle);
 
       const textarea = container.querySelector<HTMLTextAreaElement>(".planning-textarea");
       expect(textarea).not.toBeNull();
