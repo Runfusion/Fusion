@@ -127,38 +127,39 @@ import {
 export { isBranchAheadOfBase } from "./self-healing-branch.js";
 import { isBranchAheadOfBase } from "./self-healing-branch.js";
 
+export {
+  OPTIONAL_STEP_REVISION_KEY_MARKER,
+  normalizeOptionalStepRevisionKey,
+  optionalStepRevisionKey,
+  countOptionalStepRevisionAttempts,
+  optionalStepRevisionLogOutcome,
+} from "./self-healing-optional-step-revision.js";
+import {
+  optionalStepRevisionKey,
+  countOptionalStepRevisionAttempts,
+  optionalStepRevisionLogOutcome,
+} from "./self-healing-optional-step-revision.js";
+
+export {
+  extractTaskIdFromTempMergeDir,
+  getErrorMessage,
+  isTaskNotFoundError,
+  buildResumeLimboStepSignature,
+  formatRecoveryTimestamp,
+  matchGlob,
+  matchesScope,
+} from "./self-healing-path-utils.js";
+import {
+  extractTaskIdFromTempMergeDir,
+  getErrorMessage,
+  isTaskNotFoundError,
+  buildResumeLimboStepSignature,
+  formatRecoveryTimestamp,
+  matchesScope,
+} from "./self-healing-path-utils.js";
+
+
 const log = createLogger("self-healing");
-const OPTIONAL_STEP_REVISION_KEY_MARKER = "Workflow revision key:";
-
-function normalizeOptionalStepRevisionKey(value: string | undefined): string {
-  return (value ?? "").trim().toLowerCase();
-}
-
-function optionalStepRevisionKey(nodeId: string | undefined, stepName: string | undefined): string {
-  return normalizeOptionalStepRevisionKey(nodeId) || normalizeOptionalStepRevisionKey(stepName) || "pre-merge-optional-step";
-}
-
-function countOptionalStepRevisionAttempts(task: Pick<Task, "log">, key: string, stepName: string | undefined): number {
-  const normalizedKey = normalizeOptionalStepRevisionKey(key);
-  const normalizedStepName = normalizeOptionalStepRevisionKey(stepName);
-  return (task.log ?? []).filter((entry) => {
-    const action = entry.action ?? "";
-    const outcome = entry.outcome ?? "";
-    if (!/attempt \d+\//.test(action)) return false;
-    const markerIndex = outcome.indexOf(OPTIONAL_STEP_REVISION_KEY_MARKER);
-    if (markerIndex >= 0) {
-      const markerValue = outcome.slice(markerIndex + OPTIONAL_STEP_REVISION_KEY_MARKER.length).split(/\r?\n/, 1)[0]?.trim();
-      return normalizeOptionalStepRevisionKey(markerValue) === normalizedKey;
-    }
-    if (!normalizedStepName) return false;
-    return normalizeOptionalStepRevisionKey(outcome).includes(`step: ${normalizedStepName}`);
-  }).length;
-}
-
-function optionalStepRevisionLogOutcome(details: string, key: string): string {
-  return `${details}\n${OPTIONAL_STEP_REVISION_KEY_MARKER} ${key}`;
-}
-
 const worktreeMetadataReconcileLog = createLogger("worktree-metadata-reconcile");
 const execAsync = promisify(exec);
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
@@ -173,22 +174,12 @@ type WorkflowRecoveryRoute =
   | { kind: "work-item-resume"; reason: "pause-abort-review-progress" | "pause-abort-manual-merge-hold" }
   | { kind: "no-action"; reason: "not-pause-abort" | "unsafe-or-not-routable" };
 
-function extractTaskIdFromTempMergeDir(dirname: string): string | null {
-  const match = /^fusion-ai-merge-(fn-\d+)-[a-z0-9]+$/i.exec(dirname);
-  return match?.[1]?.toUpperCase() ?? null;
-}
 
 function resolveRepoLocalAiMergeRoot(rootDir: string, settings?: Pick<Settings, "worktreesDir">): string {
   return resolveAiMergeRootPath(rootDir, settings);
 }
 
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
-function isTaskNotFoundError(err: unknown): boolean {
-  return /\btask\s+fn-\d+\s+not found\b/i.test(getErrorMessage(err));
-}
 
 type BranchGroupLandingRecorder = {
   recordBranchGroupMemberLanded?: (groupId: string, payload: {
@@ -234,17 +225,7 @@ async function classifyOwnedLandedEvidenceForSelfHealing(rootDir: string, task: 
   return classifyOwnedLandedEvidence(rootDir, task, { mergeTargetBranch });
 }
 
-function buildResumeLimboStepSignature(task: Task): string {
-  return JSON.stringify({
-    currentStep: task.currentStep ?? null,
-    steps: Array.isArray(task.steps) ? task.steps.map((step) => step.status) : [],
-  });
-}
 
-function formatRecoveryTimestamp(date = new Date()): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
-}
 
 async function preserveWorktreeChanges(repoDir: string, worktreePath: string, taskId: string): Promise<string | null> {
   try {
@@ -265,52 +246,7 @@ async function preserveWorktreeChanges(repoDir: string, worktreePath: string, ta
   }
 }
 
-function matchGlob(path: string, pattern: string): boolean {
-  if (pattern.includes("**")) {
-    const regexPattern = pattern
-      .replace(/\./g, "\\.")
-      .replace(/\*\*/g, "<<<DOUBLESTAR>>>")
-      .replace(/\*/g, "[^/]*")
-      .replace(/<<<DOUBLESTAR>>>/g, ".*");
-    const regex = new RegExp(`^${regexPattern}$`);
-    return regex.test(path);
-  }
 
-  const lastSlash = pattern.lastIndexOf("/");
-  if (lastSlash !== -1) {
-    const patternDir = pattern.slice(0, lastSlash);
-    const patternFile = pattern.slice(lastSlash + 1);
-    const pathDir = path.lastIndexOf("/") !== -1 ? path.slice(0, path.lastIndexOf("/")) : "";
-    const pathFile = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/")) : path;
-
-    if (patternDir.includes("*")) {
-      const dirRegex = new RegExp(`^${patternDir.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`);
-      if (!dirRegex.test(pathDir)) return false;
-    } else if (!pathDir.endsWith(patternDir) && patternDir !== pathDir) {
-      return false;
-    }
-
-    return matchGlob(pathFile, patternFile);
-  }
-
-  const fileName = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/") + 1) : path;
-  const regexPattern = pattern.replace(/\./g, "\\.").replace(/\*/g, "[^/]*");
-  const regex = new RegExp(`^${regexPattern}$`);
-  return regex.test(fileName) || regex.test(path);
-}
-
-function matchesScope(filePath: string, scopePatterns: string[]): boolean {
-  for (const pattern of scopePatterns) {
-    if (matchGlob(filePath, pattern)) return true;
-    const dirPattern = pattern.replace(/\/\*+$/, "");
-    if (dirPattern !== pattern && filePath.startsWith(dirPattern + "/")) return true;
-    if (pattern.endsWith("/") && filePath.startsWith(pattern)) return true;
-    const patternDir = pattern.lastIndexOf("/") >= 0 ? pattern.slice(0, pattern.lastIndexOf("/")) : "";
-    const fileDir = filePath.lastIndexOf("/") >= 0 ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
-    if (patternDir && fileDir === patternDir) return true;
-  }
-  return false;
-}
 
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */

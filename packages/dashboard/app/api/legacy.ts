@@ -215,6 +215,17 @@ export type {
   RevertTaskResult,
   RevertTaskOptions,
 } from "./tasks-lifecycle.js";
+
+export {
+  fetchConfig,
+  fetchSettings,
+  fetchTaskEffectiveSettings,
+  updateSettings,
+  checkForUpdate,
+  refreshUpdateCheck,
+  installUpdate,
+} from "./settings.js";
+export type { UpdateInstallResponse } from "./settings.js";
 import { api, ApiRequestError, buildApiUrl, looksLikeHtml, proxyApi } from "./client.js";
 import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
@@ -317,51 +328,6 @@ export function fetchBoardWorkflows(projectId?: string, options?: FetchOptions):
   return dedupe(path, () => api<BoardWorkflowsPayload>(path), options);
 }
 
-
-export function fetchConfig(projectId?: string): Promise<{ maxConcurrent: number; rootDir: string }> {
-  const path = withProjectId("/config", projectId);
-  return dedupe(path, () => api<{ maxConcurrent: number; rootDir: string }>(path));
-}
-
-export function fetchSettings(projectId?: string, options?: FetchOptions): Promise<Settings> {
-  const path = withProjectId("/settings", projectId);
-  return dedupe(path, () => api<Settings>(path), options);
-}
-
-export function fetchTaskEffectiveSettings(taskId: string, projectId?: string, options?: FetchOptions): Promise<Settings> {
-  const path = withProjectId(`/tasks/${taskId}/effective-settings`, projectId);
-  return dedupe(path, () => api<Settings>(path), options);
-}
-
-export function updateSettings(settings: Partial<Settings>, projectId?: string): Promise<Settings> {
-  return api<Settings>(withProjectId("/settings", projectId), {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-export function checkForUpdate(projectId?: string): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>(withProjectId("/update-check", projectId));
-}
-
-export function refreshUpdateCheck(projectId?: string): Promise<UpdateCheckResponse> {
-  return api<UpdateCheckResponse>(withProjectId("/update-check/refresh", projectId), {
-    method: "POST",
-  });
-}
-
-export interface UpdateInstallResponse {
-  currentVersion: string;
-  latestVersion: string | null;
-  updated: boolean;
-  error?: string;
-}
-
-export function installUpdate(projectId?: string): Promise<UpdateInstallResponse> {
-  return api<UpdateInstallResponse>(withProjectId("/update-check/install", projectId), {
-    method: "POST",
-  });
-}
 
 export interface RemoteSettings {
   remoteActiveProvider: "tailscale" | "cloudflare" | null;
