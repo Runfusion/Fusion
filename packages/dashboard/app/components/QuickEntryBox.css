@@ -217,13 +217,44 @@ rules only own grouping/spacing/alignment.
   min-width: 0;
 }
 
+/*
+FNXC:QuickAddActionRow 2026-07-15-22:40:
+Save's label was cut off on mobile ("Sav|"). Measured cause, not a guess: at a 412px viewport the
+primary group needs ~275px inside a 260px column. All five icon controls carry an explicit
+`min-width: 36px` touch-target floor, so they cannot absorb the 15px deficit — and Save's own
+automatic minimum size (`min-width: auto`, which would normally floor a flex item at its
+min-content width) is ZEROED by the `overflow: hidden` on `.quick-entry-actions .btn` above.
+Per the flexbox spec, automatic minimum size only applies when overflow is `visible`. That
+`overflow: hidden` exists for a VERTICAL reason (FN-7680/FN-7683 height equalization), so a
+height fix silently made Save the only horizontally-shrinkable control in the row: it absorbed
+the entire deficit (40px actual vs 55px needed) and clipped its own label.
+
+Two rules restore the invariant "the primary action's label is never clipped, at any width":
+- Save is pinned to its content width (`flex-shrink: 0` + `min-width: max-content`) so it can
+  never be squeezed. `overflow: hidden` stays — it still owns the vertical clamp.
+- The group may WRAP so a genuine deficit resolves as a second line instead of clipped text or
+  an overflowing row. `justify-content: flex-end` keeps Save right-aligned when it wraps.
+
+Deliberately NOT breakpoint-scoped (FN-5751): the mechanism is width-driven, not media-driven —
+mobile only triggers it first because its 36px touch targets are larger than the desktop chips.
+Where the row already fits (desktop, ~249px of content) both rules are inert, verified in-browser
+at 412px and 1400px. The earlier "wraps as one unit, never splitting Save from its neighbors"
+intent is revised here: at widths where the row cannot fit, Save wrapping to its own right-aligned
+line is strictly better than a clipped label.
+*/
 .quick-entry-primary-group {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-sm);
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.quick-entry-primary-group [data-testid="quick-entry-save"] {
+  flex: 0 0 auto;
+  min-width: max-content;
 }
 
 /*
