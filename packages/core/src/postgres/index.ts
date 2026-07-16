@@ -38,6 +38,15 @@ export {
 } from "./connection.js";
 
 export {
+  registerEmbeddedRuntimeUrl,
+  releaseEmbeddedRuntimeLease,
+  invalidateEmbeddedRuntimeUrl,
+  getActiveEmbeddedRuntimeUrl,
+  clearActiveEmbeddedRuntimeUrl,
+  type EmbeddedRuntimeLease,
+} from "./active-backend-registry.js";
+
+export {
   redactUrlPassword,
   redactUrlQueryPassword,
   redactKeywordPassword,

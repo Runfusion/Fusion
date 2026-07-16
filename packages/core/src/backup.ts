@@ -3,6 +3,7 @@ import { CronExpressionParser } from "cron-parser";
 import { getDefaultCentralDbPath } from "./central-db.js";
 import { PgBackupManager, type PgBackupPair, type PgDumpResult } from "./postgres/pg-backup.js";
 import { resolveBackend } from "./postgres/backend-resolver.js";
+import { getActiveEmbeddedRuntimeUrl } from "./postgres/active-backend-registry.js";
 import type { ProjectSettings } from "./types.js";
 
 export interface BackupFileInfo {
@@ -247,20 +248,18 @@ export function createBackupManager(
 }
 
 /**
- * FNXC:BackendFlip 2026-06-26-14:35:
- * Resolve the PostgreSQL connection string for backup operations from the
- * runtime backend. Returns the runtime URL when the backend is external
- * (DATABASE_URL set). Returns undefined for embedded mode (the default
- * production path since flip-embedded-pg-default when DATABASE_URL is unset),
- * because the embedded lifecycle provides its URL asynchronously at startup
- * and cannot be resolved synchronously here.
+ * FNXC:PostgresBackup 2026-07-16-12:40:
+ * External deployments resolve directly from DATABASE_URL. Embedded PostgreSQL
+ * learns its URL only during asynchronous startup, so use the active lifecycle
+ * registry as the synchronous fallback. It is intentionally undefined before
+ * boot or after owner shutdown, preserving BackupManager's actionable error.
  */
-function resolveBackendConnectionString(): string | undefined {
+export function resolveBackendConnectionString(): string | undefined {
   const backend = resolveBackend();
   if (backend.mode === "external" && backend.runtimeUrl) {
     return backend.runtimeUrl;
   }
-  return undefined;
+  return getActiveEmbeddedRuntimeUrl();
 }
 
 /*

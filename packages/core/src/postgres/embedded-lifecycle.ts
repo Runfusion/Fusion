@@ -966,6 +966,11 @@ export class EmbeddedPostgresLifecycle {
     return this.options.port ?? this.resolvedPort;
   }
 
+  /** True when this lifecycle started the postmaster rather than joining it. */
+  getOwnsProcess(): boolean {
+    return this.ownsProcess;
+  }
+
   /** True when the embedded postgres process is currently running. */
   isRunning(): boolean {
     return this.running;

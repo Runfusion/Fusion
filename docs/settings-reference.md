@@ -673,6 +673,9 @@ GitLab configuration examples: leave both URL fields blank for GitLab.com (`http
 | `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
 | `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
 | `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
+
+Database backups work with both external PostgreSQL and Fusion's default embedded PostgreSQL deployment. `fn backup` and the built-in **Database Backup** cron/routine use `pg_dump` and `pg_restore`; install PostgreSQL client tools or configure their paths so both executables are available on `PATH`. They are not bundled with `embedded-postgres`.
+
 | `memoryBackupEnabled` | `boolean` | `false` | Enable scheduled memory backups. |
 | `memoryBackupSchedule` | `string` | `"0 3 * * *"` | Memory backup cron schedule. |
 | `memoryBackupRetention` | `number` | `14` | Number of memory backups to retain. |

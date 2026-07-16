@@ -1357,8 +1357,17 @@ export {
   syncBackupAutomation,
   syncBackupRoutine,
   BACKUP_SCHEDULE_NAME,
+  resolveBackendConnectionString,
 } from "./backup.js";
 export type { BackupInfo, BackupOptions, BackupFileInfo, BackupPairInfo } from "./backup.js";
+export {
+  registerEmbeddedRuntimeUrl,
+  releaseEmbeddedRuntimeLease,
+  invalidateEmbeddedRuntimeUrl,
+  getActiveEmbeddedRuntimeUrl,
+  clearActiveEmbeddedRuntimeUrl,
+} from "./postgres/active-backend-registry.js";
+export type { EmbeddedRuntimeLease } from "./postgres/active-backend-registry.js";
 export {
   MemoryBackupManager,
   createMemoryBackupManager,
