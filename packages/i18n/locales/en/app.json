@@ -5969,7 +5969,9 @@
       "gitLabApiBaseUrlHint": "Blank derives <instance>/api/v4. Override only for self-managed GitLab API gateways that use a different absolute http:// or https:// URL. No default — unset.",
       "gitLabTokenTypeHint": "No default — unset (the selector falls back to personal access token until you choose otherwise).",
       "gitLabAuthTokenHint": "Projects inherit this fallback only when they do not set a project GitLab token. Read-only operations need read_api or api; write actions need api; project/group tokens remain limited by resource membership. No default — unset.",
-      "dismissModalsByClickingOutsideHint": " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. "
+      "dismissModalsByClickingOutsideHint": " When enabled, clicking or tapping a modal backdrop closes the modal. Default: disabled, to prevent accidental dismissal. ",
+      "skipConfirmationDialogs": " Skip confirmation dialogs for critical actions ",
+      "skipConfirmationDialogsHint": " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled"
     },
     "globalModels": {
       "allow": "allow",
@@ -6392,6 +6394,8 @@
       "automaticallyCompactContextWhenApproachingThisTokenCount": "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default — unset (no cap).",
       "autoSelectPresetBasedOnTaskSize": " Auto-select preset based on task size ",
       "autoSummarizeLongDescriptionsAsTitles": " Auto-summarize long descriptions as titles ",
+      "taskDefinitionInInputLanguage": "Write task definitions in the operator's input language",
+      "taskDefinitionInInputLanguageHelp": "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled.",
       "configuredPresets": "Configured presets",
       "configuresTheModelUsedForTwoShortSummary": " Configures the model used for two short-summary jobs: auto-generating task titles from long descriptions, and generating merge commit summaries from step commits and diff stats. ",
       "defaultWorkflowModelLaneActions": "Default workflow model lane actions",
@@ -8334,6 +8338,8 @@
     "revertNeedsHuman": "Cannot auto-revert {{taskId}}: {{reason}}",
     "revertNeedsHumanDefault": "human review required",
     "reverted": "Reverted {{taskId}} in commit {{sha}}",
+    "revertedBadge": "Reverted",
+    "revertedBadgeTitle": "This task's changes were reverted",
     "revertTask": "Revert this task's changes",
     "reviewerModel": "Reviewer Model",
     "save": "Save",

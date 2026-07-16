@@ -52,6 +52,17 @@ Show full details for a task including steps, progress, and log entries.
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID (e.g. FN-001) |
 
+### fn_task_logs_read
+
+Read a task's full persisted agent log with pagination and optional type filtering.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Task ID (e.g. FN-001) |
+| `limit` | number | — | Maximum matching entries to return (default 100). |
+| `offset` | number | — | Number of matching entries to skip from newest (default 0). |
+| `type` | union | — | Only return entries of this agent-log type. |
+
 ### fn_task_attach
 
 Attach a file to a task. Supports images (png, jpg, gif, webp) and text files (txt, log, json, yaml, yml, toml, csv, xml).

@@ -37,6 +37,7 @@ export interface UseAppSettingsResult {
   quickChatCloseOnOutsideClick: boolean;
   dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
+  skipConfirmationDialogs: boolean;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
@@ -95,6 +96,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
+  const [skipConfirmationDialogs, setSkipConfirmationDialogs] = useState(false);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
@@ -162,6 +164,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
       setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
+      setSkipConfirmationDialogs(settings.skipConfirmationDialogs === true);
       setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
@@ -349,6 +352,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     quickChatCloseOnOutsideClick,
     dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
+    skipConfirmationDialogs,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,

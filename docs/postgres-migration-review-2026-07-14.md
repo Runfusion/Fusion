@@ -12,6 +12,10 @@ Fusion no longer supports SQLite as a live runtime backend. Startup selects eith
 
 Legacy `fusion.db`, `archive.db`, and `fusion-central.db` files remain readable only at controlled identity-discovery and one-time migration/import seams. They are never a supported write target or runtime fallback. `.fusion/project.json` is the local project identity marker after cutover.
 
+### Embedded PostgreSQL resource floor
+
+The zero-config embedded PostgreSQL lifecycle uses mmap-backed primary shared memory so hosts with constrained SysV shared-memory IDs can boot without operator tuning. The supported, tested constrained-host floor is **64MB `/dev/shm`**; `fn serve` and the built boot smoke inherit this default. Operators can still provide a later PostgreSQL `-c shared_memory_type=…` flag when a deployment needs an explicit override.
+
 ## PostgreSQL-authoritative inventory
 
 | Surface | PostgreSQL authority |

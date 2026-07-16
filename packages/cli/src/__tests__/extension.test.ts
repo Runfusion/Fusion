@@ -251,6 +251,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_task_update",
         "fn_task_list",
         "fn_task_show",
+        "fn_task_logs_read",
         "fn_task_attach",
         "fn_task_pause",
         "fn_task_unpause",

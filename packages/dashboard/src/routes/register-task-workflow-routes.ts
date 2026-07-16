@@ -1862,6 +1862,26 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           workflowId: aiUndoWorkflowId,
         });
 
+      /*
+      FNXC:TaskRevert 2026-07-16-00:00:
+      FN-8066 records dashboard provenance on the source task only when its changes
+      are proven reverted at the base branch HEAD: clean landed git reverts and
+      already-reverted outcomes, including autoMerge:false PR-mode results where
+      preparation finds nothing left to merge. AI undo, conflict, needsHuman,
+      unsupported, and PR-pending outcomes do not stamp this marker because the
+      source is not yet reverted at HEAD. This awaited persistence intentionally
+      fails the request if it cannot be written; a successful response must have a
+      durable badge marker. It does not change the source task lifecycle column.
+      */
+      const stampReverted = async (revertCommitSha?: string): Promise<void> => {
+        await scopedStore.updateTask(task.id, {
+          sourceMetadataPatch: {
+            revertedAt: new Date().toISOString(),
+            ...(revertCommitSha ? { revertedCommitSha: revertCommitSha } : {}),
+          },
+        });
+      };
+
       if (mode === "ai") {
         res.json(await createAiUndoResult());
         return;
@@ -1935,6 +1955,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             // prepared.eligible === true
             if (prepared.repos.length === 0) {
               // Every sub-repo was already-reverted — nothing to PR.
+              await stampReverted();
               res.json({ mode: "git", clean: true, workspace: { repos: [] } });
               return;
             }
@@ -2054,6 +2075,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           },
           effectiveAutoMerge: settings.autoMerge,
         });
+
+        if (workspaceResult.mode === "git" && "clean" in workspaceResult && workspaceResult.clean === true) {
+          await stampReverted();
+        }
 
         if (mode === "git") {
           res.json(workspaceResult);
@@ -2211,6 +2236,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
         if (!prepared.eligible) {
           if ("alreadyReverted" in prepared && prepared.alreadyReverted) {
+            await stampReverted();
             res.json({ mode: "git", clean: true, alreadyReverted: true });
             return;
           }
@@ -2285,6 +2311,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         effectiveAutoMerge: settings.autoMerge,
         granularity,
       });
+
+      if (result.mode === "git" && "clean" in result && result.clean === true) {
+        await stampReverted("revertCommitSha" in result && typeof result.revertCommitSha === "string" ? result.revertCommitSha : undefined);
+      }
 
       if (mode === "git") {
         res.json(result);

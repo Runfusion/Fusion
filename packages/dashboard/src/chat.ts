@@ -56,6 +56,7 @@ import {
   createAskQuestionTool,
   createChatArtifactTools,
   createChatTaskDocumentTools,
+  createChatTaskLogsReadTool,
   createWorkflowAuthoringTools,
   createTaskCreateTool,
   createTaskListTool,
@@ -2388,6 +2389,9 @@ export class ChatManager {
       const documentTools = this.taskStore
         ? createChatTaskDocumentTools(this.taskStore)
         : [];
+      const taskLogReadTools = this.taskStore
+        ? [createChatTaskLogsReadTool(this.taskStore)]
+        : [];
       const artifactTools = this.taskStore
         ? createChatArtifactTools(this.taskStore, this.messageStore)
         : [];
@@ -2423,6 +2427,7 @@ export class ChatManager {
         ...messagingTools,
         ...workflowTools,
         ...documentTools,
+        ...taskLogReadTools,
         ...artifactTools,
         ...chatFusionTools,
       ]);

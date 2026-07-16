@@ -22,7 +22,8 @@ describeIfGit("reliability interactions: self-defeating dep reconciliation", () 
     });
     fixtures.push(fx);
 
-    fx.store.getDatabase().prepare("UPDATE tasks SET title = ? WHERE id = ?").run("Finalize FN-100: close loop", fx.task.id);
+    await fx.store.listTasks({ column: "todo", slim: true });
+    await fx.seedRawTaskColumns(fx.task.id, { title: "Finalize FN-100: close loop" });
 
     const recovered = await fx.manager.reconcileSelfDefeatingDependencies();
     expect(recovered).toBe(1);
@@ -33,7 +34,7 @@ describeIfGit("reliability interactions: self-defeating dep reconciliation", () 
       updated?.log.some((entry) => JSON.stringify(entry).includes("Auto-reconciled self-defeating dependency")),
     ).toBe(true);
 
-    const events = fx.store.getRunAuditEvents({
+    const events = await fx.store.getRunAuditEventsAsync({
       taskId: fx.task.id,
       domain: "database",
       mutationType: "task:auto-reconciled-self-defeating-dep",
@@ -77,7 +78,7 @@ describeIfGit("reliability interactions: self-defeating dep reconciliation", () 
     });
     fixtures.push(fx);
 
-    fx.store.getDatabase().prepare("UPDATE tasks SET title = ? WHERE id = ?").run("Finalize FN-100", fx.task.id);
+    await fx.seedRawTaskColumns(fx.task.id, { title: "Finalize FN-100" });
 
     const recovered = await fx.manager.reconcileSelfDefeatingDependencies();
     expect(recovered).toBe(0);

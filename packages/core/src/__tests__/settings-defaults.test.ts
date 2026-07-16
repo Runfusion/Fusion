@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveMaxAutoMergeRetries } from "../in-review-stall.js";
 import { isExperimentalFeatureEnabled } from "../experimental-features.js";
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "../settings-schema.js";
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey } from "../settings-schema.js";
 import { isWorkflowColumnsEnabled } from "../workflow-columns-settings.js";
 import {
   __resetLegacyCwdMainWarningForTests,
@@ -235,6 +235,16 @@ describe("settings defaults invariants", () => {
       expect(GLOBAL_SETTINGS_KEYS).toContain("dismissModalsOnOutsideClick");
       expect("dismissModalsOnOutsideClick" in DEFAULT_PROJECT_SETTINGS).toBe(false);
       expect(PROJECT_SETTINGS_KEYS).not.toContain("dismissModalsOnOutsideClick");
+    });
+  });
+
+  describe("skipConfirmationDialogs default", () => {
+    it("defaults critical-action confirmation skipping off and global-scoped only", () => {
+      expect(DEFAULT_GLOBAL_SETTINGS.skipConfirmationDialogs).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).toContain("skipConfirmationDialogs");
+      expect("skipConfirmationDialogs" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("skipConfirmationDialogs");
+      expect(isGlobalOnlySettingsKey("skipConfirmationDialogs")).toBe(true);
     });
   });
 

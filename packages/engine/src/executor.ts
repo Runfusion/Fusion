@@ -244,6 +244,7 @@ import {
   createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool,
   createTaskFileScopeAddTool as sharedCreateTaskFileScopeAddTool,
   createTaskLogTool as sharedCreateTaskLogTool,
+  createTaskLogsReadTool as sharedCreateTaskLogsReadTool,
   createWorkflowListTool as sharedCreateWorkflowListTool,
   createWorkflowGetTool as sharedCreateWorkflowGetTool,
   createWorkflowValidateTool as sharedCreateWorkflowValidateTool,
@@ -11075,6 +11076,7 @@ export class TaskExecutor {
       const customTools = [
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints, stuckDetector),
         this.createTaskLogTool(task.id),
+        this.createTaskLogsReadTool(task.id),
         this.createTaskCreateTool(!identityAgent || isEphemeralAgent(identityAgent)),
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }, audit),
@@ -13298,6 +13300,10 @@ export class TaskExecutor {
 
   private createTaskLogTool(taskId: string): ToolDefinition {
     return sharedCreateTaskLogTool(this.store, taskId);
+  }
+
+  private createTaskLogsReadTool(taskId: string): ToolDefinition {
+    return sharedCreateTaskLogsReadTool(this.store, taskId);
   }
 
   /*

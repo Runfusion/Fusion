@@ -101,10 +101,6 @@ export function registerExtension(api: MockApi): void {
   kbExtension(api as unknown as ExtensionAPI);
 }
 
-// `kbExtension` is imported lazily-free via the default export below; keep the
-// import at module scope so `registerExtension` can call it.
-import kbExtension from "../extension.js";
-
 export interface PgExtensionHarness {
   /** The project rootDir the PG-backed store is scoped to (also the tool-call cwd). */
   readonly rootDir: () => string;

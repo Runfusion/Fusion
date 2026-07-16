@@ -1807,7 +1807,10 @@ describe("GitHubImportModal", () => {
 
       fireEvent.click(await screen.findByText(/#2 GitLab bug/));
       await waitFor(() => {
-        expect(screen.getByTestId("gitlab-import-preview-card")).toBeTruthy();
+        const preview = screen.getByTestId("gitlab-import-preview-card");
+        expect(preview).toBeTruthy();
+        expect(preview.closest(".github-import-detail-panel")).toBeTruthy();
+        expect(preview.closest(".github-import-detail-panel")?.querySelector(".github-import-detail-actions")).toBeTruthy();
       });
 
       first.unmount();
@@ -1932,6 +1935,8 @@ describe("GitHubImportModal", () => {
     fireEvent.click(screen.getByRole("radio", { name: /select issue #12/i }));
     const detail = await screen.findByTestId("floating-window-github-import-detail");
     expect(within(detail).getByText("Windowed issue body")).toBeTruthy();
+    expect(within(detail).getByTestId("github-import-action-top")).toBeTruthy();
+    expect(detail.querySelector(".github-import-detail-panel .github-import-detail-actions")).toBeTruthy();
     expect(detail.querySelectorAll(".floating-window__resize-handle")).toHaveLength(8);
     fireEvent.click(within(detail).getByTestId("floating-window-close-github-import-detail"));
     await waitFor(() => expect(screen.queryByTestId("floating-window-github-import-detail")).toBeNull());
@@ -1946,6 +1951,8 @@ describe("GitHubImportModal", () => {
     await screen.findByText("Test PR");
     fireEvent.click(screen.getByRole("radio", { name: /select pull request #1/i }));
     const detail = await screen.findByTestId("floating-window-github-import-detail");
+    expect(within(detail).getByTestId("github-import-action-top")).toBeTruthy();
+    expect(detail.querySelector(".github-import-detail-panel .github-import-detail-actions")).toBeTruthy();
     expect(within(detail).getByTestId("github-import-pr-checks")).toBeTruthy();
     expect(await within(detail).findByText("Looks good")).toBeTruthy();
   });
@@ -1964,10 +1971,27 @@ describe("GitHubImportModal", () => {
     expect(document.querySelector(".github-import-resize-handle")).toBeNull();
   });
 
-  it("scopes the import detail FloatingWindow as a mobile full-screen sheet", () => {
+  it("keeps every provider detail panel padded with tokenized bottom actions", () => {
+    const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+    const detailPanelRule = source.match(/\.github-import-detail-panel\s*\{[^}]*\}/)?.[0] ?? "";
+    const actionRowRule = source.match(/\.github-import-detail-actions\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(detailPanelRule).toContain("padding: var(--space-lg);");
+    expect(actionRowRule).toContain("flex-wrap: wrap;");
+    expect(actionRowRule).toContain("gap: var(--space-sm);");
+  });
+
+  it("scopes the import detail FloatingWindow as the shared mobile full-screen sheet", () => {
     const source = readFileSync(resolve(__dirname, "../FloatingWindow.css"), "utf8");
-    expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.floating-window--github-import-detail[\s\S]*width: 100vw !important/);
-    expect(source).toContain(".floating-window--github-import-detail .floating-window__resize-handle");
+    const chatSheetRule = source.match(/\.floating-window--chat\s*\{([^}]*)\}/)?.[1] ?? "";
+    const importSheetRule = source.match(/\.floating-window--github-import-detail\s*\{([^}]*)\}/)?.[1] ?? "";
+    const taskSheetRule = source.match(/\.floating-window--task-detail\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(importSheetRule).toBe(chatSheetRule);
+    expect(importSheetRule).toBe(taskSheetRule);
+    expect(importSheetRule).toContain("inset: 0 !important;");
+    expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.floating-window--github-import-detail \.floating-window__resize-handle\s*\{\s*display: none;/);
+    expect(source).toContain(".floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail)");
   });
 
   describe("Hide imported", () => {

@@ -1371,6 +1371,7 @@ export {
   applyTestModeOverrides,
   isTestModeActive,
   resolveExecutionSettingsModel,
+  resolveMergerFallbackModel,
   resolveMergerSettingsModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,

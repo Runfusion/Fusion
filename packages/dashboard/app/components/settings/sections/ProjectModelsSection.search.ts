@@ -44,6 +44,16 @@ export const projectModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "project-models",
+    key: "taskDefinitionInInputLanguage",
+    labelKey: "settings.projectModels.taskDefinitionInInputLanguage",
+    labelFallback: "Write task definitions in the operator's input language",
+    helpKey: "settings.projectModels.taskDefinitionInInputLanguageHelp",
+    helpFallback:
+      "When enabled, generated task-definition prose uses supported detectable input languages (Spanish, French, Korean, or Chinese as zh-CN). Headings, markers, and code stay English. Unsupported or undetectable input stays English. Default: disabled.",
+    keywords: ["task definition", "prompt language", "localized prose", "Spanish", "French", "Korean", "Chinese"],
+  },
+  {
+    sectionId: "project-models",
     key: "autoSummarizeTitles",
     labelKey: "settings.projectModels.autoSummarizeLongDescriptionsAsTitles",
     labelFallback: " Auto-summarize long descriptions as titles ",

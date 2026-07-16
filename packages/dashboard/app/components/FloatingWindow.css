@@ -123,6 +123,28 @@ On mobile/narrow app viewports, opening Quick Chat should present the full Chat 
   .floating-window--chat .floating-window__resize-handle {
     display: none;
   }
+
+  /*
+  FNXC:QuickAddAttachments 2026-07-16-00:00:
+  Pending task-attachment images open in a movable, resizable FloatingWindow on desktop. On narrow touch viewports the dedicated image-preview variant must instead fill the screen and remove desktop resize handles.
+  */
+  .floating-window--image-preview {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--image-preview .floating-window__resize-handle {
+    display: none;
+  }
+
   /*
   FNXC:GitHubImport 2026-07-15-16:00:
   Import details use FloatingWindow for desktop drag and resize; on mobile this scoped variant becomes a full-screen sheet

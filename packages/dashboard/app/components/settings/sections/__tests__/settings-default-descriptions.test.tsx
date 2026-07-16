@@ -75,6 +75,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   gitlabAuthTokenType: "globalGeneral.gitLabTokenTypeHint",
   gitlabAuthToken: "globalGeneral.gitLabAuthTokenHint",
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
+  skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
   persistAgentThinkingLogPermanent: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   persistAgentThinkingLogEphemeral: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
@@ -255,6 +256,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // ProjectModelsSection
   autoSelectModelPreset: "projectModels.autoSelectModelPresetHint",
   autoSummarizeTitles: "projectModels.whenEnabledTasksCreatedWithoutATitleBut",
+  taskDefinitionInInputLanguage: "projectModels.taskDefinitionInInputLanguageHelp",
   defaultPresetBySize: "projectModels.autoSelectModelPresetHint",
   modelPresets: "projectModels.autoSelectModelPresetHint",
   prDescriptionPromptInstructions: "projectModels.prDescriptionPromptInstructionsHelp",
@@ -308,6 +310,10 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   engineActiveSinceMs: "internal engine bookkeeping timestamp",
   engineActivationGraceMs: "internal engine tuning constant, no UI field",
   reliabilityStatsResetAt: "internal engine bookkeeping timestamp",
+  // FNXC:SettingsDefaults 2026-07-15-23:18: FN-8038 classifies PostgreSQL migration
+  // bookkeeping as engine-managed records, not user-editable Settings descriptions.
+  sqliteMigrationNotice: "startup-factory-managed PostgreSQL migration banner record, not a plain description field",
+  postgresMigrationInboxMessageSentAt: "engine-written PostgreSQL migration inbox completion-message marker, not a plain description field",
   dashboardCurrentNodeId: "dashboard session/PWA restore state, not a setting field",
   dashboardCurrentProjectIdByNode: "dashboard session/PWA restore state, not a setting field",
   daemonToken: "daemon runtime secret, not rendered as a description field",
@@ -347,6 +353,8 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   titleSummarizerGlobalModelId: "configured via the model-lane picker, not a plain description field",
   mergerProvider: "configured via the model-lane picker, not a plain description field",
   mergerModelId: "configured via the model-lane picker, not a plain description field",
+  mergerFallbackProvider: "configured via the inline merger-fallback model picker, not a plain description field",
+  mergerFallbackModelId: "configured via the inline merger-fallback model picker, not a plain description field",
   mergerGlobalProvider: "configured via the model-lane picker, not a plain description field",
   mergerGlobalModelId: "configured via the model-lane picker, not a plain description field",
   executionGlobalProvider: "configured via the model-lane picker, not a plain description field",
@@ -372,6 +380,7 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   titleSummarizerThinkingLevel: "project title-summarizer inline thinking companion, configured via the model-lane picker, not a plain description field",
   titleSummarizerFallbackThinkingLevel: "project title-summarizer fallback inline thinking companion, configured via the model-lane picker, not a plain description field",
   mergerThinkingLevel: "project merger inline thinking companion, configured via the model-lane picker, not a plain description field",
+  mergerFallbackThinkingLevel: "project merger-fallback inline thinking companion, configured via the model-lane picker, not a plain description field",
   fallbackThinkingLevel: "global fallback model inline thinking companion, configured via the model-lane picker, not a plain description field",
   agentPrompts2: "not a real key (placeholder guard)",
   promptOverrides2: "not a real key (placeholder guard)",

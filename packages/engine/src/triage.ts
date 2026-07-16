@@ -43,6 +43,8 @@ import {
   MAX_TASK_LIST_TEXT_CHARS,
   upsertWorkflowStepResult,
   deriveFallbackTaskTitle,
+  detectContentLanguage,
+  localeDisplayName,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -3249,6 +3251,31 @@ When writing PROMPT.md, add this as an explicit requirement under completion doc
     memorySection = "\n\n" + buildTriageMemoryInstructions("", settings);
   }
 
+  let taskDefinitionLanguageSection = "";
+  if (settings?.taskDefinitionInInputLanguage === true) {
+    const detectedLanguage = detectContentLanguage(task.description);
+    const isSupportedNonEnglishLanguage = (
+      detectedLanguage.locale === "es"
+      || detectedLanguage.locale === "fr"
+      || detectedLanguage.locale === "ko"
+      || detectedLanguage.locale === "zh-CN"
+    ) && (detectedLanguage.confidence === "medium" || detectedLanguage.confidence === "high");
+
+    /*
+    FNXC:TaskDefinitionInputLanguage 2026-07-16-05:00:
+    PROMPT.md gates parse canonical English headings and markers, so opt-in localization
+    applies only to planner-authored prose. Conservative core detection limits authoring to
+    confident es/fr/ko/zh-CN input; Chinese intentionally normalizes to zh-CN, while English,
+    Japanese/unknown, short, and low-confidence descriptions keep byte-faithful English output.
+    */
+    if (isSupportedNonEnglishLanguage) {
+      taskDefinitionLanguageSection = `\n\n## Task Definition Language
+Write all human-readable, planner-authored prose in the operator's detected input language: ${localeDisplayName(detectedLanguage.locale)} (${detectedLanguage.locale}). This includes Mission, Before → After bullets, Review Level assessments, step descriptions, and Do NOT items.
+
+Keep every \`##\`/\`###\` section heading, machine marker, the verbatim \`## Original Description\` block, fenced and inline code, file paths, \`fn_*\` tool names, and commit-message conventions in canonical English. Do not translate or alter them.`;
+    }
+  }
+
   let attachmentsSection = "";
   if (attachmentContents && attachmentContents.length > 0) {
     const parts = ["## Attachments", ""];
@@ -3407,5 +3434,5 @@ ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join("
 ## Instructions
 ${isRevision ? "1. Read the existing specification and revision feedback carefully\n2. Apply surgical PROMPT.md edits that fully resolve every blocking feedback item — do not rewrite from title/description alone\n3. Keep structure stable unless feedback requires rethink; preserve uncriticized content\n4. Keep `## Original Description` at the top (after title/metadata) with the operator description **verbatim**\n5. Ensure the revised specification is still detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Include `## Original Description` near the top with the exact Description text above (verbatim)\n5. Address the revision feedback without inventing extra scope\n6. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. Include `## Original Description` immediately after title/`Created`/`Size` with the exact Description text above (verbatim — do not paraphrase)\n4. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n5. Name actual files, functions, and patterns from the codebase — be specific"}
 
-Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${attachmentsSection}${userCommentsSection}`;
+Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${taskDefinitionLanguageSection}${attachmentsSection}${userCommentsSection}`;
 }

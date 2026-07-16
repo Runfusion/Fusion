@@ -106,6 +106,7 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.titleSummarizerThinkingLevel).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.titleSummarizerFallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_PROJECT_SETTINGS.mergerThinkingLevel).toBeUndefined();
+    expect(DEFAULT_PROJECT_SETTINGS.mergerFallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.fallbackThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.executionGlobalThinkingLevel).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.planningGlobalThinkingLevel).toBeUndefined();
@@ -117,6 +118,7 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("titleSummarizerThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("titleSummarizerFallbackThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("mergerThinkingLevel")).toBe(true);
+    expect(isProjectSettingsKey("mergerFallbackThinkingLevel")).toBe(true);
     expect(isGlobalSettingsKey("fallbackThinkingLevel")).toBe(true);
     expect(isProjectSettingsKey("planningFallbackThinkingLevel")).toBe(false);
     expect(isGlobalSettingsKey("planningFallbackThinkingLevel")).toBe(false);
@@ -582,6 +584,7 @@ describe("model lane key parity regression (FN-1729)", () => {
     { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId", expectedScope: "project" },
     // Merger lane (project-scoped like summarizer; not workflow-moved)
     { provider: "mergerProvider", modelId: "mergerModelId", expectedScope: "project" },
+    { provider: "mergerFallbackProvider", modelId: "mergerFallbackModelId", expectedScope: "project" },
     { provider: "mergerGlobalProvider", modelId: "mergerGlobalModelId", expectedScope: "global" },
   ] as const;
 

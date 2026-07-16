@@ -101,6 +101,31 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+describe("TaskDetailModal reset confirmations", () => {
+  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+    const onResetTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-001", column: "in-progress" as any })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onResetTask={onResetTask}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-001"));
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
+    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+  });
+});
+
 describe("TaskDetailModal planner Chat tab", () => {
   function renderTask(column: any = "in-progress", initialTab?: ComponentProps<typeof TaskDetailModal>["initialTab"]) {
     return render(

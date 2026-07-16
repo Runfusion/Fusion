@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
-import type { AgentState, AgentCapability, AgentUpdateInput, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode } from "@fusion/core";
+import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
 import { DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
@@ -59,6 +59,28 @@ export const taskCreateParams = Type.Object({
 export const taskLogParams = Type.Object({
   message: Type.String({ description: "What happened" }),
   outcome: Type.Optional(Type.String({ description: "Result or consequence (optional)" })),
+});
+
+const agentLogTypeParams = Type.Union([
+  Type.Literal("text"),
+  Type.Literal("status"),
+  Type.Literal("tool"),
+  Type.Literal("thinking"),
+  Type.Literal("tool_result"),
+  Type.Literal("tool_error"),
+], { description: "Only return entries of this agent-log type." });
+
+export const taskLogsReadParams = Type.Object({
+  limit: Type.Optional(Type.Number({ description: "Maximum matching entries to return (default 100)." })),
+  offset: Type.Optional(Type.Number({ description: "Number of matching entries to skip from the newest entry (default 0)." })),
+  type: Type.Optional(agentLogTypeParams),
+});
+
+export const chatTaskLogsReadParams = Type.Object({
+  task_id: Type.String({ description: "Task ID whose agent log to read (e.g. FN-001)." }),
+  limit: Type.Optional(Type.Number({ description: "Maximum matching entries to return (default 100)." })),
+  offset: Type.Optional(Type.Number({ description: "Number of matching entries to skip from the newest entry (default 0)." })),
+  type: Type.Optional(agentLogTypeParams),
 });
 
 export const taskListParams = Type.Object({});
@@ -1310,6 +1332,81 @@ export function createTaskLogToolWithContext(store: TaskStore, taskId: string, r
         details: {},
       };
     },
+  };
+}
+
+/*
+FNXC:TaskLogsRead 2026-07-16-00:00:
+TypeBox defaults are schema metadata, not runtime values. Issue #2149 needs omitted or invalid paging normalized here because an undefined limit reaches TaskStore as an unbounded read.
+*/
+export function normalizeAgentLogPaging(rawLimit?: unknown, rawOffset?: unknown, defaultLimit = 100): { limit: number; offset: number } {
+  const normalizedLimit = rawLimit == null ? defaultLimit : Math.floor(Number(rawLimit));
+  const normalizedOffset = rawOffset == null ? 0 : Math.floor(Number(rawOffset));
+  return {
+    limit: Number.isFinite(normalizedLimit) && normalizedLimit > 0 ? normalizedLimit : defaultLimit,
+    offset: Number.isFinite(normalizedOffset) && normalizedOffset >= 0 ? normalizedOffset : 0,
+  };
+}
+
+/*
+FNXC:TaskLogsRead 2026-07-16-00:00:
+Issue #2149 requires failure analysis to preserve each persisted log row's chronology. AgentLogEntry has no persisted stream/run boundary, so adjacent text or thinking rows cannot safely be re-glued here: they may be distinct responses from the same agent. The dashboard can group its live render entries using its hidden tool-boundary metadata; this store-only reader must render every persisted row separately.
+*/
+export function renderAgentLogEntries(entries: AgentLogEntry[]): string {
+  return entries.map((entry) => formatAgentLogBlock(entry, entry.text)).join("\n\n");
+}
+
+function formatAgentLogBlock(entry: AgentLogEntry, text: string): string {
+  const agent = entry.agent ? ` (${entry.agent})` : "";
+  const detail = entry.detail !== undefined ? `\nDetail:\n${entry.detail}` : "";
+  return `[${entry.timestamp}] ${entry.type}${agent}\n${text}${detail}`;
+}
+
+async function readTaskAgentLogs(
+  store: TaskStore,
+  taskId: string,
+  params: { limit?: unknown; offset?: unknown; type?: AgentLogEntry["type"] },
+) {
+  const { limit, offset } = normalizeAgentLogPaging(params.limit, params.offset);
+  try {
+    const [entries, total] = await Promise.all([
+      store.getAgentLogs(taskId, { limit, offset, type: params.type }),
+      store.getAgentLogCount(taskId, { type: params.type }),
+    ]);
+    const filter = params.type ? `, type=${params.type}` : "";
+    const header = `Agent log: ${entries.length}/${total} entries (limit=${limit}, offset=${offset}${filter})`;
+    return { content: [{ type: "text" as const, text: entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)` }], details: { taskId, total, limit, offset, type: params.type } };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } catch (err: any) {
+    return { content: [{ type: "text" as const, text: `ERROR: Failed to read agent log for task ${taskId}: ${err.message}` }], details: {} };
+  }
+}
+
+/**
+ * FNXC:TaskLogsRead 2026-07-16-00:00:
+ * Issue #2149 requires task-bound agents to read the full persisted agent log to diagnose failures. Runtime paging normalization prevents accidental unbounded reads.
+ */
+export function createTaskLogsReadTool(store: TaskStore, taskId: string): ToolDefinition {
+  return {
+    name: "fn_task_logs_read",
+    label: "Read Agent Logs",
+    description: "Read this task's persisted agent log with pagination and optional type filtering. Default page size is 100.",
+    parameters: taskLogsReadParams,
+    execute: async (_id: string, params: Static<typeof taskLogsReadParams>) => readTaskAgentLogs(store, taskId, params),
+  };
+}
+
+/**
+ * FNXC:TaskLogsRead 2026-07-16-00:00:
+ * Dashboard chat has no ambient task, so Issue #2149 log reads require task_id just like chat task-document tools.
+ */
+export function createChatTaskLogsReadTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_logs_read",
+    label: "Read Agent Logs",
+    description: "Read a task's persisted agent log with pagination and optional type filtering. Requires task_id; default page size is 100.",
+    parameters: chatTaskLogsReadParams,
+    execute: async (_id: string, params: Static<typeof chatTaskLogsReadParams>) => readTaskAgentLogs(store, params.task_id, params),
   };
 }
 

@@ -401,6 +401,11 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expectSharedHeaderBaseline(inProgressContainer);
     expectHeaderActionsControlCenterline(inProgressContainer, { sendBack: true, menu: true, size: true });
 
+    /*
+     * FNXC:BoardCardActions 2026-07-16-02:24:
+     * FN-8080 preserves the FN-8035 done-card contract: Archive/Revert live in the three-dot
+     * card-menu-btn TaskContextMenu, so header actions expose menu + size and no Send back chip.
+     */
     const { container: doneContainer } = render(
       <TaskCard
         task={makeTask({
@@ -416,7 +421,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(doneContainer);
-    expectHeaderActionsControlCenterline(doneContainer, { sendBack: true, menu: true, size: true });
+    expectHeaderActionsControlCenterline(doneContainer, { menu: true, size: true });
 
     const { container: triageContainer } = render(
       <TaskCard

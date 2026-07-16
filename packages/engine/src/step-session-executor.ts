@@ -52,6 +52,7 @@ import {
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
+  createTaskLogsReadTool,
 } from "./agent-tools.js";
 import { RemovalReason, removeWorktree } from "./worktree-backend.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
@@ -1298,7 +1299,10 @@ export class StepSessionExecutor {
 
           // Task log and create tools — task context for step sessions.
           const taskLogTool = this.options.store
-            ? [createTaskLogTool(this.options.store, taskDetail.id)]
+            ? [
+                createTaskLogTool(this.options.store, taskDetail.id),
+                createTaskLogsReadTool(this.options.store, taskDetail.id),
+              ]
             : [];
           const taskCreateTool = this.options.store
             ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir })]

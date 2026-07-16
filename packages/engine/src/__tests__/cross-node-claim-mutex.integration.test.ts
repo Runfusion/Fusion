@@ -1,35 +1,43 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { AgentStore, CheckoutConflictError, TaskStore, createCentralDatabase, type CentralDatabase } from "@fusion/core";
+import { AgentStore, AsyncCentralClaimStore, CheckoutConflictError, TaskStore } from "@fusion/core";
+import { pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import { createPgLayer, hasPg, makePgAgentStore, makePgTaskStore } from "./reliability-interactions/_helpers.js";
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-cross-node-claim-test-"));
-}
+const pgIt = hasPg ? pgDescribe : describe.skip;
 
-describe("cross-node claim mutex integration", () => {
-  let rootDir: string;
-  let globalDir: string;
+pgIt("cross-node claim mutex integration", () => {
   let taskStore: TaskStore;
-  let centralDb: CentralDatabase;
+  let centralClaimStore: AsyncCentralClaimStore;
   let storeA: AgentStore;
   let storeB: AgentStore;
+  let cleanupTaskStore: (() => Promise<void>) | undefined;
+  let cleanupCentralLayer: (() => Promise<void>) | undefined;
   let agentA: string;
   let agentB: string;
   let taskId: string;
 
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    globalDir = join(rootDir, ".fusion-global");
-    taskStore = new TaskStore(rootDir, globalDir);
-    await taskStore.init();
-    centralDb = createCentralDatabase(globalDir);
-    centralDb.init();
+    const taskFixture = await makePgTaskStore();
+    const centralFixture = await createPgLayer();
+    taskStore = taskFixture.store;
+    cleanupTaskStore = taskFixture.cleanup;
+    cleanupCentralLayer = centralFixture.cleanup;
+    centralClaimStore = new AsyncCentralClaimStore(centralFixture.layer);
 
-    storeA = new AgentStore({ rootDir, taskStore, claimStore: centralDb, projectId: "P-1", nodeId: "node-a" });
-    storeB = new AgentStore({ rootDir, taskStore, claimStore: centralDb, projectId: "P-1", nodeId: "node-b" });
+    storeA = makePgAgentStore({
+      taskStore,
+      layer: taskFixture.layer,
+      claimStore: centralClaimStore,
+      projectId: "P-1",
+      nodeId: "node-a",
+    });
+    storeB = makePgAgentStore({
+      taskStore,
+      layer: taskFixture.layer,
+      claimStore: centralClaimStore,
+      projectId: "P-1",
+      nodeId: "node-b",
+    });
     await storeA.init();
     await storeB.init();
 
@@ -41,13 +49,12 @@ describe("cross-node claim mutex integration", () => {
   afterEach(async () => {
     storeA?.close();
     storeB?.close();
-    taskStore?.close();
-    centralDb?.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await cleanupTaskStore?.();
+    await cleanupCentralLayer?.();
   });
 
   it("allows one winner per race and bumps epoch once per successful ownership acquisition", async () => {
-    const originalTryClaim = centralDb.tryClaimTask.bind(centralDb);
+    const originalTryClaim = centralClaimStore.tryClaimTask.bind(centralClaimStore);
     const installBarrier = () => {
       let waiters = 0;
       let releaseBarrier: (() => void) | undefined;
@@ -55,13 +62,14 @@ describe("cross-node claim mutex integration", () => {
         releaseBarrier = resolve;
       });
 
-      centralDb.tryClaimTask = (((input: Parameters<CentralDatabase["tryClaimTask"]>[0]) => {
+      centralClaimStore.tryClaimTask = async (input: Parameters<AsyncCentralClaimStore["tryClaimTask"]>[0]) => {
         waiters += 1;
         if (waiters === 2) {
           releaseBarrier?.();
         }
-        return barrier.then(() => originalTryClaim(input));
-      }) as unknown) as CentralDatabase["tryClaimTask"];
+        await barrier;
+        return originalTryClaim(input);
+      };
     };
 
     installBarrier();
@@ -79,7 +87,7 @@ describe("cross-node claim mutex integration", () => {
 
     const winner = fulfilled[0].value;
     expect(rejected[0].reason.currentHolderId).toBe(winner.checkedOutBy);
-    expect(centralDb.getTaskClaim("P-1", taskId)?.leaseEpoch).toBe(1);
+    expect((await centralClaimStore.getTaskClaim("P-1", taskId))?.leaseEpoch).toBe(1);
     expect(winner.checkoutLeaseEpoch).toBe(1);
     expect(["node-a", "node-b"]).toContain(winner.checkoutNodeId);
 
@@ -97,6 +105,6 @@ describe("cross-node claim mutex integration", () => {
     expect(fulfilled2).toHaveLength(1);
     expect(rejected2).toHaveLength(1);
     expect(rejected2[0].reason).toBeInstanceOf(CheckoutConflictError);
-    expect(centralDb.getTaskClaim("P-1", taskId)?.leaseEpoch).toBe(1);
+    expect((await centralClaimStore.getTaskClaim("P-1", taskId))?.leaseEpoch).toBe(1);
   });
 });

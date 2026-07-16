@@ -839,6 +839,19 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  it("routes reset through the centralized confirm seam and proceeds in skip mode", async () => {
+    const onResetTask = vi.fn(async () => createMockTask());
+    mockConfirm.mockResolvedValueOnce(true);
+    renderListView({ tasks: [createMockTask({ id: "FN-901", column: "in-progress" })], onResetTask });
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
+
+    await waitFor(() => expect(onResetTask).toHaveBeenCalledWith("FN-901"));
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true, title: "Reset" }));
+    expect(document.querySelector(".confirm-dialog-overlay")).toBeNull();
+  });
+
   it("opens Planning Mode from eligible list row menus and omits it for executing rows", async () => {
     const viewportSpy = mockDesktopViewport();
     const onPlanningMode = vi.fn();

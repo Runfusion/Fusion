@@ -1946,12 +1946,20 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     className="floating-window--github-import-detail"
                   >
                     <div className="github-import-detail-panel">
-                      <div className="issue-preview" data-testid="gitlab-import-preview-card">
-                        <h4>{selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}{selectedGitlabItem.iid} {importTranslation.display.title}</h4>
-                        <div className="preview-meta-row"><span className={`preview-state-badge preview-state-badge--${selectedGitlabItem.state}`}>{selectedGitlabItem.state}</span><a href={selectedGitlabItem.webUrl} target="_blank" rel="noopener noreferrer">{t("git.openSource", "Open source")}</a></div>
-                        {importTranslation.controls}
-                        <MailboxMessageContent className="preview-body preview-body--markdown" content={importTranslation.display.body?.trim() || t("git.noDescription", "(no description)")} testId="gitlab-import-preview-body" />
-                        <button type="button" className="btn btn-primary" onClick={handleImportGitLab} disabled={!gitlabEnabled || importing || isUrlImported(selectedGitlabItem.webUrl)}>{importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}</button>
+                      <div className="github-import-pane-header">
+                        <h4>{t("git.previewHeading", "Preview")}</h4>
+                      </div>
+                      <div className="github-import-pane-content">
+                        <div className="issue-preview" data-testid="gitlab-import-preview-card">
+                          <h4>{selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}{selectedGitlabItem.iid} {importTranslation.display.title}</h4>
+                          <div className="preview-meta-row"><span className={`preview-state-badge preview-state-badge--${selectedGitlabItem.state}`}>{selectedGitlabItem.state}</span><a href={selectedGitlabItem.webUrl} target="_blank" rel="noopener noreferrer">{t("git.openSource", "Open source")}</a></div>
+                          {importTranslation.controls}
+                          <MailboxMessageContent className="preview-body preview-body--markdown" content={importTranslation.display.body?.trim() || t("git.noDescription", "(no description)")} testId="gitlab-import-preview-body" />
+                        </div>
+                      </div>
+                      {/* FNXC:GitHubImport 2026-07-16-00:37: GitLab uses the same padded, bottom-aligned detail action bar as GitHub so mobile sheets keep the primary import control reachable and consistent with other FloatingWindow modals. */}
+                      <div className="github-import-detail-actions" data-testid="github-import-detail-actions">
+                        <button type="button" className="btn btn-primary github-import-action" data-testid="github-import-action-top" onClick={handleImportGitLab} disabled={!gitlabEnabled || importing || isUrlImported(selectedGitlabItem.webUrl)}>{importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}</button>
                       </div>
                     </div>
                   </FloatingWindow>

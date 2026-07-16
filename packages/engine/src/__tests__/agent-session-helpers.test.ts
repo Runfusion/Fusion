@@ -124,6 +124,7 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
     expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
 
+    expect(resolveMergerFallbackThinkingLevel({ mergerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", mergerThinkingLevel: "medium" })).toBe("xhigh");
     expect(resolveMergerFallbackThinkingLevel({ fallbackThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");

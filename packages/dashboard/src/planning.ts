@@ -47,6 +47,7 @@ import {
 import {
   buildSessionSkillContextSync,
   createChatTaskDocumentTools,
+  createChatTaskLogsReadTool,
   createFnAgent as engineCreateFnAgent,
   createWorkflowAuthoringTools,
   resolveMcpServersForStore,
@@ -1267,6 +1268,7 @@ export async function createSession(
       Planning sessions do not own the dashboard MessageStore, so artifact tools stay excluded here until the planning lane can thread the same inbox dependency as chat. This preserves the FN-6778 requirement that registration notifications use an existing MessageStore rather than constructing a new one.
       */
       ...createChatTaskDocumentTools(store),
+      createChatTaskLogsReadTool(store),
     ],
     onThinking: () => {
       // Non-streaming path ignores thinking output
@@ -1873,6 +1875,7 @@ async function createPlanningAgent(
       ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
       /* FNXC:ArtifactRegistry 2026-06-21-00:00: Streaming planning excludes artifact tools for the same reason as non-streaming planning: this module has no MessageStore dependency to provide best-effort dashboard inbox notifications. */
       ...createChatTaskDocumentTools(store),
+      createChatTaskLogsReadTool(store),
     ],
     ...(modelProvider && modelId
       ? {

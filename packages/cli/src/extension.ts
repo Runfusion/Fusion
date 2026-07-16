@@ -65,6 +65,8 @@ import {
   workflowSettingsParams,
   traitListParams,
   isInReviewMissingWorktreeSessionStartFailure,
+  normalizeAgentLogPaging,
+  renderAgentLogEntries,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
@@ -1564,6 +1566,38 @@ export default function kbExtension(pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: lines.join("\n").trimEnd() }],
         details: { task },
+      };
+    },
+  });
+
+  // ── fn_task_logs_read ───────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_task_logs_read",
+    label: "fn: Read Task Logs",
+    description: "Read a task's full persisted agent log with pagination and optional type filtering.",
+    promptSnippet: "Read persisted agent logs for a Fusion task",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+      limit: Type.Optional(Type.Number({ description: "Maximum matching entries to return (default 100)." })),
+      offset: Type.Optional(Type.Number({ description: "Number of matching entries to skip from newest (default 0)." })),
+      type: Type.Optional(Type.Union([
+        Type.Literal("text"), Type.Literal("status"), Type.Literal("tool"),
+        Type.Literal("thinking"), Type.Literal("tool_result"), Type.Literal("tool_error"),
+      ], { description: "Only return entries of this agent-log type." })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const { limit, offset } = normalizeAgentLogPaging(params.limit, params.offset);
+      const [entries, total] = await Promise.all([
+        store.getAgentLogs(params.id, { limit, offset, type: params.type }),
+        store.getAgentLogCount(params.id, { type: params.type }),
+      ]);
+      const filter = params.type ? `, type=${params.type}` : "";
+      const header = `Agent log: ${entries.length}/${total} entries (limit=${limit}, offset=${offset}${filter})`;
+      return {
+        content: [{ type: "text", text: entries.length > 0 ? `${header}\n\n${renderAgentLogEntries(entries)}` : `${header}\n\n(no matching log entries)` }],
+        details: { taskId: params.id, total, limit, offset, type: params.type },
       };
     },
   });

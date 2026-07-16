@@ -23,6 +23,16 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "skipConfirmationDialogs",
+    labelKey: "settings.globalGeneral.skipConfirmationDialogs",
+    labelFallback: " Skip confirmation dialogs for critical actions ",
+    helpKey: "settings.globalGeneral.skipConfirmationDialogsHint",
+    helpFallback:
+      " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled",
+    keywords: ["confirm", "critical action", "delete", "reset", "destructive"],
+  },
+  {
+    sectionId: "global-general",
     key: "persistAgentToolOutput",
     labelKey: "settings.globalGeneral.saveToolOutputInAgentLogs",
     labelFallback: " Save tool output in agent logs ",

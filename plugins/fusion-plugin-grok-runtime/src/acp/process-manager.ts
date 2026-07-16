@@ -21,8 +21,22 @@ function debugLog(message: string): void {
   console.error(`[grok-acp] ${message}`);
 }
 
+/*
+FNXC:ProcessLifecycle 2026-07-16-07:00:
+Vitest resets the Grok plugin module graph while retaining the worker's `process`.
+Keep the ACP child registry on `process` so the one guarded exit listener also
+reaps children registered by later module evaluations; adding one listener per
+evaluation causes MaxListenersExceededWarning in the dashboard backfill lane.
+*/
+const ACTIVE_PROCESSES_KEY = Symbol.for("fusion.plugin.grok-runtime.activeProcesses");
+const processWithActiveProcesses = process as typeof process & {
+  [key: symbol]: Set<ChildProcess> | undefined;
+};
+
 /** Registry of active agent subprocesses for teardown. Self-cleans on exit. */
-const activeProcesses = new Set<ChildProcess>();
+const activeProcesses =
+  processWithActiveProcesses[ACTIVE_PROCESSES_KEY] ??
+  (processWithActiveProcesses[ACTIVE_PROCESSES_KEY] = new Set<ChildProcess>());
 
 /**
  * Register a subprocess in the agent process registry.

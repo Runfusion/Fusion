@@ -648,6 +648,47 @@ describe("splitSettingsSave", () => {
     expect(projectClearResult.projectPatch).toEqual({ titleSummarizerFallbackThinkingLevel: null });
   });
 
+  it("emits set and null-cleared merger fallback lane values in the project patch", () => {
+    const setResult = splitSettingsSave({
+      payload: {
+        mergerFallbackProvider: "anthropic",
+        mergerFallbackModelId: "claude-sonnet-4-5",
+        mergerFallbackThinkingLevel: "high",
+      },
+      initialValues: {} as never,
+      initialScopedValues: { global: {}, project: {} } as never,
+      activeSection: "project-models",
+    });
+    expect(setResult.projectPatch).toEqual({
+      mergerFallbackProvider: "anthropic",
+      mergerFallbackModelId: "claude-sonnet-4-5",
+      mergerFallbackThinkingLevel: "high",
+    });
+
+    const clearResult = splitSettingsSave({
+      payload: {
+        mergerFallbackProvider: undefined,
+        mergerFallbackModelId: undefined,
+        mergerFallbackThinkingLevel: undefined,
+      },
+      initialValues: {} as never,
+      initialScopedValues: {
+        global: {},
+        project: {
+          mergerFallbackProvider: "anthropic",
+          mergerFallbackModelId: "claude-sonnet-4-5",
+          mergerFallbackThinkingLevel: "high",
+        },
+      } as never,
+      activeSection: "project-models",
+    });
+    expect(clearResult.projectPatch).toEqual({
+      mergerFallbackProvider: null,
+      mergerFallbackModelId: null,
+      mergerFallbackThinkingLevel: null,
+    });
+  });
+
   it("drops plain-undefined global keys that were never set", () => {
     const payload: Record<string, unknown> = {
       ntfyTopic: undefined, // never had a value → passed through as undefined

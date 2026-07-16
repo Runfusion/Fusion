@@ -211,6 +211,70 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("Test task description");
   });
 
+  describe("task-definition input language setting", () => {
+    const languageSettings: Settings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 10_000,
+      groupOverlappingFiles: false,
+      autoMerge: true,
+      taskDefinitionInInputLanguage: true,
+    };
+    const detectedSamples = [
+      ["es", "Necesitamos actualizar la definición de la tarea para que los usuarios puedan leer los pasos y las instrucciones en español con todos los detalles necesarios.", "Español"],
+      ["fr", "Nous devons mettre à jour la définition de la tâche pour que les utilisateurs puissent lire les étapes et les instructions en français avec tous les détails nécessaires.", "Français"],
+      ["ko", "사용자가 작업 정의의 단계와 지침을 한국어로 읽을 수 있도록 필요한 모든 세부 정보와 함께 작업 정의를 업데이트해야 합니다.", "한국어"],
+      ["zh-CN", "我们需要更新任务定义，以便用户可以使用中文阅读所有必要详细信息中的步骤和说明，并且确保任务规划清晰准确。", "简体中文"],
+    ] as const;
+
+    it.each(detectedSamples)("adds a %s authoring section for confident supported input", (locale, description, displayName) => {
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, description },
+        ".fusion/tasks/KB-001/PROMPT.md",
+        languageSettings,
+      );
+
+      expect(prompt).toContain("## Task Definition Language");
+      expect(prompt).toContain(`${displayName} (${locale})`);
+      expect(prompt).toContain("Keep every `##`/`###` section heading");
+      expect(prompt).toContain("`## Original Description`");
+    });
+
+    it.each([
+      [undefined, undefined, "Specify this task"],
+      ["# Existing specification", "Apply the feedback", "Revise this task"],
+      [undefined, "Create a replacement", "Re-specify this task"],
+    ])("applies the instruction in every specification mode", (existingPrompt, feedback, mode) => {
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, description: detectedSamples[0][1] },
+        ".fusion/tasks/KB-001/PROMPT.md",
+        languageSettings,
+        [],
+        existingPrompt,
+        feedback,
+      );
+
+      expect(prompt).toContain(mode);
+      expect(prompt).toContain("## Task Definition Language");
+    });
+
+    it.each([
+      ["setting is disabled", { ...languageSettings, taskDefinitionInInputLanguage: false }, detectedSamples[0][1]],
+      ["English input", languageSettings, "The task description has enough English words for the detector to identify the language with high confidence and preserve normal behavior."],
+      ["short input", languageSettings, "Très court"],
+      ["low-confidence input", languageSettings, "Atypical vocabulary provides no familiar stopwords despite being long enough for language detection to inspect this ambiguous prose sample."],
+      ["unsupported Japanese input", languageSettings, "ユーザーが作業内容と必要な手順を日本語で詳細に説明し、すべての利用者が理解できるように要件と確認方法を記載しています。"],
+    ])("keeps English behavior when %s", (_reason, settings, description) => {
+      const prompt = buildSpecificationPrompt(
+        { ...baseTask, description },
+        ".fusion/tasks/KB-001/PROMPT.md",
+        settings,
+      );
+
+      expect(prompt).not.toContain("## Task Definition Language");
+    });
+  });
+
   it("includes project commands when provided", () => {
     const settings: Settings = {
       maxConcurrent: 2,

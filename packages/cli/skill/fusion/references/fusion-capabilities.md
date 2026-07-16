@@ -25,6 +25,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_update` | Update fields on an existing task. Supports modifying the title, description, dependencies, assigned agent, priority, and workflow_id after task creation. Set workflow_id to a workflow ID to select it, or null to clear the workflow selection. |
 | `fn_task_list` | List all tasks on the Fusion board, grouped by column. |
 | `fn_task_show` | Show full details for a task including steps, progress, and log entries. |
+| `fn_task_logs_read` | Read a task's full persisted agent log with pagination and optional type filtering. |
 | `fn_task_attach` | Attach a file to a task. Supports images (png, jpg, gif, webp) and text files (txt, log, json, yaml, yml, toml, csv, xml). |
 | `fn_task_pause` | Pause a task for explicit user-requested manual control — stops all automated agent and scheduler interaction. Agents should not pause tasks to handle failures or blockers; use retry, create/delegate follow-up work, or let the task surface as failed instead. |
 | `fn_task_unpause` | Unpause a task — resumes automated agent and scheduler interaction. |

@@ -2092,12 +2092,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return unlinkGithubIssueImpl(this, id);
   }
 
-/** Read historical agent log entries for a task from JSONL storage. */
-  async getAgentLogs( taskId: string, options?: { limit?: number; offset?: number }, ): Promise<AgentLogEntry[]> {
+/*
+FNXC:AgentLogRead 2026-07-16-00:00:
+Issue #2149 requires read-only type filtering to occur in the file-store before pagination, so a task-chat agent receives a coherent page and a filtered total rather than post-pagination results.
+*/
+  async getAgentLogs( taskId: string, options?: { limit?: number; offset?: number; type?: AgentLogEntry["type"] }, ): Promise<AgentLogEntry[]> {
     return getAgentLogsImpl(this, taskId, options);
   }
-  async getAgentLogCount(taskId: string): Promise<number> {
-    return getAgentLogCountImpl(this, taskId);
+  async getAgentLogCount(taskId: string, options?: { type?: AgentLogEntry["type"] }): Promise<number> {
+    return getAgentLogCountImpl(this, taskId, options);
   }
 
 /** Get persisted agent log entries for a task filtered by an inclusive time range. */

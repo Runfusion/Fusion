@@ -22,6 +22,7 @@ vi.mock("../agent-session-helpers.js", () => ({
   // The mock must surface it or every PR-response run throws on the missing
   // export. Neutral undefined return — no test asserts on thinking level.
   resolveMergerThinkingLevel: vi.fn(() => undefined),
+  resolveMergerFallbackThinkingLevel: vi.fn((settings: Settings) => settings.mergerFallbackThinkingLevel ?? settings.fallbackThinkingLevel),
 }));
 
 vi.mock("../pi.js", () => ({

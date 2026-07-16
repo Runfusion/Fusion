@@ -240,6 +240,28 @@ export function resolveMergerSettingsModel(settings?: Partial<Settings>): Resolv
   );
 }
 
+/**
+ * FNXC:Settings-MergerModel 2026-07-16-00:00:
+ * Retryable merger sessions resolve a project merger-fallback pair before the shared
+ * global fallback pair. Complete-pair selection and test-mode override behavior match
+ * all other model lanes, preserving existing behavior while this lane is unset.
+ */
+export function resolveMergerFallbackModel(settings?: Partial<Settings>): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      {
+        provider: settings?.mergerFallbackProvider,
+        modelId: settings?.mergerFallbackModelId,
+      },
+      {
+        provider: settings?.fallbackProvider,
+        modelId: settings?.fallbackModelId,
+      },
+    ),
+    settings,
+  );
+}
+
 export function resolveTaskExecutionModel(
   task: TaskModelLike,
   settings?: Partial<Settings>,

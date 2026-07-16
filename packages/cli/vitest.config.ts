@@ -85,18 +85,13 @@ const quarantinedCliTests: string[] = [
   FNXC:CliTests 2026-06-27-10:05:
   FN-7119 re-ran extension.test.ts twice with the exclude removed and the fn_delegate_task null-target symptom no longer reproduces at HEAD. Keep this list empty so delegate-task validation coverage stays active in the package lane.
 
-  FNXC:CliTests 2026-07-04-10:40:
-  FN-7447 re-quarantines extension.test.ts after its built-dist-barrel fn_task_list test (line ~3084) timed out at 5000ms in full-suite shard 4/4 (run 28697507894) while passing locally at ~1.2s and in 3 of the 4 surrounding CI runs. The root-cause invariant is the loaded-lane signature: in-test dist-barrel recompilation (vi.resetModules + vi.importActual of the full @fusion/core dist barrel + a fresh dynamic import of extension.js) inside the default 5s timeout is CPU-bound and degrades non-linearly under 4-shard CI contention. This is the same signature rescued in FN-6483/FN-6705/FN-6795/FN-6839; widening the timeout is forbidden by the flaky-test rule and removing the recompilation removes the test's only purpose, so the file is excluded per the deletion ratchet rather than re-attempting a fifth fixture rescue. Mirrors scripts/lib/test-quarantine.json; collateral is the ~68 otherwise-stable tests in this file, recoverable via rescue before the 2026-07-18 deletion deadline.
-
-  FNXC:CliTests 2026-07-04-13:50:
-  FN-7530 resolved the FN-7447 entry: RESCUE-by-split, not delete. The single dist-barrel recompilation test (unchanged assertions) moved to packages/cli/src/__tests__/extension-dist-barrel.test.ts; extension.test.ts is back in the default lane and its ~68 stable tests run again. The isolated file still stays quarantined here under its OWN fresh entry, because the root cause is loaded-lane CPU contention during vi.resetModules()/vi.importActual(dist barrel)/dynamic import() -- a property of that operation under 4-shard CI, not of file layout -- so splitting the file does not by itself make it safe to re-admit, and with only one test in the file there is no second call site to amortize a module-top-level rescue against. No testTimeout widening, retries, or worker/concurrency changes were made. Mirrors scripts/lib/test-quarantine.json; this isolated file's own 14-day deletion clock is due 2026-07-18.
+  FNXC:CliTests 2026-07-16-06:27:
+  FN-8093 rescues the isolated dist-barrel test before its deletion deadline. Its entire CPU-bound recompilation unit and fixture seeding run once in suite-scoped beforeAll, while each default-5s test body only executes an already-injected fn_task_list tool. The exclusion and matching ledger entry were removed in lockstep after loaded-lane verification; do not re-add either unless a new root cause is quarantined under the deletion ratchet.
   */
-  "src/__tests__/extension-dist-barrel.test.ts",
   /*
-  FNXC:CliTests 2026-07-14-23:05:
-  project-context.test.ts lost its embedded PostgreSQL postmaster and timed out only in a combined focused lane, then passed 12/12 in isolation. Quarantine the loaded-lane cluster interference on sight instead of widening hooks, retrying, or weakening lifecycle assertions; mirrored in scripts/lib/test-quarantine.json.
+  FNXC:CliTests 2026-07-16-09:00:
+  FN-8077 removed project-context.test.ts from this list and the ledger in lockstep. Its CentralCore coverage now uses the external PostgreSQL test harness under pgDescribe rather than launching an embedded postmaster for each test in forked loaded lanes; pure formatting coverage remains ungated.
   */
-  "src/__tests__/project-context.test.ts",
 ];
 
 export default defineConfig({

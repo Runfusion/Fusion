@@ -71,6 +71,7 @@ import {
   isWindowsElevatedAdmin,
   startServerAsNonAdminUser,
   type NonAdminServerHandle,
+  type NonAdminStartOptions,
 } from "./embedded-windows-admin.js";
 // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
 // Static import so tsup/esbuild bundles postgres.js into packages/cli/dist/bin.js.
@@ -469,6 +470,33 @@ export function __setEmbeddedPostgresCtorForTests(ctor: EmbeddedPostgresCtor | n
   embeddedPostgresCtorIsTestOverride = ctor !== null;
 }
 
+/*
+ * FNXC:PostgresEmbedded 2026-07-16-12:45:
+ * Cross-platform tests must exercise the elevated Windows launcher without an
+ * elevated token, Windows binaries, or a running database. These narrow seams
+ * replace only the branch dependencies during a test; production always calls
+ * the imported implementations.
+ */
+let windowsElevatedAdminForTests: boolean | null = null;
+let windowsNativeRootForTests: string | null = null;
+let windowsLauncherForTests:
+  | ((opts: NonAdminStartOptions) => Promise<NonAdminServerHandle>)
+  | null = null;
+
+export function __setWindowsElevatedAdminForTests(value: boolean | null): void {
+  windowsElevatedAdminForTests = value;
+}
+
+export function __setWindowsEmbeddedPostgresNativeRootForTests(value: string | null): void {
+  windowsNativeRootForTests = value;
+}
+
+export function __setWindowsLauncherForTests(
+  launcher: ((opts: NonAdminStartOptions) => Promise<NonAdminServerHandle>) | null,
+): void {
+  windowsLauncherForTests = launcher;
+}
+
 function getEmbeddedPostgresCtor(): EmbeddedPostgresCtor {
   if (embeddedPostgresCtorCache) return embeddedPostgresCtorCache;
   // FNXC:DesktopEmbeddedPostgres 2026-07-14-18:30:
@@ -489,6 +517,17 @@ export const DEFAULT_EMBEDDED_USER = "postgres";
 export const DEFAULT_EMBEDDED_PASSWORD = "password";
 /** Default application database name created/ensured on the embedded cluster. */
 export const DEFAULT_EMBEDDED_DATABASE = "fusion";
+
+/*
+ * FNXC:PostgresEmbedded 2026-07-16-12:45:
+ * Embedded PostgreSQL 15's primary postmaster allocation used SysV shmget and
+ * failed with `could not create shared memory segment: No space left on device`
+ * when host SHMMNI/SHMALL was constrained. Use mmap-backed primary shared memory
+ * so the zero-config cluster has been boot-smoke tested with a 64MB /dev/shm
+ * lower bound. Defaults precede caller flags because PostgreSQL applies repeated
+ * `-c key=value` settings last-wins, preserving an operator's explicit override.
+ */
+export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = ["-c", "shared_memory_type=mmap"] as const;
 
 /**
  * FNXC:PostgresEmbedded 2026-06-24-09:05:
@@ -914,7 +953,7 @@ export class EmbeddedPostgresLifecycle {
       user: opts.user ?? DEFAULT_EMBEDDED_USER,
       password: opts.password ?? DEFAULT_EMBEDDED_PASSWORD,
       initdbFlags: opts.initdbFlags ?? [],
-      postgresFlags: opts.postgresFlags ?? [],
+      postgresFlags: [...DEFAULT_EMBEDDED_POSTGRES_FLAGS, ...(opts.postgresFlags ?? [])],
       startTimeoutMs: opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS,
       onLog: opts.onLog ?? ((msg: string) => log.log(msg)),
       onError:
@@ -1128,8 +1167,11 @@ export class EmbeddedPostgresLifecycle {
     // Skip the real non-admin path when tests inject a mock ctor so delayed
     // start/cancellation coverage exercises pg.start() even on elevated CI.
     try {
-      if (isWindowsElevatedAdmin() && !embeddedPostgresCtorIsTestOverride) {
-        const nativeRoot = resolveWindowsEmbeddedPostgresNativeRoot();
+      const isElevatedWindows = windowsElevatedAdminForTests ?? isWindowsElevatedAdmin();
+      // A launcher seam intentionally coexists with the ctor seam so this branch
+      // can be covered off Windows; without that seam, ctor mocks retain normal-path behavior.
+      if (isElevatedWindows && (!embeddedPostgresCtorIsTestOverride || windowsLauncherForTests)) {
+        const nativeRoot = windowsNativeRootForTests ?? resolveWindowsEmbeddedPostgresNativeRoot();
         if (!nativeRoot) {
           throw new Error(
             "embedded postgres: the process is running elevated on Windows, where " +
@@ -1139,7 +1181,7 @@ export class EmbeddedPostgresLifecycle {
               "non-elevated, or ensure the embedded-postgres platform package is installed.",
           );
         }
-        this.nonAdminHandle = await startServerAsNonAdminUser({
+        this.nonAdminHandle = await (windowsLauncherForTests ?? startServerAsNonAdminUser)({
           nativeRoot,
           dataDir: this.options.dataDir,
           port,

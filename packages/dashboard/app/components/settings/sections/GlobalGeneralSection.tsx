@@ -38,6 +38,16 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
       />
       <SettingsToggleRow
         descriptor={{
+          key: "skipConfirmationDialogs",
+          label: t("settings.globalGeneral.skipConfirmationDialogs", " Skip confirmation dialogs for critical actions "),
+          help: t("settings.globalGeneral.skipConfirmationDialogsHint", " When enabled, destructive actions such as deleting a task or resetting progress run immediately without a prompt. Default: disabled"),
+          scope: "global",
+        }}
+        value={form.skipConfirmationDialogs === true}
+        onChange={(v) => setForm((f) => ({ ...f, skipConfirmationDialogs: v === true }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
           key: "persistAgentToolOutput",
           label: t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs "),
           help: t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. "),

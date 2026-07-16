@@ -4,10 +4,10 @@ import { useDashboardKeyboardShortcuts } from "../useDashboardKeyboardShortcuts"
 
 function baseHandlers() {
   return {
-    openFiles: vi.fn(),
-    openSettings: vi.fn(),
-    openCommandCenter: vi.fn(),
-    openNewTask: vi.fn(),
+    toggleFiles: vi.fn(),
+    toggleSettings: vi.fn(),
+    toggleCommandCenter: vi.fn(),
+    toggleNewTask: vi.fn(),
   };
 }
 
@@ -18,29 +18,29 @@ function press(init: KeyboardEventInit, target: Document | HTMLElement = documen
 }
 
 describe("useDashboardKeyboardShortcuts", () => {
-  it("opens Quick Chat with the default Space binding from document focus", () => {
-    const openQuickChat = vi.fn();
+  it("dispatches the Quick Chat toggle with the default Space binding from document focus", () => {
+    const toggleQuickChat = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), openQuickChat, toggleTerminal: vi.fn() }));
+      ...baseHandlers(), toggleQuickChat, toggleTerminal: vi.fn() }));
 
     const event = press({ key: " " });
 
-    expect(openQuickChat).toHaveBeenCalledTimes(1);
+    expect(toggleQuickChat).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("opens Terminal with custom shortcuts and honors disabled actions", () => {
-    const openQuickChat = vi.fn();
+  it("dispatches Terminal toggles with custom shortcuts and honors disabled actions", () => {
+    const toggleQuickChat = vi.fn();
     const toggleTerminal = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
       shortcuts: { quickChat: "", terminal: "Alt+T" },
-      openQuickChat,
+      toggleQuickChat,
       toggleTerminal,
     }));
 
     press({ key: " " });
-    expect(openQuickChat).not.toHaveBeenCalled();
+    expect(toggleQuickChat).not.toHaveBeenCalled();
 
     const event = press({ key: "t", altKey: true });
     expect(toggleTerminal).toHaveBeenCalledTimes(1);
@@ -48,13 +48,13 @@ describe("useDashboardKeyboardShortcuts", () => {
   });
 
   it("ignores shortcuts from editable and interactive targets", () => {
-    const openQuickChat = vi.fn();
+    const toggleQuickChat = vi.fn();
     const toggleTerminal = vi.fn();
     const input = document.createElement("input");
     const button = document.createElement("button");
     document.body.append(input, button);
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), openQuickChat, toggleTerminal }));
+      ...baseHandlers(), toggleQuickChat, toggleTerminal }));
 
     input.focus();
     press({ key: " " }, input);
@@ -62,29 +62,29 @@ describe("useDashboardKeyboardShortcuts", () => {
     button.focus();
     press({ key: " " }, button);
 
-    expect(openQuickChat).not.toHaveBeenCalled();
+    expect(toggleQuickChat).not.toHaveBeenCalled();
     expect(toggleTerminal).not.toHaveBeenCalled();
     input.remove();
     button.remove();
   });
 
   it("does not handle default-prevented nested menu events", () => {
-    const openQuickChat = vi.fn();
+    const toggleQuickChat = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
-      ...baseHandlers(), openQuickChat, toggleTerminal: vi.fn() }));
+      ...baseHandlers(), toggleQuickChat, toggleTerminal: vi.fn() }));
 
     const event = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
     Object.defineProperty(event, "defaultPrevented", { value: true });
     document.dispatchEvent(event);
 
-    expect(openQuickChat).not.toHaveBeenCalled();
+    expect(toggleQuickChat).not.toHaveBeenCalled();
   });
 
   it("delegates Escape to the topmost popup closer once", () => {
     const closeTopmostPopup = vi.fn(() => true);
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      openQuickChat: vi.fn(),
+      toggleQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -101,7 +101,7 @@ describe("useDashboardKeyboardShortcuts", () => {
     document.body.appendChild(input);
     renderHook(() => useDashboardKeyboardShortcuts({
       ...baseHandlers(),
-      openQuickChat: vi.fn(),
+      toggleQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
     }));
@@ -116,50 +116,50 @@ describe("useDashboardKeyboardShortcuts", () => {
 });
 
 describe("FN-7553 new actions", () => {
-  it("dispatches openFiles, openSettings, openCommandCenter, and newTask on their default bindings", () => {
-    const openFiles = vi.fn();
-    const openSettings = vi.fn();
-    const openCommandCenter = vi.fn();
-    const openNewTask = vi.fn();
+  it("dispatches Files, Settings, Command Center, and New Task toggles on their default bindings", () => {
+    const toggleFiles = vi.fn();
+    const toggleSettings = vi.fn();
+    const toggleCommandCenter = vi.fn();
+    const toggleNewTask = vi.fn();
     renderHook(() => useDashboardKeyboardShortcuts({
-      openQuickChat: vi.fn(),
+      toggleQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
-      openFiles,
-      openSettings,
-      openCommandCenter,
-      openNewTask,
+      toggleFiles,
+      toggleSettings,
+      toggleCommandCenter,
+      toggleNewTask,
     }));
 
     const filesEvent = press({ key: "e", ctrlKey: true });
-    expect(openFiles).toHaveBeenCalledTimes(1);
+    expect(toggleFiles).toHaveBeenCalledTimes(1);
     expect(filesEvent.defaultPrevented).toBe(true);
 
     press({ key: ",", ctrlKey: true });
-    expect(openSettings).toHaveBeenCalledTimes(1);
+    expect(toggleSettings).toHaveBeenCalledTimes(1);
 
     press({ key: "k", ctrlKey: true });
-    expect(openCommandCenter).toHaveBeenCalledTimes(1);
+    expect(toggleCommandCenter).toHaveBeenCalledTimes(1);
 
     press({ key: "n", ctrlKey: true, shiftKey: true });
-    expect(openNewTask).toHaveBeenCalledTimes(1);
+    expect(toggleNewTask).toHaveBeenCalledTimes(1);
   });
 
   it("no-ops new actions when their binding is disabled and ignores editable targets", () => {
-    const openFiles = vi.fn();
+    const toggleFiles = vi.fn();
     const input = document.createElement("input");
     document.body.appendChild(input);
     renderHook(() => useDashboardKeyboardShortcuts({
       shortcuts: { openFiles: "" },
-      openQuickChat: vi.fn(),
+      toggleQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
-      openFiles,
-      openSettings: vi.fn(),
-      openCommandCenter: vi.fn(),
-      openNewTask: vi.fn(),
+      toggleFiles,
+      toggleSettings: vi.fn(),
+      toggleCommandCenter: vi.fn(),
+      toggleNewTask: vi.fn(),
     }));
 
     press({ key: "e", ctrlKey: true });
-    expect(openFiles).not.toHaveBeenCalled();
+    expect(toggleFiles).not.toHaveBeenCalled();
 
     input.focus();
     press({ key: "k", ctrlKey: true }, input);

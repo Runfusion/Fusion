@@ -328,10 +328,10 @@ deleted per the AGENTS.md deletion ratchet (14 days expired, not rescued).
 Ledger entries removed from scripts/lib/test-quarantine.json in the same commit.
 The array stays empty; add new entries here only with a matching ledger row.
 
-FNXC:DashboardTestQuarantine 2026-07-14-18:48:
-PostgreSQL maintainability verification observed routes-system.test.ts return a timing-sensitive CPU sample of 10 where the test expected 30. Quarantine the unrelated flake under the deletion ratchet without changing its timeout, retries, or assertion; mirror the entry in scripts/lib/test-quarantine.json.
+FNXC:DashboardTestQuarantine 2026-07-16-09:00:
+FN-8077 removed routes-system.test.ts from this list and the ledger in lockstep. Its test now explicitly advances a fake Date-only clock between CPU samples, so unrelated route clock reads cannot stretch elapsed time under the loaded API lane; assertions and timeout policy are unchanged.
 */
-const quarantinedDashboardTests: string[] = ["src/__tests__/routes-system.test.ts"];
+const quarantinedDashboardTests: string[] = [];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,

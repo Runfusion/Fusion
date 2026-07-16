@@ -690,6 +690,7 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-timestamps")).toBeTruthy();
       expect(container.querySelectorAll(".detail-timestamp-item").length).toBe(2);
       const tabs = container.querySelectorAll(".detail-tab");
+      // FNXC:TaskDetailTabs 2026-07-15-23:23: Keep this responsive-order expectation aligned with peer tab tests: the always-available Terminal (FN-7826) and Cost (FN-7820) tabs belong between Comments and Artifacts.
       expect(Array.from(tabs).map((tab) => tab.textContent?.trim())).toEqual([
         "Activity",
         "Chat",
@@ -697,6 +698,8 @@ describe("TaskDetailModal", () => {
         "Changes",
         "Review",
         "Comments",
+        "Terminal",
+        "Cost",
         "Artifacts",
         "Model",
         "Workflow",

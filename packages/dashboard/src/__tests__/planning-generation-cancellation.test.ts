@@ -14,6 +14,7 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   createWorkflowAuthoringTools: () => [],
   createChatTaskDocumentTools: () => [],
+  createChatTaskLogsReadTool: () => ({}),
 }));
 
 import {

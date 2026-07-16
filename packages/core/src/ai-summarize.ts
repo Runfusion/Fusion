@@ -12,6 +12,7 @@
  */
 
 import { getFnAgent, type AgentMessage } from "./ai-engine-loader.js";
+import { detectContentLanguage, localeDisplayName } from "./detect-content-language.js";
 import { DANGLING_TAIL_STOPWORDS, stripDanglingTail, stripEmptyPlaceholders } from "./task-title-id-drift.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ Your ONLY job is to create a concise title (max 60 characters) that summarizes t
 
 ## Style
 - Clear, descriptive, actionable, professional
+- Write the title in the SAME language as the task description content. For example, a French description requires a French title.
 - Maximum 60 characters
 - Focus on the main goal or deliverable of the task`;
 
@@ -218,6 +220,21 @@ function formatConfiguredModel(provider?: string, modelId?: string): string {
   return provider && modelId ? `${provider}/${modelId}` : "unknown configured model";
 }
 
+/*
+ * FNXC:TitleSummaryInputLanguage 2026-07-16-00:00:
+ * When existing autoSummarizeTitles or per-request summarize behavior invokes this shared summarizer,
+ * the generated title must match the operator's description language without another model call.
+ * Detection only adds a medium-or-higher confidence hint; matching the description remains the rule.
+ */
+function buildTitleLanguageInstruction(description: string): string {
+  const detected = detectContentLanguage(description);
+  if (detected.locale !== "unknown" && detected.confidence !== "low") {
+    return `Write the title in the SAME language as the task description. Likely language: ${localeDisplayName(detected.locale)}.`;
+  }
+
+  return "Write the title in the SAME language as the task description.";
+}
+
 async function runTitleSummarizer(
   createFnAgent: NonNullable<Awaited<ReturnType<typeof getFnAgent>>>,
   description: string,
@@ -264,6 +281,7 @@ async function runTitleSummarizer(
       : description;
     const wrappedPrompt =
       "Summarize the following task description into a title (≤60 chars). " +
+      buildTitleLanguageInstruction(description) + " " +
       "Output ONLY the title text on a single line. Do not call any tools.\n\n" +
       "<description>\n" +
       truncatedDescription +

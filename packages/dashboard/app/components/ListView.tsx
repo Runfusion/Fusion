@@ -1767,11 +1767,21 @@ export function ListView({
           addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
         }
       } : undefined,
-      onReset: onResetTask ? () => {
-        if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
-        void onResetTask(task.id)
-          .then(() => addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success"))
-          .catch((err) => addToast(getErrorMessage(err), "error"));
+      onReset: onResetTask ? async () => {
+        const shouldReset = await confirm({
+          title: t("taskDetail.reset.btn", "Reset"),
+          message: t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }),
+          confirmLabel: t("taskDetail.reset.btn", "Reset"),
+          cancelLabel: t("common.cancel", "Cancel"),
+          danger: true,
+        });
+        if (!shouldReset) return;
+        try {
+          await onResetTask(task.id);
+          addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success");
+        } catch (err) {
+          addToast(getErrorMessage(err), "error");
+        }
       } : undefined,
       onTogglePause: (isTaskPaused ? onUnpauseTask : onPauseTask) ? async () => {
         try {
