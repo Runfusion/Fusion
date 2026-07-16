@@ -2383,10 +2383,15 @@ export class TriageProcessor {
           && Boolean((result.output || result.notes)?.trim()),
       );
     const priorSpecReviewFeedback = (priorPlanReviewRevise?.output || priorPlanReviewRevise?.notes)?.trim() || undefined;
-    // FNXC:TriagePlanReviewConvergence 2026-07-16-20:10: read the attempt from the SAME fresh
-    // latestTaskForReview snapshot as the prior feedback. Using the older `task` arg could pair
-    // fresh feedback with a stale (lower) attempt and miss the attempt-3 severity ratchet.
-    const specReviewAttempt = (latestTaskForReview.planReviewReplanCount ?? 0) + 1;
+    // FNXC:TriagePlanReviewConvergence 2026-07-16-21:30: derive the attempt from the MAX replan
+    // count across both the caller's `task` snapshot and the fresh `latestTaskForReview`. The
+    // refresh above falls back to the stale `task` when getTask() fails, so reading either one
+    // alone could under-count the attempt and skip the attempt-3 severity ratchet. Max is
+    // monotonic (fresh count >= stale), so it never sends a lower attempt than any snapshot
+    // knows about. This is best-effort convergence context, so a failed refresh must not defer
+    // or block the Plan Review gate — it just uses the best replan count available.
+    const specReviewAttempt =
+      Math.max(task.planReviewReplanCount ?? 0, latestTaskForReview.planReviewReplanCount ?? 0) + 1;
 
     let reviewFailure: unknown;
     const review = await reviewStep(
