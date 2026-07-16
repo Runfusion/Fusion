@@ -28,6 +28,8 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
+  isRecycleWorktreeNamingConflict,
+  RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE,
   scheduleQmdProjectMemoryRefresh,
   searchProjectMemory,
   syncBackupRoutine,
@@ -696,6 +698,25 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       if (clientSettings.memoryBackendType !== undefined) {
         if (clientSettings.memoryBackendType !== null && typeof clientSettings.memoryBackendType !== "string") {
           throw badRequest("memoryBackendType must be a string or null");
+        }
+      }
+
+      // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: recycleWorktrees and worktreeNaming:"task-id" are mutually
+      // exclusive. Validate the RESOLVED next state (current merged with this partial patch) so a clean 400 is
+      // returned before the store backstop throws. Only fetch current settings when one of the two fields moves.
+      if (
+        Object.prototype.hasOwnProperty.call(clientSettings, "recycleWorktrees")
+        || Object.prototype.hasOwnProperty.call(clientSettings, "worktreeNaming")
+      ) {
+        const currentForWorktreeCheck = await scopedStore.getSettings();
+        const nextRecycle = Object.prototype.hasOwnProperty.call(clientSettings, "recycleWorktrees")
+          ? clientSettings.recycleWorktrees
+          : currentForWorktreeCheck.recycleWorktrees;
+        const nextNaming = Object.prototype.hasOwnProperty.call(clientSettings, "worktreeNaming")
+          ? clientSettings.worktreeNaming
+          : currentForWorktreeCheck.worktreeNaming;
+        if (isRecycleWorktreeNamingConflict({ recycleWorktrees: nextRecycle, worktreeNaming: nextNaming })) {
+          throw badRequest(RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE);
         }
       }
 

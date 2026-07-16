@@ -9,13 +9,16 @@ import { formatError } from "./logger.js";
 import { classifyBootstrapMisbinding, isBranchConflictError, reanchorBranchToBase } from "./branch-conflicts.js";
 import {
   type WorktreePool,
+  canonicalizePath,
   classifyTaskWorktree,
+  getRegisteredWorktreeBranches,
   isInsideWorktreesDir,
   isRepoRootPath,
   removeWorktree,
   RemovalReason,
   PoolDoubleLeaseError,
 } from "./worktree-pool.js";
+import { isTaskPinnedWorktreeNaming, pinnedWorktreePathForTask } from "./worktree-pinning.js";
 import {
   NativeWorktreeBackend,
   WorktrunkOperationError,
@@ -168,6 +171,23 @@ async function maybeWarnForeignTaskStartPoint(
   }
 }
 
+/*
+FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+Warm-reuse of a task-pinned worktree requires the on-disk directory to be checked out on the task's own
+branch. A same-name directory carrying a foreign branch (or detached HEAD) is stale/foreign and must be
+reclaimed in place rather than reused, so pinned mode never hands a task another task's checkout.
+*/
+async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string, expectedBranch: string): Promise<boolean> {
+  try {
+    const canonical = canonicalizePath(worktreePath);
+    const entries = await getRegisteredWorktreeBranches(rootDir);
+    const match = entries.find((entry) => entry.worktreePath === canonical);
+    return match?.branch === expectedBranch;
+  } catch {
+    return false;
+  }
+}
+
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
   const notifyFallback = async (op: WorktrunkOpName, stderr?: string) => {
@@ -217,6 +237,19 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   }
   const branchName = resolveTaskWorkingBranch(task);
   const naming = settings.worktreeNaming || "random";
+  /*
+   * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+   * Pinning and `recycleWorktrees` are MUTUALLY EXCLUSIVE — the settings-write boundary rejects enabling both
+   * (see `assertWorktreeNamingRecycleExclusive`). Pinned mode is therefore active only under
+   * `worktreeNaming: "task-id"` AND recycling OFF AND the native backend. The `!recycleWorktrees` guard here is
+   * the runtime backstop: a legacy/hand-edited on-disk config that still carries both settings degrades safely
+   * to recycling (pinning off), matching the rule "task-pinned worktrees only apply when recycling is off".
+   * Worktrunk owns its own layout, so pinning is bypassed whenever worktrunk is enabled or in play.
+   */
+  const pinned = isTaskPinnedWorktreeNaming(settings)
+    && !settings.recycleWorktrees
+    && backend.kind !== "worktrunk"
+    && settings.worktrunk?.enabled !== true;
   const allowSiblingBranchRename = settings.executorAllowSiblingBranchRename === true;
   const baseBranch = task.executionStartBranch || null;
   /*
@@ -236,7 +269,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   }
 
   let isResume = Boolean(task.worktree && existsSync(worktreePath));
-  if (task.worktree && isResume) {
+  // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: the non-pinned resume-classification self-heal is skipped in
+  // pinned mode; acquirePinnedWorktree runs its own derive→validate→reuse-or-recreate decision below.
+  if (!pinned && task.worktree && isResume) {
     const resumeClassification = await classifyTaskWorktree(rootDir, worktreePath);
     /*
      * FNXC:WorktreeLiveness 2026-06-21-11:10:
@@ -456,6 +491,107 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     if (!isRepoRootPath(rootDir, result.worktreePath)) return result;
     return createFreshWorktreeFromReturnGuard(result.worktreePath, result.source);
   };
+
+  /** Warm-reuse an existing, usable, branch-matched worktree (mirrors the resume path). */
+  const reuseWarmWorktree = async (path: string, resumedBranch: string, source: "existing"): Promise<AcquireTaskWorktreeResult> => {
+    logger?.log(`Reusing existing worktree: ${path}`);
+    const cleanup = await removeDesktopBuildArtifacts(path, logger);
+    if (cleanup.removed.length > 0) {
+      await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
+    }
+    const hydrated = await hydrate(path);
+    await verifyResumeBranchNotMisbound({
+      worktreePath: path,
+      branchName: resumedBranch,
+      taskId: task.id,
+      rootDir,
+      store,
+      audit,
+      logger,
+      runContext,
+    });
+    return guardAcquisitionReturn({ worktreePath: path, branch: resumedBranch, source, hydrated, isResume: true });
+  };
+
+  /*
+   * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+   * Pinned-mode acquisition: derive → validate → reuse-or-recreate at the SAME derived path.
+   * `task.worktree` is a cache here — if it disagrees with the derived pinned path (the FN-7996 stale/foreign
+   * pointer shape), re-derive, correct the metadata, and emit `worktree:pin-rederived` before validating.
+   * The pool is never consulted (a pooled dir has the wrong name), so a task dispatched N times only ever
+   * touches `<worktreesDir>/<task-id>` and never suffixes a sibling directory name. Recreate-in-place does NOT
+   * consume any worktree-session retry budget (acquisition returns a valid fresh worktree directly).
+   */
+  const acquirePinnedWorktree = async (): Promise<AcquireTaskWorktreeResult> => {
+    const pinnedPath = pinnedWorktreePathForTask(task.id, settings, rootDir);
+    const resumedBranch = task.branch ?? branchName;
+
+    if (task.worktree && canonicalizePath(task.worktree) !== canonicalizePath(pinnedPath)) {
+      await audit?.git({
+        type: "worktree:pin-rederived",
+        target: pinnedPath,
+        metadata: { taskId: task.id, previous: task.worktree, derived: pinnedPath, source: "acquire" },
+      });
+      await store.logEntry(task.id, "Re-derived task-pinned worktree path from task id", `${task.worktree} -> ${pinnedPath}`, runContext);
+      await store.updateTask(task.id, { worktree: pinnedPath });
+    }
+
+    worktreePath = pinnedPath;
+    branch = branchName;
+
+    if (existsSync(pinnedPath)) {
+      const classification = await classifyTaskWorktree(rootDir, pinnedPath);
+      const branchMatches = classification.ok
+        ? await pinnedWorktreeBranchMatches(rootDir, pinnedPath, resumedBranch)
+        : false;
+      if (classification.ok && branchMatches) {
+        return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
+      }
+      // Invalid / foreign-branch / stale (crash leftover, archive→restore) → reclaim in place: remove the
+      // registered worktree (owner probe via removeWorktree) then recreate fresh at the SAME path — never suffix.
+      await audit?.git({
+        type: "worktree:incomplete-detected",
+        target: pinnedPath,
+        metadata: {
+          classification: classification.ok ? "foreign-branch" : classification.classification,
+          reason: classification.ok ? `branch mismatch (expected ${resumedBranch})` : classification.reason,
+          source: "pinned-acquire",
+          taskId: task.id,
+        },
+      });
+      await store.logEntry(
+        task.id,
+        classification.ok
+          ? `Task-pinned worktree ${pinnedPath} is checked out on a foreign branch; reclaiming in place`
+          : `Task-pinned worktree ${pinnedPath} is ${classification.classification} (${classification.reason}); reclaiming in place`,
+        undefined,
+        runContext,
+      );
+      if (isInsideWorktreesDir(rootDir, pinnedPath, settings)) {
+        try {
+          await removeWorktree({
+            rootDir,
+            worktreePath: pinnedPath,
+            settings,
+            reason: RemovalReason.PoolPrune,
+            taskId: task.id,
+            audit: undefined,
+          });
+        } catch (removeErr) {
+          logger?.warn(`${task.id}: failed to remove stale pinned worktree ${pinnedPath}: ${formatError(removeErr)}`);
+        }
+      }
+      // The removed worktree's session cannot resume into a fresh checkout — clear it so the executor starts clean.
+      await store.updateTask(task.id, { sessionFile: null });
+    }
+
+    const created = await createWorktreeImpl(branchName, pinnedPath, task.id, freshStartPoint, allowSiblingBranchRename);
+    return finalizeCreatedWorktree(created, "fresh", "normal");
+  };
+
+  if (pinned) {
+    return acquirePinnedWorktree();
+  }
 
   if (task.worktree && isResume) {
     logger?.log(`Reusing existing worktree: ${worktreePath}`);

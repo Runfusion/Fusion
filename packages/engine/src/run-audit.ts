@@ -96,6 +96,13 @@ export type GitMutationType =
   | "worktree:remove-classification-probe-failed"
   | "worktree:remove-leaked-registered-worktree"
   | "worktree:reuse"
+  /*
+   * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+   * Emitted when task-pinned acquisition (`worktreeNaming: "task-id"`) corrects a `task.worktree` cache that
+   * disagrees with the derived `<worktreesDir>/<task-id>` path (the FN-7996 stale/foreign-pointer shape).
+   * Metadata is ids/paths-only: `{ taskId, previous, derived, source }`.
+   */
+  | "worktree:pin-rederived"
   | "worktree:incomplete-detected"
   | "worktree:reanchored"
   | "worktree:auto-recovered"

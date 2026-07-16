@@ -340,6 +340,53 @@ describe("WorktreesSection", () => {
     expect(screen.getByLabelText("File to copy into new worktrees")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browse file to copy into new worktrees" })).toBeInTheDocument();
   });
+
+  /*
+  FNXC:TaskPinnedWorktrees 2026-07-16-00:00: recycleWorktrees and worktreeNaming:"task-id" are mutually
+  exclusive; the UI enforces this bidirectionally so the conflicting state is unreachable.
+  */
+  function renderWorktrees(form: Partial<SettingsFormState>) {
+    return render(
+      <WorktreesSection
+        form={{ worktreeCopyFiles: [], ...form } as SettingsFormState}
+        setForm={vi.fn()}
+        gitRemotes={[]}
+        worktrunkInstall={worktrunkInstall}
+        worktrunkInstallVerified={true}
+        onOpenWorktreesDirPicker={vi.fn()}
+        onWorktreeCopyFileChange={vi.fn()}
+        onRemoveWorktreeCopyFile={vi.fn()}
+        onAddWorktreeCopyFile={vi.fn()}
+        onOpenWorktreeCopyFilePicker={vi.fn()}
+      />,
+    );
+  }
+
+  it("disables the recycle toggle when worktree naming is task-id (mutually exclusive)", () => {
+    renderWorktrees({ recycleWorktrees: false, worktreeNaming: "task-id" });
+    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
+    expect(recycle.disabled).toBe(true);
+    expect(recycle.checked).toBe(false);
+    // The naming select stays enabled so the operator can switch away from task-id.
+    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
+    expect(naming.disabled).toBe(false);
+    expect(naming.value).toBe("task-id");
+  });
+
+  it("disables the naming select when recycling is on (mutually exclusive)", () => {
+    renderWorktrees({ recycleWorktrees: true, worktreeNaming: "random" });
+    const naming = screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement;
+    expect(naming.disabled).toBe(true);
+    const recycle = screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement;
+    expect(recycle.disabled).toBe(false);
+    expect(recycle.checked).toBe(true);
+  });
+
+  it("leaves both controls editable when neither conflicting value is set", () => {
+    renderWorktrees({ recycleWorktrees: false, worktreeNaming: "random" });
+    expect((screen.getByLabelText(/Recycle worktrees/i) as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/Worktree Naming Style/i) as HTMLSelectElement).disabled).toBe(false);
+  });
 });
 
 describe("GlobalModelsSection", () => {

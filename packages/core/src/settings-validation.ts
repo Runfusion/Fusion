@@ -15,6 +15,34 @@ import type {
 } from "./types.js";
 import { isLocale, isMcpSecretRef } from "./types.js";
 
+/*
+FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
+`recycleWorktrees` and `worktreeNaming: "task-id"` are MUTUALLY EXCLUSIVE. "task-id" naming enables
+task-pinned worktrees — each task owns exactly one derivable directory `<worktreesDir>/<task-id>` for its
+whole lifecycle — which is fundamentally incompatible with the cross-task recycle pool (a recycled dir
+belongs to a different task and carries the wrong name). The operator rule is "task-pinned worktrees only
+apply when recycling is off", so the combination is rejected at every settings-write boundary
+(store.updateSettings backstop + dashboard PUT /settings for a clean 400) instead of being silently resolved.
+*/
+export const RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE =
+  'recycleWorktrees and worktreeNaming:"task-id" are mutually exclusive: "task-id" naming pins each task to its own worktree directory, which is incompatible with the cross-task recycle pool. Disable recycleWorktrees to use "task-id" naming, or choose "random"/"task-title" naming to keep recycling.';
+
+/** True when the resolved settings enable BOTH the recycle pool and task-pinned ("task-id") naming. */
+export function isRecycleWorktreeNamingConflict(
+  settings: { recycleWorktrees?: boolean; worktreeNaming?: string } | undefined,
+): boolean {
+  return settings?.recycleWorktrees === true && settings?.worktreeNaming === "task-id";
+}
+
+/** Throws with {@link RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE} when both settings are enabled together. */
+export function assertWorktreeNamingRecycleExclusive(
+  settings: { recycleWorktrees?: boolean; worktreeNaming?: string } | undefined,
+): void {
+  if (isRecycleWorktreeNamingConflict(settings)) {
+    throw new Error(RECYCLE_WORKTREE_NAMING_CONFLICT_MESSAGE);
+  }
+}
+
 const UNAVAILABLE_NODE_POLICIES: readonly UnavailableNodePolicy[] = ["block", "fallback-local"] as const;
 const DIRECT_MERGE_COMMIT_STRATEGIES: readonly DirectMergeCommitStrategy[] = ["auto", "always-squash", "always-rebase"] as const;
 const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["gh-cli", "token"] as const;

@@ -14,7 +14,7 @@ import type {BoardConfig, Settings, GlobalSettings} from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../moved-settings.js";
 import "../builtin-traits.js";
-import {validateLocale} from "../settings-validation.js";
+import {validateLocale, assertWorktreeNamingRecycleExclusive} from "../settings-validation.js";
 import {hasSyncPassphraseConfigured} from "../secrets-sync-passphrase.js";
 import {ensureMemoryFileWithBackend} from "../project-memory.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -96,6 +96,9 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
         const globalSettings = await store.globalSettingsStore.getSettings();
         const previousMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...config.settings } as Settings;
         const updatedProjectSettings = { ...config.settings, ...projectPatch };
+        // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: reject recycleWorktrees + worktreeNaming:"task-id"
+        // (mutually exclusive) against the resolved next state BEFORE persisting the invalid combination.
+        assertWorktreeNamingRecycleExclusive({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
         // Write the full updated settings object back via the async helper.
         await writeProjectConfigAsync(layer, updatedProjectSettings as Record<string, unknown>);
         const updatedMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings;
@@ -182,6 +185,9 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
       const globalSettings = await store.globalSettingsStore.getSettings();
       const previousMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...config.settings } as Settings;
       const updatedProjectSettings = { ...config.settings, ...projectPatch };
+      // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: reject recycleWorktrees + worktreeNaming:"task-id"
+      // (mutually exclusive) against the resolved next state BEFORE persisting the invalid combination.
+      assertWorktreeNamingRecycleExclusive({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
       config.settings = updatedProjectSettings as Settings;
       await store.writeConfig(config);
       const updatedMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings;
