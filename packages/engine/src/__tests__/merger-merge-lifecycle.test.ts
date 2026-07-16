@@ -1897,8 +1897,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return "src/file.ts\n";
       }
 
-      // git diff-tree for trivial whitespace detection - return real changes (non-trivial)
-      if (cmdStr.includes("diff-tree")) {
+      // The conflict helper compares index stages through execFile; return a substantive diff.
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2056,8 +2056,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return hasConflicts ? "src/complex.ts\n" : "";
       }
 
-      // git diff-tree for trivial whitespace detection - return real changes (non-trivial)
-      if (cmdStr.includes("diff-tree")) {
+      // The conflict helper compares index stages through execFile; return a substantive diff.
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2141,7 +2141,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
       if (cmdStr.includes("diff --name-only --diff-filter=U")) {
         return hasConflicts ? "packages/core/src/store.ts\n" : "";
       }
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2205,7 +2205,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return Buffer.from("");
       }
       if (cmdStr.includes("diff --name-only --diff-filter=U")) return hasConflicts ? "packages/core/src/store.ts\n" : "";
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2263,7 +2263,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return Buffer.from("");
       }
       if (cmdStr.includes("diff --name-only --diff-filter=U")) return hasConflicts ? "packages/core/src/store.ts\n" : "";
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;
@@ -2598,7 +2598,7 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
         return "";
       }
 
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const value = 2;\n-const value = 1;";
         throw error;
@@ -2711,7 +2711,7 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
         return "src/always-conflicts.ts\n";
       }
 
-      if (cmdStr.includes("diff-tree")) {
+      if (cmdStr.includes("git diff -p -w")) {
         const error = new Error("exit code 1") as any;
         error.stdout = "+const x = 2;\n-const x = 1;";
         throw error;

@@ -261,6 +261,17 @@ import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merger
 export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 export { IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
 
+/*
+FNXC:MergeReliability 2026-07-15-14:55:
+`smartConflictResolution` was introduced as an alias, not a second enablement gate. Preserve an operator's legacy `autoResolveConflicts: false` choice even when stored defaults include the newer alias.
+*/
+function isSmartConflictResolutionEnabled(settings: {
+  autoResolveConflicts?: boolean;
+  smartConflictResolution?: boolean;
+}): boolean {
+  return settings.autoResolveConflicts !== false && settings.smartConflictResolution !== false;
+}
+
 async function resolveMergerMcpServers(store?: TaskStore, agentId?: string | null) {
   // FNXC:McpConfig 2026-06-25-22:27:
   // Merger-owned sessions resolve enabled MCP servers at session creation for conflict resolution, verification fixes, autostash recovery, and post-merge workflow nodes. Secret material stays in memory and is forwarded only through the shared runtime guard.
@@ -2551,8 +2562,7 @@ async function tryRecoverHardFailApply(params: {
 }): Promise<AutostashOutcome> {
   const { rootDir, taskId, sha, applyErrorMsg, applyStderr, ctx } = params;
   const stashFiles = [...await listStashChangedPaths(rootDir, sha)];
-  const smartConflictResolution =
-    (ctx.settings.smartConflictResolution ?? ctx.settings.autoResolveConflicts) !== false;
+  const smartConflictResolution = isSmartConflictResolutionEnabled(ctx.settings);
 
   // Step 1: try `git apply --3way`. This pulls the diff out of the stash and
   // applies it as a regular patch with three-way merging, which behaves
@@ -3068,8 +3078,7 @@ export async function restoreUnrelatedRootDirChanges(
   });
   const aiConflictedFiles = partitioned.inScopeConflicts;
 
-  const smartConflictResolution =
-    (ctx.settings.smartConflictResolution ?? ctx.settings.autoResolveConflicts) !== false;
+  const smartConflictResolution = isSmartConflictResolutionEnabled(ctx.settings);
 
   if (!smartConflictResolution) {
     const message = `Autostash apply conflicted in ${aiConflictedFiles.length} file(s) and smartConflictResolution is disabled. Stash ${sha.slice(0, 7)} left intact; resolve manually with: cd ${rootDir} && # edit files, then git stash drop <ref>`;
@@ -7596,8 +7605,7 @@ export async function aiMergeTask(
 
   // 2. Read settings
   const includeTaskId = settings.includeTaskIdInCommit !== false;
-  // Support both setting names: smartConflictResolution (new) and autoResolveConflicts (legacy)
-  const smartConflictResolution = (settings.smartConflictResolution ?? settings.autoResolveConflicts) !== false;
+  const smartConflictResolution = isSmartConflictResolutionEnabled(settings);
   const mergeConflictStrategy: CanonicalMergeConflictStrategy = normalizeMergeConflictStrategy(
     settings.mergeConflictStrategy,
   );
