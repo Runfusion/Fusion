@@ -178,14 +178,25 @@ branch. A same-name directory carrying a foreign branch (or detached HEAD) is st
 reclaimed in place rather than reused, so pinned mode never hands a task another task's checkout.
 */
 async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string, expectedBranch: string): Promise<boolean> {
-  try {
-    const canonical = canonicalizePath(worktreePath);
-    const entries = await getRegisteredWorktreeBranches(rootDir);
-    const match = entries.find((entry) => entry.worktreePath === canonical);
-    return match?.branch === expectedBranch;
-  } catch {
-    return false;
+  const canonical = canonicalizePath(worktreePath);
+  const entries = await getRegisteredWorktreeBranches(rootDir);
+  /*
+   * FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
+   * `false` (branch mismatch) drives DESTRUCTIVE reclaim, so it must mean a PROVEN mismatch — never a probe
+   * failure. This function is only called after `classifyTaskWorktree` already proved the pinned path is a
+   * registered, usable worktree, so a totally empty branch enumeration is an inconsistency: the underlying
+   * `git worktree list` is failing transiently (it swallows errors and returns []). Treating that as
+   * "foreign branch" would blow away a valid warm worktree. Throw so acquisition fails safe and retries with
+   * a fresh probe, rather than reclaiming on a flaky signal. A non-empty list that simply omits this path
+   * (detached HEAD / no branch line) is a genuine reclaim case and correctly returns false below.
+   */
+  if (entries.length === 0) {
+    throw new Error(
+      `pinned branch probe returned no registered worktrees for ${rootDir}; cannot confirm branch of ${worktreePath} (transient git failure) — refusing to prove mismatch`,
+    );
   }
+  const match = entries.find((entry) => entry.worktreePath === canonical);
+  return match?.branch === expectedBranch;
 }
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
@@ -545,6 +556,17 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         ? await pinnedWorktreeBranchMatches(rootDir, pinnedPath, resumedBranch)
         : false;
       if (classification.ok && branchMatches) {
+        /*
+         * FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
+         * Warm reuse can ADOPT an orphaned pinned directory (dir exists on its own branch while `task.worktree`
+         * is null — first dispatch onto a leftover dir, or a recovery path that cleared the pointer). Persist
+         * the derived worktree/branch before returning so the acquisition leaves the task assigned; otherwise
+         * later lifecycle steps see a successful acquisition on an unassigned task. Idempotent when the cache
+         * was already correct.
+         */
+        if (task.worktree !== pinnedPath || task.branch !== resumedBranch) {
+          await store.updateTask(task.id, { worktree: pinnedPath, branch: resumedBranch });
+        }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
       }
       // Invalid / foreign-branch / stale (crash leftover, archive→restore) → reclaim in place: remove the

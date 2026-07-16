@@ -2,9 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { join } from "node:path";
 import { acquireTaskWorktree } from "../worktree-acquisition.js";
 
-// The pinned-mode branch is validated in isolation with mocked git/liveness seams so the tests stay
-// fast and deterministic (no real-git worktree creation). classifyTaskWorktree / branch lookup / fs
-// existence are the observable inputs to derive→validate→reuse-or-recreate; we drive each of them.
+/*
+FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
+The pinned-mode branch is validated in isolation with mocked git/liveness seams so the tests stay fast and
+deterministic (no real-git worktree creation). classifyTaskWorktree / branch lookup / fs existence are the
+observable inputs to derive→validate→reuse-or-recreate; we drive each of them.
+*/
 vi.mock("../worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return {
@@ -148,6 +151,51 @@ describe("acquireTaskWorktree — task-pinned mode", () => {
     expect(result.worktreePath).toBe(PINNED);
     expect(createWorktree).not.toHaveBeenCalled();
     expect(removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("adopts an orphaned pinned dir (task.worktree null) and persists worktree+branch metadata", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(classifyTaskWorktree).mockResolvedValue({ ok: true } as any);
+    vi.mocked(getRegisteredWorktreeBranches).mockResolvedValue([{ branch: "fusion/fn-7996", worktreePath: PINNED }]);
+    const store = makeStore();
+    const createWorktree = vi.fn();
+
+    const result = await acquireTaskWorktree({
+      task: { ...baseTask, worktree: null, branch: null },
+      rootDir: ROOT,
+      store,
+      settings: pinnedSettings,
+      createWorktree,
+    });
+
+    expect(result.source).toBe("existing");
+    expect(result.worktreePath).toBe(PINNED);
+    // The successful acquisition must leave the task assigned, not orphaned.
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7996", { worktree: PINNED, branch: "fusion/fn-7996" });
+    expect(createWorktree).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("fails safe (no destructive reclaim) when the branch probe is untrustworthy (empty enumeration)", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(classifyTaskWorktree).mockResolvedValue({ ok: true } as any);
+    // classifyTaskWorktree proved the path is a registered usable worktree, yet the branch enumeration is
+    // empty — a transient `git worktree list` failure. Must throw rather than reclaim a valid warm worktree.
+    vi.mocked(getRegisteredWorktreeBranches).mockResolvedValue([]);
+    const createWorktree = vi.fn();
+
+    await expect(
+      acquireTaskWorktree({
+        task: { ...baseTask, worktree: PINNED, branch: "fusion/fn-7996" },
+        rootDir: ROOT,
+        store: makeStore(),
+        settings: pinnedSettings,
+        createWorktree,
+      }),
+    ).rejects.toThrow(/cannot confirm branch/);
+
+    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(createWorktree).not.toHaveBeenCalled();
   });
 
   it("acceptance #5: reclaims a same-name dir on a foreign branch in place (no suffix)", async () => {

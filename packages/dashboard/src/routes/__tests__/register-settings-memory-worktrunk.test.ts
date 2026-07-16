@@ -208,6 +208,20 @@ describe("register-settings-memory-routes worktrunk gate", () => {
     expect(scopedStore.updateSettings).toHaveBeenCalledWith({ worktreeNaming: "task-id" });
   });
 
+  it("maps the store backstop 'mutually exclusive' error to 400 (not 500)", async () => {
+    const { app, scopedStore } = createApp();
+    // A patch that clears the pre-check's view (e.g. null-clear) but resolves to a conflict inside the store,
+    // where the mutual-exclusion backstop throws. The route must classify it as a 400 client error.
+    scopedStore.updateSettings.mockRejectedValueOnce(
+      new Error('recycleWorktrees and worktreeNaming:"task-id" are mutually exclusive: ...'),
+    );
+
+    const res = await patchSettings(app, { autoMerge: true });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mutually exclusive");
+  });
+
   it("passes enabled plugin skills to memory dream processing", async () => {
     const pluginRunner = {
       getPluginSkills: vi.fn(() => [
