@@ -1,19 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "@fusion/core";
 import { ensureQualitySchema } from "../quality-schema.js";
+import { QualityStore } from "../store/quality-store.js";
 import {
   createQualityRoutes,
   loadTaskStoreSettings,
   requireQualityExperimental,
 } from "../routes/create-routes.js";
 
-function makeCtx(getSettings?: () => unknown) {
+function makeCtx(getSettings?: () => unknown, withStore = false) {
   const db = new DatabaseSync(":memory:");
   ensureQualitySchema(db as never);
+  const qualityStore = new QualityStore(db as never);
   return {
     taskStore: {
-      getDatabase: () => db,
-      getAsyncLayer: () => ({ projectId: "proj-1", db: { execute: vi.fn().mockResolvedValue([]) } }),
+      // Intentionally no getDatabase — QA routes must not call it.
+      getAsyncLayer: () => null,
+      getQualityStore: withStore ? () => qualityStore : undefined,
       getSettings: getSettings ?? (() => Promise.resolve({})),
       getRootDir: () => "/tmp",
       getTask: vi.fn(),
@@ -77,13 +80,28 @@ describe("createQualityRoutes experimental wrapping", () => {
     expect(result).toMatchObject({ presets: expect.any(Array) });
   });
 
-  it("lists runs when enabled (regression: async settings used to always 404)", async () => {
+  it("lists runs when enabled via PostgreSQL store (not SQLite getDatabase)", async () => {
     const routes = createQualityRoutes();
     const list = routes.find((r) => r.method === "GET" && r.path === "/runs");
     const result = await list!.handler(
       { query: { projectId: "proj-1" } },
-      makeCtx(() => Promise.resolve({ experimentalFeatures: { qualityPlugin: true } })),
+      makeCtx(() => Promise.resolve({ experimentalFeatures: { qualityPlugin: true } }), true),
     );
     expect(result).toEqual({ runs: [] });
+  });
+
+  it("fails closed when AsyncDataLayer is missing (no SQLite fallback)", async () => {
+    const routes = createQualityRoutes();
+    const list = routes.find((r) => r.method === "GET" && r.path === "/runs");
+    const result = await list!.handler(
+      { query: { projectId: "proj-1" } },
+      makeCtx(() => Promise.resolve({ experimentalFeatures: { qualityPlugin: true } }), false),
+    );
+    expect(result).toMatchObject({
+      status: 500,
+      body: {
+        error: expect.stringMatching(/AsyncDataLayer|PostgreSQL|SQLite is not supported/i),
+      },
+    });
   });
 });

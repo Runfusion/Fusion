@@ -1,10 +1,10 @@
 import type { PluginContext, PluginRouteDefinition } from "@fusion/plugin-sdk";
-import { AsyncQualityStore } from "../store/async-quality-store.js";
 import { isQualityPresetId, listPresetCatalog, resolvePresetCommand } from "../runner/command-presets.js";
 import { cancelQualityRun, defaultTimeoutMs, executeQualityRun } from "../runner/command-runner.js";
 import { getAllowRootFallback, getDefaultPreviewScript, getLogTruncateKb, getRunRetentionCount } from "../settings.js";
 import { buildHeuristicSuggestedCases } from "../suggestions/heuristic-cases.js";
 import type { QualityPresetId } from "../store/quality-types.js";
+import { getQualityStore } from "../store/quality-store-provider.js";
 import { createPreviewSessionManager } from "../preview/preview-sessions.js";
 import { resolveTaskCodeCwd } from "../preview/task-code-worktree.js";
 
@@ -38,18 +38,12 @@ function requireProjectId(req: Req): string {
   return id;
 }
 
-const qualityStoreCache = new WeakMap<object, AsyncQualityStore>();
-
-function getStore(ctx: PluginContext): AsyncQualityStore {
-  const key = ctx.taskStore as object;
-  const cached = qualityStoreCache.get(key);
-  if (cached) return cached;
-  const asyncLayer = ctx.taskStore.getAsyncLayer();
-  if (!asyncLayer) throw new Error("Quality plugin requires ctx.taskStore.getAsyncLayer() / PostgreSQL AsyncDataLayer");
-  const store = new AsyncQualityStore(asyncLayer);
-  qualityStoreCache.set(key, store);
-  return store;
-}
+/*
+FNXC:QualityPostgres 2026-07-16-09:03:
+Do not call TaskStore.getDatabase() here. QA routes bind only to
+getQualityStore → AsyncDataLayer (PostgreSQL). SQLite is unavailable in
+backend mode and must never be used for runs/plans/suggestions.
+*/
 
 function httpError(status: number, message: string): never {
   const err = new Error(message) as Error & { statusCode?: number };
@@ -136,7 +130,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
       handler: async (req, ctx) => {
         const r = req as Req;
         const projectId = requireProjectId(r);
-        const store = getStore(ctx);
+        const store = getQualityStore(ctx);
         const taskId = typeof r.query?.taskId === "string" ? r.query.taskId : undefined;
         const limit = typeof r.query?.limit === "string" ? Number(r.query.limit) : 50;
         return { runs: await store.listRuns(projectId, { taskId, limit }) };
@@ -151,7 +145,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const projectId = requireProjectId(r);
         const runId = r.params?.runId;
         if (!runId) httpError(400, "runId required");
-        const run = await getStore(ctx).getRun(projectId, runId);
+        const run = await getQualityStore(ctx).getRun(projectId, runId);
         if (!run) httpError(404, "Run not found");
         return { run };
       },
@@ -176,11 +170,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const confirmFullSuite = body.confirmFullSuite === true;
         const source = body.source === "hub" ? "hub" : "task-tab";
 
-        const store = getStore(ctx);
-        const active = await store.findActiveRun(projectId, taskId);
-        if (active) {
-          httpError(409, `A run is already active (${active.id})`);
-        }
+        const store = getQualityStore(ctx);
 
         // Resolve cwd server-side
         const rootDir = ctx.taskStore.getRootDir?.() ?? process.cwd();
@@ -263,7 +253,12 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         }
 
         const timeoutMs = defaultTimeoutMs(verificationCommandTimeoutMs);
-        const run = await store.createRun({
+        /*
+        FNXC:Quality 2026-07-16-09:20:
+        createRunIfNoActive holds a PG advisory lock for the project/task scope so two
+        concurrent starts cannot both observe "no active run" and double-queue.
+        */
+        const created = await store.createRunIfNoActive({
           projectId,
           taskId,
           source,
@@ -274,8 +269,17 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
           timeoutMs,
           triggeredBy: "operator",
         });
+        if (!created.ok) {
+          httpError(409, `A run is already active (${created.active.id})`);
+        }
+        const run = created.run;
 
         // Detach execution — do not block the HTTP response on full suite runtime
+        /*
+        FNXC:Quality 2026-07-16-09:20:
+        Catch only execution failures (not prune). Nested try/catch so a failed
+        status write cannot become an unhandled rejection. Prune is best-effort.
+        */
         void executeQualityRun({
           store,
           projectId,
@@ -285,18 +289,30 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
           timeoutMs,
           logTruncateKb: getLogTruncateKb(ctx.settings as Record<string, unknown>),
         })
-          .then(async () => {
-            await store.pruneRuns(projectId, getRunRetentionCount(ctx.settings as Record<string, unknown>));
-          })
           .catch(async (err) => {
             ctx.logger?.warn?.(
               `Quality run ${run.id} failed: ${err instanceof Error ? err.message : String(err)}`,
             );
-            await store.updateRun(projectId, run.id, {
-              status: "error",
-              errorMessage: err instanceof Error ? err.message : String(err),
-              finishedAt: new Date().toISOString(),
-            });
+            try {
+              await store.finalizeRun(projectId, run.id, {
+                status: "error",
+                errorMessage: err instanceof Error ? err.message : String(err),
+                finishedAt: new Date().toISOString(),
+              });
+            } catch (updateErr) {
+              ctx.logger?.warn?.(
+                `Quality run ${run.id} status update failed: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}`,
+              );
+            }
+          })
+          .finally(() => {
+            void store
+              .pruneRuns(projectId, getRunRetentionCount(ctx.settings as Record<string, unknown>))
+              .catch((pruneErr) => {
+                ctx.logger?.warn?.(
+                  `Quality prune failed: ${pruneErr instanceof Error ? pruneErr.message : String(pruneErr)}`,
+                );
+              });
           });
 
         return { run, detached: true };
@@ -311,7 +327,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const projectId = requireProjectId(r);
         const runId = r.params?.runId;
         if (!runId) httpError(400, "runId required");
-        const store = getStore(ctx);
+        const store = getQualityStore(ctx);
         const run = await store.getRun(projectId, runId);
         if (!run) httpError(404, "Run not found");
         if (run.status !== "queued" && run.status !== "running") {
@@ -328,7 +344,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
       handler: async (req, ctx) => {
         const r = req as Req;
         const projectId = requireProjectId(r);
-        return { plans: await getStore(ctx).listPlans(projectId) };
+        return { plans: await getQualityStore(ctx).listPlans(projectId) };
       },
     },
     {
@@ -342,7 +358,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const name = typeof body.name === "string" ? body.name.trim() : "";
         if (!name) httpError(400, "name is required");
         const steps = validatePlanSteps(Array.isArray(body.steps) ? body.steps : []);
-        const plan = await getStore(ctx).createPlan({ projectId, name, steps });
+        const plan = await getQualityStore(ctx).createPlan({ projectId, name, steps });
         return { plan };
       },
     },
@@ -355,7 +371,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
         const projectId = requireProjectId(r);
         const taskId = r.params?.taskId;
         if (!taskId) httpError(400, "taskId required");
-        const existing = await getStore(ctx).getSuggestedCases(projectId, taskId);
+        const existing = await getQualityStore(ctx).getSuggestedCases(projectId, taskId);
         return { suggestions: existing };
       },
     },
@@ -391,7 +407,7 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
             ? task.modifiedFiles.filter((p): p is string => typeof p === "string")
             : [],
         });
-        const snapshot = await getStore(ctx).saveSuggestedCases({
+        const snapshot = await getQualityStore(ctx).saveSuggestedCases({
           projectId,
           taskId,
           cases,

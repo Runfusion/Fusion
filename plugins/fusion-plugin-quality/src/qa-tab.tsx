@@ -343,7 +343,11 @@ export function QualityTaskQaTab(props: QualityQaTabProps): ReactElement {
         ),
       ),
       !worktree
-        ? createElement("p", { style: { marginTop: 8, fontSize: 12, opacity: 0.8 } }, "Worktree required for targeted runs.")
+        ? createElement(
+            "p",
+            { style: { marginTop: 8, fontSize: 12, opacity: 0.8 } },
+            "No live worktree — runs use a temporary QA checkout of this task's branch/merge commit.",
+          )
         : null,
     ),
 
