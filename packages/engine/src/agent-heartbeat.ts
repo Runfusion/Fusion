@@ -52,7 +52,6 @@ import { createLogger, heartbeatLog, formatError } from "./logger.js";
 import {
   extractConcurrentSoftDeleteRaceDetails,
   isConcurrentSoftDeleteRaceError,
-  isOperatorActionableAgentError,
   isStaleWorktreeModuleResolutionError,
 } from "./transient-error-detector.js";
 
