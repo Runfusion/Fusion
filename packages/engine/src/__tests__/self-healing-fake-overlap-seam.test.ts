@@ -60,6 +60,50 @@ function createOverlapStore(seed: Task[]): { store: TaskStore; tasks: Map<string
   return { store, tasks };
 }
 
+describe("SelfHealingManager PostgreSQL soft-delete repair", () => {
+  function createSoftDeleteRepairStore(settings: Pick<Settings, "globalPause" | "enginePaused">) {
+    const reconcileSoftDeletedColumnDriftBackend = vi.fn().mockResolvedValue({ reconciled: 2 });
+    const getDatabase = vi.fn(() => {
+      throw new Error("SQLite must not be opened by PostgreSQL soft-delete repair");
+    });
+    const store = {
+      getSettings: vi.fn().mockResolvedValue(settings),
+      reconcileSoftDeletedColumnDriftBackend,
+      getDatabase,
+      recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+    return { store, reconcileSoftDeletedColumnDriftBackend, getDatabase };
+  }
+
+  it("returns early while paused without invoking the backend repair", async () => {
+    const { store, reconcileSoftDeletedColumnDriftBackend, getDatabase } = createSoftDeleteRepairStore({
+      globalPause: true,
+      enginePaused: false,
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    await expect(manager.reconcileSoftDeletedColumnDrift()).resolves.toEqual({ reconciled: 0 });
+
+    expect(reconcileSoftDeletedColumnDriftBackend).not.toHaveBeenCalled();
+    expect(getDatabase).not.toHaveBeenCalled();
+    manager.stop();
+  });
+
+  it("delegates active repair to PostgreSQL without opening SQLite", async () => {
+    const { store, reconcileSoftDeletedColumnDriftBackend, getDatabase } = createSoftDeleteRepairStore({
+      globalPause: false,
+      enginePaused: false,
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    await expect(manager.reconcileSoftDeletedColumnDrift()).resolves.toEqual({ reconciled: 2 });
+
+    expect(reconcileSoftDeletedColumnDriftBackend).toHaveBeenCalledOnce();
+    expect(getDatabase).not.toHaveBeenCalled();
+    manager.stop();
+  });
+});
+
 describe("SelfHealingManager fake TaskStore overlap seam", () => {
   it("preserves queued recovery through active overlap without missing-method drift", async () => {
     const staleBlocker = makeTask("FN-DONE-BLOCKER", { column: "done" });

@@ -2569,8 +2569,10 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return getPluginStoreImpl(this);
   }
   /**
-   * FNXC:PluginPostgresSchema 2026-07-14-17:25:
-   * Every host (engine, CLI, and desktop) uses this backend-aware schema entrypoint after loading plugins. PostgreSQL executes only registered PG-native hooks and fails on SQLite-only third-party hooks; legacy mode retains the existing Database runner.
+   * FNXC:PluginPostgresSchema 2026-07-16-00:00:
+   * FN-8104 retires the unreachable SQLite schema-init fallback that FN-8103
+   * temporarily allowlisted. Every host now invokes only the PostgreSQL
+   * AsyncDataLayer executor after loading plugins; SQLite-only hooks remain unsupported.
    */
   /** @internal Installed by the backend startup factory; never exposed through PluginContext. */
   setPluginPostgresSchemaExecutor(
@@ -2592,20 +2594,12 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
 
   async runPluginSchemaInits(hooks: LoadedPluginSchemaContract[]): Promise<void> {
-    if (this.backendMode) {
-      if (!this.getAsyncLayer()) throw new Error("backend TaskStore is missing its AsyncDataLayer");
-      assertLoadedPluginSchemaInitHooksSupported(hooks);
-      if (!this.pluginPostgresSchemaExecutor) {
-        throw new Error("backend TaskStore is missing its PostgreSQL plugin schema executor");
-      }
-      await this.pluginPostgresSchemaExecutor(hooks);
-      return;
+    if (!this.getAsyncLayer()) throw new Error("backend TaskStore is missing its AsyncDataLayer");
+    assertLoadedPluginSchemaInitHooksSupported(hooks);
+    if (!this.pluginPostgresSchemaExecutor) {
+      throw new Error("backend TaskStore is missing its PostgreSQL plugin schema executor");
     }
-    await this.getDatabase().runPluginSchemaInits(
-      hooks.flatMap((entry) => entry.legacyHook
-        ? [{ pluginId: entry.pluginId, hook: entry.legacyHook as PluginOnSchemaInit }]
-        : []),
-    );
+    await this.pluginPostgresSchemaExecutor(hooks);
   }
   public async isPluginInstalled(pluginId: string): Promise<boolean> {
     return isPluginInstalledImpl(this, pluginId);

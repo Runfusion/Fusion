@@ -423,7 +423,7 @@ describe("GitHubImportModal", () => {
       expect(screen.getByText("First Issue")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
 
     const previewCard = await screen.findByTestId("github-import-preview-card");
     expect(within(previewCard).getByText("First Issue")).toBeTruthy();
@@ -463,7 +463,7 @@ describe("GitHubImportModal", () => {
       expect(screen.getByText(/Problème d'aperçu/)).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("radio", { name: /Select issue #7/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #7/i }));
 
     const translateRegion = await screen.findByTestId("github-import-translate");
     expect(translateRegion).toBeTruthy();
@@ -508,7 +508,7 @@ describe("GitHubImportModal", () => {
       expect(screen.getByText("Import preview problem")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("radio", { name: /Select issue #8/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #8/i }));
     await screen.findByTestId("github-import-preview-card");
     expect(screen.queryByTestId("github-import-translate")).toBeNull();
   });
@@ -528,11 +528,11 @@ describe("GitHubImportModal", () => {
       expect(screen.getByText("Null Issue")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
     let previewCard = await screen.findByTestId("github-import-preview-card");
     expect(within(previewCard).getByText("(no description)")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("radio", { name: /Select issue #2/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #2/i }));
     previewCard = await screen.findByTestId("github-import-preview-card");
     expect(within(previewCard).getByText("(no description)")).toBeTruthy();
   });
@@ -870,7 +870,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("First Issue")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
       fireEvent.click(screen.getByTestId("github-import-action-top"));
 
       await waitFor(() => {
@@ -881,7 +881,7 @@ describe("GitHubImportModal", () => {
         const row = screen.getByText("First Issue").closest(".issue-item") as HTMLElement;
         expect(row).toHaveClass("imported");
         expect(within(row).getByText("Imported")).toBeTruthy();
-        expect(screen.getByRole("radio", { name: /Select issue #1/i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Select issue #1/i })).toBeDisabled();
         expect(screen.getByText("1 imported")).toBeTruthy();
       });
     });
@@ -897,7 +897,7 @@ describe("GitHubImportModal", () => {
 
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
       await screen.findByText("Context Issue");
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
       fireEvent.click(screen.getByTestId("github-import-action-top"));
       await waitFor(() => expect(screen.getByText("Context Issue").closest(".issue-item")).toHaveClass("imported"));
 
@@ -927,15 +927,15 @@ describe("GitHubImportModal", () => {
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
 
       await waitFor(() => expect(screen.getByText("Retry Issue")).toBeTruthy());
-      const radio = screen.getByRole("radio", { name: /Select issue #3/i }) as HTMLInputElement;
-      fireEvent.click(radio);
+      const row = screen.getByRole("button", { name: /Select issue #3/i });
+      fireEvent.click(row);
       expect(await screen.findByTestId("github-import-preview-card")).toHaveTextContent("Retry Issue");
 
       fireEvent.click(screen.getByTestId("github-import-action-top"));
 
       await waitFor(() => {
         expect(screen.getByText("already imported elsewhere")).toBeTruthy();
-        expect(radio.checked).toBe(true);
+        expect(row).toHaveClass("selected");
         expect(screen.getByTestId("github-import-preview-card")).toHaveTextContent("Retry Issue");
         expect(screen.queryByTestId("github-import-preview-empty")).toBeNull();
       });
@@ -959,7 +959,7 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("disables radio buttons for already imported issues", async () => {
+    it("disables list rows for already imported issues", async () => {
       const existingTask: Task = {
         ...mockTask,
         description: "Existing\n\nSource: https://github.com/owner/repo/issues/1",
@@ -973,8 +973,8 @@ describe("GitHubImportModal", () => {
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[existingTask]} />);
 
       await waitFor(() => {
-        const radio = screen.getByRole("radio", { name: /Select issue #1/i }) as HTMLInputElement;
-        expect(radio.disabled).toBe(true);
+        const row = screen.getByRole("button", { name: /Select issue #1/i });
+        expect(row).toBeDisabled();
       });
     });
 
@@ -1106,7 +1106,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Detail PR")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #7/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #7/i }));
 
       // Detail fetch is scoped to the selected PR by "owner/repo" + number.
       await waitFor(() => {
@@ -1178,7 +1178,7 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         expect(screen.getByText("Filter PR")).toBeTruthy();
       });
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #11/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #11/i }));
 
       const comments = await screen.findByTestId("github-import-pr-comments");
       // Default (All): both comments show.
@@ -1220,7 +1220,7 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         expect(screen.getByText("Nav PR")).toBeTruthy();
       });
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #13/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #13/i }));
 
       const comments = await screen.findByTestId("github-import-pr-comments");
       const prev = await within(comments).findByTestId("github-import-comment-prev");
@@ -1256,7 +1256,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Bare PR")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #9/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #9/i }));
 
       expect(await screen.findByTestId("github-import-pr-checks-empty")).toBeTruthy();
       expect(await screen.findByTestId("github-import-pr-comments-empty")).toBeTruthy();
@@ -1284,7 +1284,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Detail Issue")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #7/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #7/i }));
 
       // Detail fetch is scoped to the selected issue by "owner/repo" + number.
       await waitFor(() => {
@@ -1321,8 +1321,8 @@ describe("GitHubImportModal", () => {
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
       await waitFor(() => expect(screen.getByText("Close Retry Issue")).toBeTruthy());
-      const radio = screen.getByRole("radio", { name: /Select issue #8/i }) as HTMLInputElement;
-      fireEvent.click(radio);
+      const row = screen.getByRole("button", { name: /Select issue #8/i });
+      fireEvent.click(row);
       expect(await screen.findByTestId("github-import-preview-card")).toHaveTextContent("Close Retry Issue");
 
       fireEvent.click(await screen.findByTestId("github-import-issue-close"));
@@ -1330,7 +1330,7 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         expect(apiCloseGitHubIssue).toHaveBeenCalledWith("dustinbyrne/kb", 8);
         expect(screen.getByTestId("github-import-issue-close-toast")).toHaveTextContent("close failed");
-        expect(radio.checked).toBe(true);
+        expect(row).toHaveClass("selected");
         expect(screen.getByTestId("github-import-preview-card")).toHaveTextContent("Close Retry Issue");
         expect(screen.getByTestId("github-import-issue-close")).toBeTruthy();
       });
@@ -1358,7 +1358,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Long Desktop Issue")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
 
       const previewCard = await screen.findByTestId("github-import-preview-card");
       expect(previewCard.textContent).toContain(longBody);
@@ -1391,7 +1391,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Long Desktop PR")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
 
       const previewCard = await screen.findByTestId("github-import-preview-card");
       expect(previewCard.textContent).toContain(longBody);
@@ -1428,7 +1428,7 @@ describe("GitHubImportModal", () => {
         expect(screen.getByText("Metadata Issue")).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #7/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #7/i }));
 
       const previewCard = await screen.findByTestId("github-import-preview-card");
       expect(within(previewCard).getByText("open")).toBeTruthy();
@@ -1592,7 +1592,7 @@ describe("GitHubImportModal", () => {
       });
 
       // Select the PR
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
 
       // Preview should show with branch info
       const previewCard = await screen.findByTestId("github-import-preview-card");
@@ -1617,7 +1617,7 @@ describe("GitHubImportModal", () => {
       });
 
       // Select the PR
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
 
       // Click Import
       fireEvent.click(screen.getByTestId("github-import-action-top"));
@@ -1630,7 +1630,7 @@ describe("GitHubImportModal", () => {
         const row = screen.getByText("Test PR").closest(".issue-item") as HTMLElement;
         expect(row).toHaveClass("imported");
         expect(within(row).getByText("Imported")).toBeTruthy();
-        expect(screen.getByRole("radio", { name: /Select pull request #1/i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Select pull request #1/i })).toBeDisabled();
         expect(screen.getByText("1 imported")).toBeTruthy();
       });
     });
@@ -1655,7 +1655,7 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("disables radio buttons for already imported PRs", async () => {
+    it("disables list rows for already imported PRs", async () => {
       const existingTask: Task = {
         ...mockPRTask,
         description: "Review and address any issues in this pull request.\n\nPR: https://github.com/owner/repo/pull/1",
@@ -1669,8 +1669,8 @@ describe("GitHubImportModal", () => {
       fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
 
       await waitFor(() => {
-        const radio = screen.getByRole("radio", { name: /Select pull request #1/i }) as HTMLInputElement;
-        expect(radio.disabled).toBe(true);
+        const row = screen.getByRole("button", { name: /Select pull request #1/i });
+        expect(row).toBeDisabled();
       });
     });
 
@@ -1774,9 +1774,9 @@ describe("GitHubImportModal", () => {
       fireEvent.change(screen.getByPlaceholderText(/Filter:/), { target: { value: "bug" } });
       // The label change re-triggers auto-load (briefly disabling the list); wait for it to settle before selecting.
       await waitFor(() => {
-        expect(screen.getByRole("radio", { name: /Select issue #1/i })).not.toBeDisabled();
+        expect(screen.getByRole("button", { name: /Select issue #1/i })).not.toBeDisabled();
       });
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
 
       await waitFor(() => {
         expect(within(screen.getByTestId("github-import-preview-card")).getByText("Persisted Issue")).toBeTruthy();
@@ -1817,7 +1817,7 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         expect(screen.getByText("Test PR")).toBeTruthy();
       });
-      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select pull request #1/i }));
       await waitFor(() => {
         expect(within(screen.getByTestId("github-import-preview-card")).getByText("Test PR")).toBeTruthy();
       });
@@ -1911,9 +1911,9 @@ describe("GitHubImportModal", () => {
       fireEvent.change(screen.getByPlaceholderText(/Filter:/), { target: { value: "bug" } });
       // The label change re-triggers auto-load (briefly disabling the list); wait for it to settle before selecting.
       await waitFor(() => {
-        expect(screen.getByRole("radio", { name: /Select issue #1/i })).not.toBeDisabled();
+        expect(screen.getByRole("button", { name: /Select issue #1/i })).not.toBeDisabled();
       });
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
       await waitFor(() => {
         expect(within(screen.getByTestId("github-import-preview-card")).getByText("Project One Issue")).toBeTruthy();
       });
@@ -1941,7 +1941,7 @@ describe("GitHubImportModal", () => {
         <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" presentation="embedded" />,
       );
       await waitFor(() => expect(screen.getByText("Will Vanish")).toBeTruthy());
-      fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
       await waitFor(() => {
         expect(within(screen.getByTestId("github-import-preview-card")).getByText("Will Vanish")).toBeTruthy();
       });
@@ -1978,7 +1978,7 @@ describe("GitHubImportModal", () => {
     ]);
     render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
     await screen.findByText("Windowed issue");
-    fireEvent.click(screen.getByRole("radio", { name: /select issue #12/i }));
+    fireEvent.click(screen.getByRole("button", { name: /select issue #12/i }));
     const detail = await screen.findByTestId("floating-window-github-import-detail");
     expect(within(detail).getByText("Windowed issue body")).toBeTruthy();
     expect(within(detail).getByTestId("github-import-action-top")).toBeTruthy();
@@ -1995,7 +1995,7 @@ describe("GitHubImportModal", () => {
     render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
     fireEvent.click(screen.getByRole("tab", { name: /pull requests/i }));
     await screen.findByText("Test PR");
-    fireEvent.click(screen.getByRole("radio", { name: /select pull request #1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /select pull request #1/i }));
     const detail = await screen.findByTestId("floating-window-github-import-detail");
     expect(within(detail).getByTestId("github-import-action-top")).toBeTruthy();
     expect(detail.querySelector(".github-import-detail-panel .github-import-detail-actions")).toBeTruthy();
@@ -2080,7 +2080,7 @@ describe("GitHubImportModal", () => {
       vi.mocked(apiFetchGitHubIssues).mockResolvedValue(issueItems);
       const view = render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
       await screen.findByText("Imported issue");
-      fireEvent.click(screen.getByRole("radio", { name: /select issue #1/i }));
+      fireEvent.click(screen.getByRole("button", { name: /select issue #1/i }));
       expect(await screen.findByTestId("github-import-preview-card")).toHaveTextContent("Imported issue");
       view.rerender(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[{ ...mockTask, description: "Source: https://github.com/owner/repo/issues/1" }]} projectId="project-1" />);
       fireEvent.click(screen.getByTestId("github-import-hide-imported-toggle"));
@@ -2253,7 +2253,7 @@ describe("GitHubImportModal — detail actions sit at the bottom (operator repor
     ]);
     render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
     await waitFor(() => expect(screen.getByText("First Issue")).toBeTruthy());
-    fireEvent.click(screen.getByRole("radio", { name: /Select issue #1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #1/i }));
     return screen.findByTestId("github-import-preview-card");
   };
 

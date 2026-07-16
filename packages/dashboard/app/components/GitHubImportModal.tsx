@@ -968,7 +968,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
 
   /**
    * FNXC:GitHubImport 2026-07-02-00:00:
-   * Successful GitHub issue import/close actions must return users to the main issue list instead of leaving a completed issue's preview, action buttons, or selected radio active.
+   * Successful GitHub issue import/close actions must return users to the main issue list instead of leaving a completed issue's preview, action buttons, or selected row active.
    * Failures intentionally do not call this helper so the selected preview remains available for retry with the existing error affordance.
    */
   const returnToIssueListAfterSuccess = useCallback(() => {
@@ -1565,25 +1565,28 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                   </div>
                 )}
 
+                {/*
+                FNXC:GitHubImport 2026-07-16-10:32:
+                List rows are plain selectable buttons (no left-side radio). Selection is the row itself —
+                the radio was redundant after Import moved solely into the detail preview action bar, and
+                GitLab already used button rows. Keep aria-label so keyboard/screen-reader selection still
+                names the issue number.
+                */}
                 {/* Issues list */}
                 {activeTab === "issues" && visibleIssues.length > 0 && (
                   <div className="issues-list" aria-live="polite">
                     {pagedIssues.map((issue) => {
                       const isImported = isUrlImported(issue.html_url);
                       return (
-                        <div
+                        <button
                           key={issue.number}
+                          type="button"
                           className={`issue-item ${selectedIssueNumber === issue.number ? "selected" : ""} ${isImported ? "imported" : ""}`}
-                          onClick={() => !isImported && handleIssueSelect(issue.number)}
+                          onClick={() => handleIssueSelect(issue.number)}
+                          disabled={isImported}
+                          aria-label={t("git.selectIssueAriaLabel", "Select issue #{{number}}", { number: issue.number })}
+                          aria-pressed={selectedIssueNumber === issue.number}
                         >
-                          <input
-                            type="radio"
-                            name="issue"
-                            checked={selectedIssueNumber === issue.number}
-                            onChange={() => handleIssueSelect(issue.number)}
-                            disabled={isImported}
-                            aria-label={t("git.selectIssueAriaLabel", "Select issue #{{number}}", { number: issue.number })}
-                          />
                           <div className="issue-main">
                             <div className="issue-heading-row">
                               <span className="issue-number">#{issue.number}</span>
@@ -1610,7 +1613,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                             )}
                           </div>
                           {isImported && <span className="imported-badge">{t("git.imported", "Imported")}</span>}
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -1666,19 +1669,15 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     {visiblePulls.map((pull) => {
                       const isImported = isUrlImported(pull.html_url);
                       return (
-                        <div
+                        <button
                           key={pull.number}
+                          type="button"
                           className={`issue-item ${selectedPullNumber === pull.number ? "selected" : ""} ${isImported ? "imported" : ""}`}
-                          onClick={() => !isImported && handlePullSelect(pull.number)}
+                          onClick={() => handlePullSelect(pull.number)}
+                          disabled={isImported}
+                          aria-label={t("git.selectPullAriaLabel", "Select pull request #{{number}}", { number: pull.number })}
+                          aria-pressed={selectedPullNumber === pull.number}
                         >
-                          <input
-                            type="radio"
-                            name="pull"
-                            checked={selectedPullNumber === pull.number}
-                            onChange={() => handlePullSelect(pull.number)}
-                            disabled={isImported}
-                            aria-label={t("git.selectPullAriaLabel", "Select pull request #{{number}}", { number: pull.number })}
-                          />
                           <div className="issue-main">
                             <div className="issue-heading-row">
                               <span className="issue-number">#{pull.number}</span>
@@ -1689,7 +1688,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                             </span>
                           </div>
                           {isImported && <span className="imported-badge">{t("git.imported", "Imported")}</span>}
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -2049,7 +2048,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         dialog; the embedded sidebar has nothing to cancel, so it has no bar at all.
 
         Import no longer lives here. There were two ways to import — this footer (acting on the
-        radio selection) and the preview pane — which split the action across two places and let you
+        list selection) and the preview pane — which split the action across two places and let you
         import an issue whose body you had never opened. Import is now ONLY in the detail preview's
         bottom action bar, so the list is purely for choosing what to look at. Cancel stays.
         */}
