@@ -71,6 +71,12 @@ class AgentOnboardingGenerationTimeoutError extends Error {
     this.name = "AgentOnboardingGenerationTimeoutError";
   }
 }
+class AgentOnboardingGenerationStoppedError extends Error {
+  constructor() {
+    super("Generation stopped by user. You can retry.");
+    this.name = "AgentOnboardingGenerationStoppedError";
+  }
+}
 const REFORMAT_PROMPT =
   "Your previous response could not be parsed as JSON. " +
   'Respond with ONLY one valid JSON object using either {"type":"question","data":{...}} or {"type":"complete","data":{...}}. ' +
@@ -126,7 +132,12 @@ interface Session {
 }
 
 const sessions = new Map<string, Session>();
-const activeGenerations = new Map<string, { abortController: AbortController; timer: NodeJS.Timeout }>();
+type ActiveGeneration = {
+  abortController: AbortController;
+  timer: NodeJS.Timeout;
+  reject: (reason?: unknown) => void;
+};
+const activeGenerations = new Map<string, ActiveGeneration>();
 
 export class AgentOnboardingStreamManager extends EventEmitter {
   private readonly sessions = new Map<string, Set<AgentOnboardingStreamCallback>>();
@@ -391,20 +402,27 @@ async function runGenerationWithTimeout<T>(session: Session, operation: () => Pr
   FNXC:AgentOnboarding 2026-07-15-16:36:
   A generation timeout must settle the wrapper even when the provider ignores cancellation and its prompt promise never resolves. Race the operation against an explicit rejection; abort remains best-effort cleanup, while continueConversation owns the single terminal error event.
   */
-  let rejectTimeout!: (reason?: unknown) => void;
-  const timeout = new Promise<never>((_, reject) => {
-    rejectTimeout = reject;
+  let rejectGeneration!: (reason?: unknown) => void;
+  const interruption = new Promise<never>((_, reject) => {
+    rejectGeneration = reject;
   });
   const timer = setTimeout(() => {
     abortController.abort();
-    rejectTimeout(new AgentOnboardingGenerationTimeoutError());
+    rejectGeneration(new AgentOnboardingGenerationTimeoutError());
   }, GENERATION_TIMEOUT_MS);
-  activeGenerations.set(session.id, { abortController, timer });
+  /*
+  FNXC:AgentOnboarding 2026-07-15-17:32:
+  User stop must settle the active prompt race even when the provider ignores cancellation. Keep a per-generation reject handle and identity-guard cleanup so a late stopped prompt cannot publish stale state or delete a newer retry's registration.
+  */
+  const activeGeneration: ActiveGeneration = { abortController, timer, reject: rejectGeneration };
+  activeGenerations.set(session.id, activeGeneration);
   try {
-    return await Promise.race([operation(), timeout]);
+    return await Promise.race([operation(), interruption]);
   } finally {
     clearTimeout(timer);
-    activeGenerations.delete(session.id);
+    if (activeGenerations.get(session.id) === activeGeneration) {
+      activeGenerations.delete(session.id);
+    }
   }
 }
 
@@ -487,6 +505,9 @@ async function continueConversation(session: Session, message: string): Promise<
       agentOnboardingStreamManager.broadcast(session.id, { type: "complete" });
     }
   } catch (err) {
+    if (err instanceof AgentOnboardingGenerationStoppedError) {
+      return;
+    }
     if (err instanceof AgentOnboardingGenerationTimeoutError) {
       const expiredAgent = session.agent;
       session.agentEpoch += 1;
@@ -577,6 +598,7 @@ export function stopAgentOnboardingGeneration(sessionId: string): boolean {
     session.error = "Generation stopped by user. You can retry.";
     agentOnboardingStreamManager.broadcast(session.id, { type: "error", data: session.error });
   }
+  active.reject(new AgentOnboardingGenerationStoppedError());
   return true;
 }
 

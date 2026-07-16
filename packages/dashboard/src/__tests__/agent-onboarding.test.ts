@@ -39,6 +39,7 @@ import {
   retryAgentOnboardingSession,
   SessionNotFoundError,
   startAgentOnboardingSession,
+  stopAgentOnboardingGeneration,
 } from "../agent-onboarding.js";
 
 function createMockAgent(responses: string[]) {
@@ -622,6 +623,54 @@ describe("agent-onboarding", () => {
     expect(agentOnboardingStreamManager.getBufferedEvents(sessionId, 0)).toContainEqual(
       expect.objectContaining({ event: "error", data: JSON.stringify("AI generation timed out. You can retry.") }),
     );
+  });
+
+  it("settles a stopped generation without letting late cleanup detach a newer retry", async () => {
+    const response = JSON.stringify({
+      type: "question",
+      data: { id: "stale", type: "text", question: "Stale question?" },
+    });
+    const expiredMessages: Array<{ role: string; content: string }> = [];
+    let resolveExpiredPrompt!: () => void;
+    const expiredPrompt = vi.fn(() => new Promise<void>((resolve) => {
+      resolveExpiredPrompt = () => {
+        expiredMessages.push({ role: "assistant", content: response });
+        resolve();
+      };
+    }));
+    let signalRetryPromptStarted!: () => void;
+    const retryPromptStarted = new Promise<void>((resolve) => {
+      signalRetryPromptStarted = resolve;
+    });
+    const retryPrompt = vi.fn(() => {
+      signalRetryPromptStarted();
+      return new Promise<void>(() => {});
+    });
+    mockCreateFnAgent
+      .mockResolvedValueOnce({ session: { state: { messages: expiredMessages }, prompt: expiredPrompt, dispose: vi.fn() } })
+      .mockResolvedValueOnce({ session: { state: { messages: [] }, prompt: retryPrompt, dispose: vi.fn() } });
+
+    const sessionId = await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "stop and retry", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+    expect(expiredPrompt).toHaveBeenCalledTimes(1);
+    expect(stopAgentOnboardingGeneration(sessionId)).toBe(true);
+
+    const retry = retryAgentOnboardingSession(sessionId);
+    await retryPromptStarted;
+    expect(retryPrompt).toHaveBeenCalledTimes(1);
+
+    resolveExpiredPrompt();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getAgentOnboardingSession(sessionId)?.currentQuestion).toBeUndefined();
+    expect(stopAgentOnboardingGeneration(sessionId)).toBe(true);
+    await retry;
+    expect(getAgentOnboardingSession(sessionId)?.error).toBe("Generation stopped by user. You can retry.");
   });
 
   it("progresses through start -> question -> response -> final summary", async () => {
