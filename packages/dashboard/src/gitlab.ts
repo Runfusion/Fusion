@@ -75,6 +75,12 @@ export class GitLabApiError extends Error {
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const PAGE_SIZE = 100;
+/*
+FNXC:IssueImportAttachments 2026-07-15-14:10:
+Issue-note text is auxiliary attachment input. Bound both requests and retained bodies so a hostile or unusually large issue cannot make import pagination unbounded.
+*/
+const MAX_NOTE_PAGES = 10;
+const MAX_NOTE_BODIES = 500;
 
 function clampLimit(limit: unknown): number {
   if (typeof limit !== "number" || !Number.isFinite(limit)) return DEFAULT_LIMIT;
@@ -256,13 +262,15 @@ export class GitLabClient {
   */
   async listNotes(resource: "issues" | "merge_requests", project: string | number, iid: number): Promise<string[]> {
     const bodies: string[] = [];
-    for (let page = 1; ; page++) {
-      const raw = await this.request<unknown>(`projects/${encodeGitLabPathId(project)}/${resource}/${iid}/notes?per_page=100&page=${page}`);
+    for (let page = 1; page <= MAX_NOTE_PAGES && bodies.length < MAX_NOTE_BODIES; page++) {
+      const raw = await this.request<unknown>(`projects/${encodeGitLabPathId(project)}/${resource}/${iid}/notes?per_page=${PAGE_SIZE}&page=${page}`);
       if (!Array.isArray(raw) || raw.length === 0) break;
-      bodies.push(...raw
-        .map((note) => (note as { body?: unknown })?.body)
-        .filter((body): body is string => typeof body === "string"));
-      if (raw.length < 100) break;
+      for (const note of raw) {
+        const body = (note as { body?: unknown })?.body;
+        if (typeof body === "string") bodies.push(body);
+        if (bodies.length === MAX_NOTE_BODIES) break;
+      }
+      if (raw.length < PAGE_SIZE) break;
     }
     return bodies;
   }

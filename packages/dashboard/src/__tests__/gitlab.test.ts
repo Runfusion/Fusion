@@ -70,6 +70,15 @@ describe("GitLabClient", () => {
     await expect(client.listNotes("issues", "g/p", 2)).resolves.toHaveLength(101);
     expect(fetchImpl.mock.calls[1][0]).toContain("notes?per_page=100&page=2");
   });
+
+  it("bounds note collection when every page is full", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({ body: `note-${index}` }));
+    const fetchImpl = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(fullPage)));
+    const client = new GitLabClient(auth, fetchImpl as any);
+
+    await expect(client.listNotes("issues", "g/p", 2)).resolves.toHaveLength(500);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
 });
 
 describe("GitLab provenance helpers", () => {
