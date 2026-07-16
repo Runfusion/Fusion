@@ -1140,6 +1140,10 @@ export function SettingsModal({
     executorToolFailureRetryCount: 2,
     executorToolFailureRetryBackoffMs: 2000,
     executorToolFailureThreshold: 3,
+    executorModelEscalationEnabled: false,
+    executorEscalationProvider: "",
+    executorEscalationModelId: "",
+    executorEscalationNodeId: "",
     mergeIntegrationWorktree: "reuse-task-worktree",
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
@@ -1724,6 +1728,10 @@ export function SettingsModal({
           executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryCount, 2),
           executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryBackoffMs, 2000),
           executorToolFailureThreshold: Math.max(1, Math.floor(Number(s.executorToolFailureThreshold ?? 3) || 3)),
+          executorModelEscalationEnabled: s.executorModelEscalationEnabled === true,
+          executorEscalationProvider: s.executorEscalationProvider ?? "",
+          executorEscalationModelId: s.executorEscalationModelId ?? "",
+          executorEscalationNodeId: s.executorEscalationNodeId ?? "",
           worktreeCopyFiles: Array.isArray(s.worktreeCopyFiles) ? s.worktreeCopyFiles : [],
         };
         setForm(normalizedSettings);
@@ -3340,6 +3348,10 @@ export function SettingsModal({
         executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(form.executorToolFailureRetryCount, 2),
         executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(form.executorToolFailureRetryBackoffMs, 2000),
         executorToolFailureThreshold: Math.max(1, Math.floor(Number(form.executorToolFailureThreshold ?? 3) || 3)),
+        executorModelEscalationEnabled: form.executorModelEscalationEnabled === true,
+        executorEscalationProvider: form.executorEscalationProvider?.trim() || undefined,
+        executorEscalationModelId: form.executorEscalationModelId?.trim() || undefined,
+        executorEscalationNodeId: form.executorEscalationNodeId?.trim() || undefined,
         taskPrefix: form.taskPrefix?.trim() || undefined,
         githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
         /*

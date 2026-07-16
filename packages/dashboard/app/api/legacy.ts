@@ -6600,6 +6600,16 @@ export interface ProjectInfo {
 }
 
 /** Project health metrics */
+export interface CodebaseMetrics {
+  tokenEstimate: number;
+  sourceFileCount: number;
+  sourceByteCount: number;
+  diskBytes: number;
+  diskFileCount: number;
+  method: string;
+  truncated: boolean;
+}
+
 export interface ProjectHealth {
   projectId: string;
   status: "active" | "paused" | "errored" | "initializing";
@@ -7235,6 +7245,10 @@ export function removeProjectPathMapping(projectId: string, nodeId: string): Pro
 /** Fetch health metrics for a specific project */
 export function fetchProjectHealth(id: string): Promise<ProjectHealth> {
   return api<ProjectHealth>(`/projects/${encodeURIComponent(id)}/health`);
+}
+
+export function fetchCodebaseMetrics(id: string): Promise<CodebaseMetrics> {
+  return api<CodebaseMetrics>(`/projects/${encodeURIComponent(id)}/codebase-metrics`);
 }
 
 /** Fetch executor statistics for the status bar.

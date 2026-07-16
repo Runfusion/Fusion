@@ -52,6 +52,7 @@ import {
   registerProject,
   unregisterProject,
   fetchProjectHealth,
+  fetchCodebaseMetrics,
   fetchProjectPathMappings,
   fetchProjectPathMapping,
   upsertProjectPathMapping,
@@ -831,6 +832,17 @@ describe("fetchProjectHealth", () => {
     expect(result.activeTaskCount).toBe(5);
     expect(result.inFlightAgentCount).toBe(2);
     expect(result.totalTasksCompleted).toBe(100);
+  });
+});
+
+describe("fetchCodebaseMetrics", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it("uses the project-scoped metrics URL and returns its response", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { tokenEstimate: 42, sourceFileCount: 1, sourceByteCount: 20, diskBytes: 30, diskFileCount: 2, method: "local", truncated: false }));
+    await expect(fetchCodebaseMetrics("project/a")).resolves.toMatchObject({ tokenEstimate: 42, diskFileCount: 2 });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/projects/project%2Fa/codebase-metrics", expect.any(Object));
   });
 });
 

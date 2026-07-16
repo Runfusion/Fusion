@@ -571,6 +571,11 @@ The Command Center subtree previously had no tablet tier, so at 769px–1024px t
 }
 
 @media (max-width: 768px) {
+  .cc-stat-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .cc-live-strip {
     grid-template-columns: 1fr;
   }

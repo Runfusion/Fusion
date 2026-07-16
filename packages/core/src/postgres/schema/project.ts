@@ -101,6 +101,7 @@ export const tasks = projectSchema.table("tasks", {
   resumeLimboCount: integer("resume_limbo_count").default(0),
   graphResumeRetryCount: integer("graph_resume_retry_count").default(0),
   consecutiveToolFailureRetryCount: integer("consecutive_tool_failure_retry_count").default(0),
+  executorEscalationAttempted: integer("executor_escalation_attempted").default(0),
   toolFailureDetectorLogCursor: integer("tool_failure_detector_log_cursor"),
   toolFailureRetryExhaustedAuditEmitted: integer("tool_failure_retry_exhausted_audit_emitted").default(0),
   resumeLimboTipSha: text("resume_limbo_tip_sha"),

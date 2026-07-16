@@ -9,6 +9,7 @@ import { CommandCenter } from "../CommandCenter";
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 42_000, sourceFileCount: 10, sourceByteCount: 100, diskBytes: 1024, diskFileCount: 12, method: "local", truncated: false }),
   withProjectId: (path: string, projectId?: string) =>
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   fetchOrgTree: vi.fn().mockResolvedValue([]),
@@ -422,6 +423,11 @@ function mockEmptyOverviewApi() {
   mockOverviewApi({ tokens: tokenFixture(0), tools: toolsFixture(0), activity: emptyActivityFixture(), signals: signalsFixture(0), live: liveFixture([{ column: "in-progress", count: 0 }]) });
 }
 
+function expectProjectMetricCards() {
+  expect(screen.getByTestId("cc-overview-codebase-tokens")).toBeInTheDocument();
+  expect(screen.getByTestId("cc-overview-disk-size")).toBeInTheDocument();
+}
+
 function statValue(testId: string) {
   return within(screen.getByTestId(testId)).getByText((content, element) =>
     element?.classList.contains("cc-stat-value") === true && content.length > 0,
@@ -481,6 +487,8 @@ describe("CommandCenter shell", () => {
     mockEmptyOverviewApi();
     render(<CommandCenter />);
     expect(screen.getByTestId("command-center-overview-loading")).toBeTruthy();
+    expectProjectMetricCards();
+    expect(screen.getByTestId("cc-overview-codebase-tokens")).toHaveTextContent("—");
     expectThroughputLastAfter("command-center-overview-loading");
   });
 
@@ -494,6 +502,7 @@ describe("CommandCenter shell", () => {
     expect(screen.queryByTestId("cc-overview-line")).toBeNull();
     expect(screen.queryByTestId("command-center-overview-chart-activity")).toBeNull();
     await screen.findByTestId("command-center-empty");
+    expectProjectMetricCards();
     expectThroughputLastAfter("command-center-empty");
     // FNXC:CommandCenter 2026-06-23-01:30: Sessions/Active-nodes cards were removed — neither renders in the empty-data branch (the empty state has no stat grid at all).
     expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
@@ -987,6 +996,7 @@ describe("CommandCenter shell", () => {
     render(<CommandCenter />);
 
     await screen.findByTestId("command-center-overview-error");
+    expectProjectMetricCards();
     expectThroughputLastAfter("command-center-overview-error");
     expect(screen.getByTestId("command-center-overview-error").textContent).toContain("tokens failed");
     expect(screen.queryByTestId("command-center-overview-loading")).toBeNull();

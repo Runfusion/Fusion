@@ -367,6 +367,8 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
       if (updates.consecutiveToolFailureRetryCount === null) task.consecutiveToolFailureRetryCount = null;
       else if (updates.consecutiveToolFailureRetryCount !== undefined) task.consecutiveToolFailureRetryCount = updates.consecutiveToolFailureRetryCount;
+      if (updates.executorEscalationAttempted === null) task.executorEscalationAttempted = null;
+      else if (updates.executorEscalationAttempted !== undefined) task.executorEscalationAttempted = updates.executorEscalationAttempted;
       if (updates.toolFailureDetectorLogCursor === null) task.toolFailureDetectorLogCursor = null;
       else if (updates.toolFailureDetectorLogCursor !== undefined) task.toolFailureDetectorLogCursor = updates.toolFailureDetectorLogCursor;
       if (updates.toolFailureRetryExhaustedAuditEmitted === null) task.toolFailureRetryExhaustedAuditEmitted = null;

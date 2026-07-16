@@ -43,6 +43,7 @@ export function buildAutoPauseClearPatch(
 export function buildManualRetryResetPatch(options?: { resetMergeRetries?: boolean }): Partial<Task> {
   const patch: Partial<Task> = {
     nextRecoveryAt: null as unknown as Task["nextRecoveryAt"],
+    executorEscalationAttempted: false,
     toolFailureDetectorLogCursor: null,
     toolFailureRetryExhaustedAuditEmitted: false,
   };

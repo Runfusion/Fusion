@@ -12,6 +12,7 @@ import type { CentralCore as CentralCoreApi } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
 import { getOrCreateProjectStore, evictProjectStore } from "../project-store-resolver.js";
+import { computeCodebaseMetrics } from "../lib/codebase-metrics.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 const {
@@ -947,6 +948,24 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       if (err instanceof ApiError) {
         throw err;
       }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/projects/:id/codebase-metrics
+   * Compute bounded, local-only codebase context and apparent disk metrics.
+   */
+  router.get("/projects/:id/codebase-metrics", async (req, res) => {
+    try {
+      const metrics = await withCentralCore(async (central) => {
+        const project = await central.getProject(req.params.id);
+        if (!project) throw notFound("Project not found");
+        return await computeCodebaseMetrics(project.path);
+      });
+      res.json(metrics);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
   });

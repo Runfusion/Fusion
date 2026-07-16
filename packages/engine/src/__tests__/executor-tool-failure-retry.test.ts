@@ -41,9 +41,9 @@ function graphFailure() {
   };
 }
 
-function makeHarness(options: { retries: number; entries: Array<{ type: string }> }) {
+function makeHarness(options: { retries: number; entries: Array<{ type: string }>; settings?: Record<string, unknown>; task?: Partial<TaskDetail> }) {
   const store = createMockStore();
-  const task = makeTask();
+  const task = makeTask(options.task);
   store.getTask.mockResolvedValue(task);
   store.getSettings.mockResolvedValue({
     maxConcurrent: 2,
@@ -53,10 +53,12 @@ function makeHarness(options: { retries: number; entries: Array<{ type: string }
     executorToolFailureRetryCount: options.retries,
     executorToolFailureRetryBackoffMs: 0,
     executorToolFailureThreshold: 3,
+    ...options.settings,
   });
   store.getAgentLogCount = vi.fn().mockResolvedValue(options.entries.length);
   store.getAgentLogs = vi.fn().mockResolvedValue(options.entries);
   store.claimNextToolFailureRetry = vi.fn().mockResolvedValue({ outcome: "claimed", attempt: 1 });
+  store.updateTask.mockImplementation(async (_id: string, patch: Partial<TaskDetail>) => Object.assign(task, patch));
   store.updateTaskAtomic = vi.fn(async (_id: string, updater: (current: TaskDetail) => Partial<TaskDetail> | null) => {
     const updates = updater(task);
     if (updates) Object.assign(task, updates);
@@ -121,6 +123,91 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
       status: "failed",
       error: "Workflow graph terminated with failure at node 'steps#0:step-execute'",
     });
+  });
+
+  it("escalates once to a configured model after same-model retries exhaust", async () => {
+    const { executor, store, task } = makeHarness({
+      retries: 2,
+      entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }],
+      settings: { executorModelEscalationEnabled: true, executorEscalationProvider: "anthropic", executorEscalationModelId: "claude-sonnet" },
+    });
+    store.claimNextToolFailureRetry.mockResolvedValue({ outcome: "exhausted" });
+    const execute = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await (executor as any).handleGraphFailure(task, graphFailure());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(task).toMatchObject({ modelProvider: "anthropic", modelId: "claude-sonnet", executorEscalationAttempted: true, status: null, error: null });
+    expect(execute).toHaveBeenCalledWith(task);
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:execution-escalation-retry", metadata: expect.objectContaining({ taskId: task.id, hasModelTarget: true, hasNodeTarget: false }) }));
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function), undefined);
+  });
+
+  it("requeues a node escalation for scheduler effective-node resolution", async () => {
+    const { executor, store, task } = makeHarness({
+      retries: 2,
+      entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }],
+      settings: { executorModelEscalationEnabled: true, executorEscalationNodeId: "cursor-node" },
+    });
+    store.claimNextToolFailureRetry.mockResolvedValue({ outcome: "exhausted" });
+    const execute = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await (executor as any).handleGraphFailure(task, graphFailure());
+
+    expect(task).toMatchObject({ nodeId: "cursor-node", column: "todo", executorEscalationAttempted: true, status: null, error: null });
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:execution-escalation-retry", metadata: expect.objectContaining({ hasNodeTarget: true }) }));
+  });
+
+  it("parks the single escalated attempt and records escalation exhaustion", async () => {
+    const { executor, store, task } = makeHarness({
+      retries: 2,
+      entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }],
+      task: { executorEscalationAttempted: true },
+      settings: { executorModelEscalationEnabled: true, executorEscalationProvider: "anthropic", executorEscalationModelId: "claude-sonnet" },
+    });
+    store.claimNextToolFailureRetry.mockResolvedValue({ outcome: "exhausted" });
+
+    await (executor as any).handleGraphFailure(task, graphFailure());
+
+    expect(task.status).toBe("failed");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:execution-escalation-exhausted" }));
+  });
+
+  it("does not let a concurrent exhausted handler park the escalation it lost", async () => {
+    const { executor, store, task } = makeHarness({
+      retries: 2,
+      entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }],
+      settings: { executorModelEscalationEnabled: true, executorEscalationProvider: "anthropic", executorEscalationModelId: "claude-sonnet" },
+    });
+    store.claimNextToolFailureRetry.mockResolvedValue({ outcome: "exhausted" });
+    task.executorEscalationAttempted = true;
+    // The atomic escalation claim invalidates its exhausted cursor before scheduling.
+    task.toolFailureDetectorLogCursor = null;
+
+    await (executor as any).handleGraphFailure(task, graphFailure());
+
+    expect(task).toMatchObject({ status: null, error: null, executorEscalationAttempted: true });
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }), expect.anything());
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:execution-escalation-exhausted",
+    }));
+  });
+
+  it("audits a terminal escalated failure even after escalation is disabled", async () => {
+    const { executor, store, task } = makeHarness({
+      retries: 0,
+      entries: [],
+      task: { executorEscalationAttempted: true, modelProvider: "anthropic", modelId: "claude-sonnet" },
+    });
+
+    await (executor as any).handleGraphFailure(task, graphFailure());
+
+    expect(task.status).toBe("failed");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:execution-escalation-exhausted",
+      metadata: expect.objectContaining({ hadModelTarget: true, hadNodeTarget: false }),
+    }));
   });
 
   it("does not let an exhausted stale handler park a newer cursor-owned run", async () => {

@@ -102,6 +102,7 @@ export function rowToTask(row: TaskRow): Task {
     resumeLimboCount: row.resumeLimboCount ?? undefined,
     graphResumeRetryCount: row.graphResumeRetryCount ?? undefined,
     consecutiveToolFailureRetryCount: row.consecutiveToolFailureRetryCount ?? undefined,
+    executorEscalationAttempted: row.executorEscalationAttempted ? true : undefined,
     toolFailureDetectorLogCursor: row.toolFailureDetectorLogCursor ?? undefined,
     toolFailureRetryExhaustedAuditEmitted: row.toolFailureRetryExhaustedAuditEmitted ? true : undefined,
     resumeLimboTipSha: row.resumeLimboTipSha || undefined,
