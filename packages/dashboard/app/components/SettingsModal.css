@@ -405,6 +405,21 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
     line-height: 1;
     white-space: nowrap;
   }
+
+  /*
+  FNXC:Settings 2026-07-16-00:20:
+  Export/Import/Reset/Cancel/Save share `.btn-sm`, which the global mobile touch-target
+  rule (`.btn:not(...):not(.btn-sm)...{min-height:36px}` in styles.css) deliberately skips
+  so dense table/card rows of small buttons stay compact. That exclusion also caught this
+  footer, so these buttons rendered at their ~24px unpadded height on mobile — visibly
+  smaller than Help and the auth Test/Disable buttons sitting on the same rail. Re-apply
+  the 36px touch target scoped to this footer only, so the exclusion keeps holding
+  everywhere else that intentionally wants compact `.btn-sm`.
+  */
+  .settings-modal .modal-actions-left .btn-sm,
+  .settings-modal .modal-actions-right .btn-sm {
+    min-height: 36px;
+  }
 }
 
 .settings-version-check-btn {
