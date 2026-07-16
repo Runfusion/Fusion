@@ -46,8 +46,11 @@ export function superviseSpawn(command, args = [], options = {}) {
   let lifetimeTimer = null;
   if (typeof maxLifetimeMs === "number" && Number.isFinite(maxLifetimeMs) && maxLifetimeMs > 0) {
     lifetimeTimer = globalThis.setTimeout(() => {
+      if (settled) return;
       killProcess("SIGTERM");
-      const escalationTimer = globalThis.setTimeout(() => killProcess("SIGKILL"), killGraceMs);
+      const escalationTimer = globalThis.setTimeout(() => {
+        if (!settled) killProcess("SIGKILL");
+      }, killGraceMs);
       escalationTimer.unref?.();
     }, maxLifetimeMs);
     lifetimeTimer.unref?.();

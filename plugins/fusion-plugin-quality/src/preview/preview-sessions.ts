@@ -25,6 +25,8 @@ export interface PreviewSession {
 }
 
 const FORBIDDEN_PORT = 4040;
+const MAX_TERMINAL_SESSIONS = 50;
+const TERMINAL_SESSION_TTL_MS = 60 * 60 * 1000;
 
 async function allocateFreePort(): Promise<number> {
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -54,6 +56,26 @@ interface LiveSession extends PreviewSession {
   supervised?: SupervisedChild;
 }
 
+/** Remove stale terminal session metadata without touching live preview processes. */
+export function pruneTerminalPreviewSessions(
+  sessions: Map<string, LiveSession>,
+  now = Date.now(),
+): void {
+  const terminal = [...sessions.entries()]
+    .filter(([, session]) => session.status === "stopped" || session.status === "failed")
+    .sort(([, left], [, right]) => Date.parse(left.stoppedAt ?? left.startedAt ?? "") - Date.parse(right.stoppedAt ?? right.startedAt ?? ""));
+  for (const [sessionKey, session] of terminal) {
+    const stoppedAt = Date.parse(session.stoppedAt ?? "");
+    if (Number.isFinite(stoppedAt) && now - stoppedAt > TERMINAL_SESSION_TTL_MS) {
+      sessions.delete(sessionKey);
+    }
+  }
+  for (const [sessionKey] of terminal) {
+    if (sessions.size <= MAX_TERMINAL_SESSIONS) break;
+    sessions.delete(sessionKey);
+  }
+}
+
 export function createPreviewSessionManager() {
   const sessions = new Map<string, LiveSession>();
 
@@ -63,6 +85,7 @@ export function createPreviewSessionManager() {
 
   return {
     get(projectId: string, taskId: string): PreviewSession | null {
+      pruneTerminalPreviewSessions(sessions);
       const s = sessions.get(key(projectId, taskId));
       if (!s) return null;
       const { supervised: _s, ...publicSession } = s;
@@ -75,6 +98,7 @@ export function createPreviewSessionManager() {
       cwd: string;
       script: string;
     }): Promise<PreviewSession> {
+      pruneTerminalPreviewSessions(sessions);
       const k = key(input.projectId, input.taskId);
       const existing = sessions.get(k);
       if (existing && (existing.status === "running" || existing.status === "starting")) {
@@ -139,11 +163,13 @@ export function createPreviewSessionManager() {
             session.errorMessage = `Exited with code ${code}`;
           }
           session.supervised = undefined;
+          pruneTerminalPreviewSessions(sessions);
         });
       } catch (err) {
         session.status = "failed";
         session.errorMessage = err instanceof Error ? err.message : String(err);
         session.stoppedAt = new Date().toISOString();
+        pruneTerminalPreviewSessions(sessions);
       }
 
       const { supervised: _s, ...pub } = session;
@@ -155,14 +181,22 @@ export function createPreviewSessionManager() {
       const session = sessions.get(k);
       if (!session) return null;
       if (session.supervised) {
-        session.supervised.kill("SIGTERM");
-        setTimeout(() => {
-          session.supervised?.kill("SIGKILL");
+        /*
+        FNXC:Quality 2026-07-15-14:10:
+        A stopped preview may still be a live child that ignored SIGTERM. Keep
+        the captured supervisor until its close event so the escalation always
+        targets the original process group instead of an already-cleared field.
+        */
+        const supervised = session.supervised;
+        supervised.kill("SIGTERM");
+        const escalationTimer = setTimeout(() => {
+          supervised.kill("SIGKILL");
         }, 2000);
+        escalationTimer.unref?.();
       }
       session.status = "stopped";
       session.stoppedAt = new Date().toISOString();
-      session.supervised = undefined;
+      pruneTerminalPreviewSessions(sessions);
       const { supervised: _s, ...pub } = session;
       return pub;
     },

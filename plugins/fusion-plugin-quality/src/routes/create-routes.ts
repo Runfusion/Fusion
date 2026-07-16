@@ -58,6 +58,17 @@ function httpError(status: number, message: string): never {
 
 const previewManager = createPreviewSessionManager();
 
+const QUALITY_EXPERIMENTAL_FLAG = "qualityPlugin";
+
+function requireQualityExperimental(ctx: PluginContext): void {
+  const settings = (typeof (ctx.taskStore as { getSettings?: () => unknown }).getSettings === "function"
+    ? (ctx.taskStore as { getSettings: () => unknown }).getSettings()
+    : {}) as { experimentalFeatures?: Record<string, boolean> };
+  if (settings.experimentalFeatures?.[QUALITY_EXPERIMENTAL_FLAG] !== true) {
+    httpError(404, "Quality plugin is experimental; enable experimentalFeatures.qualityPlugin to use it");
+  }
+}
+
 /*
 FNXC:Quality 2026-07-15-13:05:
 Test plans are execution contracts: silently dropping an unknown requested
@@ -74,7 +85,7 @@ export function validatePlanSteps(stepsRaw: unknown[]): QualityPresetId[] {
 }
 
 export function createQualityRoutes(): PluginRouteDefinition[] {
-  return [
+  const routes: PluginRouteDefinition[] = [
     {
       method: "GET",
       path: "/presets",
@@ -388,4 +399,17 @@ export function createQualityRoutes(): PluginRouteDefinition[] {
       },
     },
   ];
+  return routes.map((route) => ({
+    ...route,
+    handler: async (req, ctx) => {
+      /*
+      FNXC:Quality 2026-07-15-14:10:
+      The Quality plugin is an opt-in experiment. Gate every route at the
+      server boundary so installed bundles cannot run commands until a global
+      operator explicitly enables experimentalFeatures.qualityPlugin.
+      */
+      requireQualityExperimental(ctx);
+      return route.handler(req, ctx);
+    },
+  }));
 }
