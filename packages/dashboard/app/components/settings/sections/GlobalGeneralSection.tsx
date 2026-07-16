@@ -1,5 +1,4 @@
 import { resolvePersistAgentThinkingLog } from "@fusion/core";
-import { CliBinaryPanel } from "../../CliBinaryPanel";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import type { SectionBaseProps } from "./context";
@@ -9,7 +8,7 @@ export type GlobalGeneralSectionProps = SectionBaseProps;
 FNXC:SettingsStyling 2026-07-15-17:35:
 Plain settings rows render through the shared primitives rather than hand-rolled `form-group` + `checkbox-label` markup, so labels, help copy, and padding come from one type scale. `.form-group` stays global and untouched — 35 non-settings files style forms with it.
 The migrated keys are all global-tier (DEFAULT_GLOBAL_SETTINGS), so each carries a "global" badge stating that it travels between projects.
-Rows that stay bespoke are the ones whose copy a single-string descriptor cannot carry without rewording it: the `fn` binary check, the update-check toggle, and the thinking-log group all build label or help from `t()` fragments interleaved with `<code>` tags. The thinking-log pair additionally shares ONE help string across two checkboxes, which no per-row descriptor models. CliBinaryPanel is a custom widget.
+Rows that stay bespoke are the ones whose copy a single-string descriptor cannot carry without rewording it: the `fn` binary check, the update-check toggle, and the thinking-log group all build label or help from `t()` fragments interleaved with `<code>` tags. The thinking-log pair additionally shares ONE help string across two checkboxes, which no per-row descriptor models. The CLI binary panel has moved to its own advanced-only section.
 */
 export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProps) {
     const { t } = useTranslation("app");
@@ -19,7 +18,10 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         FNXC:SourceControl 2026-07-15-20:30:
         The global GitLab disclosure and the global default tracking repo moved to "Source Control · Global" (SourceControlGlobalSection.tsx), paired with the project source-control section under the Integrations nav group. They are forge integration settings, not general app preferences.
       */}
-      <CliBinaryPanel />
+      {/*
+      FNXC:SettingsNavigation 2026-07-16-01:00:
+      The `fn` CLI binary panel moved OUT of this section to its own advanced-only "CLI Binary" section at the bottom of the nav. It used to render first here, so a binary install/version/path panel was the first thing an operator saw on opening Settings — machine plumbing above the preferences they came for. Do not move it back.
+      */}
       <SettingsToggleRow
         descriptor={{
           key: "dismissModalsOnOutsideClick",
