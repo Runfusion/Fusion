@@ -83,11 +83,41 @@ The wash paints background and box-shadow only — never a border or padding —
   }
 }
 
+/*
+FNXC:SettingsStyling 2026-07-16-00:10:
+`align-items: flex-start` (not center) so a checkbox sits on the label's FIRST line. Centering aligns it to the midpoint of a label that has wrapped to two or three lines, which floats the box down beside the middle of the sentence.
+`flex-wrap: nowrap` because the head now holds at most two items — the control and the label group — and the group is what absorbs the wrapping. Allowing the row itself to wrap is what stranded the checkbox on its own line.
+*/
 .settings-field-row-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-xs);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+/*
+FNXC:SettingsStyling 2026-07-16-00:10:
+Label + scope badge + help tip flow as one run of prose: `min-width: 0` lets the group shrink below its content's intrinsic width (a flex item refuses to by default, which is what forces the wrap), and `flex: 1 1 auto` gives it the width left over beside the control.
+The children stay inline, so the badge and the "?" trail the label's LAST word rather than being pushed onto their own line — and a wrapped second line starts under the first word, not under the checkbox.
+*/
+.settings-field-row-labelgroup {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
+/*
+FNXC:SettingsStyling 2026-07-16-00:10:
+The group's children are inline, so the head's flex `gap` no longer separates them — it only ever applied between flex items, and the label/badge/tip are now text runs inside one item. Their spacing has to come from margins instead, or the badge renders flush against the label ("Open tasks in the right sidebarPROJECT").
+Margin-inline-start rather than a gap so the spacing travels with each trailing element when the label wraps: the badge stays attached to the last word rather than to a column edge.
+*/
+.settings-field-row-labelgroup > * {
+  vertical-align: middle;
+}
+
+.settings-field-row-labelgroup > .settings-field-row-scope,
+.settings-field-row-labelgroup > .settings-help {
+  margin-inline-start: var(--space-xs);
 }
 
 .settings-field-row-label {

@@ -123,10 +123,15 @@ export function SettingsFieldRow({
       {/*
       FNXC:SettingsStyling 2026-07-15-17:35:
       Inline rows put the control FIRST in the DOM, not just visually: a checkbox reads "[x] Hide banners", and reordering with CSS alone would leave the tab and screen-reader order saying "Hide banners [x]", which is the wrong sentence.
+
+      FNXC:SettingsStyling 2026-07-16-00:10:
+      The label, scope badge, and help tip are wrapped in ONE group so they wrap as prose rather than as flex items.
+      Without the wrapper the head is a flex row whose items are [checkbox][label][badge][tip]; once the label is too wide to sit beside the checkbox, the WHOLE label wraps to the next line and strands the checkbox alone on its own — observed on a 390px viewport with "Keep task popups on the view where they were opened".
+      With the wrapper, the checkbox is the only sibling flex item and the group takes the remaining width, so the label's TEXT wraps inside it and every continuation line aligns under the first word instead of under the checkbox.
       */}
       <div className="settings-field-row-head">
         {inlineControl && control}
-        {labelAndScope}
+        <div className="settings-field-row-labelgroup">{labelAndScope}</div>
       </div>
       {!inlineControl && control}
       {error && (
