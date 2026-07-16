@@ -172,6 +172,10 @@ export async function tryClaimTask(
     const now = input.renewedAt;
 
     if (!existing) {
+      /*
+      FNXC:AsyncCentralClaims 2026-07-16-10:55:
+      FN-8047 requires concurrent first claims from separate nodes to produce one winner and a normal conflict for the loser. PostgreSQL transactions can both observe an absent row, so make the unique-key collision non-throwing and classify the persisted winner below instead of leaking a database constraint error through AgentStore checkout.
+      */
       await tx.insert(schema.central.taskClaims).values({
         projectId: input.projectId,
         taskId: input.taskId,
@@ -182,10 +186,13 @@ export async function tryClaimTask(
         leaseRenewedAt: now,
         createdAt: now,
         updatedAt: now,
-      });
+      }).onConflictDoNothing();
       const claim = await getTaskClaim(tx, input.projectId, input.taskId);
       if (!claim) {
         throw new Error("Task claim insert succeeded but row could not be read back");
+      }
+      if (claim.ownerNodeId !== input.nodeId || claim.ownerAgentId !== input.agentId) {
+        return { ok: false, reason: "conflict", current: claim };
       }
       return { ok: true, claim };
     }

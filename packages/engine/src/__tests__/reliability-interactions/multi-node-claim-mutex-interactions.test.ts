@@ -1,18 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { AgentStore, CheckoutConflictError, TaskStore } from "@fusion/core";
+import { hasGit, hasPg, makePgAgentStore, makePgTaskStore } from "./_helpers.js";
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-reliability-claim-mutex-"));
-}
+const describeIfGit = hasGit && hasPg ? describe : describe.skip;
 
-describe("reliability interactions: multi-node claim mutex", () => {
-  let rootDir: string;
-  let globalDir: string;
+describeIfGit("reliability interactions: multi-node claim mutex", () => {
   let taskStore: TaskStore;
+  let cleanup: (() => Promise<void>) | undefined;
   let agentStoreA: AgentStore;
   let agentStoreB: AgentStore;
   let taskId: string;
@@ -20,13 +14,12 @@ describe("reliability interactions: multi-node claim mutex", () => {
   let agentB: string;
 
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    globalDir = join(rootDir, ".fusion-global");
-    taskStore = new TaskStore(rootDir, globalDir);
-    await taskStore.init();
+    const fixture = await makePgTaskStore();
+    taskStore = fixture.store;
+    cleanup = fixture.cleanup;
 
-    agentStoreA = new AgentStore({ rootDir, taskStore });
-    agentStoreB = new AgentStore({ rootDir, taskStore });
+    agentStoreA = makePgAgentStore({ taskStore, layer: fixture.layer });
+    agentStoreB = makePgAgentStore({ taskStore, layer: fixture.layer });
     await agentStoreA.init();
     await agentStoreB.init();
 
@@ -38,8 +31,7 @@ describe("reliability interactions: multi-node claim mutex", () => {
   afterEach(async () => {
     agentStoreA?.close();
     agentStoreB?.close();
-    taskStore?.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await cleanup?.();
   });
 
   it("prevents split-brain, preserves renewal semantics, and keeps legacy conflict shape", async () => {

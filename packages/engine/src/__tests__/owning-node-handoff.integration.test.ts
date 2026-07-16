@@ -1,33 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { TaskStore, type OwningNodeHandoffPolicy } from "@fusion/core";
+import { pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import { hasPg, makePgTaskStore } from "./reliability-interactions/_helpers.js";
 import { MeshLeaseManager } from "../mesh-lease-manager.js";
 import type { NodeHealthMonitor } from "../node-health-monitor.js";
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-owning-handoff-test-"));
-}
+const pgIt = hasPg ? pgDescribe : describe.skip;
 
-describe("MeshLeaseManager owning-node handoff integration", () => {
-  let rootDir: string;
-  let globalDir: string;
+pgIt("MeshLeaseManager owning-node handoff integration", () => {
   let taskStore: TaskStore;
+  let cleanup: (() => Promise<void>) | undefined;
   let taskId: string;
 
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    globalDir = join(rootDir, ".fusion-global");
-    taskStore = new TaskStore(rootDir, globalDir);
-    await taskStore.init();
+    const fixture = await makePgTaskStore();
+    taskStore = fixture.store;
+    cleanup = fixture.cleanup;
     taskId = (await taskStore.createTask({ description: "handoff" })).id;
   });
 
   afterEach(async () => {
-    taskStore?.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await cleanup?.();
   });
 
   async function seedLease(ownerNodeId: string): Promise<void> {
@@ -54,20 +47,20 @@ describe("MeshLeaseManager owning-node handoff integration", () => {
 
   it("applies handoff policy matrix for peer-owned leases", async () => {
     await seedLease("node-peer");
-    let baselineEventIds = new Set(taskStore.getRunAuditEvents({ taskId, limit: 200 }).map((event) => event.id));
+    let baselineEventIds = new Set((await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).map((event) => event.id));
     expect(await runCase("block", "node-peer")).toBe(false);
     let task = await taskStore.getTask(taskId);
     expect(task?.checkedOutBy).toBe("agent-1");
-    let newEvents = taskStore.getRunAuditEvents({ taskId, limit: 200 }).filter((event) => !baselineEventIds.has(event.id));
+    let newEvents = (await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).filter((event) => !baselineEventIds.has(event.id));
     expect(newEvents.some((event) => event.mutationType === "node:handoff:parked" && event.metadata?.source === "mesh-lease.recover" && event.metadata?.decisionReason === "handoff_blocked_by_policy")).toBe(true);
     expect(newEvents.some((event) => event.mutationType === "node:lease:recovered")).toBe(false);
 
     await seedLease("node-peer");
-    baselineEventIds = new Set(taskStore.getRunAuditEvents({ taskId, limit: 200 }).map((event) => event.id));
+    baselineEventIds = new Set((await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).map((event) => event.id));
     expect(await runCase("reassign-to-local", "node-peer")).toBe(true);
     task = await taskStore.getTask(taskId);
     expect(task?.checkedOutBy ?? null).toBeNull();
-    newEvents = taskStore.getRunAuditEvents({ taskId, limit: 200 }).filter((event) => !baselineEventIds.has(event.id));
+    newEvents = (await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).filter((event) => !baselineEventIds.has(event.id));
     const localRecoveryEvent = newEvents.find((event) => event.mutationType === "node:lease:recovered");
     expect(localRecoveryEvent).toBeTruthy();
     expect(localRecoveryEvent?.metadata?.source).toBe("mesh-lease.recover");
@@ -75,11 +68,11 @@ describe("MeshLeaseManager owning-node handoff integration", () => {
     expect(String(localRecoveryEvent?.metadata?.recoveryReason ?? "")).toContain("test-owner-unavailable");
 
     await seedLease("node-peer");
-    baselineEventIds = new Set(taskStore.getRunAuditEvents({ taskId, limit: 200 }).map((event) => event.id));
+    baselineEventIds = new Set((await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).map((event) => event.id));
     expect(await runCase("reassign-any-healthy", "node-peer")).toBe(true);
     task = await taskStore.getTask(taskId);
     expect(task?.checkedOutBy ?? null).toBeNull();
-    newEvents = taskStore.getRunAuditEvents({ taskId, limit: 200 }).filter((event) => !baselineEventIds.has(event.id));
+    newEvents = (await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).filter((event) => !baselineEventIds.has(event.id));
     const anyRecoveryEvent = newEvents.find((event) => event.mutationType === "node:lease:recovered");
     expect(anyRecoveryEvent).toBeTruthy();
     expect(anyRecoveryEvent?.metadata?.source).toBe("mesh-lease.recover");
@@ -90,12 +83,12 @@ describe("MeshLeaseManager owning-node handoff integration", () => {
   it("recovers self-owned leases regardless of policy", async () => {
     for (const policy of ["block", "reassign-to-local", "reassign-any-healthy"] as const) {
       await seedLease("node-local");
-      const baselineEventIds = new Set(taskStore.getRunAuditEvents({ taskId, limit: 200 }).map((event) => event.id));
+      const baselineEventIds = new Set((await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).map((event) => event.id));
       const recovered = await runCase(policy, "node-local");
       expect(recovered).toBe(true);
       const task = await taskStore.getTask(taskId);
       expect(task?.checkedOutBy ?? null).toBeNull();
-      const newEvents = taskStore.getRunAuditEvents({ taskId, limit: 200 }).filter((event) => !baselineEventIds.has(event.id));
+      const newEvents = (await taskStore.getRunAuditEventsAsync({ taskId, limit: 200 })).filter((event) => !baselineEventIds.has(event.id));
       const recoveryEvents = newEvents.filter((event) => event.mutationType === "node:lease:recovered");
       expect(recoveryEvents).toHaveLength(1);
       expect(recoveryEvents[0]?.metadata?.source).toBe("mesh-lease.recover");

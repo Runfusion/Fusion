@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { execSync, spawnSync, exec } from "node:child_process";
 import { Worker } from "node:worker_threads";
 import {
-  DEFAULT_SETTINGS, TaskStore, type Settings, type Task,
-  type AsyncDataLayer, type ResolvedBackend,
+  AgentStore, DEFAULT_SETTINGS, TaskStore, type Settings, type Task,
+  type AsyncDataLayer, type CentralClaimStore, type ResolvedBackend,
   createConnectionSetFromUrl, applySchemaBaseline, createAsyncDataLayer,
 } from "@fusion/core";
 import { aiMergeTask } from "../../merger.js";
@@ -131,7 +131,18 @@ function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
 
 let relDbCounter = 0;
 
-async function createPgLayer(): Promise<{ layer: AsyncDataLayer; dbName: string }> {
+export type PgLayerFixture = {
+  layer: AsyncDataLayer;
+  dbName: string;
+  cleanup: () => Promise<void>;
+};
+
+/**
+ * Create one isolated PostgreSQL schema layer for a reliability test.
+ * Callers must use {@link hasPg} before invoking this helper because DDL uses
+ * the `psql` binary as well as a TCP-reachable PostgreSQL server.
+ */
+export async function createPgLayer(): Promise<PgLayerFixture> {
   relDbCounter += 1;
   const dbName = `fusion_rel_${process.pid}_${relDbCounter}_${Math.random().toString(36).slice(2, 8)}`;
   try {
@@ -152,7 +163,65 @@ async function createPgLayer(): Promise<{ layer: AsyncDataLayer; dbName: string 
   await schemaConn.close();
   const connections = await createConnectionSetFromUrl(backend, { poolMax: 5, connectTimeoutSeconds: 5 });
   const layer = createAsyncDataLayer(connections);
-  return { layer, dbName };
+  return {
+    layer,
+    dbName,
+    cleanup: async () => {
+      try { await layer.close(); } catch { /* best-effort */ }
+      try { await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* best-effort */ }
+    },
+  };
+}
+
+/*
+FNXC:PgMigrationQuarantine 2026-07-16-10:30:
+VAL-REMOVAL-005 removed AgentStore's SQLite runtime path, so multi-node claim and handoff tests must construct TaskStore and every sibling AgentStore with one shared AsyncDataLayer. Reliability callers gate with hasGit && hasPg; integration callers compose hasPg ? pgDescribe : describe.skip because DDL requires both reachable PostgreSQL and psql, but integration tests do not require Git.
+*/
+export async function makePgTaskStore(): Promise<{
+  rootDir: string;
+  store: TaskStore;
+  layer: AsyncDataLayer;
+  cleanup: () => Promise<void>;
+}> {
+  const rootDir = await mkdtemp(join(reliabilityTestTempParent(), "fusion-pg-store-"));
+  const pg = await createPgLayer();
+  const store = new TaskStore(rootDir, undefined, { asyncLayer: pg.layer });
+  await store.init();
+  return {
+    rootDir,
+    store,
+    layer: pg.layer,
+    cleanup: async () => {
+      await store.close();
+      await pg.cleanup();
+      await rm(rootDir, { recursive: true, force: true });
+    },
+  };
+}
+
+/**
+ * Construct one backend-mode AgentStore for each AgentStore instance a test
+ * already needs. Two-store tests call this twice with the same taskStore/layer.
+ */
+export function makePgAgentStore(input: {
+  taskStore: TaskStore;
+  layer: AsyncDataLayer;
+  rootDir?: string;
+  claimStore?: CentralClaimStore;
+  projectId?: string;
+  nodeId?: string;
+}): AgentStore {
+  if (input.taskStore.getAsyncLayer() !== input.layer) {
+    throw new Error("makePgAgentStore requires the TaskStore's shared asyncLayer");
+  }
+  return new AgentStore({
+    rootDir: input.rootDir ?? input.taskStore.getRootDir(),
+    taskStore: input.taskStore,
+    asyncLayer: input.layer,
+    claimStore: input.claimStore,
+    projectId: input.projectId,
+    nodeId: input.nodeId,
+  });
 }
 
 export type ReliabilityFixture = {
@@ -194,7 +263,8 @@ export async function makeReliabilityFixture(input: {
   git(rootDir, 'git commit -m "chore: init"');
   await mkdir(join(rootDir, ".fusion"), { recursive: true });
 
-  const { layer, dbName } = await createPgLayer();
+  const pg = await createPgLayer();
+  const { layer } = pg;
   const store = new TaskStore(rootDir, undefined, { asyncLayer: layer });
   await store.init();
   const settings: Settings = {
@@ -232,8 +302,7 @@ export async function makeReliabilityFixture(input: {
     cleanup: async () => {
       manager.stop();
       await store.close();
-      try { await layer.close(); } catch { /* best-effort */ }
-      try { await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}"`); } catch { /* best-effort */ }
+      await pg.cleanup();
       await rm(rootDir, { recursive: true, force: true });
       await rm(worktreeRoot, { recursive: true, force: true });
     },

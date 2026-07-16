@@ -301,11 +301,8 @@ export default defineConfig({
             // getDatabase, walCheckpoint) that throw/return-empty in backend mode, or have mock
             // drift from the async-satellite cutover. Quarantined on sight per AGENTS.md.
             "src/__tests__/backlog-pressure-reporter.test.ts",
-            "src/__tests__/cross-node-claim-mutex.integration.test.ts",
-            "src/__tests__/distributed-claim-mutex.integration.test.ts",
             "src/__tests__/mission-autopilot.test.ts",
             "src/__tests__/mission-factory-parity.integration.test.ts",
-            "src/__tests__/owning-node-handoff.integration.test.ts",
             "src/__tests__/planner-overseer-intervention-wiring.test.ts",
             "src/__tests__/project-engine.test.ts",
             "src/__tests__/self-healing.test.ts",
@@ -379,8 +376,9 @@ export default defineConfig({
             // (now PG-backed) but fail on sync SQLite APIs (getRunAuditEvents, getDatabase) that
             // return [] / throw in backend mode, or on mock drift from the async-satellite cutover.
             // Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
-            "src/__tests__/reliability-interactions/multi-node-claim-mutex-interactions.test.ts",
-            "src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts",
+            // FNXC:PgMigrationQuarantine 2026-07-16-10:45:
+            // FN-8047 restored multi-node claim and owning-node handoff coverage with shared PG-backed
+            // AgentStores and AsyncCentralClaimStore; their paired ledger entries are intentionally live.
             "src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
             "src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
             "src/__tests__/reliability-interactions/self-defeating-dep-reconcile.test.ts",
