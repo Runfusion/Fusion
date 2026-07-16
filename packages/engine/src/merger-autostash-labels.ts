@@ -44,7 +44,10 @@ export function parseAutostashCreatedAt(label: string): string | null {
   if (!match) return null;
   const ts = Number.parseInt(match[1] ?? "", 10);
   if (!Number.isFinite(ts)) return null;
-  return new Date(ts).toISOString();
+  // Guard RangeError: finite numbers outside JS Date range still produce Invalid Date.
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 export function parseAutostashSourcePhase(label: string): string | null {

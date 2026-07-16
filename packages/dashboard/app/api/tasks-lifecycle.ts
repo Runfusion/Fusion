@@ -39,6 +39,7 @@ export function deleteTask(id: string, projectId?: string, options?: DeleteTaskO
   if (options?.githubIssueAction) {
     search.set("githubIssueAction", options.githubIssueAction);
   }
+  // FNXC:TaskLifecycle 2026-07-16-12:00:
   // FN-5233 route reads delete modifiers from query params, including allowResurrection.
   if (options?.allowResurrection) {
     search.set("allowResurrection", "true");

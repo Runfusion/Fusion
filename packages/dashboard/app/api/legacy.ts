@@ -175,6 +175,11 @@ export type {
   RepairOverlapBlockerResult,
 };
 
+/*
+ * FNXC:CodeOrganization 2026-07-16-12:00:
+ * Preserve legacy task-lifecycle imports while implementations live in
+ * tasks-lifecycle.ts.
+ */
 export {
   promoteTask,
   deleteTask,

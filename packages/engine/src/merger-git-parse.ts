@@ -5,7 +5,7 @@
  * FNXC:CodeOrganization 2026-07-16-14:00:
  * Also hosts getBranchChangedFiles + quoteArg (shell-safe git name-only diff).
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 
 export function parseFailingFilesFromOutput(output: string): string[] {
@@ -78,25 +78,25 @@ export function quoteArg(value: string): string {
 
 /**
  * Get the set of files changed in the branch relative to the base branch.
- * Uses `git diff --name-only <baseBranch>...HEAD` (three-dot range so it
+ * Uses `git diff --name-only -z <baseBranch>...HEAD` (three-dot range so it
  * computes the diff from the merge-base, not the current HEAD of baseBranch).
  *
- * Returns an empty array on git errors (callers treat this as "unknown").
+ * FNXC:CodeOrganization 2026-07-16-16:00:
+ * Invoke git via execFileSync argv (no shell) so branch names cannot break
+ * quoting on Windows cmd.exe, and parse NUL-delimited paths so whitespace/
+ * newlines in filenames are preserved. Empty array on git errors (unknown).
  *
  * @internal Exported for testing only.
  */
 export function getBranchChangedFiles(rootDir: string, baseBranch: string, branch: string): string[] {
   try {
-    // Quote both refs — branch names can legally contain `/` and other
-    // characters that, while harmless to git, would expose us to shell
-    // injection if a caller ever passed an unsanitized branch string.
-    const baseRef = quoteArg(baseBranch);
-    const headRef = branch === "HEAD" ? "HEAD" : quoteArg(branch);
-    const output = execSync(
-      `git diff --name-only ${baseRef}...${headRef}`,
-      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
-    ).toString();
-    return output.split("\n").map((f) => f.trim()).filter(Boolean);
+    const headRef = branch === "HEAD" ? "HEAD" : branch;
+    const output = execFileSync(
+      "git",
+      ["diff", "--name-only", "-z", `${baseBranch}...${headRef}`],
+      { cwd: rootDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    return String(output).split("\0").map((f) => f.trim()).filter(Boolean);
   } catch {
     return [];
   }
