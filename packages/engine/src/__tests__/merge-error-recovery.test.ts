@@ -651,8 +651,13 @@ describe("ProjectEngine merge error recovery", () => {
   });
 
   it("parks direct merge when transient retry cap is exhausted", async () => {
+    // FNXC:MergeReliability 2026-07-15-19:25 (FN-8004): seed AT the cap, read from the constant.
+    // This previously hardcoded 3; raising the budget to 5 silently turned this into a
+    // "retries once more" case. Deriving the seed keeps the invariant (park once the budget is
+    // spent) under test regardless of how the budget is tuned.
+    const atCap = ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES;
     const store = makeStore({
-      tasks: [makeTask({ mergeTransientRetryCount: 3 }), makeTask({ mergeTransientRetryCount: 3 })],
+      tasks: [makeTask({ mergeTransientRetryCount: atCap }), makeTask({ mergeTransientRetryCount: atCap })],
     });
     vi.mocked(runAiMerge).mockRejectedValueOnce(new Error("socket hang up"));
 

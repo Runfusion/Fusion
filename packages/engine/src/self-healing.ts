@@ -517,8 +517,17 @@ export const MAX_AUTO_MERGE_RETRIES = 3;
  * `mergeRetries` and re-enqueueing the same task, the task is considered
  * genuinely stuck and stays parked as `failed` for manual review. Tracked via
  * `task.mergeDetails.transientRecoveryCount`.
+ *
+ * FNXC:MergeReliability 2026-07-15-18:50 (FN-8004):
+ * Raised 2 → 5. This budget only ever applies to errors already PROVEN transient by
+ * `classifyTransientMergeError` — provider blips, network drops, lease races. For that
+ * population the cost asymmetry is lopsided: an extra retry costs one merge attempt,
+ * while giving up strands completed, reviewed work in `in-review` until a human notices.
+ * Operators reported the old budget surrendering while the underlying fault was still
+ * clearing. Recovery remains strictly bounded and audited — this widens the window,
+ * it does not remove the ceiling.
  */
-export const MAX_TRANSIENT_MERGE_RECOVERIES = 2;
+export const MAX_TRANSIENT_MERGE_RECOVERIES = 5;
 
 // FN-5627: classifier extracted to `transient-merge-error-classifier.ts`
 // to avoid pulling `createLogger` into modules that mock `../logger.js`

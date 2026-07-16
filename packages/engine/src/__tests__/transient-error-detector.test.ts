@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+// FNXC:Reliability-ErrorClassification 2026-07-15-19:15 (FN-8004): the pure predicates moved to
+// the import-free leaf `transient-error-patterns.ts`; this module re-exports them. Importing via
+// BOTH paths here pins the re-export contract so existing callers keep working.
+import { isTransientError as isTransientErrorViaLeaf } from "../transient-error-patterns.js";
 import {
   isTransientError,
   isTransientAuthCredentialError,
@@ -548,6 +552,49 @@ describe("Transient Error Detector", () => {
       expect(isSilentTransientError("abort")).toBe(false);
       expect(isSilentTransientError("Aborted")).toBe(false);
       expect(isSilentTransientError("The operation was aborted by user")).toBe(false);
+    });
+  });
+
+  /*
+  FNXC:AcpRuntime 2026-07-15-19:15 (FN-8004):
+  ACP-backed runtimes (Grok, OMP, generic ACP) surface provider-side turn failures as JSON-RPC
+  errors. Treating them as permanent parked a task `failed` over a ~20s blip, and since
+  `status:"failed"` is what suppresses recovery, the work stranded until a human noticed.
+
+  The anchoring is the load-bearing part: the bare JSON-RPC text is "Internal error", which must
+  NEVER match globally or it would disguise real application defects as retryable blips.
+  */
+  describe("ACP provider turn failures (FN-8004)", () => {
+    it("treats ACP turn failures as transient across every runtime prefix", () => {
+      expect(isTransientError("Grok ACP turn failed: Internal error")).toBe(true);
+      expect(isTransientError("OMP ACP turn failed: Internal error")).toBe(true);
+      expect(isTransientError("Grok ACP turn failed: Internal error (acp rpc code -32603, retryable)")).toBe(true);
+    });
+
+    it("treats retryable ACP rpc codes as transient", () => {
+      for (const code of [-32603, -32000, -32001, -32002, -32003]) {
+        expect(isTransientError(`Server error (acp rpc code ${code}, retryable)`)).toBe(true);
+      }
+    });
+
+    it("treats ACP startup and dead-connection diagnostics as transient", () => {
+      expect(isTransientError("Grok ACP failed to start: spawn grok ENOENT")).toBe(true);
+      expect(isTransientError("Grok ACP session has no live connection. The `grok agent stdio` process failed to start."))
+        .toBe(true);
+    });
+
+    it("does NOT match the bare JSON-RPC message or caller-fault codes", () => {
+      expect(isTransientError("Internal error")).toBe(false);
+      expect(isTransientError("Application threw Internal error while saving")).toBe(false);
+      for (const code of [-32600, -32601, -32602]) {
+        expect(isTransientError(`Bad call (acp rpc code ${code})`)).toBe(false);
+      }
+    });
+
+    it("re-exports the identical predicate from the leaf module", () => {
+      // The detector must stay a pure re-export — a divergent copy would let the merge
+      // classifier (which imports the leaf) and the executor drift apart again.
+      expect(isTransientErrorViaLeaf).toBe(isTransientError);
     });
   });
 });

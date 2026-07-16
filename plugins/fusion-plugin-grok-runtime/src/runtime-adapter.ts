@@ -89,6 +89,16 @@ function describeCreateFailure(error: unknown): string {
   );
 }
 
+/*
+FNXC:GrokAcp 2026-07-15-18:45:
+`promptAcpSession` (acp-runtime provider.ts) already re-shapes JSON-RPC faults into a diagnostic
+carrying the rpc code — e.g. `Internal error (acp rpc code -32603, retryable)`. Pass that through
+verbatim rather than re-flattening to `error.message`, so the engine's transient classifier can
+recognize a provider-side blip and retry instead of parking the task permanently.
+
+FN-8004: the bare message reaching the merger was "Internal error", matched no transient pattern,
+and terminally failed an auto-merge whose branch work was complete and correct.
+*/
 function describePromptFailure(error: unknown): string {
   const reason = error instanceof Error ? error.message : String(error ?? "unknown error");
   return compactDiagnostic(`Grok ACP turn failed: ${reason}`);
