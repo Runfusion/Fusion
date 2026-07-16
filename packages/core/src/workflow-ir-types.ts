@@ -327,6 +327,10 @@ export interface WorkflowSettingDefinition {
   type: WorkflowSettingType;
   default?: unknown;
   options?: WorkflowSettingOption[];
+  /** Inclusive lower bound for a number setting. */
+  minimum?: number;
+  /** Require number values to be whole integers. */
+  integer?: boolean;
   description?: string;
   render?: WorkflowSettingRender;
 }

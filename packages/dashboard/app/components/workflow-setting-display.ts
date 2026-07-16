@@ -101,6 +101,17 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
      */
     description: "Leave empty for unbounded automatic Code Review remediation; set 0 to disable automatic revision.",
   },
+  planReviewReplanCap: {
+    group: "review",
+    label: "Plan Review replan cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-07-15-12:00:
+     * FN-7985 exposes triage's separate consecutive Plan Review REVISE ceiling here. An
+     * empty value intentionally delegates to the engine constant rather than duplicating
+     * its default in the editable workflow setting.
+     */
+    description: "Leave empty to use the built-in Plan Review replan default; set 0 to require approval after the first REVISE.",
+  },
   triageProactiveSubtaskSplittingEnabled: {
     group: "steps",
     label: "Automatic large-task splitting",

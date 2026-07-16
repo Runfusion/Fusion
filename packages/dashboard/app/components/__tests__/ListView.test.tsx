@@ -430,6 +430,36 @@ describe("ListView", () => {
     expect(screen.getByText("View")).toBeDefined();
   });
 
+  it("renders the exhausted review budget indicator only for the matching approval reason in desktop rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-BUDGET", status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+        createMockTask({ id: "FN-MANUAL", status: "awaiting-approval" }),
+        createMockTask({ id: "FN-LEGACY", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }),
+      ],
+    });
+
+    expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
+    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    viewportSpy.mockRestore();
+  });
+
+  it("renders the exhausted review budget indicator only for the matching approval reason in grouped cards", () => {
+    const viewportSpy = mockMobileViewport();
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-BUDGET", status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
+        createMockTask({ id: "FN-MANUAL", status: "awaiting-approval" }),
+        createMockTask({ id: "FN-LEGACY", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }),
+      ],
+    });
+
+    expect(screen.getByTestId("list-review-budget-exhausted-FN-BUDGET")).toHaveTextContent("Review budget exhausted");
+    expect(screen.getAllByText("Awaiting Approval")).toHaveLength(2);
+    viewportSpy.mockRestore();
+  });
+
   it("falls back malformed task columns to Planning group instead of crashing", () => {
     const malformedTask = {
       ...createMockTask({ id: "FN-404" }),

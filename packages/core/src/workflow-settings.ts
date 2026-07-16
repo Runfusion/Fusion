@@ -146,6 +146,12 @@ function validateValue(
           `setting '${setting.id}' expects a finite number, got ${typeof value === "number" ? String(value) : typeof value}`,
         );
       }
+      if (setting.integer === true && !Number.isInteger(value)) {
+        return reject("type-mismatch", `setting '${setting.id}' expects an integer, got ${value}`);
+      }
+      if (setting.minimum !== undefined && value < setting.minimum) {
+        return reject("type-mismatch", `setting '${setting.id}' must be at least ${setting.minimum}, got ${value}`);
+      }
       return { ok: true, value };
     }
     case "boolean": {

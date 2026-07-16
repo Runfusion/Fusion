@@ -2241,14 +2241,23 @@ export class TriageProcessor {
   `plan-review-replan-cap` so TaskCard/TaskDetailModal/notifications can tell the operator
   why approval is required (Plan Review did not converge) instead of looking like a generic
   require-all plan gate.
+
+  FNXC:PlanReviewReplan 2026-07-15-12:00:
+  FN-7985 makes this triage-only ceiling a workflow setting. The source constant remains the
+  fallback when no valid non-negative finite integer is resolved, so an unset workflow follows
+  the coordinated built-in default instead of persisting a duplicate numeric default.
   */
-  private async blockAfterPlanReviewRevise(task: Task, latestFeedback: string): Promise<void> {
+  private async blockAfterPlanReviewRevise(task: Task, latestFeedback: string, settings: Settings): Promise<void> {
+    const configuredCap = settings.planReviewReplanCap;
+    const replanCap = typeof configuredCap === "number" && Number.isFinite(configuredCap) && Number.isInteger(configuredCap) && configuredCap >= 0
+      ? configuredCap
+      : PLAN_REVIEW_GATE_REPLAN_CAP;
     const priorCount = task.planReviewReplanCount ?? 0;
-    if (priorCount >= PLAN_REVIEW_GATE_REPLAN_CAP) {
+    if (priorCount >= replanCap) {
       await this.store.logEntry(
         task.id,
         PLAN_REVIEW_REPLAN_CAP_LOG_ACTION,
-        `The triage Plan Review gate requested a planning revision ${priorCount} consecutive times without converging (cap ${PLAN_REVIEW_GATE_REPLAN_CAP}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is being routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${latestFeedback}`,
+        `The triage Plan Review gate requested a planning revision ${priorCount} consecutive times without converging (cap ${replanCap}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is being routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${latestFeedback}`,
       );
       /*
       FNXC:PlanReviewReplan 2026-07-13-00:00:
@@ -2270,7 +2279,7 @@ export class TriageProcessor {
       };
       await this.store.updateTask(task.id, escalationUpdates);
       planLog.warn(
-        `${task.id} Plan Review replan cap (${PLAN_REVIEW_GATE_REPLAN_CAP}) reached after ${priorCount} REVISE replans — escalating to awaiting-approval instead of replanning`,
+        `${task.id} Plan Review replan cap (${replanCap}) reached after ${priorCount} REVISE replans — escalating to awaiting-approval instead of replanning`,
       );
       return;
     }
@@ -2327,7 +2336,7 @@ export class TriageProcessor {
           "AI spec revision requested",
           `Plan Review deterministic external-integration evidence check requested a planning revision before execution.\n\nFeedback:\n${diagnostic}`,
         );
-        await this.blockAfterPlanReviewRevise(task, diagnostic);
+        await this.blockAfterPlanReviewRevise(task, diagnostic, settings);
         return "blocked";
       }
     }
@@ -2461,7 +2470,7 @@ export class TriageProcessor {
         "AI spec revision requested",
         `Plan Review requested a planning revision before execution.\n\nStatus: ${review.verdict}\nFeedback:\n${reviseFeedback}`,
       );
-      await this.blockAfterPlanReviewRevise(task, reviseFeedback);
+      await this.blockAfterPlanReviewRevise(task, reviseFeedback, settings);
       return "blocked";
     }
 

@@ -2270,7 +2270,20 @@ describe("TaskCard", () => {
    * When Plan Review exhausts automatic REVISE replans, the card must not look like a
    * generic require-all hold — badge text + title explain the non-convergence reason.
    */
-  it("renders a distinct Plan Review Cap badge when awaitingApprovalReason is plan-review-replan-cap", () => {
+  it("keeps the generic Awaiting Approval badge for an ordinary manual hold", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "awaiting-approval" } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(within(container).getByText("Awaiting Approval")).toBeDefined();
+    expect(container.querySelector(".awaiting-approval--plan-review-replan-cap")).toBeNull();
+  });
+
+  it("renders a distinct review-budget-exhausted badge when awaitingApprovalReason is plan-review-replan-cap", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -2282,7 +2295,7 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(within(container).getByText("Plan Review Cap")).toBeDefined();
+    expect(within(container).getByText("Review budget exhausted")).toBeDefined();
     expect(within(container).queryByText("Awaiting Approval")).toBeNull();
     const badge = container.querySelector(".card-status-badge") as HTMLElement;
     expect(badge.className).toContain("awaiting-approval--plan-review-replan-cap");

@@ -59,7 +59,11 @@ function createRetryTask(overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
-function createStore(task: Task, settingsOverrides: Partial<Settings> = {}): TaskStore {
+function createStore(
+  task: Task,
+  settingsOverrides: Partial<Settings> = {},
+  workflowSettings: Record<string, unknown> = {},
+): TaskStore {
   return {
     getTask: vi.fn().mockResolvedValue(task),
     listTasks: vi.fn().mockResolvedValue([task]),
@@ -87,7 +91,7 @@ function createStore(task: Task, settingsOverrides: Partial<Settings> = {}): Tas
     addSteeringComment: vi.fn(),
     getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
     getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
-    getWorkflowSettingValues: vi.fn().mockReturnValue({}),
+    getWorkflowSettingValues: vi.fn().mockReturnValue(workflowSettings),
     getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-plan-review-replan-cap"),
     on: vi.fn(),
     emit: vi.fn(),
@@ -139,11 +143,36 @@ describe("Plan Review replan cap", () => {
     }));
   });
 
-  it("escalates to awaiting-approval instead of replanning once the cap is reached", async () => {
+  it("uses a workflow-configured replan cap before escalating to manual approval", async () => {
     const rootDir = await createFixtureRoot();
     roots.push(rootDir);
-    // Cap is 8: a task that has already consumed that many consecutive REVISE replans must
-    // escalate on the next REVISE rather than replanning again.
+    const task = createRetryTask({
+      id: "FN-REPLAN-CAP-CONFIGURED",
+      planReviewReplanCount: 1,
+    });
+    const prompt = `# Task: ${task.id} - Existing draft\n\n## Mission\n\nOnly rewrite after reviewer feedback.\n`;
+    await writePrompt(rootDir, task.id, prompt);
+    const store = createStore(task, {}, { planReviewReplanCap: 1 });
+    mockReviewStep.mockResolvedValue({ verdict: "REVISE", review: "One configured attempt was enough.", summary: "Needs revision." });
+
+    await runGate(rootDir, task, store);
+
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+    }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      "Plan Review replan cap reached — escalating to manual approval",
+      expect.stringContaining("cap 1"),
+    );
+  });
+
+  it("falls back to the source cap when the workflow setting is unset", async () => {
+    const rootDir = await createFixtureRoot();
+    roots.push(rootDir);
+    // The workflow-value map intentionally omits planReviewReplanCap. A task that has
+    // consumed the source-default cap must still escalate on the next REVISE.
     const task = createRetryTask({
       id: "FN-REPLAN-CAP-HIT",
       planReviewReplanCount: 8,

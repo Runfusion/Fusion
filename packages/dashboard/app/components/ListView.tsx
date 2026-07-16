@@ -23,6 +23,7 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { getTaskStatusBadgeLabel } from "../utils/taskStatusBadgeLabel";
+import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
@@ -82,6 +83,7 @@ FNXC:MergeQueue 2026-07-15-10:45:
 List status column used to print raw engine statuses (landing/reviewing). Share the board badge mapper so list and card never diverge.
 */
 function getTaskStatusLabel(status: string, t: TFunction<"app">): string {
+  if (status === "awaiting-approval") return t("tasks.awaitingApproval", "Awaiting Approval");
   return getTaskStatusBadgeLabel(status, t);
 }
 type SortDirection = "asc" | "desc";
@@ -2683,6 +2685,7 @@ export function ListView({
                             !isStuckState &&
                             (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
                           const hasStatus = typeof visualStatus === "string" && visualStatus.trim().length > 0;
+                          const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const planReviewRunning = isPlanReviewRunning(task);
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
@@ -2738,8 +2741,14 @@ export function ListView({
                                 ) : isStuckState ? (
                                   <span className="list-status-badge stuck">{t("listView.stuck", "Stuck")}</span>
                                 ) : hasStatus ? (
-                                  <span className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}>
-                                    {getTaskStatusLabel(visualStatus ?? "", t)}
+                                  <span
+                                    className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
+                                    title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                    data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
+                                  >
+                                    {isReviewBudgetExhausted
+                                      ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                                      : getTaskStatusLabel(visualStatus ?? "", t)}
                                   </span>
                                 ) : null}
                                 {planReviewRunning && (
@@ -2893,6 +2902,7 @@ export function ListView({
                               !isPaused &&
                               !isStuckState &&
                               (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
+                            const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                             const planReviewRunning = isPlanReviewRunning(task);
                             const isDragging = draggingTaskId === task.id;
 
@@ -2959,11 +2969,15 @@ export function ListView({
                                       </span>
                                     ) : visualStatus ? (
                                       <span
-                                        className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${
+                                        className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
+                                        title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                        data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                       >
-                                        {getTaskStatusLabel(visualStatus ?? "", t)}
+                                        {isReviewBudgetExhausted
+                                          ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
+                                          : getTaskStatusLabel(visualStatus ?? "", t)}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>

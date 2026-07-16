@@ -506,6 +506,7 @@ export {
   resolveEffectivePlannerHeartbeatPatrolEnabled,
   PLAN_REVIEW_MAX_REVISIONS_SETTING_ID,
   CODE_REVIEW_MAX_REVISIONS_SETTING_ID,
+  PLAN_REVIEW_REPLAN_CAP_SETTING_ID,
   type WorkflowSettingsResolverStore,
   type EffectiveSettingsResult,
   type EffectiveSettingsTaskRef,

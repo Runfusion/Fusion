@@ -43,6 +43,7 @@ import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgre
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel } from "../utils/taskStatusBadgeLabel";
+import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
@@ -1331,8 +1332,7 @@ function TaskCardComponent({
   converging — Approve keeps the current PROMPT.md; Reject regenerates.
   */
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
-  const isPlanReviewReplanCapApproval =
-    isAwaitingApproval && task.awaitingApprovalReason === "plan-review-replan-cap";
+  const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && !isAwaitingInput && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
@@ -3069,7 +3069,7 @@ function TaskCardComponent({
             {isStuck
               ? t("tasks.stuck", "Stuck")
               : isPlanReviewReplanCapApproval
-                ? t("tasks.awaitingApprovalPlanReviewReplanCap", "Plan Review Cap")
+                ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                 : isAwaitingApproval
                   ? t("tasks.awaitingApproval", "Awaiting Approval")
                   : isAwaitingInput

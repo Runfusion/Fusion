@@ -1170,6 +1170,26 @@ function validateFields(fields: WorkflowFieldDefinition[] | undefined): void {
   }
 }
 
+/** Validate number-only setting constraints before values/defaults consume them. */
+function validateSettingNumericConstraints(setting: WorkflowSettingDefinition): void {
+  if (setting.minimum !== undefined) {
+    if (setting.type !== "number") {
+      throw new WorkflowIrError(`Workflow setting '${setting.id}' minimum is only allowed for number settings`);
+    }
+    if (typeof setting.minimum !== "number" || !Number.isFinite(setting.minimum)) {
+      throw new WorkflowIrError(`Workflow setting '${setting.id}' minimum must be a finite number`);
+    }
+  }
+  if (setting.integer !== undefined) {
+    if (setting.type !== "number") {
+      throw new WorkflowIrError(`Workflow setting '${setting.id}' integer is only allowed for number settings`);
+    }
+    if (typeof setting.integer !== "boolean") {
+      throw new WorkflowIrError(`Workflow setting '${setting.id}' integer must be a boolean`);
+    }
+  }
+}
+
 /** Validate that a setting's `default` conforms to its own type/options (U1).
  *  Unlike `validateFields`, settings validate defaults because the engine's
  *  effective-settings resolver (U3) consumes the default directly — a malformed
@@ -1192,6 +1212,12 @@ function validateSettingDefault(setting: WorkflowSettingDefinition): void {
         throw new WorkflowIrError(
           `Workflow setting '${id}' default must be a finite number`,
         );
+      }
+      if (setting.integer === true && !Number.isInteger(value)) {
+        throw new WorkflowIrError(`Workflow setting '${id}' default must be an integer`);
+      }
+      if (setting.minimum !== undefined && value < setting.minimum) {
+        throw new WorkflowIrError(`Workflow setting '${id}' default must be at least ${setting.minimum}`);
       }
       break;
     case "boolean":
@@ -1299,6 +1325,7 @@ function validateSettings(settings: WorkflowSettingDefinition[] | undefined): vo
         );
       }
     }
+    validateSettingNumericConstraints(setting);
     validateSettingDefault(setting);
   }
 }

@@ -751,6 +751,25 @@ ListView uses the same active-review token as TaskCard for the FN-7831 Reviewing
   color: var(--in-review);
   box-shadow: inset 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--in-review) 35%, transparent);
 }
+
+/*
+FNXC:PlanReviewReplan 2026-07-15-12:15:
+FN-7985 marks a plan parked after its automatic review/revise budget runs out as a warning,
+not an ordinary triage hold. This shared ListView modifier applies to both grouped cards and
+rows while preserving their existing badge geometry.
+*/
+.list-status-badge--review-budget-exhausted {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  box-shadow: inset 0 0 0 var(--btn-border-width) color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+@media (max-width: 768px) {
+  .list-status-badge--review-budget-exhausted {
+    max-width: 100%;
+    text-align: center;
+  }
+}
 .list-status-badge--done {
   background: var(--status-done-bg);
   color: var(--done);
