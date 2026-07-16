@@ -104,11 +104,7 @@
       "esbuild",
       "koffi",
       "protobufjs"
-    ],
-    "overrides": {
-      "@types/node": "^25.5.2",
-      "protobufjs": "^7.5.8"
-    }
+    ]
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
