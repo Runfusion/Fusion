@@ -7845,7 +7845,34 @@ export class TaskExecutor {
       return { outcome: "failure", value: "no-worktree-for-write-node" };
     }
 
-    const worktreePath = executionTarget.worktree || this.rootDir;
+    /*
+    FNXC:PlanReviewWorktree 2026-07-16-18:30:
+    FN-7996: Plan Review runs pre-execution and reviews the store-injected PROMPT.md (see
+    FNXC:PlanReviewSpecInjection) — it does not need worktree contents at all. But it inherited
+    whatever stale task.worktree metadata survived earlier park/requeue cycles, and a recycled or
+    pruned path made session start refuse ("Refusing to start coding agent in missing worktree"),
+    terminal-parking the task. When the recorded worktree is absent on disk, run Plan Review from
+    the repo root instead. Scoped strictly to Plan Review: other read-only gates review
+    implementation diffs, so silently retargeting them to the root would review the wrong tree —
+    they keep failing fast and route through the unusable-worktree graph-failure recovery.
+    */
+    const nodeDisplayName = typeof cfg.name === "string" && cfg.name.trim() ? cfg.name.trim() : node.id;
+    const isPlanReviewNode = node.id === "plan-review-step" || nodeDisplayName === "Plan Review" || optionalGroupId === "plan-review";
+    let worktreePath = executionTarget.worktree || this.rootDir;
+    if (
+      isPlanReviewNode
+      && !writeCapable
+      && executionTarget.worktree
+      && !existsSync(executionTarget.worktree)
+    ) {
+      await this.store.logEntry(
+        live.id,
+        `Plan Review worktree ${executionTarget.worktree} is missing on disk — running the reviewer from the repo root (spec is store-injected)`,
+        undefined,
+        this.getRunContextFor(live.id),
+      );
+      worktreePath = this.rootDir;
+    }
     let prompt = typeof cfg.prompt === "string" ? cfg.prompt : "";
     let modelProvider = typeof cfg.modelProvider === "string" && cfg.modelProvider.trim() ? cfg.modelProvider : undefined;
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
@@ -8302,6 +8329,25 @@ export class TaskExecutor {
     if (!failedNode || !result.context) return undefined;
     const value = result.context[`node:${failedNode}:value`];
     if (typeof value === "string") return value;
+    /*
+    FNXC:WorkflowLifecycle 2026-07-16-18:20:
+    Optional-group template failures record materialized `<groupId>::<templateId>` ids in
+    visitedNodeIds, but runOptionalGroup publishes context values under the UNQUALIFIED
+    template id, and the group wrapper publishes the group's FINAL routing value (e.g.
+    FN-7977's plan-review provider-failure hold) under the group id. FN-7996 parked
+    terminally because this lookup only understood `#` foreach ids, so every graph-failure
+    router (provider hold, awaiting states) missed group-template failures. Prefer the
+    group's own value (it carries post-classification routing intent), then the template's.
+    */
+    const groupInstanceDelimiter = failedNode.indexOf("::");
+    if (groupInstanceDelimiter !== -1) {
+      const groupNode = failedNode.slice(0, groupInstanceDelimiter);
+      const groupValue = result.context[`node:${groupNode}:value`];
+      if (typeof groupValue === "string") return groupValue;
+      const templateNode = failedNode.slice(groupInstanceDelimiter + 2);
+      const templateValue = result.context[`node:${templateNode}:value`];
+      return typeof templateValue === "string" ? templateValue : undefined;
+    }
     const foreachInstanceDelimiter = failedNode.indexOf("#");
     if (foreachInstanceDelimiter === -1) return undefined;
     /*
@@ -8315,6 +8361,74 @@ export class TaskExecutor {
 
   private isAwaitingGraphFailureValue(value: string | undefined): value is "awaiting-user-input" | "awaiting-cli-approval" {
     return value === "awaiting-user-input" || value === "awaiting-cli-approval";
+  }
+
+  /*
+  FNXC:MissingWorktreeRecovery 2026-07-16-18:25:
+  FN-7996: a session-start unusable-worktree refusal (assertValidWorktreeSession in pi.ts)
+  thrown inside ANY workflow graph node (Plan Review, code review, custom gates) surfaced as a
+  generic node "exception" and fell through every graph-failure router into the terminal park,
+  which also OVERWROTE task.error with a generic message — erasing the signature the in-review
+  missing-worktree self-healing sweep classifies on. The overseer then blindly re-dispatched the
+  same stale task.worktree all day. Extract the underlying node error from the graph context so
+  handleGraphFailure can route these into the same bounded recovery the execute session-start
+  path already uses (clear stale worktree/branch/session metadata, requeue to todo, budgeted by
+  worktreeSessionRetryCount).
+  */
+  private extractUnusableWorktreeGraphFailure(result: WorkflowGraphTaskRunResult): string | null {
+    if (!result.context) return null;
+    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
+    const candidateKeys: string[] = [];
+    if (failedNode) {
+      candidateKeys.push(`node:${failedNode}:error`);
+      const groupInstanceDelimiter = failedNode.indexOf("::");
+      if (groupInstanceDelimiter !== -1) {
+        // runOptionalGroup publishes template context under the UNQUALIFIED template id.
+        candidateKeys.push(`node:${failedNode.slice(groupInstanceDelimiter + 2)}:error`);
+        candidateKeys.push(`node:${failedNode.slice(0, groupInstanceDelimiter)}:error`);
+      }
+    }
+    for (const key of candidateKeys) {
+      const value = result.context[key];
+      if (typeof value === "string" && isMissingWorktreeSessionStartFailure(value)) return value;
+    }
+    for (const [key, value] of Object.entries(result.context)) {
+      if (
+        key.startsWith("node:")
+        && key.endsWith(":error")
+        && typeof value === "string"
+        && isMissingWorktreeSessionStartFailure(value)
+      ) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private async routeUnusableWorktreeGraphFailureToRecovery(
+    task: Task,
+    live: TaskDetail,
+    result: WorkflowGraphTaskRunResult,
+  ): Promise<boolean> {
+    if (live.deletedAt) return false;
+    if (live.paused || live.userPaused === true) return false;
+    if (live.column === "done" || live.column === "archived") return false;
+    // Pause/abort provenance owns aborted runs; a genuine abort never carries the
+    // session-start refusal as its terminal node error in the same walk.
+    if (this.pausedAborted.has(task.id)) return false;
+    const errorText = this.extractUnusableWorktreeGraphFailure(result);
+    if (!errorText) return false;
+    const stalePath = extractMissingWorktreePathFromSessionStartFailure(errorText) ?? live.worktree ?? "";
+    const audit = createRunAuditor(this.store, {
+      runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("graph-worktree-recovery", task.id),
+      agentId: this.getRunContextFor(task.id)?.agentId ?? (task.assignedAgentId ?? "executor"),
+      taskId: task.id,
+      phase: "execute",
+    });
+    const outcome = await this.recoverMissingWorktreeSessionStartFailure(live, stalePath, new Error(errorText), audit);
+    // escalate-exhausted intentionally returns false: the failure falls through to the
+    // visible terminal park so a human inspects the task instead of it looping silently.
+    return outcome === "requeue-todo";
   }
 
   private isMergeGraphFailure(failedNode: string | undefined): boolean {
@@ -8970,6 +9084,17 @@ export class TaskExecutor {
         return;
       }
       const live = loadedLive;
+      /*
+      FNXC:MissingWorktreeRecovery 2026-07-16-18:25:
+      An unusable-worktree session-start refusal inside a graph node must route to the bounded
+      worktree-session recovery BEFORE any other classifier: FN-7977's provider-failure hold
+      would otherwise retry the same stale worktree in place, and the terminal sink would park
+      the task failed with the signature erased (FN-7996 looped dispatch→park all day).
+      */
+      if (await this.routeUnusableWorktreeGraphFailureToRecovery(task, live, result)) {
+        await this.persistTokenUsage(task.id);
+        return;
+      }
       if (this.graphFailureValue(result) === PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE) {
         /*
          * FNXC:PlanReviewReplan 2026-07-15-16:35:
@@ -16966,12 +17091,19 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
   }
 
+  /*
+  FNXC:MissingWorktreeRecovery 2026-07-16-18:35:
+  Returns the recovery outcome (not a bare boolean) so the FN-7996 graph-failure router can
+  distinguish "requeued for clean retry" (handled — stop failure processing) from
+  "escalate-exhausted" (fall through to the visible terminal park for human inspection).
+  Existing session-start callers treat any truthy outcome as handled, unchanged.
+  */
   private async recoverMissingWorktreeSessionStartFailure(
     task: Task,
     worktreePath: string,
     error: unknown,
     audit: RunAuditor,
-  ): Promise<boolean> {
+  ): Promise<false | "requeue-todo" | "escalate-exhausted"> {
     const errorText = error instanceof Error ? error.message : String(error);
     const missingWorktreeFailure = isMissingWorktreeSessionStartFailure(errorText);
     const missingTaskJsonFailure = isTransientMissingTaskJsonError(error, task);
@@ -17047,7 +17179,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         this.getRunContextFor(task.id),
       );
     }
-    return true;
+    return recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo";
   }
 
   private async emitWorktreeReanchoredAudit(
