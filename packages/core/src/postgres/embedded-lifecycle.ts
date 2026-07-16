@@ -779,6 +779,24 @@ export function readPortFromPostmasterPid(dataDir: string): number | null {
  * Uses both the in-process registry AND a probe of the postmaster.pid file
  * (handles the case where another process started it).
  */
+/**
+ * True when a failed `CREATE DATABASE` means someone else already created it.
+ *
+ * FNXC:PostgresStartupRace 2026-07-15-20:45:
+ * `42P04` duplicate_database is the documented code, raised when the winner committed before we
+ * probed the catalog. A tighter collision — both statements inside the `pg_database` insert —
+ * instead surfaces `23505` unique_violation on `pg_database_datname_index`. Scope the 23505 arm
+ * to that constraint so an unrelated unique violation still throws.
+ */
+function isDuplicateDatabaseError(error: unknown): boolean {
+  const { code, constraint_name: constraint } = (error ?? {}) as {
+    code?: string;
+    constraint_name?: string;
+  };
+  if (code === "42P04") return true;
+  return code === "23505" && constraint === "pg_database_datname_index";
+}
+
 function isAlreadyRunning(dataDir: string): { port: number; database: string } | null {
   // Check in-process registry first
   const cached = runningInstances.get(dataDir);
@@ -984,12 +1002,11 @@ export class EmbeddedPostgresLifecycle {
       this.running = false; // We didn't start it, so we won't stop it
       this.ownsProcess = false;
 
-      /*
-      FNXC:PostgresCutover 2026-07-15-20:14:
-      This path deliberately does NOT create the database, despite what this comment claimed for the preceding months — there has never been an `ensureDatabase()` call here. The process that owns the postmaster creates it after its own start(); a joiner has no cluster of its own to ensure. `ensureDatabase()` would throw here regardless: it requires `this.running`, which the join path leaves false by design so `stop()` never reaps an instance we did not start.
-
-      Assumption worth knowing: the owner publishes `runningInstances` / writes `postmaster.pid` BEFORE its `ensureDatabase()` resolves, so a joiner that wins that narrow window connects to a not-yet-created database and fails at the connection layer rather than here. Callers see a connect error, not a silent empty DB.
-      */
+      // FNXC:PostgresStartupRace 2026-07-15-20:45: the owner may not have created the
+      // database yet — it does so only after its own start() resolves, while the signals
+      // that brought us here appear earlier. Verify against the joined instance's port
+      // (never getPort(), which prefers our own requested port). See ensureJoinedDatabase.
+      await this.ensureJoinedDatabase(existing.port);
       const url = this.buildUrl(existing.port, this.options.database);
       return {
         mode: "embedded",
@@ -1142,6 +1159,10 @@ export class EmbeddedPostgresLifecycle {
       this.options.onLog(
         `embedded postgres: startup raced with an existing instance on port ${existing.port} (data dir ${this.options.dataDir}), connecting without starting a new instance`,
       );
+      // FNXC:PostgresStartupRace 2026-07-15-20:45: this is the tightest window of all — we
+      // lost the race by milliseconds, so the winner's ensureDatabase() is very likely still
+      // in flight. Same best-effort verify as the preflight join.
+      await this.ensureJoinedDatabase(existing.port);
       const runtimeUrl = this.buildUrl(existing.port, this.options.database);
       return {
         mode: "embedded",
@@ -1239,26 +1260,78 @@ export class EmbeddedPostgresLifecycle {
    * SQL connection with a bounded connect timeout instead.
    */
   async ensureDatabase(): Promise<void> {
-    if (!this.running || this.getPort() === undefined) {
+    const port = this.getPort();
+    if (!this.running || port === undefined) {
       throw new Error(
         "Cannot ensure database: the embedded cluster is not running. Call start() first.",
       );
     }
-    const exists = await this.databaseExists(this.options.database);
-    if (exists) return;
-    const sql = this.openMaintenanceSql();
+    await this.createDatabaseIfMissing(port);
+  }
+
+  /**
+   * Join path: make sure the database exists on an instance THIS process does not own.
+   *
+   * FNXC:PostgresStartupRace 2026-07-15-20:45:
+   * The owner creates the database only after its own start() resolves, but the signals a
+   * joiner detects it by — the `runningInstances` entry and, decisively, `postmaster.pid`
+   * (written by postgres itself) — both appear BEFORE that. A joiner winning the window
+   * therefore handed back a URL to a database that did not exist yet and failed at the
+   * caller's first connect. Reordering the owner's publish cannot fix it: `isAlreadyRunning`
+   * falls back to the pid file, whose timing postgres owns, so the joiner must verify.
+   *
+   * Creating it here is safe rather than a second writer: `CREATE DATABASE` is atomic, and
+   * both this path and the owner's `ensureDatabase` tolerate `42P04`, so whoever loses the
+   * race treats the winner's database as its own success.
+   *
+   * Best-effort by contract. `isAlreadyRunning` joins optimistically without probing (a stale
+   * pid file from a crash still resolves to a port), so a probe failure must leave that
+   * behavior exactly as it was — report it and return the URL, letting the connection layer
+   * surface an unreachable cluster as it always has. Never convert an optimistic join into a
+   * hard startup failure.
+   */
+  private async ensureJoinedDatabase(port: number): Promise<void> {
+    try {
+      await this.createDatabaseIfMissing(port);
+    } catch (error) {
+      this.options.onLog(
+        `embedded postgres: could not verify database "${this.options.database}" on joined instance at port ${port} (${error instanceof Error ? error.message : String(error)}); continuing — the connection layer will report an unreachable cluster`,
+      );
+    }
+  }
+
+  /**
+   * Create `options.database` on the cluster at `port` unless it already exists.
+   *
+   * Takes an explicit port because {@link getPort} resolves to `options.port ?? resolvedPort`
+   * — on a join with an explicitly configured port that is THIS instance's requested port,
+   * not the port of the instance actually being joined.
+   */
+  private async createDatabaseIfMissing(port: number): Promise<void> {
+    if (await this.databaseExistsOn(port, this.options.database)) return;
+    const sql = this.openMaintenanceSqlOn(port);
     try {
       const safeName = this.options.database.replace(/"/g, '""');
       await sql.unsafe(`CREATE DATABASE "${safeName}"`);
+    } catch (error) {
+      // FNXC:PostgresStartupRace 2026-07-15-20:45: a concurrent starter or joiner created the
+      // database between our existence check and this statement. The post-condition we promise
+      // (the database exists) holds, so that is success, not an error.
+      //
+      // Two distinct codes, both observed against a real cluster: 42P04 duplicate_database when
+      // the winner committed before we checked the catalog, and 23505 unique_violation on
+      // pg_database_datname_index when the two CREATEs collide inside the catalog insert itself.
+      // Tolerating only 42P04 leaves the tighter half of the race throwing — which is exactly
+      // what the concurrent-ensureDatabase test caught.
+      if (!isDuplicateDatabaseError(error)) throw error;
     } finally {
       await sql.end({ timeout: 5 }).catch(() => {});
     }
   }
 
-  /** Check whether a database with the given name exists on the cluster. */
-  private async databaseExists(name: string): Promise<boolean> {
-    if (!this.running || this.getPort() === undefined) return false;
-    const sql = this.openMaintenanceSql();
+  /** Check whether a database with the given name exists on the cluster at `port`. */
+  private async databaseExistsOn(port: number, name: string): Promise<boolean> {
+    const sql = this.openMaintenanceSqlOn(port);
     try {
       const rows = await sql`SELECT 1 AS one FROM pg_database WHERE datname = ${name}`;
       return rows.length > 0;
@@ -1279,11 +1352,7 @@ export class EmbeddedPostgresLifecycle {
    * library start() — unavailable on the elevated Windows non-admin path.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private openMaintenanceSql(): any {
-    const port = this.getPort();
-    if (port === undefined) {
-      throw new Error("openMaintenanceSql: no port assigned");
-    }
+  private openMaintenanceSqlOn(port: number): any {
     const host = process.platform === "win32" ? "127.0.0.1" : "localhost";
     return postgres({
       host,

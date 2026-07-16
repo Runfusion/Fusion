@@ -628,6 +628,96 @@ embeddedDescribe("embedded-lifecycle: real process (VAL-CONN-001, VAL-CONN-006, 
     REAL_PROCESS_TEST_TIMEOUT_MS,
   );
 
+  /*
+  FNXC:PostgresStartupRace 2026-07-15-20:45:
+  The owner creates the database only after its own start() resolves, but a joiner detects the
+  instance earlier (registry entry, then postmaster.pid — written by postgres itself). A joiner
+  landing in that window used to hand back a URL to a database that did not exist yet. Dropping
+  the database from a started cluster reproduces exactly that state: postmaster up and
+  published, database absent.
+  */
+  it(
+    "a joining lifecycle creates the database when the owner has not yet",
+    async () => {
+      const dataDir = makeDataDir();
+      const owner = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
+      tracked.push({ lifecycle: owner, dataDir });
+      await owner.start();
+      const port = owner.getPort()!;
+
+      const openAdmin = () =>
+        postgres({
+          host: "localhost",
+          port,
+          user: "postgres",
+          password: "password",
+          database: "postgres",
+          max: 1,
+          connect_timeout: 10,
+        });
+
+      // Rewind to the race window: cluster running, database not yet created.
+      const admin = openAdmin();
+      try {
+        await admin.unsafe(`DROP DATABASE IF EXISTS "fusion"`);
+      } finally {
+        await admin.end({ timeout: 5 });
+      }
+
+      const joiner = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
+      const resolved = await joiner.start();
+
+      // It joined rather than starting its own postmaster...
+      expect(joiner.isRunning()).toBe(false);
+      expect(resolved.runtimeUrl).toContain(`:${port}/`);
+
+      // ...and did not hand back a URL to a database that does not exist.
+      const check = openAdmin();
+      try {
+        const rows = await check`SELECT 1 AS one FROM pg_database WHERE datname = 'fusion'`;
+        expect(rows.length).toBe(1);
+      } finally {
+        await check.end({ timeout: 5 });
+      }
+    },
+    REAL_PROCESS_TEST_TIMEOUT_MS,
+  );
+
+  /* FNXC:PostgresStartupRace 2026-07-15-20:45: both the owner's ensureDatabase and the join
+     path create the database, so a concurrent CREATE must resolve as success (42P04), not throw.
+     Racing them against one cluster is the only honest way to exercise that tolerance. */
+  it(
+    "concurrent ensureDatabase calls tolerate a duplicate-database race",
+    async () => {
+      const dataDir = makeDataDir();
+      const lifecycle = new EmbeddedPostgresLifecycle(baseOptions(dataDir));
+      tracked.push({ lifecycle, dataDir });
+      await lifecycle.start();
+      const port = lifecycle.getPort()!;
+
+      const admin = postgres({
+        host: "localhost",
+        port,
+        user: "postgres",
+        password: "password",
+        database: "postgres",
+        max: 1,
+        connect_timeout: 10,
+      });
+      try {
+        await admin.unsafe(`DROP DATABASE IF EXISTS "fusion"`);
+      } finally {
+        await admin.end({ timeout: 5 });
+      }
+
+      // Both see "missing" and both issue CREATE DATABASE; one must lose and survive it.
+      await expect(
+        Promise.all([lifecycle.ensureDatabase(), lifecycle.ensureDatabase()]),
+      ).resolves.toBeDefined();
+    },
+    REAL_PROCESS_TEST_TIMEOUT_MS,
+  );
+
   it(
     "graceful shutdown stops the Postgres process; no orphan remains (VAL-CONN-007)",
     async () => {
@@ -731,6 +821,46 @@ describe("embedded-lifecycle: startup race (cross-process)", () => {
       });
       expect(lifecycle.isRunning()).toBe(false);
       expect(logLines.some((line) => /startup raced with an existing instance/i.test(line))).toBe(true);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
+FNXC:PostgresStartupRace 2026-07-15-20:45:
+Mocked ctor, no real Postgres — kept outside the real-process block so it runs under the
+gate/CI default (see the sibling startup-race block for why that placement matters).
+
+Pins the best-effort half of the join-path database verify: `isAlreadyRunning` joins
+optimistically without probing (a stale pid file from a crash still resolves to a port), so an
+unreachable joined instance must return the URL exactly as it did before the verify existed and
+let the connection layer report it. A hard throw here would turn every stale-pid start into a
+startup failure.
+*/
+describe("embedded-lifecycle: join-path database verify is best-effort", () => {
+  it("still resolves optimistically when the joined instance is unreachable", async () => {
+    const dataDir = makeDataDir();
+    writeFileSync(join(dataDir, "PG_VERSION"), "15\n");
+    // A port nothing is listening on: the verify's probe cannot succeed.
+    writeFileSync(
+      join(dataDir, "postmaster.pid"),
+      ["12345", dataDir, "/tmp", "localhost", "55441", "5432101", String(Date.now())].join("\n") + "\n",
+    );
+    const logLines: string[] = [];
+
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        onLog: (message) => logLines.push(message),
+      });
+
+      await expect(lifecycle.start()).resolves.toMatchObject({
+        mode: "embedded",
+        runtimeUrl: expect.stringContaining(":55441/"),
+      });
+      expect(lifecycle.isRunning()).toBe(false);
+      expect(logLines.some((line) => /could not verify database/i.test(line))).toBe(true);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
