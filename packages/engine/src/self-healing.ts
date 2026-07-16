@@ -458,7 +458,15 @@ AI merge sets status="reviewing" during the clean-room review pass (merger-ai me
 FNXC:MergeQueue 2026-07-15-10:40:
 Include landing (post-approve advance/cleanup) with reviewing so a hung worktree remove cannot leave the single-flight pump un-reclaimable while the board shows no merging badge.
 */
-const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix", "reviewing", "landing"]);
+/*
+FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
+Moved to the leaf `merge-active-status.ts` and re-exported so the dashboard's manual Retry gate
+shares ONE definition with this sweep. Previously the manual gate hardcoded its own stricter view
+and refused to retry ANY merge-active status, so an orphaned `landing` stamp was un-retryable by
+hand while this sweep cleared it automatically minutes later.
+*/
+import { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isStaleMergeActiveStatus } from "./merge-active-status.js";
+export { ACTIVE_MERGE_STATUSES, DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS, isMergeActiveStatus, isStaleMergeActiveStatus } from "./merge-active-status.js";
 const NON_TERMINAL_STEP_STATUSES = new Set(["pending", "in-progress"]);
 const STRANDED_COMPLETED_TODO_ACTIVE_STATUSES = new Set([
   "in-progress",
@@ -537,7 +545,8 @@ import { classifyTransientMergeError } from "./transient-merge-error-classifier.
 export { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
 const MAX_STARVATION_DROPS = 3;
 const DEADLOCK_RECOVERY_COOLDOWN_MS = 15 * 60_000;
-const DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS = 5 * 60_000;
+// DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS now lives in ./merge-active-status.js (imported above)
+// so the manual Retry gate and this sweep cannot drift apart (FN-8004 follow-up).
 const DEFAULT_STALE_MERGING_FANOUT_MIN_AGE_MS = 15 * 60_000;
 const DEFAULT_UNBACKED_MERGING_FANOUT_GRACE_MS = 60_000;
 const DURABLE_ERROR_RECOVERY_BASE_COOLDOWN_MS = 30_000;
@@ -3003,15 +3012,15 @@ export class SelfHealingManager {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const stale = tasks.filter((task) => {
         if (task.column !== "in-review" || task.paused) return false;
-        // Include AI-merge "reviewing" (same ACTIVE_MERGE_STATUSES as interrupted recovery).
-        if (!task.status || !ACTIVE_MERGE_STATUSES.has(task.status)) return false;
-        // Live owner is reclaimed by recoverWedgedActiveMerge / recoverInterruptedMergingTasks
-        // using merger-silence clocks; this path only clears orphan status without a live owner.
-        if (activeMergeTaskId && activeMergeTaskId === task.id) return false;
-
-        const updatedAtMs = task.updatedAt ? Date.parse(task.updatedAt) : Number.NaN;
-        if (!Number.isFinite(updatedAtMs)) return false;
-        return now - updatedAtMs >= minAgeMs;
+        /*
+        FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
+        Staleness now comes from the shared `isStaleMergeActiveStatus` leaf, which the dashboard's
+        manual Retry gate also calls. Inlining the rule here is what let the manual path drift into
+        refusing every merge-active status. Covers: merge-active stamp, no live in-process owner
+        (reclaimed instead by recoverWedgedActiveMerge / recoverInterruptedMergingTasks via
+        merger-silence clocks), and `updatedAt` untouched for minAgeMs.
+        */
+        return isStaleMergeActiveStatus(task, { activeMergeTaskId, nowMs: now, minAgeMs });
       });
 
       if (stale.length === 0) return 0;

@@ -65,6 +65,9 @@ import {
   prepareRevertPrBranch,
   prepareWorkspaceRevertPrBranches,
   isInReviewMissingWorktreeSessionStartFailure,
+  // FN-8004 follow-up: shared with SelfHealingManager.recoverStaleMergingStatus so the manual
+  // Retry gate and the automatic sweep agree on when a merge-active stamp is orphaned.
+  isStaleMergeActiveStatus,
   type AiUndoTaskResult,
   type PrepareRevertPrBranchResult,
   type PrepareWorkspaceRevertPrBranchesResult,
@@ -2347,12 +2350,39 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         hasIncompleteSteps || (task.steps.length === 0 && (task.mergeRetries ?? 0) === 0);
       const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
       const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
+      /*
+      FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
+      An orphaned merge-active stamp used to be un-retryable BY HAND: this gate rejected every
+      merge-active status ("Task is not in a retryable state (current status: landing)"), so when a
+      merger died mid-flight — crash, engine restart, operator SIGTERM — the operator's escape hatch
+      was blocked exactly when it was needed, and the only recourse was waiting out self-healing's
+      recoverStaleMergingStatus sweep. Observed on FN-8004: a killed merge left `landing` stamped and
+      manual Retry 400'd for the full sweep delay.
+
+      `isStaleMergeActiveStatus` is the SAME predicate that sweep uses, so the manual path can never
+      be looser than the automatic one. A genuinely RUNNING merge stays protected: it holds the
+      in-process merge lease (activeMergeTaskId) and refreshes `updatedAt` each phase, so it fails
+      both staleness checks and Retry still refuses it.
+
+      This feeds `isInReviewRetry` rather than only the gate: a bare gate bypass would fall through
+      to the generic retry branch below and move a fully-executed task to `todo`, re-running finished
+      work. Routing it through isInReviewRetry lands it on the merge-retry branch (clear status/error,
+      reset mergeRetries, STAY in in-review) — identical to what the operator's Retry button does for
+      a failed merge. A stale-stamped task that also has incomplete steps still routes to the
+      execution branch via isExecutionFailureInReview, which is the correct handling for that case.
+      */
+      const isStaleMergeActiveRetry =
+        task.column === "in-review" &&
+        isStaleMergeActiveStatus(task, {
+          activeMergeTaskId: _resolveSelfHealingManager(scopedStore)?.getActiveMergeTaskId?.() ?? null,
+        });
       const isInReviewRetry =
         task.column === "in-review" &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
-          isInReviewMergeRetryStall);
+          isInReviewMergeRetryStall ||
+          isStaleMergeActiveRetry);
       /*
       FNXC:MissingWorktreeRetry 2026-07-10-18:32:
       Dashboard retry must support the upstream #1992 signature where the task is stranded in a merge-active status but the durable failure is an unusable worktree session-start assertion. Only that classifier bypasses the merge-active status gate.
