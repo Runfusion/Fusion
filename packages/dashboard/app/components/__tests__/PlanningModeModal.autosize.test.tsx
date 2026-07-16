@@ -200,12 +200,18 @@ describe("PlanningModeModal autosize", () => {
       />
     );
 
+    /*
+    FNXC:PlanningSummaryDescription 2026-07-15-23:15:
+    FN-8031 shows Markdown preview first, so autosize only applies after the Plain toggle reveals the textarea. Measure caps there rather than against a hidden textarea.
+    */
+    await screen.findByText("Recovered summary description from persisted session");
+    fireEvent.click(screen.getByTestId("planning-description-markdown-toggle"));
     const description = await screen.findByDisplayValue("Recovered summary description from persisted session") as HTMLTextAreaElement;
     await waitFor(() => {
       expect(description.style.height).toBe("640px");
     });
 
-    fireEvent.click(screen.getByText("Expand"));
+    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
     await waitFor(() => {
       expect(description.style.height).toBe("800px");
     });
