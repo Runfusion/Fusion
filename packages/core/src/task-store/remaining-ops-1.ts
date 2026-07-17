@@ -778,22 +778,14 @@ export async function updateIssueInfoImpl(store: TaskStore, id: string, issueInf
 
 export async function listWorkflowStepsImpl(store: TaskStore): Promise<import("../types.js").WorkflowStep[]> {
     if (store.workflowStepsCache) return store.workflowStepsCache;
-    /*
-     * FNXC:SqliteFinalRemoval 2026-06-24-15:40:
-     * In backend mode (PostgreSQL), the workflow_steps table read path has not
-     * been converted to the async Drizzle helper yet. Return only the plugin-
-     * contributed steps (which are in-memory, not DB-backed) so task creation
-     * does not throw when auto-defaulting workflow steps. The stored steps are
-     * empty until the async workflow-step helper is implemented. This matches
-     * the existing fail-soft behavior (the catch block logged a warning and
-     * continued with no default steps).
-     */
     if (store.backendMode) {
       /*
       FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
-      The interim fail-soft (plugin steps only, stored steps dropped) is
-      replaced with a real async read of project.workflow_steps, restoring
-      stored-step listing parity with the sync branch below.
+      Backend mode reads stored steps from project.workflow_steps via the async
+      layer, replacing the SqliteFinalRemoval-era interim fail-soft that
+      returned plugin-contributed steps only (stored steps were dropped until
+      the async helper existed). Listing parity with the sync branch below:
+      compiled-step rows stay filtered out, plugin steps are appended.
       */
       const table = schema.project.workflowSteps;
       const pgRows = await store.asyncLayer!.db
