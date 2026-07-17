@@ -2233,6 +2233,8 @@ describe("TaskExecutor global pause behavior", () => {
       paused: false,
       pausedByAgentId: null,
       status: null,
+      // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+      bulkCompletionRefusalAt: null,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
@@ -2311,6 +2313,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2381,6 +2385,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2455,6 +2461,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2521,6 +2529,8 @@ describe("TaskExecutor global pause behavior", () => {
         paused: false,
         pausedByAgentId: null,
         status: null,
+        // FNXC:Lifecycle 2026-07-17-06:15: FN-8141 clears skip-bypass taint on accepted completion.
+        bulkCompletionRefusalAt: null,
       });
       expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");

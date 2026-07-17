@@ -467,6 +467,15 @@ export function createMockStore() {
     // test tasks carrying a branchContext group are live by construction; group
     // staleness is unit-tested against the real store, not here.
     getBranchGroup: vi.fn().mockReturnValue({ id: "BG-test", status: "open", branchName: "fusion/bg-test" }),
+    /*
+    FNXC:EngineTests 2026-07-17-06:00:
+    Executor graph path and backup dispatch now call getAgentLogCount / getGlobalSettingsDir
+    on TaskStore. Without these stubs, nearly every execute()-path test rejects with
+    "is not a function" and the full-suite engine shards go red.
+    */
+    getAgentLogCount: vi.fn().mockResolvedValue(0),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getGlobalSettingsDir: vi.fn().mockReturnValue(undefined),
   };
   return store as any;
 }
