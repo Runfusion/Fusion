@@ -1050,7 +1050,19 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated"));
       });
 
-      it("escalates repeated zombie re-arms when skipHeartbeatWhenIdle prevents lastHeartbeatAt from advancing", async () => {
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-15:40:
+       * Corrected invariant (supersedes the prior FN-7939 behavior that escalated
+       * here): a LIVE timer whose delivery is intentionally skipped
+       * (`skipHeartbeatWhenIdle` on an idle agent) freezes `lastHeartbeatAt`
+       * without being a dead "zombie". Because the interval keeps physically
+       * firing, the audit must recognize it via `lastTimerFireAtMs` and leave it
+       * alone — no zombie re-arm churn and no `heartbeat-rearm-nonadvancing-escalated`
+       * warning. The prior test killed the interval (mis-modeling a dead timer)
+       * and asserted escalation; that escalation was the bug — an idle skip-agent
+       * with a healthy timer was being flagged for hours.
+       */
+      it("does NOT escalate or churn zombie re-arms for a live-but-idle-skipping timer (frozen lastHeartbeatAt is intentional, not a dead timer)", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
@@ -1058,6 +1070,7 @@ describe("HeartbeatTriggerScheduler", () => {
           "agent-churn": buildAgent({
             id: "agent-churn",
             heartbeatIntervalMs: 120_000,
+            taskId: undefined,
             runtimeConfig: { enabled: true, heartbeatIntervalMs: 120_000, skipHeartbeatWhenIdle: true },
           }),
         };
@@ -1073,21 +1086,71 @@ describe("HeartbeatTriggerScheduler", () => {
         scheduler.start();
         await vi.advanceTimersByTimeAsync(0);
 
-        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
-        clearInterval(timers.get("agent-churn")!.handle as ReturnType<typeof setInterval>);
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Leave the interval ALIVE. It fires every 2min and returns early at the
+        // skipHeartbeatWhenIdle gate (no task) — delivery never advances
+        // lastHeartbeatAt, but the timer is provably firing. Span well past the
+        // 2x-interval (4min) stale threshold.
+        await vi.advanceTimersByTimeAsync(12 * 60_000);
+
+        // Idle-skip: onTimerTick returns before the callback, so no dispatch.
+        expect(callback).not.toHaveBeenCalled();
+        // The fix: a live timer is never treated as a zombie, so neither the
+        // re-arm nor the escalation warning is ever emitted.
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated"));
+        // And the audit takes the explicit "leave live-but-skipping timer alone" path.
+        expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("left live-but-skipping timer for agent-churn untouched"));
+        expect((scheduler as any).nonAdvancingRearmState.has("agent-churn")).toBe(false);
+      });
+
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-15:40:
+       * Production repro (idle "org" agents completing as `no_assignment_identity_run`,
+       * plus over-budget / engine-paused skips): the timer fires and the run
+       * completes, but the completion path does not record an "ok" heartbeat, so
+       * `lastHeartbeatAt` stays frozen. Before the fix this drove the 60s audit to
+       * re-arm every cycle and escalate for hours (observed: 3–63 consecutive
+       * non-advancing re-arms across every permanent agent). The live-timer guard
+       * must suppress that churn regardless of WHY delivery did not advance.
+       */
+      it("does NOT escalate or churn when a live timer dispatches but delivery leaves lastHeartbeatAt frozen (budget/no-assignment skip)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agents: Record<string, Agent> = {
+          "agent-noadvance": buildAgent({ id: "agent-noadvance", heartbeatIntervalMs: 120_000 }),
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => Object.values(agents));
+        vi.mocked(store.getAgent).mockImplementation(async (agentId: string) => agents[agentId] ?? null);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+        vi.mocked(store.updateAgent).mockImplementation(async (agentId: string, updates: Partial<Agent>) => {
+          agents[agentId] = { ...agents[agentId], ...updates } as Agent;
+          return agents[agentId];
+        });
+        // Callback runs (the run executes) but does NOT advance lastHeartbeatAt —
+        // exactly the skipped/no-op-delivery completion shape.
+        callback.mockResolvedValue(undefined);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
         callback.mockClear();
         vi.mocked(heartbeatLog.warn).mockClear();
 
         await vi.advanceTimersByTimeAsync(12 * 60_000);
 
-        expect(callback).not.toHaveBeenCalled();
-        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated agentId=agent-churn"));
-        expect((agents["agent-churn"].metadata as Record<string, any>).heartbeatTimerRepair).toEqual(
-          expect.objectContaining({
-            staleAtRepair: true,
-            staleRepairReason: expect.stringContaining("heartbeat-rearm-nonadvancing-escalated"),
-          }),
-        );
+        // The timer is alive: it dispatched on its own cadence (6 fires / 12min).
+        expect(callback.mock.calls.filter((c) => c[0] === "agent-noadvance").length).toBeGreaterThanOrEqual(5);
+        // Delivery never advanced lastHeartbeatAt...
+        expect(agents["agent-noadvance"].lastHeartbeatAt).toBe("2026-01-01T00:00:00.000Z");
+        // ...yet the audit must not misclassify the healthy timer as a zombie.
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated"));
+        expect((scheduler as any).nonAdvancingRearmState.has("agent-noadvance")).toBe(false);
       });
     });
 
