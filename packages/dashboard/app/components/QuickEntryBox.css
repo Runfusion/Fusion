@@ -829,12 +829,23 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
   full row (`width: 100%`, `margin-left: 0`) so all three rows land on identical edges. The
   group `gap`s remain as minimum spacing between controls.
   */
+  /*
+  FNXC:QuickAddActionRow 2026-07-16-15:00:
+  FN-8164 makes the icon-forward mobile controls read proportionately inside the
+  FN-7683 36px touch-target box. Scope the --space-lg glyph override to the
+  primary icon controls so Save, Deps, Models, Node, and Agent retain their
+  label-friendly inline glyph proportions; their desktop rendering and the
+  mobile touch-target floor remain intentionally unchanged. Tighten only
+  horizontal gaps with existing spacing tokens so wrapped rows stay compact.
+  */
   .quick-entry-actions {
     justify-content: space-between;
+    column-gap: var(--space-xs);
   }
 
   .quick-entry-options-group {
     justify-content: space-between;
+    column-gap: var(--space-xs);
   }
 
   .quick-entry-primary-group {
@@ -846,6 +857,13 @@ FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules
 
   .quick-entry-primary-group .btn-icon {
     min-width: var(--space-2xl);
+  }
+
+  .quick-entry-primary-group .btn-icon svg,
+  .quick-entry-primary-group [data-testid="quick-entry-priority-button"] svg,
+  .quick-entry-primary-group [data-testid="quick-entry-fast-toggle"] svg {
+    width: var(--space-lg);
+    height: var(--space-lg);
   }
 
   .quick-entry-box .dep-dropdown {

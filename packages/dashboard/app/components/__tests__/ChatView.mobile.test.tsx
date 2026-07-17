@@ -503,12 +503,12 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
-  it("mobile mode: direct sidebar rows expose rename and delete buttons", async () => {
+  it("mobile mode: direct sidebar rows expose one action menu without title overlap shells", async () => {
     const restoreMatchMedia = mockMobileViewport();
     const selectSession = vi.fn();
     try {
       const sessions = [
-        { id: "session-001", agentId: "agent-001", status: "active" as const, title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+        { id: "session-001", agentId: "agent-001", status: "active" as const, title: "A long mobile conversation title that must clear the overflow menu", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       ];
       setupMockChat({
         sessions,
@@ -520,15 +520,17 @@ describe("ChatView mobile behavior", () => {
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const row = screen.getByTestId("chat-session-session-001");
-      const renameButton = within(row).getByTestId("chat-session-rename-btn");
-      const deleteButton = within(row).getByTestId("chat-session-delete-btn");
-      expect(renameButton).toHaveAccessibleName(/rename conversation mobile chat/i);
-      expect(deleteButton).toHaveAccessibleName(/delete conversation/i);
-      expect(renameButton.compareDocumentPosition(deleteButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(renameButton.closest(".chat-session-actions")).toBe(deleteButton.closest(".chat-session-actions"));
+      const menuButton = within(row).getByTestId("chat-session-menu-btn");
+      expect(menuButton).toHaveAccessibleName(/conversation actions for a long mobile conversation title/i);
+      expect(within(row).getAllByTestId("chat-session-menu-btn")).toHaveLength(1);
+      expect(row.querySelector(".chat-session-actions")).not.toBeInTheDocument();
 
-      await userEvent.click(renameButton);
+      await userEvent.click(menuButton);
       expect(selectSession).not.toHaveBeenCalled();
+      const menu = document.querySelector(".chat-session-context-menu");
+      expect(within(menu!).getByTestId("chat-context-rename")).toHaveTextContent("Rename");
+      expect(within(menu!).getByTestId("chat-context-delete")).toHaveTextContent("Delete");
+      await userEvent.click(within(menu!).getByTestId("chat-context-rename"));
       expect(screen.getByRole("dialog", { name: /rename conversation/i })).toBeInTheDocument();
     } finally {
       restoreMatchMedia.mockRestore();

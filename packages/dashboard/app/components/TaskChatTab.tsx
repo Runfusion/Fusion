@@ -543,13 +543,22 @@ function TaskChatToolGroup({ entries }: { entries: AgentLogEntry[] }) {
 /*
  FNXC:Chat-Thinking 2026-07-15-10:33:
  Chat thinking (reasoning) blocks render collapsed by default so the response is scannable without manually closing each block; the summary remains an expand-on-click affordance. (FN-7974)
+
+ FNXC:Chat-Thinking 2026-07-16-18:05:
+ FN-8171 keeps the scannable collapsed default for idle task columns, but opens Live Activity thinking for in-progress and in-review tasks so operators can follow active or awaiting-review reasoning at a glance. The expanded block remains user-collapsible.
 */
-function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
+function TaskChatThinking({ entries, defaultOpen = false }: { entries: AgentLogEntry[]; defaultOpen?: boolean }) {
   const { t } = useTranslation("app");
+  const [open, setOpen] = useState(defaultOpen);
   const combinedThinkingText = entries.map((entry) => entry.text).join("");
 
   return (
-    <details className="task-chat-thinking" data-testid="task-chat-thinking">
+    <details
+      className="task-chat-thinking"
+      data-testid="task-chat-thinking"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="task-chat-thinking-summary">
         <span>{t("taskChat.thinking", "Thinking")}</span>
         <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Thinking block timestamp" />
@@ -568,12 +577,12 @@ function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
   );
 }
 
-function TaskChatSegmentView({ segment }: { segment: TaskChatSegment }) {
+function TaskChatSegmentView({ segment, defaultOpen }: { segment: TaskChatSegment; defaultOpen?: boolean }) {
   if (segment.kind === "tool") {
     return <TaskChatToolGroup entries={segment.entries} />;
   }
   if (segment.kind === "thinking") {
-    return <TaskChatThinking entries={segment.entries} />;
+    return <TaskChatThinking entries={segment.entries} defaultOpen={defaultOpen} />;
   }
   return <TaskChatText entries={segment.entries} />;
 }
@@ -616,6 +625,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const sendingRef = useRef(false);
   const [optimisticMessages, setOptimisticMessages] = useState<UserChatMessage[]>([]);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
+  const thinkingDefaultOpen = task.column === "in-progress" || task.column === "in-review";
   const transcriptRef = useRef<HTMLDivElement>(null);
   const previousEntryCountRef = useRef(0);
   const previousScrollHeightRef = useRef(0);
@@ -979,7 +989,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
                 <div className="task-chat-group-bubbles">
                   {segments.map((segment) => {
                     const segmentKey = `${segment.kind}-${segment.startIndex}-${segment.entries.length}`;
-                    return <TaskChatSegmentView key={segmentKey} segment={segment} />;
+                    return <TaskChatSegmentView key={segmentKey} segment={segment} defaultOpen={thinkingDefaultOpen} />;
                   })}
                 </div>
               </section>

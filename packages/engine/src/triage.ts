@@ -537,21 +537,18 @@ export class TriageProcessor {
   }
 
   /**
-   * Maximum time a task can remain in the `processing` set before it's
-   * considered stale (30 minutes). By this point the stuck detector
-   * (default 20-min timeout) should have already killed the session
-   * and the `finally` block should have cleaned up. If it hasn't,
-   * the promise is hung (e.g., `promptWithFallback` never settled
-   * after dispose) and self-healing recovery needs to force-evict it.
+   * Maximum time a task can remain in the `processing` set before a hung,
+   * non-live session is considered stale (30 minutes). A live session remains
+   * protected regardless of elapsed time; a stuck-aborted session is still
+   * reclaimable because its promise may never reach the cleanup `finally`.
    */
   private static readonly STALE_PROCESSING_THRESHOLD_MS = 30 * 60 * 1000;
 
   /**
-   * Evict tasks from the `processing` set that have been there longer than
-   * the staleness threshold. This handles the case where a stuck-kill
-   * disposes the session but the `specifyTask` promise never settles
-   * (hung `promptWithFallback`), leaving the task in `processing` forever
-   * and blocking self-healing recovery.
+   * Evict stale tasks from `processing` only when their triage promise is no
+   * longer live. This reclaims a stuck-killed/disposed session whose
+   * `specifyTask` promise never settles, while preserving a session still
+   * streaming past the normal wall-clock threshold.
    *
    * @returns the set of evicted task IDs
    */
@@ -561,17 +558,24 @@ export class TriageProcessor {
     const evicted = new Set<string>();
 
     for (const [taskId, since] of this.processingSince) {
-      if (now - since >= threshold) {
-        planLog.warn(
-          `${taskId} has been in processing for ${Math.round((now - since) / 60_000)}min ` +
-          `(threshold: ${Math.round(threshold / 60_000)}min) — evicting (likely hung promise)`,
-        );
-        this.processing.delete(taskId);
-        this.processingSince.delete(taskId);
-        this.activeSessions.delete(taskId);
-        this.stuckAborted.delete(taskId);
-        evicted.add(taskId);
-      }
+      if (now - since < threshold) continue;
+
+      /*
+      FNXC:Triage 2026-07-16-18:29:
+      Stale-processing eviction must retain a task with a live, non-aborted triage session (`activeSessions.has(id) && !stuckAborted.has(id)`). Removing it would drop genuinely active planning from `getProcessingTaskIds()` and let self-healing prematurely finalize it to todo/awaiting-approval, clear planning status, or nudge priority. Hung promises without a session and stuck-aborted/disposed sessions remain evictable.
+      */
+      const hasLiveSession = this.activeSessions.has(taskId) && !this.stuckAborted.has(taskId);
+      if (hasLiveSession) continue;
+
+      planLog.warn(
+        `${taskId} has been in processing for ${Math.round((now - since) / 60_000)}min ` +
+        `(threshold: ${Math.round(threshold / 60_000)}min) — evicting (likely hung promise)`,
+      );
+      this.processing.delete(taskId);
+      this.processingSince.delete(taskId);
+      this.activeSessions.delete(taskId);
+      this.stuckAborted.delete(taskId);
+      evicted.add(taskId);
     }
 
     return evicted;
