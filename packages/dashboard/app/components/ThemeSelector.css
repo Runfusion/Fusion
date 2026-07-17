@@ -291,6 +291,27 @@
   --swatch-sample-4: #e8c888;
 }
 
+.theme-swatch-aurora {
+  --swatch-sample-1: #08131d;
+  --swatch-sample-2: #0d1d2c;
+  --swatch-sample-3: #4dd0e1;
+  --swatch-sample-4: #9c6bff;
+}
+
+.theme-swatch-volcanic {
+  --swatch-sample-1: #1a0f0a;
+  --swatch-sample-2: #24150d;
+  --swatch-sample-3: #ff7043;
+  --swatch-sample-4: #ffca28;
+}
+
+.theme-swatch-glacier {
+  --swatch-sample-1: #0b141b;
+  --swatch-sample-2: #12202b;
+  --swatch-sample-3: #7dd3fc;
+  --swatch-sample-4: #34d399;
+}
+
 .theme-swatch-cobalt {
   --swatch-sample-1: #071426;
   --swatch-sample-2: #102848;
@@ -1116,6 +1137,27 @@
   --swatch-sample-2: #ece4d4;
   --swatch-sample-3: #907040;
   --swatch-sample-4: #a08050;
+}
+
+[data-theme="light"] .theme-swatch-aurora {
+  --swatch-sample-1: #eef7ff;
+  --swatch-sample-2: #e1effc;
+  --swatch-sample-3: #0f8fa5;
+  --swatch-sample-4: #6d47d9;
+}
+
+[data-theme="light"] .theme-swatch-volcanic {
+  --swatch-sample-1: #fff3eb;
+  --swatch-sample-2: #ffe8da;
+  --swatch-sample-3: #d94f26;
+  --swatch-sample-4: #b8860b;
+}
+
+[data-theme="light"] .theme-swatch-glacier {
+  --swatch-sample-1: #edf7fc;
+  --swatch-sample-2: #deedf5;
+  --swatch-sample-3: #2c7fa0;
+  --swatch-sample-4: #1f8a72;
 }
 
 [data-theme="light"] .theme-swatch-cobalt {

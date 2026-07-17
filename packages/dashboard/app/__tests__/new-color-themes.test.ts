@@ -10,6 +10,9 @@ const dashboardIndexPath = path.resolve(__dirname, "../index.html");
 const desktopIndexPath = path.resolve(__dirname, "../../../desktop/src/renderer/index.html");
 
 const newThemes = [
+  { value: "aurora", label: "Aurora" },
+  { value: "volcanic", label: "Volcanic" },
+  { value: "glacier", label: "Glacier" },
   { value: "cobalt", label: "Cobalt" },
   { value: "clay", label: "Clay" },
   { value: "moss", label: "Moss" },

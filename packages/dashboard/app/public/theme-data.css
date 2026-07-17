@@ -7168,6 +7168,196 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 }
 
 /*
+FNXC:DashboardTheming 2026-07-17-08:15:
+Aurora, Volcanic, and Glacier are restored historical themes. Keep their token ramps synchronized with the core union, selector metadata, both bootstrap validators, and swatch classes.
+*/
+[data-color-theme="aurora"] {
+  --bg: #08131d;
+  --surface: #0d1d2c;
+  --card: #122537;
+  --card-hover: #173047;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #27445e;
+  --text: #d5e9ff;
+  --text-muted: #8eb2d4;
+  --text-dim: #6286a8;
+  --todo: #4dd0e1;
+  --in-progress: #9c6bff;
+  --in-progress-rgb: 156, 107, 255;
+  --in-review: #43d7a6;
+  --triage: #ffd166;
+  --done: #6888a8;
+  --color-success: #43d7a6;
+  --color-warning: #ffd166;
+  --color-error: #ff6b7f;
+  --color-info: #4dd0e1;
+  --cta-bg: #2cb389;
+  --cta-border: #43d7a6;
+  --cta-text: #08131d;
+  --cta-bg-hover: #43d7a6;
+  --cta-border-hover: #63e7b9;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #9c6bff;
+  --accent-text: #ffffff;
+  --logo-accent: var(--todo);
+}
+
+[data-color-theme="aurora"][data-theme="light"] {
+  --bg: #eef7ff;
+  --surface: #e1effc;
+  --card: #ffffff;
+  --card-hover: #edf3fb;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #bfd3e8;
+  --text: #1f3448;
+  --text-muted: #4f6d8a;
+  --text-dim: #7590ab;
+  --todo: #0f8fa5;
+  --in-progress: #6d47d9;
+  --in-progress-rgb: 109, 71, 217;
+  --in-review: #1f8a72;
+  --triage: #b68419;
+  --done: #6c87a2;
+  --color-success: #1f8a72;
+  --color-warning: #b68419;
+  --color-error: #c74257;
+  --color-info: #0f8fa5;
+  --cta-bg: #18755f;
+  --cta-border: #1f8a72;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #1f8a72;
+  --cta-border-hover: #2ea38a;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #6d47d9;
+  --accent-text: #ffffff;
+  --logo-accent: var(--todo);
+}
+
+[data-color-theme="volcanic"] {
+  --bg: #1a0f0a;
+  --surface: #24150d;
+  --card: #2f1b10;
+  --card-hover: #3a2214;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #5b3a2c;
+  --text: #ffe6d8;
+  --text-muted: #c59d8c;
+  --text-dim: #8f6c5f;
+  --todo: #ff7043;
+  --in-progress: #ffca28;
+  --in-progress-rgb: 255, 202, 40;
+  --in-review: #ff8f66;
+  --triage: #ff9e80;
+  --done: #9a6f5d;
+  --color-success: #ff8f66;
+  --color-warning: #ffca28;
+  --color-error: #ff5252;
+  --color-info: #ffca28;
+  --cta-bg: #d94f26;
+  --cta-border: #ff7043;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #ff7043;
+  --cta-border-hover: #ff8a65;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #ff7043;
+  --accent-text: #ffffff;
+  --logo-accent: var(--todo);
+}
+
+[data-color-theme="volcanic"][data-theme="light"] {
+  --bg: #fff3eb;
+  --surface: #ffe8da;
+  --card: #fffaf5;
+  --card-hover: #fff0e4;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #e1c1ad;
+  --text: #43281b;
+  --text-muted: #7a5647;
+  --text-dim: #9f7868;
+  --todo: #d94f26;
+  --in-progress: #b8860b;
+  --in-progress-rgb: 184, 134, 11;
+  --in-review: #c95836;
+  --triage: #a5533b;
+  --done: #8e6d62;
+  --color-success: #c95836;
+  --color-warning: #b8860b;
+  --color-error: #ba3b3b;
+  --color-info: #b8860b;
+  --cta-bg: #b84220;
+  --cta-border: #d94f26;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #d94f26;
+  --cta-border-hover: #e76943;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #d94f26;
+  --accent-text: #ffffff;
+  --logo-accent: var(--todo);
+}
+
+[data-color-theme="glacier"] {
+  --bg: #0b141b;
+  --surface: #12202b;
+  --card: #162935;
+  --card-hover: #1b3342;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #2a4558;
+  --text: #d9f1ff;
+  --text-muted: #93b6cc;
+  --text-dim: #6e91a8;
+  --todo: #7dd3fc;
+  --in-progress: #34d399;
+  --in-progress-rgb: 52, 211, 153;
+  --in-review: #6ee7ff;
+  --triage: #facc15;
+  --done: #7193aa;
+  --color-success: #34d399;
+  --color-warning: #facc15;
+  --color-error: #ff7a9a;
+  --color-info: #7dd3fc;
+  --cta-bg: #1fa884;
+  --cta-border: #34d399;
+  --cta-text: #08131d;
+  --cta-bg-hover: #34d399;
+  --cta-border-hover: #5be3b2;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #34d399;
+  --accent-text: #08131d;
+  --logo-accent: var(--todo);
+}
+
+[data-color-theme="glacier"][data-theme="light"] {
+  --bg: #edf7fc;
+  --surface: #deedf5;
+  --card: #ffffff;
+  --card-hover: #eef5fa;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #bdd3e1;
+  --text: #203845;
+  --text-muted: #4b6f82;
+  --text-dim: #7695a6;
+  --todo: #2c7fa0;
+  --in-progress: #1f8a72;
+  --in-progress-rgb: 31, 138, 114;
+  --in-review: #318db4;
+  --triage: #b88a0d;
+  --done: #728d9f;
+  --color-success: #1f8a72;
+  --color-warning: #b88a0d;
+  --color-error: #c24d64;
+  --color-info: #2c7fa0;
+  --cta-bg: #18705c;
+  --cta-border: #1f8a72;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #1f8a72;
+  --cta-border-hover: #2ca088;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #1f8a72;
+  --accent-text: #ffffff;
+  --logo-accent: var(--todo);
+}
+
+/*
 FNXC:DashboardTheming 2026-07-16-00:00:
 FN-8151 adds Cobalt, Clay, and Moss with complete dark and light token ramps. Keep these blocks synchronized with the core union, selector metadata, both bootstrap validators, and swatch classes.
 */

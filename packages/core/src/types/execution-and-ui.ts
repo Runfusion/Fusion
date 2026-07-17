@@ -109,6 +109,9 @@ export const COLOR_THEMES = [
   "lavender",
   "neon-bloom",
   "sepia",
+  "aurora",
+  "volcanic",
+  "glacier",
   // FNXC:DashboardTheming 2026-07-16-00:00: FN-8151 adds Cobalt, Clay, and Moss; keep the core union, selector metadata, both bootstrap validators, token blocks, and swatch classes in this exact order.
   "cobalt",
   "clay",
