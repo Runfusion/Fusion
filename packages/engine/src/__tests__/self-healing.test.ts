@@ -8920,6 +8920,108 @@ describe("stale triage processing eviction before recovery", () => {
 
     manager.stop();
   });
+
+  it("preserves live planning tasks across approved, orphaned, and starved recovery sweeps", async () => {
+    const store = createMockStore();
+    const liveIds = new Set(["FN-approved-live", "FN-orphan-live", "FN-refinement-live"]);
+    const evictFn = vi.fn().mockReturnValue(new Set<string>());
+    const recoverFn = vi.fn().mockResolvedValue(true);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      recoverApprovedTriageTask: recoverFn,
+      getPlanningTaskIds: () => liveIds,
+      evictStaleTriageProcessing: evictFn,
+    });
+
+    const old = "2026-01-01T00:00:00.000Z";
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "FN-approved-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-orphan-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-refinement-live", column: "triage", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
+      { id: "FN-peer-1", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:01:00.000Z" },
+      { id: "FN-peer-2", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:02:00.000Z" },
+      { id: "FN-peer-3", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:03:00.000Z" },
+    ]);
+    vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
+
+    expect(await manager.recoverApprovedTriageTasks()).toBe(0);
+    expect(await manager.recoverOrphanedPlanningTasks()).toBe(0);
+    expect(await manager.recoverStarvedRefinementTriageTasks()).toBe(0);
+    expect(evictFn).toHaveBeenCalledTimes(3);
+    expect(recoverFn).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+
+    manager.stop();
+  });
+
+  it("recovers no-session and stuck-aborted planning IDs after eviction removes both", async () => {
+    const store = createMockStore();
+    let planningIds = new Set(["FN-live", "FN-hung", "FN-stuck-aborted"]);
+    const evictFn = vi.fn().mockImplementation(() => {
+      planningIds = new Set(["FN-live"]);
+      return new Set(["FN-hung", "FN-stuck-aborted"]);
+    });
+    const recoverFn = vi.fn().mockResolvedValue(true);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      recoverApprovedTriageTask: recoverFn,
+      getPlanningTaskIds: () => planningIds,
+      evictStaleTriageProcessing: evictFn,
+    });
+    const old = "2026-01-01T00:00:00.000Z";
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+    ]);
+    vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
+
+    expect(await manager.recoverApprovedTriageTasks()).toBe(2);
+    expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-hung" }));
+    expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-stuck-aborted" }));
+    expect(recoverFn).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-live" }));
+
+    manager.stop();
+  });
+
+  it("clears and priority-nudges evicted hung and stuck-aborted tasks while preserving live planning", async () => {
+    const store = createMockStore();
+    const evictFn = vi.fn().mockReturnValue(new Set(["FN-hung", "FN-stuck-aborted"]));
+    const getPlanning = vi.fn().mockReturnValue(new Set(["FN-live"]));
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getPlanningTaskIds: getPlanning,
+      evictStaleTriageProcessing: evictFn,
+    });
+    const old = "2026-01-01T00:00:00.000Z";
+    const planningTasks = [
+      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+    ];
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue(planningTasks);
+    vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
+
+    expect(await manager.recoverOrphanedPlanningTasks()).toBe(2);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-hung", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-stuck-aborted", { status: null });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-live", { status: null });
+
+    vi.clearAllMocks();
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      ...planningTasks.map((task) => ({ ...task, sourceType: "task_refine" })),
+      { id: "FN-peer-1", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:01:00.000Z" },
+      { id: "FN-peer-2", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:02:00.000Z" },
+      { id: "FN-peer-3", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:03:00.000Z" },
+    ]);
+
+    expect(await manager.recoverStarvedRefinementTriageTasks()).toBe(2);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-hung", { priority: "high" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-stuck-aborted", { priority: "high" });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-live", { priority: "high" });
+
+    manager.stop();
+  });
 });
 
 // ── Maintenance cycle concurrency ──────────────────────────────────

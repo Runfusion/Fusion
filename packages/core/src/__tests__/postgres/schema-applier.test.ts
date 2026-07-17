@@ -41,6 +41,7 @@ import {
   MULTI_PROJECT_CUTOVER_SCHEMA_VERSION,
   MISSION_FIX_IDEMPOTENCY_VERSION,
   IMPORT_TRANSLATION_CACHE_VERSION,
+  IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -49,6 +50,9 @@ import {
   skip the domain/partition split when the baseline marker advances.
   */
   CHAT_SESSION_PINS_VERSION,
+  EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
+  EXECUTOR_ESCALATION_ATTEMPT_VERSION,
+  GLOBAL_ROUTINES_SCHEMA_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
   SQLITE_SCHEMA_PARITY_VERSION,
@@ -124,9 +128,14 @@ describe("schema-applier: immutable migration identities", () => {
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(OWNER_PROJECT_ID_SPLIT_VERSION));
   });
 
-  it("keeps chat session pins assigned to version 0012 (current baseline)", () => {
+  it("keeps chat session pins assigned to version 0012", () => {
     expect(CHAT_SESSION_PINS_VERSION).toBe("0012");
-    expect(SCHEMA_BASELINE_VERSION).toBe(CHAT_SESSION_PINS_VERSION);
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_SESSION_PINS_VERSION));
+  });
+
+  it("keeps the import translation scope fix assigned to version 0016", () => {
+    expect(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION).toBe("0016");
+    expect(SCHEMA_BASELINE_VERSION).toBe(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
   });
 });
 
@@ -443,7 +452,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 90 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 90 project tables, 18 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -462,7 +471,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30).
     // Plugin tables are added separately by the hook.
     expect(bySchema.project).toBe(90);
-    expect(bySchema.central).toBe(17);
+    expect(bySchema.central).toBe(18);
     expect(bySchema.archive).toBe(1);
   });
 
@@ -964,6 +973,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
         created_at text NOT NULL,
         updated_at text NOT NULL
       );
+      /* FNXC:GitHubImportTranslate 2026-07-16-23:30: Later durable-task migrations run after this historical 0000 fixture, so retain their required task table surface. */
+      CREATE TABLE project.tasks (id text PRIMARY KEY);
       CREATE TABLE project.automations (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -1035,7 +1046,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_FIX_IDEMPOTENCY_VERSION,
       IMPORT_TRANSLATION_CACHE_VERSION,
       OWNER_PROJECT_ID_SPLIT_VERSION,
-      SCHEMA_BASELINE_VERSION,
+      CHAT_SESSION_PINS_VERSION,
+      EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
+      EXECUTOR_ESCALATION_ATTEMPT_VERSION,
+      GLOBAL_ROUTINES_SCHEMA_VERSION,
+      IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1073,8 +1088,53 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_FIX_IDEMPOTENCY_VERSION,
       IMPORT_TRANSLATION_CACHE_VERSION,
       OWNER_PROJECT_ID_SPLIT_VERSION,
-      SCHEMA_BASELINE_VERSION,
+      CHAT_SESSION_PINS_VERSION,
+      EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
+      EXECUTOR_ESCALATION_ATTEMPT_VERSION,
+      GLOBAL_ROUTINES_SCHEMA_VERSION,
+      IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
     ]);
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-23:30:
+  An upgrade has already recorded 0010, so editing its SQL only fixes fresh
+  databases. Simulate that recorded pre-fix shape and prove 0016 converges the
+  existing default and RLS policy before a reopened store reads the cache.
+  */
+  it("upgrades a 0010 import translation cache to the normalized scope contract", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0016';
+      ALTER TABLE project.import_translation_cache
+        ALTER COLUMN project_id SET DEFAULT current_setting('fusion.project_id', true);
+      DROP POLICY fusion_project_isolation ON project.import_translation_cache;
+      CREATE POLICY fusion_project_isolation ON project.import_translation_cache
+        USING (project_id = current_setting('fusion.project_id', true))
+        WITH CHECK (project_id = current_setting('fusion.project_id', true));
+    `));
+
+    expect(await getAppliedMigrations(ctx.db)).toContain(IMPORT_TRANSLATION_CACHE_VERSION);
+    expect(await getAppliedMigrations(ctx.db)).not.toContain(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    const defaultRows = (await ctx.db.execute(sql`
+      SELECT pg_get_expr(ad.adbin, ad.adrelid) AS expression
+      FROM pg_attrdef ad
+      JOIN pg_class c ON c.oid = ad.adrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ad.adnum
+      WHERE n.nspname = 'project' AND c.relname = 'import_translation_cache' AND a.attname = 'project_id'
+    `)) as unknown as Array<{ expression: string }>;
+    expect(defaultRows[0]?.expression).toContain("__legacy_unscoped__");
+
+    const policies = (await ctx.db.execute(sql`
+      SELECT qual FROM pg_policies
+      WHERE schemaname = 'project' AND tablename = 'import_translation_cache' AND policyname = 'fusion_project_isolation'
+    `)) as unknown as Array<{ qual: string }>;
+    expect(policies[0]?.qual).toContain("__legacy_unscoped__");
+    expect(await getAppliedMigrations(ctx.db)).toContain(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
@@ -1124,6 +1184,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       "0010",
       "0011",
       "0012",
+      EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
+      EXECUTOR_ESCALATION_ATTEMPT_VERSION,
+      GLOBAL_ROUTINES_SCHEMA_VERSION,
+      IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
     ]);
   });
 
@@ -1176,6 +1240,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       "0010",
       "0011",
       "0012",
+      EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
+      EXECUTOR_ESCALATION_ATTEMPT_VERSION,
+      GLOBAL_ROUTINES_SCHEMA_VERSION,
+      IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
     ]);
   });
 
@@ -1228,6 +1296,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       "0010",
       "0011",
       "0012",
+      EXECUTOR_TOOL_FAILURE_RETRY_VERSION,
+      EXECUTOR_ESCALATION_ATTEMPT_VERSION,
+      GLOBAL_ROUTINES_SCHEMA_VERSION,
+      IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
     ]);
   });
 });

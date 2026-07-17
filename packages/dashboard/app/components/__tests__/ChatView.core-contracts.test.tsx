@@ -229,8 +229,8 @@ describe("formatModelTag helper function", () => {
   });
 });
 
-describe("Chat Session Delete Button", () => {
-  it("renders delete button on each session item", async () => {
+describe("Chat Session Action Menu", () => {
+  it("renders one overflow button on each session item without an inline action cluster", async () => {
     setupMockChat({
       sessions: [
         { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat 1", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -244,11 +244,34 @@ describe("Chat Session Delete Button", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const deleteButtons = screen.getAllByTestId("chat-session-delete-btn");
-    expect(deleteButtons.length).toBe(2);
+    expect(screen.getAllByTestId("chat-session-menu-btn")).toHaveLength(2);
+    expect(document.querySelectorAll(".chat-session-actions")).toHaveLength(0);
   });
 
-  it("clicking delete button shows confirmation dialog", async () => {
+  it("preserves pinned labels and pin-limit disabling in the shared action menu", async () => {
+    const pinnedAt = "2026-04-08T00:00:00.000Z";
+    const sessions = [
+      { id: "session-pinned", agentId: "agent-001", status: "active" as const, title: "Pinned Chat", pinnedAt, createdAt: pinnedAt, updatedAt: pinnedAt },
+      { id: "session-pinned-two", agentId: "agent-002", status: "active" as const, title: "Pinned Chat Two", pinnedAt, createdAt: pinnedAt, updatedAt: pinnedAt },
+      { id: "session-pinned-three", agentId: "agent-003", status: "active" as const, title: "Pinned Chat Three", pinnedAt, createdAt: pinnedAt, updatedAt: pinnedAt },
+      { id: "session-unpinned", agentId: "agent-004", status: "active" as const, title: "Unpinned Chat", createdAt: pinnedAt, updatedAt: pinnedAt },
+    ];
+    setupMockChat({ sessions, filteredSessions: sessions, pinnedCount: 3 });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(within(screen.getByTestId("chat-session-session-pinned")).getByTestId("chat-session-menu-btn"));
+    expect(screen.getByTestId("chat-context-pin")).toHaveTextContent("Unpin");
+
+    await userEvent.click(within(screen.getByTestId("chat-session-session-pinned")).getByTestId("chat-session-menu-btn"));
+    await userEvent.click(within(screen.getByTestId("chat-session-session-unpinned")).getByTestId("chat-session-menu-btn"));
+    const pinButton = screen.getByTestId("chat-context-pin");
+    expect(pinButton).toHaveTextContent("Pin");
+    expect(pinButton).toBeDisabled();
+    expect(pinButton).toHaveAttribute("title", "You can pin up to 3 conversations");
+  });
+
+  it("opens the shared labeled action menu and deletes from it", async () => {
     setupMockChat({
       sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
       filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
@@ -256,8 +279,14 @@ describe("Chat Session Delete Button", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const deleteButton = screen.getByTestId("chat-session-delete-btn");
-    await userEvent.click(deleteButton);
+    await userEvent.click(screen.getByTestId("chat-session-menu-btn"));
+
+    const menu = document.querySelector(".chat-session-context-menu");
+    expect(menu).toBeInTheDocument();
+    expect(within(menu!).getByTestId("chat-context-pin")).toHaveTextContent("Pin");
+    expect(within(menu!).getByTestId("chat-context-rename")).toHaveTextContent("Rename");
+    expect(within(menu!).getByTestId("chat-context-archive")).toHaveTextContent("Archive");
+    await userEvent.click(within(menu!).getByTestId("chat-context-delete"));
 
     // Dialog should be open
     const dialog = document.querySelector(".chat-new-dialog") as HTMLElement | null;
@@ -265,7 +294,7 @@ describe("Chat Session Delete Button", () => {
     expect(within(dialog!).getByText("Delete Conversation?")).toBeInTheDocument();
   });
 
-  it("clicking delete button does not select the session", async () => {
+  it("clicking the action menu button does not select the session", async () => {
     const selectSession = vi.fn();
     setupMockChat({
       sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
@@ -275,8 +304,7 @@ describe("Chat Session Delete Button", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const deleteButton = screen.getByTestId("chat-session-delete-btn");
-    await userEvent.click(deleteButton);
+    await userEvent.click(screen.getByTestId("chat-session-menu-btn"));
 
     expect(selectSession).not.toHaveBeenCalled();
   });
@@ -420,8 +448,8 @@ describe("Chat Session Delete Button", () => {
 
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const deleteButton = screen.getByTestId("chat-session-delete-btn");
-    await userEvent.click(deleteButton);
+    await userEvent.click(screen.getByTestId("chat-session-menu-btn"));
+    await userEvent.click(screen.getByTestId("chat-context-delete"));
 
     // Click confirm in dialog
     const dialog = document.querySelector(".chat-new-dialog") as HTMLElement | null;
@@ -550,18 +578,18 @@ describe("ChatView CSS — active state edge highlights", () => {
 describe("FN-3911 chat session list layout", () => {
   const css = loadAllAppCss();
 
-  it("reserves right padding on title and preview rows so text clears the edit/delete action pair", async () => {
+  it("reserves one overflow-button gutter on title and preview rows", async () => {
     const titleMatch = css.match(/\.chat-session-title\s*\{([^}]*)\}/);
     const previewMatch = css.match(/\.chat-session-preview\s*\{([^}]*)\}/);
     expect(titleMatch).toBeTruthy();
     expect(previewMatch).toBeTruthy();
-    expect(titleMatch?.[1]).toContain("padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2))");
-    expect(previewMatch?.[1]).toContain("padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2))");
+    expect(titleMatch?.[1]).toContain("padding-right: calc((var(--space-md) * 2) + var(--space-sm))");
+    expect(previewMatch?.[1]).toContain("padding-right: calc((var(--space-md) * 2) + var(--space-sm))");
   });
 
-  it("FN-4385/FN-7441: keeps mobile title/preview clearance matched to compact row action pair", async () => {
+  it("keeps mobile title/preview clearance matched to the overflow button", async () => {
     expect(css).toMatch(
-      /@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-session-title,\s*\.chat-session-preview\s*\{\s*padding-right:\s*calc\(\(var\(--space-md\)\s*\*\s*4\)\s*\+\s*\(var\(--space-xs\)\s*\*\s*2\)\);\s*\}/,
+      /@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-session-title,\s*\.chat-session-preview\s*\{\s*padding-right:\s*calc\(\(var\(--space-md\)\s*\*\s*2\)\s*\+\s*var\(--space-sm\)\);\s*\}/,
     );
   });
 });
@@ -569,16 +597,15 @@ describe("FN-3911 chat session list layout", () => {
 describe("Chat Session Row Action CSS", () => {
   const css = loadAllAppCss();
 
-  it(".chat-session-actions positions the edit/delete pair outside row text flow", async () => {
-    const actionsMatch = css.match(/\.chat-session-actions\s*\{([^}]*)\}/);
-    const actionButtonMatch = css.match(/\.chat-session-action-btn\s*\{([^}]*)\}/);
-    expect(actionsMatch).toBeTruthy();
-    expect(actionButtonMatch).toBeTruthy();
-    expect(actionsMatch![1]).toContain("position: absolute");
-    expect(actionsMatch![1]).toContain("right: var(--space-sm)");
-    expect(actionsMatch![1]).toContain("gap: var(--space-xs)");
-    expect(actionButtonMatch![1]).toContain("width: calc(var(--space-md) * 2)");
-    expect(actionButtonMatch![1]).toContain("min-height: calc(var(--space-md) * 2)");
+  it(".chat-session-menu-btn positions one overflow button outside row text flow", async () => {
+    const menuButtonMatch = css.match(/\.chat-session-menu-btn\s*\{([^}]*)\}/);
+    expect(menuButtonMatch).toBeTruthy();
+    expect(menuButtonMatch![1]).toContain("position: absolute");
+    expect(menuButtonMatch![1]).toContain("right: var(--space-sm)");
+    expect(menuButtonMatch![1]).toContain("width: calc(var(--space-md) * 2)");
+    expect(menuButtonMatch![1]).toContain("min-height: calc(var(--space-md) * 2)");
+    expect(css).not.toMatch(/\.chat-session-actions\s*\{/);
+    expect(css).not.toMatch(/\.chat-session-action-btn\s*\{/);
   });
 
   it("FN-4352: mobile row action buttons stay compact without min-size inflation", async () => {
@@ -593,7 +620,7 @@ describe("Chat Session Row Action CSS", () => {
       }
     }
 
-    expect(actionRule).toContain("padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2))");
+    expect(actionRule).toContain("padding-right: calc((var(--space-md) * 2) + var(--space-sm))");
     expect(actionRule).not.toContain("min-width:");
     expect(actionRule).not.toContain("min-height:");
   });
@@ -626,7 +653,15 @@ describe("ChatView CSS — mobile thread switcher", () => {
     expect(optionMatch?.[1]).toContain("min-height: calc(var(--space-lg) * 2.25)");
     expect(optionMatch?.[1]).toContain("align-items: flex-start");
     expect(optionMatch?.[1]).toContain("line-height: normal");
-    expect(optionTitleMatch?.[1]).toContain("display: block");
+    /*
+     * FNXC:ChatMobileSessionSwitcher 2026-07-16-18:54:
+     * FN-8054 intentionally uses inline flex to keep a pinned session's Pin indicator beside its title.
+     * Retain the width and wrapping contracts from FN-4061 so long titles remain readable.
+     */
+    expect(optionTitleMatch?.[1]).toContain("width: 100%");
+    expect(optionTitleMatch?.[1]).toContain("display: inline-flex");
+    expect(optionTitleMatch?.[1]).toContain("align-items: center");
+    expect(optionTitleMatch?.[1]).toContain("gap: var(--space-xs)");
     expect(optionTitleMatch?.[1]).toContain("line-height: normal");
     expect(optionTitleMatch?.[1]).toContain("white-space: normal");
     expect(optionTitleMatch?.[1]).toContain("overflow-wrap: anywhere");

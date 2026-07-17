@@ -588,6 +588,9 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     { id: "executionProvider", name: "Execution provider", type: "string" },
     { id: "executionModelId", name: "Execution model", type: "string" },
     { id: "executionThinkingLevel", name: "Execution thinking level", type: "enum", options: [{ value: "low", label: "Low" }] },
+    { id: "executionFallbackProvider", name: "Execution fallback provider", type: "string" },
+    { id: "executionFallbackModelId", name: "Execution fallback model", type: "string" },
+    { id: "executionFallbackThinkingLevel", name: "Execution fallback thinking level", type: "enum", options: [{ value: "high", label: "High" }] },
     { id: "validatorProvider", name: "Validator provider", type: "string" },
     { id: "validatorModelId", name: "Validator model", type: "string" },
     { id: "validatorThinkingLevel", name: "Validator thinking level", type: "enum", options: [{ value: "minimal", label: "Minimal" }] },
@@ -606,6 +609,43 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     { id: "titleSummarizerFallbackProvider", name: "Title summarizer fallback provider", type: "string" },
     { id: "titleSummarizerFallbackModelId", name: "Title summarizer fallback model", type: "string" },
   ];
+
+  it("keeps the workflow model lane catalog interleaved by primary and fallback", () => {
+    expect(WORKFLOW_MODEL_LANE_CATALOG.map((pair) => pair.id)).toEqual([
+      "planning",
+      "planning-fallback",
+      "execution",
+      "execution-fallback",
+      "validator",
+      "validator-fallback",
+    ]);
+  });
+
+  it("renders workflow model lane rows with each fallback directly after its primary", async () => {
+    render(<Host initial={modelDecls} readOnly />);
+
+    await screen.findByTestId("wf-settings-value-validator-fallback");
+    const laneTestIds = new Set([
+      "wf-settings-value-planning",
+      "wf-settings-value-planning-fallback",
+      "wf-settings-value-execution",
+      "wf-settings-value-execution-fallback",
+      "wf-settings-value-validator",
+      "wf-settings-value-validator-fallback",
+    ]);
+    const renderedLaneTestIds = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='wf-settings-value-']"))
+      .map((element) => element.dataset.testid)
+      .filter((testId): testId is string => laneTestIds.has(testId));
+
+    expect(renderedLaneTestIds).toEqual([
+      "wf-settings-value-planning",
+      "wf-settings-value-planning-fallback",
+      "wf-settings-value-execution",
+      "wf-settings-value-execution-fallback",
+      "wf-settings-value-validator",
+      "wf-settings-value-validator-fallback",
+    ]);
+  });
 
   it("does not catalog title summarization as a workflow model lane", async () => {
     expect(WORKFLOW_MODEL_LANE_CATALOG.map((pair) => pair.id)).not.toEqual(
