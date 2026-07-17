@@ -912,7 +912,7 @@ export async function migrateMovedSettingsImpl(store: TaskStore): Promise<void> 
     const projectId = store.getWorkflowSettingsProjectId();
 
     // (1) Snapshot CUSTOMIZED moved keys from RAW persisted project + global stores.
-    const rawProjectSettings = store.readRawProjectSettings();
+    const rawProjectSettings = await store.readRawProjectSettings();
     let rawGlobalSettings: Record<string, unknown> = {};
     try {
       rawGlobalSettings = await store.globalSettingsStore.readRaw();

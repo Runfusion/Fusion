@@ -3057,10 +3057,10 @@ export class TriageProcessor {
       User-triggered spec rebuilds can race an old paused graph run that writes step-instance rows after the route cleared them. Clear again when triage accepts a fresh parsed plan over an existing step projection, even if the task snapshot no longer has status `needs-replan`.
       */
       const maybeStore = this.store as unknown as {
-        clearWorkflowRunStepInstances?: (taskId: string) => void;
+        clearWorkflowRunStepInstances?: (taskId: string) => void | Promise<void>;
       };
       try {
-        maybeStore.clearWorkflowRunStepInstances?.(task.id);
+        await maybeStore.clearWorkflowRunStepInstances?.(task.id);
       } catch {
         // Older stores may not persist graph step instances; replanning remains valid without cleanup.
       }

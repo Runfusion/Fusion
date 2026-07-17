@@ -220,7 +220,7 @@ export class AgentReflectionService {
         return null;
       }
 
-      const metrics = this.buildCapturedMetrics(taskId, task, outcome);
+      const metrics = await this.buildCapturedMetrics(taskId, task, outcome);
 
       const reflection = await this.reflectionStore.createReflection({
         agentId,
@@ -266,10 +266,10 @@ export class AgentReflectionService {
    * is now `recoveryRetryCount + workflowReworkCount`; either driver is surfaced individually in
    * `durationDrivers` (`retries:N` / `rework:N`) so the two causes stay distinguishable.
    */
-  private buildCapturedMetrics(taskId: string, task: Task, outcome: "completed" | "failed"): ReflectionMetrics {
+  private async buildCapturedMetrics(taskId: string, task: Task, outcome: "completed" | "failed"): Promise<ReflectionMetrics> {
     const durationMs = this.calculateDurationMs(task);
     const recoveryRetryCount = task.recoveryRetryCount ?? 0;
-    const workflowReworkCount = this.sumWorkflowStepReworkCount(taskId);
+    const workflowReworkCount = await this.sumWorkflowStepReworkCount(taskId);
     const retryReworkCount = recoveryRetryCount + workflowReworkCount;
 
     const touchedFiles = task.mergeDetails?.landedFiles ?? task.modifiedFiles;
@@ -317,13 +317,13 @@ export class AgentReflectionService {
    * threaded. Returns 0 (never fabricated) when the store lacks the method or the table/rows don't
    * exist — additive bookkeeping, degrades silently like its call sites in executor.ts.
    */
-  private sumWorkflowStepReworkCount(taskId: string): number {
+  private async sumWorkflowStepReworkCount(taskId: string): Promise<number> {
     const store = this.taskStore as unknown as {
-      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => Array<{ reworkCount?: number }>;
+      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => Array<{ reworkCount?: number }> | Promise<Array<{ reworkCount?: number }>>;
     };
     if (typeof store.loadWorkflowRunStepInstances !== "function") return 0;
     try {
-      const rows = store.loadWorkflowRunStepInstances(taskId, `${taskId}:run`);
+      const rows = await store.loadWorkflowRunStepInstances(taskId, `${taskId}:run`);
       if (!Array.isArray(rows) || rows.length === 0) return 0;
       return rows.reduce((sum, row) => sum + (row.reworkCount ?? 0), 0);
     } catch {

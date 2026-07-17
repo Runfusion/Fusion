@@ -789,10 +789,27 @@ export async function listWorkflowStepsImpl(store: TaskStore): Promise<import(".
      * continued with no default steps).
      */
     if (store.backendMode) {
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
+      The interim fail-soft (plugin steps only, stored steps dropped) is
+      replaced with a real async read of project.workflow_steps, restoring
+      stored-step listing parity with the sync branch below.
+      */
+      const table = schema.project.workflowSteps;
+      const pgRows = await store.asyncLayer!.db
+        .select()
+        .from(table)
+        .orderBy(table.createdAt);
+      const storedPgSteps = pgRows
+        .map((row) => store.applyLegacyWorkflowStepOverrides(store.toStoredWorkflowStep({
+          ...row,
+          migrated_fragment_id: row.migratedFragmentId,
+        } as unknown as Parameters<typeof store.toStoredWorkflowStep>[0])))
+        .filter((step) => !step.templateId?.startsWith(WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX));
       const pluginSteps = store._pluginWorkflowStepTemplates
         .map(({ template }) => store.resolvePluginWorkflowStep(template.id))
         .filter((step): step is import("../types.js").WorkflowStep => Boolean(step));
-      store.workflowStepsCache = pluginSteps;
+      store.workflowStepsCache = [...storedPgSteps, ...pluginSteps];
       return store.workflowStepsCache;
     }
     const rows = store.db.prepare("SELECT * FROM workflow_steps ORDER BY createdAt ASC").all() as Array<{
@@ -832,6 +849,38 @@ export async function getWorkflowStepImpl(store: TaskStore, id: string): Promise
       if (pluginStep) {
         return pluginStep;
       }
+    }
+
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:30:
+    Backend mode previously fell through to the sync store.db read and threw
+    "SQLite Database is not available" (reachable via ensureWorkflowStepForTemplate
+    and the executor's workflow-step gate). Async lookup: by id, then by
+    templateId (earliest created), then built-in template — same resolution
+    order as the sync branch.
+    */
+    if (store.backendMode) {
+      const table = schema.project.workflowSteps;
+      const mapRow = (row: typeof table.$inferSelect) =>
+        store.applyLegacyWorkflowStepOverrides(store.toStoredWorkflowStep({
+          ...row,
+          migrated_fragment_id: row.migratedFragmentId,
+        } as unknown as Parameters<typeof store.toStoredWorkflowStep>[0]));
+      const byIdRows = await store.asyncLayer!.db
+        .select()
+        .from(table)
+        .where(eq(table.id, id))
+        .limit(1);
+      if (byIdRows[0]) return mapRow(byIdRows[0]);
+      const byTemplateRows = await store.asyncLayer!.db
+        .select()
+        .from(table)
+        .where(eq(table.templateId, id))
+        .orderBy(table.createdAt)
+        .limit(1);
+      if (byTemplateRows[0]) return mapRow(byTemplateRows[0]);
+      const pgTemplate = store.getBuiltInWorkflowTemplate(id);
+      return pgTemplate ? store.toBuiltInWorkflowStep(pgTemplate) : undefined;
     }
 
     const byId = store.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as

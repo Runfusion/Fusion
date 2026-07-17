@@ -796,6 +796,12 @@ export function toBuiltInWorkflowStepImpl(store: TaskStore, template: import("..
 }
 
 export function getLegacyWorkflowStepSnapshotImpl(store: TaskStore, id: string, templateId?: string): Record<string, unknown> | undefined {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:55: the legacy snapshot lives
+    // only in the pre-migration SQLite config.workflowSteps JSON blob; a
+    // PostgreSQL deployment has no legacy snapshot, so overrides never apply.
+    if (store.backendMode) {
+      return undefined;
+    }
     const row = store.db
       .prepare("SELECT workflowSteps FROM config WHERE id = 1")
       .get() as { workflowSteps?: string | null } | undefined;

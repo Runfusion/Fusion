@@ -5512,15 +5512,18 @@ export class TaskExecutor {
    * mixed/partial store never throws into the run.
    */
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:40: the store methods are now
+    // async (PostgreSQL routing); the persistence interfaces already accept
+    // Promise-returning impls and await them.
     const store = this.store as unknown as {
-      saveWorkflowRunBranch?: (state: WorkflowBranchRunState) => void;
-      loadWorkflowRunBranches?: (taskId: string, runId: string) => WorkflowBranchRunState[];
-      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void;
+      saveWorkflowRunBranch?: (state: WorkflowBranchRunState) => void | Promise<void>;
+      loadWorkflowRunBranches?: (taskId: string, runId: string) => WorkflowBranchRunState[] | Promise<WorkflowBranchRunState[]>;
+      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void | Promise<void>;
     };
     if (typeof store.saveWorkflowRunBranch !== "function") return undefined;
     return {
       saveBranchState: (state) => store.saveWorkflowRunBranch?.(state),
-      loadBranchStates: (taskId, runId) => store.loadWorkflowRunBranches?.(taskId, runId) ?? [],
+      loadBranchStates: async (taskId, runId) => (await store.loadWorkflowRunBranches?.(taskId, runId)) ?? [],
       clearStaleBranchStates: (taskId, keepRunId) => store.clearWorkflowRunBranches?.(taskId, keepRunId),
     };
   }
@@ -5532,15 +5535,17 @@ export class TaskExecutor {
    * fully in-memory — purely additive, same posture as buildBranchPersistence.
    */
   private buildStepInstancePersistence(): WorkflowStepInstancePersistence | undefined {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:40: async store methods; the
+    // persistence interface awaits Promise-returning impls.
     const store = this.store as unknown as {
-      saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
-      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
-      clearWorkflowRunStepInstances?: (taskId: string, keepRunId: string) => void;
+      saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void | Promise<void>;
+      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[] | Promise<WorkflowStepInstanceState[]>;
+      clearWorkflowRunStepInstances?: (taskId: string, keepRunId: string) => void | Promise<void>;
     };
     if (typeof store.saveWorkflowRunStepInstance !== "function") return undefined;
     return {
       saveInstanceState: (state) => store.saveWorkflowRunStepInstance?.(state),
-      loadInstanceStates: (taskId, runId) => store.loadWorkflowRunStepInstances?.(taskId, runId) ?? [],
+      loadInstanceStates: async (taskId, runId) => (await store.loadWorkflowRunStepInstances?.(taskId, runId)) ?? [],
       clearStaleInstanceStates: (taskId, keepRunId) => store.clearWorkflowRunStepInstances?.(taskId, keepRunId),
     };
   }
@@ -5621,7 +5626,7 @@ export class TaskExecutor {
       },
       hasExpandedForeach: async (task): Promise<boolean> => {
         const store = this.store as unknown as {
-          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[] | Promise<WorkflowStepInstanceState[]>;
         };
         if (typeof store.loadWorkflowRunStepInstances !== "function") return false;
         try {
@@ -5630,7 +5635,7 @@ export class TaskExecutor {
           // under the REAL run id (threaded from maybeExecuteWorkflowGraph) so the
           // pin protection actually fires; fall back to the legacy literal only when
           // the run id was not threaded (older store / no definition).
-          const rows = store.loadWorkflowRunStepInstances(task.id, runId ?? `${task.id}:run`);
+          const rows = await store.loadWorkflowRunStepInstances(task.id, runId ?? `${task.id}:run`);
           return Array.isArray(rows) && rows.length > 0;
         } catch {
           return false;
@@ -5842,8 +5847,8 @@ export class TaskExecutor {
         },
         markInstanceIntegrated: async (stepIndex, integratedAt, identity): Promise<void> => {
           const store = this.store as unknown as {
-            saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
-            loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+            saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void | Promise<void>;
+            loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[] | Promise<WorkflowStepInstanceState[]>;
           };
           if (typeof store.saveWorkflowRunStepInstance !== "function") return;
           // The upsert is keyed by (taskId, runId, foreachNodeId, stepIndex). The
@@ -5854,7 +5859,7 @@ export class TaskExecutor {
           // reworkCount) we don't otherwise carry on the identity.
           let existing: WorkflowStepInstanceState | undefined;
           try {
-            const rows = store.loadWorkflowRunStepInstances?.(taskId, identity.runId) ?? [];
+            const rows = (await store.loadWorkflowRunStepInstances?.(taskId, identity.runId)) ?? [];
             existing = rows.find(
               (r) => r.foreachNodeId === identity.foreachNodeId && r.stepIndex === stepIndex,
             );
@@ -5862,7 +5867,7 @@ export class TaskExecutor {
             // Best-effort read; fall back to a minimal flip below.
           }
           try {
-            store.saveWorkflowRunStepInstance({
+            await store.saveWorkflowRunStepInstance({
               ...(existing ?? {}),
               taskId,
               runId: identity.runId,
@@ -5891,14 +5896,14 @@ export class TaskExecutor {
         // self-healing sweep across stale runs (recoverStaleTransitionPending
         // analogue) is out of scope for U10.
         const store = this.store as unknown as {
-          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[] | Promise<WorkflowStepInstanceState[]>;
         };
         if (typeof store.loadWorkflowRunStepInstances !== "function") return [];
         let rows: WorkflowStepInstanceState[] = [];
         try {
           // Load under the REAL run id (threaded) so resume actually sees the rows
           // the sub-walk persisted; the legacy literal is the unthreaded fallback.
-          rows = store.loadWorkflowRunStepInstances(taskId, runId ?? `${taskId}:run`) ?? [];
+          rows = (await store.loadWorkflowRunStepInstances(taskId, runId ?? `${taskId}:run`)) ?? [];
         } catch {
           return [];
         }
@@ -9943,11 +9948,11 @@ export class TaskExecutor {
     if (hasImplementationProgress) return false;
 
     const maybeStore = this.store as unknown as {
-      clearWorkflowRunStepInstances?: (taskId: string) => void;
-      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void;
+      clearWorkflowRunStepInstances?: (taskId: string) => void | Promise<void>;
+      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void | Promise<void>;
     };
     try {
-      maybeStore.clearWorkflowRunStepInstances?.(live.id);
+      await maybeStore.clearWorkflowRunStepInstances?.(live.id);
     } catch {
       // Legacy stores may not persist graph step instances.
     }

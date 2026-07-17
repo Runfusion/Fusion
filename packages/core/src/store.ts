@@ -988,7 +988,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
 /** Residual B (U13/U9): per-branch progress snapshots for the given tasks, */
-  getBranchProgressByTask( taskIds: readonly string[], ): Map<string, Array<{ branchId: string; nodeId: string; status: string }>> {
+  async getBranchProgressByTask( taskIds: readonly string[], ): Promise<Map<string, Array<{ branchId: string; nodeId: string; status: string }>>> {
     return getBranchProgressByTaskImpl(this, taskIds);
   }
   // FNXC:PostgresCutover 2026-07-04-00:00: facade delegates to async PG query in backend mode.
@@ -1025,36 +1025,36 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
 /** Persist (idempotent upsert) one branch's progress for a fan-out run (#1407). */
-   saveWorkflowRunBranch(state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): void {
-    saveWorkflowRunBranchImpl(this, state);
+   async saveWorkflowRunBranch(state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): Promise<void> {
+    return saveWorkflowRunBranchImpl(this, state);
   }
 
   /** Load persisted branch states for a run (crash-resume; #1407). */
-  loadWorkflowRunBranches( taskId: string, runId: string, ): Array<{
+  async loadWorkflowRunBranches( taskId: string, runId: string, ): Promise<Array<{
     taskId: string;
     runId: string;
     branchId: string;
     currentNodeId: string;
     status: "running" | "completed" | "failed" | "aborted";
-  }> {
+  }>> {
     return loadWorkflowRunBranchesImpl(this, taskId, runId);
   }
 
 /** Prune stale branch rows for a task (#1412). */
-   clearWorkflowRunBranches(taskId: string, keepRunId: string): void {
-    clearWorkflowRunBranchesImpl(this, taskId, keepRunId);
+   async clearWorkflowRunBranches(taskId: string, keepRunId: string): Promise<void> {
+    return clearWorkflowRunBranchesImpl(this, taskId, keepRunId);
   }
 
 /** Persist (idempotent upsert) one step instance's run-state inside a foreach */
-  saveWorkflowRunStepInstance( state: import("./types.js").WorkflowRunStepInstance, ): void {
+  async saveWorkflowRunStepInstance( state: import("./types.js").WorkflowRunStepInstance, ): Promise<void> {
     return saveWorkflowRunStepInstanceImpl(this, state);
   }
 
 /** Load persisted step-instance run-state for a run (crash-resume; KTD-6). */
-  loadWorkflowRunStepInstances( taskId: string, runId: string, ): import("./types.js").WorkflowRunStepInstance[] {
+  async loadWorkflowRunStepInstances( taskId: string, runId: string, ): Promise<import("./types.js").WorkflowRunStepInstance[]> {
     return loadWorkflowRunStepInstancesImpl(this, taskId, runId);
   }
-  clearWorkflowRunStepInstances(taskId: string, keepRunId?: string): void {
+  async clearWorkflowRunStepInstances(taskId: string, keepRunId?: string): Promise<void> {
     return clearWorkflowRunStepInstancesImpl(this, taskId, keepRunId);
   }
   async listTasksForGithubTrackingReconcile(options?: { offset?: number; limit?: number }): Promise<{ tasks: Task[]; hasMore: boolean }> {
@@ -1222,7 +1222,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public parseWorkflowPromptOverrideJson(raw: string | null | undefined): Record<string, string> {
     return parseWorkflowPromptOverrideJsonImpl(this, raw);
   }
-   listWorkflowPromptOverridesForProject(): Record<string, Record<string, string>> {
+   async listWorkflowPromptOverridesForProject(): Promise<Record<string, Record<string, string>>> {
     return listWorkflowPromptOverridesForProjectImpl(this);
   }
    getWorkflowPromptOverrides(workflowId: string, projectId: string): Record<string, string> {
@@ -2128,7 +2128,7 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   public async migrateMovedSettingsToWorkflowValuesOnce(): Promise<void> {
     return migrateMovedSettingsImpl(this);
   }
-  public readRawProjectSettings(): Record<string, unknown> {
+  public async readRawProjectSettings(): Promise<Record<string, unknown>> {
     return readRawProjectSettingsImpl(this);
   }
   public invalidateConfigCacheAfterMigration(): void {

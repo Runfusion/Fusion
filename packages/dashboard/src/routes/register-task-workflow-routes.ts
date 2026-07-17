@@ -87,7 +87,7 @@ const DUPLICATE_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "to", 
 const ARTIFACT_TYPES = new Set<ArtifactType>(["document", "image", "video", "audio", "other"]);
 const ADDRESS_PR_FEEDBACK_PROMPT = "Run /ce-resolve-pr-feedback to resolve open PR review feedback: evaluate each thread, fix valid issues, and reply.";
 
-function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): void {
+async function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): Promise<void> {
   /*
   FNXC:WorkflowReplan 2026-06-29-00:33:
   Spec rebuild intentionally invalidates the planned step source, so persisted graph foreach pins from the previous PROMPT.md must be cleared before the next parse-steps node runs. Keeping the stale pins makes rebuilt tasks fail closed with pin-mismatch at parse instead of executing the fresh plan.
@@ -96,10 +96,10 @@ function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): void {
   User reset/retry is also a hard graph-run boundary. Clear all persisted foreach step-instance rows for the task, not only rows outside a keep-run id, because stale rows can be written by an old aborting graph after the first cleanup and then make the next parse fail immediately.
   */
   const maybeStore = store as unknown as {
-    clearWorkflowRunStepInstances?: (taskId: string) => void;
+    clearWorkflowRunStepInstances?: (taskId: string) => void | Promise<void>;
   };
   try {
-    maybeStore.clearWorkflowRunStepInstances?.(taskId);
+    await maybeStore.clearWorkflowRunStepInstances?.(taskId);
   } catch {
     // Legacy stores may not have workflow-run instance persistence; rebuild must still proceed.
   }
@@ -950,7 +950,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       try {
         const settings = await scopedStore.getSettingsFast();
         if (isWorkflowColumnsEnabled(settings) && tasks.length > 0) {
-          const byTask = scopedStore.getBranchProgressByTask(tasks.map((t) => t.id));
+          const byTask = await scopedStore.getBranchProgressByTask(tasks.map((t) => t.id));
           if (byTask.size > 0) {
             tasks = tasks.map((task) => {
               const branchProgress = byTask.get(task.id);
@@ -2436,7 +2436,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
 
       if (isMissingWorktreeSessionRetry) {
-        clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+        await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
         await scopedStore.updateTask(req.params.id, {
           status: null,
           error: null,
@@ -2460,7 +2460,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           FNXC:WorkflowRetry 2026-06-29-02:18:
           Dashboard retry for an in-review execution failure re-enters the workflow graph from parse/execution, so it must clear persisted foreach step-instance pins. Otherwise a stale pin from the failed run makes the retry hit the same parse pin-mismatch immediately.
           */
-          clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+          await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
           await scopedStore.updateTask(req.params.id, {
             status: null,
             error: null,
@@ -2516,7 +2516,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       FNXC:WorkflowRetry 2026-06-29-02:18:
       Non-planning manual retry is also a fresh execution boundary. Clear graph step-instance rows before moving back to todo so parse-steps can repin the current PROMPT.md instead of inheriting failed foreach state.
       */
-      clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
 
       // Reset steps if the branch has no unique commits (work was lost with worktree)
       const completedSteps = task.steps.filter(
@@ -2609,7 +2609,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       engine?.clearTaskPauseAbortState?.(req.params.id);
       await releaseExecutionAgentBindings(engine, req.params.id);
-      clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
 
       // Reset all steps to pending
       for (let i = 0; i < task.steps.length; i++) {
@@ -2626,7 +2626,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       );
 
       await scopedStore.moveTask(req.params.id, "todo");
-      clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
       let updated = await scopedStore.getTask(req.params.id);
       if (!updated) {
         throw notFound(`Task ${req.params.id} not found after reset`);
@@ -4265,7 +4265,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.column === "triage") {
         // Log the rebuild request
         await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
-        clearRebuiltSpecWorkflowPins(scopedStore, task.id);
+        await clearRebuiltSpecWorkflowPins(scopedStore, task.id);
 
         // Remove the existing spec so rebuilds produce a fresh PROMPT.md instead
         // of asking triage to revise whatever was already on disk.
@@ -4294,7 +4294,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       // Log the rebuild request
       await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
-      clearRebuiltSpecWorkflowPins(scopedStore, task.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, task.id);
 
       // Move to triage for replanning
       const updated = await scopedStore.moveTask(task.id, "triage");

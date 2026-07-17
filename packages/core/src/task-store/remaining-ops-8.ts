@@ -76,7 +76,21 @@ export async function importLegacyAgentLogsOnceImpl(store: TaskStore): Promise<v
     store.db.bumpLastModified();
 }
 
-export function readRawProjectSettingsImpl(store: TaskStore): Record<string, unknown> {
+export async function readRawProjectSettingsImpl(store: TaskStore): Promise<Record<string, unknown>> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:35: backend mode previously
+    // returned {} from the catch below, hiding raw persisted project settings
+    // on PostgreSQL. Read the config row via the async layer instead.
+    if (store.backendMode) {
+      try {
+        const config = await readProjectConfig(store.asyncLayer!);
+        const settings = config.settings;
+        return settings && typeof settings === "object" && !Array.isArray(settings)
+          ? (settings as Record<string, unknown>)
+          : {};
+      } catch {
+        return {};
+      }
+    }
     try {
       const row = store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as
         | { settings: string }

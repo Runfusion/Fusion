@@ -19,7 +19,26 @@ import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 
-export function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): void {
+export async function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): Promise<void> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:15:
+    Backend mode previously swallowed the sync throw, so parallel-branch
+    checkpoints were never persisted on PostgreSQL. ON CONFLICT targets the PK
+    by constraint name because project-schema PKs lead with project_id (which
+    itself comes from the column's current_setting default under RLS).
+    */
+    if (store.backendMode) {
+      await store.asyncLayer!.db.execute(sql`
+        INSERT INTO project.workflow_run_branches
+          (task_id, run_id, branch_id, current_node_id, status, updated_at)
+        VALUES (${state.taskId}, ${state.runId}, ${state.branchId}, ${state.currentNodeId}, ${state.status}, ${new Date().toISOString()})
+        ON CONFLICT ON CONSTRAINT workflow_run_branches_pkey DO UPDATE SET
+          current_node_id = EXCLUDED.current_node_id,
+          status = EXCLUDED.status,
+          updated_at = EXCLUDED.updated_at
+      `);
+      return;
+    }
     try {
       store.db
         .prepare(

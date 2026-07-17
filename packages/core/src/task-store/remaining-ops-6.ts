@@ -260,11 +260,48 @@ export async function recordPrThreadOutcomeImpl(store: TaskStore,
     store.db.bumpLastModified();
 }
 
-export function getBranchProgressByTaskImpl(store: TaskStore,
+export async function getBranchProgressByTaskImpl(store: TaskStore,
     taskIds: readonly string[],
-  ): Map<string, Array<{ branchId: string; nodeId: string; status: string }>> {
+  ): Promise<Map<string, Array<{ branchId: string; nodeId: string; status: string }>>> {
     const result = new Map<string, Array<{ branchId: string; nodeId: string; status: string }>>();
     if (taskIds.length === 0) return result;
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:10:
+    Backend mode previously fell into the sync catch below and silently
+    returned an empty map, dropping branchProgress from every task payload on
+    PostgreSQL. Read the rows async and resolve the winning (latest updatedAt,
+    runId tie-break) run per task in JS — per-task row counts are small.
+    */
+    if (store.backendMode) {
+      const table = schema.project.workflowRunBranches;
+      const rows = await store.asyncLayer!.db
+        .select({
+          taskId: table.taskId,
+          runId: table.runId,
+          branchId: table.branchId,
+          nodeId: table.currentNodeId,
+          status: table.status,
+          updatedAt: table.updatedAt,
+        })
+        .from(table)
+        .where(inArray(table.taskId, taskIds as string[]));
+      const latestRunByTask = new Map<string, { runId: string; updatedAt: string }>();
+      for (const row of rows) {
+        const current = latestRunByTask.get(row.taskId);
+        if (!current
+          || row.updatedAt > current.updatedAt
+          || (row.updatedAt === current.updatedAt && row.runId > current.runId)) {
+          latestRunByTask.set(row.taskId, { runId: row.runId, updatedAt: row.updatedAt });
+        }
+      }
+      for (const row of rows) {
+        if (latestRunByTask.get(row.taskId)?.runId !== row.runId) continue;
+        const list = result.get(row.taskId) ?? [];
+        list.push({ branchId: row.branchId, nodeId: row.nodeId, status: row.status });
+        result.set(row.taskId, list);
+      }
+      return result;
+    }
     try {
       // Skip entirely when the table has no rows (cheap existence probe).
       const any = store.db
@@ -327,16 +364,41 @@ export function getBranchProgressByTaskImpl(store: TaskStore,
     return result;
 }
 
-export function loadWorkflowRunBranchesImpl(store: TaskStore,
+export async function loadWorkflowRunBranchesImpl(store: TaskStore,
     taskId: string,
     runId: string,
-  ): Array<{
+  ): Promise<Array<{
     taskId: string;
     runId: string;
     branchId: string;
     currentNodeId: string;
     status: "running" | "completed" | "failed" | "aborted";
-  }> {
+  }>> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:10:
+    Backend mode previously returned [] from the sync catch, so parallel-branch
+    workflow runs lost their crash-recovery checkpoints on PostgreSQL.
+    */
+    if (store.backendMode) {
+      const table = schema.project.workflowRunBranches;
+      const rows = await store.asyncLayer!.db
+        .select({
+          taskId: table.taskId,
+          runId: table.runId,
+          branchId: table.branchId,
+          currentNodeId: table.currentNodeId,
+          status: table.status,
+        })
+        .from(table)
+        .where(and(eq(table.taskId, taskId), eq(table.runId, runId)));
+      return rows as Array<{
+        taskId: string;
+        runId: string;
+        branchId: string;
+        currentNodeId: string;
+        status: "running" | "completed" | "failed" | "aborted";
+      }>;
+    }
     try {
       const rows = store.db
         .prepare(
@@ -357,9 +419,34 @@ export function loadWorkflowRunBranchesImpl(store: TaskStore,
     }
 }
 
-export function saveWorkflowRunStepInstanceImpl(store: TaskStore,
+export async function saveWorkflowRunStepInstanceImpl(store: TaskStore,
     state: import("../types.js").WorkflowRunStepInstance,
-  ): void {
+  ): Promise<void> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:10:
+    Backend mode previously swallowed the sync throw, so foreach step-instance
+    checkpoints were never persisted on PostgreSQL. ON CONFLICT targets the PK
+    by constraint name because project-schema PKs lead with project_id (which
+    itself comes from the column's current_setting default under RLS).
+    */
+    if (store.backendMode) {
+      await store.asyncLayer!.db.execute(sql`
+        INSERT INTO project.workflow_run_step_instances
+          (task_id, run_id, foreach_node_id, step_index, pinned_step_count, current_node_id, status, baseline_sha, checkpoint_id, rework_count, branch_name, integrated_at, updated_at)
+        VALUES (${state.taskId}, ${state.runId}, ${state.foreachNodeId}, ${state.stepIndex}, ${state.pinnedStepCount}, ${state.currentNodeId ?? null}, ${state.status}, ${state.baselineSha ?? null}, ${state.checkpointId ?? null}, ${state.reworkCount ?? 0}, ${state.branchName ?? null}, ${state.integratedAt ?? null}, ${new Date().toISOString()})
+        ON CONFLICT ON CONSTRAINT workflow_run_step_instances_pkey DO UPDATE SET
+          pinned_step_count = EXCLUDED.pinned_step_count,
+          current_node_id = EXCLUDED.current_node_id,
+          status = EXCLUDED.status,
+          baseline_sha = EXCLUDED.baseline_sha,
+          checkpoint_id = EXCLUDED.checkpoint_id,
+          rework_count = EXCLUDED.rework_count,
+          branch_name = EXCLUDED.branch_name,
+          integrated_at = EXCLUDED.integrated_at,
+          updated_at = EXCLUDED.updated_at
+      `);
+      return;
+    }
     try {
       store.db
         .prepare(
@@ -397,10 +484,34 @@ export function saveWorkflowRunStepInstanceImpl(store: TaskStore,
     }
 }
 
-export function loadWorkflowRunStepInstancesImpl(store: TaskStore,
+export async function loadWorkflowRunStepInstancesImpl(store: TaskStore,
     taskId: string,
     runId: string,
-  ): import("../types.js").WorkflowRunStepInstance[] {
+  ): Promise<import("../types.js").WorkflowRunStepInstance[]> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:10: see saveWorkflowRunStepInstanceImpl.
+    if (store.backendMode) {
+      const table = schema.project.workflowRunStepInstances;
+      const rows = await store.asyncLayer!.db
+        .select({
+          taskId: table.taskId,
+          runId: table.runId,
+          foreachNodeId: table.foreachNodeId,
+          stepIndex: table.stepIndex,
+          pinnedStepCount: table.pinnedStepCount,
+          currentNodeId: table.currentNodeId,
+          status: table.status,
+          baselineSha: table.baselineSha,
+          checkpointId: table.checkpointId,
+          reworkCount: table.reworkCount,
+          branchName: table.branchName,
+          integratedAt: table.integratedAt,
+          updatedAt: table.updatedAt,
+        })
+        .from(table)
+        .where(and(eq(table.taskId, taskId), eq(table.runId, runId)))
+        .orderBy(table.stepIndex);
+      return rows as unknown as import("../types.js").WorkflowRunStepInstance[];
+    }
     try {
       const rows = store.db
         .prepare(
@@ -416,7 +527,17 @@ export function loadWorkflowRunStepInstancesImpl(store: TaskStore,
     }
 }
 
-export function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: string, keepRunId?: string): void {
+export async function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: string, keepRunId?: string): Promise<void> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:10: see saveWorkflowRunStepInstanceImpl.
+    if (store.backendMode) {
+      const table = schema.project.workflowRunStepInstances;
+      await store.asyncLayer!.db
+        .delete(table)
+        .where(keepRunId === undefined
+          ? eq(table.taskId, taskId)
+          : and(eq(table.taskId, taskId), ne(table.runId, keepRunId)));
+      return;
+    }
     try {
       if (keepRunId === undefined) {
         store.db
