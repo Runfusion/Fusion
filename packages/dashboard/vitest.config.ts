@@ -360,6 +360,8 @@ const quarantinedDashboardTests: string[] = [
   "src/routes/__tests__/mission-workflow-triage-route.test.ts",
   "src/routes/__tests__/workflow-validate-route.test.ts",
   "src/__tests__/mesh-routes.test.ts",
+  // FNXC:DashboardTests 2026-07-17-06:35: inventory + ledger lockstep — build-only dist assert not in quality projects.
+  "src/__tests__/plugin-registry-dist.test.ts",
 ];
 
 const qualityApiTests = [

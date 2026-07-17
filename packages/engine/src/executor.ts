@@ -5263,11 +5263,20 @@ export class TaskExecutor {
        * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
        * Capture a count cursor without reading the task log. Failure handling receives this
        * execution-local boundary, so a stale task snapshot cannot accidentally qualify an old run.
+       *
+       * FNXC:ExecutorToolFailureRetry 2026-07-17-06:30:
+       * Minimal/test TaskStore adapters may omit getAgentLogCount (same optional pattern as
+       * project-engine). Treat a missing method as cursor 0 so graph entry does not throw
+       * "is not a function" and still records a durable detector boundary when updateTask exists.
        */
       if (resolveMaxConsecutiveToolFailureRetries(settings) > 0) {
-        const cursor = await this.store.getAgentLogCount(task.id);
+        const cursor = typeof this.store.getAgentLogCount === "function"
+          ? await this.store.getAgentLogCount(task.id).catch(() => 0)
+          : 0;
         this.graphToolFailureRunCursors.set(task.id, cursor);
-        await this.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, this.getRunContextFor(task.id));
+        if (typeof this.store.updateTask === "function") {
+          await this.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, this.getRunContextFor(task.id));
+        }
       }
       let selection: { workflowId: string; stepIds: string[] } | undefined;
       if (
@@ -9252,9 +9261,17 @@ export class TaskExecutor {
 
   private async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): Promise<boolean> {
     if (cursor == null) return false;
-    const currentCount = await this.store.getAgentLogCount(taskId);
+    /*
+    FNXC:ExecutorToolFailureRetry 2026-07-17-06:30:
+    Optional log APIs on minimal/test stores: missing getAgentLogCount/getAgentLogs cannot
+    prove a trailing failure streak, so return false rather than throw mid-failure handling.
+    */
+    if (typeof this.store.getAgentLogCount !== "function" || typeof this.store.getAgentLogs !== "function") {
+      return false;
+    }
+    const currentCount = await this.store.getAgentLogCount(taskId).catch(() => cursor);
     if (currentCount <= cursor) return false;
-    const entries = await this.store.getAgentLogs(taskId, { limit: currentCount - cursor });
+    const entries = await this.store.getAgentLogs(taskId, { limit: currentCount - cursor }).catch(() => []);
     let failures = 0;
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const type = entries[index]!.type;

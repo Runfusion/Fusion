@@ -6654,7 +6654,12 @@
       "executorEscalationModelId": "",
       "executorEscalationModelIdHelp": "",
       "executorEscalationNodeId": "",
-      "executorEscalationNodeIdHelp": ""
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "分流重複項處理",
+      "triageDuplicateResolutionHelp": "將分流偵測到的重複項攔截並要求保留/刪除決策（預設），或不攔截而自動保留/刪除。",
+      "triageDuplicateResolutionPrompt": "攔截並決策（預設）",
+      "triageDuplicateResolutionKeep": "自動保留",
+      "triageDuplicateResolutionDelete": "自動刪除"
     },
     "title": "設定",
     "worktrees": {
@@ -7647,7 +7652,13 @@
       "copy": "此任務看起來是以下任務的近似重複：",
       "headline": "檢測到潛在重複",
       "keepBtn": "保留",
-      "kept": "保留了 {{id}} 並關閉了重複警告"
+      "kept": "保留了 {{id}} 並關閉了重複警告",
+      "deleteBtn": "刪除",
+      "deleteConfirm": "刪除",
+      "deleted": "已刪除 {{id}}",
+      "deleteMessage": "將 {{id}} 作為 {{duplicateOf}} 的重複項刪除？",
+      "deleteTitle": "刪除重複任務",
+      "triageActions": "選擇刪除以移除此重複項，或選擇保留以繼續。"
     },
     "nextRecoveryAt": "下次恢復時間：{{time}}",
     "no": "否",

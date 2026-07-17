@@ -6654,7 +6654,12 @@
       "executorEscalationModelId": "",
       "executorEscalationModelIdHelp": "",
       "executorEscalationNodeId": "",
-      "executorEscalationNodeIdHelp": ""
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "트리아지 중복 해결",
+      "triageDuplicateResolutionHelp": "트리아지에서 감지된 중복을 유지/삭제 결정으로 차단(기본)하거나, 차단 없이 자동 유지/삭제합니다.",
+      "triageDuplicateResolutionPrompt": "결정 대기(기본)",
+      "triageDuplicateResolutionKeep": "자동 유지",
+      "triageDuplicateResolutionDelete": "자동 삭제"
     },
     "title": "설정",
     "worktrees": {
@@ -7647,7 +7652,13 @@
       "copy": "이 작업은 다음의 근사 중복으로 보입니다",
       "headline": "잠재적 중복 감지됨",
       "keepBtn": "유지",
-      "kept": "{{id}} 유지 및 중복 경고 무시됨"
+      "kept": "{{id}} 유지 및 중복 경고 무시됨",
+      "deleteBtn": "삭제",
+      "deleteConfirm": "삭제",
+      "deleted": "{{id}} 삭제됨",
+      "deleteMessage": "{{duplicateOf}}의 중복으로 {{id}}를 삭제할까요?",
+      "deleteTitle": "중복 작업 삭제",
+      "triageActions": "이 중복을 제거하려면 삭제를, 계속하려면 유지를 선택하세요."
     },
     "nextRecoveryAt": "다음 복구 시각: {{time}}",
     "no": "아니요",

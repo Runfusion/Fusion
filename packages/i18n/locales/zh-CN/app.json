@@ -6654,7 +6654,12 @@
       "executorEscalationModelId": "",
       "executorEscalationModelIdHelp": "",
       "executorEscalationNodeId": "",
-      "executorEscalationNodeIdHelp": ""
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "分诊重复项处理",
+      "triageDuplicateResolutionHelp": "将分诊检测到的重复项拦截并要求保留/删除决策（默认），或不拦截而自动保留/删除。",
+      "triageDuplicateResolutionPrompt": "拦截并决策（默认）",
+      "triageDuplicateResolutionKeep": "自动保留",
+      "triageDuplicateResolutionDelete": "自动删除"
     },
     "title": "设置",
     "worktrees": {
@@ -7647,7 +7652,13 @@
       "copy": "此任务看起来是以下任务的近似重复：",
       "headline": "检测到潜在重复",
       "keepBtn": "保留",
-      "kept": "保留了 {{id}} 并关闭了重复警告"
+      "kept": "保留了 {{id}} 并关闭了重复警告",
+      "deleteBtn": "删除",
+      "deleteConfirm": "删除",
+      "deleted": "已删除 {{id}}",
+      "deleteMessage": "将 {{id}} 作为 {{duplicateOf}} 的重复项删除？",
+      "deleteTitle": "删除重复任务",
+      "triageActions": "选择删除以移除此重复项，或选择保留以继续。"
     },
     "nextRecoveryAt": "下次恢复时间：{{time}}",
     "no": "否",

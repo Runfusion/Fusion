@@ -89,6 +89,8 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   (emitter as any).parseStepsFromPrompt = vi.fn().mockResolvedValue([]);
   (emitter as any).parseFileScopeFromPrompt = vi.fn().mockResolvedValue([]);
   (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
+  // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
+  (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
   (emitter as any).updateSettings = vi.fn().mockResolvedValue(undefined);
   (emitter as any).emit = emitter.emit.bind(emitter);
 
@@ -133,6 +135,9 @@ function createSelfHealingStore(tasks: Task[], settingsOverrides: Record<string,
   (emitter as any).recordRunAuditEvent = vi.fn().mockImplementation(async (event: any) => {
     audits.push(event);
   });
+  // FNXC:EngineTests 2026-07-17-06:30: graph tool-failure cursor reads getAgentLogCount at execute entry.
+  (emitter as any).getAgentLogCount = vi.fn().mockResolvedValue(0);
+  (emitter as any).getAgentLogs = vi.fn().mockResolvedValue([]);
   (emitter as any).emit = emitter.emit.bind(emitter);
   return emitter;
 }
