@@ -4144,6 +4144,19 @@ export class HeartbeatTriggerScheduler {
   private errorRecoveryLimit = MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS;
   private pendingAssignments: Map<string, PendingAssignment> = new Map();
   private registrationEpochs: Map<string, number> = new Map();
+  /*
+   * FNXC:AgentHeartbeat 2026-07-17-18:15:
+   * Per-ARM identity for timer callbacks. Each applyTimerRegistration call takes
+   * the next `timerArmSeq` value and records it as the agent's current arm. Timer
+   * callbacks carry their armId; onTimerTick rejects a tick whose armId is no
+   * longer current, and a phase-alignment timeout only transitions to its steady
+   * interval while its arm is still current. This is finer-grained than
+   * `registrationEpochs` (bumped once per registerAgent): the base arm and the
+   * async settings-multiplier re-arm share a single epoch, so only a per-arm id
+   * can distinguish a superseded base arm from the live multiplier arm.
+   */
+  private timerArmSeq = 0;
+  private currentTimerArm: Map<string, number> = new Map();
   private running = false;
   private assignedListener: ((agent: import("@fusion/core").Agent, taskId: string) => void) | null = null;
   private createdListener: ((agent: import("@fusion/core").Agent) => void) | null = null;
@@ -4163,6 +4176,25 @@ export class HeartbeatTriggerScheduler {
   private timerAuditWatchdogHandle: ReturnType<typeof setInterval> | null = null;
   private lastAuditRanAtMs = 0;
   private nonAdvancingRearmState: Map<string, { lastHeartbeatAt: string | null; count: number }> = new Map();
+  /*
+   * FNXC:AgentHeartbeat 2026-07-17-15:40:
+   * Wall-clock (ms) of the last moment we had positive evidence each agent's
+   * CURRENT timer is alive: stamped both when the timer is (re-)armed
+   * (applyTimerRegistration) and every time it PHYSICALLY FIRES (onTimerTick
+   * entered), independent of whether that tick actually delivered a heartbeat.
+   * The zombie-timer audit must key liveness off "is the interval firing" — NOT
+   * off `lastHeartbeatAt` (which only advances on a successful "ok" delivery).
+   * A timer whose delivery is intentionally skipped or no-op'd
+   * (over-budget, engine/global pause, idle-skip, no-assignment idle-agent runs)
+   * leaves `lastHeartbeatAt` frozen while the interval keeps firing perfectly.
+   * Keying zombie detection off `lastHeartbeatAt` misclassified those live
+   * timers as dead, re-armed them every 60s forever, and emitted escalating
+   * `heartbeat-rearm-nonadvancing-escalated` warnings that could never recover
+   * anything (re-arming a live timer is a no-op). This map lets the audit tell a
+   * genuinely dead interval (no fire within the stale window) apart from a live
+   * timer whose delivery is being skipped, and only re-arm the former.
+   */
+  private lastTimerFireAtMs: Map<string, number> = new Map();
   /**
    * FNXC:AgentHeartbeat 2026-07-16-12:00:
    * FN-8184 caches the settings-derived multiplier for syncTimerForAgent,
@@ -4279,6 +4311,12 @@ export class HeartbeatTriggerScheduler {
     }
     this.lastAuditRanAtMs = 0;
     this.nonAdvancingRearmState.clear();
+    // FNXC:AgentHeartbeat 2026-07-17-15:40: clear fire-liveness markers on stop so
+    // a subsequent start()/re-registration re-derives liveness from real ticks.
+    this.lastTimerFireAtMs.clear();
+    // FNXC:AgentHeartbeat 2026-07-17-18:15: clear per-arm ids so any callback
+    // that outlives stop() is rejected by onTimerTick's arm guard.
+    this.currentTimerArm.clear();
 
     heartbeatLog.log("HeartbeatTriggerScheduler stopped");
   }
@@ -4408,12 +4446,40 @@ export class HeartbeatTriggerScheduler {
 
     this.clearAgentTimer(agentId);
 
+    /*
+     * FNXC:AgentHeartbeat 2026-07-17-18:15:
+     * Take this arm's unique identity and record it as the agent's current arm.
+     * Every callback this arm schedules carries `armId`. onTimerTick rejects a
+     * tick whose armId is no longer current (a superseded timer's already-queued
+     * callback can then neither dispatch NOR record liveness for the replacement),
+     * and the phase-alignment timeout below only transitions to its steady
+     * interval while its arm is still current — otherwise a superseded timeout
+     * would install an untracked interval over the live replacement in
+     * `this.timers` and leak a duplicate-firing timer.
+     */
+    const armId = ++this.timerArmSeq;
+    this.currentTimerArm.set(agentId, armId);
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-17-16:30:
+     * Anchor the fire-liveness marker to the CURRENT timer at arm time. Arming a
+     * fresh timer is itself positive evidence of liveness (setInterval/setTimeout
+     * always schedule), so a just-registered timer is not a zombie even before
+     * its first tick. Critically, re-stamping here OVERWRITES any marker left by
+     * the previous timer: without this, a fire recorded under an old (shorter)
+     * interval could vouch for a replacement timer against the new (larger) stale
+     * window after an interval increase, masking a dead replacement until that
+     * inflated window expired. Re-stamping restarts the staleness clock at every
+     * (re-)registration, so liveness is only ever proven by the current timer.
+     */
+    this.lastTimerFireAtMs.set(agentId, Date.now());
+
     const armSteadyInterval = () => {
       // The setTimeout fired and was consumed; replace it with the long-lived
       // setInterval that drives every subsequent tick. Use the same
       // effectiveIntervalMs so the cadence remains correct.
       const intervalHandle = setInterval(() => {
-        void this.onTimerTick(agentId, effectiveIntervalMs);
+        void this.onTimerTick(agentId, effectiveIntervalMs, armId);
       }, effectiveIntervalMs);
       this.timers.set(agentId, {
         intervalMs: effectiveIntervalMs,
@@ -4431,11 +4497,16 @@ export class HeartbeatTriggerScheduler {
     } else {
       const timeoutHandle = setTimeout(() => {
         // Fire the overdue/phase-aligned tick first, then transition to the
-        // steady cadence. The tick fires regardless of whether the steady
-        // interval install succeeds, so a missed tick can never silently
-        // happen here.
-        void this.onTimerTick(agentId, effectiveIntervalMs);
-        armSteadyInterval();
+        // steady cadence. The tick itself is armId-guarded inside onTimerTick.
+        void this.onTimerTick(agentId, effectiveIntervalMs, armId);
+        // FNXC:AgentHeartbeat 2026-07-17-18:15: only install the steady interval
+        // if THIS arm is still current. A superseded timeout (its arm replaced by
+        // a re-registration or the settings-multiplier re-arm) must not overwrite
+        // the live replacement in this.timers, which would leak an untracked,
+        // duplicate-firing interval that later clearAgentTimer never reaches.
+        if (this.currentTimerArm.get(agentId) === armId) {
+          armSteadyInterval();
+        }
       }, initialDelayMs);
       this.timers.set(agentId, {
         intervalMs: effectiveIntervalMs,
@@ -4490,6 +4561,12 @@ export class HeartbeatTriggerScheduler {
     this.registrationEpochs.set(agentId, (this.registrationEpochs.get(agentId) ?? 0) + 1);
     this.pendingAssignments.delete(agentId);
     this.nonAdvancingRearmState.delete(agentId);
+    // FNXC:AgentHeartbeat 2026-07-17-15:40: drop the fire-liveness marker so it
+    // cannot leak for deleted agents and a later re-registration starts fresh.
+    this.lastTimerFireAtMs.delete(agentId);
+    // FNXC:AgentHeartbeat 2026-07-17-18:15: clear the current-arm id so any
+    // in-flight callback from this agent's last arm is rejected by onTimerTick.
+    this.currentTimerArm.delete(agentId);
     if (this.timers.has(agentId)) {
       this.clearAgentTimer(agentId);
       heartbeatLog.log(`Unregistered timer for ${agentId}`);
@@ -5022,6 +5099,38 @@ export class HeartbeatTriggerScheduler {
           continue;
         }
 
+        /*
+         * FNXC:AgentHeartbeat 2026-07-17-15:40:
+         * A present timer whose `lastHeartbeatAt` is stale is only a genuine
+         * "zombie" (dead interval) when the interval has ALSO stopped firing.
+         * Prior code inferred death solely from the frozen `lastHeartbeatAt`,
+         * but that field advances only on a successful "ok" delivery — it stays
+         * frozen whenever delivery is legitimately skipped or no-op'd
+         * (over-budget, engine/global pause, idle-skip, or idle "org" agents
+         * whose runs complete as `no_assignment_identity_run`). Those timers are
+         * alive and firing on cadence; re-arming them every 60s recovers nothing
+         * and only churns registrations while accruing phantom
+         * `heartbeat-rearm-nonadvancing-escalated` warnings for hours.
+         *
+         * Fix the invariant: if the timer has PHYSICALLY FIRED within its stale
+         * window (`lastTimerFireAtMs` newer than `staleThresholdMs`), it is not a
+         * zombie — the frozen `lastHeartbeatAt` reflects intentionally-skipped
+         * delivery, not a lost interval. Leave it alone and reset the
+         * non-advancing counter. Only a present timer with NO recent fire (a
+         * truly dead interval) falls through to the re-arm/escalation path below.
+         */
+        const lastFireAtMs = this.lastTimerFireAtMs.get(agent.id);
+        // Sample the clock once so the gate decision and the logged age agree.
+        const sinceLastFireMs = typeof lastFireAtMs === "number" ? Date.now() - lastFireAtMs : Number.POSITIVE_INFINITY;
+        const timerFiredWithinStaleWindow = sinceLastFireMs <= staleThresholdMs;
+        if (hasTimerEntry && staleAtRepair && timerFiredWithinStaleWindow) {
+          this.nonAdvancingRearmState.delete(agent.id);
+          heartbeatLog.log(
+            `Timer audit left live-but-skipping timer for ${agent.id} untouched (audit:${reason}): interval fired ${Math.round(sinceLastFireMs / 1000)}s ago; frozen lastHeartbeatAt reflects skipped/no-op delivery, not a dead timer`,
+          );
+          continue;
+        }
+
         const isZombieRearm = hasTimerEntry && staleAtRepair;
 
         const activeRun = await this.store.getActiveHeartbeatRun(agent.id);
@@ -5093,7 +5202,17 @@ export class HeartbeatTriggerScheduler {
         if (nonAdvancingEscalated) {
           /*
            * FNXC:AgentHeartbeat 2026-07-13-07:39:
-           * FN-7939 — a zombie-timer re-arm that never restores delivery must become visible after a bounded count. Persistent skip/parallel guards can otherwise leave lastHeartbeatAt frozen while the audit rewrites `zombie-timer-rearmed` metadata forever, recreating multi-hour silent drift under a nominally active timer entry.
+           * FN-7939 — a zombie-timer re-arm that never restores delivery must become visible after a bounded count.
+           *
+           * FNXC:AgentHeartbeat 2026-07-17-15:40:
+           * This escalation now fires ONLY for a genuinely dead interval: the
+           * `timerFiredWithinStaleWindow` guard above short-circuits any present
+           * timer that is still physically firing (its delivery merely skipped by
+           * budget/pause/idle-skip/no-assignment), so a live-but-skipping timer no
+           * longer reaches this path. Previously it did — the audit rewrote
+           * `zombie-timer-rearmed` metadata every 60s for hours and emitted this
+           * escalation for agents whose timers were perfectly healthy, because
+           * `lastHeartbeatAt` (delivery) was conflated with interval liveness.
            */
           heartbeatLog.warn(
             `Timer audit escalated non-advancing zombie re-arm reason=heartbeat-rearm-nonadvancing-escalated agentId=${agent.id} count=${consecutiveNonAdvancingRearms} threshold=${HeartbeatTriggerScheduler.NON_ADVANCING_REARM_ESCALATION_THRESHOLD} (audit:${reason}): ${staleRepairReason}`,
@@ -5119,8 +5238,34 @@ export class HeartbeatTriggerScheduler {
    * Handle a timer tick for an agent.
    * Checks for active runs before invoking the callback.
    */
-  private async onTimerTick(agentId: string, intervalMs: number): Promise<void> {
+  private async onTimerTick(agentId: string, intervalMs: number, armId?: number): Promise<void> {
     if (!this.running) return;
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-17-18:15:
+     * Reject superseded ticks BEFORE recording liveness or dispatching. Timer
+     * callbacks carry the per-arm identity they were scheduled under
+     * (applyTimerRegistration); any re-arm — a re-registration, an unregister, or
+     * the settings-multiplier re-arm — advances the agent's current arm, so a
+     * stale/already-queued callback from a replaced timer no longer matches.
+     * Without this, that old callback could stamp `lastTimerFireAtMs` for the
+     * CURRENT (possibly dead) timer and mask a needed repair for a full stale
+     * window. Legacy/direct callers pass no armId and are unaffected.
+     */
+    if (armId !== undefined && this.currentTimerArm.get(agentId) !== armId) {
+      return;
+    }
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-17-15:40:
+     * Stamp the physical fire BEFORE any gate. This records that the interval is
+     * alive regardless of whether delivery proceeds below (skip guards, active
+     * run, budget/pause). The audit's zombie detection consumes this so a live
+     * timer whose delivery is intentionally skipped is never re-armed as a dead
+     * "zombie". Stamped even on the paths that `return` early — a fired-but-
+     * skipped tick is still proof of liveness.
+     */
+    this.lastTimerFireAtMs.set(agentId, Date.now());
 
     try {
       const agent = await this.store.getAgent(agentId);

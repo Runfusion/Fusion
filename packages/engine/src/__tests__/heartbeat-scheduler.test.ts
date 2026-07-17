@@ -377,6 +377,11 @@ describe("HeartbeatTriggerScheduler", () => {
       expect((scheduler as any).nonAdvancingRearmState.has(agent.id)).toBe(false);
 
       agent.lastHeartbeatAt = new Date(Date.now() - 162_000_001).toISOString();
+      // A genuinely dead interval also has no physical fire within the shared
+      // window — age the timer-liveness marker too, which is what now
+      // distinguishes a zombie from a live-but-skipping timer (frozen
+      // lastHeartbeatAt alone no longer implies death).
+      (scheduler as any).lastTimerFireAtMs.set(agent.id, Date.now() - 162_000_001);
       await (scheduler as any).auditTimerRegistrations("interval");
       expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
     });
@@ -818,6 +823,145 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(callback).toHaveBeenCalledWith("agent-long", "timer", expect.anything());
       });
 
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-16:30:
+       * Greptile PR #2271 P1 regression: liveness must be anchored to the CURRENT
+       * timer, not to a fire recorded before the timer was (re-)armed. After an
+       * interval increase, an old timer's fire must not vouch for the replacement
+       * against the new (larger) stale window. `applyTimerRegistration` re-stamps
+       * `lastTimerFireAtMs` at arm time, so the staleness clock restarts on every
+       * (re-)registration and a dead replacement is still repaired on schedule.
+       */
+      it("re-anchors the fire-liveness marker to the current timer on re-registration (interval increase)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        // Short interval first; a real fire records liveness under the old timer.
+        const agent = buildAgent({ id: "agent-reReg", heartbeatIntervalMs: 300_000 });
+        vi.mocked(store.listAgents).mockImplementation(async () => [agent]);
+        vi.mocked(store.getAgent).mockResolvedValue(agent);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(6 * 60_000); // fires at 5min under the 5min interval
+
+        const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+        const fireMarkers = (scheduler as unknown as { lastTimerFireAtMs: Map<string, number> }).lastTimerFireAtMs;
+        expect(fireMarkers.get("agent-reReg")).toBe(t0 + 5 * 60_000); // last physical fire at 5min
+
+        // Interval increases to 1h; syncTimerForAgent-style re-registration replaces
+        // the timer. The marker MUST re-anchor to NOW (6min) so the old 5min fire
+        // cannot vouch for the new 1h timer against the new 2h stale window.
+        (agent.runtimeConfig as Record<string, unknown>).heartbeatIntervalMs = 3_600_000;
+        scheduler.registerAgent("agent-reReg", { enabled: true, heartbeatIntervalMs: 3_600_000 }, { lastHeartbeatAt: agent.lastHeartbeatAt });
+        expect(fireMarkers.get("agent-reReg")).toBe(t0 + 6 * 60_000); // re-anchored to re-registration time
+
+        // Kill the freshly-armed replacement — a genuinely dead replacement timer.
+        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
+        clearInterval(timers.get("agent-reReg")!.handle as ReturnType<typeof setInterval>);
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Advance well past the new 2h window (measured from the ~6min
+        // re-registration), plus a trailing tick to let the catch-up dispatch
+        // fire. The dead replacement must be repaired, not masked forever.
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 + 10 * 60_000);
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(callback).toHaveBeenCalledWith("agent-reReg", "timer", expect.anything());
+      });
+
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-18:15:
+       * Greptile PR #2271 P1 (queued-callback ordering): a callback from a
+       * superseded timer that runs AFTER re-registration must not stamp liveness
+       * or dispatch for the replacement timer. Timer callbacks carry their per-arm
+       * identity; onTimerTick rejects a mismatched arm before recording
+       * lastTimerFireAtMs or invoking the callback.
+       */
+      it("rejects a superseded timer tick (stale arm identity) so it neither dispatches nor records liveness", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildAgent({ id: "agent-arm", heartbeatIntervalMs: 3_600_000 });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getAgent).mockResolvedValue(agent);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const arms = (scheduler as unknown as { currentTimerArm: Map<string, number> }).currentTimerArm;
+        const fireMarkers = (scheduler as unknown as { lastTimerFireAtMs: Map<string, number> }).lastTimerFireAtMs;
+        const currentArm = arms.get("agent-arm")!;
+        const staleArm = currentArm - 1;
+
+        callback.mockClear();
+        fireMarkers.delete("agent-arm"); // so any stamp below is detectable
+
+        // A leftover callback from a superseded arm fires with the OLD arm id.
+        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, arm?: number) => Promise<void> })
+          .onTimerTick("agent-arm", 3_600_000, staleArm);
+        expect(callback).not.toHaveBeenCalled();
+        expect(fireMarkers.has("agent-arm")).toBe(false);
+
+        // A tick from the CURRENT arm is honored: it records liveness and dispatches.
+        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, arm?: number) => Promise<void> })
+          .onTimerTick("agent-arm", 3_600_000, currentArm);
+        expect(callback).toHaveBeenCalledWith("agent-arm", "timer", expect.anything());
+        expect(fireMarkers.has("agent-arm")).toBe(true);
+      });
+
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-18:15:
+       * Greptile PR #2271 P1 (interval-transition leak): a phase-alignment timeout
+       * whose arm has been superseded must NOT transition to a steady interval,
+       * else it installs an untracked interval over the live replacement in
+       * this.timers — leaking a duplicate-firing timer that later cleanup never
+       * reaches. The timeout→interval transition is gated on the arm still being
+       * current.
+       */
+      it("a superseded phase-alignment timeout does not install a steady interval (no leaked/untracked timer)", async () => {
+        vi.useFakeTimers();
+        // now = 00:30, lastHeartbeatAt = 00:00, interval 1h → a phase-alignment
+        // setTimeout that fires 30min out (deterministic, not the random overdue jitter).
+        vi.setSystemTime(new Date("2026-01-01T00:30:00.000Z"));
+
+        const agent = buildAgent({
+          id: "agent-leak",
+          heartbeatIntervalMs: 3_600_000,
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getAgent).mockResolvedValue(agent);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const timers = (scheduler as unknown as { timers: Map<string, { kind: string }> }).timers;
+        const arms = (scheduler as unknown as { currentTimerArm: Map<string, number> }).currentTimerArm;
+        expect(timers.get("agent-leak")?.kind).toBe("timeout"); // phase-alignment timeout armed
+        callback.mockClear();
+
+        // Simulate the queued-callback race: a re-registration superseded THIS arm
+        // (advance the current arm) while the already-scheduled timeout still fires.
+        arms.set("agent-leak", arms.get("agent-leak")! + 1);
+
+        // Fire the (now superseded) phase timeout.
+        await vi.advanceTimersByTimeAsync(31 * 60_000);
+
+        // The superseded timeout must neither dispatch nor transition to a steady
+        // interval — the tracked entry stays the (now-consumed) timeout, and no
+        // untracked interval was installed over a replacement.
+        expect(callback).not.toHaveBeenCalledWith("agent-leak", "timer", expect.anything());
+        expect(timers.get("agent-leak")?.kind).not.toBe("interval");
+      });
+
       it("pause guards still suppress dispatch after a zombie re-arm (does not regress FN-2658)", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
@@ -1050,7 +1194,19 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated"));
       });
 
-      it("escalates repeated zombie re-arms when skipHeartbeatWhenIdle prevents lastHeartbeatAt from advancing", async () => {
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-15:40:
+       * Corrected invariant (supersedes the prior FN-7939 behavior that escalated
+       * here): a LIVE timer whose delivery is intentionally skipped
+       * (`skipHeartbeatWhenIdle` on an idle agent) freezes `lastHeartbeatAt`
+       * without being a dead "zombie". Because the interval keeps physically
+       * firing, the audit must recognize it via `lastTimerFireAtMs` and leave it
+       * alone — no zombie re-arm churn and no `heartbeat-rearm-nonadvancing-escalated`
+       * warning. The prior test killed the interval (mis-modeling a dead timer)
+       * and asserted escalation; that escalation was the bug — an idle skip-agent
+       * with a healthy timer was being flagged for hours.
+       */
+      it("does NOT escalate or churn zombie re-arms for a live-but-idle-skipping timer (frozen lastHeartbeatAt is intentional, not a dead timer)", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
@@ -1058,6 +1214,7 @@ describe("HeartbeatTriggerScheduler", () => {
           "agent-churn": buildAgent({
             id: "agent-churn",
             heartbeatIntervalMs: 120_000,
+            taskId: undefined,
             runtimeConfig: { enabled: true, heartbeatIntervalMs: 120_000, skipHeartbeatWhenIdle: true },
           }),
         };
@@ -1073,21 +1230,71 @@ describe("HeartbeatTriggerScheduler", () => {
         scheduler.start();
         await vi.advanceTimersByTimeAsync(0);
 
-        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
-        clearInterval(timers.get("agent-churn")!.handle as ReturnType<typeof setInterval>);
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Leave the interval ALIVE. It fires every 2min and returns early at the
+        // skipHeartbeatWhenIdle gate (no task) — delivery never advances
+        // lastHeartbeatAt, but the timer is provably firing. Span well past the
+        // 2x-interval (4min) stale threshold.
+        await vi.advanceTimersByTimeAsync(12 * 60_000);
+
+        // Idle-skip: onTimerTick returns before the callback, so no dispatch.
+        expect(callback).not.toHaveBeenCalled();
+        // The fix: a live timer is never treated as a zombie, so neither the
+        // re-arm nor the escalation warning is ever emitted.
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated"));
+        // And the audit takes the explicit "leave live-but-skipping timer alone" path.
+        expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("left live-but-skipping timer for agent-churn untouched"));
+        expect((scheduler as any).nonAdvancingRearmState.has("agent-churn")).toBe(false);
+      });
+
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-15:40:
+       * Production repro (idle "org" agents completing as `no_assignment_identity_run`,
+       * plus over-budget / engine-paused skips): the timer fires and the run
+       * completes, but the completion path does not record an "ok" heartbeat, so
+       * `lastHeartbeatAt` stays frozen. Before the fix this drove the 60s audit to
+       * re-arm every cycle and escalate for hours (observed: 3–63 consecutive
+       * non-advancing re-arms across every permanent agent). The live-timer guard
+       * must suppress that churn regardless of WHY delivery did not advance.
+       */
+      it("does NOT escalate or churn when a live timer dispatches but delivery leaves lastHeartbeatAt frozen (budget/no-assignment skip)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agents: Record<string, Agent> = {
+          "agent-noadvance": buildAgent({ id: "agent-noadvance", heartbeatIntervalMs: 120_000 }),
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => Object.values(agents));
+        vi.mocked(store.getAgent).mockImplementation(async (agentId: string) => agents[agentId] ?? null);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+        vi.mocked(store.updateAgent).mockImplementation(async (agentId: string, updates: Partial<Agent>) => {
+          agents[agentId] = { ...agents[agentId], ...updates } as Agent;
+          return agents[agentId];
+        });
+        // Callback runs (the run executes) but does NOT advance lastHeartbeatAt —
+        // exactly the skipped/no-op-delivery completion shape.
+        callback.mockResolvedValue(undefined);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
         callback.mockClear();
         vi.mocked(heartbeatLog.warn).mockClear();
 
         await vi.advanceTimersByTimeAsync(12 * 60_000);
 
-        expect(callback).not.toHaveBeenCalled();
-        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated agentId=agent-churn"));
-        expect((agents["agent-churn"].metadata as Record<string, any>).heartbeatTimerRepair).toEqual(
-          expect.objectContaining({
-            staleAtRepair: true,
-            staleRepairReason: expect.stringContaining("heartbeat-rearm-nonadvancing-escalated"),
-          }),
-        );
+        // The timer is alive: it dispatched on its own cadence (6 fires / 12min).
+        expect(callback.mock.calls.filter((c) => c[0] === "agent-noadvance").length).toBeGreaterThanOrEqual(5);
+        // Delivery never advanced lastHeartbeatAt...
+        expect(agents["agent-noadvance"].lastHeartbeatAt).toBe("2026-01-01T00:00:00.000Z");
+        // ...yet the audit must not misclassify the healthy timer as a zombie.
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("reason=heartbeat-rearm-nonadvancing-escalated"));
+        expect((scheduler as any).nonAdvancingRearmState.has("agent-noadvance")).toBe(false);
       });
     });
 
