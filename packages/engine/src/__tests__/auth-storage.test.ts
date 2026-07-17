@@ -218,17 +218,19 @@ describe("createFusionAuthStorage", () => {
       expect(authStorage.hasAuth("anthropic")).toBe(true);
     });
 
-    // FNXC:ProviderAuth 2026-07-16-11:00 — Symptom Verification for the pi-ai >=0.80 read()-based
-    // auth-resolution regression. Original symptom: a subscription-only Anthropic login (stored only
-    // under `anthropic-subscription`) failed every task with "Provider is not configured: anthropic"
-    // because pi-ai's resolveProviderAuth calls credentials.read("anthropic") directly instead of
-    // fusion's getApiKey("anthropic"), so the subscription->anthropic alias was bypassed. Assert the
-    // credential store's read() path (the exact surface pi-ai uses) resolves the subscription credential.
-    it("aliases Anthropic subscription OAuth through the pi-ai credential-store read('anthropic') path", async () => {
+    // FNXC:ProviderAuth 2026-07-17-06:30 — Symptom Verification for the pi >=0.80.8 ModelRuntime.getAuth
+    // regression. Original symptom: a subscription-only Anthropic login (stored only under
+    // `anthropic-subscription`) failed every task with "Provider is not configured: anthropic" and then
+    // fell back, because pi-ai's resolveProviderAuth reads credentials.read("anthropic") directly and
+    // refreshes an OAuth credential via credentials.modify("anthropic") — but fusion has no raw
+    // `anthropic` row, so the refresh callback saw `current === undefined` and bailed. Fix: read("anthropic")
+    // resolves through fusion's getApiKey (refresh + subscription/raw precedence) and returns a ready
+    // api_key credential carrying the OAuth token (which pi-ai routes as OAuth by its sk-ant-oat prefix).
+    it("resolves Anthropic subscription auth into a ready api_key credential via read('anthropic')", async () => {
       writeFusionAuth(homeDir, {
         "anthropic-subscription": {
           type: "oauth",
-          access: "subscription-access-token",
+          access: "sk-ant-oat01-subscription-access-token",
           refresh: "subscription-refresh-token",
           expires: Date.now() + 3_600_000,
         },
@@ -237,15 +239,11 @@ describe("createFusionAuthStorage", () => {
       const authStorage = createFusionAuthStorage();
       const credentialStore = createFusionCredentialStore(authStorage);
 
-      // pi-ai reads the credential for provider `anthropic` directly; it must see the subscription OAuth.
-      expect(await credentialStore.read("anthropic")).toMatchObject({
-        type: "oauth",
-        access: "subscription-access-token",
-      });
-      // `anthropic-subscription` still reads its own credential unchanged.
-      expect(await credentialStore.read("anthropic-subscription")).toMatchObject({
-        type: "oauth",
-        access: "subscription-access-token",
+      // pi-ai's resolveProviderAuth reads provider `anthropic` directly; it must get a usable credential
+      // whose token still carries the sk-ant-oat prefix so the anthropic-messages layer routes it as OAuth.
+      expect(await credentialStore.read("anthropic")).toEqual({
+        type: "api_key",
+        key: "sk-ant-oat01-subscription-access-token",
       });
     });
 
@@ -254,7 +252,7 @@ describe("createFusionAuthStorage", () => {
         anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
         "anthropic-subscription": {
           type: "oauth",
-          access: "subscription-access-token",
+          access: "sk-ant-oat01-subscription-access-token",
           refresh: "subscription-refresh-token",
           expires: Date.now() + 3_600_000,
         },
@@ -263,7 +261,7 @@ describe("createFusionAuthStorage", () => {
       const authStorage = createFusionAuthStorage();
       const credentialStore = createFusionCredentialStore(authStorage);
 
-      // Raw api_key wins; the subscription alias only fills the gap when no raw/legacy row exists.
+      // Raw api_key wins (getApiKey precedence); the subscription token only fills the gap otherwise.
       expect(await credentialStore.read("anthropic")).toEqual({
         type: "api_key",
         key: "sk-ant-api03-runtime-key",

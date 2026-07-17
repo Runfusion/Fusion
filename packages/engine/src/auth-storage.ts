@@ -147,15 +147,15 @@ class FusionFileAuthStorage implements FusionAuthStorage {
 export function createFusionCredentialStore(authStorage: FusionAuthStorage): CredentialStore {
   return {
     /*
-    FNXC:ProviderAuth 2026-07-16-11:00:
-    pi-ai >=0.80 resolves provider auth by reading the credential store directly (`resolveProviderAuth` -> `credentials.read(provider.id)`) and performs OAuth refresh + auth derivation itself, instead of calling fusion's `getApiKey(provider)`. Fusion persists an Anthropic subscription login under `anthropic-subscription`, but Anthropic model execution requests provider `anthropic`, so the subscription->anthropic aliasing that lived only in `resolveAnthropicRuntimeApiKey` (the getApiKey path) is now bypassed. Without aliasing at the read() layer a subscription-only login surfaces at prompt time as `Provider is not configured: anthropic` even though the status card shows "connected" (status uses hasVisibleAnthropicCredential, a different path). When no raw/legacy `anthropic` credential exists, alias the separated `anthropic-subscription` OAuth credential into read("anthropic") so pi-ai runs it on the built-in provider (/v1 Claude Code impersonation). A raw `anthropic` api_key or legacy oauth row still wins. See resolveAnthropicRuntimeApiKey for the mirror precedence.
+    FNXC:ProviderAuth 2026-07-17-06:30:
+    pi >=0.80.8 moved session request auth from `ModelRegistry.getApiKeyAndHeaders` (which called fusion's `getApiKey(provider)`) to `ModelRuntime.getAuth` -> pi-ai `resolveProviderAuth`, which reads the credential store directly (`credentials.read(provider.id)`) and, for an OAuth credential, refreshes it ITSELF via `credentials.modify(provider.id, ...)`. That refresh path is broken for Anthropic: fusion persists the subscription login under `anthropic-subscription` (there is NO raw `anthropic` row), so `modify("anthropic")` reads `current === undefined`, the refresh callback bails, and `resolveStoredOAuth` returns undefined -> the task fails with `Provider is not configured: anthropic` (then falls back). The status card still shows "connected" because status uses a different path (hasVisibleAnthropicCredential). Fix: resolve Anthropic auth through fusion's `getApiKey("anthropic")`, the battle-tested path that already handles token refresh + the raw-key/legacy-oauth/subscription/fallback precedence (see resolveAnthropicRuntimeApiKey), and hand pi-ai a ready-to-use api_key credential. pi-ai's anthropic-messages layer routes by token prefix — `sk-ant-oat*` -> OAuth Bearer + Claude Code identity headers, otherwise x-api-key — so a subscription OAuth token still runs as OAuth, and returning it as `api_key` deliberately bypasses pi-ai's own (broken-for-us) OAuth refresh-via-modify. Other OAuth providers (openai-codex, github-copilot) are stored under their own provider id, so read/modify share an id and pi-ai's refresh works — only Anthropic needs this indirection.
     */
     read: async (providerId) => {
-      const credential = authStorage.get(providerId) as Credential | undefined;
-      if (!credential && providerId === ANTHROPIC_PROVIDER_ID) {
-        return authStorage.get(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) as Credential | undefined;
+      if (providerId === ANTHROPIC_PROVIDER_ID) {
+        const token = await authStorage.getApiKey(ANTHROPIC_PROVIDER_ID);
+        return token ? ({ type: "api_key", key: token } as Credential) : undefined;
       }
-      return credential;
+      return authStorage.get(providerId) as Credential | undefined;
     },
     list: async () => authStorage.list().flatMap((providerId): CredentialInfo[] => {
       const credential = authStorage.get(providerId);
