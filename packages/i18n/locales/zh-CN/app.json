@@ -3322,7 +3322,8 @@
     "unpauseUnavailable": "恢复操作不可用",
     "useProjectDefault": "使用项目默认",
     "viewOptions": "视图选项",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "重新规划"
   },
   "mailbox": {
     "agent": "代理",
@@ -5906,7 +5907,11 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "移动端底部快捷操作",
+      "mobileNavPrimaryItemsHint": "默认：仪表盘、任务、代理、任务组、聊天、邮箱。未选中的目标仍保留在“更多”菜单中。",
+      "moveNavItemEarlier": "将 {{item}} 前移",
+      "moveNavItemLater": "将 {{item}} 后移"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -8381,7 +8386,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "重新规划"
   },
   "terminal": {
     "arrowKeysLabel": "",

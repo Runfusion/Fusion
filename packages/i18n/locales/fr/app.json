@@ -3322,7 +3322,8 @@
     "unpauseUnavailable": "L'action Reprendre est indisponible",
     "useProjectDefault": "Utiliser le défaut du projet",
     "viewOptions": "Options d'affichage",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "Replanifier"
   },
   "mailbox": {
     "agent": "Agent",
@@ -5906,7 +5907,11 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "Actions rapides du bas mobile",
+      "mobileNavPrimaryItemsHint": "Par défaut : Tableau de bord, Tâches, Agents, Missions, Chat, Boîte de réception. Les destinations non sélectionnées restent dans le menu Plus.",
+      "moveNavItemEarlier": "Déplacer {{item}} plus tôt",
+      "moveNavItemLater": "Déplacer {{item}} plus tard"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -8381,7 +8386,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "Replanifier"
   },
   "terminal": {
     "arrowKeysLabel": "",

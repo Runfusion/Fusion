@@ -130,9 +130,16 @@ describe("computeBlockerFanoutMap", () => {
 
   it("keeps the dashboard fallback aligned with the documented self-healing default seed", () => {
     const testDir = dirname(fileURLToPath(import.meta.url));
-    const source = readFileSync(resolve(testDir, "../../../../engine/src/self-healing.ts"), "utf8");
-    const match = source.match(/export const MAX_AUTO_MERGE_RETRIES = (\d+);/);
+    /*
+    FNXC:DashboardTests 2026-07-17-11:45:
+    Wave-8 peeled MAX_AUTO_MERGE_RETRIES into self-healing-constants.ts (re-exported
+    from self-healing.ts). Read the constant definition file so this alignment
+    guard still pins the dashboard seed to the engine default of 3.
+    */
+    const constantsSource = readFileSync(resolve(testDir, "../../../../engine/src/self-healing-constants.ts"), "utf8");
+    const match = constantsSource.match(/export const MAX_AUTO_MERGE_RETRIES = (\d+);/);
     expect(match?.[1]).toBe(String(MAX_AUTO_MERGE_RETRIES));
+    const source = readFileSync(resolve(testDir, "../../../../engine/src/self-healing.ts"), "utf8");
     expect(source).toContain("SelfHealingManager must call resolveMaxAutoMergeRetries(settings)");
   });
 });

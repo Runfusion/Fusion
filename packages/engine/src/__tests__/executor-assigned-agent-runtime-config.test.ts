@@ -10,6 +10,13 @@ function createStore() {
   return {
     on: vi.fn(),
     getFusionDir: vi.fn(() => "/worktree/.fusion"),
+    /*
+    FNXC:EngineTests 2026-07-17-11:45:
+    getAuthoritativeAssignedAgent requires store.getAsyncLayer() so the fallback
+    AgentStore runs in PostgreSQL backend mode. A missing method throws, is
+    swallowed, and the lookup returns null — defeating the runtimeConfig spy.
+    */
+    getAsyncLayer: vi.fn(() => ({ kind: "test-async-layer" })),
   } as any;
 }
 

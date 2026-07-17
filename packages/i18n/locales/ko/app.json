@@ -3322,7 +3322,8 @@
     "unpauseUnavailable": "재개 작업을 사용할 수 없습니다",
     "useProjectDefault": "프로젝트 기본값 사용",
     "viewOptions": "보기 옵션",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "재계획"
   },
   "mailbox": {
     "agent": "에이전트",
@@ -5906,7 +5907,11 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "모바일 하단 빠른 작업",
+      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 작업, 에이전트, 미션, 채팅, 메일함. 선택하지 않은 목적지는 더보기 메뉴에 유지됩니다.",
+      "moveNavItemEarlier": "{{item}} 앞으로 이동",
+      "moveNavItemLater": "{{item}} 뒤로 이동"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -8381,7 +8386,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "재계획"
   },
   "terminal": {
     "arrowKeysLabel": "",

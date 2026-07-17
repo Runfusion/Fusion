@@ -3322,7 +3322,8 @@
     "unpauseUnavailable": "恢復操作無法使用",
     "useProjectDefault": "使用專案預設",
     "viewOptions": "檢視選項",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "重新規劃"
   },
   "mailbox": {
     "agent": "代理",
@@ -5906,7 +5907,11 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "行動版底部快捷操作",
+      "mobileNavPrimaryItemsHint": "預設：儀表板、任務、代理、任務組、聊天、信箱。未選取的目的地仍保留在「更多」選單中。",
+      "moveNavItemEarlier": "將 {{item}} 前移",
+      "moveNavItemLater": "將 {{item}} 後移"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -8381,7 +8386,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "重新規劃"
   },
   "terminal": {
     "arrowKeysLabel": "",

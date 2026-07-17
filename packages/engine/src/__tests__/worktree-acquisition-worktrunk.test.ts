@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execMock, existsSyncMock } = vi.hoisted(() => {
   const mock = vi.fn();
@@ -7,7 +10,16 @@ const { execMock, existsSyncMock } = vi.hoisted(() => {
 });
 
 vi.mock("node:child_process", () => ({ exec: execMock, execFile: vi.fn() }));
-vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
+/*
+FNXC:EngineTests 2026-07-17-11:55:
+Path reservation now mkdirs lock state under rootDir/.worktrees before create.
+Keep real node:fs/promises so reservation works against a temp root; only stub
+existsSync for worktrunk path existence checks.
+*/
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, existsSync: existsSyncMock };
+});
 vi.mock("../worktree-hooks.js", () => ({
   installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),
   IDENTITY_GUARD_BYPASS_ENV: "FUSION_MERGER_BYPASS_IDENTITY_GUARD",
@@ -46,20 +58,33 @@ const makeAudit = () => {
   };
 };
 
-beforeEach(() => {
-  execMock.mockReset();
-  existsSyncMock.mockReset();
-  existsSyncMock.mockReturnValue(true);
-});
-
 describe("acquireTaskWorktree worktrunk wiring", () => {
+  const roots: string[] = [];
+
+  async function makeRootDir(): Promise<string> {
+    const rootDir = await mkdtemp(join(tmpdir(), "fusion-wt-"));
+    roots.push(rootDir);
+    return rootDir;
+  }
+
+  beforeEach(() => {
+    execMock.mockReset();
+    existsSyncMock.mockReset();
+    existsSyncMock.mockReturnValue(true);
+  });
+
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
   it("uses native by default when worktrunk settings absent", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "" });
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const rootDir = await makeRootDir();
 
     const result = await acquireTaskWorktree({
       task,
-      rootDir: "/repo",
+      rootDir,
       store: makeStore() as any,
       settings: {},
     });
@@ -79,10 +104,11 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
   it("prefers explicit createWorktree override", async () => {
     const createWorktree = vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" });
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const rootDir = await makeRootDir();
 
     await acquireTaskWorktree({
       task,
-      rootDir: "/repo",
+      rootDir,
       store: makeStore() as any,
       settings: { worktrunk: { enabled: true, binaryPath: "wt" } } as any,
       createWorktree,
@@ -93,12 +119,13 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
   });
 
   it("emits worktrunk + native create audits when worktrunk succeeds", async () => {
+    const rootDir = await makeRootDir();
     execMock.mockImplementation((command: string) => {
       if (command.includes('"config" "show"')) return Promise.resolve({ stdout: "", stderr: "" });
       if (command.includes('"switch" "--create"')) return Promise.resolve({ stdout: "", stderr: "" });
       if (command === "git worktree list --porcelain") {
         return Promise.resolve({
-          stdout: "worktree /repo/.worktrees/fusion/fn-1\nbranch refs/heads/fusion/fn-1\n",
+          stdout: `worktree ${rootDir}/.worktrees/fusion/fn-1\nbranch refs/heads/fusion/fn-1\n`,
           stderr: "",
         });
       }
@@ -109,7 +136,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
     await acquireTaskWorktree({
       task,
-      rootDir: "/repo",
+      rootDir,
       store: makeStore() as any,
       settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fail" } } as any,
       audit: audit as any,
@@ -122,30 +149,32 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
   it("propagates resolved worktrunk path into result and task store", async () => {
     const store = makeStore();
+    const rootDir = await makeRootDir();
+    const resolvedPath = join(rootDir, ".worktrees/custom/fusion-fn-1");
     execMock.mockImplementation((command: string) => {
       if (command.includes('"config" "show"')) return Promise.resolve({ stdout: "", stderr: "" });
       if (command.includes('"switch" "--create"')) return Promise.resolve({ stdout: "", stderr: "" });
       if (command === "git worktree list --porcelain") {
         return Promise.resolve({
-          stdout: "worktree /repo/.worktrees/custom/fusion-fn-1\nbranch refs/heads/fusion/fn-1\n",
+          stdout: `worktree ${resolvedPath}\nbranch refs/heads/fusion/fn-1\n`,
           stderr: "",
         });
       }
       return Promise.resolve({ stdout: "", stderr: "" });
     });
-    existsSyncMock.mockImplementation((path: string) => path === "/repo/.worktrees/custom/fusion-fn-1");
+    existsSyncMock.mockImplementation((path: string) => path === resolvedPath);
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
 
     const result = await acquireTaskWorktree({
       task,
-      rootDir: "/repo",
+      rootDir,
       store: store as any,
       settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fail" } } as any,
     });
 
-    expect(result.worktreePath).toBe("/repo/.worktrees/custom/fusion-fn-1");
+    expect(result.worktreePath).toBe(resolvedPath);
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
-      worktree: "/repo/.worktrees/custom/fusion-fn-1",
+      worktree: resolvedPath,
       branch: "fusion/fn-1",
     });
   });
@@ -154,11 +183,12 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
     execMock.mockRejectedValue({ stderr: "nope", status: 9 });
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
     const { audit, events } = makeAudit();
+    const rootDir = await makeRootDir();
 
     await expect(
       acquireTaskWorktree({
         task,
-        rootDir: "/repo",
+        rootDir,
         store: makeStore() as any,
         settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fail" } } as any,
         audit: audit as any,
@@ -181,10 +211,11 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
     });
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
     const { audit, events } = makeAudit();
+    const rootDir = await makeRootDir();
 
     await acquireTaskWorktree({
       task,
-      rootDir: "/repo",
+      rootDir,
       store: makeStore() as any,
       settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fallback-native" } } as any,
       audit: audit as any,
@@ -198,11 +229,12 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
 
   it("fails with binary missing when enabled and binaryPath absent", async () => {
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const rootDir = await makeRootDir();
 
     await expect(
       acquireTaskWorktree({
         task,
-        rootDir: "/repo",
+        rootDir,
         store: makeStore() as any,
         settings: { worktrunk: { enabled: true, onFailure: "fail" } } as any,
       }),
@@ -212,10 +244,11 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
   it("uses custom backend when provided", async () => {
     const create = vi.fn().mockResolvedValue({ path: "/tmp/custom", branch: "fusion/fn-1-custom" });
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+    const rootDir = await makeRootDir();
 
     const result = await acquireTaskWorktree({
       task,
-      rootDir: "/repo",
+      rootDir,
       store: makeStore() as any,
       settings: { worktrunk: { enabled: true, binaryPath: "wt" } } as any,
       backend: {
@@ -237,11 +270,11 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
     expect(execMock).toHaveBeenCalledTimes(2);
     expect(execMock).toHaveBeenCalledWith(
       "git symbolic-ref --short refs/remotes/origin/HEAD",
-      expect.objectContaining({ cwd: "/repo" }),
+      expect.objectContaining({ cwd: rootDir }),
     );
     expect(execMock).toHaveBeenCalledWith(
       "git remote",
-      expect.objectContaining({ cwd: "/repo" }),
+      expect.objectContaining({ cwd: rootDir }),
     );
   });
 });

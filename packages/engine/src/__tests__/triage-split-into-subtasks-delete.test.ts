@@ -66,6 +66,8 @@ function createStore(overrides: Partial<TaskStore> = {}): TaskStore {
       planningFallbackModelId: "fallback-model",
     } as Settings),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    // FNXC:EngineTests 2026-07-17-11:45: flagTriageDuplicate records task:auto-archived-duplicate activity.
+    recordActivity: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
@@ -148,9 +150,26 @@ describe("triage split/delete lineage forwarding", () => {
     }));
   });
 
-  it("passes removeLineageReferences on DUPLICATE close", async () => {
+  it("passes removeLineageReferences on opt-in DUPLICATE delete resolution", async () => {
+    /*
+    FNXC:EngineTests 2026-07-17-11:50:
+    Default triageDuplicateResolution is prompt (flag, not delete). This suite
+    still covers the delete path when operators opt in.
+    */
     const store = createStore({
-      getTask: vi.fn().mockResolvedValue(undefined),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        triageDuplicateResolution: "delete",
+      } as Settings),
+      getTask: vi.fn().mockImplementation(async (id: string) => (
+        id === "FN-4894"
+          ? createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null })
+          : undefined
+      )),
       deleteTask: vi.fn().mockResolvedValue(undefined),
     });
 
