@@ -248,9 +248,19 @@ export class GitHubTrackingCommentService {
       return;
     }
 
+    /*
+     * FNXC:GitHubTrackingComments 2026-07-16-12:40:
+     * A closed tracked issue must link its landing commit when one exists. The task:moved snapshot
+     * can predate mergeDetails persistence on human PR, no-op, and recovery done paths, so re-read
+     * the authoritative row before building the Done comment. Fall back to the snapshot when the
+     * read fails so the comment is never dropped.
+     */
+    const taskForComment = event.to === "done"
+      ? await this.store.getTask(event.task.id).catch(() => null) ?? event.task
+      : event.task;
     const body = event.to === "done"
-      ? formatTrackingComment(event.task, event.to, { owner, repo })
-      : formatTrackingComment(event.task, event.to);
+      ? formatTrackingComment(taskForComment, event.to, { owner, repo })
+      : formatTrackingComment(taskForComment, event.to);
 
     try {
       const projectSettings = await this.store.getSettings() as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
