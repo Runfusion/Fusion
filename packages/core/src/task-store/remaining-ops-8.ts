@@ -31,7 +31,7 @@ import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
 import { ActivityLogRow } from "./row-types.js";
 import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
@@ -984,13 +984,33 @@ export function getExperimentSessionStoreImpl(store: TaskStore): ExperimentSessi
     return store.experimentSessionStore;
 }
 
-export function getVerificationCacheHitImpl(store: TaskStore,
+/*
+FNXC:PostgresOnlyDataAccess 2026-07-16-11:40:
+The merger's deterministic-verification cache read at merger.ts ran the sync
+SQLite branch unguarded, so every backend-mode merge with a resolvable tree sha
+threw "SQLite Database is not available". Both cache ops are now async and route
+to the project-schema verification_cache table in backend mode.
+*/
+export async function getVerificationCacheHitImpl(store: TaskStore,
     treeSha: string,
     testCommand: string,
     buildCommand: string,
-  ): { recordedAt: string; taskId: string | null } | null {
+  ): Promise<{ recordedAt: string; taskId: string | null } | null> {
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
+    if (store.backendMode) {
+      const table = schema.project.verificationCache;
+      const rows = await store.asyncLayer!.db
+        .select({ recordedAt: table.recordedAt, taskId: table.taskId })
+        .from(table)
+        .where(and(
+          eq(table.treeSha, treeSha),
+          eq(table.testCommand, normalizedTest),
+          eq(table.buildCommand, normalizedBuild),
+        ))
+        .limit(1);
+      return rows[0] ?? null;
+    }
     const row = store.db
       .prepare(
         `SELECT recordedAt, taskId FROM verification_cache
@@ -1002,15 +1022,32 @@ export function getVerificationCacheHitImpl(store: TaskStore,
     return row ?? null;
 }
 
-export function recordVerificationCachePassImpl(store: TaskStore,
+export async function recordVerificationCachePassImpl(store: TaskStore,
     treeSha: string,
     testCommand: string,
     buildCommand: string,
     taskId: string,
-  ): void {
+  ): Promise<void> {
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
     const recordedAt = new Date().toISOString();
+    if (store.backendMode) {
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-16-11:55:
+      Target the PK by constraint name: migration 0006_project_ownership
+      rebuilds every project-schema PK to lead with project_id, so a
+      column-list ON CONFLICT on the three logical key columns cannot infer
+      the arbiter index (42P10). project_id itself comes from the column's
+      current_setting('fusion.project_id') default under RLS.
+      */
+      await store.asyncLayer!.db.execute(sql`
+        INSERT INTO project.verification_cache (tree_sha, test_command, build_command, recorded_at, task_id)
+        VALUES (${treeSha}, ${normalizedTest}, ${normalizedBuild}, ${recordedAt}, ${taskId})
+        ON CONFLICT ON CONSTRAINT verification_cache_pkey
+        DO UPDATE SET recorded_at = EXCLUDED.recorded_at, task_id = EXCLUDED.task_id
+      `);
+      return;
+    }
     store.db
       .prepare(
         `INSERT OR REPLACE INTO verification_cache (treeSha, testCommand, buildCommand, recordedAt, taskId)

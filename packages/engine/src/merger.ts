@@ -770,7 +770,7 @@ async function runDeterministicVerification(
   }
 
   if (treeSha) {
-    const cacheHit = store.getVerificationCacheHit(treeSha, effectiveTestCommand, effectiveBuildCommand);
+    const cacheHit = await store.getVerificationCacheHit(treeSha, effectiveTestCommand, effectiveBuildCommand);
     if (cacheHit) {
       const sha7 = treeSha.slice(0, 7);
       const msg = `Skipping deterministic verification — cached pass for tree ${sha7} (recorded at ${cacheHit.recordedAt}, by ${cacheHit.taskId ?? "unknown"})`;
@@ -1000,7 +1000,7 @@ async function runDeterministicVerification(
   // ── Record cache pass ──────────────────────────────────────────────────
   if (treeSha) {
     try {
-      store.recordVerificationCachePass(treeSha, effectiveTestCommand, effectiveBuildCommand, taskId);
+      await store.recordVerificationCachePass(treeSha, effectiveTestCommand, effectiveBuildCommand, taskId);
       mergerLog.log(`${taskId}: Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
       await store.logEntry(taskId, `Recorded verification pass for tree ${treeSha.slice(0, 7)}`);
     } catch (err) {
@@ -9121,7 +9121,7 @@ export async function aiMergeTask(
             });
             const treeSha = treeOut.trim();
             if (!treeSha) continue;
-            const cacheHit = store.getVerificationCacheHit(treeSha, effectiveTestCommand ?? "", effectiveBuildCommand ?? "");
+            const cacheHit = await store.getVerificationCacheHit(treeSha, effectiveTestCommand ?? "", effectiveBuildCommand ?? "");
             if (cacheHit) {
               verificationPassed = true;
               break;

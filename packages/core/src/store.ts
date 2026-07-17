@@ -2632,12 +2632,12 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   // ── Verification Cache ────────────────────────────────────────────────────
 
 /** Look up a previously recorded verification cache pass for a given tree sha */
-  getVerificationCacheHit( treeSha: string, testCommand: string, buildCommand: string, ): { recordedAt: string; taskId: string | null } | null {
+  async getVerificationCacheHit( treeSha: string, testCommand: string, buildCommand: string, ): Promise<{ recordedAt: string; taskId: string | null } | null> {
     return getVerificationCacheHitImpl(this, treeSha, testCommand, buildCommand);
   }
 
 /** Record a successful verification pass for the given tree sha and commands. */
-  recordVerificationCachePass( treeSha: string, testCommand: string, buildCommand: string, taskId: string, ): void {
+  async recordVerificationCachePass( treeSha: string, testCommand: string, buildCommand: string, taskId: string, ): Promise<void> {
     return recordVerificationCachePassImpl(this, treeSha, testCommand, buildCommand, taskId);
   }
 
