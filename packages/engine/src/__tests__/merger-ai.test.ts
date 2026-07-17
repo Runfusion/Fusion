@@ -1049,6 +1049,68 @@ describe("runAiMerge", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
+  it("finalizes a no-commits all-done task when the branch is missing", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store, task } = makeStore(dir, {
+      branch: "fusion/ghost",
+      baseCommitSha: "0123456789abcdef",
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Audit", status: "done" },
+        { name: "Report", status: "done" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(), reviewAgent: vi.fn(),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+  });
+
+  it("demotes a no-commits task with incomplete steps when the branch is missing", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store, task } = makeStore(dir, {
+      branch: "fusion/ghost",
+      baseCommitSha: "0123456789abcdef",
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Execute", status: "done" },
+        { name: "Testing & Verification", status: "skipped" }, // triggers the guard
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(), reviewAgent: vi.fn(),
+    });
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toContain("skipped verification step");
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
+  });
+
+  it("throws for non-no-commits executed task with missing branch (unchanged invariant)", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store } = makeStore(dir, {
+      branch: "fusion/ghost",
+      baseCommitSha: "0123456789abcdef",
+      // Intentionally NOT noCommitsExpected
+    });
+
+    await expect(runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(), reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    })).rejects.toThrow(/work appears lost/);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("throws a clear error when the task's target branch has no local ref", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     const { store } = makeStore(dir, { baseBranch: "release/9.9" }); // never created locally

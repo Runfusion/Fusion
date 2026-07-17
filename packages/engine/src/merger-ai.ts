@@ -1152,6 +1152,63 @@ export async function runAiMerge(
       task.mergeDetails?.mergeConfirmed === true ||
       !!task.mergeDetails?.commitSha ||
       hasPriorAiNoOpFinalizationProof(task, branch, integrationBranch);
+    /*
+     * FNXC:RUFU-011 2026-07-17-00:00:
+     * No-commits tasks (observational audits, non-code deliverables) never
+     * create git branches with substantive work. When the branch is missing
+     * but the task explicitly expected no commits, route through the
+     * evaluateNoCommitsNoOpFinalize guard. If all steps are done, finalize as
+     * a no-op; if steps are incomplete/skipped, demote to todo with progress
+     * preserved (matching the empty-merge demotion pattern).
+     */
+    if (wasExecuted && !alreadyMerged && task.noCommitsExpected === true) {
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      if (noCommitsFinalize.blocked) {
+        const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no branch changes";
+        await store.updateTask(taskId, { error: reason });
+        await store.logEntry(
+          taskId,
+          `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+          JSON.stringify({
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            branch,
+            integrationBranch,
+            lane: "no-commits-branch-missing",
+          }, null, 2),
+        );
+        await audit.database({
+          type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
+          target: taskId,
+          metadata: {
+            reason,
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            branch,
+            integrationBranch,
+            lane: "no-commits-branch-missing",
+          },
+        });
+        await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        return {
+          task,
+          branch,
+          merged: false,
+          noOp: false,
+          ok: true,
+          reason,
+          error: reason,
+          worktreeRemoved: false,
+          branchDeleted: false,
+        };
+      }
+      await audit.git({
+        type: "merge:ai-no-branch",
+        target: branch,
+        metadata: { taskId, kind: "no-commits-expected", noCommitsExpected: true },
+      });
+      return await finalizeTask(store, taskId, noOpResult(task, branch, "no-commits-expected"), undefined, undefined, projectRootDir);
+    }
     if (wasExecuted && !alreadyMerged) {
       await audit.git({
         type: "merge:ai-no-branch",
