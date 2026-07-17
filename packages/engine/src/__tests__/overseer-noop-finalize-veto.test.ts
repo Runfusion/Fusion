@@ -33,6 +33,9 @@ function entry(overrides: Partial<PlannerInterventionEntry>): PlannerInterventio
 const failedEntry = (overrides: Partial<PlannerInterventionEntry> = {}) =>
   entry({ reason: EXECUTOR_FAILED_INCOMPLETE_REASON, ...overrides });
 
+/** A durable clean-completion task-log marker at `ts` (see @fusion/core CLEAN_COMPLETION_MARKERS). */
+const completionLog = (ts: string) => [{ action: "Task marked done by agent", timestamp: ts }];
+
 const okTask: NoOpFinalizeExecutorVetoTask = {
   userPaused: false,
   paused: false,
@@ -56,17 +59,55 @@ describe("deriveExecutorSignalMemory", () => {
     expect(memory).toEqual({ signal: "failed", incompleteWork: true, observedAt: Date.parse("2026-07-16T22:40:00.000Z") });
   });
 
-  it("a later green executor observation supersedes an earlier failed one (no subsequent-green derivation)", () => {
+  // THE follow-up-3 regression: a mid-execution `progressing` observation is NOT
+  // "completed green" and must NOT clear the failure park's veto.
+  it("a later `progressing` executor observation does NOT supersede an earlier failed one (still vetoed)", () => {
     // Timeline is newest-first, as getPlannerInterventionTimeline returns it.
     const memory = deriveExecutorSignalMemory([
-      entry({ id: "green", timestamp: "2026-07-16T23:10:00.000Z", reason: "Task is actively executing in-progress work" }),
+      entry({ id: "progressing", timestamp: "2026-07-16T23:10:00.000Z", reason: "Task is actively executing in-progress work" }),
       failedEntry({ id: "fail", timestamp: "2026-07-16T22:40:00.000Z" }),
+    ]);
+    expect(memory?.incompleteWork).toBe(true);
+    expect(memory?.signal).toBe("failed");
+  });
+
+  // The FN-8141 shape itself: progressing observations existed BETWEEN two failed
+  // parks; the newest relevant executor signal is failed → stays vetoed.
+  it("keeps the veto when progressing sits between two failed parks (FN-8141 timeline)", () => {
+    const memory = deriveExecutorSignalMemory([
+      failedEntry({ id: "fail-2", timestamp: "2026-07-16T23:20:00.000Z" }),
+      entry({ id: "progressing", timestamp: "2026-07-16T23:00:00.000Z", reason: "Task is actively executing in-progress work" }),
+      failedEntry({ id: "fail-1", timestamp: "2026-07-16T22:40:00.000Z" }),
+    ]);
+    expect(memory?.incompleteWork).toBe(true);
+  });
+
+  it("a clean-completion task-log marker NEWER than the failure park supersedes it (not vetoed)", () => {
+    const memory = deriveExecutorSignalMemory(
+      [failedEntry({ id: "fail", timestamp: "2026-07-16T22:40:00.000Z" })],
+      completionLog("2026-07-16T23:10:00.000Z"),
+    );
+    expect(memory?.incompleteWork).toBe(false);
+    expect(memory?.signal).toBe("progressing");
+  });
+
+  it("a clean-completion task-log marker OLDER than the failure park does NOT supersede it (still vetoed)", () => {
+    const memory = deriveExecutorSignalMemory(
+      [failedEntry({ id: "fail", timestamp: "2026-07-16T22:40:00.000Z" })],
+      completionLog("2026-07-16T22:00:00.000Z"),
+    );
+    expect(memory?.incompleteWork).toBe(true);
+  });
+
+  it("returns incompleteWork:false when there is no failure park at all", () => {
+    const memory = deriveExecutorSignalMemory([
+      entry({ id: "progressing", timestamp: "2026-07-16T23:10:00.000Z", reason: "Task is actively executing in-progress work" }),
     ]);
     expect(memory?.incompleteWork).toBe(false);
     expect(memory?.signal).toBe("progressing");
   });
 
-  it("ignores non-executor stages and non-observe actions when picking the newest signal", () => {
+  it("ignores non-executor stages and non-observe actions when locating the failure park", () => {
     const memory = deriveExecutorSignalMemory([
       // Newest overall, but a merger observation — must be ignored.
       entry({ id: "merger", stage: "merger", timestamp: "2026-07-16T23:40:00.000Z", reason: "Task is in the merge/integration phase" }),
@@ -74,6 +115,23 @@ describe("deriveExecutorSignalMemory", () => {
       entry({ id: "retry", stage: "executor", action: "retry", timestamp: "2026-07-16T23:00:00.000Z", reason: "retrying step" }),
       failedEntry({ id: "fail", timestamp: "2026-07-16T22:40:00.000Z" }),
     ]);
+    expect(memory?.incompleteWork).toBe(true);
+  });
+
+  // A completion marker beyond the bounded tail window must not be scanned in —
+  // preserves the cheap tail-only scan contract.
+  it("only scans the bounded task-log tail for completion markers", () => {
+    const padding = Array.from({ length: 300 }, (_, i) => ({
+      action: "unrelated log line",
+      timestamp: `2026-07-16T2${(i % 3)}:00:00.000Z`,
+    }));
+    // Completion marker is at the HEAD (older than the 250-entry tail window).
+    const log = [{ action: "Task marked done by agent", timestamp: "2026-07-16T23:59:00.000Z" }, ...padding];
+    const memory = deriveExecutorSignalMemory(
+      [failedEntry({ id: "fail", timestamp: "2026-07-16T22:40:00.000Z" })],
+      log,
+    );
+    // The out-of-window completion marker is NOT seen → failure park still stands.
     expect(memory?.incompleteWork).toBe(true);
   });
 });

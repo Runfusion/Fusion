@@ -723,7 +723,7 @@ export {
 } from "./no-op-completion-marker.js";
 export { evaluateNoCommitsNoOpFinalize } from "./no-commits-finalize-guard.js";
 export type { NoCommitsNoOpFinalizeEvaluation } from "./no-commits-finalize-guard.js";
-export { evaluateCompletedPromotionFailureProvenance } from "./completed-promotion-failure-provenance.js";
+export { evaluateCompletedPromotionFailureProvenance, CLEAN_COMPLETION_MARKERS } from "./completed-promotion-failure-provenance.js";
 export type { CompletedPromotionFailureProvenanceEvaluation } from "./completed-promotion-failure-provenance.js";
 export { evaluateSkipBypassTaint } from "./skip-bypass-taint-guard.js";
 export type { SkipBypassTaintEvaluation } from "./skip-bypass-taint-guard.js";

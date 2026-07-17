@@ -22,11 +22,21 @@
  * Two pure, unit-testable pieces (no I/O, never throw), following the FN-7514
  * `evaluateOverseerHumanControl` precedent (pure predicate + ids/outcomes-only
  * audit metadata):
- *   - `deriveExecutorSignalMemory` — reconstructs the most-recent executor
- *     signal from the durable `overseer:intervention` timeline the overseer
- *     already writes (no new persisted column; "the existing oversight state
- *     storage the controller uses").
+ *   - `deriveExecutorSignalMemory` — reconstructs the executor signal from the
+ *     durable `overseer:intervention` timeline the overseer already writes (no
+ *     new persisted column; "the existing oversight state storage the controller
+ *     uses") PLUS the durable task log for completion supersession.
  *   - `evaluateNoOpFinalizeExecutorVeto` — the veto decision.
+ *
+ * FNXC:Lifecycle 2026-07-16-12:10 (follow-up 3):
+ * A mid-execution `progressing` observation must NOT clear the veto. The overseer
+ * emits `progressing` ("Task is actively executing in-progress work") the moment
+ * a task re-enters execution, long before it finishes — so failed-incomplete →
+ * requeue → re-execution starts → dies/reverts again (no newer failed
+ * observation) once left `progressing` as the newest signal and defeated the
+ * veto. A failure park is now superseded ONLY by a clean-completion task-log
+ * marker STRICTLY newer than it (the executor stage emits no green-completion
+ * observation), never by an in-flight progressing/stuck/blocked signal.
  *
  * This composes with, and is independent of, the merger-layer lineage-proof
  * guard (a sibling change): both can fire, and EITHER alone must stop FN-8141.
@@ -41,7 +51,8 @@
  *    fight user-paused / autoMerge:false semantics; a human owns those tasks.
  */
 
-import type { ExecutorOverseerSignalMemory, PlannerInterventionEntry, Settings, Task } from "@fusion/core";
+import type { ExecutorOverseerSignalMemory, PlannerInterventionEntry, Settings, Task, TaskLogEntry } from "@fusion/core";
+import { CLEAN_COMPLETION_MARKERS } from "@fusion/core";
 import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "./planner-overseer.js";
 import {
   evaluateOverseerHumanControl,
@@ -77,50 +88,115 @@ export interface NoOpFinalizeExecutorVetoDecision {
 export const NO_OP_FINALIZE_EXECUTOR_VETO_REASON =
   "most recent executor-stage signal was failed-with-incomplete-work and no subsequent execution completed green";
 
+/** Minimal task-log shape the supersession check needs — narrowed for testability. */
+export type ExecutorSignalMemoryLogEntry = Pick<TaskLogEntry, "action" | "timestamp">;
+
+/** Bound the task-log tail scan; the merger calls this per empty-lane finalize. */
+const MAX_LOG_SCAN = 250;
+
 /**
- * FNXC:Lifecycle 2026-07-16-09:40:
- * Pure derivation of the most-recent executor-stage overseer signal from the
- * durable `overseer:intervention` timeline (newest-first, as
- * `getPlannerInterventionTimeline` returns it). Considers ONLY passive
- * observations (`action === "observe"`) on the `executor` stage — steering/
- * retry/escalate entries also carry `stage: "executor"` but their `reason` is a
- * recovery message, not a signal. Returns `null` when there is no executor
- * observation to reason about. Never throws.
+ * FNXC:Lifecycle 2026-07-16-12:10:
+ * Newest (most-recent-timestamp) durable clean-completion marker in the task log,
+ * as epoch-ms, or `null` when none is present / parseable. Scans the tail only
+ * (log is append-ordered) and reuses the SHARED `CLEAN_COMPLETION_MARKERS` set
+ * from `evaluateCompletedPromotionFailureProvenance` so the accepted-completion
+ * vocabulary stays single-sourced (no string drift; picks up sibling edits to
+ * that list automatically). Pure; never throws.
+ */
+function newestCleanCompletionMarkerMs(
+  taskLog: ReadonlyArray<ExecutorSignalMemoryLogEntry> | null | undefined,
+): number | null {
+  if (!taskLog || taskLog.length === 0) {
+    return null;
+  }
+  const scanFloor = Math.max(0, taskLog.length - MAX_LOG_SCAN);
+  let newestMs: number | null = null;
+  for (let i = taskLog.length - 1; i >= scanFloor; i--) {
+    const action = taskLog[i]?.action ?? "";
+    if (!CLEAN_COMPLETION_MARKERS.some((marker) => action.includes(marker))) {
+      continue;
+    }
+    const ms = Date.parse(taskLog[i]?.timestamp ?? "");
+    if (Number.isFinite(ms) && (newestMs === null || ms > newestMs)) {
+      newestMs = ms;
+    }
+  }
+  return newestMs;
+}
+
+/**
+ * FNXC:Lifecycle 2026-07-16-12:10:
+ * Pure derivation of the executor-stage overseer signal memory from the durable
+ * `overseer:intervention` timeline PLUS the durable task log. Considers ONLY
+ * passive observations (`action === "observe"`) on the `executor` stage —
+ * steering/retry/escalate entries also carry `stage: "executor"` but their
+ * `reason` is a recovery message, not a signal. Returns `null` when there is no
+ * executor observation to reason about. Never throws.
  *
- * `incompleteWork` is `true` iff the newest executor observation's reason is the
- * canonical `EXECUTOR_FAILED_INCOMPLETE_REASON`; any later observation
- * (progressing/stuck/blocked/...) supersedes it, which is how "no subsequent
- * execution completed green" is derived.
+ * TIGHTENED (FN-8141 follow-up 3): the earlier version took the NEWEST executor
+ * observation and cleared `incompleteWork` whenever it was anything but the
+ * canonical failed reason. But the overseer emits a `progressing` observation
+ * ("Task is actively executing in-progress work") the moment a task re-enters
+ * execution — long before that execution finishes. So a shape of
+ * failed-incomplete → requeue → re-execution starts (progressing observed) →
+ * execution dies/reverts again with NO newer failed observation left the newest
+ * observation as `progressing` and DEFEATED the veto, laundering an empty no-op
+ * finalize to `done`. `progressing` is not "completed green".
+ *
+ * New rule — a failure park is superseded ONLY by genuine completion-family
+ * evidence NEWER than it, never by an in-flight `progressing`/`stuck`/`blocked`
+ * signal:
+ *  1. Find the newest executor `observe` whose reason is
+ *     `EXECUTOR_FAILED_INCOMPLETE_REASON` (the failure park). No failure park at
+ *     all ⇒ `incompleteWork: false`.
+ *  2. `incompleteWork` stays TRUE unless a clean-completion marker in the task
+ *     log is STRICTLY NEWER than that failure park. The executor stage emits no
+ *     "completed green" observation (planner-overseer.ts writes only
+ *     progressing/failed/stuck/blocked for `executor`), so the durable task-log
+ *     `CLEAN_COMPLETION_MARKERS` are the sole supersession evidence.
+ *  3. A malformed/unparseable failure timestamp fails SAFE (cannot prove a
+ *     completion is newer ⇒ stays vetoed).
  */
 export function deriveExecutorSignalMemory(
   entries: ReadonlyArray<PlannerInterventionEntry> | null | undefined,
+  taskLog?: ReadonlyArray<ExecutorSignalMemoryLogEntry> | null,
 ): ExecutorOverseerSignalMemory | null {
-  if (!entries || entries.length === 0) {
-    return null;
-  }
-  let newest: PlannerInterventionEntry | null = null;
-  for (const entry of entries) {
+  let newestObs: PlannerInterventionEntry | null = null;
+  let newestFailed: PlannerInterventionEntry | null = null;
+  for (const entry of entries ?? []) {
     if (!entry || entry.stage !== "executor" || entry.action !== "observe") {
       continue;
     }
-    if (newest === null || entry.timestamp > newest.timestamp) {
-      newest = entry;
+    if (newestObs === null || entry.timestamp > newestObs.timestamp) {
+      newestObs = entry;
+    }
+    if (entry.reason === EXECUTOR_FAILED_INCOMPLETE_REASON) {
+      if (newestFailed === null || entry.timestamp > newestFailed.timestamp) {
+        newestFailed = entry;
+      }
     }
   }
-  if (!newest) {
+  // No executor observation at all → no memory to reason about.
+  if (!newestObs) {
     return null;
   }
-  const incompleteWork = newest.reason === EXECUTOR_FAILED_INCOMPLETE_REASON;
-  const observedAt = Date.parse(newest.timestamp);
-  return {
-    // The timeline does not carry the raw signal enum; map the one reason we
-    // act on back to its signal and label everything else "progressing"
-    // (any non-failed executor observation is, for veto purposes, "not
-    // failed-with-incomplete-work").
-    signal: incompleteWork ? "failed" : "progressing",
-    incompleteWork,
-    observedAt: Number.isFinite(observedAt) ? observedAt : 0,
-  };
+  // No failure park in the timeline → nothing to veto; the executor never
+  // parked failed-with-incomplete-work.
+  if (!newestFailed) {
+    const observedAt = Date.parse(newestObs.timestamp);
+    return { signal: "progressing", incompleteWork: false, observedAt: Number.isFinite(observedAt) ? observedAt : 0 };
+  }
+
+  const failedAtMs = Date.parse(newestFailed.timestamp);
+  const completionAtMs = newestCleanCompletionMarkerMs(taskLog);
+  // Supersession requires a clean completion STRICTLY newer than the failure
+  // park. A NaN failure timestamp cannot be proven older than any completion, so
+  // it fails safe (stays vetoed).
+  const superseded = completionAtMs !== null && Number.isFinite(failedAtMs) && completionAtMs > failedAtMs;
+  if (superseded) {
+    return { signal: "progressing", incompleteWork: false, observedAt: completionAtMs };
+  }
+  return { signal: "failed", incompleteWork: true, observedAt: Number.isFinite(failedAtMs) ? failedAtMs : 0 };
 }
 
 /**

@@ -763,17 +763,67 @@ describe("runAiMerge", () => {
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
 
-  it("FN-8141: does NOT veto an empty no-op finalize when a later executor observation was green", async () => {
+  /*
+   * FN-8141 follow-up 3 regression: a mid-execution `progressing` observation
+   * newer than the failure park must NOT clear the veto (the overseer emits
+   * `progressing` the instant a task re-enters execution, long before it
+   * finishes). The empty no-op finalize is still blocked to todo.
+   */
+  it("FN-8141 follow-up 3: STILL vetoes when a later executor observation was only `progressing` (no completion)", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     git(dir, "merge -q fusion/fn-1");
     const { store, task } = makeStore(dir, { noCommitsExpected: true, steps: [{ name: "Execute", status: "done" }] });
-    // Timeline newest-first: a green executor observation supersedes the failure.
+    const mainBefore = git(dir, "rev-parse main");
+    // Timeline newest-first: progressing sits AFTER the failure park but is not
+    // "completed green" — it must not supersede the failure.
     store.getRunAuditEventsAsync = vi.fn(async () => [
       {
-        id: "ev-green", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T23:10:00.000Z",
+        id: "ev-progressing", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T23:10:00.000Z",
         domain: "database", mutationType: "overseer:intervention", runId: "r3", agentId: "overseer",
         metadata: { stage: "executor", reason: "Task is actively executing in-progress work", action: "observe", outcome: "succeeded" },
       },
+      {
+        id: "ev-fail", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T22:40:00.000Z",
+        domain: "database", mutationType: "overseer:intervention", runId: "r2", agentId: "overseer",
+        metadata: { stage: "executor", reason: EXECUTOR_FAILED_INCOMPLETE_REASON, action: "observe", outcome: "succeeded" },
+      },
+    ]);
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    // Vetoed to todo — NOT laundered to done.
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("Finalize blocked (overseer failed-executor veto)"),
+      expect.stringContaining("ai-empty-merge"),
+    );
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  /*
+   * The escape hatch stays intact: a GENUINELY re-executed green task (a
+   * clean-completion task-log marker NEWER than the failure park) is not vetoed
+   * and finalizes to done.
+   */
+  it("FN-8141 follow-up 3: does NOT veto when a clean-completion task-log marker is newer than the failure park", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [{ name: "Execute", status: "done" }],
+      log: [
+        { action: "Executor stage parked failed with work incomplete", timestamp: "2026-07-16T22:40:00.000Z" },
+        { action: "Task marked done by agent", timestamp: "2026-07-16T23:30:00.000Z" },
+      ],
+    });
+    store.getRunAuditEventsAsync = vi.fn(async () => [
       {
         id: "ev-fail", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T22:40:00.000Z",
         domain: "database", mutationType: "overseer:intervention", runId: "r2", agentId: "overseer",

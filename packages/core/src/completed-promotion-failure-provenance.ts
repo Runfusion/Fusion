@@ -71,7 +71,18 @@ const FAILURE_PARK_MARKERS = [
  *  - "All steps complete — implicit fn_task_done" (executor.ts ~12095/~12402 — implicit-completion
  *    success when all steps are done without an explicit tool call)
  */
-const CLEAN_COMPLETION_MARKERS = [
+/*
+ * FNXC:Lifecycle 2026-07-16-12:10:
+ * Exported so the FN-8141 follow-up overseer no-op-finalize veto
+ * (`deriveExecutorSignalMemory` in packages/engine/src/overseer-noop-finalize-veto.ts)
+ * consumes the SAME accepted-completion marker set instead of duplicating the
+ * strings. The executor-stage overseer timeline emits no "completed green"
+ * observation (only progressing/failed/stuck/blocked), so these durable task-log
+ * markers are the only evidence that can supersede a failure park. Importing the
+ * shared list means any change here (e.g. removing the stranded-completion
+ * promotion-output marker) is picked up by the veto automatically — no drift.
+ */
+export const CLEAN_COMPLETION_MARKERS = [
   "Task marked done by agent",
   "All steps complete — implicit fn_task_done",
 ];

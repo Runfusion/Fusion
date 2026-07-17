@@ -1298,7 +1298,10 @@ export async function runAiMerge(
     let executorMemory = null as Awaited<ReturnType<typeof deriveExecutorSignalMemory>>;
     try {
       const timeline = await getPlannerInterventionTimeline(store, taskId);
-      executorMemory = deriveExecutorSignalMemory(timeline);
+      // FNXC:Lifecycle 2026-07-16-12:10 (follow-up 3): thread the durable task log
+      // so a mid-execution `progressing` observation cannot clear the veto — only a
+      // clean-completion marker newer than the failure park supersedes it.
+      executorMemory = deriveExecutorSignalMemory(timeline, task.log);
     } catch (err) {
       aiMergeLog.warn(`${taskId}: executor overseer-memory derivation failed (skipping veto): ${getErrorMessage(err)}`);
     }
