@@ -14,7 +14,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, evaluateCompletedPromotionFailureProvenance, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
@@ -687,6 +687,27 @@ export function evaluateTaskDoneRefusal(
   }
 
   return { ok: true };
+}
+
+/*
+FNXC:Lifecycle 2026-07-16-21:40:
+FN-8141 — synthesize a refusal for an IMPLICIT (agent-exited, no explicit
+fn_task_done) completion whose skipped steps are skip-bypass tainted. Only the
+implicit/auto paths consult this; an explicit accepted fn_task_done stays the
+honest exit that clears the taint. Reuses the bulk-step-completion class so the
+existing refusal budget/park machinery applies unchanged.
+*/
+function buildSkipBypassTaintRefusal(
+  evaluation: ReturnType<typeof evaluateSkipBypassTaint>,
+): Extract<TaskDoneRefusalResult, { ok: false }> {
+  const reason = evaluation.reason
+    ?? "skipped steps after a bulk-step-completion refusal cannot auto-complete the task";
+  return {
+    ok: false,
+    refusalClass: "bulk-step-completion-without-review",
+    reason,
+    message: formatTaskDoneRefusal("bulk-step-completion-without-review", reason),
+  };
 }
 
 /**
@@ -4069,7 +4090,16 @@ export class TaskExecutor {
   private async getCompletedTaskFinalizationDecision(taskId: string, taskDone: boolean): Promise<"finalize" | "blocked" | "incomplete"> {
     const task = await this.store.getTask(taskId);
     const completionBlocker = await this.getTaskCompletionBlocker(task);
-    const workComplete = taskDone || this.isTaskWorkComplete(task);
+    /*
+    FNXC:Lifecycle 2026-07-16-21:40:
+    FN-8141 — `taskDone` means an ACCEPTED fn_task_done (explicit or a non-tainted
+    implicit completion), which is the honest exit and always finalizes. Only the
+    step-status-derived `isTaskWorkComplete` path can be laundered by skip-bypass, so
+    the taint guard gates that path alone; a genuine no-op/PREMISE-STALE accepted done
+    is never blocked.
+    */
+    const workComplete = taskDone
+      || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
     if (completionBlocker) {
       executorLog.log(`${taskId} completion blocked — ${completionBlocker}`);
       if (workComplete && await this.parkCompletedBlockedTask(task, completionBlocker, "finalization", workComplete)) {
@@ -4086,7 +4116,12 @@ export class TaskExecutor {
   }
 
   private isTaskAlreadyCompleteForNonContinuableSession(task: Task, taskDone: boolean): boolean {
-    return taskDone || task.column === "in-review" || this.isTaskWorkComplete(task);
+    // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — the step-status "already complete" branch
+    // must not treat skip-bypass-tainted skips as completion; an accepted done / in-review
+    // column are honest completion signals and stay unaffected.
+    return taskDone
+      || task.column === "in-review"
+      || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
   }
 
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> {
@@ -4419,6 +4454,26 @@ export class TaskExecutor {
         && !this.isTaskWorkComplete(liveForCompletenessCheck)
       ) {
         executorLog.log(`${task.id}: skipping recoverCompletedTask — task has incomplete steps awaiting executor remediation`);
+        return false;
+      }
+      /*
+      FNXC:Lifecycle 2026-07-16-21:40:
+      FN-8141 — recoverCompletedTask is the shared auto-promotion chokepoint for every
+      "work looks complete → in-review" path (unpause resume, completed-task watchdog,
+      orphan resume). Refuse to auto-promote a skip-bypass-tainted task: its steps were
+      skipped after a bulk-step-completion refusal with no accepted fn_task_done, so the
+      only honest exits are an accepted fn_task_done or operator intervention (both clear
+      the taint). Leaving it unpromoted lets the bounded requeue/park machinery converge
+      it to a human instead of laundering it to review.
+      */
+      if (liveForCompletenessCheck && evaluateSkipBypassTaint(liveForCompletenessCheck).blocked) {
+        executorLog.warn(`${task.id}: skipping recoverCompletedTask — skip-bypass taint active (steps skipped after a bulk-step-completion refusal)`);
+        await this.store.logEntry(
+          task.id,
+          "Auto-promotion withheld: steps were skipped after a bulk-step-completion refusal with no accepted fn_task_done — requires reviewer or operator sign-off",
+          undefined,
+          this.getRunContextFor(task.id),
+        ).catch(() => undefined);
         return false;
       }
 
@@ -6803,6 +6858,18 @@ export class TaskExecutor {
   }
 
   private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
+    /*
+    FNXC:Lifecycle 2026-07-16-21:40:
+    FN-8141 — the graph merge boundary is another AUTO-promotion path. If the task is
+    skip-bypass tainted (steps skipped after a bulk-step-completion refusal with no
+    accepted fn_task_done), treat it as missing implementation proof so the merge is
+    blocked with `implementation-incomplete` rather than laundered through a no-op merge.
+    Runs before the noCommitsExpected exemption so a tainted task cannot slip past it.
+    */
+    const taint = evaluateSkipBypassTaint(task);
+    if (taint.blocked) {
+      return "implementation did not run: steps were skipped after a bulk-step-completion refusal without an accepted fn_task_done";
+    }
     if (task.noCommitsExpected === true) return undefined;
 
     let ir: WorkflowIr | undefined;
@@ -11177,7 +11244,7 @@ export class TaskExecutor {
             }
 
             // Reset retry counters on success
-            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
+            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
             if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after step-session completion")) {
               return;
             }
@@ -11989,7 +12056,7 @@ export class TaskExecutor {
             if (implicitCheck.steps.length > 0 &&
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
               // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
-              const refusal = evaluateTaskDoneRefusal(implicitCheck, {}, codeReviewVerdicts);
+              const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
               if (!refusal.ok) {
                 await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
                 return;
@@ -12039,7 +12106,7 @@ export class TaskExecutor {
             }
 
             // Reset retry counters on success
-            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
+            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
             if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion (post-reset)")) {
               return;
             }
@@ -12292,7 +12359,7 @@ export class TaskExecutor {
                 if (implicitCheck.steps.length > 0 &&
                     implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
                   // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
-                  const refusal = evaluateTaskDoneRefusal(implicitCheck, {}, codeReviewVerdicts);
+                  const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
                   if (!refusal.ok) {
                     await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
                     retrySession?.dispose();
@@ -12342,7 +12409,7 @@ export class TaskExecutor {
                 await this.store.logEntry(task.id, "Fast mode — pre-merge workflow steps skipped", undefined, this.getRunContextFor(task.id));
               }
 
-              await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
+              await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
               if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion retry")) {
                 return;
               }
@@ -14400,6 +14467,38 @@ export class TaskExecutor {
     return { blocked: false };
   }
 
+  /*
+  FNXC:Lifecycle 2026-07-16-21:40:
+  FN-8141 — an IMPLICIT completion (agent exits with every step done/skipped and no
+  explicit fn_task_done) is an AUTO-promotion, so it must honor the skip-bypass taint.
+  A synthesized taint refusal here re-parks the run through the existing refusal budget
+  rather than laundering skipped-after-refusal steps into review. The explicit
+  fn_task_done tool path is NOT routed here — that call remains the honest exit.
+  */
+  private evaluateImplicitCompletionRefusal(
+    task: Task,
+    codeReviewVerdicts: Map<number, ReviewVerdict>,
+  ): ReturnType<typeof evaluateTaskDoneRefusal> {
+    const refusal = evaluateTaskDoneRefusal(task, {}, codeReviewVerdicts);
+    if (!refusal.ok) return refusal;
+    const taint = evaluateSkipBypassTaint(task);
+    if (taint.blocked) return buildSkipBypassTaintRefusal(taint);
+    return { ok: true };
+  }
+
+  /*
+  FNXC:Lifecycle 2026-07-16-21:40:
+  FN-8141 — a `bulk-step-completion-without-review` refusal stamps the durable taint
+  marker so that later skips (in this or a requeued lifecycle) cannot auto-promote. The
+  marker is cleared only on an honest exit (accepted fn_task_done / operator retry).
+  */
+  private skipBypassTaintUpdateForRefusal(
+    refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
+  ): { bulkCompletionRefusalAt: string } | Record<string, never> {
+    if (refusal.refusalClass !== "bulk-step-completion-without-review") return {};
+    return { bulkCompletionRefusalAt: new Date().toISOString() };
+  }
+
   private async handleImplicitTaskDoneRefusal(
     task: Task,
     refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
@@ -14408,6 +14507,7 @@ export class TaskExecutor {
     await this.store.logEntry(task.id, refusal.message, undefined, this.getRunContextFor(task.id));
     executorLog.error(`${task.id}: fn_task_done refused (${refusal.refusalClass}) — ${refusal.reason} (implicit completion)`);
 
+    const taintUpdate = this.skipBypassTaintUpdateForRefusal(refusal);
     const priorRequeues = task.taskDoneRetryCount ?? 0;
     const nextRequeueCount = priorRequeues + 1;
     if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -14415,6 +14515,7 @@ export class TaskExecutor {
         status: "queued",
         error: null,
         taskDoneRetryCount: nextRequeueCount,
+        ...taintUpdate,
         paused: false,
         pausedByAgentId: null,
         worktree: null,
@@ -14433,6 +14534,7 @@ export class TaskExecutor {
       await this.store.updateTask(task.id, {
         status: "failed",
         error: refusal.message,
+        ...taintUpdate,
         paused: false,
         pausedByAgentId: null,
         worktree: null,
@@ -14651,6 +14753,9 @@ export class TaskExecutor {
           await store.logEntry(taskId, refusalMessage, undefined, this.getRunContextFor(task.id));
           executorLog.error(`${taskId}: fn_task_done refused (${taskDoneRefusal.refusalClass}) — ${taskDoneRefusal.reason}`);
 
+          // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — stamp the skip-bypass taint marker so a
+          // later skip-then-exit (in this or a requeued lifecycle) cannot auto-promote.
+          const taintUpdate = this.skipBypassTaintUpdateForRefusal(taskDoneRefusal);
           const priorRequeues = task.taskDoneRetryCount ?? 0;
           const nextRequeueCount = priorRequeues + 1;
           if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -14658,6 +14763,7 @@ export class TaskExecutor {
               status: "queued",
               error: null,
               taskDoneRetryCount: nextRequeueCount,
+              ...taintUpdate,
               paused: false,
               pausedByAgentId: null,
               worktree: null,
@@ -14676,6 +14782,7 @@ export class TaskExecutor {
             await store.updateTask(taskId, {
               status: "failed",
               error: refusalMessage,
+              ...taintUpdate,
               paused: false,
               pausedByAgentId: null,
               worktree: null,
@@ -14795,6 +14902,10 @@ export class TaskExecutor {
           paused: false,
           pausedByAgentId: null,
           status: null,
+          // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — an ACCEPTED explicit fn_task_done is the
+          // honest completion signal (covers the PREMISE STALE skip-then-done flow); clear any
+          // skip-bypass taint so a subsequent auto-promotion path is not blocked.
+          bulkCompletionRefusalAt: null,
         });
         await store.logEntry(taskId, "Task marked done by agent", undefined, this.getRunContextFor(taskId));
 

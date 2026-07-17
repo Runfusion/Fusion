@@ -113,6 +113,8 @@ export function rowToTask(row: TaskRow): Task {
     planReviewReplanCount: row.planReviewReplanCount ?? undefined,
     recoveryRetryCount: row.recoveryRetryCount ?? undefined,
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,
+    // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; empty/null → undefined (no taint).
+    bulkCompletionRefusalAt: row.bulkCompletionRefusalAt || undefined,
     worktreeSessionRetryCount: row.worktreeSessionRetryCount ?? undefined,
     completionHandoffLimboRecoveryCount: row.completionHandoffLimboRecoveryCount ?? undefined,
     verificationFailureCount: row.verificationFailureCount ?? undefined,

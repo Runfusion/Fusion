@@ -1664,6 +1664,17 @@ export interface Task {
    *  failures. Capped by `MAX_TASK_DONE_RETRIES`; when exhausted the task stays
    *  in `in-review` for human inspection. Cleared on successful completion. */
   taskDoneRetryCount?: number;
+  /**
+   * FNXC:Lifecycle 2026-07-16-21:40:
+   * ISO-8601 timestamp stamped when the executor's `bulk-step-completion-without-review`
+   * refusal fires for this task's current execution lifecycle (FN-8141). While set, any
+   * step in `skipped` state is "tainted": it must not count toward AUTOMATIC promotion
+   * (executor completion-finalize, self-healing stuck-in-progress / stranded-todo recovery,
+   * graph merge boundary) — see `evaluateSkipBypassTaint`. Cleared on an honest exit: an
+   * ACCEPTED fn_task_done (explicit or non-tainted implicit) or an operator manual retry.
+   * Null/undefined means no active taint.
+   */
+  bulkCompletionRefusalAt?: string;
   /** Number of times self-healing auto-requeued an `in-review` task that failed
    *  at session start with an unusable-worktree error. Bounded by
    *  `MAX_WORKTREE_SESSION_RETRIES`; when exhausted the task remains parked in
