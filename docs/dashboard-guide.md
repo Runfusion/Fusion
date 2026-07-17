@@ -80,6 +80,12 @@ On mobile, an open navigation-bar **More** sheet or mailbox message detail is di
 When task detail is open from a board card, task popup, mobile list row, right-dock/activity/onboarding link, deep link, or another task detail link, one browser, iOS edge-swipe, or Android Back action closes the current detail first and restores the prior dashboard context (for example, nested task detail → previous task detail, or task detail → board/list).
 <!-- FNXC:TaskDetailSwipeBackDocs 2026-07-15-10:36: Mobile task popups now register the same navigation entry as modal and full-panel task detail, so every Back delivery mechanism dismisses the popup before it can leave the originating Board or List. -->
 On mobile board-card detail, **Back to board** also restores the prior board/card scroll position so the same lane context remains visible.
+
+### Mobile Kanban column snapping
+
+After a horizontal swipe on the mobile Kanban board, Fusion smoothly settles the viewport on the nearest column so it does not rest between two columns. This is a user-scroll-end behavior only; refreshes, resizes, and restored pages preserve the column position you chose. The board intentionally keeps CSS `scroll-snap-type: x proximity` rather than using `x mandatory`, because mandatory snapping reintroduced the FN-001 iOS corner-rendering regression during layout changes.
+
+<!-- FNXC:BoardNavigationDocs 2026-07-15-13:30: Mobile Kanban documentation must describe the user-only JS scroll-end snap and its FN-001 proximity-CSS rationale so operators understand why layout changes never force a column. -->
 <!-- FNXC:BoardNavigationDocs 2026-06-29-20:45: Mobile full-panel task detail temporarily replaces the board, so the user-facing navigation guide must document that Back to board restores the board/card scroll context instead of returning to the top of the board. -->
 This behavior used to be mobile-only, and now applies across all viewports.
 Task Detail modal opens from onboarding, activity log, and task-to-task navigation now all register navigation history entries, so Android back swipe/button dismisses them consistently.
