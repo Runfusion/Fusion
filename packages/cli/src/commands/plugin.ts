@@ -141,7 +141,18 @@ export async function createPluginStore(
       closePluginStore();
       void central.close().catch(() => undefined);
     };
-    await pluginStore.init();
+    try {
+      await pluginStore.init();
+    } catch (initErr) {
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-17-17:40:
+      If init() rejects the store is never returned, so the wrapped close() above is
+      unreachable and the owned embedded-Postgres CentralCore would leak. Tear it down
+      (via the wrapper, which closes both the store and central) before rethrowing.
+      */
+      pluginStore.close();
+      throw initErr;
+    }
     return pluginStore;
   }
 }

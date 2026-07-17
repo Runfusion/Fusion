@@ -1257,20 +1257,26 @@ export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string
     if (store.backendMode) {
       const layer = store.asyncLayer!;
       /*
-      FNXC:PostgresOnlyDataAccess 2026-07-17-16:10:
-      Cross-project safety relies on the FN partition normalization (data-layer.ts):
-      an unbound store's reads AND writes are both normalized to the
-      `__legacy_unscoped__` sentinel, so `listTasks` only ever returns this store's
-      own rows (a real-project store sees only its project_id; an unscoped store sees
-      only the quarantine partition — never another project's archived rows). The
-      DELETE below filters by the SAME expression, keeping enumerate+delete lockstep.
+      FNXC:PostgresOnlyDataAccess 2026-07-17-17:40:
+      Enumerate the archived rows with an EXPLICIT project predicate. `listTasks()`
+      derives its scope from `taskProjectScope(layer)`, which is a NO-OP when the
+      layer is unbound (projectId absent) — i.e. it would read archived rows across
+      every project, and this destructive sweep (snapshot + dir removal + cache
+      evict) would then touch tasks it must never own. Scoping the read here to the
+      same `projectId` the DELETE below uses keeps enumerate+delete lockstep: a bound
+      store sees only its project, an unbound store only the `__legacy_unscoped__`
+      quarantine partition.
       */
       const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
-      const archivedTasks = await store.listTasks({ column: "archived", includeDeleted: true });
+      const archivedRows = await layer.db
+        .select()
+        .from(schema.project.tasks)
+        .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.column, "archived")));
       const cleanedUpIds: string[] = [];
       const { rm } = await import("node:fs/promises");
 
-      for (const task of archivedTasks) {
+      for (const row of archivedRows) {
+        const task = store.rowToTask(store.pgRowToTaskRow(row));
         const dir = store.taskDir(task.id);
         // Guarantee a cold-storage snapshot before the destructive delete.
         const entry = await store.taskToArchiveEntry(task, task.deletedAt ?? new Date().toISOString());
