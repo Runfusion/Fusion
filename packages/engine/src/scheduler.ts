@@ -401,7 +401,7 @@ function recoverIdleSemaphoreLeak(
   if (result.reconciliation?.changed) {
     schedulerLog.warn(
       `${source}: recovered stale semaphore active count ${result.reconciliation.before} -> ${result.reconciliation.after} ` +
-      "(no persisted in-progress/planning/review agent work)",
+      "(semaphore over-held vs persisted+in-flight top-level agent work)",
     );
   }
   return result.candidateSinceMs;

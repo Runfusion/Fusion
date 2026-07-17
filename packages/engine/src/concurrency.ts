@@ -20,6 +20,21 @@ interface PriorityWaiter {
 
 export const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
 
+/**
+ * FNXC:GlobalConcurrencyControls 2026-07-16-00:00:
+ * Repair window for the NON-idle stale-excess case (semaphore holds more slots
+ * than persisted running tasks + caller in-flight sessions while some agent
+ * work is still persisted-running). Deliberately much longer than the idle
+ * window: nested helper agents ({@link AgentSemaphore.runNested}) legitimately
+ * push `activeCount` above the persisted top-level count for the duration of a
+ * nested run, so an excess must persist far longer than any plausible nested
+ * session before it is treated as leaked. A real leak (observed in production:
+ * slots pinned at the limit for days with planning=0/processing=0 while a few
+ * zombie in-progress rows kept the idle valve from ever firing) survives this
+ * window trivially; a live nested reviewer does not.
+ */
+export const STALE_SEMAPHORE_EXCESS_REPAIR_MS = 600_000;
+
 function createAbortError(): Error {
   if (typeof DOMException === "function") {
     try {
@@ -103,6 +118,22 @@ export interface IdleSemaphoreLeakRecoveryResult {
   reconciliation?: { before: number; after: number; changed: boolean };
 }
 
+/*
+FNXC:GlobalConcurrencyControls 2026-07-16-00:00:
+Generalized from the idle-only valve. The previous guard (`persistedActive !== 0
+|| inFlightCount > 0` → reset) meant leaked slots were only ever reclaimed when
+the WHOLE system quiesced. In production a handful of zombie in-progress rows
+kept `persistedActive` nonzero indefinitely, so slots leaked by abnormal agent
+teardown accumulated until `activeCount` pinned the limit — the engine then sat
+fully idle ("Hold release … no reservable slot" on every sweep, planning=0,
+processing=0, merge queue growing) until a process restart. The valve now
+clamps `activeCount` down to the persisted+in-flight bound whenever the
+semaphore over-holds CONTINUOUSLY for the repair window: the strict idle case
+keeps its fast 5s window (same behavior as before), while the non-idle case
+uses the conservative {@link STALE_SEMAPHORE_EXCESS_REPAIR_MS} so legitimate
+nested-agent overshoot is never touched. `reconcileActiveCount` only lowers
+the count, and the candidate timestamp resets the moment the excess clears.
+*/
 export function recoverIdleSemaphoreLeakCandidate(params: {
   semaphore: AgentSemaphore | undefined;
   tasks: Task[];
@@ -110,6 +141,8 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
   inFlightCount?: number;
   nowMs?: number;
   repairAfterMs?: number;
+  /** Override for the non-idle stale-excess window (tests). */
+  staleExcessRepairAfterMs?: number;
 }): IdleSemaphoreLeakRecoveryResult {
   const {
     semaphore,
@@ -118,12 +151,15 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
     inFlightCount = 0,
     nowMs = Date.now(),
     repairAfterMs = IDLE_SEMAPHORE_LEAK_REPAIR_MS,
+    staleExcessRepairAfterMs = STALE_SEMAPHORE_EXCESS_REPAIR_MS,
   } = params;
 
   if (!semaphore) return { candidateSinceMs: null };
 
   const persistedActive = persistedTopLevelAgentSlots(tasks);
-  if (persistedActive !== 0 || semaphore.activeCount <= 0 || inFlightCount > 0) {
+  const bound = persistedActive + Math.max(0, Math.floor(inFlightCount));
+  const excess = semaphore.activeCount - bound;
+  if (excess <= 0) {
     return { candidateSinceMs: null };
   }
 
@@ -131,13 +167,14 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
     return { candidateSinceMs: nowMs };
   }
 
-  if (nowMs - candidateSinceMs < repairAfterMs) {
+  const windowMs = bound === 0 ? repairAfterMs : staleExcessRepairAfterMs;
+  if (nowMs - candidateSinceMs < windowMs) {
     return { candidateSinceMs };
   }
 
   return {
     candidateSinceMs: null,
-    reconciliation: semaphore.reconcileActiveCount(0),
+    reconciliation: semaphore.reconcileActiveCount(bound),
   };
 }
 
