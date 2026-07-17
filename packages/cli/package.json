@@ -60,12 +60,12 @@
     "test:pre-release": "pnpm test:slow-cli && pnpm test:build-exe"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
+    "@earendil-works/pi-ai": "^0.80.10",
+    "@earendil-works/pi-coding-agent": "^0.80.10",
     "dockerode": "^4.0.12",
+    "electron": "^33.4.11",
     "embedded-postgres": "15.18.0-beta.17",
     "express": "^5.1.0",
-    "electron": "^33.4.11",
     "i18next": "^26.3.1",
     "ink": "^7.0.5",
     "ink-spinner": "^5.0.0",
