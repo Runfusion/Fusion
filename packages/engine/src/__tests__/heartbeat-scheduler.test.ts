@@ -873,6 +873,48 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(callback).toHaveBeenCalledWith("agent-reReg", "timer", expect.anything());
       });
 
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-17:45:
+       * Greptile PR #2271 P1 (queued-callback ordering): a callback from a
+       * superseded timer that runs AFTER re-registration must not stamp liveness
+       * or dispatch for the replacement timer. Timer callbacks carry their
+       * registration generation; onTimerTick rejects a mismatched one before
+       * recording lastTimerFireAtMs or invoking the callback.
+       */
+      it("rejects a superseded timer tick (stale registration generation) so it neither dispatches nor records liveness", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildAgent({ id: "agent-epoch", heartbeatIntervalMs: 3_600_000 });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getAgent).mockResolvedValue(agent);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const epochs = (scheduler as unknown as { registrationEpochs: Map<string, number> }).registrationEpochs;
+        const fireMarkers = (scheduler as unknown as { lastTimerFireAtMs: Map<string, number> }).lastTimerFireAtMs;
+        const currentGeneration = epochs.get("agent-epoch")!;
+        const staleGeneration = currentGeneration - 1;
+
+        callback.mockClear();
+        fireMarkers.delete("agent-epoch"); // so any stamp below is detectable
+
+        // A leftover callback from a superseded timer fires with the OLD generation.
+        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, gen?: number) => Promise<void> })
+          .onTimerTick("agent-epoch", 3_600_000, staleGeneration);
+        expect(callback).not.toHaveBeenCalled();
+        expect(fireMarkers.has("agent-epoch")).toBe(false);
+
+        // A tick from the CURRENT generation is honored: it records liveness and dispatches.
+        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, gen?: number) => Promise<void> })
+          .onTimerTick("agent-epoch", 3_600_000, currentGeneration);
+        expect(callback).toHaveBeenCalledWith("agent-epoch", "timer", expect.anything());
+        expect(fireMarkers.has("agent-epoch")).toBe(true);
+      });
+
       it("pause guards still suppress dispatch after a zombie re-arm (does not regress FN-2658)", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
