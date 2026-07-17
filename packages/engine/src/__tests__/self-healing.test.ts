@@ -2955,6 +2955,37 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("FN-8141: does not re-promote a task the empty-merge guard blocked back to todo (error set)", async () => {
+      // The empty-merge no-landed-proof guard (merger-ai.ts) moves a commit-expected empty branch
+      // back to todo with all steps done/skipped AND task.error set. The stranded-todo promoter must
+      // NOT immediately re-promote it (task.error exclusion) or the task ping-pongs to in-review.
+      const recoverFn = vi.fn().mockResolvedValue(true);
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141",
+          column: "todo",
+          paused: false,
+          error: "branch had no net changes vs main — work may have been reverted or lost; operator review required",
+          reviewLevel: 2,
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }, { status: "skipped" }, { status: "skipped" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("recovers blockedBy todo tasks when all steps are complete", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
 

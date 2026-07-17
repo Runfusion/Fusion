@@ -563,6 +563,116 @@ describe("runAiMerge", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
+  /*
+   * FN-8141 regression: the AI empty-merge lane laundered a task whose branch was empty ONLY because
+   * the executor reverted its own work. A commit-expected empty branch must not finalize `done` without
+   * POSITIVE already-landed proof. Invariant asserted across surfaces: reverted/lost work (no proof) →
+   * blocked to todo; genuinely-integrated (ancestor) / prior-no-op-proof → still finalizes no-op done;
+   * noCommitsExpected tasks keep their existing (separately-hardened) path.
+   */
+  /** A branch that committed work then reverted it: AHEAD of main (real commits) but net-zero, tip NOT an ancestor of main. */
+  function revertBranchToNetZero(dir: string, branch: string): void {
+    git(dir, `checkout -q ${branch}`);
+    rmSync(join(dir, "feature.txt"));
+    git(dir, "add -A");
+    git(dir, "commit -q -m 'revert: undo the work (net-zero vs main)'");
+    git(dir, "checkout -q main");
+  }
+
+  it("blocks a commit-expected empty branch with no landed proof (reverted work) to todo, not done", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    revertBranchToNetZero(dir, "fusion/fn-1");
+    const { store, task } = makeStore(dir); // commit-expected (noCommitsExpected unset)
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      // Leave HEAD at the tip in the clean room → squash produces no net changes → empty outcome.
+      mergeAgent: vi.fn(async () => { /* nothing lands */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toContain("operator review required");
+    expect(task.column).toBe("todo");
+    expect(task.error).toContain("operator review required");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
+    );
+    // The integration branch must NOT advance and NOT be marked done.
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  it("still finalizes an empty branch as no-op when a prior AI no-op finalization proof exists", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    revertBranchToNetZero(dir, "fusion/fn-1"); // no ancestor/classifier proof — only the log proof qualifies
+    const { store, task } = makeStore(dir, {
+      log: [
+        { action: "AI merge: fusion/fn-1 had no net changes vs main — finalizing as no-op" },
+        { action: "AI merge: finalized FN-1 (no-op), finalizing task row" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing lands */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.merged).toBe(false);
+    expect(task.column).toBe("done");
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
+    );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+  });
+
+  it("still finalizes an empty branch as no-op when the branch tip is already an ancestor of main", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    // Fast-forward main to the branch tip: the work is genuinely integrated (branch ⊑ main).
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir); // commit-expected
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing lands */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.merged).toBe(false);
+    expect(task.column).toBe("done");
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
+    );
+  });
+
+  it("leaves a noCommitsExpected empty (net-zero, non-ancestor) branch on its existing done path — guard does not apply", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    revertBranchToNetZero(dir, "fusion/fn-1"); // would trip the commit-expected guard, but noCommitsExpected opts out
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Execute", status: "done" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing lands */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
+    );
+  });
+
   it("fails loudly when an executed, never-merged task has no branch (possible lost work)", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     // branch points at a ref that doesn't exist; task was executed (baseCommitSha) and never merged.

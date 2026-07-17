@@ -703,6 +703,14 @@ export type DatabaseMutationType =
    * Metadata: { reason, doneCount, incompleteCount, classification?, baseRef?, lane }
    */
   | "task:no-commits-finalize-blocked-incomplete-steps"
+  /**
+   * FNXC:Lifecycle 2026-07-16-00:00:
+   * FN-8141: the AI empty-merge lane refused to finalize a commit-expected task `done` because its
+   * branch had no net changes vs the integration tip AND no positive proof the work already landed
+   * (commits reverted/lost). The task is moved back to `todo` with progress preserved for operator review.
+   * Metadata: { reason, branch, integrationBranch, lane, baseCommitSha?, hadPriorNoOpProof? }
+   */
+  | "task:empty-merge-finalize-blocked-no-landed-proof"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
   /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a done/archived task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */
