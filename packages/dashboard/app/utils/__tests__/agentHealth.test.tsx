@@ -245,6 +245,35 @@ describe("getAgentHealthStatus", () => {
       });
       expect(getAgentHealthStatus(agent).label).toBe("Healthy");
     });
+
+    it("FN-8190: applies the project multiplier once before classifying long-cadence agents", () => {
+      // Field configuration: raw 3h cadence with a 7.5x project multiplier.
+      // At 13h, raw 4x grace would falsely label this agent Unresponsive; the
+      // 22h30m effective cadence has a 90h dashboard grace window instead.
+      const agent = makeAgent({
+        state: "active",
+        lastHeartbeatAt: new Date(FIXED_NOW - 13 * 3_600_000).toISOString(),
+        runtimeConfig: { heartbeatIntervalMs: 3 * 3_600_000 },
+      });
+
+      expect(getAgentHealthStatus(agent, 7.5).label).toBe("Healthy");
+    });
+
+    it("FN-8190: preserves strict dashboard boundaries for sub-one, default, and field multipliers", () => {
+      const rawIntervalMs = 3 * 3_600_000;
+      for (const multiplier of [0.5, 1, 7.5]) {
+        const thresholdMs = rawIntervalMs * multiplier * 4;
+        const agent = (ageMs: number) => makeAgent({
+          state: "active",
+          lastHeartbeatAt: new Date(FIXED_NOW - ageMs).toISOString(),
+          runtimeConfig: { heartbeatIntervalMs: rawIntervalMs },
+        });
+
+        expect(getAgentHealthStatus(agent(thresholdMs - 1), multiplier).label).toBe("Healthy");
+        expect(getAgentHealthStatus(agent(thresholdMs), multiplier).label).toBe("Healthy");
+        expect(getAgentHealthStatus(agent(thresholdMs + 1), multiplier).label).toBe("Unresponsive");
+      }
+    });
   });
 
   // ── Agents without explicit heartbeatIntervalMs ───────────────────────────

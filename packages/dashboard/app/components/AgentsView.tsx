@@ -1347,7 +1347,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
   // Use centralized health status utility for consistent labels across all views
   const getHealthStatus = (agent: Agent): AgentHealthStatus => {
-    return getAgentHealthStatus(agent);
+    return getAgentHealthStatus(agent, heartbeatMultiplier);
   };
 
   const isPauseAllDisabled = isBulkEligibilityLoading || isBulkActionRunning || bulkPauseEligibleCount === 0;

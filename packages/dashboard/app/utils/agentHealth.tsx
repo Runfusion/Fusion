@@ -58,9 +58,23 @@ type AgentHealthInput = Pick<
  * and agents that were explicitly configured both get consistent treatment,
  * differing only by their scheduled cadence.
  */
-function getStalenessThresholdMs(runtimeConfig?: Record<string, unknown>): number {
+function getStalenessThresholdMs(
+  runtimeConfig?: Record<string, unknown>,
+  heartbeatMultiplier: number = 1,
+): number {
   const intervalMs = resolveHeartbeatIntervalMs(runtimeConfig?.heartbeatIntervalMs);
-  return Math.max(intervalMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
+  const resolvedMultiplier = Number.isFinite(heartbeatMultiplier) && heartbeatMultiplier > 0
+    ? heartbeatMultiplier
+    : 1;
+
+  /*
+  FNXC:AgentHeartbeat 2026-07-17-00:25:
+  FN-8190 requires dashboard health labels to use the project-resolved heartbeat
+  multiplier exactly once. The dashboard cannot import engine timing helpers, so
+  callers supply this settings value and raw persisted intervals remain the input.
+  */
+  const effectiveIntervalMs = Math.max(1000, Math.round(intervalMs * resolvedMultiplier));
+  return Math.max(effectiveIntervalMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
 }
 
 /** Format milliseconds into a human-readable duration string (e.g. "5m", "1h 20m", "2h"). */
@@ -122,7 +136,10 @@ function getHeartbeatRepairMetadata(agent: AgentHealthInput): {
   };
 }
 
-export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus {
+export function getAgentHealthStatus(
+  agent: AgentHealthInput,
+  heartbeatMultiplier: number = 1,
+): AgentHealthStatus {
   const { state, lastHeartbeatAt, lastError, pauseReason, runtimeConfig } = agent;
   const isTaskWorker = isTaskWorkerAgent(agent);
   const isHeartbeatEnabled = isTaskWorker || runtimeConfig?.enabled !== false;
@@ -195,7 +212,7 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
   // interval (with grace) rather than to `heartbeatTimeoutMs`, which is the
   // per-run work budget and has nothing to do with between-tick freshness.
   const lastHeartbeat = Date.parse(lastHeartbeatAt);
-  const stalenessThresholdMs = getStalenessThresholdMs(runtimeConfig);
+  const stalenessThresholdMs = getStalenessThresholdMs(runtimeConfig, heartbeatMultiplier);
 
   /*
   FNXC:AgentHeartbeat 2026-07-15-18:00:
