@@ -1,5 +1,5 @@
 import "./MobileNavBar.css";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   Bot,
@@ -34,6 +34,7 @@ import { useTranslation } from "react-i18next";
 import { fetchScripts } from "../api";
 import type { PluginDashboardViewEntry } from "../api";
 import { useViewportMode } from "./Header";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
@@ -169,6 +170,7 @@ export function MobileNavBar({
 }: MobileNavBarProps) {
   const { t } = useTranslation("app");
   const mode = useViewportMode();
+  const navigationHistory = useContext(NavigationHistoryContext);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
   const [scripts, setScripts] = useState<Record<string, string>>({});
@@ -226,6 +228,22 @@ export function MobileNavBar({
     setHasSheetDragged(false);
     setIsMoreOpen(false);
   }, [resetSheetDrag]);
+
+  /*
+  FNXC:MobileNav 2026-07-16-14:30:
+  The More sheet must dismiss before navigation on iOS swipe-back, Android native Back, and browser Back.
+  Register its stable, idempotent closer as a modal entry, while reading nullable context so provider-less
+  component renders retain their existing behavior.
+  */
+  useEffect(() => {
+    if (!isMoreOpen || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: closeMore });
+  }, [closeMore, isMoreOpen, navigationHistory]);
+
+  const dismissMore = useCallback(() => {
+    navigationHistory?.removeNav(closeMore);
+    closeMore();
+  }, [closeMore, navigationHistory]);
 
   /*
   FNXC:MobileNav 2026-07-16-12:00:
@@ -288,16 +306,16 @@ export function MobileNavBar({
 
     resetSheetDrag();
     if (shouldDismiss && touch) {
-      closeMore();
+      dismissMore();
     }
-  }, [closeMore, resetSheetDrag]);
+  }, [dismissMore, resetSheetDrag]);
 
   const handleMoreAction = useCallback(
     (callback?: () => void) => {
-      closeMore();
+      dismissMore();
       callback?.();
     },
-    [closeMore],
+    [dismissMore],
   );
 
   useEffect(() => {
@@ -305,13 +323,13 @@ export function MobileNavBar({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        closeMore();
+        dismissMore();
       }
     };
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [closeMore, isMoreOpen]);
+  }, [dismissMore, isMoreOpen]);
 
   useLayoutEffect(() => {
     const navEl = navRef.current;
@@ -561,7 +579,13 @@ export function MobileNavBar({
           data-testid="mobile-nav-tab-more"
           role="tab"
           aria-selected={false}
-          onClick={() => setIsMoreOpen((prev) => !prev)}
+          onClick={() => {
+            if (isMoreOpen) {
+              dismissMore();
+            } else {
+              setIsMoreOpen(true);
+            }
+          }}
         >
           <span className="mobile-nav-tab-icon-wrapper">
             <MoreHorizontal />
@@ -577,7 +601,7 @@ export function MobileNavBar({
         <>
           <div
             className="mobile-more-sheet-backdrop"
-            onClick={closeMore}
+            onClick={dismissMore}
           />
           <div
             ref={sheetRef}
@@ -659,7 +683,7 @@ export function MobileNavBar({
                         data-testid={`mobile-more-script-item-${name}`}
                         onClick={() => {
                           if (onRunScript) onRunScript(name, command);
-                          closeMore();
+                          dismissMore();
                           setIsScriptsSubmenuOpen(false);
                         }}
                       >
@@ -673,7 +697,7 @@ export function MobileNavBar({
                         className="mobile-more-item mobile-more-subitem mobile-more-subitem--manage"
                         data-testid="mobile-more-scripts-manage"
                         onClick={() => {
-                          closeMore();
+                          dismissMore();
                           setIsScriptsSubmenuOpen(false);
                           onOpenScripts();
                         }}
@@ -690,7 +714,7 @@ export function MobileNavBar({
                       className="mobile-more-item mobile-more-subitem"
                       data-testid="mobile-more-scripts-manage"
                       onClick={() => {
-                        closeMore();
+                        dismissMore();
                         setIsScriptsSubmenuOpen(false);
                         onOpenScripts();
                       }}

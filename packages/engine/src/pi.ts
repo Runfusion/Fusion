@@ -2430,7 +2430,13 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
         throw error;
       }
     }
-    const createSessionOptions: Parameters<typeof createAgentSession>[0] = {
+    /*
+    FNXC:ModelCatalog 2026-07-16-18:00:
+    pi 0.80.10's createAgentSession accepts an optional options parameter, but Fusion
+    constructs and augments an options object before dispatch. Narrow away undefined so
+    the ModelRuntime-capable SDK contract remains type-safe as tool allowlists are added.
+    */
+    const createSessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]> = {
       cwd: options.cwd,
       modelRuntime,
       resourceLoader,

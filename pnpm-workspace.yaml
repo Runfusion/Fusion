@@ -18,6 +18,11 @@ onlyBuiltDependencies:
 overrides:
   '@types/node': ^25.5.2
   protobufjs: ^7.5.8
+  # FNXC:ModelCatalog 2026-07-16-18:15: Keep floating @fusion/droid-cli and
+  # @fusion/pi-llama-cpp imports on the ModelRuntime-capable pi SDK so the
+  # workspace cannot resolve conflicting pi type surfaces.
+  '@earendil-works/pi-ai': 0.80.10
+  '@earendil-works/pi-coding-agent': 0.80.10
 # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
 # Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
 # optional native payloads for both CPU families on the current OS so each

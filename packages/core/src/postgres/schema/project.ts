@@ -1917,7 +1917,13 @@ Import auto-translation must survive modal close and page reload — the operato
 `projectId` is part of the PK because all projects share one flat `project` schema — omitting it (as the older `verification_cache` PK does) would leak one project's translations into another.
 */
 export const importTranslationCache = projectSchema.table("import_translation_cache", {
-  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-23:30:
+  An unbound compatibility store owns cache rows in the explicit legacy
+  partition. Match fusion_assign_project_id so a defaulted insert and the
+  application scope predicate cannot disagree after a process restart.
+  */
+  projectId: text("project_id").notNull().default(sql`COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')`),
   /** Import source: "github" | "gitlab". */
   provider: text("provider").notNull(),
   /** Canonical repo identity, e.g. "owner/repo" (GitLab: project path). */

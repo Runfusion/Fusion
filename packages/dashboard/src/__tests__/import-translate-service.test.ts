@@ -27,8 +27,10 @@ const {
 } = await import("../import-translate-service.js");
 
 /** Minimal in-memory stand-in for the durable cache. */
-function makeStore(settings: Record<string, unknown> = {}): any {
-  const rows = new Map<string, { sourceHash: string; translatedTitle: string; translatedBody: string; detectedLocale: string | null; recordedAt: string }>();
+function makeStore(
+  settings: Record<string, unknown> = {},
+  rows = new Map<string, { sourceHash: string; translatedTitle: string; translatedBody: string; detectedLocale: string | null; recordedAt: string }>(),
+): any {
   const key = (k: { provider: string; repoKey: string; issueNumber: number; targetLocale: string }) =>
     `${k.provider}|${k.repoKey}|${k.issueNumber}|${k.targetLocale}`;
   return {
@@ -129,6 +131,10 @@ describe("hashSourceContent", () => {
   it("is stable for identical content", () => {
     expect(hashSourceContent("t", "a")).toBe(hashSourceContent("t", "a"));
   });
+
+  it("uses the same hash when an upstream absent body is normalized to empty", () => {
+    expect(hashSourceContent("title", "")).toBe(hashSourceContent("title", ""));
+  });
 });
 
 describe("translateImportItems", () => {
@@ -165,6 +171,28 @@ describe("translateImportItems", () => {
     expect(translateTextMock).not.toHaveBeenCalled();
     expect(out.get(7)?.cached).toBe(true);
     expect(out.get(7)?.title).toBe("TRANSLATED");
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-23:30:
+  Reopen the service's store boundary rather than reuse its object: a durable
+  cache must make the next GitHub and GitLab page fully free of model calls.
+  */
+  it.each(["github", "gitlab"] as const)("serves a reopened %s load entirely from the durable cache", async (provider) => {
+    const firstStore = makeStore();
+    const item = { number: 7, title: "Error del servidor", body: SPANISH_BODY, state: "open" as const };
+    const firstContext = { ...ctx(firstStore), provider, targetLocale: "en" as const };
+    await translateImportItems(firstContext, [item]);
+    translateTextMock.mockClear();
+
+    const reopenedStore = makeStore({}, firstStore.rows);
+    const reopenedContext = { ...ctx(reopenedStore), provider, targetLocale: "en" as const };
+    const partition = await partitionImportItemsByCache(reopenedContext, [item]);
+    const out = await translateImportItems(reopenedContext, [item], partition);
+
+    expect(partition.uncached).toHaveLength(0);
+    expect(translateTextMock).not.toHaveBeenCalled();
+    expect(out.get(item.number)?.cached).toBe(true);
   });
 
   it("re-translates when the issue body was edited (cache miss on new hash)", async () => {
