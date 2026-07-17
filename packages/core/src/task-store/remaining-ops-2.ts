@@ -1256,6 +1256,15 @@ export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string
     */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-17-16:10:
+      Cross-project safety relies on the FN partition normalization (data-layer.ts):
+      an unbound store's reads AND writes are both normalized to the
+      `__legacy_unscoped__` sentinel, so `listTasks` only ever returns this store's
+      own rows (a real-project store sees only its project_id; an unscoped store sees
+      only the quarantine partition — never another project's archived rows). The
+      DELETE below filters by the SAME expression, keeping enumerate+delete lockstep.
+      */
       const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
       const archivedTasks = await store.listTasks({ column: "archived", includeDeleted: true });
       const cleanedUpIds: string[] = [];

@@ -129,6 +129,24 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
     const deletedAt = new Date().toISOString();
     const allowResurrection = options?.allowResurrection === true;
 
+    /*
+    FNXC:MissionStore 2026-07-17-16:10:
+    PostgreSQL hard-delete mirror of the SQLite mission feature/task-link cleanup in
+    deleteTaskImpl. Run the async unlink BEFORE the soft-delete (after the lineage
+    gate) and let failures propagate: if the unlink fails the task is NOT deleted, so
+    the store never commits a deletion that leaves a mission feature pointing at a
+    gone task. `unlinkFeatureFromTask` preserves full semantics (status→defined,
+    task-linkage clear, slice-status recompute), unlike the low-level taskId=NULL
+    helper. Idempotent on retry: a re-attempt finds no linked feature and skips.
+    */
+    const missionStore = store.getMissionStore();
+    if (missionStore instanceof AsyncMissionStore) {
+      const linkedFeature = await missionStore.getFeatureByTaskId(id);
+      if (linkedFeature) {
+        await missionStore.unlinkFeatureFromTask(linkedFeature.id);
+      }
+    }
+
     // Soft-delete + lineage clear + audit in one transaction (atomicity).
     await layer.transactionImmediate(async (tx) => {
       // Clear lineage references on live children so the parent can be deleted.
@@ -156,27 +174,6 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
         },
       });
     });
-
-    /*
-    FNXC:MissionStore 2026-07-17-14:20:
-    PostgreSQL hard-delete mirror of the SQLite mission feature/task-link cleanup
-    in deleteTaskImpl (archive-lifecycle.ts). That sync transaction callback could
-    only drive the sync MissionStore, so in backend mode the unlink was skipped and
-    orphaned mission feature→task links leaked on every hard delete. The async
-    unlink cannot join the just-closed transaction, so run it here best-effort
-    (like the task:deleted emit) — the delete is already committed.
-    */
-    try {
-      const missionStore = store.getMissionStore();
-      if (missionStore instanceof AsyncMissionStore) {
-        const linkedFeature = await missionStore.getFeatureByTaskId(id);
-        if (linkedFeature) {
-          await missionStore.unlinkFeatureFromTask(linkedFeature.id);
-        }
-      }
-    } catch (missionCleanupErr) {
-      storeLog.warn(`Best-effort mission feature/task-link cleanup after hard delete of ${id} failed: ${missionCleanupErr instanceof Error ? missionCleanupErr.message : String(missionCleanupErr)}`);
-    }
 
     // Emit lifecycle event (best-effort, outside the transaction).
     store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
