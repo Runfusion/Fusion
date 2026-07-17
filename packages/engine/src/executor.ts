@@ -1,10 +1,11 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
-import { exec, execSync } from "node:child_process";
+import { exec, execFile, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { setImmediate as setImmediateCb } from "node:timers";
 
 // Internal git plumbing intentionally bypasses sandbox backends.
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
@@ -135,7 +136,7 @@ import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./workspace-paths.j
 import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree-pool.js";
 import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
-import {canonicalizeWorktreePath, registerArchiveWorktreeDisposer} from "@fusion/core";
+import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer} from "@fusion/core";
 import {
   activeSessionRegistry,
   executingTaskLock,
@@ -1712,6 +1713,7 @@ export class TaskExecutor {
    *  session being fully reaped before creating/acquiring a new worktree. */
   private pendingTaskDisposals = new Map<string, Promise<void>>();
   private unregisterArchiveWorktreeDisposer: (() => void) | undefined;
+  private unregisterArchiveWorkspaceWorktreeDisposer: (() => void) | undefined;
   /** Active agent sessions per task, used to terminate on pause and inject steering. */
   private activeSessions = new Map<string, ActiveExecutorSessionState>();
   /** Active step-session executors per task (mutually exclusive with activeSessions). */
@@ -2965,6 +2967,23 @@ export class TaskExecutor {
       for (const path of activeSessionRegistry.pathsForTask(task.id)) activeSessionRegistry.unregisterPath(path);
       await this.removeOwnWorktreeWithReconcile({worktreePath: task.worktree, settings: await store.getSettings(), taskId: task.id, reason: RemovalReason.ExecutorDispose});
       task.worktree = undefined;
+    });
+    this.unregisterArchiveWorkspaceWorktreeDisposer = registerArchiveWorkspaceWorktreeDisposer(store, async (task, plan) => {
+      const removed: string[] = [];
+      const failed: {repoRel: string; error: unknown}[] = [];
+      await this.awaitAbortInFlightTaskWork(task.id, "workspace task archived");
+      for (const entry of plan) {
+        try {
+          if (await canonicalizeWorktreePath(entry.worktreePath) === await canonicalizeWorktreePath(entry.repoRootDir)) throw new Error("Refusing to remove workspace repository root");
+          activeSessionRegistry.unregisterPath(entry.worktreePath);
+          await removeWorktree({worktreePath: entry.worktreePath, rootDir: entry.repoRootDir, settings: await store.getSettings(), taskId: task.id, reason: RemovalReason.ExecutorDispose, force: true});
+          /* FNXC:WorkflowLifecycle 2026-07-16-16:00: Archive metadata can contain valid Git refs with shell metacharacters. Pass the ref as an argv value so cleanup never evaluates it as shell code. */
+          await execFileAsync("git", ["branch", "-D", entry.branch], {cwd: entry.repoRootDir, timeout: 120_000, maxBuffer: 10 * 1024 * 1024});
+          if (task.workspaceWorktrees) for (const repoRel of [entry.repoRel, ...entry.aliasRepoRels]) delete task.workspaceWorktrees[repoRel];
+          removed.push(entry.repoRel);
+        } catch (error) { failed.push({repoRel: entry.repoRel, error}); }
+      }
+      return {removed, failed};
     });
 
     store.on("task:moved", ({ task, from, to, source }) => {
@@ -18123,6 +18142,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
   disposeArchiveWorktreeDisposer(): void {
     this.unregisterArchiveWorktreeDisposer?.();
     this.unregisterArchiveWorktreeDisposer = undefined;
+    this.unregisterArchiveWorkspaceWorktreeDisposer?.();
+    this.unregisterArchiveWorkspaceWorktreeDisposer = undefined;
   }
 
   private async removeOwnWorktreeWithReconcile(input: {

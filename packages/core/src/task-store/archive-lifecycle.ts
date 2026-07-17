@@ -9,12 +9,12 @@
 import {TaskStore, storeLog} from "../store.js";
 import {MissionStore} from "../mission-store.js";
 import {TaskHasDependentsError, TaskHasLineageChildrenError, TaskSelfDeleteError} from "./errors.js";
-import type {Task, Column, GithubIssueAction} from "../types.js";
+import {isWorkspaceTask, type Task, type Column, type GithubIssueAction} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {toJson} from "../db-helpers.js";
 import {getErrorMessage} from "../error-message.js";
-import {getArchiveWorktreeDisposer} from "../archive-worktree-disposer.js";
+import {ArchiveWorkspaceDisposalError, ArchiveWorkspaceDisposalIncompleteError, ArchiveWorkspaceWorktreeDisposerMissingError, getArchiveWorkspaceWorktreeDisposer, getArchiveWorktreeDisposer, type ArchiveWorkspaceDisposalResult, type WorkspaceDisposalPlanEntry} from "../archive-worktree-disposer.js";
 import {acquireWorktreePathReservation, canonicalizeWorktreePath} from "../worktree-path-reservation.js";
 import {basename, join, resolve} from "node:path";
 import {homedir} from "node:os";
@@ -22,6 +22,113 @@ import {homedir} from "node:os";
 function resolveArchiveWorktreesDir(store: TaskStore, configured?: string): string {
   const value = configured?.replace(/^~(?=$|[\\/])/, homedir()).replaceAll("{repo}", basename(store.rootDir));
   return value ? resolve(store.rootDir, value) : join(store.rootDir, ".worktrees");
+}
+
+export async function buildWorkspaceDisposalPlan(store: TaskStore, task: Task): Promise<{plan: WorkspaceDisposalPlanEntry[]; singularDeduplicated: boolean}> {
+  const entries = Object.entries(task.workspaceWorktrees ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const byCanonical = new Map<string, WorkspaceDisposalPlanEntry>();
+  for (const [repoRel, entry] of entries) {
+    const canonical = await canonicalizeWorktreePath(entry.worktreePath);
+    const repoRootDir = join(store.rootDir, repoRel);
+    const existing = byCanonical.get(canonical);
+    if (existing) existing.aliasRepoRels.push(repoRel);
+    else byCanonical.set(canonical, {repoRel, worktreePath: entry.worktreePath, branch: entry.branch, repoRootDir, aliasRepoRels: []});
+  }
+  let singularDeduplicated = false;
+  if (task.worktree) {
+    const canonical = await canonicalizeWorktreePath(task.worktree);
+    const existing = byCanonical.get(canonical);
+    if (existing) { existing.aliasRepoRels.push("__singular_worktree__"); singularDeduplicated = true; }
+  }
+  return {plan: [...byCanonical.values()], singularDeduplicated};
+}
+
+function normalizeWorkspaceDisposalResult(plan: WorkspaceDisposalPlanEntry[], result: ArchiveWorkspaceDisposalResult): {removed: Set<string>; failures: Map<string, unknown>} {
+  const owners = new Set(plan.map((entry) => entry.repoRel));
+  const counts = new Map<string, number>();
+  for (const repoRel of result.removed) counts.set(repoRel, (counts.get(repoRel) ?? 0) + 1);
+  const reportedFailures = new Map<string, unknown>();
+  for (const failure of result.failed) if (owners.has(failure.repoRel)) reportedFailures.set(failure.repoRel, failure.error);
+  const removed = new Set<string>();
+  const failures = new Map<string, unknown>();
+  for (const repoRel of owners) {
+    if (counts.get(repoRel) === 1 && !reportedFailures.has(repoRel)) removed.add(repoRel);
+    else failures.set(repoRel, reportedFailures.get(repoRel) ?? new ArchiveWorkspaceDisposalIncompleteError(repoRel));
+  }
+  return {removed, failures};
+}
+
+/*
+FNXC:WorkflowLifecycle 2026-07-16-14:00:
+FN-8105 reserved only the singular path. Workspace tasks retain one worktree per
+sub-repo, so archive holds a canonical per-repo reservation through an awaited,
+store-scoped disposal and quarantines every path not explicitly reported removed.
+*/
+export type PreparedWorkspaceArchiveDisposal = {
+  plan: WorkspaceDisposalPlanEntry[];
+  reservations: Record<string, Awaited<ReturnType<typeof acquireWorktreePathReservation>>>;
+  singularDeduplicated: boolean;
+};
+
+/**
+ * FNXC:WorkflowLifecycle 2026-07-16-15:30:
+ * The PostgreSQL archive commits its cold-storage row before filesystem cleanup.
+ * Acquire every workspace reservation before that mutation, then carry the held
+ * handles into disposal so a separate process cannot recreate a deterministic
+ * sub-repository worktree in the commit-to-removal window.
+ */
+export async function prepareArchivedWorkspaceWorktrees(store: TaskStore, task: Task): Promise<PreparedWorkspaceArchiveDisposal> {
+  if (!isWorkspaceTask(task)) return {plan: [], reservations: {}, singularDeduplicated: false};
+  const {plan, singularDeduplicated} = await buildWorkspaceDisposalPlan(store, task);
+  const reservations: PreparedWorkspaceArchiveDisposal["reservations"] = {};
+  if (plan.length === 0) return {plan, reservations, singularDeduplicated};
+  try {
+    const settings = await store.getSettings();
+    for (const entry of plan) {
+      const canonical = await canonicalizeWorktreePath(entry.worktreePath);
+      reservations[entry.repoRel] = await acquireWorktreePathReservation({
+        canonicalPath: canonical,
+        rootDir: entry.repoRootDir,
+        worktreesDir: resolveArchiveWorktreesDir({rootDir: entry.repoRootDir} as TaskStore, settings.worktreesDir),
+      });
+    }
+    return {plan, reservations, singularDeduplicated};
+  } catch (error) {
+    await releasePreparedWorkspaceArchiveDisposal({plan, reservations, singularDeduplicated});
+    throw error;
+  }
+}
+
+export async function releasePreparedWorkspaceArchiveDisposal(prepared: PreparedWorkspaceArchiveDisposal): Promise<void> {
+  for (const reservation of Object.values(prepared.reservations)) {
+    if (reservation.state === "held") await reservation.release();
+  }
+}
+
+export async function disposeArchivedWorkspaceWorktrees(store: TaskStore, task: Task, prepared = undefined as PreparedWorkspaceArchiveDisposal | undefined): Promise<{singularDeduplicated: boolean}> {
+  const disposal = prepared ?? await prepareArchivedWorkspaceWorktrees(store, task);
+  const {plan, reservations, singularDeduplicated} = disposal;
+  if (plan.length === 0) return {singularDeduplicated};
+  try {
+    const disposer = getArchiveWorkspaceWorktreeDisposer(store);
+    let result: ArchiveWorkspaceDisposalResult;
+    if (!disposer) {
+      storeLog.warn("archive-workspace-worktree-disposer-missing", {taskId: task.id, repos: plan.map((entry) => entry.repoRel)});
+      result = {removed: [], failed: plan.map((entry) => ({repoRel: entry.repoRel, error: new ArchiveWorkspaceWorktreeDisposerMissingError(entry.repoRel)}))};
+    } else {
+      try { result = await disposer(task, plan, reservations); }
+      catch (error) {
+        result = error instanceof ArchiveWorkspaceDisposalError
+          ? {removed: error.removed, failed: error.failed}
+          : {removed: [], failed: plan.map((entry) => ({repoRel: entry.repoRel, error}))};
+      }
+    }
+    const normalized = normalizeWorkspaceDisposalResult(plan, result);
+    for (const [repoRel, error] of normalized.failures) await reservations[repoRel].quarantine(getErrorMessage(error));
+  } finally {
+    await releasePreparedWorkspaceArchiveDisposal(disposal);
+  }
+  return {singularDeduplicated};
 }
 
 export async function disposeArchivedWorktree(store: TaskStore, task: Task): Promise<void> {
@@ -284,7 +391,8 @@ export async function archiveTaskImpl(store: TaskStore, id: string, optionsOrCle
       until the awaited engine disposer finishes. The disposer is store-scoped
       so executor-less fn/CLI archives cannot silently leak a worktree.
       */
-      await disposeArchivedWorktree(store, task);
+      const workspace = await disposeArchivedWorkspaceWorktrees(store, task);
+      if (!workspace.singularDeduplicated) await disposeArchivedWorktree(store, task);
       const cleanedBranches = await store.cleanupBranchForTask(task);
       if (cleanedBranches.length > 0) {
         task.log.push({

@@ -546,7 +546,15 @@ export {
 export {
   registerArchiveWorktreeDisposer,
   getArchiveWorktreeDisposer,
+  registerArchiveWorkspaceWorktreeDisposer,
+  getArchiveWorkspaceWorktreeDisposer,
+  ArchiveWorkspaceDisposalError,
+  ArchiveWorkspaceDisposalIncompleteError,
+  ArchiveWorkspaceWorktreeDisposerMissingError,
   type ArchiveWorktreeDisposer,
+  type ArchiveWorkspaceWorktreeDisposer,
+  type WorkspaceDisposalPlanEntry,
+  type ArchiveWorkspaceDisposalResult,
 } from "./archive-worktree-disposer.js";
 export {
   acquireWorktreePathReservation,
