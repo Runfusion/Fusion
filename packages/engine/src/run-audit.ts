@@ -817,7 +817,23 @@ export type DatabaseMutationType =
    * Emitted at most once per taskId while the blocking provenance persists (deduped in-memory).
    * Metadata: { taskId, reason: "failure-provenance", sweep: "stuck-in-progress" | "stranded-todo", marker?: string }
    */
-  | "task:reconcile-stranded-completed-no-action";
+  | "task:reconcile-stranded-completed-no-action"
+  /**
+   * FNXC:Lifecycle 2026-07-16-09:40:
+   * FN-8141 no-action lifecycle event: the AI empty-merge lane vetoed a
+   * zero-diff (no net changes) no-op finalize because the task's cross-stage
+   * overseer memory (derived from the durable `overseer:intervention` timeline)
+   * shows the MOST RECENT executor-stage signal was failed-with-incomplete-work
+   * with no subsequent green completion (`evaluateNoOpFinalizeExecutorVeto`).
+   * The task is moved back to `todo` with progress preserved instead of reaching
+   * `done` — mirroring the FN-6461 `task:no-commits-finalize-blocked-incomplete-steps`
+   * blocked lane. The move-to-todo transition takes the task out of the merge
+   * lane, so the event is not re-emitted every poll (equivalent to the
+   * `overseer:oversight-withheld-human-control` per-(taskId, reason) dedup).
+   * Metadata (ids/outcomes-only): { reason; branch; integrationBranch; lane:
+   * "ai-empty-merge"; executorSignal?; executorSignalObservedAt? }
+   */
+  | "overseer:no-op-finalize-vetoed-failed-executor";
 
 // ── Filesystem mutation types ─────────────────────────────────────────────────
 

@@ -1353,6 +1353,41 @@ export interface PrThreadState {
   updatedAt: number;
 }
 
+/**
+ * FNXC:Lifecycle 2026-07-16-09:40:
+ * FN-8141 cross-stage overseer memory. FN-8141 was laundered into `done`
+ * because the planner overseer is stage-scoped and memoryless: it emitted
+ * `stage=executor signal=failed` (parked failed with work incomplete) twice,
+ * then an hour later saw `stage=merger signal=progressing` and let an empty
+ * no-op merge finalize the task `done` — nothing connected the failed executor
+ * verdict to the merger's finalize decision.
+ *
+ * This is the derived (NOT persisted-as-a-column) most-recent executor-stage
+ * overseer signal, reconstructed on demand from the durable
+ * `overseer:intervention` timeline the overseer already writes (see
+ * `deriveExecutorSignalMemory` in the engine). It is the evidence the
+ * merger-layer no-op-finalize veto (`evaluateNoOpFinalizeExecutorVeto`) reads
+ * to refuse completing a zero-diff task whose executor never finished green.
+ * Since the executor stage only exists while a task is `in-progress`, a later
+ * green re-execution appends a non-`failed` executor observation that becomes
+ * the newest entry (clearing `incompleteWork`) — this is how "no subsequent
+ * execution completed green" is derived: the memory always reflects the LATEST
+ * executor observation.
+ */
+export interface ExecutorOverseerSignalMemory {
+  /** The most recent executor-stage `OverseerObservationSignal` (bare string to avoid pulling the engine stage taxonomy into core). */
+  signal: string;
+  /**
+   * True iff `signal` is the failed-with-incomplete-work executor shape
+   * (the overseer's `signal: "failed"` executor observation — "Executor stage
+   * parked failed with work incomplete"). A later `progressing`/`complete`/etc.
+   * executor observation supersedes it, deriving `false`.
+   */
+  incompleteWork: boolean;
+  /** epoch-ms (or intervention-entry timestamp) of the observation that produced this memory. */
+  observedAt: number;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */

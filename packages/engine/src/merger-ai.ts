@@ -44,6 +44,7 @@ import {
   assertNotWorkspaceTaskMerge,
   buildTaskLineageTrailer,
   evaluateNoCommitsNoOpFinalize,
+  getPlannerInterventionTimeline,
   getPrimaryPrInfo,
   getTaskMergeBlocker,
   normalizeMergeAdvanceAutoSyncMode,
@@ -69,6 +70,7 @@ import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { checkSessionError } from "./usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
+import { deriveExecutorSignalMemory, evaluateNoOpFinalizeExecutorVeto } from "./overseer-noop-finalize-veto.js";
 import { createLogger } from "./logger.js";
 import {
   buildAutostashLabel,
@@ -1226,6 +1228,13 @@ export async function runAiMerge(
      * preserved so an operator (or reviewer) sees it instead of it laundering into `done`.
      * task.error keeps recoverStrandedCompletedTodoTasks from re-promoting the unchanged task (it
      * excludes any task with `task.error` set), mirroring the FN-6461 blocked lane above.
+     *
+     * FNXC:Lifecycle 2026-07-16-09:40:
+     * Empty-lane guard ORDER (each blocks BEFORE finalizeMerged; first blocker wins; all coexist):
+     *   (1) FN-6461/#2254 step-evidence guard (`evaluateNoCommitsNoOpFinalize`, above)
+     *   (2) #2259 already-landed-proof guard (this block, commit-expected only)
+     *   (3) FN-8141 executor-signal veto (`evaluateNoOpFinalizeExecutorVeto`, below)
+     * They use INDEPENDENT evidence, so any one alone stops the FN-8141 laundering shape.
      */
     if (task.noCommitsExpected !== true) {
       const landedProof = await proveEmptyMergeAlreadyLanded(task, branch, integrationBranch, projectRootDir);
@@ -1267,6 +1276,71 @@ export async function runAiMerge(
         `AI merge: ${branch} had no net changes vs ${integrationBranch} but work already landed (proof=${landedProof.strategy}${landedProof.sha ? ` sha=${landedProof.sha.slice(0, 8)}` : ""}) — finalizing as no-op`,
       );
     }
+
+    /*
+     * FNXC:Lifecycle 2026-07-16-09:40:
+     * FN-8141 overseer-layer backstop — guard (3) in the empty-lane order above.
+     * Independent of, and composed with, the FN-6461/#2254 step-evidence guard
+     * and the #2259 already-landed-proof guard (this one keys on the cross-stage
+     * executor overseer signal, derived from the durable `overseer:intervention`
+     * timeline). EITHER of the three alone must stop the FN-8141 laundering
+     * shape. Only the zero-diff no-op lane is in scope — a real squash landing
+     * never reaches here. `evaluateNoOpFinalizeExecutorVeto` is pure and defers
+     * to the FN-7514 human-control contract, so it never fights user-paused /
+     * autoMerge:false tasks.
+     */
+    // Derive the most-recent executor signal from the durable
+    // `overseer:intervention` timeline (best-effort — a store without the async
+    // reader, or a query failure, degrades to `null` = no veto, so other guards
+    // remain the safety net).
+    let executorMemory = null as Awaited<ReturnType<typeof deriveExecutorSignalMemory>>;
+    try {
+      const timeline = await getPlannerInterventionTimeline(store, taskId);
+      executorMemory = deriveExecutorSignalMemory(timeline);
+    } catch (err) {
+      aiMergeLog.warn(`${taskId}: executor overseer-memory derivation failed (skipping veto): ${getErrorMessage(err)}`);
+    }
+    const executorVeto = evaluateNoOpFinalizeExecutorVeto({ mergeIsEmpty: true, task, memory: executorMemory, settings });
+    if (executorVeto.veto) {
+      const vetoReason = executorVeto.reason ?? "overseer failed-executor no-op-finalize veto";
+      await store.updateTask(taskId, { error: vetoReason });
+      await store.logEntry(
+        taskId,
+        `Finalize blocked (overseer failed-executor veto): ${vetoReason} — moving back to todo with progress preserved`,
+        JSON.stringify({
+          executorSignal: executorMemory?.signal,
+          executorSignalObservedAt: executorMemory?.observedAt,
+          branch,
+          integrationBranch,
+          lane: "ai-empty-merge",
+        }, null, 2),
+      );
+      await audit.database({
+        type: "overseer:no-op-finalize-vetoed-failed-executor" as Parameters<typeof audit.database>[0]["type"],
+        target: taskId,
+        metadata: {
+          reason: vetoReason,
+          executorSignal: executorMemory?.signal,
+          executorSignalObservedAt: executorMemory?.observedAt,
+          branch,
+          integrationBranch,
+          lane: "ai-empty-merge",
+        },
+      });
+      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      return {
+        task,
+        branch,
+        merged: false,
+        noOp: false,
+        ok: true,
+        reason: vetoReason,
+        error: vetoReason,
+        worktreeRemoved: false,
+        branchDeleted: false,
+      };
+    }
+
     await log(`AI merge: ${branch} had no net changes vs ${integrationBranch} — finalizing as no-op`);
     const noOpFinalized = await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.tipSha, audit, log, { empty: true }, mergeTarget, groupRouting, options.syncGroupPr);
     await runPushAfterMergeStep({ store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result: noOpFinalized });

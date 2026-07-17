@@ -30,6 +30,18 @@ export type OverseerWatchedStage = (typeof OVERSEER_WATCHED_STAGES)[number];
 /** Normalized signal describing how a watched stage is currently progressing. */
 export type OverseerObservationSignal = "progressing" | "stuck" | "failed" | "blocked" | "awaiting-human" | "complete";
 
+/**
+ * FNXC:Lifecycle 2026-07-16-09:40:
+ * FN-8141: the CONSTANT reason string for the executor stage's
+ * failed-with-incomplete-work observation. It is already load-bearing — the
+ * FN-7577 feed dedup keys on `stage|signal|reason`, so this string must never
+ * embed per-failure detail (see the derivation at `deriveSignalAndSources`).
+ * Exported as the single source of truth so the cross-stage no-op-finalize veto
+ * derivation (`deriveExecutorSignalMemory`) can recognize this observation in
+ * the durable `overseer:intervention` timeline without duplicating the literal.
+ */
+export const EXECUTOR_FAILED_INCOMPLETE_REASON = "Executor stage parked failed with work incomplete";
+
 /** A link back to the concrete evidence an observation was derived from. */
 export interface OverseerSourceLink {
   kind: "agent-log" | "review-comment" | "failed-check" | "merge-error" | "pr-state";
@@ -191,7 +203,7 @@ function deriveSignalAndSources(
       if (task.status === "failed") {
         return {
           signal: "failed",
-          reason: "Executor stage parked failed with work incomplete",
+          reason: EXECUTOR_FAILED_INCOMPLETE_REASON,
           sources: [{ kind: "agent-log", ref: taskId }],
         };
       }

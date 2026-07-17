@@ -33,6 +33,7 @@ import {
   REVIEW_VERDICT_MARKER,
   AiMergeBlockedError,
 } from "../merger-ai.js";
+import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../planner-overseer.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();
@@ -708,6 +709,86 @@ describe("runAiMerge", () => {
     expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
     );
+  });
+
+  /*
+   * FN-8141 guard (3) — executor-signal veto — exercised IN ISOLATION.
+   * The sibling guards (1) step-evidence and (2) already-landed-proof already
+   * catch the exact FN-8141 shape (covered by the tests above). These two tests
+   * prove guard (3) blocks independently on DIFFERENT evidence: a task that
+   * PASSES guard (1) (all steps `done`, none skipped) and SKIPS guard (2)
+   * (`noCommitsExpected`) — only the durable executor overseer signal reveals
+   * the executor never finished green.
+   */
+  it("FN-8141: vetoes an empty no-op finalize when the last executor signal was failed-with-incomplete-work", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1"); // fold branch work into main → branch is now empty
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Plan", status: "done" },
+        { name: "Execute", status: "done" },
+      ],
+    });
+    // Durable overseer timeline: newest executor observation is failed-incomplete.
+    store.getRunAuditEventsAsync = vi.fn(async () => [
+      {
+        id: "ev-fail-2", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T22:40:00.000Z",
+        domain: "database", mutationType: "overseer:intervention", runId: "r2", agentId: "overseer",
+        metadata: { stage: "executor", reason: EXECUTOR_FAILED_INCOMPLETE_REASON, action: "observe", outcome: "succeeded" },
+      },
+    ]);
+    const auditDb: unknown[] = [];
+    const priorRecord = store.recordRunAuditEvent;
+    store.recordRunAuditEvent = vi.fn((e: any) => { auditDb.push(e); return priorRecord?.(e); });
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    // Vetoed to todo — NOT laundered to done.
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("Finalize blocked (overseer failed-executor veto)"),
+      expect.stringContaining("ai-empty-merge"),
+    );
+    expect(auditDb.some((e: any) => e.mutationType === "overseer:no-op-finalize-vetoed-failed-executor")).toBe(true);
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  it("FN-8141: does NOT veto an empty no-op finalize when a later executor observation was green", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, { noCommitsExpected: true, steps: [{ name: "Execute", status: "done" }] });
+    // Timeline newest-first: a green executor observation supersedes the failure.
+    store.getRunAuditEventsAsync = vi.fn(async () => [
+      {
+        id: "ev-green", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T23:10:00.000Z",
+        domain: "database", mutationType: "overseer:intervention", runId: "r3", agentId: "overseer",
+        metadata: { stage: "executor", reason: "Task is actively executing in-progress work", action: "observe", outcome: "succeeded" },
+      },
+      {
+        id: "ev-fail", taskId: "FN-1", target: "FN-1", timestamp: "2026-07-16T22:40:00.000Z",
+        domain: "database", mutationType: "overseer:intervention", runId: "r2", agentId: "overseer",
+        metadata: { stage: "executor", reason: EXECUTOR_FAILED_INCOMPLETE_REASON, action: "observe", outcome: "succeeded" },
+      },
+    ]);
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
   it("fails loudly when an executed, never-merged task has no branch (possible lost work)", async () => {
