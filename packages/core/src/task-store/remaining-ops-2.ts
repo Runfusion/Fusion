@@ -26,6 +26,8 @@ import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.j
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
+import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./remaining-ops-8.js";
 import * as schema from "../postgres/schema/index.js";
 import {and, asc, eq, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async-merge-coordination.js";
@@ -1242,15 +1244,46 @@ export async function unlinkGithubIssueImpl(store: TaskStore, id: string): Promi
 
 export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string[]> {
     /*
-    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
-    Dead legacy-SQLite path (no live caller): uses store.archiveDb + store.db,
-    both of which throw the removed-SQLite stub in backend mode. It was never
-    ported to the AsyncDataLayer. Fail fast with an actionable message so a future
-    re-exposure is caught here rather than surfacing the cryptic stub error.
+    FNXC:PostgresOnlyDataAccess 2026-07-17-15:10:
+    Backend-mode port. `cleanupArchivedTasks` is the hard-removal path for tasks
+    already in the `archived` column (the CLI documents it as such): it snapshots
+    each to cold storage, hard-deletes the live project row, and removes the task
+    directory. In PostgreSQL, archived rows are soft-deleted (`deleted_at` set), so
+    enumeration MUST pass `includeDeleted`. The cold snapshot upsert is idempotent
+    (archive already holds it from archive time); the project-row DELETE fires the
+    ON DELETE CASCADE that purges the task's documents/artifacts, matching the
+    SQLite path's dir removal. Selection rows are purged via the async helper.
     */
     if (store.backendMode) {
-      throw new Error("cleanupArchivedTasks is not implemented for the PostgreSQL backend (no async port exists). Use the async archive lifecycle helpers instead.");
+      const layer = store.asyncLayer!;
+      const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+      const archivedTasks = await store.listTasks({ column: "archived", includeDeleted: true });
+      const cleanedUpIds: string[] = [];
+      const { rm } = await import("node:fs/promises");
+
+      for (const task of archivedTasks) {
+        const dir = store.taskDir(task.id);
+        // Guarantee a cold-storage snapshot before the destructive delete.
+        const entry = await store.taskToArchiveEntry(task, task.deletedAt ?? new Date().toISOString());
+        await upsertArchivedTaskEntry(layer.db, entry, layer.projectId);
+
+        await purgeTaskWorkflowSelectionRowsAsyncImpl(store, task.id);
+        await layer.db
+          .delete(schema.project.tasks)
+          .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, task.id)));
+
+        if (existsSync(dir)) {
+          await rm(dir, { recursive: true, force: true });
+        }
+        if (store.isWatching) {
+          store.taskCache.delete(task.id);
+        }
+        cleanedUpIds.push(task.id);
+      }
+
+      return cleanedUpIds;
     }
+
     const archivedTasks = await store.listTasks({ column: "archived" });
 
     const cleanedUpIds: string[] = [];

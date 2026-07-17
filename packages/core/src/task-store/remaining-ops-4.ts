@@ -636,25 +636,35 @@ export async function getAllDocumentsImpl(store: TaskStore, options?: { searchQu
 
 export async function deleteWorkflowStepImpl(store: TaskStore, id: string): Promise<void> {
     /*
-    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
-    Dead legacy-SQLite path (the REST route + client helper were removed in U5):
-    unlike its migrated siblings createWorkflowStep/updateWorkflowStep, this never
-    got a backend branch, so store.db here throws the removed-SQLite stub in backend
-    mode. Fail fast with an actionable message if a future route re-exposes it.
+    FNXC:PostgresOnlyDataAccess 2026-07-17-15:10:
+    Backend mode deletes the workflow_steps row via the AsyncDataLayer (mirrors the
+    async workflow_steps deletes in workflow-ops.ts). The `.returning()` clause lets
+    us preserve the sync path's "not found" contract. `bumpLastModified` is a
+    SQLite-only mtime touch with no PostgreSQL analogue. The task-reference cleanup
+    below is already async and backend-safe, so it runs in both modes.
     */
     if (store.backendMode) {
-      throw new Error("deleteWorkflowStep is not implemented for the PostgreSQL backend (no async port exists). Materialized workflow_steps are cleaned up via the async workflow-ops helpers.");
-    }
-    const deleted = store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
-      changes?: number;
-    };
+      const layer = store.asyncLayer!;
+      const deletedRows = await layer.db
+        .delete(schema.project.workflowSteps)
+        .where(eq(schema.project.workflowSteps.id, id))
+        .returning({ id: schema.project.workflowSteps.id });
+      if (deletedRows.length === 0) {
+        throw new Error(`Workflow step '${id}' not found`);
+      }
+      store.workflowStepsCache = null;
+    } else {
+      const deleted = store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
+        changes?: number;
+      };
 
-    if ((deleted.changes || 0) === 0) {
-      throw new Error(`Workflow step '${id}' not found`);
-    }
+      if ((deleted.changes || 0) === 0) {
+        throw new Error(`Workflow step '${id}' not found`);
+      }
 
-    store.db.bumpLastModified();
-    store.workflowStepsCache = null;
+      store.db.bumpLastModified();
+      store.workflowStepsCache = null;
+    }
 
     // Clean up references from existing tasks (best-effort, outside config lock)
     try {

@@ -300,35 +300,14 @@ export function patchTaskRowInTransactionImpl(store: TaskStore,
     return { current: store.readTaskFromDb(id) };
 }
 
-export async function applyTaskPatchImpl(store: TaskStore,
-    dir: string,
-    id: string,
-    task: Task,
-    changedColumns: Iterable<keyof TaskRow>,
-    options?: { existingRow?: TaskRow; auditInput?: { agentId?: string; runId?: string; timestamp?: string; operation?: string } },
-  ): Promise<void> {
-    /*
-    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
-    Dead legacy-SQLite path (no live caller): drives a sync store.db.transactionImmediate,
-    which throws the removed-SQLite stub in backend mode. Never ported to the async
-    data layer. Fail fast with an actionable message if re-exposed.
-    */
-    if (store.backendMode) {
-      throw new Error("applyTaskPatch is not implemented for the PostgreSQL backend (no async port exists). Use the async task update/patch helpers instead.");
-    }
-    let result: { deletedAt?: string; current?: Task } | undefined;
-    store.db.transactionImmediate(() => {
-      result = store.patchTaskRowInTransaction(id, task, changedColumns, options?.existingRow);
-    });
-    if (result?.deletedAt) {
-      store.throwSoftDeletedWriteBlocked(id, result.deletedAt, options?.auditInput?.operation ?? "applyTaskPatch", {
-        agentId: options?.auditInput?.agentId,
-        runId: options?.auditInput?.runId,
-        timestamp: options?.auditInput?.timestamp,
-      });
-    }
-    await store.writeTaskJsonFile(dir, result?.current ?? task);
-}
+/*
+FNXC:PostgresOnlyDataAccess 2026-07-17-15:10:
+`applyTaskPatchImpl` (the low-level sync SQLite column-patch primitive) was
+removed: it had zero callers in either mode, and its `store.db.transactionImmediate`
++ `patchTaskRowInTransaction` body only ran against the deleted SQLite runtime.
+Task writes go through the async persistence helpers (upsertTaskRowInTransaction /
+updateTaskColumns). The public `TaskStore.applyTaskPatch` facade was removed with it.
+*/
 
 export function readTaskFromDbImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Task | undefined {
     const selectClause = options?.activityLogLimit

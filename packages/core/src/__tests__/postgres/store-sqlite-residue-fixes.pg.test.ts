@@ -19,7 +19,7 @@
  *    Assert the feature is unlinked after a backend hard delete.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as schema from "../../postgres/schema/index.js";
@@ -106,5 +106,43 @@ pgDescribe("PostgreSQL store-migration residue fixes", () => {
     expect(orphan).toBeUndefined();
     const refreshed = await missions.getFeature(feature.id);
     expect(refreshed?.taskId).toBeUndefined();
+  });
+
+  it("deleteWorkflowStep removes the row in backend mode and reports not-found for a missing id", async () => {
+    const store = h.store();
+    const step = await store.createWorkflowStep({ name: "Deletable", description: "step" });
+
+    await store.deleteWorkflowStep(step.id);
+    const rows = await h.adminDb()
+      .select({ id: schema.project.workflowSteps.id })
+      .from(schema.project.workflowSteps)
+      .where(inArray(schema.project.workflowSteps.id, [step.id]));
+    expect(rows).toEqual([]);
+
+    // Contract preserved: deleting a non-existent step throws.
+    await expect(store.deleteWorkflowStep("WS-does-not-exist")).rejects.toThrow(/not found/);
+  });
+
+  it("cleanupArchivedTasks hard-deletes archived project rows while retaining the cold snapshot", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "to be purged" });
+    await store.archiveTask(task.id);
+
+    const cleaned = await store.cleanupArchivedTasks();
+    expect(cleaned).toContain(task.id);
+
+    // Live project row is gone...
+    const liveRows = await h.adminDb()
+      .select({ id: schema.project.tasks.id })
+      .from(schema.project.tasks)
+      .where(eq(schema.project.tasks.id, task.id));
+    expect(liveRows).toEqual([]);
+
+    // ...but the cold-storage snapshot survives for restore.
+    const coldRows = await h.adminDb()
+      .select({ id: schema.archive.archivedTasks.id })
+      .from(schema.archive.archivedTasks)
+      .where(eq(schema.archive.archivedTasks.id, task.id));
+    expect(coldRows.map((r) => r.id)).toContain(task.id);
   });
 });
