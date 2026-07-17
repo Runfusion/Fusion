@@ -273,6 +273,21 @@ export function SchedulingSection({ form, setForm, concurrencyLoading = false, o
             autoArchiveDuplicateTasksEnabled: v === true,
         }))}
       />
+      <SettingsSelectRow
+        descriptor={{
+          key: "triageDuplicateResolution",
+          label: t("settings.scheduling.triageDuplicateResolution", "Triage duplicate resolution"),
+          help: t("settings.scheduling.triageDuplicateResolutionHelp", "Block triage duplicates for a linked Keep/Delete decision (default), keep automatically, or delete automatically."),
+          scope: "project",
+          options: [
+            { value: "prompt", label: t("settings.scheduling.triageDuplicateResolutionPrompt", "Block for decision (default)") },
+            { value: "keep", label: t("settings.scheduling.triageDuplicateResolutionKeep", "Keep automatically") },
+            { value: "delete", label: t("settings.scheduling.triageDuplicateResolutionDelete", "Delete automatically") },
+          ],
+        }}
+        value={form.triageDuplicateResolution ?? "prompt"}
+        onChange={(v) => setForm((f) => ({ ...f, triageDuplicateResolution: v as "prompt" | "keep" | "delete" }))}
+      />
       <SettingsNumberRow
         descriptor={{
           key: "maxStuckKills",

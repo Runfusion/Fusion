@@ -296,6 +296,7 @@ export default defineConfig({
             "node_modules/**",
             "dist/**",
             // FNXC:PgMigrationQuarantine 2026-07-14-08:00:
+            // FNXC:WorkflowStepInstancePersistence 2026-07-16-20:35: FN-8157 restores this PG-backed foreach suite through async store persistence, so it must execute in engine-default.
             // VAL-REMOVAL-005 deleted the SQLite Database class. These engine-default files fail
             // because they construct SQLite-backed stores or use sync APIs (getRunAuditEvents,
             // getDatabase, walCheckpoint) that throw/return-empty in backend mode, or have mock
@@ -319,7 +320,6 @@ export default defineConfig({
             "src/__tests__/routine-runner.test.ts",
             "src/__tests__/self-healing-meta-archive-guards.test.ts",
             "src/__tests__/triage-token-usage.test.ts",
-            "src/__tests__/workflow-foreach-wiring.test.ts",
             /*
             FNXC:EngineTests 2026-06-14-02:11:
             FN-6433 rescued the AI-merge suites by replacing broad activeSessionRegistry cleanup with path-scoped cleanup, so the default engine lane should execute them again. The soft-delete blocker residue suite was deleted under the ratchet because deterministic soft-delete deadlock coverage already owns that invariant.

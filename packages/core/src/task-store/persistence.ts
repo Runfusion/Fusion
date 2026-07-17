@@ -42,6 +42,8 @@ export interface TaskRow {
   validatorModelId: string | null;
   planningModelProvider: string | null;
   planningModelId: string | null;
+  mergerModelProvider: string | null;
+  mergerModelId: string | null;
   mergeRetries: number | null;
   workflowStepRetries: number | null;
   stuckKillCount: number | null;
@@ -59,6 +61,8 @@ export interface TaskRow {
   planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
   taskDoneRetryCount: number | null;
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (ISO timestamp / null).
+  bulkCompletionRefusalAt: string | null;
   worktreeSessionRetryCount: number | null;
   completionHandoffLimboRecoveryCount: number | null;
   verificationFailureCount: number | null;
@@ -74,6 +78,7 @@ export interface TaskRow {
   thinkingLevel: string | null;
   validatorThinkingLevel: string | null;
   planningThinkingLevel: string | null;
+  mergerThinkingLevel: string | null;
   executionMode: string | null;
   /** FNXC:PlannerOversight 2026-07-14-18:11: null = inherit project; 0 = off; 1 = on (autoMerge pattern). */
   sessionAdvisorEnabled: number | null;
@@ -227,6 +232,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("validatorModelId", (task) => task.validatorModelId ?? null),
   defineTaskColumn("planningModelProvider", (task) => task.planningModelProvider ?? null),
   defineTaskColumn("planningModelId", (task) => task.planningModelId ?? null),
+  defineTaskColumn("mergerModelProvider", (task) => task.mergerModelProvider ?? null),
+  defineTaskColumn("mergerModelId", (task) => task.mergerModelId ?? null),
   defineTaskColumn("mergeRetries", (task) => task.mergeRetries ?? null),
   defineTaskColumn("workflowStepRetries", (task) => task.workflowStepRetries ?? null),
   defineTaskColumn("stuckKillCount", (task) => task.stuckKillCount ?? 0),
@@ -246,6 +253,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker persisted as nullable ISO timestamp.
+  defineTaskColumn("bulkCompletionRefusalAt", (task) => task.bulkCompletionRefusalAt ?? null),
   defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),
   defineTaskColumn("completionHandoffLimboRecoveryCount", (task) => task.completionHandoffLimboRecoveryCount ?? 0),
   defineTaskColumn("verificationFailureCount", (task) => task.verificationFailureCount ?? 0),
@@ -262,6 +271,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   // FNXC:Settings-ThinkingLevel 2026-07-13 (merge port): per-task validator/planning reasoning-effort overrides.
   defineTaskColumn("validatorThinkingLevel", (task) => task.validatorThinkingLevel ?? null),
   defineTaskColumn("planningThinkingLevel", (task) => task.planningThinkingLevel ?? null),
+  defineTaskColumn("mergerThinkingLevel", (task) => task.mergerThinkingLevel ?? null),
   defineTaskColumn("executionMode", (task) => task.executionMode ?? null),
   defineTaskColumn("sessionAdvisorEnabled", serializeTaskSessionAdvisorEnabled),
   defineTaskColumn("tokenUsageInputTokens", (task) => task.tokenUsage?.inputTokens ?? null),

@@ -6693,6 +6693,11 @@ export default interface Resources {
         "strictDefault": "Strict (default)",
         "stuckTaskTimeoutMinutes": "Stuck Task Timeout (minutes)",
         "timeoutInMinutesForDetectingStuckTasksWhen": "Timeout in minutes for detecting stuck tasks. When a task's agent session shows no activity for longer than this duration, the task is terminated and retried. Leave empty to disable. Suggested: 10. Default: 10 minutes (600000ms).",
+        "triageDuplicateResolution": "Triage duplicate resolution",
+        "triageDuplicateResolutionDelete": "Delete automatically",
+        "triageDuplicateResolutionHelp": "Block triage-detected duplicates for a Keep/Delete decision with a link to the duplicate (default), keep automatically, or delete automatically.",
+        "triageDuplicateResolutionKeep": "Keep automatically",
+        "triageDuplicateResolutionPrompt": "Block for decision (default)",
         "whenEnabledTasksThatModifyTheSameFiles": "When enabled, tasks that modify the same files are queued serially to avoid merge conflicts. Default: enabled.",
         "whenEnabledTasksWithStalePlansPROMPTMd": "When enabled, tasks with stale plans (PROMPT.md older than the threshold) are automatically sent back to planning for replanning. Default: disabled.",
         "whenTheStuckDetectorKillsAndReQueues": "When the stuck detector kills and re-queues a task, keep completed step statuses so the agent can resume from where it left off. Disable to reset every step to pending on each stuck retry. Default: enabled."
@@ -7745,9 +7750,15 @@ export default interface Resources {
         "archiveTitle": "Archive near-duplicate task",
         "archived": "Archived {{id}}",
         "copy": "This task appears to be a near-duplicate of",
+        "deleteBtn": "Delete",
+        "deleteConfirm": "Delete",
+        "deleted": "Deleted {{id}}",
+        "deleteMessage": "Delete {{id}} as a duplicate of {{duplicateOf}}?",
+        "deleteTitle": "Delete duplicate task",
         "headline": "Potential duplicate detected",
         "keepBtn": "Keep",
-        "kept": "Kept {{id}} and dismissed duplicate warning"
+        "kept": "Kept {{id}} and dismissed duplicate warning",
+        "triageActions": "Choose Delete to remove this duplicate, or Keep to continue anyway."
       },
       "nextRecoveryAt": "Next recovery at {{time}}",
       "no": "No",

@@ -31,7 +31,7 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 FNXC:MultiProjectIsolation 2026-07-15-23:40:
 Advances to 0012 after the owner_project_id domain/partition split and chat pin timestamp. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0015";
+export const SCHEMA_BASELINE_VERSION = "0017";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -56,6 +56,12 @@ FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Import-translation cache advances to 0010. Migrations are registered here explicitly (not auto-discovered from the migrations dir), so a new .sql file that is not wired through a version constant + bookkeeping check silently never runs.
 */
 export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
+/**
+ * FNXC:GitHubImportTranslate 2026-07-16-23:30:
+ * Existing databases already recorded 0010, so the cache scope correction is
+ * deliberately a new forward migration rather than a retroactive SQL edit.
+ */
+export const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION = "0016";
 /*
 FNXC:MultiProjectIsolation 2026-07-15-23:40:
 Version 0011 splits the domain "project" field from the RLS partition on the tables
@@ -78,6 +84,8 @@ export const EXECUTOR_TOOL_FAILURE_RETRY_VERSION = "0013";
 export const EXECUTOR_ESCALATION_ATTEMPT_VERSION = "0014";
 /** FNXC:PostgresSchema 2026-07-16-22:00: central global routines follow main's already-landed 0014 migration. */
 export const GLOBAL_ROUTINES_SCHEMA_VERSION = "0015";
+/** FNXC:Settings-MergerModel 2026-07-16-12:00: per-task merger lane is an additive upgrade. */
+export const TASK_MERGER_MODEL_LANE_VERSION = "0017";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
@@ -134,6 +142,11 @@ const IMPORT_TRANSLATION_CACHE_MIGRATION_PATH = join(
   "migrations",
   "0010_import_translation_cache.sql",
 );
+const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH = join(
+  __dirname,
+  "migrations",
+  "0016_import_translation_cache_scope_fix.sql",
+);
 const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
   __dirname,
   "migrations",
@@ -159,6 +172,7 @@ const GLOBAL_ROUTINES_MIGRATION_PATH = join(
   "migrations",
   "0015_global_routines.sql",
 );
+const TASK_MERGER_MODEL_LANE_MIGRATION_PATH = join(__dirname, "migrations", "0017_task_merger_model_lane.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -238,11 +252,13 @@ export async function applySchemaBaseline(
     const sessionAdvisorEnabledAlreadyApplied = applied.includes(SESSION_ADVISOR_ENABLED_SCHEMA_VERSION);
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
+    const importTranslationCacheScopeFixAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
     const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
     const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
     const executorToolFailureRetryAlreadyApplied = applied.includes(EXECUTOR_TOOL_FAILURE_RETRY_VERSION);
     const executorEscalationAttemptAlreadyApplied = applied.includes(EXECUTOR_ESCALATION_ATTEMPT_VERSION);
     const globalRoutinesAlreadyApplied = applied.includes(GLOBAL_ROUTINES_SCHEMA_VERSION);
+    const taskMergerModelLaneAlreadyApplied = applied.includes(TASK_MERGER_MODEL_LANE_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -532,6 +548,29 @@ export async function applySchemaBaseline(
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${GLOBAL_ROUTINES_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+    if (!taskMergerModelLaneAlreadyApplied) {
+      const migrationSql = await readFile(TASK_MERGER_MODEL_LANE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_MERGER_MODEL_LANE_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:GitHubImportTranslate 2026-07-16-23:30:
+    0010's marker prevents its corrected fresh-install definition from running
+    on upgrades. Apply 0016 separately before runtime cache reads so existing
+    rows, RLS, and unbound compatibility stores share one partition contract.
+    */
+    if (!importTranslationCacheScopeFixAlreadyApplied) {
+      const migrationSql = await readFile(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

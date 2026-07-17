@@ -44,34 +44,20 @@ export function saveMemoryFile(path: string, content: string, projectId?: string
  * Compact memory content using AI to distill it down to the most important insights.
  * Reads one memory file, compacts it via AI, and writes the result back.
  *
- * Backwards-compatible call patterns:
- * - compactMemory(projectId?)
- * - compactMemory(path, projectId?)
+ * FNXC:CodeOrganization 2026-07-17-00:00:
+ * Call contract is explicit: first arg is always an optional memory path, second is
+ * optional projectId. Do not overload a single string as path-or-projectId — that
+ * dropped project scoping for values that did not look like paths (e.g. bare project ids).
  *
- * @param pathOrProjectId - Memory file path or legacy projectId-only argument
+ * @param path - Optional memory file path to compact (omit to compact default)
  * @param projectId - Optional project ID for multi-project support
  * @returns Promise resolving to the compacted memory content
  */
 export function compactMemory(
-  pathOrProjectId?: string,
+  path?: string,
   projectId?: string,
 ): Promise<{ path?: string; content: string }> {
-  let path: string | undefined;
-  let effectiveProjectId = projectId;
-
-  if (projectId !== undefined) {
-    path = pathOrProjectId;
-  } else if (typeof pathOrProjectId === "string" && pathOrProjectId.trim().length > 0) {
-    const trimmed = pathOrProjectId.trim();
-    const looksLikeMemoryPath = trimmed.includes("/") || trimmed.endsWith(".md") || trimmed.startsWith(".");
-    if (looksLikeMemoryPath) {
-      path = trimmed;
-    } else {
-      effectiveProjectId = trimmed;
-    }
-  }
-
-  return api<{ path?: string; content: string }>(withProjectId("/memory/compact", effectiveProjectId), {
+  return api<{ path?: string; content: string }>(withProjectId("/memory/compact", projectId), {
     method: "POST",
     body: JSON.stringify(path ? { path } : {}),
   });

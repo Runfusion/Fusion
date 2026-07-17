@@ -532,6 +532,75 @@ describe("TaskCard", () => {
     }
   });
 
+  /*
+  FNXC:TaskContextMenu 2026-07-16-20:50 (FN-8178):
+  All card entry points converge on the same portaled auto-focus lifecycle. Simulate a browser that
+  scrolls a focused portal unless `preventScroll` is requested; that scroll previously reached the
+  capture-phase closer and made every card action unusable.
+  */
+  it("keeps every card menu entry point open when autofocus would otherwise scroll", async () => {
+    vi.useFakeTimers();
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onPauseTask = vi.fn(async () => makeTask({ paused: true }));
+    const nativeFocus = HTMLElement.prototype.focus;
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function focusWithBrowserScroll(options?: FocusOptions) {
+      nativeFocus.call(this);
+      if (!options?.preventScroll) {
+        window.setTimeout(() => window.dispatchEvent(new Event("scroll")), 0);
+      }
+    });
+    const openMethods = [
+      () => fireEvent.click(screen.getByTestId("card-menu-btn-FN-001")),
+      () => fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 }),
+      () => {
+        fireEvent.pointerDown(document.querySelector(".card")!, { pointerType: "touch", pointerId: 7, clientX: 24, clientY: 28 });
+        act(() => vi.advanceTimersByTime(550));
+      },
+      () => fireEvent.keyDown(document.querySelector(".card")!, { key: "ContextMenu" }),
+    ];
+
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "in-progress", status: "executing" as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onPauseTask={onPauseTask}
+        />,
+      );
+
+      for (const openMenu of openMethods) {
+        openMenu();
+        act(() => vi.runOnlyPendingTimers());
+        expectBoardContextMenuPortaled();
+        expect(focusSpy).toHaveBeenLastCalledWith({ preventScroll: true });
+
+        const pauseItem = screen.getByRole("menuitem", { name: "Pause" });
+        fireEvent.pointerUp(pauseItem, { pointerType: "touch", pointerId: 8 });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(onPauseTask).toHaveBeenLastCalledWith("FN-001");
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      }
+
+      // Explicit dismissals remain intentional after focus no longer creates a scroll dismissal.
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      expectBoardContextMenuPortaled();
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      act(() => window.dispatchEvent(new Event("scroll")));
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    } finally {
+      focusSpy.mockRestore();
+      cleanupGeometry();
+    }
+  });
+
   it("opens Planning Mode from eligible pre-execution card menus only when wired", async () => {
     const cleanupGeometry = mockBoardContextMenuGeometry();
     const onPlanningMode = vi.fn();
@@ -2176,6 +2245,46 @@ describe("TaskCard", () => {
     expect(screen.getByText("executing")).toBeDefined();
   });
 
+  it.each([
+    { column: "todo" as const, status: "planning" },
+    { column: "in-progress" as const, status: "planning" },
+  ])("FN-8170 suppresses stale planning status and its empty header wrapper on $column cards", ({ column, status }) => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column, status })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText("planning")).toBeNull();
+    expect(container.querySelector(".card-header-badges")).toBeNull();
+  });
+
+  it("FN-8170 preserves triage planning and non-planning status badges", () => {
+    const { rerender } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "planning" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.getByText("planning")).toBeDefined();
+
+    rerender(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          status: "executing",
+          steps: [{ name: "Executing step", status: "in-progress" }],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.getByText("executing")).toBeDefined();
+  });
+
   it("renders merge-remediation status as merge-active for in-review tasks", () => {
     const { container } = render(
       <TaskCard
@@ -3246,6 +3355,28 @@ describe("TaskCard", () => {
       expect(container.querySelector(".card-error")).toBeNull();
     });
 
+    it("suppresses failed chrome and Retry while a stale failed task has automatic recovery pending", () => {
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "todo",
+            status: "failed",
+            error: "Transient provider error",
+            recoveryRetryCount: 1,
+            nextRecoveryAt: new Date(Date.now() + 60_000).toISOString(),
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRetryTask={vi.fn(async () => ({}) as Task)}
+        />,
+      );
+
+      expect(container.querySelector(".card-error")).toBeNull();
+      expect(container.querySelector(".card.failed")).toBeNull();
+      expect(container.querySelector(".card-status-badge.failed")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    });
+
     it("calls onRetryTask with task id", async () => {
       const onRetryTask = vi.fn(async () => ({}) as Task);
       render(
@@ -3849,126 +3980,39 @@ describe("TaskCard", () => {
     expect(actionsContainer?.contains(menuButton)).toBe(true);
   });
 
-  it("renders in-review Move control inline in card-meta for overlap-blocked tasks", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", overlapBlockedBy: "FN-OVER", blockedBy: undefined })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-      />,
-    );
-
-    const moveControl = container.querySelector(".card-send-back");
-    const metaRow = container.querySelector(".card-meta");
-
-    expect(metaRow).not.toBeNull();
-    expect(moveControl).not.toBeNull();
-    expect(metaRow?.contains(moveControl as HTMLElement)).toBe(true);
-    expect(container.querySelector(".card-action-row")).toBeNull();
-  });
-
-  it("renders in-review Move control after queued badge in card-meta", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", status: "queued" as any, dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined })}
-        queued={true}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-      />,
-    );
-
-    const metaRow = container.querySelector(".card-meta");
-    const queuedBadge = container.querySelector(".queued-badge");
-    const moveControl = container.querySelector(".card-send-back");
-
-    expect(metaRow).not.toBeNull();
-    expect(queuedBadge).not.toBeNull();
-    expect(moveControl).not.toBeNull();
-    expect(metaRow?.contains(moveControl as HTMLElement)).toBe(true);
-    expect(queuedBadge?.compareDocumentPosition(moveControl as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(container.querySelector(".card-action-row")).toBeNull();
-  });
-
-  it("keeps in-review Move control in card-action-row when meta row is not visible", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-      />,
-    );
-
-    const moveButton = screen.getByRole("button", { name: "Move task" });
-    const actionRow = container.querySelector(".card-action-row");
-
-    expect(actionRow).not.toBeNull();
-    expect(actionRow?.contains(moveButton)).toBe(true);
-    expect(moveButton.closest(".card-meta")).toBeNull();
-  });
-
-  it("renders Create PR before Move inside card-action-row", () => {
-    const { container } = render(
-      <TaskCard
-        task={makeTask({ column: "in-review", paused: false, userPaused: false, prInfo: undefined as any })}
-        onOpenDetail={noop}
-        addToast={noop}
-        onMoveTask={vi.fn()}
-        prAuthAvailable={true}
-        autoMergeEnabled={false}
-      />,
-    );
-
-    const createPrButton = screen.getByRole("button", { name: "Create pull request" });
-    const moveButton = screen.getByRole("button", { name: "Move task" });
-    const actionRow = createPrButton.closest(".card-action-row");
-
-    expect(actionRow).not.toBeNull();
-    expect(moveButton.closest(".card-action-row")).toBe(actionRow);
-    expect(createPrButton.compareDocumentPosition(moveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    const moveControl = moveButton.closest(".card-send-back") as HTMLElement | null;
-    expect(moveControl).not.toBeNull();
-    expect(getComputedStyle(moveControl as HTMLElement).marginLeft).toBe("auto");
-
-    fireEvent.click(moveButton);
-    const menu = screen.getByRole("menu");
-    expect(moveControl?.contains(menu)).toBe(true);
-    const menuStyle = getComputedStyle(menu);
-    expect(menuStyle.right).toBe("0px");
-    expect(menuStyle.left).not.toBe("0px");
-  });
-
   it.each([
-    { name: "meta-row-visible variant", task: makeTask({ column: "in-review", blockedBy: "FN-777" }), expectedContainer: ".card-meta" },
-    { name: "no-meta variant", task: makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any }), expectedContainer: ".card-action-row" },
-  ])("keeps Move dropdown behavior for $name", ({ task, expectedContainer }) => {
+    { name: "meta-row overlap badge", task: makeTask({ column: "in-review", overlapBlockedBy: "FN-OVER", blockedBy: undefined }), queued: false },
+    { name: "meta-row queued badge", task: makeTask({ column: "in-review", status: "queued" as any, dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined }), queued: true },
+    { name: "no-meta action-row placement", task: makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any }), queued: false },
+  ])("uses the three-dot menu as the only in-review move entry point for $name", ({ task, queued }) => {
     const onMoveTask = vi.fn();
     const { container } = render(
       <TaskCard
         task={task}
+        queued={queued}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={onMoveTask}
       />,
     );
 
-    const host = container.querySelector(expectedContainer);
-    const moveButton = screen.getByRole("button", { name: "Move task" });
-    expect(host?.contains(moveButton)).toBe(true);
+    expect(container.querySelector(".card-send-back")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
 
-    fireEvent.click(moveButton);
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
 
-    expect(screen.getAllByRole("menuitem").length).toBeGreaterThan(0);
+    expect(screen.getByRole("menuitem", { name: "Done (no merge)" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Done (no merge)" }));
 
     expect(onMoveTask).toHaveBeenCalledWith("FN-001", "done", undefined);
   });
 
-  it("FN-4540 keeps in-progress Send back control in card-header-actions", () => {
+  it("uses the three-dot menu for every in-progress move target without a Send back shell", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "in-progress" })}
@@ -3978,11 +4022,28 @@ describe("TaskCard", () => {
       />,
     );
 
-    const sendBackButton = screen.getByRole("button", { name: "Send back" });
-    const actionsContainer = container.querySelector(".card-header-actions");
+    expect(container.querySelector(".card-send-back")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
 
-    expect(actionsContainer).not.toBeNull();
-    expect(actionsContainer?.contains(sendBackButton)).toBe(true);
+    fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+
+    expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
+  });
+
+  it("does not render a move shell when onMoveTask is absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "in-review" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-send-back")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send back" })).toBeNull();
   });
 
   it("shows timer chip for in-progress cards summing workflow runtime + timed events", () => {

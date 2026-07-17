@@ -999,7 +999,7 @@ When the bound task is `executor-class` or `blocked`, the default procedure dire
 
 The manager-facing reports health block in that prompt is populated from `AgentStore.getAgentsByReportsTo(agent.id)`. Engine code must call that store method with its `AgentStore` instance binding intact because some implementations resolve direct reports through `this.listAgents()`. If the section disappears unexpectedly, look for logs like `Failed to load reports ... Cannot read properties of undefined (reading 'listAgents')`, which indicate an unbound method call regressed.
 
-Direct-report staleness in this reports-health block uses each report's configured heartbeat interval, with threshold `max(heartbeatIntervalMs × 1.5, 5 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports.
+Direct-report staleness in this reports-health block uses each report's effective heartbeat interval (after `heartbeatMultiplier` is applied once), with threshold `max(effectiveHeartbeatIntervalMs × 1.5, 10 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports.
 
 This behavior is inherited by new non-ephemeral agents because agent creation seeds a per-agent `HEARTBEAT.md` file from the built-in default. If an agent sets `heartbeatProcedurePath`, that markdown file fully replaces the built-in default at runtime for task-scoped heartbeats. No-task heartbeats always fall back to the ambient built-in procedure so the prompt never references task-only tools.
 
@@ -1301,8 +1301,8 @@ Repair outcomes:
 - **Repeated non-advancing zombie repair**: after the bounded scheduler threshold, metadata includes the consecutive count/escalation flag and logs `reason=heartbeat-rearm-nonadvancing-escalated` instead of silently churning forever
 
 Stale threshold:
-- Repair staleness defaults to **`2 × heartbeatIntervalMs`**
-- This is intentionally separate from dashboard display staleness (`1.5× heartbeatIntervalMs` with a 5-minute floor)
+- Repair staleness defaults to **`2 × effectiveHeartbeatIntervalMs`** (after `heartbeatMultiplier` is applied once)
+- This is intentionally separate from dashboard display staleness (`1.5× effectiveHeartbeatIntervalMs` with a 10-minute floor)
 
 Dashboard surfacing path:
 - The stale-repair metadata write uses the existing `AgentStore.updateAgent(...)` path
@@ -1360,7 +1360,7 @@ Effects:
 - Safety guards: skip ephemeral/task-worker agents, skip disabled agents, skip non-tickable states, and skip agents with an active heartbeat run
 - Existing timer entries are left untouched (no interval reset/jitter churn)
 - Repair metadata: each audit re-arm writes `metadata.heartbeatTimerRepair` with `repairedAt` and a stale-at-repair indicator when the agent had already missed its expected cadence
-- Stale-at-repair threshold: defaults to `2 × heartbeatIntervalMs`; override with project setting `heartbeatRepairStaleMultiplier` (> 0) when you need a different sensitivity
+- Stale-at-repair threshold: defaults to `2 × effectiveHeartbeatIntervalMs` after one `heartbeatMultiplier` application; override with project setting `heartbeatRepairStaleMultiplier` (> 0) when you need a different sensitivity
 - Stale repairs emit a WARN log entry and still flow through the existing `agent:updated` refresh path for dashboard surfacing
 
 This covers the untracked timer-loss failure mode where no `agent:updated` event fires after a timer entry disappears. Manual stop/start is no longer required to re-arm the timer in that case.

@@ -44,6 +44,7 @@ import {
   assertNotWorkspaceTaskMerge,
   buildTaskLineageTrailer,
   evaluateNoCommitsNoOpFinalize,
+  getPlannerInterventionTimeline,
   getPrimaryPrInfo,
   getTaskMergeBlocker,
   normalizeMergeAdvanceAutoSyncMode,
@@ -69,6 +70,7 @@ import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { checkSessionError } from "./usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
+import { deriveExecutorSignalMemory, evaluateNoOpFinalizeExecutorVeto } from "./overseer-noop-finalize-veto.js";
 import { createLogger } from "./logger.js";
 import {
   buildAutostashLabel,
@@ -93,7 +95,7 @@ import cycle (merger-ai-worktree imports `MIN_TEMP_WORKTREE_REAP_AGE_MS` from se
 */
 import { isRepoLanded, findProvenLandedCommit, FUSION_TASK_ID_TRAILER_KEY } from "./workspace-land-predicate.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
-import { getCommitTaskOwnership } from "./already-merged-detector.js";
+import { getCommitTaskOwnership, detectAlreadyLandedOnMain } from "./already-merged-detector.js";
 import { resolveLegacyAiMergeRootPath } from "./worktree-paths.js";
 import {
   cleanupAiMergeWorktree,
@@ -381,7 +383,8 @@ interface AgentDeps {
 /** Factory for a mutating AI agent bound to a fixed system prompt. */
 function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string, options: MergerOptions, audit: RunAuditor, systemPrompt: string) {
   return async (cwd: string, prompt: string): Promise<void> => {
-    const model = resolveMergerSessionModel(settings);
+    const task = await store.getTask(taskId).catch(() => undefined);
+    const model = resolveMergerSessionModel(settings, undefined, task);
     // FNXC:Settings-MergerModel 2026-07-16-00:00: mutating merger retries resolve the project merger fallback lane before the shared global fallback.
     const mergerFallbackModel = resolveMergerFallbackModel(settings);
     const logger = new AgentLogger({
@@ -411,8 +414,8 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
       defaultModelId: model.modelId,
       fallbackProvider: mergerFallbackModel.provider,
       fallbackModelId: mergerFallbackModel.modelId,
-      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, task?.mergerThinkingLevel),
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings, task?.mergerThinkingLevel),
       runAuditor: audit,
       settings,
       // FNXC:McpConfig 2026-06-25-22:48: merger-ai is the production merge path, so the mutating agent resolves enabled MCP servers at session creation and relies on the shared runtime guard for unsupported providers.
@@ -438,8 +441,9 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
     // The reviewer uses the project's validator/reviewer model lane (the same
     // one used elsewhere for review), falling back to the merger model only if
     // that lane resolves to nothing.
+    const task = await store.getTask(taskId).catch(() => undefined);
     const validator = resolveValidatorSettingsModel(settings);
-    const model = validator.provider && validator.modelId ? validator : resolveMergerSessionModel(settings);
+    const model = validator.provider && validator.modelId ? validator : resolveMergerSessionModel(settings, undefined, task);
     // FNXC:Settings-MergerModel 2026-07-16-00:00: review merger retries share the dedicated merger fallback provider/model and thinking lane.
     const mergerFallbackModel = resolveMergerFallbackModel(settings);
     // FNXC:Settings-ThinkingLevel 2026-07-10-00:00: The review agent's model falls back
@@ -447,7 +451,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
     // must follow the same lane it actually resolved a model from.
     const reviewThinkingLevel = validator.provider && validator.modelId
       ? resolveValidatorThinkingLevel(undefined, settings)
-      : resolveMergerThinkingLevel(settings);
+      : resolveMergerThinkingLevel(settings, task?.mergerThinkingLevel);
     let captured = "";
     const logger = new AgentLogger({
       store,
@@ -479,7 +483,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
       defaultModelId: model.modelId,
       fallbackProvider: mergerFallbackModel.provider,
       fallbackModelId: mergerFallbackModel.modelId,
-      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, task?.mergerThinkingLevel),
       defaultThinkingLevel: reviewThinkingLevel,
       runAuditor: audit,
       settings,
@@ -978,6 +982,66 @@ function hasPriorAiNoOpFinalizationProof(task: Task, branch: string, integration
   );
 }
 
+/*
+FNXC:Lifecycle 2026-07-16-00:00:
+FN-8141 incident: a commit-expected task's branch had no net changes vs the integration tip ONLY
+because the executor reverted its own work five times. The empty-merge lane assumed "empty means the
+work already landed or there was nothing to do" and finalized the task `done` with mergeConfirmed —
+laundering reverted/lost work into a completed state with no reviewer or operator sign-off.
+
+Invariant: a commit-expected empty-merge outcome may finalize as no-op ONLY with POSITIVE evidence the
+work already landed. Positive evidence is any of:
+  1. Durable recorded landing on this task's own mergeDetails (mergeConfirmed / commitSha).
+  2. A prior AI no-op finalization proof pair in the task log (FN-7261 forward-fix recovery shape).
+  3. The task branch tip is an ANCESTOR of the integration branch — its history is already contained in
+     main (fast-forwarded / zero-ahead / already-integrated); nothing was reverted or lost.
+  4. The already-on-main classifier finds a DISTINCT landing commit for this task on the integration
+     branch via a STRONG strategy (trailer / ancestry / patch-id) — e.g. a squash whose history is not
+     an ancestor of the branch. The classifier's WEAK `tree-equal` / `no-diff` strategies are DELIBERATELY
+     rejected here: a branch that committed work and then reverted it back to base has a tree equal to
+     main (main never advanced), so `tree-equal` would false-positive on exactly the FN-8141 lost-work
+     shape this guard exists to catch.
+Absent all four, the branch is treated as reverted/lost work and the task is blocked, NOT finalized.
+Returns the proof marker when landed; null when unproven.
+*/
+const STRONG_LANDED_STRATEGIES: ReadonlySet<string> = new Set(["trailer", "ancestry", "patch-id"]);
+
+async function proveEmptyMergeAlreadyLanded(
+  task: Task,
+  branch: string,
+  integrationBranch: string,
+  projectRootDir: string,
+): Promise<{ strategy: string; sha?: string } | null> {
+  // 1. Durable landing already recorded on this task.
+  if (task.mergeDetails?.mergeConfirmed === true || !!task.mergeDetails?.commitSha) {
+    return { strategy: "recorded-merge-details", sha: task.mergeDetails?.commitSha };
+  }
+  // 2. Prior AI no-op finalization proof (older finalizer landed then failed pre-persist).
+  if (hasPriorAiNoOpFinalizationProof(task, branch, integrationBranch)) {
+    return { strategy: "prior-no-op-finalization" };
+  }
+  // 3. Branch tip already contained in the integration branch (its work is genuinely integrated,
+  //    not reverted). This is what distinguishes a fast-forwarded/zero-ahead no-op from an
+  //    ahead-but-net-zero reverted branch whose tip is NOT an ancestor of main.
+  const branchTip = await git(["rev-parse", "--verify", `refs/heads/${branch}`], projectRootDir).catch(() => "");
+  if (branchTip && (await gitOk(["merge-base", "--is-ancestor", branchTip, integrationBranch], projectRootDir))) {
+    return { strategy: "branch-ancestor-of-main", sha: branchTip };
+  }
+  // 4. A distinct landing commit exists on main via a STRONG classifier strategy (squash-landed).
+  const landed = await detectAlreadyLandedOnMain({
+    rootDir: projectRootDir,
+    taskId: task.id,
+    lineageId: task.lineageId,
+    baseBranch: integrationBranch,
+    taskBranch: branch,
+    baseCommitSha: task.baseCommitSha,
+  }).catch(() => null);
+  if (landed && STRONG_LANDED_STRATEGIES.has(landed.strategy)) {
+    return { strategy: landed.strategy, sha: landed.sha };
+  }
+  return null;
+}
+
 export async function runAiMerge(
   store: TaskStore,
   projectRootDir: string,
@@ -1157,6 +1221,131 @@ export async function runAiMerge(
         branchDeleted: false,
       };
     }
+    /*
+     * FNXC:Lifecycle 2026-07-16-00:00:
+     * FN-8141: for a commit-expected task (noCommitsExpected !== true), an empty branch is only a
+     * safe no-op if the work provably already landed. Without positive already-landed proof the
+     * branch is assumed reverted/lost (the FN-8141 executor reverted its work five times); block the
+     * finalize, record a precise error, emit an audit event, and move back to todo with progress
+     * preserved so an operator (or reviewer) sees it instead of it laundering into `done`.
+     * task.error keeps recoverStrandedCompletedTodoTasks from re-promoting the unchanged task (it
+     * excludes any task with `task.error` set), mirroring the FN-6461 blocked lane above.
+     *
+     * FNXC:Lifecycle 2026-07-16-09:40:
+     * Empty-lane guard ORDER (each blocks BEFORE finalizeMerged; first blocker wins; all coexist):
+     *   (1) FN-6461/#2254 step-evidence guard (`evaluateNoCommitsNoOpFinalize`, above)
+     *   (2) #2259 already-landed-proof guard (this block, commit-expected only)
+     *   (3) FN-8141 executor-signal veto (`evaluateNoOpFinalizeExecutorVeto`, below)
+     * They use INDEPENDENT evidence, so any one alone stops the FN-8141 laundering shape.
+     */
+    if (task.noCommitsExpected !== true) {
+      const landedProof = await proveEmptyMergeAlreadyLanded(task, branch, integrationBranch, projectRootDir);
+      if (!landedProof) {
+        const reason =
+          "branch had no net changes vs main — work may have been reverted or lost; operator review required";
+        await store.updateTask(taskId, { error: reason });
+        await store.logEntry(
+          taskId,
+          `Finalize blocked (empty-merge no-landed-proof guard): ${reason} — moving back to todo with progress preserved`,
+          JSON.stringify({ branch, integrationBranch, lane: "ai-empty-merge", baseCommitSha: task.baseCommitSha }, null, 2),
+        );
+        await audit.database({
+          type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
+          target: taskId,
+          metadata: {
+            reason,
+            branch,
+            integrationBranch,
+            lane: "ai-empty-merge",
+            baseCommitSha: task.baseCommitSha,
+            hadPriorNoOpProof: false,
+          },
+        });
+        await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        return {
+          task,
+          branch,
+          merged: false,
+          noOp: false,
+          ok: true,
+          reason,
+          error: reason,
+          worktreeRemoved: false,
+          branchDeleted: false,
+        };
+      }
+      await log(
+        `AI merge: ${branch} had no net changes vs ${integrationBranch} but work already landed (proof=${landedProof.strategy}${landedProof.sha ? ` sha=${landedProof.sha.slice(0, 8)}` : ""}) — finalizing as no-op`,
+      );
+    }
+
+    /*
+     * FNXC:Lifecycle 2026-07-16-09:40:
+     * FN-8141 overseer-layer backstop — guard (3) in the empty-lane order above.
+     * Independent of, and composed with, the FN-6461/#2254 step-evidence guard
+     * and the #2259 already-landed-proof guard (this one keys on the cross-stage
+     * executor overseer signal, derived from the durable `overseer:intervention`
+     * timeline). EITHER of the three alone must stop the FN-8141 laundering
+     * shape. Only the zero-diff no-op lane is in scope — a real squash landing
+     * never reaches here. `evaluateNoOpFinalizeExecutorVeto` is pure and defers
+     * to the FN-7514 human-control contract, so it never fights user-paused /
+     * autoMerge:false tasks.
+     */
+    // Derive the most-recent executor signal from the durable
+    // `overseer:intervention` timeline (best-effort — a store without the async
+    // reader, or a query failure, degrades to `null` = no veto, so other guards
+    // remain the safety net).
+    let executorMemory = null as Awaited<ReturnType<typeof deriveExecutorSignalMemory>>;
+    try {
+      const timeline = await getPlannerInterventionTimeline(store, taskId);
+      // FNXC:Lifecycle 2026-07-16-12:10 (follow-up 3): thread the durable task log
+      // so a mid-execution `progressing` observation cannot clear the veto — only a
+      // clean-completion marker newer than the failure park supersedes it.
+      executorMemory = deriveExecutorSignalMemory(timeline, task.log);
+    } catch (err) {
+      aiMergeLog.warn(`${taskId}: executor overseer-memory derivation failed (skipping veto): ${getErrorMessage(err)}`);
+    }
+    const executorVeto = evaluateNoOpFinalizeExecutorVeto({ mergeIsEmpty: true, task, memory: executorMemory, settings });
+    if (executorVeto.veto) {
+      const vetoReason = executorVeto.reason ?? "overseer failed-executor no-op-finalize veto";
+      await store.updateTask(taskId, { error: vetoReason });
+      await store.logEntry(
+        taskId,
+        `Finalize blocked (overseer failed-executor veto): ${vetoReason} — moving back to todo with progress preserved`,
+        JSON.stringify({
+          executorSignal: executorMemory?.signal,
+          executorSignalObservedAt: executorMemory?.observedAt,
+          branch,
+          integrationBranch,
+          lane: "ai-empty-merge",
+        }, null, 2),
+      );
+      await audit.database({
+        type: "overseer:no-op-finalize-vetoed-failed-executor" as Parameters<typeof audit.database>[0]["type"],
+        target: taskId,
+        metadata: {
+          reason: vetoReason,
+          executorSignal: executorMemory?.signal,
+          executorSignalObservedAt: executorMemory?.observedAt,
+          branch,
+          integrationBranch,
+          lane: "ai-empty-merge",
+        },
+      });
+      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      return {
+        task,
+        branch,
+        merged: false,
+        noOp: false,
+        ok: true,
+        reason: vetoReason,
+        error: vetoReason,
+        worktreeRemoved: false,
+        branchDeleted: false,
+      };
+    }
+
     await log(`AI merge: ${branch} had no net changes vs ${integrationBranch} — finalizing as no-op`);
     const noOpFinalized = await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.tipSha, audit, log, { empty: true }, mergeTarget, groupRouting, options.syncGroupPr);
     await runPushAfterMergeStep({ store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result: noOpFinalized });
@@ -1642,6 +1831,48 @@ export async function landWorkspaceTask(
   // existing `task:merged` consumer is satisfied. On a partial land we do NOT move
   // done (the landed repos' `landedSha` is already persisted for the retry).
   if (allLanded) {
+    /*
+     * FNXC:Lifecycle 2026-07-16-00:00 (FN-8141 workspace parity):
+     * Mirror the single-repo empty-merge guard. `allLanded` here means "no sub-repo FAILED", but every
+     * acquired sub-repo may have come back `empty` (zero landed). Already-landed sub-repos are proven up
+     * front by findProvenLandedCommit and pushed as `status:"landed"`. When NO repo landed, distinguish
+     * the two empty shapes exactly as the single-repo guard does: a genuinely-integrated / zero-ahead
+     * sub-repo (branch tip ⊑ its integration tip) is a safe no-op; an AHEAD-but-net-zero sub-repo (tip
+     * NOT an ancestor — the FN-8141 reverted/lost shape) is not. Block only when at least one empty
+     * sub-repo shows the reverted shape (or its branch vanished with nothing landed): set task.error
+     * (keeps recoverStrandedCompletedTodoTasks from re-promoting), emit the audit event, and move back
+     * to todo instead of laundering it into `done`. noCommitsExpected tasks keep their existing path.
+     */
+    const landedCount = repos.filter((r) => r.status === "landed" && r.landedSha).length;
+    let hasRevertedEmptyRepo = false;
+    if (task.noCommitsExpected !== true && repos.length > 0 && landedCount === 0) {
+      for (const r of repos) {
+        const tip = await git(["rev-parse", "--verify", `refs/heads/${r.branch}`], r.repoRootDir).catch(() => "");
+        // Branch gone with nothing landed → treat as lost. Ahead-but-empty (tip not an ancestor of the
+        // integration branch) → reverted/lost shape. Zero-ahead / already-integrated → safe no-op.
+        if (!tip || !(await gitOk(["merge-base", "--is-ancestor", tip, r.integrationBranch], r.repoRootDir))) {
+          hasRevertedEmptyRepo = true;
+          break;
+        }
+      }
+    }
+    if (hasRevertedEmptyRepo) {
+      const reason =
+        "branch had no net changes vs main — work may have been reverted or lost; operator review required";
+      await store.updateTask(taskId, { error: reason });
+      await store.logEntry(
+        taskId,
+        `Finalize blocked (empty-merge no-landed-proof guard, workspace): ${reason} — moving back to todo with progress preserved`,
+        JSON.stringify({ lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, repos: repos.map((r) => r.repo) }, null, 2),
+      ).catch(() => undefined);
+      await audit.database({
+        type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
+        target: taskId,
+        metadata: { reason, lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, hadPriorNoOpProof: false },
+      }).catch(() => undefined);
+      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      return { taskId, repos, allLanded, finalized: false };
+    }
     const finalized = await finalizeWorkspaceTask(store, taskId, task, repos);
     return { taskId, repos, allLanded, finalized };
   }

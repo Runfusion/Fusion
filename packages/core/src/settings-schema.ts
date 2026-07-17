@@ -613,6 +613,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // decide via the near-duplicate flag/UI instead of tasks silently vanishing
   // into `archived` during intake. Set true to restore the pre-FN-7658 behavior.
   autoArchiveDuplicateTasksEnabled: false,
+  triageDuplicateResolution: "prompt",
   archiveAgentLogMode: "compact",
   autoUpdatePrStatus: false,
   githubCommentOnDone: false,

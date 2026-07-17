@@ -232,6 +232,15 @@ export const schedulingSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "scheduling",
+    key: "triageDuplicateResolution",
+    labelKey: "settings.scheduling.triageDuplicateResolution",
+    labelFallback: "Triage duplicate resolution",
+    helpKey: "settings.scheduling.triageDuplicateResolutionHelp",
+    helpFallback: "Block triage-detected duplicates for a Keep/Delete decision with a link to the duplicate (default), keep automatically, or delete automatically.",
+    keywords: ["duplicate", "triage", "keep", "delete", "decision"],
+  },
+  {
+    sectionId: "scheduling",
     key: "maxStuckKills",
     labelKey: "settings.scheduling.maxStuckRetries",
     labelFallback: "Max Stuck Retries",

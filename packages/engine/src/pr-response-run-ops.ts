@@ -100,7 +100,8 @@ export function makePrResponseAgentRunner(
   threads: Array<{ id: string }>;
 }) => Promise<PrAgentRunResult> {
   return async ({ prompt, systemPrompt, signal, threads }) => {
-    const model = resolveMergerSessionModel(settings);
+    const task = store ? await store.getTask(taskId).catch(() => undefined) : undefined;
+    const model = resolveMergerSessionModel(settings, undefined, task);
     // FNXC:Settings-MergerModel 2026-07-16-00:00: PR-response retries use the merger-only fallback lane, retaining shared fallback inheritance when unset.
     const mergerFallbackModel = resolveMergerFallbackModel(settings);
     let captured = "";
@@ -133,8 +134,8 @@ export function makePrResponseAgentRunner(
       defaultModelId: model.modelId,
       fallbackProvider: mergerFallbackModel.provider,
       fallbackModelId: mergerFallbackModel.modelId,
-      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, task?.mergerThinkingLevel),
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings, task?.mergerThinkingLevel),
       settings,
       taskId,
       mcpServers,

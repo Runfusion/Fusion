@@ -19,6 +19,7 @@ import {
   isUnplannedSeedPrompt,
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
+  flagTriageDuplicate,
   resolveAgentPrompt,
   builtinSeamPrompt,
   renderTriagePolicyPlaceholders,
@@ -153,7 +154,7 @@ import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector } from "./stuck-task-detector.js";
 import { exec } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -537,21 +538,18 @@ export class TriageProcessor {
   }
 
   /**
-   * Maximum time a task can remain in the `processing` set before it's
-   * considered stale (30 minutes). By this point the stuck detector
-   * (default 20-min timeout) should have already killed the session
-   * and the `finally` block should have cleaned up. If it hasn't,
-   * the promise is hung (e.g., `promptWithFallback` never settled
-   * after dispose) and self-healing recovery needs to force-evict it.
+   * Maximum time a task can remain in the `processing` set before a hung,
+   * non-live session is considered stale (30 minutes). A live session remains
+   * protected regardless of elapsed time; a stuck-aborted session is still
+   * reclaimable because its promise may never reach the cleanup `finally`.
    */
   private static readonly STALE_PROCESSING_THRESHOLD_MS = 30 * 60 * 1000;
 
   /**
-   * Evict tasks from the `processing` set that have been there longer than
-   * the staleness threshold. This handles the case where a stuck-kill
-   * disposes the session but the `specifyTask` promise never settles
-   * (hung `promptWithFallback`), leaving the task in `processing` forever
-   * and blocking self-healing recovery.
+   * Evict stale tasks from `processing` only when their triage promise is no
+   * longer live. This reclaims a stuck-killed/disposed session whose
+   * `specifyTask` promise never settles, while preserving a session still
+   * streaming past the normal wall-clock threshold.
    *
    * @returns the set of evicted task IDs
    */
@@ -561,17 +559,24 @@ export class TriageProcessor {
     const evicted = new Set<string>();
 
     for (const [taskId, since] of this.processingSince) {
-      if (now - since >= threshold) {
-        planLog.warn(
-          `${taskId} has been in processing for ${Math.round((now - since) / 60_000)}min ` +
-          `(threshold: ${Math.round(threshold / 60_000)}min) — evicting (likely hung promise)`,
-        );
-        this.processing.delete(taskId);
-        this.processingSince.delete(taskId);
-        this.activeSessions.delete(taskId);
-        this.stuckAborted.delete(taskId);
-        evicted.add(taskId);
-      }
+      if (now - since < threshold) continue;
+
+      /*
+      FNXC:Triage 2026-07-16-18:29:
+      Stale-processing eviction must retain a task with a live, non-aborted triage session (`activeSessions.has(id) && !stuckAborted.has(id)`). Removing it would drop genuinely active planning from `getProcessingTaskIds()` and let self-healing prematurely finalize it to todo/awaiting-approval, clear planning status, or nudge priority. Hung promises without a session and stuck-aborted/disposed sessions remain evictable.
+      */
+      const hasLiveSession = this.activeSessions.has(taskId) && !this.stuckAborted.has(taskId);
+      if (hasLiveSession) continue;
+
+      planLog.warn(
+        `${taskId} has been in processing for ${Math.round((now - since) / 60_000)}min ` +
+        `(threshold: ${Math.round(threshold / 60_000)}min) — evicting (likely hung promise)`,
+      );
+      this.processing.delete(taskId);
+      this.processingSince.delete(taskId);
+      this.activeSessions.delete(taskId);
+      this.stuckAborted.delete(taskId);
+      evicted.add(taskId);
     }
 
     return evicted;
@@ -2643,37 +2648,38 @@ export class TriageProcessor {
     } = {},
   ): Promise<void> {
     let written = writtenInput;
-    const dupMatch = written.match(/^DUPLICATE:\s*([A-Z]+-\d+)/i);
+    const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
 
-    if (dupMatch) {
-      const dupId = dupMatch[1];
-      planLog.log(`${task.id} is a duplicate of ${dupId} — closing`);
-      await this.store.logEntry(
-        task.id,
-        `Duplicate of ${dupId} — closed`,
-      );
-      try {
+    /*
+     * FNXC:DuplicateIntake 2026-07-16-13:00:
+     * Issue #2225 makes triage marker deletion opt-in. Prompt parks a visible linked
+     * near-duplicate decision; keep removes the marker before the next real plan.
+     */
+    if (explicitDuplicateMarker) {
+      const canonicalId = explicitDuplicateMarker.canonicalId;
+      const resolution = settings.triageDuplicateResolution ?? "prompt";
+      if (resolution === "delete") {
         await this.store.recordActivity({
-          type: "task:auto-archived-duplicate",
-          taskId: task.id,
-          taskTitle: task.title ?? "",
-          details: `Duplicate of ${dupId} — closed`,
-          metadata: {
-            canonicalTaskId: dupId,
-            source: "explicit-marker",
-          },
+          type: "task:auto-archived-duplicate", taskId: task.id, taskTitle: task.title ?? "",
+          details: `Duplicate of ${canonicalId} — closed`, metadata: { canonicalTaskId: canonicalId, source: "explicit-marker" },
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        planLog.warn(`${task.id}: failed to record explicit duplicate-marker activity (${msg})`);
+        await this.store.deleteTask(task.id, {
+          removeLineageReferences: true,
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id) },
+        });
+        return;
       }
-      // Pass removeLineageReferences so a duplicate-close cannot be blocked by lineage children (FN-5129 / FN-5131).
-      await this.store.deleteTask(task.id, {
-        removeLineageReferences: true,
-        auditContext: {
-          agentId: task.assignedAgentId ?? "triage",
-          runId: generateSyntheticRunId("triage-delete", task.id),
-        },
+      if (resolution === "prompt") {
+        await flagTriageDuplicate(this.store, task.id, canonicalId);
+        await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null });
+        return;
+      }
+      await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+      await this.store.updateTask(task.id, {
+        paused: false,
+        pausedReason: null,
+        status: null,
+        sourceMetadataPatch: { nearDuplicateOf: canonicalId, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: true },
       });
       return;
     }
@@ -3057,10 +3063,12 @@ export class TriageProcessor {
       User-triggered spec rebuilds can race an old paused graph run that writes step-instance rows after the route cleared them. Clear again when triage accepts a fresh parsed plan over an existing step projection, even if the task snapshot no longer has status `needs-replan`.
       */
       const maybeStore = this.store as unknown as {
+        clearWorkflowRunStepInstancesAsync?: (taskId: string) => Promise<void>;
         clearWorkflowRunStepInstances?: (taskId: string) => void;
       };
       try {
-        maybeStore.clearWorkflowRunStepInstances?.(task.id);
+        await (maybeStore.clearWorkflowRunStepInstancesAsync?.(task.id)
+          ?? maybeStore.clearWorkflowRunStepInstances?.(task.id));
       } catch {
         // Older stores may not persist graph step instances; replanning remains valid without cleanup.
       }

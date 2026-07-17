@@ -3329,12 +3329,12 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
 
   /*
   FNXC:TaskDetailActivity 2026-07-16-00:00:
-  Mobile Feed uses a normal `var(--space-md)` right inset so the full scrolling list
-  uses available width. Reserve the overlay-toggle clearance only on top-of-panel
-  first-row elements, keeping the first visible row uncovered without a deep gutter.
+  FN-8166 removes the residual mobile Feed container right inset so `.detail-body`
+  provides equal left and right insets. Reserve overlay-toggle clearance only on
+  top-of-panel first-row elements, keeping the first visible row uncovered.
   */
   .detail-activity {
-    padding-inline-end: var(--space-md);
+    padding-inline-end: 0;
   }
 
   .detail-activity:not(.detail-activity--interventions) > h4,

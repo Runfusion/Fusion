@@ -342,6 +342,52 @@ describe("HeartbeatTriggerScheduler", () => {
   });
 
   describe("scheduler timer audit", () => {
+    it("FN-8184: shares the 7.5x effective cadence with repair without zombie churn", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T06:00:00.000Z"));
+      const agent = {
+        id: "agent-long-multiplier",
+        name: "Long Multiplier",
+        role: "executor",
+        state: "active",
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 10_800_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      } as Agent;
+      const taskStore = { getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 7.5 }) } as unknown as TaskStore;
+      vi.mocked(store.listAgents).mockResolvedValue([agent]);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const timers = (scheduler as unknown as { timers: Map<string, { intervalMs: number }> }).timers;
+      expect(timers.get(agent.id)?.intervalMs).toBe(81_000_000);
+      vi.mocked(store.updateAgent).mockClear();
+      vi.mocked(heartbeatLog.warn).mockClear();
+
+      await (scheduler as any).auditTimerRegistrations("interval");
+
+      // Six hours exceeds the former unscaled 2x threshold but is within the
+      // shared 162m repair window, so a present healthy timer is untouched.
+      expect(store.updateAgent).not.toHaveBeenCalled();
+      expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+      expect((scheduler as any).nonAdvancingRearmState.has(agent.id)).toBe(false);
+
+      agent.lastHeartbeatAt = new Date(Date.now() - 162_000_001).toISOString();
+      await (scheduler as any).auditTimerRegistrations("interval");
+      expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+    });
+
+    it("FN-8184: applies a sub-one multiplier once to repair staleness", async () => {
+      const agent = { id: "agent-half", runtimeConfig: { heartbeatIntervalMs: 10_800_000 } } as Agent;
+      scheduler = new HeartbeatTriggerScheduler(store, callback);
+      (scheduler as any).lastKnownHeartbeatMultiplier = 0.5;
+      expect((scheduler as any).getRepairStaleThresholdMs(agent, 2)).toBe(10_800_000);
+    });
+
     it("re-arms a tickable durable agent when timer entry is missing and no lifecycle event fires", async () => {
       vi.useFakeTimers();
       const agent = {

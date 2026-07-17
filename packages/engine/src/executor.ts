@@ -14,7 +14,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
+import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
@@ -596,7 +596,16 @@ function detectPendingReviewBlock(
 }
 
 function formatTaskDoneRefusal(refusalClass: TaskDoneRefusalClass, reason: string): string {
-  return `fn_task_done refused (${refusalClass}): ${reason}. ${TASK_DONE_REFUSAL_SUFFIX}`;
+  /*
+  FNXC:Lifecycle 2026-07-16-10:20:
+  FN-8141 — when the bulk-completion gate refuses (steps lack APPROVE verdicts), the agent must NOT reach for
+  skip-every-step-then-complete as the escape hatch (that is exactly how FN-8141 laundered a failure into `done`).
+  Name the honest blocked exit in the refusal so the sanctioned path is the advertised one.
+  */
+  const blockedHint = refusalClass === "bulk-step-completion-without-review"
+    ? " If the work genuinely cannot proceed, do NOT skip the remaining steps to force completion — call fn_task_done(outcome=\"blocked\", reason=\"...\") instead."
+    : "";
+  return `fn_task_done refused (${refusalClass}): ${reason}. ${TASK_DONE_REFUSAL_SUFFIX}${blockedHint}`;
 }
 
 export function evaluateTaskDoneRefusal(
@@ -678,6 +687,27 @@ export function evaluateTaskDoneRefusal(
   }
 
   return { ok: true };
+}
+
+/*
+FNXC:Lifecycle 2026-07-16-21:40:
+FN-8141 — synthesize a refusal for an IMPLICIT (agent-exited, no explicit
+fn_task_done) completion whose skipped steps are skip-bypass tainted. Only the
+implicit/auto paths consult this; an explicit accepted fn_task_done stays the
+honest exit that clears the taint. Reuses the bulk-step-completion class so the
+existing refusal budget/park machinery applies unchanged.
+*/
+function buildSkipBypassTaintRefusal(
+  evaluation: ReturnType<typeof evaluateSkipBypassTaint>,
+): Extract<TaskDoneRefusalResult, { ok: false }> {
+  const reason = evaluation.reason
+    ?? "skipped steps after a bulk-step-completion refusal cannot auto-complete the task";
+  return {
+    ok: false,
+    refusalClass: "bulk-step-completion-without-review",
+    reason,
+    message: formatTaskDoneRefusal("bulk-step-completion-without-review", reason),
+  };
 }
 
 /**
@@ -1324,7 +1354,7 @@ You execute task specs in isolated worktrees, produce production-quality changes
 You MUST end every turn by either:
 - (a) calling another tool to make progress, OR
 - (b) calling \`fn_task_done\` if the entire task is complete, OR
-- (c) calling \`fn_task_done\` with a summary explaining what is blocked, if you cannot make progress for any reason
+- (c) calling \`fn_task_done(outcome="blocked", reason="...")\` if the work genuinely cannot proceed (see "Cannot proceed" below)
 
 You MUST NOT end a turn by writing prose that asks the user a question, summarizes progress, or requests permission to continue. The following are FORBIDDEN turn-endings:
 - "If you want, I can continue with..."
@@ -1339,7 +1369,8 @@ If you have just finished a step's work, immediately call \`fn_task_update\` to 
 
 The user is not watching this conversation in real-time. They will read the final result. Asking permission wastes a full retry cycle and may orphan committed work.
 
-If you genuinely cannot proceed (blocked on a dependency, missing information, or an unresolvable error), call \`fn_task_done\` with a clear explanation of what is blocked and what is needed to unblock it. Never write the question as plain prose.
+**Cannot proceed — the honest blocked exit.** If the work genuinely cannot be finished (an upstream API break, a missing prerequisite task, an unresolvable external error), call \`fn_task_done(outcome="blocked", reason="<concrete blocker + what would unblock it>", blockedBy=["FN-XXXX"])\`. This parks the task as failed WITHOUT any completion claim, leaves your steps in their true statuses, preserves your worktree/branch, and records \`blockedBy\` task IDs as dependencies so the task requeues once the blocker completes.
+This is THE correct action when you are stuck — do NOT instead mark the remaining steps \`skipped\` and call \`fn_task_done\` to make the task look finished. Skipping steps to escape a blocker launders a failure into \`done\` and is never the right move. (\`skipped\` remains valid only for the stale-premise path below, when the requested work is already present on HEAD.) Never write the blocker as plain prose.
 
 ## How to work
 1. Read the PROMPT.md carefully — it contains your mission, steps, file scope, acceptance criteria, and Do NOT constraints
@@ -1369,6 +1400,8 @@ PROMPT.md is captured at task-creation time; HEAD may have moved on since then. 
 4. Call \`fn_task_done\` with a summary that begins \`PREMISE STALE:\` followed by the concrete reason (e.g. \`PREMISE STALE: targeted reproduction passes unchanged on HEAD; PROMPT claimed MOBILE_MEDIA_QUERY had been expanded but useViewportMode.ts:9 still exports the legacy value\`).
 
 This path exists specifically to prevent the executor from looping when PROMPT.md is out of sync with HEAD. Use it only after running the actual reproduction — do not invoke it to dodge real work. If a task is verified as a no-op, duplicate, or redundant for the same reason (the requested behavior is already present on HEAD), \`fn_task_done\` may also use a leading sentinel summary of \`NO-OP:\`, \`NOOP:\`, \`DUPLICATE: FN-NNNN ...\`, or \`REDUNDANT:\`. These sentinels are audit-logged and allow a verified zero-commit completion; ordinary zero-commit implementation completions without a recognized leading sentinel are still refused.
+
+**Stale premise vs. blocked — do not confuse them.** Skipping remaining steps is ONLY for the stale-premise case above, where the requested work is already present on HEAD so there is nothing left to do. If the work is real but you CANNOT do it (upstream broke, a prerequisite task is missing, an external error is unresolvable), that is NOT a stale premise — do NOT skip steps to fake completion. Use \`fn_task_done(outcome="blocked", reason="...", blockedBy=[...])\` instead (see "Cannot proceed" above).
 
 **Logging important actions:** \`fn_task_log(message="what happened")\`
 
@@ -4057,7 +4090,16 @@ export class TaskExecutor {
   private async getCompletedTaskFinalizationDecision(taskId: string, taskDone: boolean): Promise<"finalize" | "blocked" | "incomplete"> {
     const task = await this.store.getTask(taskId);
     const completionBlocker = await this.getTaskCompletionBlocker(task);
-    const workComplete = taskDone || this.isTaskWorkComplete(task);
+    /*
+    FNXC:Lifecycle 2026-07-16-21:40:
+    FN-8141 — `taskDone` means an ACCEPTED fn_task_done (explicit or a non-tainted
+    implicit completion), which is the honest exit and always finalizes. Only the
+    step-status-derived `isTaskWorkComplete` path can be laundered by skip-bypass, so
+    the taint guard gates that path alone; a genuine no-op/PREMISE-STALE accepted done
+    is never blocked.
+    */
+    const workComplete = taskDone
+      || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
     if (completionBlocker) {
       executorLog.log(`${taskId} completion blocked — ${completionBlocker}`);
       if (workComplete && await this.parkCompletedBlockedTask(task, completionBlocker, "finalization", workComplete)) {
@@ -4074,7 +4116,12 @@ export class TaskExecutor {
   }
 
   private isTaskAlreadyCompleteForNonContinuableSession(task: Task, taskDone: boolean): boolean {
-    return taskDone || task.column === "in-review" || this.isTaskWorkComplete(task);
+    // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — the step-status "already complete" branch
+    // must not treat skip-bypass-tainted skips as completion; an accepted done / in-review
+    // column are honest completion signals and stay unaffected.
+    return taskDone
+      || task.column === "in-review"
+      || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
   }
 
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> {
@@ -4407,6 +4454,43 @@ export class TaskExecutor {
         && !this.isTaskWorkComplete(liveForCompletenessCheck)
       ) {
         executorLog.log(`${task.id}: skipping recoverCompletedTask — task has incomplete steps awaiting executor remediation`);
+        return false;
+      }
+      /*
+      FNXC:Lifecycle 2026-07-16-21:40:
+      FN-8141 — recoverCompletedTask is the shared auto-promotion chokepoint for every
+      "work looks complete → in-review" path (unpause resume, completed-task watchdog,
+      orphan resume). Refuse to auto-promote a skip-bypass-tainted task: its steps were
+      skipped after a bulk-step-completion refusal with no accepted fn_task_done, so the
+      only honest exits are an accepted fn_task_done or operator intervention (both clear
+      the taint). Leaving it unpromoted lets the bounded requeue/park machinery converge
+      it to a human instead of laundering it to review.
+      */
+      if (liveForCompletenessCheck && evaluateSkipBypassTaint(liveForCompletenessCheck).blocked) {
+        executorLog.warn(`${task.id}: skipping recoverCompletedTask — skip-bypass taint active (steps skipped after a bulk-step-completion refusal)`);
+        await this.store.logEntry(
+          task.id,
+          "Auto-promotion withheld: steps were skipped after a bulk-step-completion refusal with no accepted fn_task_done — requires reviewer or operator sign-off",
+          undefined,
+          this.getRunContextFor(task.id),
+        ).catch(() => undefined);
+        return false;
+      }
+
+      /*
+      FNXC:Lifecycle 2026-07-16-10:30:
+      FN-8141 defense-in-depth: recoverCompletedTask is the shared promotion chokepoint for BOTH
+      self-healing sweeps AND the executor's own unpause / resumeOrphaned fast-paths. A task whose
+      most recent execution-outcome in the durable log was a failure/refusal park must not be
+      promoted to in-review by ANY route, even one that re-derived completion from all-steps-done/
+      skipped (skipped counts as complete, which is exactly how FN-8141 laundered a failed task).
+      The self-healing sweeps additionally emit the deduped no-action audit event; here we simply
+      refuse. Escape hatch: an operator retrying the task starts a fresh execution whose clean
+      completion marker supersedes the failure park, clearing this block with no code change.
+      */
+      const failureProvenance = evaluateCompletedPromotionFailureProvenance(liveForCompletenessCheck ?? task);
+      if (failureProvenance.blocked) {
+        executorLog.log(`${task.id}: skipping recoverCompletedTask — most recent execution ended in a failure/refusal park (operator-decides)`);
         return false;
       }
 
@@ -5533,15 +5617,20 @@ export class TaskExecutor {
    */
   private buildStepInstancePersistence(): WorkflowStepInstancePersistence | undefined {
     const store = this.store as unknown as {
+      saveWorkflowRunStepInstanceAsync?: (state: WorkflowStepInstanceState) => Promise<void>;
+      loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
+      clearWorkflowRunStepInstancesAsync?: (taskId: string, keepRunId: string) => Promise<void>;
       saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
       loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
       clearWorkflowRunStepInstances?: (taskId: string, keepRunId: string) => void;
     };
-    if (typeof store.saveWorkflowRunStepInstance !== "function") return undefined;
+    if (typeof store.saveWorkflowRunStepInstanceAsync !== "function" && typeof store.saveWorkflowRunStepInstance !== "function") return undefined;
     return {
-      saveInstanceState: (state) => store.saveWorkflowRunStepInstance?.(state),
-      loadInstanceStates: (taskId, runId) => store.loadWorkflowRunStepInstances?.(taskId, runId) ?? [],
-      clearStaleInstanceStates: (taskId, keepRunId) => store.clearWorkflowRunStepInstances?.(taskId, keepRunId),
+      saveInstanceState: (state) => store.saveWorkflowRunStepInstanceAsync?.(state) ?? store.saveWorkflowRunStepInstance?.(state),
+      loadInstanceStates: async (taskId, runId) =>
+        await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId) ?? store.loadWorkflowRunStepInstances?.(taskId, runId) ?? [],
+      clearStaleInstanceStates: (taskId, keepRunId) =>
+        store.clearWorkflowRunStepInstancesAsync?.(taskId, keepRunId) ?? store.clearWorkflowRunStepInstances?.(taskId, keepRunId),
     };
   }
 
@@ -5621,17 +5710,20 @@ export class TaskExecutor {
       },
       hasExpandedForeach: async (task): Promise<boolean> => {
         const store = this.store as unknown as {
+          loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
           loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
         };
-        if (typeof store.loadWorkflowRunStepInstances !== "function") return false;
+        if (typeof store.loadWorkflowRunStepInstancesAsync !== "function" && typeof store.loadWorkflowRunStepInstances !== "function") return false;
         try {
           // Any persisted instance row for THIS run means a foreach has expanded —
           // re-parsing would desynchronize the pinned instance set (KTD-3). Probe
           // under the REAL run id (threaded from maybeExecuteWorkflowGraph) so the
           // pin protection actually fires; fall back to the legacy literal only when
           // the run id was not threaded (older store / no definition).
-          const rows = store.loadWorkflowRunStepInstances(task.id, runId ?? `${task.id}:run`);
-          return Array.isArray(rows) && rows.length > 0;
+          const rows = await store.loadWorkflowRunStepInstancesAsync?.(task.id, runId ?? `${task.id}:run`)
+            ?? store.loadWorkflowRunStepInstances?.(task.id, runId ?? `${task.id}:run`)
+            ?? [];
+          return rows.length > 0;
         } catch {
           return false;
         }
@@ -5842,10 +5934,12 @@ export class TaskExecutor {
         },
         markInstanceIntegrated: async (stepIndex, integratedAt, identity): Promise<void> => {
           const store = this.store as unknown as {
+            saveWorkflowRunStepInstanceAsync?: (state: WorkflowStepInstanceState) => Promise<void>;
+            loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
             saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
             loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
           };
-          if (typeof store.saveWorkflowRunStepInstance !== "function") return;
+          if (typeof store.saveWorkflowRunStepInstanceAsync !== "function" && typeof store.saveWorkflowRunStepInstance !== "function") return;
           // The upsert is keyed by (taskId, runId, foreachNodeId, stepIndex). The
           // queue passes the REAL identity (the same runId + foreachNodeId the
           // foreach sub-walk persisted the row under) so this FLIPS the existing
@@ -5854,7 +5948,9 @@ export class TaskExecutor {
           // reworkCount) we don't otherwise carry on the identity.
           let existing: WorkflowStepInstanceState | undefined;
           try {
-            const rows = store.loadWorkflowRunStepInstances?.(taskId, identity.runId) ?? [];
+            const rows = await store.loadWorkflowRunStepInstancesAsync?.(taskId, identity.runId)
+              ?? store.loadWorkflowRunStepInstances?.(taskId, identity.runId)
+              ?? [];
             existing = rows.find(
               (r) => r.foreachNodeId === identity.foreachNodeId && r.stepIndex === stepIndex,
             );
@@ -5862,7 +5958,7 @@ export class TaskExecutor {
             // Best-effort read; fall back to a minimal flip below.
           }
           try {
-            store.saveWorkflowRunStepInstance({
+            await (store.saveWorkflowRunStepInstanceAsync?.({
               ...(existing ?? {}),
               taskId,
               runId: identity.runId,
@@ -5874,7 +5970,19 @@ export class TaskExecutor {
               reworkCount: existing?.reworkCount ?? 0,
               branchName: identity.branchName || canonicalStepInstanceBranchName(taskId, stepIndex),
               integratedAt,
-            } as WorkflowStepInstanceState);
+            } as WorkflowStepInstanceState) ?? store.saveWorkflowRunStepInstance?.({
+              ...(existing ?? {}),
+              taskId,
+              runId: identity.runId,
+              foreachNodeId: identity.foreachNodeId,
+              stepIndex,
+              pinnedStepCount: identity.pinnedStepCount,
+              currentNodeId: existing?.currentNodeId ?? "",
+              status: "completed",
+              reworkCount: existing?.reworkCount ?? 0,
+              branchName: identity.branchName || canonicalStepInstanceBranchName(taskId, stepIndex),
+              integratedAt,
+            } as WorkflowStepInstanceState));
           } catch {
             // Persistence is additive bookkeeping — never fail the integration.
           }
@@ -5891,14 +5999,17 @@ export class TaskExecutor {
         // self-healing sweep across stale runs (recoverStaleTransitionPending
         // analogue) is out of scope for U10.
         const store = this.store as unknown as {
+          loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
           loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
         };
-        if (typeof store.loadWorkflowRunStepInstances !== "function") return [];
+        if (typeof store.loadWorkflowRunStepInstancesAsync !== "function" && typeof store.loadWorkflowRunStepInstances !== "function") return [];
         let rows: WorkflowStepInstanceState[] = [];
         try {
           // Load under the REAL run id (threaded) so resume actually sees the rows
           // the sub-walk persisted; the legacy literal is the unthreaded fallback.
-          rows = store.loadWorkflowRunStepInstances(taskId, runId ?? `${taskId}:run`) ?? [];
+          rows = await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId ?? `${taskId}:run`)
+            ?? store.loadWorkflowRunStepInstances?.(taskId, runId ?? `${taskId}:run`)
+            ?? [];
         } catch {
           return [];
         }
@@ -6774,6 +6885,18 @@ export class TaskExecutor {
   }
 
   private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
+    /*
+    FNXC:Lifecycle 2026-07-16-21:40:
+    FN-8141 — the graph merge boundary is another AUTO-promotion path. If the task is
+    skip-bypass tainted (steps skipped after a bulk-step-completion refusal with no
+    accepted fn_task_done), treat it as missing implementation proof so the merge is
+    blocked with `implementation-incomplete` rather than laundered through a no-op merge.
+    Runs before the noCommitsExpected exemption so a tainted task cannot slip past it.
+    */
+    const taint = evaluateSkipBypassTaint(task);
+    if (taint.blocked) {
+      return "implementation did not run: steps were skipped after a bulk-step-completion refusal without an accepted fn_task_done";
+    }
     if (task.noCommitsExpected === true) return undefined;
 
     let ir: WorkflowIr | undefined;
@@ -9158,6 +9281,36 @@ export class TaskExecutor {
       }
       const live = loadedLive;
       /*
+      FNXC:Lifecycle 2026-07-16-21:22:
+      FN-8141 follow-up 1 — an honest `fn_task_done(outcome="blocked")` park (status="failed",
+      error "BLOCKED: <reason>", executor ~14657) must SURVIVE the same graph-teardown machinery
+      that undid the original incident's failed park. Every downstream classifier in this method
+      can wash the marker out: the genuine-pause-abort todo-rehome branch (~9504) clears
+      status/error on a task the abort bounced back to `todo`; the execution-resume router and the
+      terminal graph-failure sink (~9982) overwrite the distinctive `BLOCKED:` error with a generic
+      "Workflow graph terminated with failure" string; and the engine-internal auto-continue
+      (~9540) re-runs the doomed session. Self-healing (#2257/#2260) and dependency-gated scheduling
+      key off this exact `BLOCKED:` error + the recorded blockedBy dependencies, so any of those
+      would re-open the laundering hole. Detect the live blocked park BEFORE every other classifier
+      and honor it exactly like the non-graph post-loop honor-park (executor ~12163): clear the
+      in-memory pause-abort marker so `recoverPausedAbortFailures` has nothing to chase, RELEASE the
+      worktree/concurrency slot (FN-6782 leaked-`maxWorktrees`-holder precedent; the graph finally
+      does not delete `activeWorktrees`), and return WITHOUT touching status/error/column/
+      dependencies/steps — the park stays intact for the blocker/operator. Unblocking still works:
+      the operator requeue (moveTask in-progress→todo, moves.ts ~628) and `buildManualRetryResetPatch`
+      clear the `BLOCKED:` error, and the scheduler leaves the parked row untouched while blockedBy
+      dependencies are unmet.
+      */
+      if (live.status === "failed" && live.error?.startsWith("BLOCKED:")) {
+        this.clearPausedAborted(task.id);
+        this.activeWorktrees.delete(task.id);
+        const blockedParkHonored = `Workflow graph run ended after an honest blocked park (${live.error}) — honoring park, not requeueing, retrying, or clearing state`;
+        executorLog.log(`${task.id}: ${blockedParkHonored}`);
+        await this.store.logEntry(task.id, blockedParkHonored, undefined, this.getRunContextFor(task.id));
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      /*
       FNXC:MissingWorktreeRecovery 2026-07-16-18:25:
       An unusable-worktree session-start refusal inside a graph node must route to the bounded
       worktree-session recovery BEFORE any other classifier: FN-7977's provider-failure hold
@@ -9943,11 +10096,13 @@ export class TaskExecutor {
     if (hasImplementationProgress) return false;
 
     const maybeStore = this.store as unknown as {
+      clearWorkflowRunStepInstancesAsync?: (taskId: string) => Promise<void>;
       clearWorkflowRunStepInstances?: (taskId: string) => void;
       clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void;
     };
     try {
-      maybeStore.clearWorkflowRunStepInstances?.(live.id);
+      await (maybeStore.clearWorkflowRunStepInstancesAsync?.(live.id)
+        ?? maybeStore.clearWorkflowRunStepInstances?.(live.id));
     } catch {
       // Legacy stores may not persist graph step instances.
     }
@@ -11148,7 +11303,7 @@ export class TaskExecutor {
             }
 
             // Reset retry counters on success
-            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
+            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
             if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after step-session completion")) {
               return;
             }
@@ -11960,7 +12115,7 @@ export class TaskExecutor {
             if (implicitCheck.steps.length > 0 &&
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
               // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
-              const refusal = evaluateTaskDoneRefusal(implicitCheck, {}, codeReviewVerdicts);
+              const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
               if (!refusal.ok) {
                 await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
                 return;
@@ -12010,7 +12165,7 @@ export class TaskExecutor {
             }
 
             // Reset retry counters on success
-            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
+            await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
             if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion (post-reset)")) {
               return;
             }
@@ -12263,7 +12418,7 @@ export class TaskExecutor {
                 if (implicitCheck.steps.length > 0 &&
                     implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
                   // Implicit path has no summary; evaluateTaskDoneRefusal will skip summary-claims-incomplete and only enforce pending-code-review-revise / bulk-step-completion-without-review.
-                  const refusal = evaluateTaskDoneRefusal(implicitCheck, {}, codeReviewVerdicts);
+                  const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
                   if (!refusal.ok) {
                     await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
                     retrySession?.dispose();
@@ -12313,7 +12468,7 @@ export class TaskExecutor {
                 await this.store.logEntry(task.id, "Fast mode — pre-merge workflow steps skipped", undefined, this.getRunContextFor(task.id));
               }
 
-              await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
+              await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null, bulkCompletionRefusalAt: null, executeRequeueLoopCount: null, executeRequeueLoopSignature: null });
               if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion retry")) {
                 return;
               }
@@ -14371,6 +14526,38 @@ export class TaskExecutor {
     return { blocked: false };
   }
 
+  /*
+  FNXC:Lifecycle 2026-07-16-21:40:
+  FN-8141 — an IMPLICIT completion (agent exits with every step done/skipped and no
+  explicit fn_task_done) is an AUTO-promotion, so it must honor the skip-bypass taint.
+  A synthesized taint refusal here re-parks the run through the existing refusal budget
+  rather than laundering skipped-after-refusal steps into review. The explicit
+  fn_task_done tool path is NOT routed here — that call remains the honest exit.
+  */
+  private evaluateImplicitCompletionRefusal(
+    task: Task,
+    codeReviewVerdicts: Map<number, ReviewVerdict>,
+  ): ReturnType<typeof evaluateTaskDoneRefusal> {
+    const refusal = evaluateTaskDoneRefusal(task, {}, codeReviewVerdicts);
+    if (!refusal.ok) return refusal;
+    const taint = evaluateSkipBypassTaint(task);
+    if (taint.blocked) return buildSkipBypassTaintRefusal(taint);
+    return { ok: true };
+  }
+
+  /*
+  FNXC:Lifecycle 2026-07-16-21:40:
+  FN-8141 — a `bulk-step-completion-without-review` refusal stamps the durable taint
+  marker so that later skips (in this or a requeued lifecycle) cannot auto-promote. The
+  marker is cleared only on an honest exit (accepted fn_task_done / operator retry).
+  */
+  private skipBypassTaintUpdateForRefusal(
+    refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
+  ): { bulkCompletionRefusalAt: string } | Record<string, never> {
+    if (refusal.refusalClass !== "bulk-step-completion-without-review") return {};
+    return { bulkCompletionRefusalAt: new Date().toISOString() };
+  }
+
   private async handleImplicitTaskDoneRefusal(
     task: Task,
     refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
@@ -14379,6 +14566,7 @@ export class TaskExecutor {
     await this.store.logEntry(task.id, refusal.message, undefined, this.getRunContextFor(task.id));
     executorLog.error(`${task.id}: fn_task_done refused (${refusal.refusalClass}) — ${refusal.reason} (implicit completion)`);
 
+    const taintUpdate = this.skipBypassTaintUpdateForRefusal(refusal);
     const priorRequeues = task.taskDoneRetryCount ?? 0;
     const nextRequeueCount = priorRequeues + 1;
     if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -14386,6 +14574,7 @@ export class TaskExecutor {
         status: "queued",
         error: null,
         taskDoneRetryCount: nextRequeueCount,
+        ...taintUpdate,
         paused: false,
         pausedByAgentId: null,
         worktree: null,
@@ -14404,6 +14593,7 @@ export class TaskExecutor {
       await this.store.updateTask(task.id, {
         status: "failed",
         error: refusal.message,
+        ...taintUpdate,
         paused: false,
         pausedByAgentId: null,
         worktree: null,
@@ -14431,16 +14621,108 @@ export class TaskExecutor {
       name: "fn_task_done",
       label: "Mark Task Done",
       description:
-        "Signal that all steps are complete, tests pass, and documentation is updated. " +
-        "Call this as the final action after finishing all work. " +
-        "Automatically marks all remaining steps as done. " +
-        "Optionally provide a summary of what was changed/fixed.",
+        "End the task. With outcome=\"completed\" (default): signal that all steps are complete, tests pass, and " +
+        "documentation is updated — call as the final action after finishing all work; automatically marks all " +
+        "remaining steps as done; optionally provide a summary of what was changed/fixed. " +
+        "With outcome=\"blocked\": honestly park the task when the work genuinely cannot proceed (upstream API break, " +
+        "missing dependency task, unresolvable external blocker). Blocked is NOT a completion claim — it does not " +
+        "trip the review/completion gates, does not auto-complete or auto-skip steps, and preserves your worktree/" +
+        "branch/step progress so the task can be requeued once the blocker clears. Prefer blocked over marking steps " +
+        "skipped when the task cannot be finished.",
       parameters: Type.Object({
         summary: Type.Optional(Type.String({
-          description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences)",
+          description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences). Used when outcome=\"completed\".",
+        })),
+        /*
+        FNXC:Lifecycle 2026-07-16-10:20:
+        FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
+        gate refused it, the requeue budget re-ran the doomed task 5 times, and the only remaining affordance (skip every
+        step) made `isTaskComplete()` return true so self-healing + the AI merger finalized an empty diff as done. The
+        `blocked` outcome is the sanctioned honest exit: it parks the task `failed` (error `BLOCKED: <reason>`) without any
+        completion claim, so laundering is never the cheapest path.
+        */
+        outcome: Type.Optional(Type.Union(
+          [Type.Literal("completed"), Type.Literal("blocked")],
+          { description: "\"completed\" (default) finishes the task; \"blocked\" honestly parks it as failed because the work cannot proceed. Use \"blocked\" instead of skipping steps + completing when you are stuck." },
+        )),
+        blockedBy: Type.Optional(Type.Array(Type.String(), {
+          description: "When outcome=\"blocked\": task IDs (e.g. [\"FN-8145\"]) that must complete before this task can proceed. Recorded as real dependency edges so the task requeues behind the blocker.",
+        })),
+        reason: Type.Optional(Type.String({
+          description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it.",
         })),
       }),
-      execute: async (_id: string, params: { summary?: string }) => {
+      execute: async (_id: string, params: { summary?: string; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
+        /*
+        FNXC:Lifecycle 2026-07-16-10:20:
+        FN-8141 — the blocked exit runs BEFORE every completion gate (completion blocker, verdict providers, worktree
+        invariants, bulk-completion refusal). Blocked is not a completion claim, so none of those gates apply; parking
+        `failed` with a `BLOCKED:` error + real dependency edges is the whole action. Steps keep their true statuses
+        (no auto-done, no auto-skip) so a laundered "all steps skipped ⇒ complete" state can never form.
+        */
+        if (params.outcome === "blocked") {
+          const reason = params.reason?.trim();
+          if (!reason) {
+            const message = "fn_task_done(outcome=\"blocked\") requires a non-empty `reason` describing what is blocking the work. Provide `reason` (and optional `blockedBy` task IDs) and call again.";
+            return {
+              content: [{ type: "text" as const, text: message }],
+              details: { error: message },
+            };
+          }
+
+          const blockedTask = await store.getTask(taskId);
+          const blockedByIds = Array.from(
+            new Set((params.blockedBy ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+          );
+
+          const parkError = `BLOCKED: ${reason}`;
+          // Record blockedBy as real dependency edges (union with existing) so the task requeues
+          // behind the blocker rather than re-running the doomed work. Preserve worktree/branch/
+          // step progress (FN-7863 EXECUTION_DISPATCH_LOOP_EXHAUSTED park convention) — do NOT
+          // call onDone() so the outer loop's `liveTask.status === "failed"` honor-park branch keeps
+          // the row parked for the blocker/operator instead of handing off to review.
+          const mergedDependencies = blockedByIds.length > 0
+            ? Array.from(new Set([...(blockedTask.dependencies ?? []), ...blockedByIds]))
+            : undefined;
+          await store.updateTask(taskId, {
+            status: "failed",
+            error: parkError,
+            paused: false,
+            pausedByAgentId: null,
+            ...(mergedDependencies ? { dependencies: mergedDependencies } : {}),
+          }, this.getRunContextFor(taskId));
+
+          await store.logEntry(
+            taskId,
+            `${parkError}${blockedByIds.length > 0 ? ` — recorded dependencies: ${blockedByIds.join(", ")}` : ""} — parked failed (honest blocked exit; steps preserved)`,
+            undefined,
+            this.getRunContextFor(taskId),
+          );
+          await this.store.recordRunAuditEvent?.({
+            taskId,
+            agentId: "executor",
+            runId: generateSyntheticRunId("execution-blocked", taskId),
+            domain: "database",
+            mutationType: "task:execution-blocked-parked",
+            target: taskId,
+            metadata: {
+              taskId,
+              blockedBy: blockedByIds,
+              hasReason: true,
+            },
+          });
+          await this.persistTokenUsage(taskId);
+          executorLog.log(`⛔ ${taskId} parked failed via blocked exit${blockedByIds.length > 0 ? ` (blockedBy: ${blockedByIds.join(", ")})` : ""}`);
+
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Task parked as blocked (failed). ${blockedByIds.length > 0 ? `Recorded ${blockedByIds.length} blocking dependency(ies); it will requeue once they complete. ` : ""}Steps left in their true statuses; no completion recorded.`,
+            }],
+            details: {},
+          };
+        }
+
         const task = await store.getTask(taskId);
         const completionBlocker = await this.getTaskCompletionBlocker(task);
         if (completionBlocker) {
@@ -14530,6 +14812,9 @@ export class TaskExecutor {
           await store.logEntry(taskId, refusalMessage, undefined, this.getRunContextFor(task.id));
           executorLog.error(`${taskId}: fn_task_done refused (${taskDoneRefusal.refusalClass}) — ${taskDoneRefusal.reason}`);
 
+          // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — stamp the skip-bypass taint marker so a
+          // later skip-then-exit (in this or a requeued lifecycle) cannot auto-promote.
+          const taintUpdate = this.skipBypassTaintUpdateForRefusal(taskDoneRefusal);
           const priorRequeues = task.taskDoneRetryCount ?? 0;
           const nextRequeueCount = priorRequeues + 1;
           if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -14537,6 +14822,7 @@ export class TaskExecutor {
               status: "queued",
               error: null,
               taskDoneRetryCount: nextRequeueCount,
+              ...taintUpdate,
               paused: false,
               pausedByAgentId: null,
               worktree: null,
@@ -14555,6 +14841,7 @@ export class TaskExecutor {
             await store.updateTask(taskId, {
               status: "failed",
               error: refusalMessage,
+              ...taintUpdate,
               paused: false,
               pausedByAgentId: null,
               worktree: null,
@@ -14674,6 +14961,10 @@ export class TaskExecutor {
           paused: false,
           pausedByAgentId: null,
           status: null,
+          // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — an ACCEPTED explicit fn_task_done is the
+          // honest completion signal (covers the PREMISE STALE skip-then-done flow); clear any
+          // skip-bypass taint so a subsequent auto-promotion path is not blocked.
+          bulkCompletionRefusalAt: null,
         });
         await store.logEntry(taskId, "Task marked done by agent", undefined, this.getRunContextFor(taskId));
 

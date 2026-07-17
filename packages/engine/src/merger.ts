@@ -1110,7 +1110,8 @@ async function attemptInMergeVerificationFix(
       ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
       : null;
     const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+    const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
 
     // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
@@ -1147,8 +1148,8 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       defaultModelId: mergerSessionModel.modelId,
       fallbackProvider: mergerFallbackModel.provider,
       fallbackModelId: mergerFallbackModel.modelId,
-      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
       runAuditor: createRunAuditor(store, {
         runId: mergeRunContext?.runId ?? generateSyntheticRunId("merge", taskId),
         agentId: mergeRunContext?.agentId ?? "merger",
@@ -2343,7 +2344,8 @@ async function runAiAgentForAutostashConflict(params: {
     ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
     : null;
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-  const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
 
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
@@ -2395,8 +2397,8 @@ ${fileList}
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",
@@ -2756,7 +2758,8 @@ async function runAiAgentForAutostashHardFail(params: {
     ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
     : null;
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-  const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
 
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
@@ -2818,8 +2821,8 @@ ${fileList}
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",
@@ -5818,7 +5821,8 @@ You are assisting with a paused \`git pull --rebase\`.
   });
 
   throwIfAborted(options?.signal, taskId);
-  const mergerSessionModel = resolveMergerSessionModel(settings, options?.assignedAgentRuntimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+  const mergerSessionModel = resolveMergerSessionModel(settings, options?.assignedAgentRuntimeConfig, mergerTask);
 
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
@@ -5838,8 +5842,8 @@ You are assisting with a paused \`git pull --rebase\`.
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",
@@ -10783,7 +10787,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     ? await agentStoreWithGetAgent.getAgent(assignedAgentId).catch(() => null)
     : null;
   const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-  const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig);
+  const mergerTask = await store.getTask(taskId).catch(() => undefined);
+    const mergerSessionModel = resolveMergerSessionModel(settings, assignedAgent?.runtimeConfig, mergerTask);
 
   // FNXC:Settings-MergerModel 2026-07-16-00:00: merger retries use the dedicated project fallback lane before the shared global fallback pair.
 
@@ -10808,8 +10813,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
-    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
-    defaultThinkingLevel: resolveMergerThinkingLevel(settings),
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
+    defaultThinkingLevel: resolveMergerThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
       agentId: "merger",

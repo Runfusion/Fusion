@@ -23,8 +23,8 @@
     "@agentclientprotocol/sdk": "0.24.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.80.8",
-    "@earendil-works/pi-coding-agent": "^0.80.8"
+    "@earendil-works/pi-ai": "^0.80.10",
+    "@earendil-works/pi-coding-agent": "^0.80.10"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.80.10",

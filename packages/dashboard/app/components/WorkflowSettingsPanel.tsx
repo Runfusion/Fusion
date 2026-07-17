@@ -515,6 +515,9 @@ Title summarization is owned by project/global Settings → Project Models, not 
 
 FNXC:Settings-ThinkingLevel 2026-07-10-12:03:
 Workflow Values renders thinking controls inline with declared primary and fallback model lanes. The companion setting ids are excluded from generic enum rendering so operators get one inherit/override/reset affordance and undeclared lanes leave no empty control shell.
+
+FNXC:SettingsModels 2026-07-16-00:00:
+FN-8169 requires each workflow fallback lane to render directly under its primary lane so operators configure a model and its retry model together. Keep this catalog interleaved while preserving every lane key and declaration filter.
 */
 export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
   {
@@ -526,20 +529,20 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the default lane.",
   },
   {
+    id: "planning-fallback",
+    providerId: "planningFallbackProvider",
+    modelId: "planningFallbackModelId",
+    thinkingId: "planningFallbackThinkingLevel",
+    label: "Planning Fallback Model",
+    help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+  },
+  {
     id: "execution",
     providerId: "executionProvider",
     modelId: "executionModelId",
     thinkingId: "executionThinkingLevel",
     label: "Executor Model",
     help: "Provider and model used by task implementation agents. Leave unset to inherit from the default lane.",
-  },
-  {
-    id: "validator",
-    providerId: "validatorProvider",
-    modelId: "validatorModelId",
-    thinkingId: "validatorThinkingLevel",
-    label: "Reviewer Model",
-    help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
   },
   {
     id: "execution-fallback",
@@ -550,12 +553,12 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     help: "Fallback provider and model used when the primary Executor model cannot be used.",
   },
   {
-    id: "planning-fallback",
-    providerId: "planningFallbackProvider",
-    modelId: "planningFallbackModelId",
-    thinkingId: "planningFallbackThinkingLevel",
-    label: "Planning Fallback Model",
-    help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+    id: "validator",
+    providerId: "validatorProvider",
+    modelId: "validatorModelId",
+    thinkingId: "validatorThinkingLevel",
+    label: "Reviewer Model",
+    help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
   },
   {
     id: "validator-fallback",

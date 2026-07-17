@@ -166,3 +166,14 @@ describe("flagSameAgentDuplicate (FN-7658)", () => {
     });
   });
 });
+
+describe("flagTriageDuplicate", () => {
+  it("flags a triage marker without moving or deleting the task", async () => {
+    const { flagTriageDuplicate } = await import("../duplicate-intake.js");
+    const store = { logEntry: vi.fn(), recordActivity: vi.fn(), updateTask: vi.fn() } as any;
+    await flagTriageDuplicate(store, "FN-2", "FN-1");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-2", { sourceMetadataPatch: { nearDuplicateOf: "FN-1", nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false } });
+    expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ source: "triage-marker-flagged", canonicalTaskId: "FN-1" }) }));
+    expect(store.deleteTask).toBeUndefined();
+  });
+});

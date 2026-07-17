@@ -6678,7 +6678,12 @@
       "maxConcurrentTasksHint": "Default: 2.",
       "maxConcurrentVerifications": "Max Concurrent Verifications",
       "maxConcurrentVerificationsHint": "Caps stacked typecheck/build verification across tasks. Default: 1. Range: 1–8.",
-      "pollIntervalMsHint": "Default: 15000 (15 seconds)."
+      "pollIntervalMsHint": "Default: 15000 (15 seconds).",
+      "triageDuplicateResolution": "Triage duplicate resolution",
+      "triageDuplicateResolutionHelp": "Block triage-detected duplicates for a Keep/Delete decision with a link to the duplicate (default), keep automatically, or delete automatically.",
+      "triageDuplicateResolutionPrompt": "Block for decision (default)",
+      "triageDuplicateResolutionKeep": "Keep automatically",
+      "triageDuplicateResolutionDelete": "Delete automatically"
     },
     "title": "Settings",
     "worktrees": {
@@ -7684,9 +7689,15 @@
       "archiveMessage": "Archive {{id}} as a duplicate of {{duplicateOf}}?",
       "archiveTitle": "Archive near-duplicate task",
       "copy": "This task appears to be a near-duplicate of",
+      "deleteBtn": "Delete",
+      "deleteConfirm": "Delete",
+      "deleted": "Deleted {{id}}",
+      "deleteMessage": "Delete {{id}} as a duplicate of {{duplicateOf}}?",
+      "deleteTitle": "Delete duplicate task",
       "headline": "Potential duplicate detected",
       "keepBtn": "Keep",
-      "kept": "Kept {{id}} and dismissed duplicate warning"
+      "kept": "Kept {{id}} and dismissed duplicate warning",
+      "triageActions": "Choose Delete to remove this duplicate, or Keep to continue anyway."
     },
     "nextRecoveryAt": "Next recovery at {{time}}",
     "no": "No",

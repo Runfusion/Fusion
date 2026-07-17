@@ -210,7 +210,12 @@ export async function createTask(
     validatorModelId,
     planningModelProvider,
     planningModelId,
+    mergerModelProvider,
+    mergerModelId,
     thinkingLevel,
+    validatorThinkingLevel,
+    planningThinkingLevel,
+    mergerThinkingLevel,
     plannerOversightLevel,
     summarize,
     reviewLevel,
@@ -249,7 +254,12 @@ export async function createTask(
       validatorModelId,
       planningModelProvider,
       planningModelId,
+      mergerModelProvider,
+      mergerModelId,
       thinkingLevel,
+      validatorThinkingLevel,
+      planningThinkingLevel,
+      mergerThinkingLevel,
       plannerOversightLevel,
       summarize,
       reviewLevel,
@@ -317,9 +327,12 @@ export function updateTask(
     validatorModelId?: string | null;
     planningModelProvider?: string | null;
     planningModelId?: string | null;
+    mergerModelProvider?: string | null;
+    mergerModelId?: string | null;
     thinkingLevel?: string | null;
     validatorThinkingLevel?: string | null;
     planningThinkingLevel?: string | null;
+    mergerThinkingLevel?: string | null;
     plannerOversightLevel?: "off" | "observe" | "steer" | "autonomous" | null;
     /** FNXC:PlannerOversight 2026-07-14-18:11: boolean override or null to inherit project default. */
     sessionAdvisorEnabled?: boolean | null;

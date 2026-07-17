@@ -45,7 +45,7 @@ describe("TaskContextMenu shared task action model", () => {
     ]);
     expect(actionIds(makeTask({ column: "done" }), { hasResetHandler: true, onOpenRefine: vi.fn() })).toEqual(["refine", "respecify", "delete"]);
     expect(actionIds(makeTask({ column: "done" }), { hasResetHandler: true })).toEqual(["respecify", "delete"]);
-    expect(actionIds(makeTask({ column: "archived" }), { hasResetHandler: true })).toEqual(["respecify", "delete"]);
+    expect(actionIds(makeTask({ column: "archived" }), { hasResetHandler: true })).toEqual(["delete"]);
   });
 
   it("exposes Plan only for pre-execution hold columns with a host callback", () => {
@@ -199,7 +199,7 @@ describe("TaskContextMenu shared task action model", () => {
       workflowMoveColumns,
       hasResetHandler: true,
     });
-    expect(archivedModel.actions.map((action) => action.id)).toEqual(["respecify", "delete"]);
+    expect(archivedModel.actions.map((action) => action.id)).toEqual(["delete"]);
     expect(archivedModel.actions.map((action) => action.id)).not.toContain("reset");
   });
 
@@ -254,7 +254,7 @@ describe("TaskContextMenu shared task action model", () => {
       onDelete,
     });
 
-    expect(archivedModel.actions.map((action) => action.id)).toEqual(["respecify", "delete"]);
+    expect(archivedModel.actions.map((action) => action.id)).toEqual(["delete"]);
     expect(archivedModel.actions.map((action) => action.id)).not.toContain("pause");
     expect(archivedModel.actions.map((action) => action.id)).not.toContain("reset");
     archivedModel.actions.find((action) => action.id === "delete")?.onSelect?.();

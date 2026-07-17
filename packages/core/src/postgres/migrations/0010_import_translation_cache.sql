@@ -8,7 +8,7 @@ Project isolation here is the SAME contract 0006 applies to every project-owned 
 All projects share this one flat `project` schema, so a table that opts out of the contract would serve one project's translations to another. `schema-applier` verifies this invariant on boot and fails closed, so a new table MUST opt in here rather than rely on query-level predicates alone.
 */
 CREATE TABLE IF NOT EXISTS project.import_translation_cache (
-  project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+  project_id text NOT NULL DEFAULT COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'),
   provider text NOT NULL,
   repo_key text NOT NULL,
   issue_number integer NOT NULL,
@@ -38,11 +38,11 @@ BEGIN
   CREATE POLICY fusion_project_isolation ON project.import_translation_cache
     USING (
       current_setting('fusion.project_bypass', true) = 'on'
-      OR project_id = current_setting('fusion.project_id', true)
+      OR project_id = COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')
     )
     WITH CHECK (
       current_setting('fusion.project_bypass', true) = 'on'
-      OR project_id = current_setting('fusion.project_id', true)
+      OR project_id = COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')
     );
 
   -- Stamp project_id from the session setting, matching every other project table.

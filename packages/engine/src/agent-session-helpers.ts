@@ -268,8 +268,12 @@ export function resolveTitleSummarizerThinkingLevel(settings: Partial<Settings> 
  * thinking → global merger thinking → project default thinking override → global
  * default thinking. Unset at every level preserves prior default-only behavior.
  */
-export function resolveMergerThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+export function resolveMergerThinkingLevel(
+  settings: Partial<Settings> | undefined,
+  taskThinkingLevel?: ThinkingLevel | string,
+): string | undefined {
   return firstThinkingLevel(
+    taskThinkingLevel,
     settings?.mergerThinkingLevel,
     settings?.mergerGlobalThinkingLevel,
     settings?.defaultThinkingLevelOverride,
@@ -326,8 +330,10 @@ export function resolveTitleSummarizerFallbackThinkingLevel(settings: Partial<Se
 FNXC:Settings-MergerModel 2026-07-16-00:00:
 Merger recovery sessions use a lane-specific thinking level when configured, then preserve the former global-fallback and merger-primary inheritance order.
 */
-export function resolveMergerFallbackThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+export function resolveMergerFallbackThinkingLevel(settings: Partial<Settings> | undefined, taskThinkingLevel?: string | null): string | undefined {
   return firstThinkingLevel(
+    // FNXC:Settings-MergerModel 2026-07-16-00:00: A task's merger thinking selection governs both the primary and fallback merger session, so fallback must not re-inherit a project/global lane value.
+    taskThinkingLevel,
     settings?.mergerFallbackThinkingLevel,
     settings?.fallbackThinkingLevel,
     resolveMergerThinkingLevel(settings),
@@ -590,6 +596,7 @@ export function resolveHeartbeatSessionModels(
 export function resolveMergerSessionModel(
   settings: Partial<Settings> | undefined,
   assignedAgentRuntimeConfig?: Record<string, unknown>,
+  task?: { mergerModelProvider?: string | null; mergerModelId?: string | null },
 ): { provider: string | undefined; modelId: string | undefined } {
   if (isTestModeActive(settings)) {
     return {
@@ -604,7 +611,10 @@ export function resolveMergerSessionModel(
   not execution/planning/validator. Session fallback still uses the shared global
   fallbackProvider/fallbackModelId pair at createResolvedAgentSession call sites.
   */
-  const mergerModel = resolveMergerSettingsModel(settings);
+  /* FNXC:Settings-MergerModel 2026-07-16-12:00: task pair → settings → global/default; partial task pairs inherit settings. */
+  const mergerModel = task?.mergerModelProvider && task?.mergerModelId
+    ? { provider: task.mergerModelProvider, modelId: task.mergerModelId }
+    : resolveMergerSettingsModel(settings);
   return pickSettingsThenRuntimeModel(mergerModel, assignedAgentRuntimeConfig);
 }
 

@@ -94,6 +94,24 @@ function addRepoBranchWithEdit(fx: WorkspaceFixture, repoRel: string, content: s
   fx.git(repoRel, `git worktree remove --force ${worktreePath}`);
 }
 
+/**
+ * FN-8141 shape: a `fusion/<id>` branch that committed work then REVERTED it — AHEAD of the
+ * integration tip (two real commits) but net-zero, so its tip is NOT an ancestor of main and the
+ * squash lands nothing (empty outcome with zero landed).
+ */
+function addRepoRevertedBranch(fx: WorkspaceFixture, repoRel: string): void {
+  const repoDir = fx.repoPath(repoRel);
+  const worktreePath = path.join(repoDir, ".wt-revert");
+  fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
+  configureIdentity(worktreePath);
+  writeFileSync(path.join(worktreePath, "feature.txt"), "work\n", "utf-8");
+  execSync("git add feature.txt", { cwd: worktreePath, stdio: "pipe" });
+  execSync(`git commit -m "feat(${TASK_ID}): add feature in ${repoRel}"`, { cwd: worktreePath, stdio: "pipe" });
+  execSync("git rm feature.txt", { cwd: worktreePath, stdio: "pipe" });
+  execSync(`git commit -m "revert(${TASK_ID}): undo feature (net-zero) in ${repoRel}"`, { cwd: worktreePath, stdio: "pipe" });
+  fx.git(repoRel, `git worktree remove --force ${worktreePath}`);
+}
+
 /** Make a sub-repo's integration tip and the task branch BOTH edit README so the
  *  squash conflicts. */
 function makeConflictingRepo(fx: WorkspaceFixture, repoRel: string): void {
@@ -274,6 +292,48 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     // The task was NOT finalized/moved done on a partial land.
     expect(store.moveTaskCalls).toHaveLength(0);
     expect(store.emitted.some((e) => e.event === "task:merged")).toBe(false);
+  });
+
+  /*
+   * FN-8141 workspace parity: an all-empty workspace where every sub-repo branch committed work then
+   * REVERTED it (ahead of main, net-zero, tip NOT an ancestor) has zero landed sub-repos and no
+   * already-landed proof. It must be blocked back to todo with error — NOT laundered into `done`.
+   */
+  it("FN-8141: blocks a commit-expected all-empty (reverted) workspace to todo, not done", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addRepoRevertedBranch(fx, "repo-a");
+    addRepoRevertedBranch(fx, "repo-b");
+
+    const tipABefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const tipBBefore = fx.git("repo-b", "git rev-parse refs/heads/main");
+
+    const store = createStore();
+    const task = makeTask({
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    });
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH),
+      reviewAgent: approveReviewAgent,
+    });
+
+    // No sub-repo FAILED, but nothing landed → blocked, NOT finalized.
+    expect(result.allLanded).toBe(true);
+    expect(result.finalized).toBe(false);
+    for (const r of result.repos) expect(r.status).toBe("empty");
+
+    // Moved back to todo with error set; never moved done and never emitted task:merged.
+    expect(store.moveTaskCalls).toEqual([{ id: TASK_ID, column: "todo" }]);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({ error: expect.stringContaining("operator review required") }),
+    );
+    expect(store.emitted.some((e) => e.event === "task:merged")).toBe(false);
+
+    // Integration refs unchanged.
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).toBe(tipABefore);
+    expect(fx.git("repo-b", "git rev-parse refs/heads/main")).toBe(tipBBefore);
   });
 });
 

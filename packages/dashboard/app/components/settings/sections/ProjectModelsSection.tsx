@@ -29,6 +29,9 @@ Fallback model lanes must be configurable in all Settings surfaces: General uses
 
 FNXC:Settings-ThinkingLevel 2026-07-10-12:08:
 Workflow fallback lanes may expose an inline thinking selector only when the active workflow declares the matching companion setting, while the title-summarizer fallback uses project-scoped keys below. Reset must clear both the model pair and the thinking companion; undeclared rows intentionally render no orphan thinking shell.
+
+FNXC:SettingsModels 2026-07-16-00:00:
+FN-8169 requires each workflow fallback lane to render directly under its primary lane so operators configure a model and its retry model together. Keep this catalog interleaved while preserving every lane key and declaration filter.
 */
 const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
     {
@@ -40,20 +43,20 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the workflow default.",
     },
     {
+        id: "planning-fallback",
+        providerId: "planningFallbackProvider",
+        modelId: "planningFallbackModelId",
+        thinkingId: "planningFallbackThinkingLevel",
+        label: "Planning Fallback Model",
+        help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+    },
+    {
         id: "execution",
         providerId: "executionProvider",
         modelId: "executionModelId",
         thinkingId: "executionThinkingLevel",
         label: "Executor Model",
         help: "Provider and model used while executing workflow steps. Leave unset to inherit from the workflow default.",
-    },
-    {
-        id: "validator",
-        providerId: "validatorProvider",
-        modelId: "validatorModelId",
-        thinkingId: "validatorThinkingLevel",
-        label: "Reviewer Model",
-        help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
     },
     {
         id: "execution-fallback",
@@ -64,12 +67,12 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         help: "Fallback provider and model used when the primary Executor model cannot be used.",
     },
     {
-        id: "planning-fallback",
-        providerId: "planningFallbackProvider",
-        modelId: "planningFallbackModelId",
-        thinkingId: "planningFallbackThinkingLevel",
-        label: "Planning Fallback Model",
-        help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+        id: "validator",
+        providerId: "validatorProvider",
+        modelId: "validatorModelId",
+        thinkingId: "validatorThinkingLevel",
+        label: "Reviewer Model",
+        help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
     },
     {
         id: "validator-fallback",

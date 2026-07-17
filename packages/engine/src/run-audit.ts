@@ -703,6 +703,14 @@ export type DatabaseMutationType =
    * Metadata: { reason, doneCount, incompleteCount, classification?, baseRef?, lane }
    */
   | "task:no-commits-finalize-blocked-incomplete-steps"
+  /**
+   * FNXC:Lifecycle 2026-07-16-00:00:
+   * FN-8141: the AI empty-merge lane refused to finalize a commit-expected task `done` because its
+   * branch had no net changes vs the integration tip AND no positive proof the work already landed
+   * (commits reverted/lost). The task is moved back to `todo` with progress preserved for operator review.
+   * Metadata: { reason, branch, integrationBranch, lane, baseCommitSha?, hadPriorNoOpProof? }
+   */
+  | "task:empty-merge-finalize-blocked-no-landed-proof"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
   /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a done/archived task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */
@@ -799,7 +807,33 @@ export type DatabaseMutationType =
    * withheld state persists unchanged.
    * Metadata: { taskId: string; reason: "user-paused" | "auto-merge-off-human-review"; stage?: string; oversightLevel?: string }
    */
-  | "overseer:oversight-withheld-human-control";
+  | "overseer:oversight-withheld-human-control"
+  /**
+   * FNXC:Lifecycle 2026-07-16-10:30:
+   * FN-8141 no-action event: a stranded-completed promoter (`recoverCompletedTasks` stuck-in-progress
+   * sweep OR `recoverStrandedCompletedTodoTasks` stranded-todo sweep in self-healing.ts) withheld
+   * promotion of an all-steps-done/skipped task because its most recent execution-outcome in the
+   * durable task log was a failure/refusal park (`evaluateCompletedPromotionFailureProvenance`).
+   * Emitted at most once per taskId while the blocking provenance persists (deduped in-memory).
+   * Metadata: { taskId, reason: "failure-provenance", sweep: "stuck-in-progress" | "stranded-todo", marker?: string }
+   */
+  | "task:reconcile-stranded-completed-no-action"
+  /**
+   * FNXC:Lifecycle 2026-07-16-09:40:
+   * FN-8141 no-action lifecycle event: the AI empty-merge lane vetoed a
+   * zero-diff (no net changes) no-op finalize because the task's cross-stage
+   * overseer memory (derived from the durable `overseer:intervention` timeline)
+   * shows the MOST RECENT executor-stage signal was failed-with-incomplete-work
+   * with no subsequent green completion (`evaluateNoOpFinalizeExecutorVeto`).
+   * The task is moved back to `todo` with progress preserved instead of reaching
+   * `done` — mirroring the FN-6461 `task:no-commits-finalize-blocked-incomplete-steps`
+   * blocked lane. The move-to-todo transition takes the task out of the merge
+   * lane, so the event is not re-emitted every poll (equivalent to the
+   * `overseer:oversight-withheld-human-control` per-(taskId, reason) dedup).
+   * Metadata (ids/outcomes-only): { reason; branch; integrationBranch; lane:
+   * "ai-empty-merge"; executorSignal?; executorSignalObservedAt? }
+   */
+  | "overseer:no-op-finalize-vetoed-failed-executor";
 
 // ── Filesystem mutation types ─────────────────────────────────────────────────
 

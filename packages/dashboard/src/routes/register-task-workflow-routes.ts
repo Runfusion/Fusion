@@ -45,6 +45,7 @@ import {
   isWorkflowColumnsEnabled,
   resolveWorkflowIrForTask,
   workflowHasColumn,
+  resolveColumnFlags,
   TransitionRejectionError,
   getPlannerInterventionTimeline,
   isBuiltinWorkflowId,
@@ -87,7 +88,7 @@ const DUPLICATE_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "to", 
 const ARTIFACT_TYPES = new Set<ArtifactType>(["document", "image", "video", "audio", "other"]);
 const ADDRESS_PR_FEEDBACK_PROMPT = "Run /ce-resolve-pr-feedback to resolve open PR review feedback: evaluate each thread, fix valid issues, and reply.";
 
-function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): void {
+async function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): Promise<void> {
   /*
   FNXC:WorkflowReplan 2026-06-29-00:33:
   Spec rebuild intentionally invalidates the planned step source, so persisted graph foreach pins from the previous PROMPT.md must be cleared before the next parse-steps node runs. Keeping the stale pins makes rebuilt tasks fail closed with pin-mismatch at parse instead of executing the fresh plan.
@@ -96,10 +97,12 @@ function clearRebuiltSpecWorkflowPins(store: TaskStore, taskId: string): void {
   User reset/retry is also a hard graph-run boundary. Clear all persisted foreach step-instance rows for the task, not only rows outside a keep-run id, because stale rows can be written by an old aborting graph after the first cleanup and then make the next parse fail immediately.
   */
   const maybeStore = store as unknown as {
+    clearWorkflowRunStepInstancesAsync?: (taskId: string) => Promise<void>;
     clearWorkflowRunStepInstances?: (taskId: string) => void;
   };
   try {
-    maybeStore.clearWorkflowRunStepInstances?.(taskId);
+    await (maybeStore.clearWorkflowRunStepInstancesAsync?.(taskId)
+      ?? maybeStore.clearWorkflowRunStepInstances?.(taskId));
   } catch {
     // Legacy stores may not have workflow-run instance persistence; rebuild must still proceed.
   }
@@ -1101,7 +1104,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         validatorModelId,
         planningModelProvider,
         planningModelId,
+        mergerModelProvider,
+        mergerModelId,
         thinkingLevel,
+        validatorThinkingLevel,
+        planningThinkingLevel,
+        mergerThinkingLevel,
         reviewLevel,
         executionMode,
         autoMerge,
@@ -1139,11 +1147,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const validatedValidatorModelId = validateOptionalModelField(validatorModelId, "validatorModelId");
       const validatedPlanningModelProvider = validateOptionalModelField(planningModelProvider, "planningModelProvider");
       const validatedPlanningModelId = validateOptionalModelField(planningModelId, "planningModelId");
+      const validatedMergerModelProvider = validateOptionalModelField(mergerModelProvider, "mergerModelProvider");
+      const validatedMergerModelId = validateOptionalModelField(mergerModelId, "mergerModelId");
 
       // Validate thinkingLevel if provided
       const validThinkingLevels = [...THINKING_LEVELS];
-      if (thinkingLevel !== undefined && thinkingLevel !== null && !validThinkingLevels.includes(thinkingLevel)) {
-        throw badRequest(`thinkingLevel must be one of: ${validThinkingLevels.join(", ")}`);
+      for (const [name, value] of Object.entries({ thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel })) {
+        if (value !== undefined && value !== null && !validThinkingLevels.includes(value as ThinkingLevel)) {
+          throw badRequest(`${name} must be one of: ${validThinkingLevels.join(", ")}`);
+        }
       }
 
       // Validate reviewLevel if provided (must be integer 0-3)
@@ -1175,6 +1187,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const executorModel = normalizeModelSelectionPair(validatedModelProvider, validatedModelId);
       const validatorModel = normalizeModelSelectionPair(validatedValidatorModelProvider, validatedValidatorModelId);
       const planningModel = normalizeModelSelectionPair(validatedPlanningModelProvider, validatedPlanningModelId);
+      const mergerModel = normalizeModelSelectionPair(validatedMergerModelProvider, validatedMergerModelId);
 
       // Validate enabledWorkflowSteps if provided
       if (enabledWorkflowSteps !== undefined) {
@@ -1483,7 +1496,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         validatorModelId: validatorModel.modelId ?? undefined,
         planningModelProvider: planningModel.provider ?? undefined,
         planningModelId: planningModel.modelId ?? undefined,
+        mergerModelProvider: mergerModel.provider ?? undefined,
+        mergerModelId: mergerModel.modelId ?? undefined,
         thinkingLevel: thinkingLevel || undefined,
+        validatorThinkingLevel: validatorThinkingLevel || undefined,
+        planningThinkingLevel: planningThinkingLevel || undefined,
+        mergerThinkingLevel: mergerThinkingLevel || undefined,
         summarize,
         reviewLevel: reviewLevel ?? undefined,
         executionMode: executionMode || undefined,
@@ -2436,7 +2454,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
 
       if (isMissingWorktreeSessionRetry) {
-        clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+        await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
         await scopedStore.updateTask(req.params.id, {
           status: null,
           error: null,
@@ -2460,7 +2478,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           FNXC:WorkflowRetry 2026-06-29-02:18:
           Dashboard retry for an in-review execution failure re-enters the workflow graph from parse/execution, so it must clear persisted foreach step-instance pins. Otherwise a stale pin from the failed run makes the retry hit the same parse pin-mismatch immediately.
           */
-          clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+          await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
           await scopedStore.updateTask(req.params.id, {
             status: null,
             error: null,
@@ -2516,7 +2534,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       FNXC:WorkflowRetry 2026-06-29-02:18:
       Non-planning manual retry is also a fresh execution boundary. Clear graph step-instance rows before moving back to todo so parse-steps can repin the current PROMPT.md instead of inheriting failed foreach state.
       */
-      clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
 
       // Reset steps if the branch has no unique commits (work was lost with worktree)
       const completedSteps = task.steps.filter(
@@ -2609,7 +2627,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       engine?.clearTaskPauseAbortState?.(req.params.id);
       await releaseExecutionAgentBindings(engine, req.params.id);
-      clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
 
       // Reset all steps to pending
       for (let i = 0; i < task.steps.length; i++) {
@@ -2626,7 +2644,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       );
 
       await scopedStore.moveTask(req.params.id, "todo");
-      clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
       let updated = await scopedStore.getTask(req.params.id);
       if (!updated) {
         throw notFound(`Task ${req.params.id} not found after reset`);
@@ -4260,44 +4278,39 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Get current task state
       const task = await scopedStore.getTask(req.params.id);
 
-      // If task is already in triage, skip the transition check and moveTask.
-      // Just reset for replanning in place.
-      if (task.column === "triage") {
-        // Log the rebuild request
-        await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
-        clearRebuiltSpecWorkflowPins(scopedStore, task.id);
-
-        // Remove the existing spec so rebuilds produce a fresh PROMPT.md instead
-        // of asking triage to revise whatever was already on disk.
-        const { rm } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
-        await rm(promptPath, { force: true });
-
-        // Update status to indicate needs replanning
-        await scopedStore.updateTask(task.id, { status: "needs-replan" });
-
-        const updated = await scopedStore.getTask(task.id);
-        res.json(updated);
-        return;
+      const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
+      const currentColumn = "columns" in workflowIr
+        ? workflowIr.columns.find((column) => column.id === task.column)
+        : undefined;
+      const isArchived = task.column === "archived" || (currentColumn != null && resolveColumnFlags(currentColumn).archived);
+      if (isArchived) {
+        throw badRequest("Respecify is not available for archived tasks; unarchive first.");
       }
 
-      // Check if task can transition to triage
-      // #1403: task.column is ColumnId; VALID_TRANSITIONS is keyed by the legacy
-      // closed union. A non-legacy custom column id has no legacy transition row,
-      // so it correctly resolves to "cannot transition" here.
-      const canTransition =
-        isColumn(task.column) && VALID_TRANSITIONS[task.column].includes("triage");
-      if (!canTransition) {
-        throw badRequest(`Cannot rebuild spec for tasks in '${task.column}' column. Move task to a valid column first.`);
-      }
+      /*
+      FNXC:WorkflowReplan 2026-07-16-12:00:
+      Respecify must park work in a planner lane belonging to the task's own workflow:
+      triage when declared, otherwise plan-in-place todo, then legacy triage for workflows
+      with neither. The legacy fallback is intentionally recovery-rehomed: plain moves reject
+      an undeclared triage target as unknown-column (and reject non-adjacent sources), which
+      previously stranded no-triage workflows before their needs-replan status was written.
+      Archived cards are rejected above rather than resurrected into a planner lane.
+      */
+      const replanColumn = workflowHasColumn(workflowIr, "triage")
+        ? "triage"
+        : workflowHasColumn(workflowIr, "todo")
+          ? "todo"
+          : "triage";
 
-      // Log the rebuild request
       await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
-      clearRebuiltSpecWorkflowPins(scopedStore, task.id);
+      await clearRebuiltSpecWorkflowPins(scopedStore, task.id);
 
-      // Move to triage for replanning
-      const updated = await scopedStore.moveTask(task.id, "triage");
+      if (task.column !== replanColumn) {
+        await scopedStore.moveTask(task.id, replanColumn, {
+          moveSource: "user",
+          recoveryRehome: true,
+        });
+      }
 
       // Remove the existing spec so rebuilds produce a fresh PROMPT.md instead
       // of asking triage to revise whatever was already on disk.
@@ -4309,6 +4322,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Update status to indicate needs replanning
       await scopedStore.updateTask(task.id, { status: "needs-replan" });
 
+      /*
+      FNXC:WorkflowReplan 2026-07-16-12:00:
+      Respecify responses must re-read the persisted task after setting needs-replan so
+      planner-lane-in-place requests, including legacy triage, never return stale status.
+      */
+      const updated = await scopedStore.getTask(task.id);
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -4367,7 +4386,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.patch("/tasks/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId, branch, baseBranch, githubTracking, gitlabTracking, noCommitsExpected, autoMerge, overlapBlockedBy, status, dismissNearDuplicate, sessionAdvisorEnabled } = req.body;
+      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergerModelProvider, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId, branch, baseBranch, githubTracking, gitlabTracking, noCommitsExpected, autoMerge, overlapBlockedBy, status, dismissNearDuplicate, sessionAdvisorEnabled } = req.body;
       const hasBodyField = (field: string) => Object.prototype.hasOwnProperty.call(req.body, field);
 
       // Validate model fields are strings or undefined/null
@@ -4386,6 +4405,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const validatedValidatorModelId = validateModelField(validatorModelId, "validatorModelId");
       const validatedPlanningModelProvider = validateModelField(planningModelProvider, "planningModelProvider");
       const validatedPlanningModelId = validateModelField(planningModelId, "planningModelId");
+      const validatedMergerModelProvider = validateModelField(mergerModelProvider, "mergerModelProvider");
+      const validatedMergerModelId = validateModelField(mergerModelId, "mergerModelId");
       const validatedAssigneeUserId = validateModelField(assigneeUserId, "assigneeUserId");
 
       // Validate thinking level fields if provided
@@ -4398,6 +4419,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       validateThinkingLevel(thinkingLevel, "thinkingLevel");
       validateThinkingLevel(validatorThinkingLevel, "validatorThinkingLevel");
       validateThinkingLevel(planningThinkingLevel, "planningThinkingLevel");
+      validateThinkingLevel(mergerThinkingLevel, "mergerThinkingLevel");
 
       // Validate reviewLevel if provided (must be integer 0-3)
       if (reviewLevel !== undefined && reviewLevel !== null) {
@@ -4679,9 +4701,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (hasBodyField("validatorModelId")) updates.validatorModelId = validatedValidatorModelId;
       if (hasBodyField("planningModelProvider")) updates.planningModelProvider = validatedPlanningModelProvider;
       if (hasBodyField("planningModelId")) updates.planningModelId = validatedPlanningModelId;
+      if (hasBodyField("mergerModelProvider")) updates.mergerModelProvider = validatedMergerModelProvider;
+      if (hasBodyField("mergerModelId")) updates.mergerModelId = validatedMergerModelId;
       if (hasBodyField("thinkingLevel")) updates.thinkingLevel = thinkingLevel === null ? null : thinkingLevel;
       if (hasBodyField("validatorThinkingLevel")) updates.validatorThinkingLevel = validatorThinkingLevel === null ? null : validatorThinkingLevel;
       if (hasBodyField("planningThinkingLevel")) updates.planningThinkingLevel = planningThinkingLevel === null ? null : planningThinkingLevel;
+      if (hasBodyField("mergerThinkingLevel")) updates.mergerThinkingLevel = mergerThinkingLevel === null ? null : mergerThinkingLevel;
       if (hasBodyField("assigneeUserId")) updates.assigneeUserId = validatedAssigneeUserId;
       if (hasBodyField("reviewLevel")) updates.reviewLevel = reviewLevel;
       if (hasBodyField("executionMode")) updates.executionMode = executionMode === null ? null : executionMode;
@@ -4710,8 +4735,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
       if (hasBodyField("overlapBlockedBy")) updates.overlapBlockedBy = validatedOverlapBlockedBy;
       if (hasBodyField("status")) updates.status = validatedStatus;
+      const existingTaskForDuplicateDismissal = dismissNearDuplicate === true
+        ? await scopedStore.getTask(req.params.id)
+        : null;
       if (dismissNearDuplicate === true) {
+        const isTriageMarkerDecision = existingTaskForDuplicateDismissal?.sourceMetadata?.duplicateSource === "triage-marker"
+          && existingTaskForDuplicateDismissal.pausedReason === "duplicate-decision-required";
+        /*
+         * FNXC:DuplicateIntake 2026-07-16-13:00:
+         * Keep resolves Issue #2225's default triage-marker hold by acknowledging the link,
+         * clearing only the system pause, and returning to planning without retaining a stub.
+         */
         updates.sourceMetadataPatch = { nearDuplicateDismissed: true };
+        if (isTriageMarkerDecision) {
+          updates.paused = false;
+          updates.pausedReason = null;
+          updates.status = null;
+        }
       }
 
       /*
@@ -4736,6 +4776,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const task = await scopedStore.updateTask(req.params.id, updates);
+      if (dismissNearDuplicate === true && task.sourceMetadata?.duplicateSource === "triage-marker") {
+        const { rm } = await import("node:fs/promises");
+        await rm(join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
+      }
 
       const manualUnlinkRequested =
         hasBodyField("githubTracking") &&

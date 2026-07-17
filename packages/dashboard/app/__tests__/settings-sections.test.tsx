@@ -708,6 +708,53 @@ describe("ProjectModelsSection", () => {
     expect(dropdown).toHaveAttribute("data-thinking-value", "");
   });
 
+  it("renders default workflow model lanes with each fallback directly after its primary", async () => {
+    vi.mocked(fetchWorkflow).mockResolvedValue({
+      id: "builtin:coding",
+      name: "Coding",
+      ir: {
+        settings: [
+          "planning",
+          "planningFallback",
+          "execution",
+          "executionFallback",
+          "validator",
+          "validatorFallback",
+        ].flatMap((lane) => [
+          { id: `${lane}Provider`, name: `${lane} provider`, type: "string" },
+          { id: `${lane}ModelId`, name: `${lane} model`, type: "string" },
+          { id: `${lane}ThinkingLevel`, name: `${lane} thinking`, type: "enum" },
+        ]),
+      },
+    } as never);
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
+
+    render(
+      <ProjectModelsSection
+        form={{ defaultWorkflowId: "builtin:coding" } as SettingsFormState}
+        setForm={vi.fn()}
+        models={{
+          ...models,
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+        }}
+        projectId="project-1"
+        addToast={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId("workflow-model-lane-validator-fallback");
+    const workflowLaneIds = Array.from(document.querySelectorAll<HTMLElement>("[data-testid^='workflow-model-lane-']"))
+      .map((element) => element.dataset.testid?.replace("workflow-model-lane-", ""));
+    expect(workflowLaneIds).toEqual([
+      "planning",
+      "planning-fallback",
+      "execution",
+      "execution-fallback",
+      "validator",
+      "validator-fallback",
+    ]);
+  });
+
   it("wires workflow fallback lane thinking render, persist, and reset", async () => {
     let saver: (() => Promise<void>) | null = null;
     vi.mocked(fetchWorkflow).mockResolvedValue({
