@@ -4,10 +4,12 @@ import { EventEmitter } from "node:events";
 // Mock child_process so we can intercept the `git push -u origin <branch>`
 // call that processPullRequestMergeTask issues before createPr.
 const execMock = vi.hoisted(() => vi.fn());
-// Records raw (file, args[]) tuples for execFile so tests can assert a no-shell
-// invocation (Fix #11) — i.e. the branch is a discrete argv entry, not shell-
-// interpolated.
-const execFileCalls = vi.hoisted(() => [] as Array<{ file: string; args: string[] }>);
+// Records raw (file, args[], cwd) tuples for execFile so tests can assert a
+// no-shell invocation (Fix #11) — i.e. the branch is a discrete argv entry, not
+// shell-interpolated — and that git ops target the task worktree cwd (gh-4).
+const execFileCalls = vi.hoisted(
+  () => [] as Array<{ file: string; args: string[]; cwd: string | undefined }>,
+);
 vi.mock("node:child_process", () => ({
   exec: (cmd: string, opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     try {
@@ -19,7 +21,7 @@ vi.mock("node:child_process", () => ({
   },
   execFile: (file: string, args: string[] | undefined, opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     try {
-      execFileCalls.push({ file, args: args ?? [] });
+      execFileCalls.push({ file, args: args ?? [], cwd: (opts as { cwd?: string } | undefined)?.cwd });
       const result = execMock(`${file} ${(args ?? []).join(" ")}`.trim(), opts);
       cb(null, typeof result === "string" ? result : "", "");
     } catch (err) {
@@ -159,6 +161,7 @@ describe("processPullRequestMergeTask", () => {
   });
 
   describe("central-install repo threading (gh-4)", () => {
+    // FNXC:PrMergeAutoMerge 2026-07-17-19:18 (gh-4):
     // Simulate a centrally-installed multi-project daemon: process.cwd() is NOT
     // a git repo, so cwd-less getCurrentRepo() returns null; only the
     // per-project cwd resolves. Any PR call that relies on the client's
@@ -1895,6 +1898,30 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     expect(vi.mocked(getCurrentRepo)).toHaveBeenCalledWith("/projects/repo-a/.worktrees/fn-9601");
   });
 
+  it("resolvePrSource treats the configured getTaskWorktree resolver as authoritative over task.worktree", async () => {
+    const ops = createPrNodeGithubOps(githubStub() as never, {
+      getTaskWorktree: (taskId) => `/resolved/${taskId}`,
+    });
+    const source = await ops.resolvePrSource(
+      { id: "FN-9601", worktree: "/stale/recorded/worktree" } as never,
+      {} as never,
+    );
+    expect(source.repo).toBe("central-owner/central-repo");
+    expect(vi.mocked(getCurrentRepo)).toHaveBeenCalledWith("/resolved/FN-9601");
+  });
+
+  it("resolvePrSource throws instead of persisting entity.repo as '' when no repo resolves (central install, no worktree)", async () => {
+    // Worktree-less task in a central install: every cwd candidate (including
+    // process.cwd(), the install dir) fails to resolve a repo. Persisting ""
+    // would poison downstream splitRepoSlug consumers into the client's
+    // process-cwd fallback — the exact gh-4 failure mode.
+    vi.mocked(getCurrentRepo).mockReturnValue(null as never);
+    const ops = createPrNodeGithubOps(githubStub() as never);
+    expect(() => ops.resolvePrSource({ id: "FN-9601" } as never, {} as never)).toThrow(
+      /pr-create: could not determine repository for task FN-9601/,
+    );
+  });
+
   it("createPr pushes from the task worktree and passes owner/repo parsed from entity.repo", async () => {
     execMock.mockReturnValue("");
     const github = githubStub();
@@ -1908,6 +1935,8 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     );
     const pushCall = execFileCalls.find((c) => c.file === "git" && c.args[0] === "push");
     expect(pushCall).toBeDefined();
+    // The push must run in the task worktree, not process.cwd() (gh-4).
+    expect(pushCall?.cwd).toBe("/projects/repo-a/.worktrees/fn-9601");
     expect(result.prNumber).toBe(9);
   });
 

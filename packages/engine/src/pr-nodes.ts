@@ -247,25 +247,33 @@ export function buildRespondCallback(
 
     const taskId = ops.getTaskId(entity);
     /*
-     * FNXC:PrMergeAutoMerge 2026-07-17-17:58 (gh-4):
+     * FNXC:PrMergeAutoMerge 2026-07-17-19:18 (gh-4):
      * Resolve the review-response run cwd from the task's recorded worktree first.
      * The CLI-injected ops.getCwd defaults to process.cwd() (no CLI composition
      * site wires getTaskWorktree), which in a centrally-installed multi-project
      * server is the install dir — git ops and the response agent would run outside
      * the project repo. The engine owns the store, so it recovers the worktree
-     * here; ops.getCwd stays the single-project fallback.
+     * here; ops.getCwd stays the fallback ONLY for structural stores without
+     * getTask (PrNodeStore does not declare it — tests/specialized wiring). A
+     * real getTask rejection (store failure, deleted task) propagates instead:
+     * the pr-respond node maps it to a routable `respond-error`, which beats
+     * running a mutating agent + git push in a cwd that may not even be the
+     * project repo. Structural stores are also withheld from the agent runner,
+     * whose store parameter is optional but assumed to have getTask.
      */
-    // try/catch (not .catch) so structural stores without getTask — PrNodeStore
-    // does not declare it — degrade to the fallback instead of a TypeError.
-    let respondTask: { worktree?: string } | null = null;
-    try {
-      respondTask = await fullStore.getTask(taskId);
-    } catch {
-      respondTask = null;
-    }
+    const hasGetTask = typeof (fullStore as Partial<typeof fullStore>).getTask === "function";
+    const respondTask: { worktree?: string } | null = hasGetTask
+      ? await fullStore.getTask(taskId)
+      : null;
     const cwd = respondTask?.worktree || ops.getCwd(entity);
     const gitOps = makePrResponseGitOps(() => cwd);
-    const runAgent = makePrResponseAgentRunner(settings, taskId, cwd, fullStore, pluginRunner);
+    const runAgent = makePrResponseAgentRunner(
+      settings,
+      taskId,
+      cwd,
+      hasGetTask ? fullStore : undefined,
+      pluginRunner,
+    );
 
     const result = await runPrResponseRun({
       entity,

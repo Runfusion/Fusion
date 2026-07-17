@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Capture the cwd handed to the response agent runner and the git-ops resolver,
-// so these tests can assert which directory the respond run actually targets.
-const agentRunnerCalls = vi.hoisted(() => [] as Array<{ taskId: string; cwd: string }>);
+// Capture the cwd + store handed to the response agent runner and the git-ops
+// resolver, so these tests can assert which directory the respond run actually
+// targets and that getTask-less structural stores are withheld from the runner.
+const agentRunnerCalls = vi.hoisted(
+  () => [] as Array<{ taskId: string; cwd: string; store: unknown }>,
+);
 const gitOpsResolvers = vi.hoisted(() => [] as Array<(entity: unknown) => string>);
 
 vi.mock("../pr-response-run-ops.js", () => ({
-  makePrResponseAgentRunner: vi.fn((_settings: unknown, taskId: string, cwd: string) => {
-    agentRunnerCalls.push({ taskId, cwd });
-    return vi.fn();
-  }),
+  makePrResponseAgentRunner: vi.fn(
+    (_settings: unknown, taskId: string, cwd: string, store: unknown) => {
+      agentRunnerCalls.push({ taskId, cwd, store });
+      return vi.fn();
+    },
+  ),
   makePrResponseGitOps: vi.fn((getCwd: (entity: unknown) => string) => {
     gitOpsResolvers.push(getCwd);
     return {
@@ -72,48 +77,51 @@ beforeEach(() => {
 describe("buildRespondCallback cwd resolution (gh-4)", () => {
   it("prefers the task's recorded worktree over the CLI getCwd resolver (process.cwd() in central installs)", async () => {
     const getCwd = vi.fn(() => "/central/install-dir");
-    const respond = buildRespondCallback(
-      () => makeStore("/projects/repo-a/.worktrees/fn-1") as never,
-      makeOps(getCwd),
-    );
+    const store = makeStore("/projects/repo-a/.worktrees/fn-1");
+    const respond = buildRespondCallback(() => store as never, makeOps(getCwd));
 
     const result = await respond({ entity } as never);
 
     expect(result).toEqual({ value: "resolved-all" });
-    expect(agentRunnerCalls).toEqual([{ taskId: "FN-1", cwd: "/projects/repo-a/.worktrees/fn-1" }]);
+    expect(agentRunnerCalls).toEqual([
+      { taskId: "FN-1", cwd: "/projects/repo-a/.worktrees/fn-1", store },
+    ]);
     expect(gitOpsResolvers).toHaveLength(1);
     expect(gitOpsResolvers[0](entity)).toBe("/projects/repo-a/.worktrees/fn-1");
   });
 
   it("falls back to the CLI getCwd resolver when the task has no recorded worktree", async () => {
     const getCwd = vi.fn(() => "/single-project/checkout");
-    const respond = buildRespondCallback(() => makeStore(undefined) as never, makeOps(getCwd));
+    const store = makeStore(undefined);
+    const respond = buildRespondCallback(() => store as never, makeOps(getCwd));
 
     await respond({ entity } as never);
 
-    expect(agentRunnerCalls).toEqual([{ taskId: "FN-1", cwd: "/single-project/checkout" }]);
+    expect(agentRunnerCalls).toEqual([{ taskId: "FN-1", cwd: "/single-project/checkout", store }]);
     expect(gitOpsResolvers[0](entity)).toBe("/single-project/checkout");
   });
 
-  it("falls back to the CLI getCwd resolver when the task lookup fails", async () => {
+  it("propagates a real store read failure instead of silently running in the fallback cwd (routable respond-error at the node)", async () => {
     const getCwd = vi.fn(() => "/single-project/checkout");
     const respond = buildRespondCallback(
       () => makeStore(undefined, { getTaskThrows: true }) as never,
       makeOps(getCwd),
     );
 
-    await respond({ entity } as never);
-
-    expect(agentRunnerCalls).toEqual([{ taskId: "FN-1", cwd: "/single-project/checkout" }]);
+    await expect(respond({ entity } as never)).rejects.toThrow("missing task");
+    expect(agentRunnerCalls).toEqual([]);
+    expect(gitOpsResolvers).toEqual([]);
   });
 
-  it("falls back to the CLI getCwd resolver on structural stores without getTask (PrNodeStore does not declare it)", async () => {
+  it("falls back to the CLI getCwd resolver on structural stores without getTask, and withholds the store from the agent runner", async () => {
     const getCwd = vi.fn(() => "/single-project/checkout");
     const storeWithoutGetTask = { getSettings: vi.fn(async () => ({})) };
     const respond = buildRespondCallback(() => storeWithoutGetTask as never, makeOps(getCwd));
 
     await respond({ entity } as never);
 
-    expect(agentRunnerCalls).toEqual([{ taskId: "FN-1", cwd: "/single-project/checkout" }]);
+    expect(agentRunnerCalls).toEqual([
+      { taskId: "FN-1", cwd: "/single-project/checkout", store: undefined },
+    ]);
   });
 });

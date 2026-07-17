@@ -432,23 +432,34 @@ export function createPrNodeGithubOps(
 
   return {
     resolvePrSource: (task) => {
-      // FNXC:PrMergeAutoMerge 2026-07-17-16:54 (gh-4):
+      // FNXC:PrMergeAutoMerge 2026-07-17-19:18 (gh-4):
       // Resolve the repo from the task's worktree (a checkout of the project
       // repo), not process.cwd() — in a centrally-installed multi-project
       // server process.cwd() is not a repo, which persisted entity.repo as ""
-      // and poisoned every downstream splitRepoSlug consumer.
-      const repo = getCurrentRepo(task.worktree ?? process.cwd());
-      const repoSlug = repo ? `${repo.owner}/${repo.repo}` : "";
+      // and poisoned every downstream splitRepoSlug consumer. The configured
+      // getTaskWorktree resolver is authoritative (same precedence as createPr),
+      // and an unresolvable repo now throws instead of persisting "" — the
+      // pr-create node maps the throw to a routable `source-error` failure,
+      // and "" could only ever succeed by silently targeting whatever repo
+      // process.cwd() happens to sit in.
+      const cwd = options.getTaskWorktree?.(task.id) ?? task.worktree ?? process.cwd();
+      const repo = getCurrentRepo(cwd);
+      if (!repo) {
+        throw new Error(
+          `pr-create: could not determine repository for task ${task.id} (no GitHub remote resolved from ${cwd})`,
+        );
+      }
       return {
         sourceType: "task",
         sourceId: task.id,
-        repo: repoSlug,
+        repo: `${repo.owner}/${repo.repo}`,
         headBranch: getTaskBranchName(task.id),
       };
     },
     createPr: async ({ task, entity }) => {
-      // gh-4: git ops run in the task worktree when known; process.cwd() only
-      // as the single-project fallback.
+      // FNXC:PrMergeAutoMerge 2026-07-17-19:18 (gh-4):
+      // Git ops run in the task worktree when known; process.cwd() only as the
+      // single-project fallback.
       const cwd = options.getTaskWorktree?.(entity.sourceId) ?? task.worktree ?? process.cwd();
       const headBranch = entity.headBranch || getTaskBranchName(task.id);
       await pushTaskBranchToOrigin(cwd, headBranch);
