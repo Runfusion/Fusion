@@ -874,18 +874,18 @@ describe("HeartbeatTriggerScheduler", () => {
       });
 
       /*
-       * FNXC:AgentHeartbeat 2026-07-17-17:45:
+       * FNXC:AgentHeartbeat 2026-07-17-18:15:
        * Greptile PR #2271 P1 (queued-callback ordering): a callback from a
        * superseded timer that runs AFTER re-registration must not stamp liveness
-       * or dispatch for the replacement timer. Timer callbacks carry their
-       * registration generation; onTimerTick rejects a mismatched one before
-       * recording lastTimerFireAtMs or invoking the callback.
+       * or dispatch for the replacement timer. Timer callbacks carry their per-arm
+       * identity; onTimerTick rejects a mismatched arm before recording
+       * lastTimerFireAtMs or invoking the callback.
        */
-      it("rejects a superseded timer tick (stale registration generation) so it neither dispatches nor records liveness", async () => {
+      it("rejects a superseded timer tick (stale arm identity) so it neither dispatches nor records liveness", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
-        const agent = buildAgent({ id: "agent-epoch", heartbeatIntervalMs: 3_600_000 });
+        const agent = buildAgent({ id: "agent-arm", heartbeatIntervalMs: 3_600_000 });
         vi.mocked(store.listAgents).mockResolvedValue([agent]);
         vi.mocked(store.getAgent).mockResolvedValue(agent);
         vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
@@ -894,25 +894,72 @@ describe("HeartbeatTriggerScheduler", () => {
         scheduler.start();
         await vi.advanceTimersByTimeAsync(0);
 
-        const epochs = (scheduler as unknown as { registrationEpochs: Map<string, number> }).registrationEpochs;
+        const arms = (scheduler as unknown as { currentTimerArm: Map<string, number> }).currentTimerArm;
         const fireMarkers = (scheduler as unknown as { lastTimerFireAtMs: Map<string, number> }).lastTimerFireAtMs;
-        const currentGeneration = epochs.get("agent-epoch")!;
-        const staleGeneration = currentGeneration - 1;
+        const currentArm = arms.get("agent-arm")!;
+        const staleArm = currentArm - 1;
 
         callback.mockClear();
-        fireMarkers.delete("agent-epoch"); // so any stamp below is detectable
+        fireMarkers.delete("agent-arm"); // so any stamp below is detectable
 
-        // A leftover callback from a superseded timer fires with the OLD generation.
-        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, gen?: number) => Promise<void> })
-          .onTimerTick("agent-epoch", 3_600_000, staleGeneration);
+        // A leftover callback from a superseded arm fires with the OLD arm id.
+        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, arm?: number) => Promise<void> })
+          .onTimerTick("agent-arm", 3_600_000, staleArm);
         expect(callback).not.toHaveBeenCalled();
-        expect(fireMarkers.has("agent-epoch")).toBe(false);
+        expect(fireMarkers.has("agent-arm")).toBe(false);
 
-        // A tick from the CURRENT generation is honored: it records liveness and dispatches.
-        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, gen?: number) => Promise<void> })
-          .onTimerTick("agent-epoch", 3_600_000, currentGeneration);
-        expect(callback).toHaveBeenCalledWith("agent-epoch", "timer", expect.anything());
-        expect(fireMarkers.has("agent-epoch")).toBe(true);
+        // A tick from the CURRENT arm is honored: it records liveness and dispatches.
+        await (scheduler as unknown as { onTimerTick: (id: string, ms: number, arm?: number) => Promise<void> })
+          .onTimerTick("agent-arm", 3_600_000, currentArm);
+        expect(callback).toHaveBeenCalledWith("agent-arm", "timer", expect.anything());
+        expect(fireMarkers.has("agent-arm")).toBe(true);
+      });
+
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-18:15:
+       * Greptile PR #2271 P1 (interval-transition leak): a phase-alignment timeout
+       * whose arm has been superseded must NOT transition to a steady interval,
+       * else it installs an untracked interval over the live replacement in
+       * this.timers — leaking a duplicate-firing timer that later cleanup never
+       * reaches. The timeout→interval transition is gated on the arm still being
+       * current.
+       */
+      it("a superseded phase-alignment timeout does not install a steady interval (no leaked/untracked timer)", async () => {
+        vi.useFakeTimers();
+        // now = 00:30, lastHeartbeatAt = 00:00, interval 1h → a phase-alignment
+        // setTimeout that fires 30min out (deterministic, not the random overdue jitter).
+        vi.setSystemTime(new Date("2026-01-01T00:30:00.000Z"));
+
+        const agent = buildAgent({
+          id: "agent-leak",
+          heartbeatIntervalMs: 3_600_000,
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getAgent).mockResolvedValue(agent);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const timers = (scheduler as unknown as { timers: Map<string, { kind: string }> }).timers;
+        const arms = (scheduler as unknown as { currentTimerArm: Map<string, number> }).currentTimerArm;
+        expect(timers.get("agent-leak")?.kind).toBe("timeout"); // phase-alignment timeout armed
+        callback.mockClear();
+
+        // Simulate the queued-callback race: a re-registration superseded THIS arm
+        // (advance the current arm) while the already-scheduled timeout still fires.
+        arms.set("agent-leak", arms.get("agent-leak")! + 1);
+
+        // Fire the (now superseded) phase timeout.
+        await vi.advanceTimersByTimeAsync(31 * 60_000);
+
+        // The superseded timeout must neither dispatch nor transition to a steady
+        // interval — the tracked entry stays the (now-consumed) timeout, and no
+        // untracked interval was installed over a replacement.
+        expect(callback).not.toHaveBeenCalledWith("agent-leak", "timer", expect.anything());
+        expect(timers.get("agent-leak")?.kind).not.toBe("interval");
       });
 
       it("pause guards still suppress dispatch after a zombie re-arm (does not regress FN-2658)", async () => {

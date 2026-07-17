@@ -4142,6 +4142,19 @@ export class HeartbeatTriggerScheduler {
   private errorRecoveryLimit = MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS;
   private pendingAssignments: Map<string, PendingAssignment> = new Map();
   private registrationEpochs: Map<string, number> = new Map();
+  /*
+   * FNXC:AgentHeartbeat 2026-07-17-18:15:
+   * Per-ARM identity for timer callbacks. Each applyTimerRegistration call takes
+   * the next `timerArmSeq` value and records it as the agent's current arm. Timer
+   * callbacks carry their armId; onTimerTick rejects a tick whose armId is no
+   * longer current, and a phase-alignment timeout only transitions to its steady
+   * interval while its arm is still current. This is finer-grained than
+   * `registrationEpochs` (bumped once per registerAgent): the base arm and the
+   * async settings-multiplier re-arm share a single epoch, so only a per-arm id
+   * can distinguish a superseded base arm from the live multiplier arm.
+   */
+  private timerArmSeq = 0;
+  private currentTimerArm: Map<string, number> = new Map();
   private running = false;
   private assignedListener: ((agent: import("@fusion/core").Agent, taskId: string) => void) | null = null;
   private createdListener: ((agent: import("@fusion/core").Agent) => void) | null = null;
@@ -4299,6 +4312,9 @@ export class HeartbeatTriggerScheduler {
     // FNXC:AgentHeartbeat 2026-07-17-15:40: clear fire-liveness markers on stop so
     // a subsequent start()/re-registration re-derives liveness from real ticks.
     this.lastTimerFireAtMs.clear();
+    // FNXC:AgentHeartbeat 2026-07-17-18:15: clear per-arm ids so any callback
+    // that outlives stop() is rejected by onTimerTick's arm guard.
+    this.currentTimerArm.clear();
 
     heartbeatLog.log("HeartbeatTriggerScheduler stopped");
   }
@@ -4429,17 +4445,18 @@ export class HeartbeatTriggerScheduler {
     this.clearAgentTimer(agentId);
 
     /*
-     * FNXC:AgentHeartbeat 2026-07-17-17:45:
-     * Capture the CURRENT registration generation and stamp it into every timer
-     * callback this registration arms. `registerAgent` bumps `registrationEpochs`
-     * before calling here, and `unregisterAgent` bumps it too, so a later
-     * (re-)registration invalidates this generation. onTimerTick rejects any tick
-     * whose generation no longer matches — a superseded timer's already-queued
-     * callback can therefore neither dispatch a heartbeat NOR record liveness for
-     * the replacement timer (which would otherwise mask a dead replacement for a
-     * full stale window). See onTimerTick's generation guard.
+     * FNXC:AgentHeartbeat 2026-07-17-18:15:
+     * Take this arm's unique identity and record it as the agent's current arm.
+     * Every callback this arm schedules carries `armId`. onTimerTick rejects a
+     * tick whose armId is no longer current (a superseded timer's already-queued
+     * callback can then neither dispatch NOR record liveness for the replacement),
+     * and the phase-alignment timeout below only transitions to its steady
+     * interval while its arm is still current — otherwise a superseded timeout
+     * would install an untracked interval over the live replacement in
+     * `this.timers` and leak a duplicate-firing timer.
      */
-    const timerGeneration = this.registrationEpochs.get(agentId) ?? 0;
+    const armId = ++this.timerArmSeq;
+    this.currentTimerArm.set(agentId, armId);
 
     /*
      * FNXC:AgentHeartbeat 2026-07-17-16:30:
@@ -4460,7 +4477,7 @@ export class HeartbeatTriggerScheduler {
       // setInterval that drives every subsequent tick. Use the same
       // effectiveIntervalMs so the cadence remains correct.
       const intervalHandle = setInterval(() => {
-        void this.onTimerTick(agentId, effectiveIntervalMs, timerGeneration);
+        void this.onTimerTick(agentId, effectiveIntervalMs, armId);
       }, effectiveIntervalMs);
       this.timers.set(agentId, {
         intervalMs: effectiveIntervalMs,
@@ -4478,11 +4495,16 @@ export class HeartbeatTriggerScheduler {
     } else {
       const timeoutHandle = setTimeout(() => {
         // Fire the overdue/phase-aligned tick first, then transition to the
-        // steady cadence. The tick fires regardless of whether the steady
-        // interval install succeeds, so a missed tick can never silently
-        // happen here.
-        void this.onTimerTick(agentId, effectiveIntervalMs, timerGeneration);
-        armSteadyInterval();
+        // steady cadence. The tick itself is armId-guarded inside onTimerTick.
+        void this.onTimerTick(agentId, effectiveIntervalMs, armId);
+        // FNXC:AgentHeartbeat 2026-07-17-18:15: only install the steady interval
+        // if THIS arm is still current. A superseded timeout (its arm replaced by
+        // a re-registration or the settings-multiplier re-arm) must not overwrite
+        // the live replacement in this.timers, which would leak an untracked,
+        // duplicate-firing interval that later clearAgentTimer never reaches.
+        if (this.currentTimerArm.get(agentId) === armId) {
+          armSteadyInterval();
+        }
       }, initialDelayMs);
       this.timers.set(agentId, {
         intervalMs: effectiveIntervalMs,
@@ -4540,6 +4562,9 @@ export class HeartbeatTriggerScheduler {
     // FNXC:AgentHeartbeat 2026-07-17-15:40: drop the fire-liveness marker so it
     // cannot leak for deleted agents and a later re-registration starts fresh.
     this.lastTimerFireAtMs.delete(agentId);
+    // FNXC:AgentHeartbeat 2026-07-17-18:15: clear the current-arm id so any
+    // in-flight callback from this agent's last arm is rejected by onTimerTick.
+    this.currentTimerArm.delete(agentId);
     if (this.timers.has(agentId)) {
       this.clearAgentTimer(agentId);
       heartbeatLog.log(`Unregistered timer for ${agentId}`);
@@ -5211,21 +5236,21 @@ export class HeartbeatTriggerScheduler {
    * Handle a timer tick for an agent.
    * Checks for active runs before invoking the callback.
    */
-  private async onTimerTick(agentId: string, intervalMs: number, generation?: number): Promise<void> {
+  private async onTimerTick(agentId: string, intervalMs: number, armId?: number): Promise<void> {
     if (!this.running) return;
 
     /*
-     * FNXC:AgentHeartbeat 2026-07-17-17:45:
+     * FNXC:AgentHeartbeat 2026-07-17-18:15:
      * Reject superseded ticks BEFORE recording liveness or dispatching. Timer
-     * callbacks carry the registration generation they were armed under
-     * (applyTimerRegistration); a re-registration or unregister bumps
-     * `registrationEpochs`, so a stale/already-queued callback from a replaced
-     * timer no longer matches. Without this, that old callback could stamp
-     * `lastTimerFireAtMs` for the CURRENT (possibly dead) timer and mask a needed
-     * repair for a full stale window. Legacy/direct callers pass no generation
-     * and are unaffected.
+     * callbacks carry the per-arm identity they were scheduled under
+     * (applyTimerRegistration); any re-arm — a re-registration, an unregister, or
+     * the settings-multiplier re-arm — advances the agent's current arm, so a
+     * stale/already-queued callback from a replaced timer no longer matches.
+     * Without this, that old callback could stamp `lastTimerFireAtMs` for the
+     * CURRENT (possibly dead) timer and mask a needed repair for a full stale
+     * window. Legacy/direct callers pass no armId and are unaffected.
      */
-    if (generation !== undefined && this.registrationEpochs.get(agentId) !== generation) {
+    if (armId !== undefined && this.currentTimerArm.get(agentId) !== armId) {
       return;
     }
 
