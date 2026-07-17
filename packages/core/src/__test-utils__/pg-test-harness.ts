@@ -374,17 +374,12 @@ export const __pgTestTemplateTestHooks = {
 };
 
 /*
- * FNXC:PgTestTemplateDb 2026-07-17-14:34:
- * Per-module templates must not accumulate for the lifetime of a successful
- * worker. `beforeExit` permits this best-effort async cleanup after the module
- * has finished its tests; crashes remain reclaimable through the dead-pid sweep.
+ * FNXC:PgTestTemplateDb 2026-07-17-22:25:
+ * Do not register module-local `beforeExit` cleanup. Vitest can reach a transient
+ * beforeExit state while sibling isolated module registries still copy from their
+ * templates, so that handler races and drops live sources. The dead-pid sweep in
+ * ensureSchemaTemplate reclaims templates after the owning worker actually exits.
  */
-process.once("beforeExit", () => {
-  const templateName = templateDbName();
-  void withMaintenanceSql(async (client) => {
-    await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
-  }).catch(() => {});
-});
 
 /**
  * FNXC:PgTestTemplateDb 2026-07-16-17:40:
@@ -499,6 +494,19 @@ export async function createTaskStoreForTest(options?: {
   // nonce-bearing template names keep isolated modules on disjoint sources.
   const template = await ensureSchemaTemplate();
   await serializeTemplateCopy(async () => {
+    /*
+     * FNXC:PgTestTemplateDb 2026-07-17-22:34:
+     * PostgreSQL can retain a just-closed baseline connection briefly. Terminate
+     * stale template sessions immediately before copying; the module-local copy
+     * mutex ensures this never interrupts a sibling copy using the same source.
+     */
+    await withMaintenanceSql(async (client) => {
+      await client`
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = ${template} AND pid <> pg_backend_pid()
+      `;
+    });
     try {
       await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}"`);
     } catch {
