@@ -396,6 +396,7 @@ const mocks = vi.hoisted(() => {
     set: vi.fn(),
     remove: vi.fn(),
     get: vi.fn(),
+    setModelRuntime: vi.fn(),
   };
 
   const modelRegistry = {
@@ -403,6 +404,13 @@ const mocks = vi.hoisted(() => {
     registerProvider: vi.fn(),
     refresh: vi.fn(),
   };
+  /*
+  FNXC:CliTests 2026-07-16-10:10:
+  pi 0.80.8 moved model initialization into async ModelRuntime, so the real
+  registry factory calls authStorage.setModelRuntime. Stub that factory here to
+  keep provider-registration assertions bound to the shared mock registry.
+  */
+  const createFusionModelRegistryMock = vi.fn(async () => modelRegistry);
 
   const refreshAllCustomProviderModels = vi.fn().mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
   const createSkillsAdapterMock = vi.fn().mockReturnValue(undefined);
@@ -597,6 +605,7 @@ const mocks = vi.hoisted(() => {
     processAndAuditInsightExtractionMock,
     authStorage,
     modelRegistry,
+    createFusionModelRegistryMock,
     refreshAllCustomProviderModels,
     createSkillsAdapterMock,
     globalSettingsGetSettings,
@@ -687,6 +696,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
   const { createCliEngineMock } = await import("../../test/mockCoreEngine");
   return createCliEngineMock(() => importOriginal<typeof import("@fusion/engine")>(), {
     createFusionAuthStorage: vi.fn(() => mocks.authStorage),
+    createFusionModelRegistry: mocks.createFusionModelRegistryMock,
     ProjectEngine: mocks.projectEngineCtor,
     ProjectEngineManager: vi.fn().mockImplementation(function (centralCore: any, options: any) {
     const engines = new Map<string, any>();
