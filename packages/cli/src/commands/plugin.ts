@@ -129,28 +129,32 @@ export async function createPluginStore(
       ...(backendLayer ? { asyncLayer: backendLayer } : {}),
     });
     /*
-    FNXC:PostgresOnlyDataAccess 2026-07-17-16:30:
+    FNXC:PostgresOnlyDataAccess 2026-07-17-18:10:
     `central.init()` bootstraps and OWNS an embedded-Postgres backend (pool +
     postmaster). Since we don't return `central`, tie its teardown to the returned
-    store: closing the PluginStore also closes the CentralCore so the CLI process
-    can exit cleanly instead of leaking the pool. The async close is fire-and-forget
-    because PluginStore.close() is synchronous.
+    store: closing the PluginStore also stops the CentralCore. `closeWithCentral` is
+    async so a lifecycle-managing caller can `await store.close()` for a graceful
+    shutdown (a Promise return is void-compatible with `close(): void`). Even a
+    fire-and-forget CLI exit does NOT leak the backend: EmbeddedPostgres self-registers
+    beforeExit/SIGTERM/SIGINT stop hooks (see embedded-lifecycle.ts) that stop the
+    postmaster if the caller forgets, and `beforeExit` keeps the process alive for the
+    async stop.
     */
     const closePluginStore = pluginStore.close.bind(pluginStore);
-    pluginStore.close = () => {
+    const closeWithCentral = async (): Promise<void> => {
       closePluginStore();
-      void central.close().catch(() => undefined);
+      await central.close().catch(() => undefined);
     };
+    pluginStore.close = closeWithCentral;
     try {
       await pluginStore.init();
     } catch (initErr) {
       /*
-      FNXC:PostgresOnlyDataAccess 2026-07-17-17:40:
-      If init() rejects the store is never returned, so the wrapped close() above is
-      unreachable and the owned embedded-Postgres CentralCore would leak. Tear it down
-      (via the wrapper, which closes both the store and central) before rethrowing.
+      If init() rejects the store is never returned, so the reassigned close() is
+      unreachable. Await the teardown here so the owned CentralCore's embedded
+      Postgres is stopped before we rethrow.
       */
-      pluginStore.close();
+      await closeWithCentral();
       throw initErr;
     }
     return pluginStore;
