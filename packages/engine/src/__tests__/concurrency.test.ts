@@ -616,7 +616,14 @@ describe("AgentSemaphore", () => {
     expect(sem.activeCount).toBe(2);
   });
 
-  it("resets the stale-excess candidate when the excess clears (nested overshoot ends)", async () => {
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-17-00:00:
+  Greptile PR #2265 ("Candidate Outlives Slot Ownership"): a pure nested
+  overshoot is legitimate work above the persisted bound and must never become a
+  stale-excess candidate. Recovery excludes `nestedActiveCount` from the excess,
+  so a nested run — however long it runs — never arms the repair timer.
+  */
+  it("never treats a pure nested overshoot as a stale-excess candidate", async () => {
     const sem = new AgentSemaphore(4);
     await sem.acquire();
     sem.acquireNestedSlot(); // legitimate nested overshoot: active=2, persisted=1
@@ -628,19 +635,65 @@ describe("AgentSemaphore", () => {
       candidateSinceMs: null,
       nowMs: 1_000,
     });
-    expect(candidate).toEqual({ candidateSinceMs: 1_000 });
+    // active(2) == bound(1) + nested(1) → no reclaimable excess, no candidate.
+    expect(candidate).toEqual({ candidateSinceMs: null });
 
-    sem.releaseNestedSlot(); // nested run finishes; excess is gone
-
-    const reset = recoverIdleSemaphoreLeakCandidate({
+    // Even well past the long stale window the nested slot is untouched.
+    const stillClean = recoverIdleSemaphoreLeakCandidate({
       semaphore: sem,
       tasks,
-      candidateSinceMs: candidate.candidateSinceMs,
+      candidateSinceMs: null,
       nowMs: 1_000 + 600_001,
     });
-    expect(reset).toEqual({ candidateSinceMs: null });
+    expect(stillClean).toEqual({ candidateSinceMs: null });
+    expect(sem.activeCount).toBe(2);
+
+    sem.releaseNestedSlot();
     expect(sem.activeCount).toBe(1);
     sem.release();
+  });
+
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-17-00:00:
+  Greptile PR #2265 ("Candidate Outlives Slot Ownership"): when a leaked slot
+  keeps the excess continuously positive, a live nested run that starts mid-window
+  must NOT be reclaimed with the leaked slot. Recovery clamps only to
+  `bound + nestedActiveCount`, so exactly the leaked slot is removed and the live
+  nested run survives.
+  */
+  it("reclaims only the leaked slot, never a coexisting live nested run", async () => {
+    const sem = new AgentSemaphore(8);
+    for (let i = 0; i < 5; i++) await sem.acquire(); // 5 persisted running tasks
+    await sem.acquire(); // 1 leaked slot (no persisted task backs it)
+    sem.acquireNestedSlot(); // live nested run starts: active=7, nested=1
+    const tasks = Array.from({ length: 5 }, () => ({ column: "in-progress" })) as Task[];
+
+    const first = recoverIdleSemaphoreLeakCandidate({
+      semaphore: sem,
+      tasks,
+      candidateSinceMs: null,
+      nowMs: 1_000,
+    });
+    // active(7) - (bound 5 + nested 1) = 1 leaked → candidate armed.
+    expect(first).toEqual({ candidateSinceMs: 1_000 });
+
+    const repaired = recoverIdleSemaphoreLeakCandidate({
+      semaphore: sem,
+      tasks,
+      candidateSinceMs: first.candidateSinceMs,
+      nowMs: 1_000 + 600_001,
+    });
+    // Clamp to bound + nested = 6: the leaked slot is dropped, the nested run kept.
+    expect(repaired).toEqual({
+      candidateSinceMs: null,
+      reconciliation: { before: 7, after: 6, changed: true },
+    });
+    expect(sem.activeCount).toBe(6);
+    expect(sem.nestedActiveCount).toBe(1);
+
+    sem.releaseNestedSlot(); // nested run finishes cleanly → back to the 5 persisted
+    expect(sem.activeCount).toBe(5);
+    for (let i = 0; i < 5; i++) sem.release();
   });
 
   it("counts caller in-flight sessions into the stale-excess bound", async () => {

@@ -158,7 +158,20 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
 
   const persistedActive = persistedTopLevelAgentSlots(tasks);
   const bound = persistedActive + Math.max(0, Math.floor(inFlightCount));
-  const excess = semaphore.activeCount - bound;
+  /*
+  FNXC:GlobalConcurrencyControls 2026-07-17-00:00:
+  Exclude live nested helper-agent slots from the reclaimable excess (and from
+  the reconcile target). Nested runs legitimately hold slots above `bound`, so
+  counting them as excess would let a leaked slot's continuous-excess timer
+  reclaim a nested slot that only just started — reconciling away live work and
+  admitting an extra session (Greptile PR #2265, "Candidate Outlives Slot
+  Ownership"). With nested excluded, `excess` reflects only slots the semaphore
+  holds beyond persisted top-level work + caller in-flight + live nested runs —
+  i.e. genuinely leaked slots — and the reclaim floor keeps nested runs intact.
+  */
+  const nestedActive = Math.max(0, semaphore.nestedActiveCount);
+  const reclaimFloor = bound + nestedActive;
+  const excess = semaphore.activeCount - reclaimFloor;
   if (excess <= 0) {
     return { candidateSinceMs: null };
   }
@@ -167,6 +180,8 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
     return { candidateSinceMs: nowMs };
   }
 
+  // The strict-idle case (no persisted + no in-flight top-level work) keeps the
+  // fast idle window; any live top-level work uses the conservative stale window.
   const windowMs = bound === 0 ? repairAfterMs : staleExcessRepairAfterMs;
   if (nowMs - candidateSinceMs < windowMs) {
     return { candidateSinceMs };
@@ -174,7 +189,7 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
 
   return {
     candidateSinceMs: null,
-    reconciliation: semaphore.reconcileActiveCount(bound),
+    reconciliation: semaphore.reconcileActiveCount(reclaimFloor),
   };
 }
 
@@ -216,6 +231,17 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
  */
 export class AgentSemaphore {
   private _active = 0;
+  /**
+   * FNXC:GlobalConcurrencyControls 2026-07-17-00:00:
+   * Count of slots currently held by nested helper agents ({@link runNested}).
+   * Nested runs legitimately push `_active` above the persisted top-level bound,
+   * so stale-semaphore recovery must exclude them from the reclaimable excess —
+   * otherwise a leaked slot's repair-window timer (continuous positive excess)
+   * could reclaim a live nested slot that only just started (Greptile PR #2265,
+   * "Candidate Outlives Slot Ownership"). Tracked separately from `_active` so
+   * recovery can compute `active - (bound + nested)` = truly-leaked excess only.
+   */
+  private _nestedActive = 0;
   private _waiters: PriorityWaiter[] = [];
   private _getLimit: () => number;
   private _excessReleaseWarned = false;
@@ -232,6 +258,15 @@ export class AgentSemaphore {
   /** Number of slots currently held by running agents. */
   get activeCount(): number {
     return Math.max(0, this._active);
+  }
+
+  /**
+   * Number of slots currently held by nested helper agents ({@link runNested}).
+   * Clamped into `[0, activeCount]` so it can never over-report the legitimate
+   * overshoot that stale-semaphore recovery excludes from reclaimable excess.
+   */
+  get nestedActiveCount(): number {
+    return Math.max(0, Math.min(this._nestedActive, this._active));
   }
 
   /** Number of callers currently queued for a semaphore slot. */
@@ -407,10 +442,12 @@ export class AgentSemaphore {
   /** Reserve a nested helper-agent slot without queueing. */
   acquireNestedSlot(): void {
     this._active++;
+    this._nestedActive++;
   }
 
   /** Return a nested helper-agent slot. */
   releaseNestedSlot(): void {
+    if (this._nestedActive > 0) this._nestedActive--;
     this.returnSlot("runNested");
   }
 
@@ -487,6 +524,16 @@ export class ScopedAgentSemaphore extends AgentSemaphore {
   /** Shared-pool active count, preserving scheduler/metrics semantics. */
   override get activeCount(): number {
     return this.delegate.activeCount;
+  }
+
+  /**
+   * Shared-pool nested count, kept in the same frame of reference as
+   * {@link activeCount} (both read the delegate). Nested slots reserved through
+   * this scope's {@link runNested} bump the delegate, so recovery reading the
+   * delegate's nested total never treats a live nested slot as leaked excess.
+   */
+  override get nestedActiveCount(): number {
+    return this.delegate.nestedActiveCount;
   }
 
   override get waitingCount(): number {

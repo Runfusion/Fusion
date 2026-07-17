@@ -392,11 +392,13 @@ function recoverIdleSemaphoreLeak(
   tasks: Task[],
   source: string,
   candidateSinceMs: number | null,
+  inFlightCount: number = 0,
 ): number | null {
   const result = recoverIdleSemaphoreLeakCandidate({
     semaphore,
     tasks,
     candidateSinceMs,
+    inFlightCount,
   });
   if (result.reconciliation?.changed) {
     schedulerLog.warn(
@@ -560,6 +562,18 @@ export interface SchedulerOptions {
   localNodeId?: string;
   /** Optional shared auto-claim snapshot manager for invalidation on task mutations. */
   snapshotManager?: AutoClaimSnapshotManager;
+  /**
+   * FNXC:GlobalConcurrencyControls 2026-07-17-00:00:
+   * Live count of top-level triage sessions that already hold a semaphore slot
+   * but have not yet persisted `status:"planning"` (pre-planning `processing`
+   * entries). Read lazily on each scheduling pass and fed into stale-semaphore
+   * recovery as `inFlightCount` so the scheduler's reclaim bound never undercounts
+   * a live triage acquire — otherwise a pre-planning triage slot would look like
+   * leaked excess (bound=0 → fast idle window) and get released, admitting an
+   * agent above the configured limit (Greptile PR #2265, "Scheduler Omits Live
+   * Triage Slots"). Matches the triage service's own `inFlightCount` semantics.
+   */
+  getInFlightTopLevelCount?: () => number;
 }
 
 /**
@@ -1305,6 +1319,7 @@ export class Scheduler {
         tasks,
         "scheduler",
         this.idleSemaphoreLeakCandidateSince,
+        this.options.getInFlightTopLevelCount?.() ?? 0,
       );
 
       // Refresh the poll interval if the persisted setting has changed

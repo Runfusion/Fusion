@@ -587,6 +587,13 @@ export class InProcessRuntime
         maxConcurrent: this.config.maxConcurrent,
         maxWorktrees: this.config.maxWorktrees,
         semaphore: this.projectSemaphore,
+        // FNXC:GlobalConcurrencyControls 2026-07-17-00:00: Feed the triage service's
+        // live pre-planning in-flight count into the scheduler's stale-semaphore
+        // recovery so a triage session holding a slot before it writes
+        // status:"planning" is never mistaken for a leaked slot. Read lazily —
+        // triageProcessor is constructed after the scheduler but exists by the
+        // time the first scheduling pass runs.
+        getInFlightTopLevelCount: () => this.triageProcessor?.getProcessingTaskIds().size ?? 0,
         agentStore: this.agentStore,
         hasActiveAgentExecution: (agentId: string) => this.heartbeatMonitor?.getTrackedAgents().includes(agentId) ?? false,
         missionStore,
