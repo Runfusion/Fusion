@@ -2899,7 +2899,9 @@ describe("SelfHealingManager", () => {
           paused: false,
           error: null,
           reviewLevel: 2,
-          steps: [{ status: "done" }, { status: "skipped" }],
+          // FN-8141: a skipped step now blocks stranded-todo promotion, so a
+          // legitimately promotable task must be fully done (no skips).
+          steps: [{ status: "done" }, { status: "done" }],
         },
       ]);
 
@@ -4871,7 +4873,8 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.finalizeNoOpReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-6461", expect.objectContaining({ error: expect.stringContaining("done=1, incomplete=5") }));
+      // "Verify"/"Testing" are skipped verification steps → precise reason naming them.
+      expect(store.updateTask).toHaveBeenCalledWith("FN-6461", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }));
       expect(store.moveTask).toHaveBeenCalledWith("FN-6461", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }));
       expect(store.moveTask).not.toHaveBeenCalledWith("FN-6461", "done");
       expect(store.logEntry).toHaveBeenCalledWith(
@@ -4942,6 +4945,45 @@ describe("SelfHealingManager", () => {
           status: null,
           noCommitsExpected: true,
           steps: [{ name: "Preflight", status: "done" }, { name: "Execute", status: "skipped" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverCompletedTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    // FNXC:Lifecycle 2026-07-16-14:20:
+    // FN-8141 was a commit-expected task (noCommitsExpected falsy) whose branch
+    // was empty (work reverted); 3 steps done, "Testing & Verification" +
+    // "Documentation & Delivery" skipped. The FN-6461 guard only covered
+    // noCommitsExpected tasks, so the stranded-todo promoter moved it to in-review
+    // and the merger then laundered it to done. The generalized guard must keep it
+    // parked in todo.
+    it("FN-8141: stranded todo recovery does not promote reverted commit-expected tasks with skipped steps", async () => {
+      const recoverCompletedTask = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141",
+          column: "todo",
+          paused: false,
+          status: null,
+          // Intentionally NOT noCommitsExpected — normal feature task.
+          steps: [
+            { name: "Update pi SDK", status: "done" },
+            { name: "Wire runtime", status: "done" },
+            { name: "Verify Kimi K3", status: "done" },
+            { name: "Testing & Verification", status: "skipped" },
+            { name: "Documentation & Delivery", status: "skipped" },
+          ],
           log: [],
         },
       ]);

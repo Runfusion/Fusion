@@ -527,9 +527,11 @@ describe("runAiMerge", () => {
 
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
-    expect(result.error).toContain("done=1, incomplete=5");
+    // A skipped verification/QA step (here "Verify"/"Testing") blocks with a
+    // precise reason naming the skipped step(s).
+    expect(result.error).toContain("skipped verification step");
     expect(task.column).toBe("todo");
-    expect(task.error).toContain("done=1, incomplete=5");
+    expect(task.error).toContain("skipped verification step");
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -537,6 +539,41 @@ describe("runAiMerge", () => {
       expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
       expect.stringContaining("ai-empty-merge"),
     );
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  // FNXC:Lifecycle 2026-07-16-14:20:
+  // FN-8141 was a COMMIT-expected task (noCommitsExpected falsy) whose branch was
+  // empty because the SDK-bump work was reverted; 3 steps done, "Testing &
+  // Verification" + "Documentation & Delivery" skipped. The FN-6461 guard skipped
+  // it (not noCommitsExpected, done>skip), so the AI empty-merge lane laundered it
+  // to done. The generalized guard must demote it to todo instead.
+  it("demotes the FN-8141 reverted commit-expected task instead of AI empty-merge finalizing done", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      // Intentionally NOT noCommitsExpected — this is a normal feature task.
+      steps: [
+        { name: "Update pi SDK", status: "done" },
+        { name: "Wire runtime", status: "done" },
+        { name: "Verify Kimi K3", status: "done" },
+        { name: "Testing & Verification", status: "skipped" },
+        { name: "Documentation & Delivery", status: "skipped" },
+      ],
+    });
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toContain("Testing & Verification");
+    expect(task.column).toBe("todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
 
