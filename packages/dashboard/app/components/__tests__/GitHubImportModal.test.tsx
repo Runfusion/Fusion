@@ -114,6 +114,23 @@ describe("GitHubImportModal", () => {
 
 
 
+  it("lets mobile issues lists fill the sheet without a 50vh cap", () => {
+    const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+    const mobileStyles = source.slice(
+      source.indexOf("@media (max-width: 640px)"),
+      source.indexOf("@keyframes github-import-spinner-spin"),
+    );
+
+    expect(mobileStyles).not.toContain("max-height: 50vh");
+    expect(mobileStyles).toContain(".github-import-list-pane .github-import-pane-content {");
+    expect(mobileStyles).toContain("display: flex;");
+    expect(mobileStyles).toContain("flex-direction: column;");
+    expect(mobileStyles).toContain(".issues-list {");
+    expect(mobileStyles).toContain("flex: 1 1 auto;");
+    expect(mobileStyles).toContain("min-height: 0;");
+    expect(mobileStyles).toContain("max-height: none;");
+  });
+
   it("keeps the non-embedded modal body and dialog sizing rules unchanged", () => {
     const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
     const baseModalBodyRule = source.match(/(?:^|\n)\.github-import-modal__body\s*\{[^}]*\}/)?.[0] ?? "";

@@ -1567,8 +1567,24 @@ counterpart added later cannot silently reintroduce the band.
     align-self: flex-start;
   }
 
+  /*
+  FNXC:GitHubImport 2026-07-16-19:00:
+  FN-8150 requires populated GitHub, pull request, and GitLab lists to use the remaining height of
+  the mobile full-screen sheet rather than stopping at a 50vh cap. The GitHub list pane becomes a
+  constrained flex column so the list owns internal scrolling while pagination and the Cancel bar
+  remain reachable; the shared list rule also lets the stretched GitLab workspace list fill its row.
+  */
+  .github-import-list-pane .github-import-pane-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   .issues-list {
-    max-height: 50vh;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
   }
 
 
