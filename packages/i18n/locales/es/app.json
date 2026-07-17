@@ -6654,7 +6654,12 @@
       "executorEscalationModelId": "",
       "executorEscalationModelIdHelp": "",
       "executorEscalationNodeId": "",
-      "executorEscalationNodeIdHelp": ""
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "Resolución de duplicados en triage",
+      "triageDuplicateResolutionHelp": "Bloquear duplicados detectados en triage para una decisión Mantener/Eliminar (predeterminado), o mantener/eliminar automáticamente sin bloquear.",
+      "triageDuplicateResolutionPrompt": "Bloquear para decidir (predeterminado)",
+      "triageDuplicateResolutionKeep": "Mantener automáticamente",
+      "triageDuplicateResolutionDelete": "Eliminar automáticamente"
     },
     "title": "Configuración",
     "worktrees": {
@@ -7647,7 +7652,13 @@
       "copy": "Esta tarea parece ser un casi-duplicado de",
       "headline": "Posible duplicado detectado",
       "keepBtn": "Conservar",
-      "kept": "Se conservó {{id}} y se descartó la advertencia de duplicado"
+      "kept": "Se conservó {{id}} y se descartó la advertencia de duplicado",
+      "deleteBtn": "Eliminar",
+      "deleteConfirm": "Eliminar",
+      "deleted": "Eliminado {{id}}",
+      "deleteMessage": "¿Eliminar {{id}} como duplicado de {{duplicateOf}}?",
+      "deleteTitle": "Eliminar tarea duplicada",
+      "triageActions": "Elige Eliminar para quitar este duplicado, o Mantener para continuar de todos modos."
     },
     "nextRecoveryAt": "Próxima recuperación a las {{time}}",
     "no": "No",

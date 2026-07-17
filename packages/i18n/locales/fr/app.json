@@ -6654,7 +6654,12 @@
       "executorEscalationModelId": "",
       "executorEscalationModelIdHelp": "",
       "executorEscalationNodeId": "",
-      "executorEscalationNodeIdHelp": ""
+      "executorEscalationNodeIdHelp": "",
+      "triageDuplicateResolution": "Résolution des doublons en triage",
+      "triageDuplicateResolutionHelp": "Bloquer les doublons détectés en triage pour une décision Conserver/Supprimer (par défaut), ou conserver/supprimer automatiquement sans bloquer.",
+      "triageDuplicateResolutionPrompt": "Bloquer pour décision (par défaut)",
+      "triageDuplicateResolutionKeep": "Conserver automatiquement",
+      "triageDuplicateResolutionDelete": "Supprimer automatiquement"
     },
     "title": "Paramètres",
     "worktrees": {
@@ -7647,7 +7652,13 @@
       "copy": "Cette tâche semble être un quasi-doublon de",
       "headline": "Doublon potentiel détecté",
       "keepBtn": "Conserver",
-      "kept": "{{id}} conservé et avertissement de doublon ignoré"
+      "kept": "{{id}} conservé et avertissement de doublon ignoré",
+      "deleteBtn": "Supprimer",
+      "deleteConfirm": "Supprimer",
+      "deleted": "Supprimé {{id}}",
+      "deleteMessage": "Supprimer {{id}} comme doublon de {{duplicateOf}} ?",
+      "deleteTitle": "Supprimer la tâche en double",
+      "triageActions": "Choisissez Supprimer pour retirer ce doublon, ou Conserver pour continuer."
     },
     "nextRecoveryAt": "Prochaine récupération à {{time}}",
     "no": "Non",
