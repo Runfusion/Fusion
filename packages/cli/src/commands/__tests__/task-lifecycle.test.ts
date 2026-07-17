@@ -41,6 +41,7 @@ import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
   createGroupPrCallback,
+  createPrNodeGithubOps,
   processPullRequestMergeTask,
   getTaskBranchName,
   syncGroupPrCallback,
@@ -1863,6 +1864,63 @@ describe("createGroupPrCallback", () => {
       expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/groups/g9" }),
     );
     expect(result.prNumber).toBe(5);
+  });
+});
+
+describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
+  beforeEach(() => {
+    execMock.mockReset();
+    execFileCalls.length = 0;
+    vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
+      cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+  });
+
+  const githubStub = () => ({
+    createPr: vi.fn(async () => ({ number: 9, url: "https://github.com/central-owner/central-repo/pull/9", status: "open" as const })),
+    mergePr: vi.fn(async () => ({ number: 9, url: "https://github.com/central-owner/central-repo/pull/9", status: "merged" as const })),
+    getPrStatus: vi.fn(),
+    replyToReviewThread: vi.fn(),
+    resolveReviewThread: vi.fn(),
+    getViewerLogin: vi.fn(),
+    getPrReviewThreadsDetailed: vi.fn(),
+  });
+
+  it("resolvePrSource resolves the repo slug from the task worktree, not process.cwd()", async () => {
+    const ops = createPrNodeGithubOps(githubStub() as never);
+    const source = await ops.resolvePrSource(
+      { id: "FN-9601", worktree: "/projects/repo-a/.worktrees/fn-9601" } as never,
+      {} as never,
+    );
+    expect(source.repo).toBe("central-owner/central-repo");
+    expect(vi.mocked(getCurrentRepo)).toHaveBeenCalledWith("/projects/repo-a/.worktrees/fn-9601");
+  });
+
+  it("createPr pushes from the task worktree and passes owner/repo parsed from entity.repo", async () => {
+    execMock.mockReturnValue("");
+    const github = githubStub();
+    const ops = createPrNodeGithubOps(github as never);
+    const result = await ops.createPr({
+      task: { id: "FN-9601", title: "t", description: "d", worktree: "/projects/repo-a/.worktrees/fn-9601" },
+      entity: { id: "e1", sourceId: "FN-9601", repo: "central-owner/central-repo", headBranch: "fusion/fn-9601", baseBranch: "main" },
+    } as never);
+    expect(github.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/fn-9601" }),
+    );
+    const pushCall = execFileCalls.find((c) => c.file === "git" && c.args[0] === "push");
+    expect(pushCall).toBeDefined();
+    expect(result.prNumber).toBe(9);
+  });
+
+  it("mergePr passes owner/repo parsed from entity.repo", async () => {
+    const github = githubStub();
+    const ops = createPrNodeGithubOps(github as never);
+    const result = await ops.mergePr({
+      entity: { id: "e1", sourceId: "FN-9601", repo: "central-owner/central-repo", prNumber: 9, headOid: "abc123" },
+    } as never);
+    expect(result).toEqual({ status: "merged-requested" });
+    expect(github.mergePr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", number: 9, method: "squash", expectedHeadOid: "abc123" }),
+    );
   });
 });
 

@@ -432,7 +432,12 @@ export function createPrNodeGithubOps(
 
   return {
     resolvePrSource: (task) => {
-      const repo = getCurrentRepo();
+      // FNXC:PrMergeAutoMerge 2026-07-17-16:54 (gh-4):
+      // Resolve the repo from the task's worktree (a checkout of the project
+      // repo), not process.cwd() — in a centrally-installed multi-project
+      // server process.cwd() is not a repo, which persisted entity.repo as ""
+      // and poisoned every downstream splitRepoSlug consumer.
+      const repo = getCurrentRepo(task.worktree ?? process.cwd());
       const repoSlug = repo ? `${repo.owner}/${repo.repo}` : "";
       return {
         sourceType: "task",
@@ -442,10 +447,15 @@ export function createPrNodeGithubOps(
       };
     },
     createPr: async ({ task, entity }) => {
-      const cwd = process.cwd();
+      // gh-4: git ops run in the task worktree when known; process.cwd() only
+      // as the single-project fallback.
+      const cwd = options.getTaskWorktree?.(entity.sourceId) ?? task.worktree ?? process.cwd();
       const headBranch = entity.headBranch || getTaskBranchName(task.id);
       await pushTaskBranchToOrigin(cwd, headBranch);
+      const { owner, name } = splitRepoSlug(entity.repo);
       const created = await github.createPr({
+        owner,
+        repo: name,
         title: task.title ?? `Task ${task.id}`,
         body: task.description ?? "",
         head: headBranch,
@@ -458,8 +468,11 @@ export function createPrNodeGithubOps(
       if (entity.prNumber == null) {
         throw new Error(`pr-merge: entity ${entity.id} has no persisted prNumber`);
       }
+      const { owner, name } = splitRepoSlug(entity.repo);
       try {
         await github.mergePr({
+          owner,
+          repo: name,
           number: entity.prNumber,
           method: "squash",
           expectedHeadOid: entity.headOid,
