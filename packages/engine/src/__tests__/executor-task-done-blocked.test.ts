@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree-pool.js";
@@ -252,5 +252,215 @@ describe("FN-8141 blocked-parked task is not auto-recovered by the completed-tod
     expect(Boolean((t as any).error)).toBe(true);
     // evaluateNoCommitsNoOpFinalize is import-checked to keep the guard reference honest.
     expect(typeof evaluateNoCommitsNoOpFinalize).toBe("function");
+  });
+});
+
+/*
+FNXC:Lifecycle 2026-07-16-21:22:
+FN-8141 follow-up 1 — the honest blocked park must SURVIVE the graph-teardown machinery that undid the
+original incident's failed park. In FN-8141 the pause-abort classifier and the workflow-graph failure
+handler bounced the parked-failed task back to `todo` (clearing status/error) or overwrote the distinctive
+`BLOCKED:` error with a generic graph-failure string — either of which re-opens the laundering hole because
+self-healing (#2257/#2260) and dependency-gated scheduling key off exactly that error + the recorded
+blockedBy dependencies. These tests drive handleGraphFailure (the graph-teardown sink) against a live
+blocked park across the enumerated surfaces: pause-abort (hard-cancel), engine-internal auto-continue, and
+the plain terminal graph-failure sink. Invariant asserted on every surface: the row stays parked
+(status:"failed", error starts with "BLOCKED:", dependencies intact), is NOT moved to todo, is NOT
+auto-continued into a new agent session, keeps its steps, and releases its worktree/concurrency slot.
+*/
+describe("FN-8141 follow-up 1 — blocked park survives graph teardown", () => {
+  const now = "2026-07-16T00:00:00.000Z";
+
+  function blockedParkedDetail(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "FN-8141",
+      title: "Blocked exit test",
+      description: "",
+      column: "in-progress",
+      status: "failed",
+      error: "BLOCKED: pi 0.80.10 removed AuthStorage; SDK bump cannot pass verify:fast",
+      dependencies: ["FN-8145"],
+      worktree: "/repo/.worktrees/swift-falcon",
+      branch: "fusion/fn-8141",
+      baseBranch: "main",
+      paused: false,
+      userPaused: false,
+      autoMerge: true,
+      mergeRetries: 0,
+      // True statuses — NOT all done/skipped — so a laundered "complete" state can never form.
+      steps: [
+        { name: "Implement", status: "in-progress" as const },
+        { name: "Testing & Verification", status: "pending" as const },
+      ],
+      currentStep: 0,
+      log: [],
+      createdAt: now,
+      updatedAt: now,
+      ...overrides,
+    };
+  }
+
+  function makeHarness(overrides: Record<string, unknown> = {}) {
+    const store = createMockStore();
+    const task = blockedParkedDetail(overrides);
+    store.getTask.mockResolvedValue(task as any);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: true,
+      maxAutoMergeRetries: 3,
+    } as any);
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store as any, "/repo", {} as any);
+    return { store, task, executor };
+  }
+
+  async function invokeGraphFailure(
+    executor: TaskExecutor,
+    task: any,
+    resultOverrides: Record<string, unknown> = {},
+  ) {
+    await (executor as any).handleGraphFailure(task, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["plan", "execute"],
+      context: {},
+      ...resultOverrides,
+    });
+  }
+
+  function logText(store: ReturnType<typeof createMockStore>): string {
+    return store.logEntry.mock.calls.map((call: unknown[]) => call[1]).join("\n");
+  }
+
+  function assertParkPreserved(store: ReturnType<typeof createMockStore>, executor: TaskExecutor) {
+    // Never moved to todo (the FN-8141 bounce).
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // status/error never cleared to null...
+    const clearedStatusOrError = store.updateTask.mock.calls.some((call: unknown[]) => {
+      const patch = call[1] as { status?: unknown; error?: unknown } | undefined;
+      return patch?.status === null || patch?.error === null;
+    });
+    expect(clearedStatusOrError).toBe(false);
+    // ...and the distinctive BLOCKED: error is never overwritten by a generic graph-failure string.
+    const overwroteBlockedError = store.updateTask.mock.calls.some((call: unknown[]) => {
+      const patch = call[1] as { error?: unknown } | undefined;
+      return typeof patch?.error === "string" && !patch.error.startsWith("BLOCKED:");
+    });
+    expect(overwroteBlockedError).toBe(false);
+    // Dependencies never mutated.
+    const mutatedDeps = store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { dependencies?: unknown } | undefined)?.dependencies !== undefined,
+    );
+    expect(mutatedDeps).toBe(false);
+    // Steps left untouched.
+    expect(store.updateStep).not.toHaveBeenCalled();
+    // Worktree/concurrency slot released; no leaked maxWorktrees holder (FN-6782).
+    expect((executor as any).activeWorktrees.has("FN-8141")).toBe(false);
+    expect((executor as any).pausedAborted.has("FN-8141")).toBe(false);
+    // Honor-park breadcrumb logged.
+    expect(logText(store)).toContain("honoring park, not requeueing, retrying, or clearing state");
+  }
+
+  beforeEach(() => {
+    resetExecutorMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("honors the park under a hard-cancel pause-abort bounce (no requeue, no clear, no auto-continue)", async () => {
+    const { store, task, executor } = makeHarness();
+    (executor as any).addActiveWorktree(task.id, task.worktree);
+    // The exact FN-8141 teardown: pause-abort mark/classify/cleanup fired hard-cancel.
+    (executor as any).markPausedAborted(task.id, "hard-cancel");
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, {
+      interruptedNodeId: "execute",
+      interruptedAbortKind: "engine-pause",
+      context: { "node:execute:value": "aborted", "node:execute:abortKind": "engine-pause" },
+    });
+
+    assertParkPreserved(store, executor);
+    // NOT auto-continued into a fresh agent session (the engine-internal auto-continue path).
+    await vi.advanceTimersByTimeAsync(10);
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("honors the park under a plain terminal graph failure (no pause-abort marker) — the sink never overwrites BLOCKED:", async () => {
+    // Without the guard, the terminal graph-failure sink overwrites error with
+    // "Workflow graph terminated with failure at node 'execute'", erasing the BLOCKED: marker.
+    const { store, task, executor } = makeHarness();
+    (executor as any).addActiveWorktree(task.id, task.worktree);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan", "execute"],
+      context: { "node:execute:value": "aborted" },
+    });
+
+    assertParkPreserved(store, executor);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT emit a redundant blocked-parked run-audit event on the honor-park (the exit already emitted it)", async () => {
+    const { store, task, executor } = makeHarness();
+    (executor as any).addActiveWorktree(task.id, task.worktree);
+    (executor as any).markPausedAborted(task.id, "hard-cancel");
+
+    await invokeGraphFailure(executor, task);
+
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:execution-blocked-parked" }),
+    );
+  });
+
+  it("NON-blocked failed park keeps existing behavior — the honor-park guard does not fire", async () => {
+    // A generic terminal graph failure (error does NOT start with BLOCKED:) must fall through to
+    // the normal terminal sink and park failed with the generic message — the guard is scoped to BLOCKED:.
+    const { store, task, executor } = makeHarness({
+      status: null,
+      error: null,
+    });
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan", "execute"],
+      context: { "node:execute:value": "some-non-blocked-failure" },
+    });
+
+    // Generic terminal park still happens.
+    const parkedFailed = store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
+    );
+    expect(parkedFailed).toBe(true);
+    // The blocked honor-park breadcrumb is absent.
+    expect(logText(store)).not.toContain("honoring park, not requeueing, retrying, or clearing state");
+  });
+
+  it("a cleared (unblocked) row is NOT re-honor-parked — the stale BLOCKED: error must not wedge a requeue", async () => {
+    // Operator requeue via moveTask(in-progress→todo) clears status/error (moves.ts reopen); a
+    // re-dispatched row therefore carries no BLOCKED: error. The guard keys off the LIVE error, so
+    // once cleared it must not fire and re-wedge the row — normal graph-failure handling resumes.
+    const { store, task, executor } = makeHarness({
+      status: null,
+      error: null,
+    });
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan", "execute"],
+      context: { "node:execute:value": "some-non-blocked-failure" },
+    });
+
+    // Guard did not intercept — the normal terminal sink parked failed instead.
+    expect(logText(store)).not.toContain("honoring park, not requeueing, retrying, or clearing state");
+    const parkedFailed = store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
+    );
+    expect(parkedFailed).toBe(true);
   });
 });

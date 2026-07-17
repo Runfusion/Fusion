@@ -9281,6 +9281,36 @@ export class TaskExecutor {
       }
       const live = loadedLive;
       /*
+      FNXC:Lifecycle 2026-07-16-21:22:
+      FN-8141 follow-up 1 — an honest `fn_task_done(outcome="blocked")` park (status="failed",
+      error "BLOCKED: <reason>", executor ~14657) must SURVIVE the same graph-teardown machinery
+      that undid the original incident's failed park. Every downstream classifier in this method
+      can wash the marker out: the genuine-pause-abort todo-rehome branch (~9504) clears
+      status/error on a task the abort bounced back to `todo`; the execution-resume router and the
+      terminal graph-failure sink (~9982) overwrite the distinctive `BLOCKED:` error with a generic
+      "Workflow graph terminated with failure" string; and the engine-internal auto-continue
+      (~9540) re-runs the doomed session. Self-healing (#2257/#2260) and dependency-gated scheduling
+      key off this exact `BLOCKED:` error + the recorded blockedBy dependencies, so any of those
+      would re-open the laundering hole. Detect the live blocked park BEFORE every other classifier
+      and honor it exactly like the non-graph post-loop honor-park (executor ~12163): clear the
+      in-memory pause-abort marker so `recoverPausedAbortFailures` has nothing to chase, RELEASE the
+      worktree/concurrency slot (FN-6782 leaked-`maxWorktrees`-holder precedent; the graph finally
+      does not delete `activeWorktrees`), and return WITHOUT touching status/error/column/
+      dependencies/steps — the park stays intact for the blocker/operator. Unblocking still works:
+      the operator requeue (moveTask in-progress→todo, moves.ts ~628) and `buildManualRetryResetPatch`
+      clear the `BLOCKED:` error, and the scheduler leaves the parked row untouched while blockedBy
+      dependencies are unmet.
+      */
+      if (live.status === "failed" && live.error?.startsWith("BLOCKED:")) {
+        this.clearPausedAborted(task.id);
+        this.activeWorktrees.delete(task.id);
+        const blockedParkHonored = `Workflow graph run ended after an honest blocked park (${live.error}) — honoring park, not requeueing, retrying, or clearing state`;
+        executorLog.log(`${task.id}: ${blockedParkHonored}`);
+        await this.store.logEntry(task.id, blockedParkHonored, undefined, this.getRunContextFor(task.id));
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      /*
       FNXC:MissingWorktreeRecovery 2026-07-16-18:25:
       An unusable-worktree session-start refusal inside a graph node must route to the bounded
       worktree-session recovery BEFORE any other classifier: FN-7977's provider-failure hold
