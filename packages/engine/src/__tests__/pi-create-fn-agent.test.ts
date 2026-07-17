@@ -16,9 +16,13 @@ const getAllMock = vi.fn(() => [] as any[]);
 const registerProviderMock = vi.fn();
 const refreshMock = vi.fn();
 // FNXC:SessionRouting 2026-06-24-11:30:
-// #1675: capture model-registry auth resolution + session id so the wiring
+// #1675: capture model-runtime auth resolution + session id so the wiring
 // test can assert X-Session-Id/X-Session-Affinity precedence end-to-end.
+// FNXC:SessionRouting 2026-07-16-19:05: FN-8142 moved the routing-header seam from
+// ModelRegistry.getApiKeyAndHeaders to ModelRuntime.getAuth; base getAuth returns a
+// resolvable auth so attachSessionRoutingHeaders' header merge is observable.
 const getApiKeyAndHeadersMock = vi.fn(async () => ({ ok: true, apiKey: undefined, headers: undefined }));
+const modelRuntimeGetAuthMock = vi.fn(async (..._args: unknown[]) => ({ auth: { headers: {} as Record<string, string> } }));
 const sessionManagerGetSessionIdMock = vi.fn(() => undefined);
 const settingsManagerCreateMock = vi.fn(() => ({ kind: "settings-manager-create" }));
 const settingsManagerInMemoryMock = vi.fn(() => ({ kind: "settings-manager" }));
@@ -147,6 +151,15 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
   discoverAndLoadExtensions: discoverAndLoadExtensionsMock,
   getAgentDir: () => "/mock-agent-dir",
+  /*
+  FNXC:ModelRegistry 2026-07-16-19:05:
+  pi 0.80.8+ (FN-8142 migration) made model init async via ModelRuntime; createFusionModelRegistry
+  now awaits ModelRuntime.create(...) before constructing the registry. The stale ^0.80.6 pin masked
+  this until FN-8142's SDK bump (this PR); mock ModelRuntime so createFnAgent's registry path resolves.
+  */
+  ModelRuntime: {
+    create: async () => ({ getAuth: modelRuntimeGetAuthMock }),
+  },
   ModelRegistry: class {
     static create(...args: unknown[]) {
       return new (this as unknown as new () => unknown)();
@@ -1227,6 +1240,7 @@ describe("createFnAgent", () => {
     authStorageGetAllMock.mockReturnValue({});
     authStorageListMock.mockReturnValue([]);
     getApiKeyAndHeadersMock.mockResolvedValue({ ok: true, apiKey: undefined, headers: undefined });
+    modelRuntimeGetAuthMock.mockImplementation(async () => ({ auth: { headers: {} as Record<string, string> } }));
     sessionManagerGetSessionIdMock.mockReturnValue(undefined);
     createBashToolMock.mockClear();
     createAgentSessionMock.mockResolvedValue({
@@ -2750,10 +2764,18 @@ describe("createFnAgent", () => {
   // #1675: createFnAgent must resolve sessionRoutingId = taskId ?? piSessionId and
   // wrap the registry's getApiKeyAndHeaders so outbound requests carry routing
   // headers. These assert the wiring precedence end-to-end, not just the helper.
+  /*
+  FNXC:SessionRouting 2026-07-16-19:05:
+  FN-8142 (pi 0.80.8+) moved the #1675 routing-header seam off ModelRegistry.getApiKeyAndHeaders
+  onto ModelRuntime.getAuth (attachSessionRoutingHeaders). createAgentSession now receives the
+  runtime via `modelRuntime`, so the wiring test captures that runtime and asserts the decorated
+  getAuth merges X-Session-Id/X-Session-Affinity into the resolved auth headers. Precedence
+  (taskId > pi session id > no wrap) is the invariant under test, unchanged by the migration.
+  */
   describe("session routing headers wiring (#1675)", () => {
     const anyModel = { provider: "anthropic", id: "claude" } as never;
 
-    async function createAndCaptureRegistry(overrides: Record<string, unknown> = {}) {
+    async function createAndCaptureRuntime(overrides: Record<string, unknown> = {}) {
       const { createFnAgent } = await import("../pi.js");
       await createFnAgent({
         cwd: "/tmp",
@@ -2762,18 +2784,17 @@ describe("createFnAgent", () => {
         ...overrides,
       });
       const sessionOptions = createAgentSessionMock.mock.calls.at(-1)?.[0] as {
-        modelRegistry: { getApiKeyAndHeaders: (model: unknown) => Promise<unknown> };
+        modelRuntime: { getAuth: (model: unknown) => Promise<{ auth: { headers?: Record<string, string> } } | undefined> };
       };
-      return sessionOptions.modelRegistry;
+      return sessionOptions.modelRuntime;
     }
 
     it("uses taskId as the routing id when provided", async () => {
-      const registry = await createAndCaptureRegistry({ taskId: "FN-7788" });
+      const runtime = await createAndCaptureRuntime({ taskId: "FN-7788" });
 
-      const result = await registry.getApiKeyAndHeaders(anyModel) as { ok: boolean; headers?: Record<string, string> };
+      const result = await runtime.getAuth(anyModel);
 
-      expect(result.ok).toBe(true);
-      expect(result.headers).toEqual({
+      expect(result?.auth.headers).toEqual({
         "X-Session-Id": "FN-7788",
         "X-Session-Affinity": "FN-7788",
       });
@@ -2781,24 +2802,24 @@ describe("createFnAgent", () => {
 
     it("falls back to the pi session id when taskId is absent", async () => {
       sessionManagerGetSessionIdMock.mockReturnValue("pi-session-abc");
-      const registry = await createAndCaptureRegistry();
+      const runtime = await createAndCaptureRuntime();
 
-      const result = await registry.getApiKeyAndHeaders(anyModel) as { ok: boolean; headers?: Record<string, string> };
+      const result = await runtime.getAuth(anyModel);
 
-      expect(result.headers).toEqual({
+      expect(result?.auth.headers).toEqual({
         "X-Session-Id": "pi-session-abc",
         "X-Session-Affinity": "pi-session-abc",
       });
     });
 
-    it("does not wrap getApiKeyAndHeaders when neither taskId nor a session id is available", async () => {
-      // getApiKeyAndHeadersMock returns { ok: true, headers: undefined }; if the
-      // wrapper were applied, headers would be populated with X-Session-*.
-      const registry = await createAndCaptureRegistry();
+    it("does not wrap getAuth when neither taskId nor a session id is available", async () => {
+      // Base getAuth resolves { auth: { headers: {} } }; if the wrapper were
+      // applied, headers would be populated with X-Session-*.
+      const runtime = await createAndCaptureRuntime();
 
-      const result = await registry.getApiKeyAndHeaders(anyModel) as { ok: boolean; headers?: Record<string, string> };
+      const result = await runtime.getAuth(anyModel);
 
-      expect(result.headers).toBeUndefined();
+      expect(result?.auth.headers).toEqual({});
     });
   });
 
@@ -2844,6 +2865,10 @@ describe("createFnAgent", () => {
           }
         },
         getAgentDir: () => "/mock-agent-dir",
+        // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
+        ModelRuntime: {
+          create: async () => ({ getAuth: async () => undefined }),
+        },
         ModelRegistry: class {
           static create(...args: unknown[]) {
             return new (this as unknown as new () => unknown)();
@@ -2931,6 +2956,10 @@ describe("createFnAgent", () => {
           }
         },
         getAgentDir: () => "/mock-agent-dir",
+        // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
+        ModelRuntime: {
+          create: async () => ({ getAuth: async () => undefined }),
+        },
         ModelRegistry: class {
           static create(...args: unknown[]) {
             return new (this as unknown as new () => unknown)();
@@ -3015,6 +3044,10 @@ describe("createFnAgent", () => {
           }
         },
         getAgentDir: () => "/mock-agent-dir",
+        // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
+        ModelRuntime: {
+          create: async () => ({ getAuth: async () => undefined }),
+        },
         ModelRegistry: class {
           static create(...args: unknown[]) {
             return new (this as unknown as new () => unknown)();

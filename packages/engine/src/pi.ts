@@ -2057,7 +2057,18 @@ export function attachSessionRoutingHeaders(modelRuntime: ModelRuntime, sessionI
   pi 0.80.8 routes session request auth through ModelRuntime.getAuth rather than
   ModelRegistry.getApiKeyAndHeaders. Decorate the runtime seam so routing headers
   still reach every SDK-dispatched request before createAgentSession receives it.
+
+  FNXC:SessionRouting 2026-07-16-19:05:
+  The FN-8142 migration to ModelRuntime.getAuth dropped the pre-migration defensive
+  invariant that a missing resolution method must NOT break session creation. Restore it:
+  no-op (warn) instead of throwing on `getAuth.bind` when the runtime lacks getAuth, so a
+  future pi rename removing the method degrades to un-tagged requests rather than a hard fail.
   */
+  const runtimeWithAuth = modelRuntime as unknown as { getAuth?: ModelRuntime["getAuth"] };
+  if (typeof runtimeWithAuth.getAuth !== "function") {
+    piLog.warn("attachSessionRoutingHeaders: modelRuntime.getAuth missing; skipping session-routing header wiring");
+    return;
+  }
   const routingHeaders = buildSessionRoutingHeaders(sessionId);
   const resolveAuth = modelRuntime.getAuth.bind(modelRuntime) as ModelRuntime["getAuth"];
   (modelRuntime as unknown as { getAuth: ModelRuntime["getAuth"] }).getAuth = (async (providerOrModel: Parameters<ModelRuntime["getAuth"]>[0], overrides?: Parameters<ModelRuntime["getAuth"]>[1]) => {
