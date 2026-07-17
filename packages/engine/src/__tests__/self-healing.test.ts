@@ -3158,6 +3158,59 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    /*
+    FNXC:Lifecycle 2026-07-16-14:05 (Follow-up 2):
+    FN-8141 pre-fix history — a task whose durable log carries a promoter-written recovery line
+    ("Auto-recovered: task work was complete but stranded ...") AFTER the honest failure park (as the
+    pre-#2257 buggy sweep produced on the real FN-8141 row) must STILL be withheld. That line is the
+    promoter narrating its own move, not an execution outcome, so it is no longer a clean-completion
+    marker; the older failure park stays authoritative and the promoter withholds + emits the
+    existing no-action event. Without this the tail scan hit the recovery line first, returned
+    not-blocked, and re-enabled the exact laundering the guard exists to stop.
+    */
+    it("FN-8141: withholds a stranded-todo task whose only post-failure log entry is a promoter recovery line (pre-fix history)", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141",
+          column: "todo",
+          paused: false,
+          error: null,
+          reviewLevel: 2,
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }],
+        },
+      ]);
+      // Log tail: failure park followed by the promoter's OWN recovery narration (pre-#2257 sweep).
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-8141",
+        lineageId: "lin-8141",
+        log: [
+          { timestamp: "2026-07-16T10:00:02.000Z", action: "bulk-step-completion-without-review — fn_task_done refusal retry budget exhausted" },
+          { timestamp: "2026-07-16T10:00:03.000Z", action: "FN-8141: task parked failed during no-fn_task_done retry — honoring park, not retrying" },
+          { timestamp: "2026-07-16T10:00:04.000Z", action: "Auto-recovered: task work was complete but stranded in todo — moved to in-review" },
+        ],
+      });
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+      const noActionEvents = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([ev]) =>
+          (ev as { mutationType?: string }).mutationType === "task:reconcile-stranded-completed-no-action" &&
+          (ev as { metadata?: { reason?: string } }).metadata?.reason === "failure-provenance",
+      );
+      expect(noActionEvents).toHaveLength(1);
+
+      managerWithRecovery.stop();
+    });
+
     it("FN-8141: DOES promote the same task once a fresh clean execution completes all steps after the failure park", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
       const managerWithRecovery = new SelfHealingManager(store, {

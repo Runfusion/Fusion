@@ -27,6 +27,18 @@ export interface CompletedPromotionFailureProvenanceEvaluation {
  * either a failure park or a clean completion. A failure that predates a newer clean execution is
  * never reached — the completion marker decides first. A task with zero failure markers is never
  * blocked. The scan is bounded to the tail so these per-housekeeping-cycle sweeps stay cheap.
+ *
+ * FNXC:Lifecycle 2026-07-16-14:05:
+ * CLEAN_COMPLETION_MARKERS must be EXECUTION outcomes only — a log line the agent's execution
+ * lifecycle wrote when it genuinely completed the work (an accepted fn_task_done, or the implicit
+ * all-steps-done completion). The PROMOTER'S OWN OUTPUT is never evidence: the stranded-completed
+ * recovery line "Auto-recovered: task work was complete but stranded ..." (executor.ts
+ * recoverCompletedTasks) is self-healing narrating "I promoted this", not proof the execution ended
+ * cleanly. Counting it as a clean marker let any task carrying a promotion written by the pre-#2257
+ * buggy sweep (e.g. the real FN-8141 row, or any pre-guard history) permanently unblock the guard —
+ * the tail scan hit the promotion line before the older failure park and returned not-blocked,
+ * re-enabling the exact laundering this guard exists to stop. Removed for that reason. Likewise the
+ * honest-blocked exit ("BLOCKED: ...") is NOT a clean completion and must never be a marker.
  */
 
 /** Bound the tail scan; sweeps run every housekeeping cycle over many tasks. */
@@ -48,17 +60,20 @@ const FAILURE_PARK_MARKERS = [
 ];
 
 /**
- * Log-action substrings that mark a fresh clean execution outcome. A clean completion appearing
+ * Log-action substrings that mark a fresh clean EXECUTION outcome. A clean completion appearing
  * MORE RECENTLY than a failure park proves the failing lifecycle was superseded by a good one.
+ * These are execution-lifecycle outcomes ONLY — never promoter/recovery output (see the header
+ * FNXC note; "Auto-recovered: task work was complete but stranded" was removed because it is the
+ * promoter narrating its own move, not proof the execution ended cleanly).
  * Sources (packages/engine/src/executor.ts):
- *  - "Task marked done by agent" (explicit fn_task_done success)
- *  - "All steps complete — implicit fn_task_done" (implicit-completion success)
- *  - "Auto-recovered: task work was complete but stranded" (stranded-completion recovery)
+ *  - "Task marked done by agent" (executor.ts ~14939 — accepted explicit fn_task_done; also covers
+ *    the PREMISE STALE skip-then-done flow, which reaches the same accepted-completion write)
+ *  - "All steps complete — implicit fn_task_done" (executor.ts ~12095/~12402 — implicit-completion
+ *    success when all steps are done without an explicit tool call)
  */
 const CLEAN_COMPLETION_MARKERS = [
   "Task marked done by agent",
   "All steps complete — implicit fn_task_done",
-  "Auto-recovered: task work was complete but stranded",
 ];
 
 function matchesAny(text: string, markers: string[]): boolean {

@@ -23,6 +23,8 @@ const FAILURE_PARK = "FN-8141: task parked failed during no-fn_task_done retry �
 const REFUSAL_EXHAUST = "bulk-step-completion-without-review — fn_task_done refusal retry budget exhausted";
 const CLEAN_DONE = "Task marked done by agent";
 const IMPLICIT_DONE = "All steps complete — implicit fn_task_done (agent did not call tool explicitly)";
+// Promoter's own recovery output (executor.ts recoverCompletedTasks) — NOT an execution outcome.
+const PROMOTER_RECOVERY = "Auto-recovered: task work was complete but stranded in todo — moved to in-review";
 
 describe("evaluateCompletedPromotionFailureProvenance", () => {
   it("blocks when the tail failure marker is the FN-8141 park", () => {
@@ -80,6 +82,35 @@ describe("evaluateCompletedPromotionFailureProvenance", () => {
       log: log([FAILURE_PARK, IMPLICIT_DONE]),
     });
     expect(result).toEqual({ blocked: false });
+  });
+
+  /**
+   * FNXC:Lifecycle 2026-07-16-14:05 (Follow-up 2): the promoter's own recovery line must NOT count
+   * as clean-completion evidence. A pre-#2257 buggy sweep wrote "Auto-recovered: ... stranded" AFTER
+   * the honest failure park; the tail scan used to hit that line first and return not-blocked,
+   * permanently unblocking the guard on any task with pre-fix history and re-enabling FN-8141
+   * laundering. The recovery line is now inert, so the older failure park is the authoritative tail.
+   */
+  it("blocks on the pre-fix-history shape: failure park followed by a promoter recovery line", () => {
+    const result = evaluateCompletedPromotionFailureProvenance({
+      log: log([
+        REFUSAL_EXHAUST,
+        FAILURE_PARK,
+        "Execution paused — session preserved for resume, moved to todo",
+        // pre-#2257 buggy sweep promoted the stranded row — its own output, not an execution outcome
+        PROMOTER_RECOVERY,
+      ]),
+    });
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toBe("failure-provenance");
+    expect(result.markerAction).toContain("task parked failed during no-fn_task_done retry");
+  });
+
+  it("does NOT treat the promoter recovery line as a clean marker on its own", () => {
+    // A promotion line with no execution-outcome marker leaves the failure park authoritative.
+    expect(
+      evaluateCompletedPromotionFailureProvenance({ log: log([FAILURE_PARK, PROMOTER_RECOVERY]) }).blocked,
+    ).toBe(true);
   });
 
   it("does NOT block a task with zero failure markers", () => {
