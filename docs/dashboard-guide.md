@@ -337,6 +337,13 @@ Use GitHub import on mobile:
    Expected outcome: the same import workflow opens in the mobile modal layout.
 2. Choose the repository, issue/PR tab, candidate row, and import action.
    Expected outcome: Fusion creates the board task with the same GitHub provenance/tracking metadata as the desktop/tablet **Import Tasks** view.
+3. While a candidate detail sheet is open, use the platform Back gesture or control.
+   Expected outcome: the first Back dismisses only the issue, pull request, or GitLab detail and returns to the import candidate list; a second Back dismisses the import form.
+
+<!--
+FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+Mobile import detail sheets are a nested navigation layer, so documentation must distinguish Back-to-list from the subsequent Back-to-dismiss-import-form action.
+-->
 
 ## Graph View
 

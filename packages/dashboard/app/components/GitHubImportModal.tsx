@@ -1,5 +1,5 @@
 import "./GitHubImportModal.css";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useContext, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_LOCALE, getErrorMessage, isLocale, type Locale, type Task } from "@fusion/core";
 import {
@@ -44,6 +44,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { getGitHubImportState, saveGitHubImportState } from "../hooks/modalPersistence";
 import { FloatingWindow } from "./FloatingWindow";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
@@ -394,6 +395,12 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
   const { t, i18n } = useTranslation("app");
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  Standalone and embedded import surfaces have no navigation provider, so consume this context optionally rather than using the throwing context hook.
+  */
+  const navigationHistory = useContext(NavigationHistoryContext);
+  const { pushNav, removeNav } = navigationHistory ?? {};
   const { confirm } = useConfirm();
   /*
   FNXC:GitHubImportTranslate 2026-07-14-12:00:
@@ -492,6 +499,16 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   // Pulls state
   const [pulls, setPulls] = useState<GitHubPull[]>([]);
   const [selectedPullNumber, setSelectedPullNumber] = useState<number | null>(null);
+
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  Mobile Back must clear every import-detail selection through this one idempotent callback, so browser/native gesture dismissal, the sheet close affordance, and successful imports all return to the candidate list before the import form can close.
+  */
+  const clearDetailSelection = useCallback(() => {
+    setSelectedIssueNumber(null);
+    setSelectedPullNumber(null);
+    setSelectedGitlabKey(null);
+  }, []);
 
   /*
   FNXC:GitHubImport 2026-06-23-01:00:
@@ -945,13 +962,13 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       if (selectedGitlabItem.webUrl) {
         setOptimisticImportedUrls((previous) => new Set(previous).add(selectedGitlabItem.webUrl));
       }
-      setSelectedGitlabKey(null);
+      clearDetailSelection();
     } catch (err) {
       setError(getErrorMessage(err) || t("git.failedToImportGitlab", "Failed to import GitLab resource"));
     } finally {
       setImporting(false);
     }
-  }, [selectedGitlabItem, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, t]);
+  }, [selectedGitlabItem, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, t, clearDetailSelection]);
 
   /*
   FNXC:GitHubImport 2026-07-07-00:00:
@@ -1070,8 +1087,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
    * Failures intentionally do not call this helper so the selected preview remains available for retry with the existing error affordance.
    */
   const returnToIssueListAfterSuccess = useCallback(() => {
-    setSelectedIssueNumber(null);
-  }, []);
+    clearDetailSelection();
+  }, [clearDetailSelection]);
 
   const handleImport = useCallback(async () => {
     if (activeTab === "issues") {
@@ -1121,7 +1138,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         if (importedPullUrl) {
           setOptimisticImportedUrls((previous) => new Set(previous).add(importedPullUrl));
         }
-        setSelectedPullNumber(null);
+        clearDetailSelection();
       } catch (err) {
         const msg = getErrorMessage(err);
         if (msg?.includes("already imported")) {
@@ -1133,7 +1150,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         setImporting(false);
       }
     }
-  }, [activeTab, selectedIssueNumber, selectedPullNumber, issues, pulls, owner, repo, projectId, onImport, returnToIssueListAfterSuccess]);
+  }, [activeTab, selectedIssueNumber, selectedPullNumber, issues, pulls, owner, repo, projectId, onImport, returnToIssueListAfterSuccess, clearDetailSelection]);
 
   const fetchPullDetail = useCallback((force: boolean) => {
     const requestId = ++pullDetailRequestRef.current;
@@ -1237,7 +1254,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
 
   /*
   FNXC:GitHubImport 2026-07-16-20:00:
-  Closing permanently mutates the upstream GitHub issue, so its danger styling and confirmation gate must precede every local state mutation and API call. Keep the detail FloatingWindow open through the success toast so local closed state can replace the action.
+  Closing permanently mutates the upstream GitHub issue, so its danger styling and confirmation gate must precede every local state mutation and API call.
+
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  A successful close returns through the shared detail dismissal callback, preserving the mobile navigation invariant that every programmatic detail close drains its matching Back entry.
   */
   const handleCloseIssue = useCallback(async () => {
     if (selectedIssueNumber === null || !owner.trim() || !repo.trim()) return;
@@ -1263,13 +1283,14 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         return next;
       });
       setCloseToast({ type: "success", message: t("git.issueClosedToast", "Issue #{{number}} closed", { number: issueNumber }) });
+      clearDetailSelection();
     } catch (err: unknown) {
       setCloseToast({ type: "error", message: getErrorMessage(err) });
     } finally {
       setClosingIssue(false);
       closeToastTimerRef.current = setTimeout(() => setCloseToast(null), 4000);
     }
-  }, [selectedIssueNumber, owner, repo, t, confirm]);
+  }, [selectedIssueNumber, owner, repo, t, confirm, clearDetailSelection]);
 
   /*
   FNXC:GitHubImport 2026-07-17-12:00:
@@ -1312,6 +1333,17 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
 
   const selectedIssue = issues.find((i) => i.number === selectedIssueNumber);
   const selectedPull = pulls.find((p) => p.number === selectedPullNumber);
+  const detailIsOpen = Boolean(selectedIssue || selectedPull || selectedGitlabItem);
+
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  The import modal already owns the lower mobile Back entry. Register this nested detail entry only while an issue, pull, or GitLab sheet is visible, so one Back returns to the candidate list and a second can dismiss the import form. Optional context preserves provider-less and embedded renders.
+  */
+  useEffect(() => {
+    if (!detailIsOpen || !pushNav || !removeNav) return;
+    pushNav({ type: "view", revert: clearDetailSelection });
+    return () => removeNav(clearDetailSelection);
+  }, [detailIsOpen, pushNav, removeNav, clearDetailSelection]);
 
   const handleCreateCheckFixTask = useCallback(async (
     check: GitHubPullDetail["checks"][number],
@@ -1903,7 +1935,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     ? `#${selectedPull.number} — ${importTranslation.display.title}`
                     : t("git.importFromGitHub", "Import from GitHub")
               }
-              onClose={() => { setSelectedIssueNumber(null); setSelectedPullNumber(null); }}
+              onClose={clearDetailSelection}
               defaultSize={{ width: 760, height: 680 }}
               minSize={{ width: 420, height: 360 }}
               /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Import detail is a ≤768px sheet, so preserve its desktop floating geometry instead of touching it on mobile. */
@@ -2271,7 +2303,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     windowKey="github-import-detail"
                     /* FNXC:GitHubImport 2026-07-15-18:40: Mirrors the GitHub detail window — the title bar shows the same translated title as the card below rather than the raw upstream one. */
                     title={`${selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}${selectedGitlabItem.iid} — ${importTranslation.display.title}`}
-                    onClose={() => setSelectedGitlabKey(null)}
+                    onClose={clearDetailSelection}
                     defaultSize={{ width: 760, height: 680 }}
                     minSize={{ width: 420, height: 360 }}
                     /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: GitLab detail shares the ≤768px import sheet behavior and must preserve the shared desktop geometry record. */

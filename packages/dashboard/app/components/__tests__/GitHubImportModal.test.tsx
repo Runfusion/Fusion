@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useEffect, type ReactNode } from "react";
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { GitHubImportModal } from "../GitHubImportModal";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
@@ -249,6 +251,132 @@ describe("GitHubImportModal", () => {
     await screen.findByText("Fixable PR");
     fireEvent.click(screen.getByRole("button", { name: /Select pull request #81/i }));
   };
+
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  This harness supplies the same nested history arrangement as AppModals: the import form owns the modal entry, and GitHubImportModal must add/remove its detail entry above it without requiring a provider in ordinary standalone tests.
+  */
+  function MobileNavigationHarness({ children, onModalClose }: { children: ReactNode; onModalClose: () => void }) {
+    const navigationHistory = useNavigationHistory({ enabled: true });
+
+    useEffect(() => {
+      navigationHistory.pushNav({ type: "modal", close: onModalClose });
+      return () => navigationHistory.removeNav(onModalClose);
+    }, [navigationHistory, onModalClose]);
+
+    return <NavigationHistoryProvider value={navigationHistory}>{children}</NavigationHistoryProvider>;
+  }
+
+  const renderWithMobileNavigation = () => render(
+    <MobileNavigationHarness onModalClose={onClose}>
+      <GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />
+    </MobileNavigationHarness>,
+  );
+
+  const dispatchDetailBack = (delivery: "popstate" | "native") => {
+    if (delivery === "native") {
+      const event = new CustomEvent("fusion:native-back", { cancelable: true, detail: { source: "android-back" } });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
+  };
+
+  it("keeps provider-less detail selection and close behavior available", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+      { number: 71, title: "Provider-less issue", body: "Body", html_url: "https://github.com/owner/repo/issues/71", labels: [], state: "open" },
+    ]);
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Select issue #71/i }));
+    fireEvent.click(await screen.findByTestId("floating-window-close-github-import-detail"));
+
+    expect(screen.queryByTestId("github-import-preview-card")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["issue", "popstate"],
+    ["issue", "native"],
+    ["pull", "popstate"],
+    ["pull", "native"],
+    ["gitlab", "popstate"],
+    ["gitlab", "native"],
+  ] as const)("dismisses the %s detail before the import modal on %s Back", async (surface, delivery) => {
+    const originalBack = window.history.back;
+    window.history.back = vi.fn();
+    try {
+      if (surface === "issue") {
+        vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+        vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+          { number: 72, title: "Swipe issue", body: "Body", html_url: "https://github.com/owner/repo/issues/72", labels: [], state: "open" },
+        ]);
+      } else if (surface === "pull") {
+        vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+        vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([
+          { number: 73, title: "Swipe pull", body: "Body", html_url: "https://github.com/owner/repo/pull/73", headBranch: "feature", baseBranch: "main" },
+        ]);
+      } else {
+        vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+        vi.mocked(apiFetchGitLabProjectIssues).mockResolvedValueOnce([
+          { resourceKind: "project_issue", id: 73, iid: 73, projectId: 3, projectPath: "group/project", title: "Swipe GitLab issue", description: "Body", webUrl: "https://gitlab.example.com/group/project/-/issues/73", state: "opened", labels: [] },
+        ]);
+      }
+
+      renderWithMobileNavigation();
+      if (surface === "issue") {
+        fireEvent.click(await screen.findByRole("button", { name: /Select issue #72/i }));
+      } else if (surface === "pull") {
+        fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+        fireEvent.click(await screen.findByRole("button", { name: /Select pull request #73/i }));
+      } else {
+        fireEvent.click(await screen.findByRole("button", { name: "GitLab" }));
+        fireEvent.change(screen.getByLabelText("GitLab project path or ID"), { target: { value: "group/project" } });
+        fireEvent.click(screen.getByRole("button", { name: /Load/ }));
+        fireEvent.click(await screen.findByText(/#73 Swipe GitLab issue/));
+      }
+
+      await screen.findByTestId(surface === "gitlab" ? "gitlab-import-preview-card" : "github-import-preview-card");
+      dispatchDetailBack(delivery);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId(surface === "gitlab" ? "gitlab-import-preview-card" : "github-import-preview-card")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      window.history.back = originalBack;
+    }
+  });
+
+  it("drains the detail entry when the sheet closes before a rapid reopen", async () => {
+    const originalBack = window.history.back;
+    window.history.back = vi.fn();
+    try {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 74, title: "Reopen issue", body: "Body", html_url: "https://github.com/owner/repo/issues/74", labels: [], state: "open" },
+      ]);
+      renderWithMobileNavigation();
+      const row = await screen.findByRole("button", { name: /Select issue #74/i });
+      fireEvent.click(row);
+      await screen.findByTestId("github-import-preview-card");
+      fireEvent.click(screen.getByTestId("floating-window-close-github-import-detail"));
+      expect(window.history.back).toHaveBeenCalledTimes(1);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
+
+      fireEvent.click(row);
+      await screen.findByTestId("github-import-preview-card");
+      dispatchDetailBack("popstate");
+      await waitFor(() => expect(screen.queryByTestId("github-import-preview-card")).toBeNull());
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      window.history.back = originalBack;
+    }
+  });
 
   describe("PR checks refresh", () => {
     const pullOne = mockPulls[0];
@@ -1688,8 +1816,8 @@ describe("GitHubImportModal", () => {
       await waitFor(() => {
         expect(apiCloseGitHubIssue).toHaveBeenCalledTimes(1);
         expect(apiCloseGitHubIssue).toHaveBeenCalledWith("dustinbyrne/kb", 8);
-        expect(screen.getByTestId("github-import-issue-close-toast")).toHaveTextContent("Issue #8 closed");
-        expect(screen.queryByTestId("github-import-issue-close")).toBeNull();
+        expect(screen.queryByTestId("github-import-preview-card")).toBeNull();
+        expect(screen.getByRole("button", { name: /Select issue #8/i })).toHaveAttribute("aria-pressed", "false");
       });
     });
 
