@@ -377,6 +377,11 @@ describe("HeartbeatTriggerScheduler", () => {
       expect((scheduler as any).nonAdvancingRearmState.has(agent.id)).toBe(false);
 
       agent.lastHeartbeatAt = new Date(Date.now() - 162_000_001).toISOString();
+      // A genuinely dead interval also has no physical fire within the shared
+      // window — age the timer-liveness marker too, which is what now
+      // distinguishes a zombie from a live-but-skipping timer (frozen
+      // lastHeartbeatAt alone no longer implies death).
+      (scheduler as any).lastTimerFireAtMs.set(agent.id, Date.now() - 162_000_001);
       await (scheduler as any).auditTimerRegistrations("interval");
       expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
     });
@@ -816,6 +821,56 @@ describe("HeartbeatTriggerScheduler", () => {
         await vi.advanceTimersByTimeAsync(5_000);
         expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
         expect(callback).toHaveBeenCalledWith("agent-long", "timer", expect.anything());
+      });
+
+      /*
+       * FNXC:AgentHeartbeat 2026-07-17-16:30:
+       * Greptile PR #2271 P1 regression: liveness must be anchored to the CURRENT
+       * timer, not to a fire recorded before the timer was (re-)armed. After an
+       * interval increase, an old timer's fire must not vouch for the replacement
+       * against the new (larger) stale window. `applyTimerRegistration` re-stamps
+       * `lastTimerFireAtMs` at arm time, so the staleness clock restarts on every
+       * (re-)registration and a dead replacement is still repaired on schedule.
+       */
+      it("re-anchors the fire-liveness marker to the current timer on re-registration (interval increase)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        // Short interval first; a real fire records liveness under the old timer.
+        const agent = buildAgent({ id: "agent-reReg", heartbeatIntervalMs: 300_000 });
+        vi.mocked(store.listAgents).mockImplementation(async () => [agent]);
+        vi.mocked(store.getAgent).mockResolvedValue(agent);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(6 * 60_000); // fires at 5min under the 5min interval
+
+        const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+        const fireMarkers = (scheduler as unknown as { lastTimerFireAtMs: Map<string, number> }).lastTimerFireAtMs;
+        expect(fireMarkers.get("agent-reReg")).toBe(t0 + 5 * 60_000); // last physical fire at 5min
+
+        // Interval increases to 1h; syncTimerForAgent-style re-registration replaces
+        // the timer. The marker MUST re-anchor to NOW (6min) so the old 5min fire
+        // cannot vouch for the new 1h timer against the new 2h stale window.
+        (agent.runtimeConfig as Record<string, unknown>).heartbeatIntervalMs = 3_600_000;
+        scheduler.registerAgent("agent-reReg", { enabled: true, heartbeatIntervalMs: 3_600_000 }, { lastHeartbeatAt: agent.lastHeartbeatAt });
+        expect(fireMarkers.get("agent-reReg")).toBe(t0 + 6 * 60_000); // re-anchored to re-registration time
+
+        // Kill the freshly-armed replacement — a genuinely dead replacement timer.
+        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
+        clearInterval(timers.get("agent-reReg")!.handle as ReturnType<typeof setInterval>);
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Advance well past the new 2h window (measured from the ~6min
+        // re-registration), plus a trailing tick to let the catch-up dispatch
+        // fire. The dead replacement must be repaired, not masked forever.
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 + 10 * 60_000);
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(callback).toHaveBeenCalledWith("agent-reReg", "timer", expect.anything());
       });
 
       it("pause guards still suppress dispatch after a zombie re-arm (does not regress FN-2658)", async () => {

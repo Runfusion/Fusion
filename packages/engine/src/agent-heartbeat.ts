@@ -4163,11 +4163,13 @@ export class HeartbeatTriggerScheduler {
   private nonAdvancingRearmState: Map<string, { lastHeartbeatAt: string | null; count: number }> = new Map();
   /*
    * FNXC:AgentHeartbeat 2026-07-17-15:40:
-   * Wall-clock (ms) of the last time each agent's timer PHYSICALLY FIRED
-   * (onTimerTick entered), independent of whether that tick actually delivered
-   * a heartbeat. The zombie-timer audit must key liveness off "did the interval
-   * fire" — NOT off `lastHeartbeatAt` (which only advances on a successful "ok"
-   * delivery). A timer whose delivery is intentionally skipped or no-op'd
+   * Wall-clock (ms) of the last moment we had positive evidence each agent's
+   * CURRENT timer is alive: stamped both when the timer is (re-)armed
+   * (applyTimerRegistration) and every time it PHYSICALLY FIRES (onTimerTick
+   * entered), independent of whether that tick actually delivered a heartbeat.
+   * The zombie-timer audit must key liveness off "is the interval firing" — NOT
+   * off `lastHeartbeatAt` (which only advances on a successful "ok" delivery).
+   * A timer whose delivery is intentionally skipped or no-op'd
    * (over-budget, engine/global pause, idle-skip, no-assignment idle-agent runs)
    * leaves `lastHeartbeatAt` frozen while the interval keeps firing perfectly.
    * Keying zombie detection off `lastHeartbeatAt` misclassified those live
@@ -4425,6 +4427,20 @@ export class HeartbeatTriggerScheduler {
     );
 
     this.clearAgentTimer(agentId);
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-17-16:30:
+     * Anchor the fire-liveness marker to the CURRENT timer at arm time. Arming a
+     * fresh timer is itself positive evidence of liveness (setInterval/setTimeout
+     * always schedule), so a just-registered timer is not a zombie even before
+     * its first tick. Critically, re-stamping here OVERWRITES any marker left by
+     * the previous timer: without this, a fire recorded under an old (shorter)
+     * interval could vouch for a replacement timer against the new (larger) stale
+     * window after an interval increase, masking a dead replacement until that
+     * inflated window expired. Re-stamping restarts the staleness clock at every
+     * (re-)registration, so liveness is only ever proven by the current timer.
+     */
+    this.lastTimerFireAtMs.set(agentId, Date.now());
 
     const armSteadyInterval = () => {
       // The setTimeout fired and was consumed; replace it with the long-lived
