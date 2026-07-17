@@ -1686,17 +1686,9 @@ too so future divergence doesn't have to rediscover the shared selector group.
   outline-offset: 1px;
 }
 
-/* Send Back button and dropdown */
-.card-send-back {
-  position: relative;
-}
-
 /*
-FNXC:TaskCardLayout 2026-07-12-00:00:
-FN-7928 requires the Send-back/Actions trigger, ⋯ menu button, and size badge to share one optical vertical center inside .card-header-actions. Normalize their line boxes while preserving FN-7889's cluster↔id transform nudge, FN-7862's flex-start header anchor, FN-7837's middle-badge wrap/size-chip-not-orphaned contract, and FN-4351's mobile no-min-height rule.
-
-FNXC:TaskCardLayout 2026-07-13-01:03:
-The Actions/Send-back text+chevron chip still reads a little low against the ⋯ icon and single-letter size badge even after the locked chip-height row. Use a quarter-space-xs optical raise (and box-sizing so the 1px border does not inflate the flex cross size) so the three controls share one centerline.
+FNXC:TaskCardLayout 2026-07-16-00:00 (FN-8149):
+The three-dot menu is the sole card move/action entry point. Keep this shared button treatment because Start and Promote still use .card-send-back-btn; their hover-reveal and optical alignment must remain intact after menu consolidation.
 */
 .card-send-back-btn {
   display: inline-flex;
@@ -1762,49 +1754,6 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
   border-color: color-mix(in srgb, var(--text-muted) 24%, transparent);
 }
 
-.card-send-back-menu {
-  position: absolute;
-  top: calc(100% + var(--space-xs));
-  right: 0;
-  z-index: 50;
-  min-width: 100px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-}
-
-.card-action-row .card-send-back {
-  margin-left: auto;
-}
-
-.card-meta .card-send-back {
-  margin-left: auto;
-}
-
-.card-send-back-menu-item {
-  display: block;
-  width: 100%;
-  padding: calc(var(--space-sm) - (var(--space-xs) / 4)) var(--space-md);
-  font-size: 0.75rem;
-  font-weight: 400;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--transition-instant);
-}
-
-.card-send-back-menu-item:hover {
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
-
-.card-send-back-menu-item:focus {
-  outline: none;
-  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
-}
 
 /* Loading state during save */
 .card-edit-loading {
@@ -1896,12 +1845,6 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
     line-height: 1;
   }
 
-  /* Keep Actions/Send-back on the locked row centerline (no extra vertical box growth). */
-  .card-send-back {
-    display: inline-flex;
-    align-items: center;
-    height: 100%;
-  }
 
   /* FN-4351/FN-3965: keep secondary actions visible on touch, but compact per WCAG 2.5.8 because the card tap surface is the primary target for opening task detail. */
   .card-archive-btn,
@@ -1915,7 +1858,7 @@ The Actions/Send-back text+chevron chip still reads a little low against the ⋯
     line-height: 1;
     margin-top: 0;
     margin-bottom: 0;
-    /* Keep the base optical raise so Actions does not sit below ⋯ / size on the locked mobile row. */
+    /* Keep the base optical raise for Start/Promote while they share this compact mobile treatment. */
     transform: translateY(calc(var(--space-xs) / -4));
   }
 

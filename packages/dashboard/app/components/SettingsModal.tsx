@@ -60,6 +60,7 @@ import { MemorySection } from "./settings/sections/MemorySection";
 import { ResearchProjectSection } from "./settings/sections/ResearchProjectSection";
 import { ProjectMcpSection } from "./settings/sections/ProjectMcpSection";
 import { BackupsSection } from "./settings/sections/BackupsSection";
+import { DatabaseBackupsSection } from "./settings/sections/DatabaseBackupsSection";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
@@ -647,7 +648,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   FN-7062 requires the remote settings nav entry to read "Remote Access" only. The stale "& Node Sync" suffix belongs to the separate Node Sync settings section, while this section body already uses the Remote Access heading.
   */
   { id: "remote", label: "Remote Access", labelKey: "settings.nav.remote", scope: "global", searchableText: ["cloudflared", "tunnel", "QR", "persistent token", "remote URL"] },
-  { id: "backups", label: "Backups", labelKey: "settings.nav.backups", scope: "project", searchableText: ["backup", "restore", "settings export", "settings import"] },
+  { id: "backups-global", label: "Database Backups", labelKey: "settings.backups.databaseBackups", scope: "global", searchableText: ["database backup", "restore", "shared cluster"] },
+  { id: "backups", label: "Memory Backups", labelKey: "settings.backups.memoryBackups", scope: "project", searchableText: ["memory backup", "memory snapshot"] },
 
   { id: "__advanced_header", label: "Advanced", labelKey: "settings.nav.advancedHeader", scope: undefined, isGroupHeader: true },
   { id: "experimental", label: "Experimental Features", labelKey: "settings.nav.experimental", scope: "global", searchableText: ["feature flags", "experiments", "research view", "evals view", "sandbox", "subtask breakdown"] },
@@ -1166,6 +1168,7 @@ export function SettingsModal({
     includeTaskIdInCommit: true,
     worktreeInitCommand: "",
     ntfyEnabled: false,
+    agentClarificationEnabled: false,
     ntfyTopic: undefined,
     ntfyAccessToken: undefined,
     failureNotificationMode: "sticky-only",
@@ -4103,9 +4106,9 @@ export function SettingsModal({
             hiddenFeatureKeys={HIDDEN_EXPERIMENTAL_FEATURE_KEYS}
           />
         );
-      case "backups":
+      case "backups-global":
         return (
-          <BackupsSection
+          <DatabaseBackupsSection
             form={form}
             setForm={setForm}
             backupInfo={backupInfo}
@@ -4113,6 +4116,8 @@ export function SettingsModal({
             onBackupNow={handleBackupNow}
           />
         );
+      case "backups":
+        return <BackupsSection form={form} setForm={setForm} />;
       case "notifications":
         return (
           <NotificationsSection

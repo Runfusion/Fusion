@@ -237,7 +237,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getWorkflowStep: vi.fn(),
     updateWorkflowStep: vi.fn(),
     deleteWorkflowStep: vi.fn(),
-    clearWorkflowRunStepInstances: vi.fn(),
+    clearWorkflowRunStepInstancesAsync: vi.fn().mockResolvedValue(undefined),
     getMissionStore: vi.fn().mockReturnValue({
       listMissions: vi.fn().mockReturnValue([]),
       createMission: vi.fn(),
@@ -2271,8 +2271,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
         "FN-001",
         "Specification rebuild requested by user"
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-      expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+      expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
     } finally {
@@ -2291,8 +2291,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-    expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
   });
 
@@ -2307,8 +2307,8 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-    expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
   });
 
   it("allows rebuild for task already in triage", async () => {
@@ -2334,9 +2334,10 @@ describe("POST /tasks/:id/spec/rebuild", () => {
         "Specification rebuild requested by user"
       );
       expect(store.moveTask).not.toHaveBeenCalled();
-      expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+      expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+      expect(res.body.status).toBe("needs-replan");
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -2352,9 +2353,103 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
-    expect((store as unknown as { clearWorkflowRunStepInstances: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-001");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+  });
+
+  function selectWorkflow(columns: Array<{ id: string; traits?: Array<{ trait: string }> }>) {
+    const workflowIr = {
+      version: 2,
+      columns: columns.map((column) => ({ name: column.id, traits: [], ...column })),
+      nodes: [],
+      edges: [],
+    };
+    (store as unknown as { getTaskWorkflowSelection: ReturnType<typeof vi.fn> }).getTaskWorkflowSelection = vi.fn()
+      .mockReturnValue({ workflowId: "WF-rebuild-test" });
+    (store as unknown as { getWorkflowDefinition: ReturnType<typeof vi.fn> }).getWorkflowDefinition = vi.fn()
+      .mockResolvedValue({ id: "WF-rebuild-test", ir: workflowIr });
+  }
+
+  it("rebuilds a no-triage/no-todo workflow through legacy triage recovery rehome", async () => {
+    const customTask = { ...FAKE_TASK_DETAIL, column: "publish" as any };
+    const movedTask = { ...customTask, column: "triage" as any };
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-legacy-rehome-"));
+    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "PROMPT.md"), "# stale spec\n");
+    selectWorkflow([{ id: "publish" }]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(customTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+      expect(res.status).toBe(200);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+      expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
+      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the updated task when a plan-in-place workflow is already in todo", async () => {
+    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as any };
+    const updatedTask = { ...todoTask, status: "needs-replan" as const };
+    selectWorkflow([{ id: "todo" }, { id: "in-review" }]);
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(todoTask)
+      .mockResolvedValueOnce(updatedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+    expect(res.body.status).toBe("needs-replan");
+  });
+
+  it("rebuilds a plan-in-place workflow into todo", async () => {
+    const customTask = { ...FAKE_TASK_DETAIL, column: "in-review" as any };
+    const movedTask = { ...customTask, column: "todo" as any };
+    selectWorkflow([{ id: "todo" }, { id: "in-review" }]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(customTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
+  });
+
+  it("rejects legacy and semantic archived tasks before rebuilding", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-archived-"));
+    const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
+    mkdirSync(taskDir, { recursive: true });
+    writeFileSync(join(taskDir, "PROMPT.md"), "# retained spec\n");
+    const archivedTask = { ...FAKE_TASK_DETAIL, column: "cold-storage" as any };
+    selectWorkflow([{ id: "cold-storage", traits: [{ trait: "archived" }] }]);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(archivedTask);
+    (store.getRootDir as ReturnType<typeof vi.fn>).mockReturnValue(tempRoot);
+
+    try {
+      const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("not available for archived tasks");
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(true);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("returns 404 when task not found", async () => {

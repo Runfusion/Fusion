@@ -12,6 +12,7 @@ import {findWorkflowColumn} from "../plugin-gate-verdict.js";
 import {getTraitRegistry} from "../trait-registry.js";
 import {makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPending} from "../transition-pending.js";
+import {writeTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
 import {toJson, fromJson} from "../db.js";
@@ -43,21 +44,41 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
     // mid-hook is recoverable.
     const hookIds = pending.map((p) => `${p.traitId}:${p.hookKind}`);
     const startedAt = Date.now();
-    try {
-      writeTransitionPending(
-        store.db,
-        taskId,
-        makeTransitionPending(toColumn, ["default-workflow:postCommit", ...hookIds], startedAt),
-      );
-    } catch {
-      // Marker bookkeeping is best-effort; proceed to run the hooks regardless.
-    }
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:20:
+    Backend mode previously threw on the sync store.db marker write /
+    readTaskFromDb here; callers (moves.ts, lifecycle-ops.ts recovery) swallow
+    the throw, so plugin onEnter/onExit column-transition hooks silently never
+    fired on PostgreSQL. Route both the marker bookkeeping and the non-locking
+    task read through the async layer.
+    */
+    const writeMarker = async (remainingHookIds: string[]): Promise<void> => {
+      try {
+        const marker = makeTransitionPending(toColumn, remainingHookIds, startedAt);
+        if (store.backendMode) {
+          await writeTransitionPendingAsync(store.asyncLayer!.db, taskId, marker);
+        } else {
+          writeTransitionPending(store.db, taskId, marker);
+        }
+      } catch {
+        // Marker bookkeeping is best-effort; proceed to run the hooks regardless.
+      }
+    };
+    await writeMarker(["default-workflow:postCommit", ...hookIds]);
 
     // Read the task once for hook context. MUST be a non-locking read — this
     // runs inside `withTaskLock`, so `getTask` (which re-acquires the lock)
-    // would deadlock. `readTaskFromDb` is the in-lock-safe read.
-    const taskRow = store.readTaskFromDb(taskId, { includeDeleted: false });
-    const taskDetail = taskRow as unknown as TaskDetail | undefined;
+    // would deadlock. `readTaskFromDb` is the in-lock-safe read (backend mode:
+    // raw readTaskRow + row conversion, same non-locking property).
+    let taskDetail: TaskDetail | undefined;
+    if (store.backendMode) {
+      const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
+      taskDetail = pgRow
+        ? (store.rowToTask(store.pgRowToTaskRow(pgRow)) as unknown as TaskDetail)
+        : undefined;
+    } else {
+      taskDetail = store.readTaskFromDb(taskId, { includeDeleted: false }) as unknown as TaskDetail | undefined;
+    }
 
     const remaining = ["default-workflow:postCommit", ...hookIds];
     for (const { traitId, hookKind } of pending) {
@@ -97,11 +118,8 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
       // Mark this hook complete in the marker (whether it ran, degraded, or threw).
       const idx = remaining.indexOf(`${traitId}:${hookKind}`);
       if (idx >= 0) remaining.splice(idx, 1);
-      try {
-        writeTransitionPending(store.db, taskId, makeTransitionPending(toColumn, remaining, startedAt));
-      } catch {
-        // Best-effort progress bookkeeping; the final clear is the backstop.
-      }
+      // Best-effort progress bookkeeping; the final clear is the backstop.
+      await writeMarker(remaining);
     }
   }
 

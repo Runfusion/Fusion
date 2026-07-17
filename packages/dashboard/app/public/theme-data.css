@@ -7152,3 +7152,205 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --accent: #9a8050;
   --accent-text: #fff;
 }
+
+/*
+FNXC:DashboardTheming 2026-07-16-00:00:
+FN-8151 adds Cobalt, Clay, and Moss with complete dark and light token ramps. Keep these blocks synchronized with the core union, selector metadata, both bootstrap validators, and swatch classes.
+*/
+[data-color-theme="cobalt"] {
+  --bg: #071426;
+  --surface: #0b1d35;
+  --card: #102848;
+  --card-hover: #17355c;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #24446d;
+  --text: #e6f2ff;
+  --text-muted: #9bb9d8;
+  --text-dim: #6283a9;
+
+  --todo: #6eb8ff;
+  --in-progress: #38bdf8;
+  --in-progress-rgb: 56, 189, 248;
+  --in-review: #5eead4;
+  --triage: #fbbf24;
+  --done: #7694b5;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-error: #fb7185;
+  --color-info: #38bdf8;
+
+  --cta-bg: #1687e8;
+  --cta-border: #45a8ff;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #279cf4;
+  --cta-border-hover: #73bdff;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #45a8ff;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+}
+
+[data-color-theme="cobalt"][data-theme="light"] {
+  --bg: #f3f8ff;
+  --surface: #e8f2ff;
+  --card: #ffffff;
+  --card-hover: #dcecff;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #b8d4f2;
+  --text: #10233d;
+  --text-muted: #4d6d91;
+  --text-dim: #718baa;
+
+  --todo: #1874c9;
+  --in-progress: #087eb6;
+  --in-progress-rgb: 8, 126, 182;
+  --in-review: #12806f;
+  --triage: #a16207;
+  --done: #6b82a0;
+  --color-success: #287a4b;
+  --color-warning: #a16207;
+  --color-error: #c63651;
+  --color-info: #087eb6;
+
+  --cta-bg: #146fc0;
+  --cta-border: #0f629f;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #0d5fa8;
+  --cta-border-hover: #084d89;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #146fc0;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+}
+
+[data-color-theme="clay"] {
+  --bg: #201411;
+  --surface: #2d1c17;
+  --card: #3b2620;
+  --card-hover: #4b3128;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #684237;
+  --text: #f8ebe1;
+  --text-muted: #d1a999;
+  --text-dim: #986f63;
+
+  --todo: #f2a65a;
+  --in-progress: #fb923c;
+  --in-progress-rgb: 251, 146, 60;
+  --in-review: #f0b86b;
+  --triage: #facc15;
+  --done: #aa7b6c;
+  --color-success: #95c46a;
+  --color-warning: #facc15;
+  --color-error: #fb7185;
+  --color-info: #f2a65a;
+
+  --cta-bg: #c85b31;
+  --cta-border: #ec7b4c;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #dc6a3d;
+  --cta-border-hover: #f59a70;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #ec7b4c;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+}
+
+[data-color-theme="clay"][data-theme="light"] {
+  --bg: #fbf3ea;
+  --surface: #f4e4d4;
+  --card: #fffaf5;
+  --card-hover: #f8ddc7;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #dfbca3;
+  --text: #3d241b;
+  --text-muted: #795142;
+  --text-dim: #9c7564;
+
+  --todo: #b55b26;
+  --in-progress: #c95e1a;
+  --in-progress-rgb: 201, 94, 26;
+  --in-review: #a96a24;
+  --triage: #9a6805;
+  --done: #987162;
+  --color-success: #527b36;
+  --color-warning: #9a6805;
+  --color-error: #bf3650;
+  --color-info: #ad551e;
+
+  --cta-bg: #ad4d25;
+  --cta-border: #933d1c;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #923c1b;
+  --cta-border-hover: #793116;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #ad4d25;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+}
+
+[data-color-theme="moss"] {
+  --bg: #111b16;
+  --surface: #19261d;
+  --card: #243326;
+  --card-hover: #304332;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #47604b;
+  --text: #eaf2e5;
+  --text-muted: #b3c7ab;
+  --text-dim: #7f9a7b;
+
+  --todo: #b5c96a;
+  --in-progress: #8ccf75;
+  --in-progress-rgb: 140, 207, 117;
+  --in-review: #72c7a1;
+  --triage: #d6b85e;
+  --done: #82967f;
+  --color-success: #8ccf75;
+  --color-warning: #d6b85e;
+  --color-error: #e87872;
+  --color-info: #7ab8c9;
+
+  --cta-bg: #688c45;
+  --cta-border: #94b85e;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #789e52;
+  --cta-border-hover: #b2cd7a;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #a8c96b;
+  --accent-text: #182215;
+  --logo-accent: var(--accent);
+}
+
+[data-color-theme="moss"][data-theme="light"] {
+  --bg: #f2f6ee;
+  --surface: #e5eddf;
+  --card: #fbfdf8;
+  --card-hover: #d8e5d0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #bfd0b8;
+  --text: #1e3021;
+  --text-muted: #526c55;
+  --text-dim: #789178;
+
+  --todo: #74883b;
+  --in-progress: #397c49;
+  --in-progress-rgb: 57, 124, 73;
+  --in-review: #31785e;
+  --triage: #96751d;
+  --done: #71866f;
+  --color-success: #397c49;
+  --color-warning: #96751d;
+  --color-error: #bc4543;
+  --color-info: #397589;
+
+  --cta-bg: #557a35;
+  --cta-border: #46692c;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #45682c;
+  --cta-border-hover: #365422;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #557a35;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+}

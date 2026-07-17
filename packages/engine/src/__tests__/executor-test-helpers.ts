@@ -322,7 +322,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
         refresh: vi.fn(),
       };
     }),
-    AuthStorage: {
+    LegacyCredentialStorage: {
       create: vi.fn().mockReturnValue({}),
     },
     getAgentDir: vi.fn().mockReturnValue("/tmp/agent-dir"),

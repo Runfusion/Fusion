@@ -42,6 +42,7 @@ function buildApp(seed: Task[]) {
       return created;
     }),
     getTask: vi.fn().mockImplementation(async (id: string) => tasks.find((task) => task.id === id) ?? null),
+    getRootDir: () => process.cwd(),
     updateTask: vi.fn().mockImplementation(async (id: string, updates: Record<string, unknown>) => {
       const index = tasks.findIndex((task) => task.id === id);
       if (index < 0) throw new Error("Task not found");
@@ -248,6 +249,36 @@ describe("routes /api/tasks near duplicate", () => {
       "Near-duplicate intent guard failed; proceeding",
       expect.objectContaining({ error: "boom" }),
     );
+  });
+
+  it("PATCH Keep resumes a triage-marker duplicate for real planning", async () => {
+    const seeded = mkTask({
+      id: "FN-6002",
+      title: "Triage marker duplicate",
+      description: "Test candidate",
+      column: "triage",
+      paused: true,
+      pausedReason: "duplicate-decision-required",
+      sourceMetadata: { nearDuplicateOf: "FN-1000", duplicateSource: "triage-marker" },
+    });
+    const { app, tasks } = buildApp([seeded]);
+
+    const res = await performRequest(
+      app,
+      "PATCH",
+      "/api/tasks/FN-6002",
+      JSON.stringify({ dismissNearDuplicate: true }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect((res.body as Task)).toMatchObject({ paused: false, pausedReason: null, status: null });
+    expect((res.body as Task).sourceMetadata).toMatchObject({
+      nearDuplicateOf: "FN-1000",
+      duplicateSource: "triage-marker",
+      nearDuplicateDismissed: true,
+    });
+    expect(tasks[0]).toMatchObject({ paused: false, pausedReason: null, status: null });
   });
 
   it("PATCH dismissNearDuplicate applies sourceMetadataPatch merge", async () => {

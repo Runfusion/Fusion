@@ -45,6 +45,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 }));
 vi.mock("@fusion/engine", () => ({
   createFusionAuthStorage: vi.fn(() => ({})),
+  createFusionModelRegistry: vi.fn(async () => ({})),
 }));
 vi.mock("@fusion/core", () => ({
   CentralCore: MockCentralCore,

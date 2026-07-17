@@ -206,12 +206,16 @@ const TASK_DETAIL_ACTIVITY_LOG_LIMIT = 500;
 export { __resetBatchImportRateLimiter } from "./routes/register-git-github.js";
 
 /**
- * Minimal interface matching pi-coding-agent's ModelRegistry API surface
- * used by the models route. Avoids a direct dependency on the pi-coding-agent package.
+ * Minimal interface matching pi 0.80.8+ ModelRuntime's ModelRegistry
+ * compatibility facade. Avoids a direct dependency on the pi-coding-agent package.
  */
 export interface ModelRegistryLike {
-  /** Reload models from disk to pick up changes. */
-  refresh(): void;
+  /**
+   * FNXC:ModelCatalog 2026-07-16-17:55:
+   * pi 0.80.8 refreshes asynchronously, so the models endpoint must wait for it
+   * before reading getAvailable() and surface any refresh failure to the caller.
+   */
+  refresh(): Promise<void>;
   /** Get models that have auth configured. */
   getAvailable(): Array<{ id: string; name: string; provider: string; reasoning: boolean; contextWindow: number }>;
   /** Optional pi ModelRegistry surface used for supplemental model registration. */
@@ -1857,9 +1861,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/backups", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { createBackupManager } = await import("@fusion/core");
+      const { createBackupManager, resolveGlobalBackupRoot } = await import("@fusion/core");
       const settings = await scopedStore.getSettings();
-      const manager = createBackupManager(scopedStore.getFusionDir(), settings);
+      const manager = createBackupManager(resolveGlobalBackupRoot(scopedStore), settings);
       const backups = await manager.listBackups();
       
       // Calculate total size
@@ -1885,9 +1889,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/backups", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { runBackupCommand } = await import("@fusion/core");
+      const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
       const settings = await scopedStore.getSettings();
-      const result = await runBackupCommand(scopedStore.getFusionDir(), settings);
+      const result = await runBackupCommand(resolveGlobalBackupRoot(scopedStore), settings);
       
       if (result.success) {
         res.json({
@@ -5271,9 +5275,9 @@ async function executeSingleCommand(
   if (taskStore && isInProcessBackupCommand(command)) {
     const fusionDir = taskStore.getFusionDir();
     try {
-      const { runBackupCommand } = await import("@fusion/core");
+      const { runBackupCommand, resolveGlobalBackupRoot } = await import("@fusion/core");
       const settings = await taskStore.getSettings();
-      const result = await runBackupCommand(fusionDir, settings);
+      const result = await runBackupCommand(resolveGlobalBackupRoot(taskStore), settings);
       const output = truncateAutomationOutput(result.output ?? "", "");
       return {
         success: result.success,

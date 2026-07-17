@@ -229,6 +229,17 @@ describe("GlobalSettingsStore", () => {
       expect(parsed.themeMode).toBe("system");
     });
 
+    it("persists and clears the planner clarification preference", async () => {
+      await store.init();
+
+      expect((await store.getSettings()).agentClarificationEnabled).toBe(false);
+      await store.updateSettings({ agentClarificationEnabled: true });
+      expect((await store.getSettings()).agentClarificationEnabled).toBe(true);
+
+      await store.updateSettings({ agentClarificationEnabled: undefined });
+      expect((await store.getSettings()).agentClarificationEnabled).toBeUndefined();
+    });
+
     it("merges multiple updates without losing fields", async () => {
       await store.init();
 

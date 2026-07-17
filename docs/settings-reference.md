@@ -71,6 +71,7 @@ Fallback thinking-level values are applied at runtime when Fusion swaps from the
 
 | `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh"` | `undefined` | Default reasoning effort for AI sessions. `xhigh` requests maximum reasoning effort; Claude CLI adapters map it to `high` for non-Opus models and `max` for Opus models. If a provider/runtime rejects simultaneous `thinking` and `reasoning_effort` parameters, Fusion retries without the explicit thinking override instead of failing the run. |
 | `ntfyEnabled` | `boolean` | `false` | Enable ntfy push notifications. |
+| `agentClarificationEnabled` | `boolean` | `false` | Allow Planning Mode to pause for proactive AI clarification questions. When disabled, the planner requests a final summary instead; enabled proactive questions notify configured ntfy recipients and the dashboard mailbox. |
 | `failureNotificationMode` | `"sticky-only" \| "terminal-only" \| "all"` | `"sticky-only"` | Failure notification behavior. `sticky-only` defers failed-task notifications by `failureNotificationDelayMs` and suppresses transient self-recoveries. `terminal-only` suppresses while auto-retry is still active and only dispatches when `paused === true` or `column === "in-review"` with `status === "failed"`. `all` restores legacy immediate failure notifications. |
 | `failureNotificationDelayMs` | `number` | `30000` | Delay window (ms) before evaluating/sending a `failed` notification in `sticky-only` and `terminal-only` modes. Set `0` for immediate dispatch in legacy `all` mode. |
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
@@ -649,7 +650,7 @@ Default notes:
 | `githubTrackingEnabledByDefault` | `boolean` | `false` | Project-level default for enabling issue tracking on ordinary new tasks. When this is false, the Quick Entry GitHub toggle is disabled until tracking is enabled in Settings. Imported GitHub issues still follow this default unless `githubLinkImportedIssuesToTracking` is enabled. |
 | `sessionAdvisorEnabledByDefault` | `boolean` | `false` | Project-level default for the session advisor (LLM overseer agent that reviews live executor transcripts). Off by default (opt-in). Quick Add exposes an eye toggle next to GitHub that inherits this default; each task can override via `sessionAdvisorEnabled`. Provider and model ids still come from workflow settings (`plannerOverseerAdvisorProvider` / `plannerOverseerAdvisorModelId`). Dashboard location: **Settings → Project → General → Session advisor (overseer agent)**. |
 | `githubLinkImportedIssuesToTracking` | `boolean` | `false` | Project-scoped, import-only option. When enabled, GitHub issue imports from the dashboard, CLI, and extension tools persist `githubTracking: { enabled: true }` so Fusion adopts the imported source issue as the tracking issue without turning tracking on for ordinary new tasks. Duplicate/skipped imports do not create tasks or tracking metadata. |
-| `githubImportAutoTranslate` | `boolean` | `false` | Project-scoped, import-only option. When enabled, the Import Tasks panel automatically translates foreign-language GitHub/GitLab issue titles and bodies into `importTranslateTargetLocale` and shows the translation by default (the original text stays one toggle away). Off by default so all-English projects never pay for a per-issue AI call. Dashboard location: **Settings → Project → General → GitHub Tracking**. |
+| `githubImportAutoTranslate` | `boolean` | `false` | Project-scoped, import-only option. When enabled, the Import Tasks panel automatically translates foreign-language GitHub/GitLab issue titles and bodies into `importTranslateTargetLocale` and shows the translation by default (the original text stays one toggle away). Translations persist across app restarts until the upstream issue changes or closes, avoiding repeat model calls. Off by default so all-English projects never pay for a per-issue AI call. Dashboard location: **Settings → Project → General → GitHub Tracking**. |
 | `importTranslateTargetLocale` | `Locale` | `undefined` | Target language for `githubImportAutoTranslate`. One of `SUPPORTED_LOCALES`. When unset, import translation follows the dashboard's own `language` setting. Dashboard location: **Settings → Project → General → GitHub Tracking**. |
 | `githubTrackingDefaultRepo` | `string` | `undefined` | Project default issue-tracking repo (`owner/repo`) used before global fallback for tracked task creation (precedence: task override → project default → global default). In Settings UI this is a detected-remote dropdown with a Custom fallback for manual entry. This key is dual-scope: project saves go through `PUT /api/settings` (Settings → General → GitHub Tracking) while global saves go through `PUT /api/settings/global` (Settings → Global General). |
 | `gitlabEnabled` | `boolean` | `undefined` (effective global fallback, then `true`) | Project GitLab integration enable switch. Explicit `false` disables outbound GitLab API imports, completion comments, close/reopen, source closed-at backfill, and tracking refresh side effects for this project without deleting saved URL/token fields. Dashboard location: **Settings → Project → General → GitLab Configuration** and **Settings → Project → Merge → GitLab Authentication** disclosure headers. |
@@ -669,10 +670,12 @@ GitLab enablement defaults effectively to on when `gitlabEnabled` is unset, so e
 GitLab configuration examples: leave both URL fields blank for GitLab.com (`https://gitlab.com`, API `https://gitlab.com/api/v4`); set only `gitlabInstanceUrl=https://gitlab.example.com/gitlab` for a self-managed path-prefix install (API derives `https://gitlab.example.com/gitlab/api/v4`); set both URL fields when a self-managed API gateway differs from the web URL. GitLab auth uses access tokens over the GitLab REST API `PRIVATE-TOKEN` header; Fusion does not require or invoke `glab`. Supported token families are [personal access tokens](https://docs.gitlab.com/user/profile/personal_access_tokens/), [project access tokens](https://docs.gitlab.com/user/project/settings/project_access_tokens/), and [group access tokens](https://docs.gitlab.com/user/group/settings/group_access_tokens/). GitLab issue/MR import and tracking reads need `read_api` or `api`; posting notes/comments and closing/reopening issues or MRs need `api`. Project and group access tokens are constrained to their associated resource and role membership, so the configured token must cover the target project or group. Lifecycle actions use the configured API base URL for GitLab.com and self-managed instances, URL-encode project path identifiers, and skip unsupported targets such as terminal merged merge requests or group issues missing concrete project identity. Command Center signals, research/search providers, and star-prompt behavior remain deferred to later GitLab subtasks tracked from [GitLab Parity Inventory](./gitlab-parity-inventory.md).
 
 | `autoCreatePr` | `boolean` | `false` | Auto-create PRs for completed tasks. |
-| `autoBackupEnabled` | `boolean` | `false` | Enable scheduled DB backups. |
-| `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
-| `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
-| `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
+| `autoBackupEnabled` | `boolean` | `false` | Enable scheduled shared-database backups. |
+| `autoBackupSchedule` | `string` | `"0 2 * * *"` | Shared database backup cron schedule. |
+| `autoBackupRetention` | `number` | `7` | Number of shared database backups to retain. |
+| `autoBackupDir` | `string` | `".fusion/backups"` | Relative directory beneath the global Fusion directory. |
+
+> **Scope:** Database Backups are global because PostgreSQL is one shared cluster. Settings → Database Backups writes one global policy and stores its default dumps under `~/.fusion/backups`; Memory Backups remain project-scoped. Existing project overrides should be reviewed during upgrade before removing them.
 
 Database backups work with both external PostgreSQL and Fusion's default embedded PostgreSQL deployment. `fn backup` and the built-in **Database Backup** cron/routine use `pg_dump` and `pg_restore`; install PostgreSQL client tools or configure their paths so both executables are available on `PATH`. They are not bundled with `embedded-postgres`.
 
@@ -1091,14 +1094,15 @@ Mission validation sessions use this same validator lane; assigned durable agent
 
 Dedicated model lane for merger agent sessions (conflict resolution, clean-room merge, stash-conflict recovery, PR-response helpers, and related merge-agent runs). Configurable under **Settings → Global Models** and **Settings → Project Models**. Does not inherit the executor, planner, or reviewer lanes.
 
-1. Project `mergerProvider` + `mergerModelId`
-2. Global `mergerGlobalProvider` + `mergerGlobalModelId`
+1. Complete per-task `mergerModelProvider` + `mergerModelId`
+2. Project `mergerProvider` + `mergerModelId`
+3. Global `mergerGlobalProvider` + `mergerGlobalModelId`
 3. Project `defaultProviderOverride` + `defaultModelIdOverride`
 4. Global `defaultProvider` + `defaultModelId`
 5. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when both provider and model ID are set and no merger/default pair is configured
 6. Automatic provider/model resolution
 
-Thinking level for merger sessions: project `mergerThinkingLevel` → global `mergerGlobalThinkingLevel` → project `defaultThinkingLevelOverride` → global `defaultThinkingLevel`.
+Thinking level for merger sessions: per-task `mergerThinkingLevel` → project `mergerThinkingLevel` → global `mergerGlobalThinkingLevel` → project `defaultThinkingLevelOverride` → global `defaultThinkingLevel`.
 
 Session-level fallback on retryable failures resolves project `mergerFallbackProvider` + `mergerFallbackModelId` first, then the shared global `fallbackProvider` + `fallbackModelId` pair. Partial project fallback pairs are ignored. This lane applies to every merger session, including merger-ai mutating and review agents and the PR-response runner.
 
@@ -1767,3 +1771,5 @@ Values are project-scoped and finite values are floored; count/backoff must be a
 | `executorEscalationNodeId` | string, unset | Optional configured node target. |
 
 Escalation is enabled only when the toggle is true and either a complete provider/model pair or a node ID is configured. It is single-shot: after FN-7996 exhausts same-model retries, Fusion persists the override and tries once before the existing terminal park. The alternate model enters the [model-selection hierarchy](#model-selection-hierarchy) as a task-level override; a node target enters `resolveEffectiveNode` as a task-level routing override and is requeued so scheduler routing is recalculated. This remains opt-in by default to avoid unexpected model cost or execution behavior. Column-agent overrides still govern their sessions and can supersede a task-level model target.
+
+| `triageDuplicateResolution` | `"prompt" \| "keep" \| "delete"` | `"prompt"` | Controls `DUPLICATE: FN-NNNN` markers emitted during triage. **prompt** flags and system-pauses the task for an operator Keep/Delete decision; the existing decision banner links to the canonical task. **keep** dismisses the marker and replans a real task. **delete** restores legacy auto-delete behavior. |

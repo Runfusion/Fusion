@@ -46,6 +46,10 @@ export function buildManualRetryResetPatch(options?: { resetMergeRetries?: boole
     executorEscalationAttempted: false,
     toolFailureDetectorLogCursor: null,
     toolFailureRetryExhaustedAuditEmitted: false,
+    // FNXC:Lifecycle 2026-07-16-21:40:
+    // FN-8141 — an operator manual retry/edit is an honest exit signal that clears the
+    // skip-bypass taint, so a legitimately retried task can promote on its skipped steps.
+    bulkCompletionRefusalAt: null as unknown as Task["bulkCompletionRefusalAt"],
   };
 
   for (const key of MANUAL_RETRY_RESET_COUNTER_KEYS) {

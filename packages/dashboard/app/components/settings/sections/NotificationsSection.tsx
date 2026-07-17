@@ -119,6 +119,17 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
 
       <div className="notification-provider-card">
         <div className="notification-provider-header">
+          <strong>{t("settings.notifications.agentClarification", "Agent clarification")}</strong>
+          <label htmlFor="agentClarificationEnabled" className="checkbox-label">
+            <input id="agentClarificationEnabled" type="checkbox" checked={form.agentClarificationEnabled ?? false} onChange={(event) => setForm((current) => ({ ...current, agentClarificationEnabled: event.target.checked }))} />
+            {t("settings.notifications.agentClarificationEnable", " Allow the planner to ask questions")}
+          </label>
+          <SettingsHelpTip settingKey="agentClarificationEnabled">{t("settings.notifications.agentClarificationHint", "Default: disabled. When enabled, planner questions pause planning and notify your mailbox.")}</SettingsHelpTip>
+        </div>
+      </div>
+
+      <div className="notification-provider-card">
+        <div className="notification-provider-header">
           <strong>{t("settings.notifications.ntfy", "ntfy")}</strong>
           <label htmlFor="ntfyEnabled" className="checkbox-label">
             <input id="ntfyEnabled" type="checkbox" checked={form.ntfyEnabled || false} onChange={(e) => setForm((f) => ({ ...f, ntfyEnabled: e.target.checked }))}/>{t("settings.notifications.enable", " Enable ")}</label>

@@ -36,11 +36,11 @@ import {
   shouldUseHybridExecutor,
   setHostExtensionPaths,
   createFusionAuthStorage,
+  createFusionModelRegistry,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import {
   DefaultPackageManager,
-  ModelRegistry,
   SettingsManager,
   discoverAndLoadExtensions,
   createExtensionRuntime,
@@ -56,7 +56,7 @@ import {
 import { promptForPort } from "./port-prompt.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
-import { getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
+import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import {
   ensureClaudeSkillsForAllProjectsOnStartup,
@@ -677,7 +677,7 @@ export async function runServe(
   const automationStore = primaryEngine.getAutomationStore();
 
   const authStorage = createFusionAuthStorage();
-  const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+  const modelRegistry = await createFusionModelRegistry(authStorage);
   registerBuiltInZaiProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   registerBuiltInGrokProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
@@ -797,11 +797,11 @@ export async function runServe(
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
-      registerCustomProviders(
+      await registerCustomProviders(
         modelRegistry,
         globalSettings.customProviders,
         (message) => console.log(`[custom-providers] ${message}`),
@@ -815,7 +815,7 @@ export async function runServe(
     const message = error instanceof Error ? error.message : String(error);
     console.log(`[extensions] Failed to discover extensions: ${message}`);
     createExtensionRuntime();
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
   }
 
   void syncStartupModels({
@@ -832,12 +832,15 @@ export async function runServe(
       return;
     }
 
-    reregisterCustomProviders(
+    void reregisterCustomProviders(
       modelRegistry,
       previousProviders,
       currentProviders,
       (message) => console.log(`[custom-providers] ${message}`),
-    );
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[custom-providers] Failed to refresh custom providers: ${message}`);
+    });
   });
 
   // ── Daemon token resolution ─────────────────────────────────────────────

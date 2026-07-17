@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import lockfile from "proper-lockfile";
 import {
   choosePreferredStoredCredential,
   getClaudeCodeCredentialPaths,
@@ -9,12 +10,153 @@ import {
   shouldHydrateStoredCredential,
   type StoredAuthCredential,
 } from "@fusion/core";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { AuthCredential } from "@earendil-works/pi-coding-agent";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AuthInteraction, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 
 type StoredCredential = StoredAuthCredential;
+
+export interface FusionAuthStorage {
+  reload(): void;
+  get(provider: string): StoredCredential | undefined;
+  getAll(): Record<string, StoredCredential>;
+  list(): string[];
+  has(provider: string): boolean;
+  hasAuth(provider: string): boolean;
+  set(provider: string, credential: StoredCredential): void;
+  remove(provider: string): void;
+  logout(provider: string): void;
+  getApiKey(provider: string): Promise<string | undefined>;
+  getOAuthProviders(): Array<{ id: string; name: string }>;
+  login(provider: string, callbacks: unknown): Promise<void>;
+  modify(provider: string, fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>): Promise<StoredCredential | undefined>;
+  setModelRuntime(modelRuntime: ModelRuntime): void;
+}
+
+class FusionFileAuthStorage implements FusionAuthStorage {
+  private data: Record<string, StoredCredential> = {};
+  private modelRuntime: ModelRuntime | undefined;
+
+  constructor(private readonly authPath: string) {
+    this.reload();
+  }
+
+  private ensureFile(): void {
+    const parent = dirname(this.authPath);
+    if (!existsSync(parent)) mkdirSync(parent, { recursive: true, mode: 0o700 });
+    if (!existsSync(this.authPath)) {
+      writeFileSync(this.authPath, "{}", { encoding: "utf-8", mode: 0o600 });
+      chmodSync(this.authPath, 0o600);
+    }
+  }
+
+  private readCurrent(): Record<string, StoredCredential> {
+    try {
+      return JSON.parse(readFileSync(this.authPath, "utf-8")) as Record<string, StoredCredential>;
+    } catch {
+      return {};
+    }
+  }
+
+  private withLock<T>(fn: (current: Record<string, StoredCredential>) => T): T {
+    this.ensureFile();
+    // proper-lockfile's synchronous API cannot retry; writes remain serialized by the lock.
+    const release = lockfile.lockSync(this.authPath, { realpath: false });
+    try {
+      const current = this.readCurrent();
+      const result = fn(current);
+      this.data = current;
+      writeFileSync(this.authPath, JSON.stringify(current, null, 2), { encoding: "utf-8", mode: 0o600 });
+      chmodSync(this.authPath, 0o600);
+      return result;
+    } finally {
+      release();
+    }
+  }
+
+  reload(): void {
+    this.ensureFile();
+    this.data = this.readCurrent();
+  }
+
+  get(provider: string): StoredCredential | undefined { return this.data[provider]; }
+  getAll(): Record<string, StoredCredential> { return { ...this.data }; }
+  list(): string[] { return Object.keys(this.data); }
+  has(provider: string): boolean { return Boolean(this.data[provider]); }
+  hasAuth(provider: string): boolean { return this.has(provider); }
+  set(provider: string, credential: StoredCredential): void {
+    this.withLock((current) => { current[provider] = credential; });
+  }
+  remove(provider: string): void {
+    this.withLock((current) => { delete current[provider]; });
+  }
+  logout(provider: string): void { this.remove(provider); }
+  async getApiKey(provider: string): Promise<string | undefined> {
+    return resolveStoredCredentialApiKey(provider, this.get(provider));
+  }
+  getOAuthProviders(): Array<{ id: string; name: string }> {
+    return [
+      { id: "anthropic", name: "Anthropic" },
+      { id: "openai-codex", name: "OpenAI Codex" },
+      { id: "github-copilot", name: "GitHub Copilot" },
+    ];
+  }
+  setModelRuntime(modelRuntime: ModelRuntime): void {
+    this.modelRuntime = modelRuntime;
+  }
+  async login(provider: string, callbacks: unknown): Promise<void> {
+    if (!this.modelRuntime) throw new Error("OAuth login requires a ModelRuntime-backed Fusion auth storage");
+    const legacy = callbacks as {
+      onAuth?: (info: { url: string; instructions?: string }) => void;
+      onDeviceCode?: (info: { userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }) => void;
+      onPrompt?: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
+      onProgress?: (message: string) => void;
+      signal?: AbortSignal;
+    };
+    const interaction: AuthInteraction = {
+      signal: legacy.signal,
+      prompt: async (prompt) => legacy.onPrompt?.({
+        message: prompt.message,
+        placeholder: "placeholder" in prompt ? prompt.placeholder : undefined,
+      }) ?? "",
+      notify: (event) => {
+        if (event.type === "auth_url") legacy.onAuth?.({ url: event.url, instructions: event.instructions });
+        else if (event.type === "device_code") legacy.onDeviceCode?.(event);
+        else if (event.type === "progress") legacy.onProgress?.(event.message);
+      },
+    };
+    await this.modelRuntime.login(provider, "oauth", interaction);
+    this.reload();
+  }
+  async modify(provider: string, fn: (current: StoredCredential | undefined) => Promise<StoredCredential | undefined>): Promise<StoredCredential | undefined> {
+    this.ensureFile();
+    const release = await lockfile.lock(this.authPath, { realpath: false, retries: { retries: 10, minTimeout: 20 } });
+    try {
+      const current = this.readCurrent();
+      const next = await fn(current[provider]);
+      if (next !== undefined) current[provider] = next;
+      this.data = current;
+      writeFileSync(this.authPath, JSON.stringify(current, null, 2), { encoding: "utf-8", mode: 0o600 });
+      chmodSync(this.authPath, 0o600);
+      return current[provider];
+    } finally {
+      await release();
+    }
+  }
+}
+
+function createFusionCredentialStore(authStorage: FusionAuthStorage): CredentialStore {
+  return {
+    read: async (providerId) => authStorage.get(providerId) as Credential | undefined,
+    list: async () => authStorage.list().flatMap((providerId): CredentialInfo[] => {
+      const credential = authStorage.get(providerId);
+      return credential?.type === "api_key" || credential?.type === "oauth"
+        ? [{ providerId, type: credential.type }]
+        : [];
+    }),
+    modify: async (providerId, fn) => authStorage.modify(providerId, async (current) => fn(current as Credential | undefined) as Promise<StoredCredential | undefined>) as Promise<Credential | undefined>,
+    delete: async (providerId) => { authStorage.remove(providerId); },
+  };
+}
 
 /*
 FNXC:ProviderAuth 2026-07-07-00:00:
@@ -128,7 +270,10 @@ function resolveOAuthApiKey(providerId: string, credential: StoredCredential): s
     return undefined;
   }
 
-  return getOAuthProvider(getOAuthResolutionProviderId(providerId))?.getApiKey(credential as OAuthCredentials);
+  // pi 0.80.8 moved provider OAuth conversion behind ModelRuntime. The legacy
+  // dashboard adapter only needs the stored bearer access token; ModelRuntime handles
+  // provider-specific `toAuth` conversion for actual model requests.
+  return credential.access;
 }
 
 function shouldRefreshOAuthCredential(credential: StoredCredential): boolean {
@@ -161,14 +306,24 @@ async function refreshAnthropicOAuthCredential(credential: StoredCredential): Pr
     FNXC:ClaudeOAuth 2026-07-14-14:25:
     Refresh through pi-ai's registered Anthropic provider—the same implementation that performs login and owns the endpoint, client id, expiry buffer, and response contract. Fusion's duplicated HTTP implementation drifted, so expired subscription OAuth degraded into a misleading missing-API-key failure after restart or PostgreSQL migration. Preserve Fusion's recorded scopes because the provider refresh result intentionally contains only runtime token fields.
     */
-    const provider = getOAuthProvider(ANTHROPIC_PROVIDER_ID);
-    if (!provider?.refreshToken) return undefined;
-    const refreshed = await provider.refreshToken(credential as OAuthCredentials);
-
+    const response = await fetch("https://platform.claude.com/v1/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // Do not include scope: RFC 6749 refreshes preserve the granted scope only when omitted.
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: "9d1c250a-e6a1-44d9-88ed-5944d1962f5e",
+        refresh_token: credential.refresh,
+      }),
+    });
+    if (!response.ok) return undefined;
+    const payload = JSON.parse(await response.text()) as { access_token?: string; refresh_token?: string; expires_in?: number };
+    if (!payload.access_token || !payload.refresh_token || typeof payload.expires_in !== "number") return undefined;
     return {
       ...credential,
-      ...refreshed,
-      ...(credential.scopes ? { scopes: credential.scopes } : {}),
+      access: payload.access_token,
+      refresh: payload.refresh_token,
+      expires: Date.now() + payload.expires_in * 1000 - OAUTH_REFRESH_BUFFER_MS,
     };
   } catch {
     return undefined;
@@ -235,16 +390,29 @@ function readModelsJsonApiKeys(home = getHomeDir()): Map<string, string> {
  * FNXC:ModelRegistry 2026-07-03-07:00:
  * Shared model-registry factory so non-CLI hosts (the desktop embedded runtime) can wire the
  * dashboard's models API without depending on @earendil-works/pi-coding-agent directly. Mirrors the
- * CLI's ModelRegistry.create(authStorage, getModelRegistryModelsPath()). Without a ModelRegistry the
+ * CLI's the pre-0.80.8 registry factory. Without a ModelRegistry the
  * /api/models endpoint returns an empty list, so the onboarding model picker shows "no models" even
  * when a provider (e.g. Anthropic) is connected.
  */
-export function createFusionModelRegistry(authStorage: AuthStorage, home?: string): ModelRegistry {
-  return ModelRegistry.create(authStorage, getModelRegistryModelsPath(home));
+export type FusionModelRegistry = ModelRegistry & { readonly modelRuntime: ModelRuntime };
+
+/**
+ * FNXC:ModelRegistry 2026-07-16-17:20:
+ * pi 0.80.8 made model initialization asynchronous and moved auth ownership to
+ * ModelRuntime. Keep Fusion's file-backed, locked credential adapter as the runtime
+ * CredentialStore so FN-7646's per-provider read-modify-merge guarantee survives.
+ */
+export async function createFusionModelRegistry(authStorage: FusionAuthStorage, home?: string): Promise<FusionModelRegistry> {
+  const modelRuntime = await ModelRuntime.create({
+    credentials: createFusionCredentialStore(authStorage),
+    modelsPath: getModelRegistryModelsPath(home),
+  });
+  authStorage.setModelRuntime(modelRuntime);
+  return Object.assign(new ModelRegistry(modelRuntime), { modelRuntime });
 }
 
-export function createFusionAuthStorage(): AuthStorage {
-  const primary = AuthStorage.create(getFusionAuthPath());
+export function createFusionAuthStorage(): FusionAuthStorage {
+  const primary = new FusionFileAuthStorage(getFusionAuthPath());
   let supplementalCredentials = readSupplementalCredentials();
   // models.json provider API keys — final fallback after primary auth and supplemental auth.json files
   let modelsJsonApiKeys = readModelsJsonApiKeys();
@@ -294,11 +462,11 @@ export function createFusionAuthStorage(): AuthStorage {
         if (typeof credential.expires !== "number" || Date.now() >= credential.expires) {
           continue;
         }
-        primary.set(provider, credential as AuthCredential);
+        primary.set(provider, credential as StoredCredential);
         continue;
       }
       if (credential.type === "api_key") {
-        primary.set(provider, credential as AuthCredential);
+        primary.set(provider, credential as StoredCredential);
       }
     }
   };
@@ -472,7 +640,7 @@ export function createFusionAuthStorage(): AuthStorage {
           return resolveStoredCredentialApiKey(storageProvider, latestCredential);
         }
       }
-      primary.set(storageProvider, refreshedCredential as AuthCredential);
+      primary.set(storageProvider, refreshedCredential as StoredCredential);
       loggedOutProviders.delete(storageProvider);
       return resolveStoredCredentialApiKey(storageProvider, refreshedCredential);
     }
@@ -535,7 +703,7 @@ export function createFusionAuthStorage(): AuthStorage {
     // `setFallbackResolver` (called by ModelRegistry) correctly update the
     // underlying AuthStorage. Without this trap, writes land on the Proxy
     // object itself and the target's fallbackResolver stays undefined.
-    set(target: AuthStorage, prop: string | symbol, value: unknown) {
+    set(target: FusionAuthStorage, prop: string | symbol, value: unknown) {
       (target as unknown as Record<string | symbol, unknown>)[prop] = value;
       return true;
     },
@@ -593,7 +761,7 @@ export function createFusionAuthStorage(): AuthStorage {
       }
 
       if (prop === "set") {
-        return (provider: string, credential: AuthCredential) => {
+        return (provider: string, credential: StoredCredential) => {
           target.set(provider, credential);
           clearReauthenticatedLogoutState(provider, (credential as StoredCredential | undefined)?.type);
         };
@@ -713,7 +881,7 @@ export function createFusionAuthStorage(): AuthStorage {
               FNXC:ProviderAuth 2026-07-01-12:34:
               Legacy Anthropic OAuth rows are subscription credentials, not raw API keys. Hydrate them into `anthropic-subscription` before refresh so status, usage, and banner clearing share the same provider id without overwriting a raw `anthropic` API-key credential.
               */
-              primary.set(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential as AuthCredential);
+              primary.set(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential as StoredCredential);
               loggedOutProviders.delete(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
             }
             return resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential);
@@ -742,5 +910,5 @@ export function createFusionAuthStorage(): AuthStorage {
 
       return Reflect.get(target, prop, receiver);
     },
-  }) as AuthStorage;
+  }) as FusionAuthStorage;
 }

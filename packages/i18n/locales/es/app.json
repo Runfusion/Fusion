@@ -1167,8 +1167,6 @@
     "retrying": "Reintentando…"
   },
   "backgroundTasks": {
-    "confirmMessage": "Esta sesión está activa en otra pestaña. ¿Abrir de todos modos?",
-    "confirmTitle": "Abrir sesión activa",
     "dismissButton": "Descartar",
     "pillLabel_one": "",
     "pillLabel_other": "",
@@ -1178,7 +1176,6 @@
     "pillTitleWithInput_other": "",
     "popoverHeader": "Tareas de fondo",
     "status": {
-      "activeElsewhere": "activo en otra pestaña",
       "failed": "Fallido",
       "generating": "generando...",
       "needsInput": "necesita entrada"
@@ -3193,7 +3190,6 @@
     "refinedScope": "Alcance refinado",
     "refineScope": "Refinar el alcance {{label}} con IA",
     "sendToBackground": "Enviar al fondo",
-    "sessionActiveAnotherTab": "La sesión está activa en otra pestaña.",
     "showThinking": "Mostrar pensamiento",
     "startInterview": "Iniciar entrevista",
     "targetLabel": {
@@ -3838,9 +3834,6 @@
     "selectGoal": "",
     "selectMissionToView": "Selecciona una misión para ver los detalles",
     "sendToBackground": "Enviar al fondo",
-    "sessionActiveAnother": "La sesión está activa en otra pestaña.",
-    "sessionActiveHeartbeat": "Esta sesión está activa en otra pestaña (pulso en vivo)",
-    "sessionActiveTab": "Esta sesión está activa en otra pestaña",
     "showDetails": "Mostrar detalles",
     "showMetadata": "Mostrar metadatos",
     "showThinking": "Mostrar pensamiento",
@@ -3886,8 +3879,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "Estructura",
-    "takeControl": "Tomar control",
-    "takingControl": "Tomando control...",
     "targetBranch": "Rama de destino",
     "targetBranchPlaceholder": "p. ej. main",
     "taskIdPlaceholder": "ID de tarea (p. ej., FN-001)",
@@ -4638,8 +4629,6 @@
     "remove": "Eliminar",
     "retryFailed": "El reintento falló. Por favor, inténtalo de nuevo.",
     "retrying": "Reintentando...",
-    "sessionActiveOtherTab": "Esta sesión está activa en otra pestaña",
-    "sessionActiveOtherTabLive": "Esta sesión está activa en otra pestaña (heartbeat activo)",
     "sessionFailed": "La sesión falló al contactar la IA.",
     "sessionFailed2": "Sesión fallida",
     "showArchived": "Mostrar archivadas",
@@ -4662,8 +4651,6 @@
     "subtaskTitle": "Título",
     "suggestedDependencies": "Dependencias sugeridas",
     "suggestedSize": "Tamaño sugerido",
-    "takeControl": "Tomar el control",
-    "takingControl": "Tomando el control...",
     "thinkingElapsed": "Pensando… ({{seconds}} s)",
     "title": "Modo de planificación",
     "tryAnExample": "Prueba un ejemplo:",
@@ -4673,7 +4660,8 @@
     "untitledSession": "Sesión sin título",
     "usingDefault": "Usar predeterminado",
     "whatToBuild": "¿Qué quieres construir?",
-    "whatToBuildPlaceholder": "p. ej., Crear un sistema de autenticación con inicio de sesión, registro y restablecimiento de contraseña..."
+    "whatToBuildPlaceholder": "p. ej., Crear un sistema de autenticación con inicio de sesión, registro y restablecimiento de contraseña...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "Agregar elemento",
@@ -5909,7 +5897,11 @@
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
       "translationTargetLanguageHelp": "",
-      "followDashboardLanguage": ""
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6354,7 +6346,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6645,7 +6640,21 @@
       "maxConcurrentTasksHint": "",
       "maxConcurrentVerifications": "",
       "maxConcurrentVerificationsHint": "",
-      "pollIntervalMsHint": ""
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": ""
     },
     "title": "Configuración",
     "worktrees": {
@@ -6706,7 +6715,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7294,14 +7304,9 @@
     "reviewSubtasksHint": "Edita títulos, descripciones, tamaños y dependencias antes de crear todas las tareas a la vez.",
     "sendToBackgroundAriaLabel": "Enviar a segundo plano",
     "sendToBackgroundTitle": "Enviar a segundo plano",
-    "sessionActiveAnotherTab": "La sesión está activa en otra pestaña.",
-    "sessionActiveAnotherTabLive": "Esta sesión está activa en otra pestaña (latido en directo)",
-    "sessionActiveAnotherTabTakeover": "Esta sesión está activa en otra pestaña",
     "showThinking": "Mostrar razonamiento",
     "sizeLabel": "Tamaño",
     "startingBreakdown": "",
-    "takeControl": "Tomar el control",
-    "takingControl": "Tomando el control...",
     "titleLabel": "Título",
     "untitled": "Sin título",
     "waitingForThinking": ""
@@ -8481,7 +8486,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "Configure la autenticación en Configuración para ver datos de uso.",

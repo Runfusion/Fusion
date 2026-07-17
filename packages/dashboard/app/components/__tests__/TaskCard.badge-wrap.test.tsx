@@ -146,7 +146,6 @@ function expectCssRuleNotToContain(section: string, selectorFragment: string, de
 }
 
 function expectHeaderActionsControlCenterline(container: HTMLElement, expected: {
-  sendBack?: boolean;
   menu?: boolean;
   size?: boolean;
 }) {
@@ -154,22 +153,8 @@ function expectHeaderActionsControlCenterline(container: HTMLElement, expected: 
   expect(actions).toBeTruthy();
   expect(getComputedStyle(actions).alignItems).toBe("center");
 
-  const sendBack = actions.querySelector(".card-send-back-btn") as HTMLElement | null;
   const menu = actions.querySelector(".card-menu-btn") as HTMLElement | null;
   const sizeBadge = actions.querySelector(".card-size-badge") as HTMLElement | null;
-
-  if (expected.sendBack) {
-    expect(sendBack).toBeTruthy();
-    const sendBackStyles = getComputedStyle(sendBack!);
-    expect(sendBackStyles.display).toBe("inline-flex");
-    expect(sendBackStyles.alignItems).toBe("center");
-    expect(sendBackStyles.lineHeight).toBe("1");
-    expect(sendBackStyles.minHeight).toBe("");
-    // Text+chevron Actions chip reads optically low vs ⋯ / size; tokenized 1px raise keeps the three on one centerline.
-    expect(sendBackStyles.transform).toMatch(/^translateY\(calc\(var\(--space-xs\) \/ -4\)\)$/);
-  } else {
-    expect(sendBack).toBeNull();
-  }
 
   if (expected.menu) {
     expect(menu).toBeTruthy();
@@ -321,7 +306,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expectSharedHeaderBaseline(sizedContainer);
   });
 
-  it("aligns an in-progress card id with Send back and size actions while badges are present", () => {
+  it("aligns an in-progress card id with three-dot and size actions while badges are present", () => {
     const { container: alignedContainer } = render(
       <TaskCard
         task={makeTask({
@@ -342,13 +327,12 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     const headerBadges = alignedContainer.querySelector(".card-header-badges") as HTMLElement;
     const actions = alignedContainer.querySelector(".card-header-actions") as HTMLElement;
     const sizeBadge = alignedContainer.querySelector(".card-size-badge") as HTMLElement;
-    const sendBack = alignedContainer.querySelector(".card-send-back") as HTMLElement;
 
     expect(headerBadges).toBeTruthy();
     expect(getComputedStyle(headerBadges).alignItems).toBe("center");
     expect(getComputedStyle(headerBadges).minHeight).toMatch(resolvedChipHeightPattern);
-    expect(sendBack).toBeTruthy();
-    expect(actions.contains(sendBack)).toBe(true);
+    expect(alignedContainer.querySelector(".card-send-back")).toBeNull();
+    expect(actions.querySelector(".card-menu-btn")).toBeTruthy();
     expect(actions.contains(sizeBadge)).toBe(true);
     expect(sizeBadge.closest(".card-header-badges")).toBeNull();
     expectSharedHeaderBaseline(alignedContainer);
@@ -384,7 +368,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expectSharedHeaderBaseline(triageContainer);
   });
 
-  it("keeps Send back, menu, and size controls on one header-actions centerline across card states", () => {
+  it("keeps three-dot menu and size controls on one header-actions centerline across card states", () => {
     const { container: inProgressContainer } = render(
       <TaskCard
         task={makeTask({
@@ -400,12 +384,12 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(inProgressContainer);
-    expectHeaderActionsControlCenterline(inProgressContainer, { sendBack: true, menu: true, size: true });
+    expectHeaderActionsControlCenterline(inProgressContainer, { menu: true, size: true });
 
     /*
      * FNXC:BoardCardActions 2026-07-16-02:24:
      * FN-8080 preserves the FN-8035 done-card contract: Archive/Revert live in the three-dot
-     * card-menu-btn TaskContextMenu, so header actions expose menu + size and no Send back chip.
+     * card-menu-btn TaskContextMenu, so header actions expose menu + size only.
      */
     const { container: doneContainer } = render(
       <TaskCard
@@ -473,7 +457,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     );
 
     expectSharedHeaderBaseline(sizeAbsentContainer);
-    expectHeaderActionsControlCenterline(sizeAbsentContainer, { sendBack: true, menu: true });
+    expectHeaderActionsControlCenterline(sizeAbsentContainer, { menu: true });
 
     const { container: awaitingInputContainer } = render(
       <TaskCard
@@ -492,7 +476,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
 
     expect(awaitingInputContainer.querySelector(".card-answer-questions-btn")).toBeTruthy();
     expectSharedHeaderBaseline(awaitingInputContainer);
-    expectHeaderActionsControlCenterline(awaitingInputContainer, { sendBack: true, menu: true, size: true });
+    expectHeaderActionsControlCenterline(awaitingInputContainer, { menu: true, size: true });
   });
 
   it("keeps the centered-id nudge and mobile header rhythm tokenized with the badge-wrap contract", () => {
@@ -516,7 +500,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(loadedCss).toContain("min-height: var(--card-chip-height-mobile);");
   });
 
-  it("locks the mobile Send back, menu, and size controls to one header-actions centerline", () => {
+  it("locks the mobile three-dot menu, size, and Promote controls to the card rhythm", () => {
     const mobileSection = getCssBlocks(loadedCss, "max-width: 768px").join("\n");
     const menuTouchSection = getCssBlocks(loadedCss, "max-height: 480px").join("\n");
 
@@ -526,11 +510,10 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expectCssRuleToContain(mobileSection, ".card-header-actions", "overflow: visible;");
     expectCssRuleToContain(mobileSection, ".card-header-actions", "align-items: center;");
     expectCssRuleToContain(mobileSection, ".card-header-actions", "gap: calc(var(--space-xs) / 2);");
-    // Task id and right cluster share the same locked mobile chip row so Actions/⋯/size sit on the FN-#### baseline.
+    // Task id and right cluster share the same locked mobile chip row so ⋯/size sit on the FN-#### baseline.
     expectCssRuleToContain(mobileSection, ".card-id", "height: var(--card-chip-height-mobile);");
     expectCssRuleToContain(mobileSection, ".card-id", "max-height: var(--card-chip-height-mobile);");
-    expectCssRuleToContain(mobileSection, ".card-send-back", "height: 100%;");
-    expectCssRuleToContain(mobileSection, ".card-send-back", "align-items: center;");
+    expect(mobileSection).not.toMatch(/\.card-send-back\s*\{/);
     expectCssRuleToContain(mobileSection, ".card-send-back-btn", "line-height: 1;");
     expectCssRuleToContain(mobileSection, ".card-send-back-btn", "transform: translateY(calc(var(--space-xs) / -4));");
     expectCssRuleToContain(mobileSection, ".card-menu-btn", "line-height: 1;");

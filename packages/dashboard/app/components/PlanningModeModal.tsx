@@ -35,6 +35,7 @@ import {
   updatePlanningSessionDraft,
   summarizePlanningDraftTitle,
   updateGlobalSettings,
+  fetchGlobalSettings,
   type PlanningSession,
   type SubtaskItem,
   type PlanningSubtaskDraft,
@@ -437,6 +438,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [planningThinkingLevel, setPlanningThinkingLevel] = useState<ThinkingLevel | "">("");
   const [planningDepth, setPlanningDepth] = useState<"small" | "medium" | "large">("medium");
   const [customQuestionCount, setCustomQuestionCount] = useState("");
+  const [clarificationEnabled, setClarificationEnabled] = useState(false);
+  const [clarificationSettingsLoading, setClarificationSettingsLoading] = useState(true);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -1096,6 +1099,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   }, [activePlanPrompt, addToast, t]);
 
   const handleStartPlanning = useCallback(async (planOverride?: string) => {
+    if (clarificationSettingsLoading) return;
     const plan = planOverride ?? initialPlan;
     const startedPlan = plan.trim();
     if (!startedPlan) return;
@@ -1132,6 +1136,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           customQuestionCount: Number.isInteger(parsedCustomQuestionCount)
             ? parsedCustomQuestionCount
             : undefined,
+          clarificationEnabled,
         },
         draftSessionId ?? undefined,
       );
@@ -1148,6 +1153,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       currentSessionIdRef.current = null;
     }
   }, [
+    clarificationEnabled,
+    clarificationSettingsLoading,
     connectToPlanningStream,
     customQuestionCount,
     initialPlan,
@@ -1158,6 +1165,18 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     projectId,
     resetPlanningAutoRetryBudget,
   ]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    setClarificationSettingsLoading(true);
+    void fetchGlobalSettings()
+      .then((settings) => { if (active) setClarificationEnabled(settings.agentClarificationEnabled === true); })
+      // Safe fallback keeps automatic/manual starts from unexpectedly pausing.
+      .catch(() => { if (active) setClarificationEnabled(false); })
+      .finally(() => { if (active) setClarificationSettingsLoading(false); });
+    return () => { active = false; };
+  }, [isOpen]);
 
   /*
   FNXC:PlanningFocus 2026-06-23-00:00:
@@ -1173,7 +1192,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   // Auto-start planning when initialPlan prop is provided
   useEffect(() => {
-    if (isOpen && initialPlanProp && !hasAutoStartedRef.current && view.type === "initial") {
+    if (isOpen && initialPlanProp && !clarificationSettingsLoading && !hasAutoStartedRef.current && view.type === "initial") {
       setInitialPlan(initialPlanProp);
       // Use a small timeout to allow state update to propagate before starting
       const timer = setTimeout(() => {
@@ -1199,7 +1218,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         setInitialPlan(persisted);
       }
     }
-  }, [isOpen, initialPlanProp, view.type, handleStartPlanning, projectId]);
+  }, [isOpen, initialPlanProp, clarificationSettingsLoading, view.type, handleStartPlanning, projectId]);
 
   // Load a specific persisted session into the right pane.
   const loadSession = useCallback(
@@ -2379,6 +2398,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   </div>
 
                     <div className="planning-advanced-section planning-depth-selector">
+                      <label className="checkbox-label" htmlFor="planning-clarification-enabled">
+                        <input id="planning-clarification-enabled" type="checkbox" checked={clarificationEnabled} disabled={clarificationSettingsLoading} onChange={(event) => setClarificationEnabled(event.target.checked)} />
+                        {t("planning.agentClarification", " Allow agent clarification questions")}
+                      </label>
                       <p className="planning-advanced-blurb">
                         {t("planning.depthBlurb", "Plan size sets default interview depth. Questions lets you override with an exact count.")}
                       </p>
@@ -2427,7 +2450,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 <button
                   className="btn btn-primary planning-start-btn"
                   onClick={() => handleStartPlanning()}
-                  disabled={!initialPlan.trim()}
+                  disabled={!initialPlan.trim() || clarificationSettingsLoading}
                 >
                   <Lightbulb size={16} className="icon-mr-8" />
                   {t("planning.startPlanning", "Start Planning")}

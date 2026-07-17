@@ -157,3 +157,32 @@ export async function flagSameAgentDuplicate(
   // without a redundant re-fetch.
   return sourceMetadataPatch;
 }
+
+
+/**
+ * FNXC:DuplicateIntake 2026-07-16-13:00:
+ * Issue #2225 keeps triage-marker duplicates visible for an operator decision. Reuse the
+ * near-duplicate metadata consumed by the existing linked banner/chip; never move or delete here.
+ * Reset a prior Keep acknowledgement so a later marker cannot leave the task blocked without its UI.
+ */
+export async function flagTriageDuplicate(
+  store: TaskStore,
+  taskId: string,
+  canonicalId: string,
+): Promise<Record<string, unknown>> {
+  const sourceMetadataPatch = {
+    nearDuplicateOf: canonicalId,
+    nearDuplicateScore: 1,
+    duplicateSource: "triage-marker",
+    nearDuplicateDismissed: false,
+  };
+  await store.logEntry(taskId, "Flagged as triage duplicate", `Duplicate marker points to ${canonicalId}; awaiting operator decision`);
+  await store.recordActivity({
+    type: "task:auto-archived-duplicate",
+    taskId,
+    details: "Flagged (not deleted) as triage-marker duplicate",
+    metadata: { canonicalTaskId: canonicalId, source: "triage-marker-flagged" },
+  });
+  await store.updateTask(taskId, { sourceMetadataPatch });
+  return sourceMetadataPatch;
+}

@@ -75,15 +75,6 @@ import type {
   DockerNodeStatus,
   ProjectNodePathMapping,
   ApprovalRequestStatus,
-  WorkflowFieldDefinition,
-  WorkflowFieldType,
-  WorkflowFieldOption,
-  WorkflowFieldRender,
-  WorkflowSettingDefinition,
-  WorkflowSettingType,
-  WorkflowSettingOption,
-  WorkflowSettingRender,
-  WorkflowSettingRejection,
   CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
 // Consumers import backfill report types from the legacy API barrel.
@@ -231,6 +222,79 @@ export {
   installUpdate,
 } from "./settings.js";
 export type { UpdateInstallResponse } from "./settings.js";
+
+/*
+ * FNXC:CodeOrganization 2026-07-16-20:00:
+ * Preserve legacy board/remote/memory imports while implementations live in satellites.
+ */
+export {
+  updateTaskCustomFields,
+  fetchBoardWorkflows,
+} from "./board-workflows.js";
+export type {
+  BoardWorkflowColumnFlags,
+  BoardWorkflowColumn,
+  BoardWorkflowDefinition,
+  BoardWorkflowsPayload,
+  CustomFieldRejection,
+  WorkflowFieldDefinition,
+  WorkflowFieldType,
+  WorkflowFieldOption,
+  WorkflowFieldRender,
+  WorkflowSettingDefinition,
+  WorkflowSettingType,
+  WorkflowSettingOption,
+  WorkflowSettingRender,
+  WorkflowSettingRejection,
+} from "./board-workflows.js";
+
+export {
+  fetchRemoteSettings,
+  updateRemoteSettings,
+  fetchRemoteStatus,
+  installCloudflared,
+  activateRemoteProvider,
+  startRemoteTunnel,
+  stopRemoteTunnel,
+  killExternalTunnel,
+  regenerateRemotePersistentToken,
+  generateShortLivedRemoteToken,
+  fetchRemoteUrl,
+  fetchRemoteQr,
+} from "./remote.js";
+export type {
+  RemoteSettings,
+  RemoteStatus,
+} from "./remote.js";
+
+export {
+  fetchMemory,
+  saveMemory,
+  fetchMemoryFiles,
+  fetchMemoryFile,
+  saveMemoryFile,
+  compactMemory,
+  triggerMemoryDreams,
+  fetchMemoryInsights,
+  saveMemoryInsights,
+  triggerInsightExtraction,
+  fetchMemoryAudit,
+  fetchMemoryStats,
+  fetchMemoryBackendStatus,
+  installQmd,
+  testMemoryRetrieval,
+} from "./memory.js";
+export type {
+  MemoryFileInfo,
+  MemoryAuditReport,
+  MemoryBackendCapabilities,
+  MemoryBackendStatus,
+  MemorySearchResult,
+  MemoryRetrievalTestResult,
+  QmdInstallResult,
+} from "./memory.js";
+import type { MemoryFileInfo } from "./memory.js";
+
 import { api, ApiRequestError, buildApiUrl, looksLikeHtml, proxyApi } from "./client.js";
 import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
@@ -256,484 +320,6 @@ export type {
   SkillFileContent,
 };
 
-/** Resolved trait flags for a board column (subset the client cares about). */
-export interface BoardWorkflowColumnFlags {
-  countsTowardWip?: boolean;
-  complete?: boolean;
-  archived?: boolean;
-  hiddenFromBoard?: boolean;
-  hold?: boolean;
-  intake?: boolean;
-  mergeBlocker?: boolean;
-  humanReview?: boolean;
-  [key: string]: boolean | undefined;
-}
-
-export interface BoardWorkflowColumn {
-  id: string;
-  name: string;
-  flags: BoardWorkflowColumnFlags;
-}
-
-// WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender
-// are re-exported from @fusion/core above (KTD-13/14).
-export type { WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender };
-
-// Workflow-settings (U6/KTD-1) declaration types re-exported from @fusion/core so
-// the WorkflowSettingsPanel imports them from `../api` like the field types.
-export type { WorkflowSettingDefinition, WorkflowSettingType, WorkflowSettingOption, WorkflowSettingRender, WorkflowSettingRejection };
-
-export interface BoardWorkflowDefinition {
-  id: string;
-  name: string;
-  /** Optional compact custom workflow icon; built-ins render the Fusion mark by id. */
-  icon?: string;
-  columns: BoardWorkflowColumn[];
-  /** Custom field definitions declared by this workflow (U13/KTD-14). Absent on
-   *  workflows with no fields, or from older servers. */
-  fields?: WorkflowFieldDefinition[];
-}
-
-export interface BoardWorkflowsPayload {
-  flagEnabled: boolean;
-  defaultWorkflowId: string;
-  workflows: BoardWorkflowDefinition[];
-  taskWorkflowIds: Record<string, string>;
-}
-
-/** A typed custom-field rejection surfaced by the PATCH endpoint (KTD-13). */
-export interface CustomFieldRejection {
-  code: "no-fields-defined" | "unknown-field" | "type-mismatch" | "enum-violation";
-  fieldId: string;
-  detail: string;
-}
-
-/**
- * Patch a task's custom field values (U13/KTD-14). The server validates the
- * patch against the task's workflow field schema and returns the updated task;
- * a validation failure surfaces as a 400 carrying `{ fieldId, code, detail }`.
- * A `null` value for a field deletes it.
- */
-export function updateTaskCustomFields(
-  id: string,
-  customFields: Record<string, unknown>,
-  projectId?: string,
-): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/custom-fields`, projectId), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ customFields }),
-  });
-}
-
-/** Fetch the multi-lane board metadata (U9). When the flag is OFF the server
- *  returns `{ flagEnabled: false }` and the board renders its legacy form. */
-export function fetchBoardWorkflows(projectId?: string, options?: FetchOptions): Promise<BoardWorkflowsPayload> {
-  const path = withProjectId("/tasks/board-workflows", projectId);
-  return dedupe(path, () => api<BoardWorkflowsPayload>(path), options);
-}
-
-
-export interface RemoteSettings {
-  remoteActiveProvider: "tailscale" | "cloudflare" | null;
-  remoteTailscaleEnabled: boolean;
-  remoteTailscaleHostname: string;
-  remoteTailscaleTargetPort: number;
-  remoteTailscaleAcceptRoutes: boolean;
-  remoteCloudflareEnabled: boolean;
-  remoteCloudflareQuickTunnel: boolean;
-  remoteCloudflareTunnelName: string;
-  remoteCloudflareTunnelToken: string | null;
-  remoteCloudflareIngressUrl: string;
-  remotePersistentToken: string | null;
-  remoteShortLivedEnabled: boolean;
-  remoteShortLivedTtlMs: number;
-  remoteShortLivedMaxTtlMs: number;
-  remoteRememberLastRunning: boolean;
-  remoteWasRunningOnShutdown: boolean;
-  remoteLastStartedProvider: "tailscale" | "cloudflare" | null;
-}
-
-export interface RemoteStatus {
-  provider: "tailscale" | "cloudflare" | null;
-  state: "stopped" | "starting" | "running" | "stopping" | "failed";
-  url: string | null;
-  lastError: string | null;
-  lastErrorCode?: string | null;
-  cloudflaredAvailable?: boolean | null;
-  externalTunnel?: {
-    provider: "tailscale" | "cloudflare";
-    url: string | null;
-  } | null;
-  restore?: {
-    outcome: "applied" | "skipped" | "failed";
-    reason: string;
-    at: string;
-    provider: "tailscale" | "cloudflare" | null;
-    message?: string;
-  };
-}
-
-export function fetchRemoteSettings(projectId?: string): Promise<{ settings: RemoteSettings }> {
-  return api<{ settings: RemoteSettings }>(withProjectId("/remote/settings", projectId));
-}
-
-export function updateRemoteSettings(
-  settings: Partial<RemoteSettings>,
-  projectId?: string,
-): Promise<{ settings: RemoteSettings }> {
-  return api<{ settings: RemoteSettings }>(withProjectId("/remote/settings", projectId), {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-export function fetchRemoteStatus(projectId?: string): Promise<RemoteStatus> {
-  return api<RemoteStatus>(withProjectId("/remote/status", projectId));
-}
-
-export function installCloudflared(projectId?: string): Promise<{ success: boolean; command: string; error?: string }> {
-  return api(withProjectId("/remote/install-cloudflared", projectId), {
-    method: "POST",
-  });
-}
-
-export function activateRemoteProvider(provider: "tailscale" | "cloudflare", projectId?: string): Promise<{ activeProvider: "tailscale" | "cloudflare" }> {
-  return api<{ activeProvider: "tailscale" | "cloudflare" }>(withProjectId("/remote/provider/activate", projectId), {
-    method: "POST",
-    body: JSON.stringify({ provider }),
-  });
-}
-
-export function startRemoteTunnel(projectId?: string): Promise<{ state: "starting" | "running"; provider: string }> {
-  return api<{ state: "starting" | "running"; provider: string }>(withProjectId("/remote/tunnel/start", projectId), {
-    method: "POST",
-  });
-}
-
-export function stopRemoteTunnel(projectId?: string): Promise<{ state: "stopped"; provider: string | null }> {
-  return api<{ state: "stopped"; provider: string | null }>(withProjectId("/remote/tunnel/stop", projectId), {
-    method: "POST",
-  });
-}
-
-export function killExternalTunnel(projectId?: string): Promise<{ ok: boolean }> {
-  return api<{ ok: boolean }>(withProjectId("/remote/tunnel/kill-external", projectId), {
-    method: "POST",
-  });
-}
-
-export function regenerateRemotePersistentToken(projectId?: string): Promise<{ token: string; maskedToken: string }> {
-  return api<{ token: string; maskedToken: string }>(withProjectId("/remote/token/persistent/regenerate", projectId), {
-    method: "POST",
-  });
-}
-
-export function generateShortLivedRemoteToken(ttlMs: number, projectId?: string): Promise<{ token: string; expiresAt: string; ttlMs: number }> {
-  return api<{ token: string; expiresAt: string; ttlMs: number }>(withProjectId("/remote/token/short-lived/generate", projectId), {
-    method: "POST",
-    body: JSON.stringify({ ttlMs }),
-  });
-}
-
-type RemoteAuthTokenType = "persistent" | "short-lived";
-
-type RemoteLinkRequestOptions = {
-  projectId?: string;
-  tokenType?: RemoteAuthTokenType;
-  ttlMs?: number;
-};
-
-function buildRemoteAuthQuery(
-  format: "text" | "image/svg" | null,
-  tokenType: RemoteAuthTokenType,
-  ttlMs?: number,
-): string {
-  const params = new URLSearchParams();
-  if (format) {
-    params.set("format", format);
-  }
-  params.set("tokenType", tokenType);
-  if (tokenType === "short-lived" && typeof ttlMs === "number" && Number.isFinite(ttlMs)) {
-    params.set("ttlMs", String(ttlMs));
-  }
-  const query = params.toString();
-  return query ? `?${query}` : "";
-}
-
-export function fetchRemoteUrl(
-  options: RemoteLinkRequestOptions = {},
-): Promise<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null }> {
-  const { projectId, tokenType = "persistent", ttlMs } = options;
-  const query = buildRemoteAuthQuery(null, tokenType, ttlMs);
-  return api<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null }>(withProjectId(`/remote/url${query}`, projectId));
-}
-
-export function fetchRemoteQr(
-  format: "text" | "image/svg" = "text",
-  options: RemoteLinkRequestOptions = {},
-): Promise<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null; format: "text" | "image/svg"; data?: string }> {
-  const { projectId, tokenType = "persistent", ttlMs } = options;
-  const query = buildRemoteAuthQuery(format, tokenType, ttlMs);
-  return api<{ url: string; tokenType: RemoteAuthTokenType; expiresAt: string | null; format: "text" | "image/svg"; data?: string }>(withProjectId(`/remote/qr${query}`, projectId));
-}
-
-export function fetchMemory(projectId?: string): Promise<{ content: string }> {
-  return api<{ content: string }>(withProjectId("/memory", projectId));
-}
-
-export function saveMemory(content: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/memory", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ content }),
-  });
-}
-
-export interface MemoryFileInfo {
-  path: string;
-  label: string;
-  layer: "long-term" | "daily" | "dreams";
-  size: number;
-  updatedAt: string;
-}
-
-export function fetchMemoryFiles(projectId?: string): Promise<{ files: MemoryFileInfo[] }> {
-  return api<{ files: MemoryFileInfo[] }>(withProjectId("/memory/files", projectId));
-}
-
-export function fetchMemoryFile(path: string, projectId?: string): Promise<{ path: string; content: string }> {
-  const query = `path=${encodeURIComponent(path)}`;
-  return api<{ path: string; content: string }>(withProjectId(`/memory/file?${query}`, projectId));
-}
-
-export function saveMemoryFile(path: string, content: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/memory/file", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ path, content }),
-  });
-}
-
-/**
- * Compact memory content using AI to distill it down to the most important insights.
- * Reads one memory file, compacts it via AI, and writes the result back.
- *
- * Backwards-compatible call patterns:
- * - compactMemory(projectId?)
- * - compactMemory(path, projectId?)
- *
- * @param pathOrProjectId - Memory file path or legacy projectId-only argument
- * @param projectId - Optional project ID for multi-project support
- * @returns Promise resolving to the compacted memory content
- */
-export function compactMemory(
-  pathOrProjectId?: string,
-  projectId?: string,
-): Promise<{ path?: string; content: string }> {
-  let path: string | undefined;
-  let effectiveProjectId = projectId;
-
-  if (projectId !== undefined) {
-    path = pathOrProjectId;
-  } else if (typeof pathOrProjectId === "string" && pathOrProjectId.trim().length > 0) {
-    const trimmed = pathOrProjectId.trim();
-    const looksLikeMemoryPath = trimmed.includes("/") || trimmed.endsWith(".md") || trimmed.startsWith(".");
-    if (looksLikeMemoryPath) {
-      path = trimmed;
-    } else {
-      effectiveProjectId = trimmed;
-    }
-  }
-
-  return api<{ path?: string; content: string }>(withProjectId("/memory/compact", effectiveProjectId), {
-    method: "POST",
-    body: JSON.stringify(path ? { path } : {}),
-  });
-}
-
-/**
- * Trigger manual memory dream processing.
- * Synthesizes daily notes into dreams and promotes durable lessons to long-term memory.
- *
- * @param projectId - Optional project ID for multi-project support
- * @returns Promise resolving to dream processing result
- */
-export function triggerMemoryDreams(projectId?: string): Promise<{
-  success: boolean;
-  summary?: string;
-  dreamsWritten?: boolean;
-  longTermUpdatesWritten?: boolean;
-  error?: string;
-}> {
-  return api(withProjectId("/memory/dream", projectId), {
-    method: "POST",
-  });
-}
-
-/** Memory audit report type (mirrors @fusion/core MemoryAuditReport) */
-export interface MemoryAuditReport {
-  generatedAt: string;
-  workingMemory: {
-    exists: boolean;
-    size: number;
-    sectionCount: number;
-    lastModified?: string;
-  };
-  insightsMemory: {
-    exists: boolean;
-    size: number;
-    insightCount: number;
-    categories: Record<string, number>;
-    lastUpdated?: string;
-  };
-  extraction: {
-    runAt: string;
-    success: boolean;
-    insightCount: number;
-    duplicateCount: number;
-    skippedCount: number;
-    summary: string;
-    error?: string;
-  };
-  pruning: {
-    applied: boolean;
-    reason: string;
-    sizeDelta: number;
-    originalSize: number;
-    newSize: number;
-  };
-  checks: Array<{
-    id: string;
-    name: string;
-    passed: boolean;
-    details: string;
-  }>;
-  health: "healthy" | "warning" | "issues";
-}
-
-/**
- * Fetch memory insights content.
- * Returns { content: string | null, exists: boolean }.
- * content is null when no insights file exists yet.
- */
-export function fetchMemoryInsights(projectId?: string): Promise<{ content: string | null; exists: boolean }> {
-  return api<{ content: string | null; exists: boolean }>(withProjectId("/memory/insights", projectId));
-}
-
-/**
- * Save memory insights content.
- * The insights file stores parsed long-term memory grouped by category.
- */
-export function saveMemoryInsights(content: string, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/memory/insights", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ content }),
-  });
-}
-
-/**
- * Trigger AI-powered insight extraction from working memory.
- * Reads working memory, generates insights via AI, merges/prunes existing insights,
- * and generates an audit report.
- *
- * Returns: { success: boolean, summary: string, insightCount: number, pruned: boolean }
- */
-export function triggerInsightExtraction(projectId?: string): Promise<{ success: boolean; summary: string; insightCount: number; pruned: boolean }> {
-  return api<{ success: boolean; summary: string; insightCount: number; pruned: boolean }>(withProjectId("/memory/extract", projectId), {
-    method: "POST",
-  });
-}
-
-/**
- * Fetch memory audit report.
- * The audit checks working memory and insights memory state, extraction history,
- * and generates health recommendations.
- */
-export function fetchMemoryAudit(projectId?: string): Promise<MemoryAuditReport> {
-  return api<MemoryAuditReport>(withProjectId("/memory/audit", projectId));
-}
-
-/**
- * Fetch quick memory stats (lightweight, no AI).
- * Useful for dashboard displays showing memory size and insight counts.
- *
- * Returns: { workingMemorySize: number, insightsSize: number, insightsExists: boolean }
- */
-export function fetchMemoryStats(projectId?: string): Promise<{ workingMemorySize: number; insightsSize: number; insightsExists: boolean }> {
-  return api<{ workingMemorySize: number; insightsSize: number; insightsExists: boolean }>(withProjectId("/memory/stats", projectId));
-}
-
-/**
- * Memory backend capabilities returned by the backend status API.
- */
-export interface MemoryBackendCapabilities {
-  readable: boolean;
-  writable: boolean;
-  supportsAtomicWrite: boolean;
-  hasConflictResolution: boolean;
-  persistent: boolean;
-}
-
-/**
- * Memory backend status response from GET /api/memory/backend
- */
-export interface MemoryBackendStatus {
-  /** The effective backend type after runtime resolution */
-  currentBackend: string;
-  /** Capabilities of the effective backend */
-  capabilities: MemoryBackendCapabilities;
-  /** List of registered backend types available */
-  availableBackends: string[];
-  /** Whether the qmd CLI is available on PATH */
-  qmdAvailable?: boolean;
-  /** Suggested install command when qmd is unavailable */
-  qmdInstallCommand?: string;
-}
-
-export interface MemorySearchResult {
-  path: string;
-  lineStart: number;
-  lineEnd: number;
-  snippet: string;
-  score: number;
-  backend: string;
-}
-
-export interface MemoryRetrievalTestResult {
-  query: string;
-  qmdAvailable: boolean;
-  usedFallback: boolean;
-  qmdInstallCommand: string;
-  results: MemorySearchResult[];
-}
-
-export interface QmdInstallResult {
-  success: boolean;
-  qmdAvailable: boolean;
-  qmdInstallCommand: string;
-}
-
-/**
- * Fetch the current memory backend status and capabilities.
- * Use this to determine which backend is active and what operations it supports.
- */
-export function fetchMemoryBackendStatus(projectId?: string): Promise<MemoryBackendStatus> {
-  return api<MemoryBackendStatus>(withProjectId("/memory/backend", projectId));
-}
-
-export function installQmd(projectId?: string): Promise<QmdInstallResult> {
-  return api<QmdInstallResult>(withProjectId("/memory/install-qmd", projectId), {
-    method: "POST",
-  });
-}
-
-export function testMemoryRetrieval(query: string, projectId?: string): Promise<MemoryRetrievalTestResult> {
-  return api<MemoryRetrievalTestResult>(withProjectId("/memory/test", projectId), {
-    method: "POST",
-    body: JSON.stringify({ query }),
-  });
-}
-
-/** Fetch global (user-level) settings from ~/.fusion/settings.json */
 export function fetchGlobalSettings(options?: FetchOptions): Promise<GlobalSettings> {
   return dedupe("/settings/global", () => api<GlobalSettings>("/settings/global"), options);
 }
@@ -3384,7 +2970,7 @@ export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string; thinkingLevel?: ThinkingLevel },
-  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number; clarificationEnabled?: boolean },
   existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
@@ -3396,6 +2982,7 @@ export function startPlanningStreaming(
       thinkingLevel: modelOverride?.thinkingLevel,
       planningDepth: planningOptions?.planningDepth,
       customQuestionCount: planningOptions?.customQuestionCount,
+      clarificationEnabled: planningOptions?.clarificationEnabled,
       ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });

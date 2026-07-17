@@ -847,6 +847,17 @@ export async function createTaskStoreForBackend(
       }`,
     );
   }
+  /*
+  FNXC:SettingsBackups 2026-07-16-16:00:
+  This is deliberately the sole store-open entry point for the coordinated backup
+  scope migration. The TaskStore now exposes the JSON GlobalSettingsStore while
+  the bound AsyncDataLayer provides central marker/lock access; schema bootstrap
+  has neither capability and must not attempt this cross-storage migration.
+  */
+  await (await import("../backup-settings-migration.js")).migrateBackupSettingsToGlobalOnce(
+    taskStore.getAsyncLayer(),
+    taskStore.getGlobalSettingsStore(),
+  );
   log.log(`startup phase backend.factory.total: ${Date.now() - factoryT0}ms`);
 
   /*

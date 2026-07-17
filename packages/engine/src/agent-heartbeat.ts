@@ -334,6 +334,16 @@ function resolveHeartbeatMultiplier(rawMultiplier: unknown): number {
   return rawMultiplier;
 }
 
+/**
+ * FNXC:AgentHeartbeat 2026-07-16-12:00:
+ * FN-8184 requires every heartbeat timing consumer to apply heartbeatMultiplier
+ * exactly once. Scheduler cadence, repair thresholds, and reports health must
+ * derive their interval through this shared calculation.
+ */
+function computeEffectiveIntervalMs(baseIntervalMs: number, multiplier: number): number {
+  return Math.max(1000, Math.round(baseIntervalMs * resolveHeartbeatMultiplier(multiplier)));
+}
+
 async function terminatePersistedHeartbeatRun(
   store: AgentStore,
   agentId: string,
@@ -656,6 +666,11 @@ export class HeartbeatMonitor {
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
+  /**
+   * FNXC:AgentHeartbeat 2026-07-16-12:00:
+   * FN-8184 keeps the last settings-derived multiplier warm for synchronous
+   * config resolution and reports-health so each applies it exactly once.
+   */
   private cachedHeartbeatMultiplier = 1;
   private cachedHeartbeatMultiplierAt = 0;
 
@@ -3513,6 +3528,7 @@ export class HeartbeatMonitor {
       return null;
     }
 
+    await this.warmHeartbeatMultiplierCache();
     const now = Date.now();
     const rows = await Promise.all(reports.map(async (report) => {
       const resolvedConfig = this.resolveAgentConfig(report.id);
@@ -3527,7 +3543,16 @@ export class HeartbeatMonitor {
           ? await storeWithReports.getAgent(report.id)
           : (this.configStore.getCachedAgent?.(report.id) ?? null);
         if (agent?.runtimeConfig && typeof agent.runtimeConfig.heartbeatIntervalMs === "number" && Number.isFinite(agent.runtimeConfig.heartbeatIntervalMs)) {
-          pollIntervalMs = Math.max(1000, agent.runtimeConfig.heartbeatIntervalMs);
+          /*
+           * FNXC:AgentHeartbeat 2026-07-16-12:00:
+           * FN-8184 keeps the runtimeConfig label while scaling its value once,
+           * so reports-health evaluates the timer's effective cadence rather
+           * than falsely marking multiplier-adjusted reports as stale.
+           */
+          pollIntervalMs = computeEffectiveIntervalMs(
+            Math.max(1000, agent.runtimeConfig.heartbeatIntervalMs),
+            this.getCachedHeartbeatMultiplier(),
+          );
           intervalSource = "runtimeConfig";
         }
       } catch (reportsHealthConfigErr) {
@@ -3810,10 +3835,17 @@ export class HeartbeatMonitor {
    * Used by both sync and async config resolvers so isAgentHealthy (sync) and
    * checkMissedHeartbeats (async) apply the same scaling.
    */
+  private getCachedHeartbeatMultiplier(): number {
+    return this.cachedHeartbeatMultiplierAt > 0 ? this.cachedHeartbeatMultiplier : 1;
+  }
+
+  private applyHeartbeatMultiplier(result: ResolvedHeartbeatConfig, multiplier: number): void {
+    result.pollIntervalMs = computeEffectiveIntervalMs(result.pollIntervalMs, multiplier);
+    result.heartbeatTimeoutMs = Math.max(5000, computeEffectiveIntervalMs(result.heartbeatTimeoutMs, multiplier));
+  }
+
   private applyCachedMultiplier(result: ResolvedHeartbeatConfig): void {
-    const multiplier = this.cachedHeartbeatMultiplierAt > 0 ? this.cachedHeartbeatMultiplier : 1;
-    result.pollIntervalMs = Math.max(1000, Math.round(result.pollIntervalMs * multiplier));
-    result.heartbeatTimeoutMs = Math.max(5000, Math.round(result.heartbeatTimeoutMs * multiplier));
+    this.applyHeartbeatMultiplier(result, this.getCachedHeartbeatMultiplier());
   }
 
   /**
@@ -3870,24 +3902,21 @@ export class HeartbeatMonitor {
       heartbeatLog.warn(`getAgentConfig(${agentId}) agent lookup failed: ${agentLookupErr instanceof Error ? agentLookupErr.message : String(agentLookupErr)} — using monitor defaults`);
     }
 
-    this.applyCachedMultiplier(result);
-
-    if (!this.taskStore) {
-      return result;
+    let multiplier = this.getCachedHeartbeatMultiplier();
+    if (this.taskStore) {
+      try {
+        const settings = await getHeartbeatMemorySettings(this.taskStore);
+        multiplier = resolveHeartbeatMultiplier(settings?.heartbeatMultiplier);
+        this.cachedHeartbeatMultiplier = multiplier;
+        this.cachedHeartbeatMultiplierAt = Date.now();
+      } catch (settingsErr) {
+        heartbeatLog.warn(`getAgentConfig(${agentId}) settings lookup failed: ${settingsErr instanceof Error ? settingsErr.message : String(settingsErr)} — using cached multiplier`);
+      }
     }
 
-    try {
-      const settings = await getHeartbeatMemorySettings(this.taskStore);
-      const multiplier = resolveHeartbeatMultiplier(settings?.heartbeatMultiplier);
-      this.cachedHeartbeatMultiplier = multiplier;
-      this.cachedHeartbeatMultiplierAt = Date.now();
-
-      result.pollIntervalMs = Math.max(1000, Math.round(result.pollIntervalMs * multiplier));
-      result.heartbeatTimeoutMs = Math.max(5000, Math.round(result.heartbeatTimeoutMs * multiplier));
-    } catch (settingsErr) {
-      heartbeatLog.warn(`getAgentConfig(${agentId}) settings lookup failed: ${settingsErr instanceof Error ? settingsErr.message : String(settingsErr)} — using base interval`);
-    }
-
+    // Apply the resolved multiplier only after settings lookup: applying the
+    // cache before this step used to double-scale task-store-backed configs.
+    this.applyHeartbeatMultiplier(result, multiplier);
     return result;
   }
 
@@ -4132,6 +4161,12 @@ export class HeartbeatTriggerScheduler {
   private timerAuditWatchdogHandle: ReturnType<typeof setInterval> | null = null;
   private lastAuditRanAtMs = 0;
   private nonAdvancingRearmState: Map<string, { lastHeartbeatAt: string | null; count: number }> = new Map();
+  /**
+   * FNXC:AgentHeartbeat 2026-07-16-12:00:
+   * FN-8184 caches the settings-derived multiplier for syncTimerForAgent,
+   * which cannot perform settings I/O but must share repair timing with audit.
+   */
+  private lastKnownHeartbeatMultiplier = 1;
 
   private static readonly TIMER_AUDIT_INTERVAL_MS = 60_000;
   private static readonly TIMER_AUDIT_WATCHDOG_INTERVAL_MS = 60_000;
@@ -4320,6 +4355,8 @@ export class HeartbeatTriggerScheduler {
       multiplier = 1;
     }
 
+    this.lastKnownHeartbeatMultiplier = multiplier;
+
     // Guard against stale async completions after subsequent register/unregister calls.
     if (this.registrationEpochs.get(agentId) !== expectedEpoch) {
       return;
@@ -4361,7 +4398,7 @@ export class HeartbeatTriggerScheduler {
     usingDefaultInterval: boolean,
     lastHeartbeatAt: string | null,
   ): void {
-    const effectiveIntervalMs = Math.max(1000, Math.round(baseIntervalMs * multiplier));
+    const effectiveIntervalMs = computeEffectiveIntervalMs(baseIntervalMs, multiplier);
     const initialDelayMs = HeartbeatTriggerScheduler.computeInitialDelayMs(
       effectiveIntervalMs,
       lastHeartbeatAt,
@@ -4822,14 +4859,23 @@ export class HeartbeatTriggerScheduler {
     return value;
   }
 
-  private getRepairStaleThresholdMs(agent: Agent, staleMultiplier: number): number {
+  private getRepairStaleThresholdMs(
+    agent: Agent,
+    staleMultiplier: number,
+    heartbeatMultiplier: number = this.lastKnownHeartbeatMultiplier,
+  ): number {
     const config = this.getAgentTimerConfig(agent);
     let rawIntervalMs = config.heartbeatIntervalMs;
     if (!rawIntervalMs || typeof rawIntervalMs !== "number" || !Number.isFinite(rawIntervalMs) || rawIntervalMs <= 0) {
       rawIntervalMs = HeartbeatTriggerScheduler.DEFAULT_HEARTBEAT_INTERVAL_MS;
     }
-    const intervalMs = Math.max(1000, Math.round(rawIntervalMs));
-    return Math.round(intervalMs * staleMultiplier);
+    /*
+     * FNXC:AgentHeartbeat 2026-07-16-12:00:
+     * FN-8184 prevents healthy long-cadence timers from false-positive
+     * zombie re-arms by measuring repair staleness from the same effective
+     * interval that arms the timer, then applying only staleMultiplier here.
+     */
+    return Math.round(computeEffectiveIntervalMs(rawIntervalMs, heartbeatMultiplier) * staleMultiplier);
   }
 
   private getActiveRunStaleThresholdMs(agent: Agent, staleMultiplier: number): number {
@@ -4914,6 +4960,7 @@ export class HeartbeatTriggerScheduler {
         ? await this.taskStore.getSettings()
         : null;
       const staleMultiplier = this.resolveRepairStaleMultiplier(settings);
+      this.lastKnownHeartbeatMultiplier = HeartbeatTriggerScheduler.resolveHeartbeatMultiplier(settings?.heartbeatMultiplier);
       this.updateErrorRecoveryLimit(settings);
       const agents = await this.store.listAgents();
       let rearmedCount = 0;
@@ -4946,7 +4993,11 @@ export class HeartbeatTriggerScheduler {
         }
 
         const hasTimerEntry = this.timers.has(agent.id);
-        const staleThresholdMs = this.getRepairStaleThresholdMs(agent, staleMultiplier);
+        const staleThresholdMs = this.getRepairStaleThresholdMs(
+          agent,
+          staleMultiplier,
+          this.lastKnownHeartbeatMultiplier,
+        );
         const elapsedMs = getHeartbeatAgeMs(agent);
         const staleAtRepair = Number.isFinite(elapsedMs) && elapsedMs > staleThresholdMs;
 

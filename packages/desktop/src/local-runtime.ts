@@ -216,7 +216,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
     const authStorage = createFusionAuthStorage();
     // FNXC:DesktopRuntime 2026-07-03-07:00: a ModelRegistry is required for the /api/models endpoint;
     // without it the onboarding model picker shows "no models" even with a provider connected.
-    const modelRegistry = createFusionModelRegistry(authStorage);
+    const modelRegistry = await createFusionModelRegistry(authStorage);
     strace("createDashboardServer: seedDashboardProviders");
     const { authStorage: wrappedAuthStorage, dispose } = await seedDashboardProviders({
       store: store as never,

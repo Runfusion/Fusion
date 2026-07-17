@@ -64,9 +64,10 @@ import {
   shouldUseHybridExecutor,
   setHostExtensionPaths,
   createFusionAuthStorage,
+  createFusionModelRegistry,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
-import { DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, createExtensionRuntime } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager, discoverAndLoadExtensions, createExtensionRuntime } from "@earendil-works/pi-coding-agent";
 import {
   getMergeStrategy,
   getTaskBranchName,
@@ -80,7 +81,7 @@ import { promptForPort } from "./port-prompt.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
-import { getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
+import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import {
   ensureClaudeSkillsForAllProjectsOnStartup,
@@ -1642,7 +1643,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   Dashboard status polling, model discovery, and execution-facing auth reads must share the engine auth store so expired Claude OAuth credentials refresh once and legacy Claude/Codex credentials keep working.
   */
   const authStorage = createFusionAuthStorage();
-  const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+  const modelRegistry = await createFusionModelRegistry(authStorage);
   registerBuiltInZaiProvider(modelRegistry, (message) => logSink.log(message, "extensions"));
   registerBuiltInGrokProvider(modelRegistry, (message) => logSink.log(message, "extensions"));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
@@ -1752,11 +1753,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => logSink.log(message, "extensions"));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => logSink.log(message, "extensions"));
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
-      registerCustomProviders(
+      await registerCustomProviders(
         modelRegistry,
         globalSettings.customProviders,
         (message) => logSink.log(message, "custom-providers"),
@@ -1770,7 +1771,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     const message = error instanceof Error ? error.message : String(error);
     logSink.log(`Failed to discover extensions: ${message}`, "extensions");
     createExtensionRuntime();
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
   }
 
   void syncStartupModels({
@@ -1792,12 +1793,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       return;
     }
 
-    reregisterCustomProviders(
+    void reregisterCustomProviders(
       modelRegistry,
       previousProviders,
       currentProviders,
       (message) => logSink.log(message, "custom-providers"),
-    );
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logSink.log(`Failed to refresh custom providers: ${message}`, "custom-providers");
+    });
   });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────

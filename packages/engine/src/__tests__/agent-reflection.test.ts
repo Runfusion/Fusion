@@ -588,26 +588,67 @@ describe("AgentReflectionService", () => {
       expect(reflection?.metrics.verificationScopeReason).toBeUndefined();
     });
 
-    it("aggregates workflow step rework cycles (RETHINK/rework) alongside recoveryRetryCount into retryReworkCount and durationDrivers", async () => {
+    it("aggregates backend-persisted workflow rework under the resolved definition run id", async () => {
       const { agentStore, taskStore, reflectionStore } = createMockDeps();
       taskStore.getTask.mockResolvedValue(makeTask({
         id: "FN-7528-rework",
         column: "done",
         recoveryRetryCount: 1,
       }));
-      taskStore.loadWorkflowRunStepInstances = vi.fn().mockReturnValue([
-        { taskId: "FN-7528-rework", runId: "FN-7528-rework:run", foreachNodeId: "n1", stepIndex: 0, reworkCount: 2 },
-        { taskId: "FN-7528-rework", runId: "FN-7528-rework:run", foreachNodeId: "n1", stepIndex: 1, reworkCount: 1 },
+      taskStore.getTaskWorkflowSelectionAsync = vi.fn().mockResolvedValue({
+        workflowId: "selected-workflow",
+        stepIds: [],
+      });
+      taskStore.getWorkflowDefinition = vi.fn().mockResolvedValue({ id: "resolved-definition" });
+      taskStore.loadWorkflowRunStepInstancesAsync = vi.fn().mockResolvedValue([
+        { taskId: "FN-7528-rework", runId: "FN-7528-rework:resolved-definition", foreachNodeId: "n1", stepIndex: 0, reworkCount: 2 },
+        { taskId: "FN-7528-rework", runId: "FN-7528-rework:resolved-definition", foreachNodeId: "n1", stepIndex: 1, reworkCount: 1 },
       ]);
 
       const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
       const reflection = await service.captureTaskPerformance("agent-1", "FN-7528-rework");
 
-      expect(taskStore.loadWorkflowRunStepInstances).toHaveBeenCalledWith("FN-7528-rework", "FN-7528-rework:run");
+      expect(taskStore.getWorkflowDefinition).toHaveBeenCalledWith("selected-workflow");
+      expect(taskStore.loadWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-7528-rework", "FN-7528-rework:resolved-definition");
+      expect(taskStore.loadWorkflowRunStepInstancesAsync).not.toHaveBeenCalledWith("FN-7528-rework", "FN-7528-rework:selected-workflow");
+      expect(taskStore.loadWorkflowRunStepInstancesAsync).not.toHaveBeenCalledWith("FN-7528-rework", "FN-7528-rework:run");
       // recoveryRetryCount(1) + workflowReworkCount(2+1=3) = 4
       expect(reflection?.metrics.retryReworkCount).toBe(4);
       expect(reflection?.metrics.durationDrivers).toContain("retries:1");
       expect(reflection?.metrics.durationDrivers).toContain("rework:3");
+    });
+
+    it("uses the synchronous step-instance fallback for legacy stores under the resolved run id", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({ id: "FN-7528-sync", column: "done" }));
+      taskStore.getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] });
+      taskStore.loadWorkflowRunStepInstances = vi.fn().mockReturnValue([
+        { taskId: "FN-7528-sync", runId: "FN-7528-sync:builtin:coding", foreachNodeId: "n1", stepIndex: 0, reworkCount: 2 },
+      ]);
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7528-sync");
+
+      expect(taskStore.loadWorkflowRunStepInstances).toHaveBeenCalledWith("FN-7528-sync", "FN-7528-sync:builtin:coding");
+      expect(reflection?.metrics.retryReworkCount).toBe(2);
+      expect(reflection?.metrics.durationDrivers).toContain("rework:2");
+    });
+
+    it("silently omits workflow rework when no selection or step-instance reader is available", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({
+        id: "FN-7528-degraded",
+        column: "done",
+        recoveryRetryCount: 1,
+      }));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7528-degraded");
+
+      expect(reflection).not.toBeNull();
+      expect(reflection?.metrics.retryReworkCount).toBe(1);
+      expect(reflection?.metrics.durationDrivers).toContain("retries:1");
+      expect(reflection?.metrics.durationDrivers).not.toContain("rework:0");
     });
 
     it("classifies a broad/whole-suite verification command as not file-scoped, with a reason", async () => {

@@ -12,8 +12,20 @@ import type {Task, MergeRequestWorkflowProjectionOptions, WorkflowWorkItem, Work
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
+import {and, eq, ne} from "drizzle-orm";
+import * as schema from "../postgres/schema/index.js";
 
-export function clearWorkflowRunBranchesImpl(store: TaskStore, taskId: string, keepRunId: string): void {
+export async function clearWorkflowRunBranchesImpl(store: TaskStore, taskId: string, keepRunId: string): Promise<void> {
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:15: backend mode previously
+    // swallowed the sync throw, so stale-run branch rows were never pruned on
+    // PostgreSQL.
+    if (store.backendMode) {
+      const table = schema.project.workflowRunBranches;
+      await store.asyncLayer!.db
+        .delete(table)
+        .where(and(eq(table.taskId, taskId), ne(table.runId, keepRunId)));
+      return;
+    }
     try {
       store.db
         .prepare(

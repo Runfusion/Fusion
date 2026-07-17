@@ -36,11 +36,11 @@ import {
   shouldUseHybridExecutor,
   setHostExtensionPaths,
   createFusionAuthStorage,
+  createFusionModelRegistry,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import {
   DefaultPackageManager,
-  ModelRegistry,
   SettingsManager,
   discoverAndLoadExtensions,
   createExtensionRuntime,
@@ -76,7 +76,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
-import { getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
+import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
@@ -569,7 +569,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const automationStore = primaryEngine.getAutomationStore();
 
   const authStorage = createFusionAuthStorage();
-  const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+  const modelRegistry = await createFusionModelRegistry(authStorage);
   registerBuiltInZaiProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   registerBuiltInGrokProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
@@ -688,11 +688,11 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
     mergeBuiltInGrokProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
-      registerCustomProviders(
+      await registerCustomProviders(
         modelRegistry,
         globalSettings.customProviders,
         (message) => console.log(`[custom-providers] ${message}`),
@@ -705,7 +705,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     const message = error instanceof Error ? error.message : String(error);
     console.log(`[extensions] Failed to discover extensions: ${message}`);
     createExtensionRuntime();
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
   }
 
   void syncStartupModels({
@@ -722,12 +722,15 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       return;
     }
 
-    reregisterCustomProviders(
+    void reregisterCustomProviders(
       modelRegistry,
       previousProviders,
       currentProviders,
       (message) => console.log(`[custom-providers] ${message}`),
-    );
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[custom-providers] Failed to refresh custom providers: ${message}`);
+    });
   });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────

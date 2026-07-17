@@ -2,9 +2,18 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
 import { readCustomProviders } from "../custom-providers.js";
+
+async function createInMemoryModelRegistry(): Promise<ModelRegistry> {
+  const runtime = await ModelRuntime.create({
+    credentials: { read: async () => undefined, list: async () => [], modify: async (_id, fn) => fn(undefined), delete: async () => undefined },
+    modelsPath: null,
+    allowModelNetwork: false,
+  });
+  return new ModelRegistry(runtime);
+}
 
 describe("custom providers openai-responses regression", () => {
   let homeDir: string;
@@ -39,8 +48,7 @@ describe("custom providers openai-responses regression", () => {
     const loadedProviders = readCustomProviders(homeDir);
     expect(loadedProviders).toEqual(providers);
 
-    const authStorage = AuthStorage.inMemory();
-    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const modelRegistry = await createInMemoryModelRegistry();
 
     const provider = loadedProviders[0]!;
     modelRegistry.registerProvider(customProviderRegistryKey(provider, loadedProviders), {
@@ -57,7 +65,7 @@ describe("custom providers openai-responses regression", () => {
         maxTokens: 16384,
       }],
     });
-    modelRegistry.refresh();
+    await modelRegistry.refresh();
 
     expect(modelRegistry.find("myapi", "gpt-5.4")).toBeDefined();
   });

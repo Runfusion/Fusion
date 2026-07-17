@@ -86,7 +86,7 @@ vi.mock("../custom-providers.js", () => ({
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: () => ({
       setFallbackResolver: setFallbackResolverMock,
     }),

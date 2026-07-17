@@ -1,12 +1,10 @@
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
-import { createFusionAuthStorage } from "@fusion/engine";
+import { createFusionAuthStorage, createFusionModelRegistry } from "@fusion/engine";
 import { resolveProject } from "../project-context.js";
 import { runInit } from "./init.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
-import { getModelRegistryModelsPath } from "./auth-paths.js";
 
 export interface OnboardOptions {
   force?: boolean;
@@ -180,7 +178,7 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
     }
 
     const authStorage = createFusionAuthStorage();
-    const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+    const modelRegistry = await createFusionModelRegistry(authStorage);
     const providerAuth = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
     await runSkippableStep(prompts, "AI provider setup", async () => {

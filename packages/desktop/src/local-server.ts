@@ -110,7 +110,7 @@ export class DesktopLocalServerManager {
        * authStorage to createServer, not the raw one.
        */
       const authStorage = createFusionAuthStorage();
-      const modelRegistry = createFusionModelRegistry(authStorage);
+      const modelRegistry = await createFusionModelRegistry(authStorage);
       const { authStorage: wrappedAuthStorage, dispose } = await seedDashboardProviders({
         store: store as never,
         authStorage,

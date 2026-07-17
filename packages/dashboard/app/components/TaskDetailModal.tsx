@@ -69,6 +69,7 @@ import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inR
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
+import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
@@ -761,14 +762,8 @@ export function TaskDetailContent({
   const openPromptFile = useCallback(() => {
     fileBrowser?.openFile(`.fusion/tasks/${workingTask.id}/PROMPT.md`, { workspace: "project" });
   }, [fileBrowser, workingTask.id]);
-  const canRetryTask =
-    task.status === "failed" ||
-    task.status === "stuck-killed" ||
-    task.status === "planning" ||
-    task.status === "needs-replan" ||
-    (task.stuckKillCount ?? 0) > 0 ||
-    (task.recoveryRetryCount ?? 0) > 0 ||
-    Boolean(task.nextRecoveryAt);
+  const hasPendingRecovery = hasPendingAutomaticRecovery(task);
+  const canRetryTask = isTaskManuallyRetryable(task);
   const nearDuplicateOf = isStringValue(workingTask.sourceMetadata?.nearDuplicateOf)
     ? workingTask.sourceMetadata.nearDuplicateOf
     : null;
@@ -780,6 +775,8 @@ export function TaskDetailContent({
    * The Archive/Keep decision banner is actionable only while the referenced canonical exists and is active.
    * Suppress the whole affordance for missing, archived, done, or soft-deleted canonicals so no empty banner shell or stale user-decision buttons remain.
    */
+  // FNXC:DuplicateIntake 2026-07-16-13:00: Issue #2225 reuses this linked banner for triage-marker Keep/Delete decisions.
+  const isTriageMarkerDuplicate = workingTask.sourceMetadata?.duplicateSource === "triage-marker";
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
@@ -2733,6 +2730,30 @@ export function TaskDetailContent({
   }, [onArchiveTask, confirm, task.id, nearDuplicateOf, addToast, requestClose]);
 
   /*
+   * FNXC:DuplicateIntake 2026-07-16-14:00:
+   * Issue #2225 requires triage-marker duplicates to offer a real Keep/Delete decision.
+   * Unlike the ordinary near-duplicate Archive action, Delete calls the existing soft-delete
+   * API and clears incoming lineage references so the confirmed duplicate is actually removed.
+   */
+  const handleDeleteTriageDuplicate = useCallback(async () => {
+    const confirmed = await confirm({
+      title: t("taskDetail.nearDuplicate.deleteTitle", "Delete duplicate task"),
+      message: t("taskDetail.nearDuplicate.deleteMessage", "Delete {{id}} as a duplicate of {{duplicateOf}}?", { id: task.id, duplicateOf: nearDuplicateOf }),
+      confirmLabel: t("taskDetail.nearDuplicate.deleteConfirm", "Delete"),
+      cancelLabel: t("common.cancel", "Cancel"),
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await onDeleteTask(task.id, { removeLineageReferences: true });
+      addToast(t("taskDetail.nearDuplicate.deleted", "Deleted {{id}}", { id: task.id }), "success");
+      requestClose();
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [onDeleteTask, confirm, task.id, nearDuplicateOf, addToast, requestClose]);
+
+  /*
   FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
   Detail-view Revert action, mirroring TaskCard's `handleRevertClick`: calls the
   API in "auto" mode, surfaces a clean-git success toast with the revert commit
@@ -3390,7 +3411,7 @@ export function TaskDetailContent({
   independently of the Raw Logs segment because FN-7995 persists bounded `tool_error`
   detail there; the Raw-Logs-gated display list is not a diagnostic data source.
   */
-  const shouldShowTaskFailureAlert = Boolean(task.status === "failed" && !isPlannerChatExpanded);
+  const shouldShowTaskFailureAlert = Boolean(task.status === "failed" && !hasPendingRecovery && !isPlannerChatExpanded);
   const taskFailureReason = task.error?.trim() || t("taskDetail.error.genericFailureReason", "The task failed before it could complete.");
   const taskFailureToolDetail = useMemo(() => {
     const lastToolError = [...agentLogEntries].reverse().find((entry) => entry.type === "tool_error" && entry.detail?.trim());
@@ -4098,14 +4119,20 @@ export function TaskDetailContent({
                     >
                       {nearDuplicateOf}
                     </button>
-                    {". "}{t("taskDetail.nearDuplicate.actions", "Choose Archive to move this task to archived, or Keep to continue with this task.")}
+                    {". "}{isTriageMarkerDuplicate
+                      ? t("taskDetail.nearDuplicate.triageActions", "Choose Delete to remove this duplicate, or Keep to continue anyway.")
+                      : t("taskDetail.nearDuplicate.actions", "Choose Archive to move this task to archived, or Keep to continue with this task.")}
                   </p>
                   <div className="detail-near-duplicate-banner__actions">
-                    {onArchiveTask && (
+                    {isTriageMarkerDuplicate ? (
+                      <button type="button" className="btn btn-danger btn-sm" onClick={() => void handleDeleteTriageDuplicate()}>
+                        {t("taskDetail.nearDuplicate.deleteBtn", "Delete")}
+                      </button>
+                    ) : onArchiveTask ? (
                       <button type="button" className="btn btn-danger btn-sm" onClick={() => void handleArchiveNearDuplicate()}>
                         {t("taskDetail.nearDuplicate.archiveBtn", "Archive")}
                       </button>
-                    )}
+                    ) : null}
                     <button type="button" className="btn btn-sm" onClick={() => void handleDismissNearDuplicate()}>
                       {t("taskDetail.nearDuplicate.keepBtn", "Keep")}
                     </button>

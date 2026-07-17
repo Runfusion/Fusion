@@ -583,7 +583,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   router.put("/settings", async (req, res) => {
     try {
-      const { store: scopedStore, engine } = await getProjectContext(req);
+      const { store: scopedStore } = await getProjectContext(req);
       // Strip server-owned fields that should never be persisted to config.json.
       // These are computed server-side and injected only on GET /settings.
        
@@ -613,16 +613,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         clientSettings.overlapIgnorePaths = sanitizeOverlapIgnorePaths(clientSettings.overlapIgnorePaths);
       }
 
-      // Validate backup settings if provided
-      if (clientSettings.autoBackupSchedule !== undefined && !validateBackupSchedule(clientSettings.autoBackupSchedule)) {
-        throw badRequest("Invalid cron expression for autoBackupSchedule");
-      }
-      if (clientSettings.autoBackupRetention !== undefined && !validateBackupRetention(clientSettings.autoBackupRetention)) {
-        throw badRequest("autoBackupRetention must be between 1 and 100");
-      }
-      if (clientSettings.autoBackupDir !== undefined && !validateBackupDir(clientSettings.autoBackupDir)) {
-        throw badRequest("autoBackupDir must be a relative path without '..' traversal");
-      }
       if (clientSettings.autoArchiveDoneAfterMs !== undefined) {
         const ageMs = clientSettings.autoArchiveDoneAfterMs;
         if (!Number.isInteger(ageMs) || ageMs < 60_000 || ageMs > 10 * 365 * 24 * 60 * 60 * 1000) {
@@ -746,19 +736,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       }
 
       const settings = await scopedStore.updateSettings(clientSettings);
-      
-      // Sync backup routine when backup settings change.
-      const routineStoreForProject = engine?.getRoutineStore() ?? options?.routineStore;
-      if (routineStoreForProject) {
-        try {
-          await syncBackupRoutine(routineStoreForProject, settings);
-        } catch (err) {
-          // Log but don't fail the settings update if routine sync fails
-          runtimeLogger.error("Failed to sync backup routine", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
       
       res.json(settings);
     } catch (err: unknown) {
@@ -1945,6 +1922,16 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         // Best-effort: on read failure assume false so a flip-on still fires.
       }
 
+      const globalPatch = req.body as Record<string, unknown>;
+      if (globalPatch.autoBackupSchedule !== undefined && (typeof globalPatch.autoBackupSchedule !== "string" || !validateBackupSchedule(globalPatch.autoBackupSchedule))) {
+        throw badRequest("Invalid cron expression for autoBackupSchedule");
+      }
+      if (globalPatch.autoBackupRetention !== undefined && (typeof globalPatch.autoBackupRetention !== "number" || !validateBackupRetention(globalPatch.autoBackupRetention))) {
+        throw badRequest("autoBackupRetention must be between 1 and 100");
+      }
+      if (globalPatch.autoBackupDir !== undefined && (typeof globalPatch.autoBackupDir !== "string" || !validateBackupDir(globalPatch.autoBackupDir))) {
+        throw badRequest("autoBackupDir must be a relative path without '..' traversal");
+      }
       const settings = await store.updateGlobalSettings(req.body);
       // Invalidate global settings caches in all project-scoped stores so the
       // next GET /settings?projectId=xxx reads fresh values from disk rather
@@ -1957,6 +1944,12 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         for (const engine of engineManager.getAllEngines().values()) {
           engine.getTaskStore().getGlobalSettingsStore().invalidateCache();
         }
+      }
+
+      /* FNXC:SettingsBackups 2026-07-16-14:45: global writes own the single shared-cluster backup routine; project writes must not create competing schedules. */
+      const backupRoutineStore = options?.engineManager?.getAllEngines().values().next().value?.getRoutineStore?.() ?? options?.routineStore;
+      if (backupRoutineStore) {
+        await syncBackupRoutine(backupRoutineStore, await store.getSettings());
       }
 
       // Fire the toggle hook only on an actual transition — avoids redundant

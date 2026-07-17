@@ -95,6 +95,7 @@ vi.mock("../../api", () => ({
   rejectPlan: (...args: any[]) => mockRejectPlan(...args),
   refineTask: (...args: any[]) => mockRefineTask(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  fetchGlobalSettings: vi.fn().mockResolvedValue({ agentClarificationEnabled: false }),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   refineText: vi.fn(),
@@ -286,6 +287,7 @@ describe("PlanningModeModal", () => {
         await waitFor(() => {
           expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from handoff", undefined, undefined, {
             planningDepth: "medium",
+            clarificationEnabled: false,
             customQuestionCount: undefined,
           }, undefined);
         });
@@ -520,7 +522,7 @@ describe("PlanningModeModal", () => {
       expect(screen.queryByLabelText("Send to background")).toBeNull();
     });
 
-    it("enables start button when text is entered", () => {
+    it("enables start button when text is entered", async () => {
       render(
         <PlanningModeModal
           isOpen={true}
@@ -534,7 +536,9 @@ describe("PlanningModeModal", () => {
       const startButton = screen.getByText("Start Planning");
       expect(startButton.closest("button")?.hasAttribute("disabled")).toBe(true);
 
+      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(textarea, { target: { value: "Test plan" } });
 
       expect(startButton.closest("button")?.hasAttribute("disabled")).toBe(false);
@@ -631,6 +635,7 @@ describe("PlanningModeModal", () => {
           planningModelId: "claude-sonnet-4-5",
         }, {
           planningDepth: "medium",
+          clarificationEnabled: false,
           customQuestionCount: undefined,
         }, undefined);
       });
@@ -685,6 +690,7 @@ describe("PlanningModeModal", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.click(screen.getByRole("button", { name: "Large" }));
       fireEvent.change(screen.getByLabelText("Questions"), { target: { value: "7" } });
       fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
@@ -695,6 +701,7 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
           planningDepth: "large",
+          clarificationEnabled: false,
           customQuestionCount: 7,
         }, undefined);
       });
@@ -711,13 +718,16 @@ describe("PlanningModeModal", () => {
         />
       );
 
+      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(textarea, { target: { value: "Build auth system" } });
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
           planningDepth: "medium",
+          clarificationEnabled: false,
           customQuestionCount: undefined,
         }, undefined);
       });
@@ -774,6 +784,7 @@ describe("PlanningModeModal", () => {
         undefined,
         {
           planningDepth: "medium",
+          clarificationEnabled: false,
           customQuestionCount: undefined,
         },
         "draft-123",
@@ -860,6 +871,7 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined, {
           planningDepth: "medium",
+          clarificationEnabled: false,
           customQuestionCount: undefined,
         }, undefined);
       }, { timeout: 2000 });
@@ -886,6 +898,7 @@ describe("PlanningModeModal", () => {
       await waitFor(() => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined, {
           planningDepth: "medium",
+          clarificationEnabled: false,
           customQuestionCount: undefined,
         }, undefined);
       }, { timeout: 2000 });
@@ -913,6 +926,8 @@ describe("PlanningModeModal", () => {
         />,
       );
 
+      fireEvent.click(screen.getByRole("button", { name: "Advanced planning settings" }));
+      await waitFor(() => expect(document.querySelector("#planning-clarification-enabled")).not.toBeDisabled());
       fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
         target: { value: "Draft a migration plan" },
       });

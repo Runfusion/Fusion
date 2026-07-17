@@ -16,6 +16,7 @@ const PROJECT_KEY_SET = new Set<string>(PROJECT_SETTINGS_KEYS as readonly string
 const EXPECTED_KEY_OWNING_SECTIONS: Record<string, "global" | "project"> = {
   // global sections (reused from GLOBAL_SECTION_KEYS in save-split.ts)
   appearance: "global",
+  "backups-global": "global",
   notifications: "global",
   experimental: "global",
   "global-general": "global",

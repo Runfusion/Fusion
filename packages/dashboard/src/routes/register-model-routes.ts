@@ -253,7 +253,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
     }
 
     try {
-      options.modelRegistry.refresh();
+      await options.modelRegistry.refresh();
       if (options.modelRegistry.registerProvider) {
         mergeSupplementalAnthropicModels(options.modelRegistry as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
         /*

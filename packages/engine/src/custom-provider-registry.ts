@@ -26,7 +26,7 @@ interface ModelRegistryLike {
       };
     }>;
   }) => void;
-  refresh: () => void;
+  refresh: () => Promise<void>;
 }
 
 /*
@@ -121,11 +121,11 @@ function providersDiffer(previous: CustomProvider, current: CustomProvider): boo
   return JSON.stringify(toProviderConfig(previous)) !== JSON.stringify(toProviderConfig(current));
 }
 
-export function registerCustomProviders(
+export async function registerCustomProviders(
   modelRegistry: ModelRegistryLike,
   customProviders: CustomProvider[] | undefined,
   logFn: (message: string) => void,
-): void {
+): Promise<void> {
   const providers = customProviders ?? [];
   for (const provider of providers) {
     const registryKey = customProviderRegistryKey(provider, providers);
@@ -138,15 +138,15 @@ export function registerCustomProviders(
     }
   }
 
-  modelRegistry.refresh();
+  await modelRegistry.refresh();
 }
 
-export function reregisterCustomProviders(
+export async function reregisterCustomProviders(
   modelRegistry: ModelRegistryLike,
   previousProviders: CustomProvider[] | undefined,
   currentProviders: CustomProvider[] | undefined,
   logFn: (message: string) => void,
-): void {
+): Promise<void> {
   const previousById = new Map((previousProviders ?? []).map((provider) => [provider.id, provider]));
   const providers = currentProviders ?? [];
 
@@ -166,5 +166,5 @@ export function reregisterCustomProviders(
     }
   }
 
-  modelRegistry.refresh();
+  await modelRegistry.refresh();
 }

@@ -109,6 +109,10 @@ export const COLOR_THEMES = [
   "lavender",
   "neon-bloom",
   "sepia",
+  // FNXC:DashboardTheming 2026-07-16-00:00: FN-8151 adds Cobalt, Clay, and Moss; keep the core union, selector metadata, both bootstrap validators, token blocks, and swatch classes in this exact order.
+  "cobalt",
+  "clay",
+  "moss",
   "shadcn",
   // FNXC:DashboardTheming 2026-06-30-00:00: Shadcn Ember is the default for unset installs; keep it adjacent to the shadcn base so dashboard options and bootstrap validators preserve published theme order while explicit legacy ids remain valid.
   "shadcn-ember",

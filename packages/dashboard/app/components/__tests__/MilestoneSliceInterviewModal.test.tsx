@@ -931,6 +931,43 @@ describe("MilestoneSliceInterviewModal", () => {
       });
     });
 
+    /*
+    FNXC:PlanningMultiTab 2026-07-16-17:35:
+    A legacy persisted lock holder must never gate either milestone or slice interview resumption.
+    The multi-tab contract opens the shared session directly without a Take Control affordance.
+    */
+    it.each([
+      ["milestone", "MS-001", "Test Milestone", "milestone_interview"],
+      ["slice", "SL-001", "Test Slice", "slice_interview"],
+    ] as const)("resumes a legacy other-tab-owned %s session without a lock affordance", async (targetType, targetId, targetTitle, type) => {
+      mockFetchAiSession.mockResolvedValue({
+        ...mockSessionAwaitingInput,
+        type,
+        lockedByTab: "tab-other",
+        lockedAt: new Date().toISOString(),
+      });
+      mockAcquireSessionLock.mockResolvedValue({ acquired: false, currentHolder: "tab-other" });
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={vi.fn()}
+          targetType={targetType}
+          targetId={targetId}
+          targetTitle={targetTitle}
+          projectId="test-project"
+          resumeSessionId="session-resume-123"
+        />,
+      );
+
+      expect(await screen.findByText("What is the target scope?")).toBeDefined();
+      expect(screen.queryByRole("button", { name: /take control/i })).toBeNull();
+      expect(screen.queryByText(/active in another tab|live heartbeat/i)).toBeNull();
+      expect(mockAcquireSessionLock).not.toHaveBeenCalled();
+      expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
+    });
+
     it("reconnects to stream for generating session when resumeSessionId is provided", async () => {
       mockFetchAiSession.mockResolvedValue(mockSessionGenerating);
 

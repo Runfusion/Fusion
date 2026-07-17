@@ -1167,8 +1167,6 @@
     "retrying": "重試中…"
   },
   "backgroundTasks": {
-    "confirmMessage": "此工作階段在另一個標籤頁中處於活躍狀態。仍然開啟?",
-    "confirmTitle": "開啟活躍工作階段",
     "dismissButton": "關閉",
     "pillLabel_one": "",
     "pillLabel_other": "",
@@ -1178,7 +1176,6 @@
     "pillTitleWithInput_other": "",
     "popoverHeader": "背景任務",
     "status": {
-      "activeElsewhere": "在另一個標籤頁中活躍",
       "failed": "失敗",
       "generating": "生成中...",
       "needsInput": "需要輸入"
@@ -3193,7 +3190,6 @@
     "refinedScope": "精煉範圍",
     "refineScope": "用AI精煉{{label}}範圍",
     "sendToBackground": "傳送到背景",
-    "sessionActiveAnotherTab": "工作階段在另一個標籤頁中處於活躍狀態。",
     "showThinking": "顯示思考",
     "startInterview": "開始面試",
     "targetLabel": {
@@ -3838,9 +3834,6 @@
     "selectGoal": "",
     "selectMissionToView": "選擇一個任務以查看詳情",
     "sendToBackground": "傳送到背景",
-    "sessionActiveAnother": "工作階段在另一個分頁中處於活躍狀態。",
-    "sessionActiveHeartbeat": "此工作階段在另一個分頁中處於活躍狀態（即時心跳）",
-    "sessionActiveTab": "此工作階段在另一個分頁中處於活躍狀態",
     "showDetails": "顯示詳情",
     "showMetadata": "顯示中繼資料",
     "showThinking": "顯示思考",
@@ -3886,8 +3879,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "結構",
-    "takeControl": "接管",
-    "takingControl": "正在接管...",
     "targetBranch": "目標分支",
     "targetBranchPlaceholder": "例如 main",
     "taskIdPlaceholder": "任務 ID（例如 FN-001）",
@@ -4638,8 +4629,6 @@
     "remove": "移除",
     "retryFailed": "重試失敗，請再試一次。",
     "retrying": "重試中…",
-    "sessionActiveOtherTab": "此工作階段在另一個分頁中處於活動狀態",
-    "sessionActiveOtherTabLive": "此工作階段在另一個分頁中處於活動狀態（即時心跳）",
     "sessionFailed": "聯絡 AI 時工作階段失敗。",
     "sessionFailed2": "工作階段失敗",
     "showArchived": "顯示已封存",
@@ -4662,8 +4651,6 @@
     "subtaskTitle": "標題",
     "suggestedDependencies": "建議依賴項目",
     "suggestedSize": "建議規模",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制…",
     "thinkingElapsed": "思考中…（{{seconds}} 秒）",
     "title": "規劃模式",
     "tryAnExample": "試試範例：",
@@ -4673,7 +4660,8 @@
     "untitledSession": "未命名工作階段",
     "usingDefault": "使用預設",
     "whatToBuild": "您想建構什麼？",
-    "whatToBuildPlaceholder": "例如，建構一個包含登入、註冊和密碼重設的使用者驗證系統..."
+    "whatToBuildPlaceholder": "例如，建構一個包含登入、註冊和密碼重設的使用者驗證系統...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "新增項目",
@@ -5909,7 +5897,11 @@
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
       "translationTargetLanguageHelp": "",
-      "followDashboardLanguage": ""
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6354,7 +6346,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6645,7 +6640,21 @@
       "maxConcurrentTasksHint": "",
       "maxConcurrentVerifications": "",
       "maxConcurrentVerificationsHint": "",
-      "pollIntervalMsHint": ""
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": ""
     },
     "title": "設定",
     "worktrees": {
@@ -6706,7 +6715,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7294,14 +7304,9 @@
     "reviewSubtasksHint": "在一次性建立所有任務之前，編輯標題、描述、大小和相依關係。",
     "sendToBackgroundAriaLabel": "傳送至背景",
     "sendToBackgroundTitle": "傳送至背景",
-    "sessionActiveAnotherTab": "工作階段正在另一個索引標籤中執行。",
-    "sessionActiveAnotherTabLive": "此工作階段正在另一個索引標籤中執行（即時心跳）",
-    "sessionActiveAnotherTabTakeover": "此工作階段正在另一個索引標籤中執行",
     "showThinking": "顯示思考過程",
     "sizeLabel": "規模",
     "startingBreakdown": "",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制...",
     "titleLabel": "標題",
     "untitled": "無標題",
     "waitingForThinking": ""
@@ -8481,7 +8486,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "在設定中設定身份驗證以查看使用數據。",

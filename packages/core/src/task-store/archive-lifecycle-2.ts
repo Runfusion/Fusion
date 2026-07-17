@@ -22,7 +22,7 @@ import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync} from ".
 import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async-lifecycle.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async-archive-lineage.js";
 import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-archive-db.js";
-import {disposeArchivedWorktree} from "./archive-lifecycle.js";
+import {disposeArchivedWorkspaceWorktrees, disposeArchivedWorktree, prepareArchivedWorkspaceWorktrees, releasePreparedWorkspaceArchiveDisposal} from "./archive-lifecycle.js";
 
 export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
     const settings = await store.getSettingsFast();
@@ -79,6 +79,9 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       validatorModelId: task.validatorModelId,
       planningModelProvider: task.planningModelProvider,
       planningModelId: task.planningModelId,
+      mergerModelProvider: task.mergerModelProvider,
+      mergerModelId: task.mergerModelId,
+      mergerThinkingLevel: task.mergerThinkingLevel,
       breakIntoSubtasks: task.breakIntoSubtasks,
       noCommitsExpected: task.noCommitsExpected,
       baseBranch: task.baseBranch,
@@ -178,13 +181,27 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     // Build the archive entry for cold storage.
     const entry = await store.taskToArchiveEntry(task, archivedAt);
 
-    // Lineage gate + archive in one transaction.
-    const result = await archiveParentTaskWithLineageGate(layer, id, entry, {
-      removeLineageReferences: removeLineageRefs,
-      now: archivedAt,
-    });
+    /*
+    FNXC:WorkflowLifecycle 2026-07-16-15:30:
+    Backend archive persists cold storage before its cleanup phase. Hold the
+    per-repository reservations across that transaction so another process sees
+    the path as unavailable until the awaited workspace disposer has removed it.
+    */
+    const preparedWorkspace = cleanup ? await prepareArchivedWorkspaceWorktrees(store, task) : undefined;
+    let result;
+    try {
+      // Lineage gate + archive in one transaction.
+      result = await archiveParentTaskWithLineageGate(layer, id, entry, {
+        removeLineageReferences: removeLineageRefs,
+        now: archivedAt,
+      });
+    } catch (error) {
+      if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);
+      throw error;
+    }
 
     if (!result.archived) {
+      if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);
       throw new TaskHasLineageChildrenError(id, result.liveChildIds);
     }
 
@@ -197,7 +214,8 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
       A rejected archive leaves its live task and pinned worktree untouched;
       successful archives still await disposal before publishing the move event.
       */
-      await disposeArchivedWorktree(store, task);
+      const workspace = await disposeArchivedWorkspaceWorktrees(store, task, preparedWorkspace);
+      if (!workspace.singularDeduplicated) await disposeArchivedWorktree(store, task);
       await store.cleanupBranchForTask(task);
       const { rm } = await import("node:fs/promises");
       await rm(dir, { recursive: true, force: true });
@@ -439,6 +457,9 @@ export async function restoreFromArchiveImpl(store: TaskStore, entry: import("..
       validatorModelId: entry.validatorModelId,
       planningModelProvider: entry.planningModelProvider,
       planningModelId: entry.planningModelId,
+      mergerModelProvider: entry.mergerModelProvider,
+      mergerModelId: entry.mergerModelId,
+      mergerThinkingLevel: entry.mergerThinkingLevel,
       breakIntoSubtasks: entry.breakIntoSubtasks,
       noCommitsExpected: entry.noCommitsExpected,
       modifiedFiles: entry.modifiedFiles,

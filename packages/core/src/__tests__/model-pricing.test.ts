@@ -113,11 +113,13 @@ describe("model-pricing", () => {
     expect(result.usd).toBeCloseTo(4.875, 3);
   });
 
-  it("prices GLM-5.2, MiniMax-M3, and Kimi K2.6 instead of reporting unavailable", () => {
+  it("prices GLM-5.2, MiniMax-M3, Kimi K2.6, and Kimi K3 instead of reporting unavailable", () => {
     const cases = [
       { provider: "zai", model: "glm-5.2", expectedUsd: 2.28 },
       { provider: "minimax", model: "MiniMax-M3", expectedUsd: 0.54 },
       { provider: "kimi-coding", model: "kimi-k2.6-preview", expectedUsd: 1.75 },
+      // K3: $3/M cache-miss input + $15/M output; 1M input + 200k output = $6.
+      { provider: "kimi-coding", model: "k3", expectedUsd: 6 },
     ] as const;
 
     for (const { provider, model, expectedUsd } of cases) {
@@ -270,6 +272,9 @@ describe("model-pricing", () => {
       );
       expect(lookupPricing({ model: "kimi-k2.6-preview" })).toBe(
         MODEL_PRICING["kimi-coding:kimi-k2.6-preview"],
+      );
+      expect(lookupPricing({ provider: " KIMI-CODING ", model: " K3 " })).toBe(
+        MODEL_PRICING["kimi-coding:k3"],
       );
     });
 

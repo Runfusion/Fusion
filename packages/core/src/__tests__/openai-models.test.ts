@@ -1,4 +1,3 @@
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
   GPT_5_6_LUNA_MODEL_ID,
@@ -42,9 +41,19 @@ function createOpenAiCodexAuthStorage() {
 }
 
 function createRealRegistryWithLegacyCodexCatalog() {
-  const registry = ModelRegistry.inMemory(createOpenAiCodexAuthStorage() as never) as unknown as ModelRegistry & { models: Array<Record<string, unknown>> };
-  registry.models = registry.models.filter((model) => model.provider !== OPENAI_CODEX_PROVIDER_ID || !EXPECTED_IDS.includes(String(model.id)));
-  return registry;
+  // pi 0.80.8 removed the removed in-memory factory; retain the replacement-path assertion
+  // with the registry contract consumed by the supplemental catalog merge.
+  const registeredProviders = new Map<string, any>([[OPENAI_CODEX_PROVIDER_ID, {
+    oauth: OPENAI_CODEX_OAUTH_PROVIDER,
+    models: BUILT_IN_CODEX_IDS.map((id) => ({ id, name: id, provider: OPENAI_CODEX_PROVIDER_ID, reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 16_384 })),
+  }]]);
+  return {
+    registeredProviders,
+    authStorage: createOpenAiCodexAuthStorage(),
+    getAvailable: () => registeredProviders.get(OPENAI_CODEX_PROVIDER_ID)!.models.map((model: any) => ({ ...model, provider: OPENAI_CODEX_PROVIDER_ID })),
+    getAll: () => registeredProviders.get(OPENAI_CODEX_PROVIDER_ID)!.models.map((model: any) => ({ ...model, provider: OPENAI_CODEX_PROVIDER_ID })),
+    registerProvider(providerId: string, config: any) { registeredProviders.set(providerId, config); },
+  };
 }
 
 describe("SUPPLEMENTAL_OPENAI_CODEX_PROVIDER_REGISTRATION", () => {

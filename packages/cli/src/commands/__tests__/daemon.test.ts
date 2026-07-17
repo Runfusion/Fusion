@@ -666,7 +666,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
   });
 });
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: vi.fn(() => mocks.authStorage),
   },
   DefaultPackageManager: vi.fn().mockImplementation(function () {

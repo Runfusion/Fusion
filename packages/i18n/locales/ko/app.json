@@ -1167,8 +1167,6 @@
     "retrying": "재시도 중…"
   },
   "backgroundTasks": {
-    "confirmMessage": "이 세션은 다른 탭에서 활성화되어 있습니다. 그래도 여시겠습니까?",
-    "confirmTitle": "활성 세션 열기",
     "dismissButton": "닫기",
     "pillLabel_one": "",
     "pillLabel_other": "",
@@ -1178,7 +1176,6 @@
     "pillTitleWithInput_other": "",
     "popoverHeader": "백그라운드 작업",
     "status": {
-      "activeElsewhere": "다른 탭에서 활성화됨",
       "failed": "실패",
       "generating": "생성 중...",
       "needsInput": "입력 필요"
@@ -3193,7 +3190,6 @@
     "refinedScope": "정제된 범위",
     "refineScope": "AI로 {{label}} 범위 정제",
     "sendToBackground": "백그라운드로 보내기",
-    "sessionActiveAnotherTab": "다른 탭에서 세션이 활성화되어 있습니다.",
     "showThinking": "생각 표시",
     "startInterview": "인터뷰 시작",
     "targetLabel": {
@@ -3838,9 +3834,6 @@
     "selectGoal": "",
     "selectMissionToView": "세부 정보를 보려면 미션을 선택하세요",
     "sendToBackground": "백그라운드로 보내기",
-    "sessionActiveAnother": "세션이 다른 탭에서 활성화되어 있습니다.",
-    "sessionActiveHeartbeat": "이 세션은 다른 탭에서 활성화되어 있습니다 (실시간 하트비트)",
-    "sessionActiveTab": "이 세션은 다른 탭에서 활성화되어 있습니다",
     "showDetails": "세부 정보 표시",
     "showMetadata": "메타데이터 표시",
     "showThinking": "사고 과정 표시",
@@ -3886,8 +3879,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "구조",
-    "takeControl": "제어권 가져오기",
-    "takingControl": "제어권 가져오는 중...",
     "targetBranch": "대상 브랜치",
     "targetBranchPlaceholder": "예: main",
     "taskIdPlaceholder": "작업 ID (예: FN-001)",
@@ -4638,8 +4629,6 @@
     "remove": "제거",
     "retryFailed": "재시도 실패. 다시 시도해 주세요.",
     "retrying": "재시도 중...",
-    "sessionActiveOtherTab": "이 세션은 다른 탭에서 활성화되어 있습니다",
-    "sessionActiveOtherTabLive": "이 세션은 다른 탭에서 활성화되어 있습니다 (실시간 하트비트)",
     "sessionFailed": "AI 연결 중 세션이 실패했습니다.",
     "sessionFailed2": "세션 실패",
     "showArchived": "보관 항목 표시",
@@ -4662,8 +4651,6 @@
     "subtaskTitle": "제목",
     "suggestedDependencies": "제안된 의존성",
     "suggestedSize": "제안된 크기",
-    "takeControl": "제어권 가져오기",
-    "takingControl": "제어권 가져오는 중...",
     "thinkingElapsed": "사고 중… ({{seconds}}초)",
     "title": "계획 모드",
     "tryAnExample": "예시를 시도해 보세요:",
@@ -4673,7 +4660,8 @@
     "untitledSession": "제목 없는 세션",
     "usingDefault": "기본값 사용",
     "whatToBuild": "무엇을 만들고 싶으신가요?",
-    "whatToBuildPlaceholder": "예: 로그인, 회원가입, 비밀번호 재설정이 포함된 사용자 인증 시스템 구축..."
+    "whatToBuildPlaceholder": "예: 로그인, 회원가입, 비밀번호 재설정이 포함된 사용자 인증 시스템 구축...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "항목 추가",
@@ -5909,7 +5897,11 @@
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
       "translationTargetLanguageHelp": "",
-      "followDashboardLanguage": ""
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6354,7 +6346,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6645,7 +6640,21 @@
       "maxConcurrentTasksHint": "",
       "maxConcurrentVerifications": "",
       "maxConcurrentVerificationsHint": "",
-      "pollIntervalMsHint": ""
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": ""
     },
     "title": "설정",
     "worktrees": {
@@ -6706,7 +6715,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7294,14 +7304,9 @@
     "reviewSubtasksHint": "모든 작업을 한 번에 생성하기 전에 제목, 설명, 크기, 의존성을 편집하세요.",
     "sendToBackgroundAriaLabel": "백그라운드로 보내기",
     "sendToBackgroundTitle": "백그라운드로 보내기",
-    "sessionActiveAnotherTab": "다른 탭에서 세션이 활성 상태입니다.",
-    "sessionActiveAnotherTabLive": "이 세션은 다른 탭에서 활성 상태입니다 (실시간 하트비트)",
-    "sessionActiveAnotherTabTakeover": "이 세션은 다른 탭에서 활성 상태입니다",
     "showThinking": "사고 과정 보기",
     "sizeLabel": "크기",
     "startingBreakdown": "",
-    "takeControl": "제어 가져오기",
-    "takingControl": "제어 가져오는 중...",
     "titleLabel": "제목",
     "untitled": "제목 없음",
     "waitingForThinking": ""
@@ -8481,7 +8486,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "사용량 데이터를 보려면 설정에서 인증을 구성하세요.",

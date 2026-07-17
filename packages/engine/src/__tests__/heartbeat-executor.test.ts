@@ -231,6 +231,7 @@ describe("executeHeartbeat", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   describe("reports health check", () => {
@@ -257,6 +258,48 @@ describe("executeHeartbeat", () => {
       expect(section).toContain("agent-3");
       expect(section).toContain("| Name | State | Task | Last Heartbeat | Health |");
       expect(section).toContain("healthy");
+    });
+
+    it("FN-8184: reports runtimeConfig cadence with one multiplier application and strict stale boundary", async () => {
+      vi.useFakeTimers();
+      const now = new Date("2026-01-01T12:00:00.000Z");
+      vi.setSystemTime(now);
+      const intervalMs = 10_800_000;
+      const effectiveIntervalMs = 81_000_000;
+      const staleThresholdMs = effectiveIntervalMs * 1.5;
+      const store = createStoreWithAgentForExec();
+      mockTaskStore = createMockTaskStore({ getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 7.5 }) });
+      vi.mocked(store.getAgent).mockImplementation(async (agentId: string) => agentId === "agent-runtime"
+        ? { id: agentId, runtimeConfig: { heartbeatIntervalMs: intervalMs } } as Agent
+        : mockAgent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        { id: "agent-runtime", name: "Runtime Healthy", state: "active", taskId: null, lastHeartbeatAt: new Date(now.getTime() - 4.5 * 60 * 60_000).toISOString(), updatedAt: now.toISOString() } as Agent,
+        { id: "agent-boundary", name: "Strict Boundary", state: "idle", taskId: null, lastHeartbeatAt: new Date(now.getTime() - staleThresholdMs).toISOString(), updatedAt: now.toISOString() } as Agent,
+        { id: "agent-overdue", name: "Strict Overdue", state: "active", taskId: null, lastHeartbeatAt: new Date(now.getTime() - staleThresholdMs - 1).toISOString(), updatedAt: now.toISOString() } as Agent,
+      ]);
+      vi.mocked(store.getAgent).mockImplementation(async (agentId: string) => ({ id: agentId, runtimeConfig: { heartbeatIntervalMs: intervalMs } } as Agent));
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toMatch(/\| Runtime Healthy \| active \| — \| .* \| healthy \|/);
+      expect(section).toMatch(/\| Strict Boundary \| idle \| — \| .* \| healthy \|/);
+      expect(section).toMatch(/\| Strict Overdue \| active \| — \| .* \| \*\*stale\*\* \|/);
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("intervalSource=runtimeConfig"));
+    });
+
+    it("FN-8184: getAgentHeartbeatConfig scales task-store-backed values exactly once", async () => {
+      const store = createStoreWithAgentForExec();
+      mockTaskStore = createMockTaskStore({ getSettings: vi.fn().mockResolvedValue({ heartbeatMultiplier: 7.5 }) });
+      vi.mocked(store.getAgent).mockResolvedValue({
+        ...mockAgent,
+        runtimeConfig: { heartbeatIntervalMs: 10_800_000, heartbeatTimeoutMs: 60_000 },
+      } as Agent);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      await expect(monitor.getAgentHeartbeatConfig("agent-001")).resolves.toMatchObject({
+        pollIntervalMs: 81_000_000,
+        heartbeatTimeoutMs: 450_000,
+      });
     });
 
     it("FN-6954: buildReportsHealthSection suppresses running state for parked task with no live proof", async () => {

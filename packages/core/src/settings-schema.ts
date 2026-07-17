@@ -84,6 +84,16 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   shadcnCustomColors: undefined,
   dashboardFontScalePct: 100,
   /*
+  FNXC:SettingsBackups 2026-07-16-14:20:
+  PostgreSQL holds every project in one shared cluster, so database backup policy is global.
+  Memory snapshots remain project-scoped because their files live under each project’s .fusion directory.
+  */
+  autoBackupEnabled: false,
+  autoBackupSchedule: "0 2 * * *",
+  autoBackupRetention: 7,
+  autoBackupDir: ".fusion/backups",
+  backupSettingsMigrationConflicts: undefined,
+  /*
   FNXC:DashboardShortcuts 2026-07-04-00:00:
   Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. FN-7553 adds openFiles (Ctrl+E), openSettings (Ctrl+,), openCommandCenter (Ctrl+K), and newTask (Ctrl+Shift+N) — chosen to avoid colliding with the base two or each other. Empty strings are preserved so operators can disable an action.
   */
@@ -125,6 +135,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   fallbackThinkingLevel: undefined,
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
+  // FNXC:AgentClarification 2026-07-16-12:00: Planner clarification pauses are opt-in; disabled planners must complete a summary instead of waiting for proactive answers.
+  agentClarificationEnabled: false,
   ntfyTopic: undefined,
   ntfyBaseUrl: undefined,
   ntfyAccessToken: undefined,
@@ -601,6 +613,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // decide via the near-duplicate flag/UI instead of tasks silently vanishing
   // into `archived` during intake. Set true to restore the pre-FN-7658 behavior.
   autoArchiveDuplicateTasksEnabled: false,
+  triageDuplicateResolution: "prompt",
   archiveAgentLogMode: "compact",
   autoUpdatePrStatus: false,
   githubCommentOnDone: false,
@@ -622,10 +635,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   githubTrackingDedupEnabled: true,
   githubAuthMode: "gh-cli",
   githubAuthToken: undefined,
-  autoBackupEnabled: false,
-  autoBackupSchedule: "0 2 * * *",
-  autoBackupRetention: 7,
-  autoBackupDir: ".fusion/backups",
   memoryBackupEnabled: false,
   memoryBackupSchedule: "0 3 * * *",
   memoryBackupRetention: 14,

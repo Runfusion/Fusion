@@ -1167,8 +1167,6 @@
     "retrying": "Nouvelle tentative…"
   },
   "backgroundTasks": {
-    "confirmMessage": "Cette session est active dans un autre onglet. Ouvrir quand même ?",
-    "confirmTitle": "Ouvrir une session active",
     "dismissButton": "Rejeter",
     "pillLabel_one": "",
     "pillLabel_other": "",
@@ -1178,7 +1176,6 @@
     "pillTitleWithInput_other": "",
     "popoverHeader": "Tâches de fond",
     "status": {
-      "activeElsewhere": "actif dans un autre onglet",
       "failed": "Échec",
       "generating": "génération...",
       "needsInput": "nécessite une entrée"
@@ -3193,7 +3190,6 @@
     "refinedScope": "Portée affinée",
     "refineScope": "Affiner la portée {{label}} avec l'IA",
     "sendToBackground": "Envoyer en arrière-plan",
-    "sessionActiveAnotherTab": "La session est active dans un autre onglet.",
     "showThinking": "Afficher la réflexion",
     "startInterview": "Commencer l'entrevue",
     "targetLabel": {
@@ -3838,9 +3834,6 @@
     "selectGoal": "",
     "selectMissionToView": "Sélectionnez une mission pour voir les détails",
     "sendToBackground": "Envoyer en arrière-plan",
-    "sessionActiveAnother": "La session est active dans un autre onglet.",
-    "sessionActiveHeartbeat": "Cette session est active dans un autre onglet (pulsation en direct)",
-    "sessionActiveTab": "Cette session est active dans un autre onglet",
     "showDetails": "Afficher les détails",
     "showMetadata": "Afficher les métadonnées",
     "showThinking": "Afficher la réflexion",
@@ -3886,8 +3879,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "Structure",
-    "takeControl": "Prendre le contrôle",
-    "takingControl": "Prise de contrôle en cours...",
     "targetBranch": "Branche cible",
     "targetBranchPlaceholder": "p. ex. main",
     "taskIdPlaceholder": "ID de tâche (p. ex. FN-001)",
@@ -4638,8 +4629,6 @@
     "remove": "Supprimer",
     "retryFailed": "Nouvelle tentative échouée. Veuillez réessayer.",
     "retrying": "Nouvelle tentative…",
-    "sessionActiveOtherTab": "Cette session est active dans un autre onglet",
-    "sessionActiveOtherTabLive": "Cette session est active dans un autre onglet (signal de vie actif)",
     "sessionFailed": "La session a échoué lors de la connexion à l'IA.",
     "sessionFailed2": "Échec de la session",
     "showArchived": "Afficher les archivées",
@@ -4662,8 +4651,6 @@
     "subtaskTitle": "Titre",
     "suggestedDependencies": "Dépendances suggérées",
     "suggestedSize": "Taille suggérée",
-    "takeControl": "Prendre le contrôle",
-    "takingControl": "Prise de contrôle…",
     "thinkingElapsed": "Réflexion… ({{seconds}} s)",
     "title": "Mode planification",
     "tryAnExample": "Essayez un exemple :",
@@ -4673,7 +4660,8 @@
     "untitledSession": "Session sans titre",
     "usingDefault": "Modèle par défaut",
     "whatToBuild": "Que voulez-vous construire ?",
-    "whatToBuildPlaceholder": "ex : Construire un système d'authentification avec connexion, inscription et réinitialisation du mot de passe…"
+    "whatToBuildPlaceholder": "ex : Construire un système d'authentification avec connexion, inscription et réinitialisation du mot de passe…",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "Ajouter un élément",
@@ -5909,7 +5897,11 @@
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
       "translationTargetLanguageHelp": "",
-      "followDashboardLanguage": ""
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6354,7 +6346,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6645,7 +6640,21 @@
       "maxConcurrentTasksHint": "",
       "maxConcurrentVerifications": "",
       "maxConcurrentVerificationsHint": "",
-      "pollIntervalMsHint": ""
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": ""
     },
     "title": "Paramètres",
     "worktrees": {
@@ -6706,7 +6715,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7294,14 +7304,9 @@
     "reviewSubtasksHint": "Modifiez les titres, descriptions, tailles et dépendances avant de créer toutes les tâches d'un coup.",
     "sendToBackgroundAriaLabel": "Envoyer en arrière-plan",
     "sendToBackgroundTitle": "Envoyer en arrière-plan",
-    "sessionActiveAnotherTab": "La session est active dans un autre onglet.",
-    "sessionActiveAnotherTabLive": "Cette session est active dans un autre onglet (signal de présence actif)",
-    "sessionActiveAnotherTabTakeover": "Cette session est active dans un autre onglet",
     "showThinking": "Afficher la réflexion",
     "sizeLabel": "Taille",
     "startingBreakdown": "",
-    "takeControl": "Prendre le contrôle",
-    "takingControl": "Prise de contrôle...",
     "titleLabel": "Titre",
     "untitled": "Sans titre",
     "waitingForThinking": ""
@@ -8481,7 +8486,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "Configurez l'authentification dans les paramètres pour voir les données d'utilisation.",

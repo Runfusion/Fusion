@@ -120,6 +120,66 @@ describe("Utility component mobile adaptations", () => {
     expect(screen.getByText("Break down API tasks")).toBeTruthy();
   });
 
+  /*
+  FNXC:PlanningMultiTab 2026-07-16-17:35:
+  Background task rows open directly on mobile for every session state, even when a legacy
+  session payload reports another tab as its prior lock holder. No confirm gate or lock banner
+  may be reintroduced because interviews are intentionally multi-tab.
+  */
+  it("opens legacy other-tab-owned sessions directly without a lock affordance", () => {
+    const onOpenSession = vi.fn();
+    const sessions = [
+      {
+        id: "sess-generating-other-tab",
+        type: "planning",
+        status: "generating",
+        title: "Generating plan",
+        projectId: "proj-1",
+        updatedAt: new Date().toISOString(),
+        lockedByTab: "tab-other",
+      },
+      {
+        id: "sess-awaiting-other-tab",
+        type: "mission_interview",
+        status: "awaiting_input",
+        title: "Awaiting mission input",
+        projectId: "proj-1",
+        updatedAt: new Date().toISOString(),
+        lockedByTab: "tab-other",
+      },
+      {
+        id: "sess-failed-other-tab",
+        type: "slice_interview",
+        status: "error",
+        title: "Failed slice interview",
+        projectId: "proj-1",
+        updatedAt: new Date().toISOString(),
+        lockedByTab: "tab-other",
+      },
+    ] as unknown as AiSessionSummary[];
+
+    render(
+      <BackgroundTasksIndicator
+        sessions={sessions}
+        generating={1}
+        needsInput={1}
+        onOpenSession={onOpenSession}
+        onDismissSession={vi.fn()}
+      />,
+    );
+
+    for (const session of sessions) {
+      fireEvent.click(screen.getByRole("button", { name: /AI 3/i }));
+      fireEvent.click(screen.getByText(session.title));
+    }
+
+    expect(onOpenSession).toHaveBeenNthCalledWith(1, sessions[0]);
+    expect(onOpenSession).toHaveBeenNthCalledWith(2, sessions[1]);
+    expect(onOpenSession).toHaveBeenNthCalledWith(3, sessions[2]);
+    expect(screen.queryByRole("button", { name: /take control/i })).toBeNull();
+    expect(screen.queryByText(/active in another tab|live heartbeat/i)).toBeNull();
+  });
+
   it("returns null for BackgroundTasksIndicator with no sessions", () => {
     const { container } = render(
       <BackgroundTasksIndicator

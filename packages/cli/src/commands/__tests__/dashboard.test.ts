@@ -116,7 +116,7 @@ const {
   delete process.env.FUSION_BEARER_TOKEN;
 
   return {
-    mockAuthStorage: { getAuth: vi.fn(), setAuth: vi.fn(), getApiKey: vi.fn().mockResolvedValue(undefined) },
+    mockLegacyCredentialStorage: { getAuth: vi.fn(), setAuth: vi.fn(), getApiKey: vi.fn().mockResolvedValue(undefined) },
     mockModelRegistry: {
       registerProvider: vi.fn(),
       refresh: vi.fn(),
@@ -877,12 +877,15 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 // ── Mock @earendil-works/pi-coding-agent ──────────────────────────────
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: vi.fn(() => mockAuthStorage),
   },
   DefaultPackageManager: makeConstructibleMock(() => ({
     resolve: vi.fn().mockResolvedValue({ extensions: [] }),
   })),
+  ModelRuntime: {
+    create: vi.fn(),
+  },
   ModelRegistry: {
     create: vi.fn(() => mockModelRegistry),
     inMemory: vi.fn(() => mockModelRegistry),
@@ -3438,7 +3441,7 @@ describe("runDashboard — merge stream sink routing", () => {
     (DefaultPackageManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       resolve: vi.fn().mockResolvedValue({ extensions: [] }),
     }));
-    (ModelRegistry.create as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (ModelRuntime.create as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       registerProvider: vi.fn(),
       refresh: vi.fn(),
     }));

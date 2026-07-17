@@ -1167,8 +1167,6 @@
     "retrying": "重试中…"
   },
   "backgroundTasks": {
-    "confirmMessage": "此会话在另一个标签页中处于活跃状态。仍然打开?",
-    "confirmTitle": "打开活跃会话",
     "dismissButton": "关闭",
     "pillLabel_one": "",
     "pillLabel_other": "",
@@ -1178,7 +1176,6 @@
     "pillTitleWithInput_other": "",
     "popoverHeader": "后台任务",
     "status": {
-      "activeElsewhere": "在另一个标签页中活跃",
       "failed": "失败",
       "generating": "生成中...",
       "needsInput": "需要输入"
@@ -3193,7 +3190,6 @@
     "refinedScope": "精炼范围",
     "refineScope": "用AI精炼{{label}}范围",
     "sendToBackground": "发送到后台",
-    "sessionActiveAnotherTab": "会话在另一个标签页中处于活跃状态。",
     "showThinking": "显示思考",
     "startInterview": "开始面试",
     "targetLabel": {
@@ -3838,9 +3834,6 @@
     "selectGoal": "",
     "selectMissionToView": "选择一个任务以查看详情",
     "sendToBackground": "发送到后台",
-    "sessionActiveAnother": "会话在另一个标签页中处于活跃状态。",
-    "sessionActiveHeartbeat": "此会话在另一个标签页中处于活跃状态（实时心跳）",
-    "sessionActiveTab": "此会话在另一个标签页中处于活跃状态",
     "showDetails": "显示详情",
     "showMetadata": "显示元数据",
     "showThinking": "显示思考",
@@ -3886,8 +3879,6 @@
     "tabActivity_one": "",
     "tabActivity_other": "",
     "tabStructure": "结构",
-    "takeControl": "接管",
-    "takingControl": "正在接管...",
     "targetBranch": "目标分支",
     "targetBranchPlaceholder": "例如 main",
     "taskIdPlaceholder": "任务 ID（例如 FN-001）",
@@ -4638,8 +4629,6 @@
     "remove": "移除",
     "retryFailed": "重试失败，请再试一次。",
     "retrying": "重试中…",
-    "sessionActiveOtherTab": "此会话在另一个标签页中处于活动状态",
-    "sessionActiveOtherTabLive": "此会话在另一个标签页中处于活动状态（实时心跳）",
     "sessionFailed": "联系 AI 时会话失败。",
     "sessionFailed2": "会话失败",
     "showArchived": "显示已归档",
@@ -4662,8 +4651,6 @@
     "subtaskTitle": "标题",
     "suggestedDependencies": "建议依赖项",
     "suggestedSize": "建议规模",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制…",
     "thinkingElapsed": "思考中…（{{seconds}} 秒）",
     "title": "规划模式",
     "tryAnExample": "试试示例：",
@@ -4673,7 +4660,8 @@
     "untitledSession": "无标题会话",
     "usingDefault": "使用默认",
     "whatToBuild": "您想构建什么？",
-    "whatToBuildPlaceholder": "例如，构建一个包含登录、注册和密码重置的用户认证系统..."
+    "whatToBuildPlaceholder": "例如，构建一个包含登录、注册和密码重置的用户认证系统...",
+    "agentClarification": ""
   },
   "plugins": {
     "addItem": "添加项目",
@@ -5909,7 +5897,11 @@
       "autoTranslateImportedIssuesHelp": "",
       "translationTargetLanguage": "",
       "translationTargetLanguageHelp": "",
-      "followDashboardLanguage": ""
+      "followDashboardLanguage": "",
+      "restartFailed": "",
+      "restartNow": "",
+      "restartUnavailable": "",
+      "restarting": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6354,7 +6346,10 @@
       "ntfyEnabledHint": "",
       "webhookEnabledHint": "",
       "webhookUrlHint": "",
-      "webhookFormatHint": ""
+      "webhookFormatHint": "",
+      "agentClarification": "",
+      "agentClarificationEnable": "",
+      "agentClarificationHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6645,7 +6640,21 @@
       "maxConcurrentTasksHint": "",
       "maxConcurrentVerifications": "",
       "maxConcurrentVerificationsHint": "",
-      "pollIntervalMsHint": ""
+      "pollIntervalMsHint": "",
+      "executorToolFailureRetryCount": "",
+      "executorToolFailureRetryCountHelp": "",
+      "executorToolFailureRetryBackoffMs": "",
+      "executorToolFailureRetryBackoffMsHelp": "",
+      "executorToolFailureThreshold": "",
+      "executorToolFailureThresholdHelp": "",
+      "executorModelEscalationEnabled": "",
+      "executorModelEscalationEnabledHelp": "",
+      "executorEscalationProvider": "",
+      "executorEscalationProviderHelp": "",
+      "executorEscalationModelId": "",
+      "executorEscalationModelIdHelp": "",
+      "executorEscalationNodeId": "",
+      "executorEscalationNodeIdHelp": ""
     },
     "title": "设置",
     "worktrees": {
@@ -6706,7 +6715,8 @@
       "showWorktreeGroupingHelp": "",
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
-      "howToNameFreshWorktreeDirectories": ""
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -7294,14 +7304,9 @@
     "reviewSubtasksHint": "在一次性创建所有任务之前，编辑标题、描述、大小和依赖关系。",
     "sendToBackgroundAriaLabel": "发送到后台",
     "sendToBackgroundTitle": "发送到后台",
-    "sessionActiveAnotherTab": "会话正在另一个标签页中运行。",
-    "sessionActiveAnotherTabLive": "此会话正在另一个标签页中运行（实时心跳）",
-    "sessionActiveAnotherTabTakeover": "此会话正在另一个标签页中运行",
     "showThinking": "显示思考过程",
     "sizeLabel": "规模",
     "startingBreakdown": "",
-    "takeControl": "接管控制",
-    "takingControl": "正在接管控制...",
     "titleLabel": "标题",
     "untitled": "无标题",
     "waitingForThinking": ""
@@ -8481,7 +8486,11 @@
     "updateFailedWithMessage": "",
     "updateNow": "",
     "updateSuccess": "",
-    "updating": ""
+    "updating": "",
+    "restartFailed": "",
+    "restartNow": "",
+    "restartUnavailable": "",
+    "restarting": ""
   },
   "usage": {
     "configureAuthHint": "在设置中配置身份验证以查看使用数据。",

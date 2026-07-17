@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
-import { createAgentSession, ModelRegistry, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
 // Mock skill resolver functions - define inside factory to avoid hoisting issues
@@ -20,7 +20,7 @@ vi.mock("../skill-resolver.js", () => {
 
 // Mock pi-coding-agent imports
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
+  LegacyCredentialStorage: {
     create: vi.fn(() => ({
       getCredentials: vi.fn().mockResolvedValue({}),
     })),
@@ -52,22 +52,17 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   DefaultPackageManager: vi.fn(),
   discoverAndLoadExtensions: vi.fn().mockResolvedValue({ errors: [], runtime: { pendingProviderRegistrations: [] } }),
   getAgentDir: vi.fn(() => "/test/agent-dir"),
-  ModelRegistry: Object.assign(
-    vi.fn().mockImplementation(() => ({
-      find: vi.fn().mockReturnValue({ provider: "test", id: "test-model" }),
+  ModelRuntime: {
+    create: vi.fn(async () => ({ getAuth: vi.fn(async () => undefined) })),
+  },
+  ModelRegistry: vi.fn().mockImplementation(function () {
+    return {
+      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
       getAll: vi.fn().mockReturnValue([]),
       registerProvider: vi.fn(),
       refresh: vi.fn(),
-    })),
-    {
-      create: vi.fn().mockReturnValue({
-        find: vi.fn().mockReturnValue({ provider: "test", id: "test-model" }),
-        getAll: vi.fn().mockReturnValue([]),
-        registerProvider: vi.fn(),
-        refresh: vi.fn(),
-      }),
-    },
-  ),
+    };
+  }),
   SessionManager: {
     inMemory: vi.fn(() => ({})),
   },
@@ -1049,8 +1044,8 @@ describe("piLog structured diagnostics", () => {
     expect(onFallbackModelUsed).toHaveBeenCalledWith(
       expect.objectContaining({
         triggerPoint: "session-creation",
-        primaryModel: "test/test-model",
-        fallbackModel: "test/test-model",
+        primaryModel: "test/primary-model",
+        fallbackModel: "test/fallback-model",
         taskId: "FN-1",
       }),
     );
@@ -1148,12 +1143,6 @@ describe("piLog structured diagnostics", () => {
 
   it("throws a bounded fallback exhaustion error when prompt-time fallback also fails", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    vi.mocked(ModelRegistry.create).mockReturnValueOnce({
-      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
-      getAll: vi.fn().mockReturnValue([]),
-      registerProvider: vi.fn(),
-      refresh: vi.fn(),
-    } as any);
     const onFallbackModelUsed = vi.fn();
 
     const primarySession = {
@@ -1221,12 +1210,6 @@ describe("piLog structured diagnostics", () => {
 
   it("does not create a meaningless prompt-time fallback when primary and fallback match", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    vi.mocked(ModelRegistry.create).mockReturnValueOnce({
-      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
-      getAll: vi.fn().mockReturnValue([]),
-      registerProvider: vi.fn(),
-      refresh: vi.fn(),
-    } as any);
     const onFallbackModelUsed = vi.fn();
     const primarySession = {
       model: { provider: "openai", id: "gpt-4o" },
@@ -1319,12 +1302,6 @@ describe("piLog structured diagnostics", () => {
 
   it("swaps once to fallback for Anthropic Sonnet 5 not_found_error without retaining the primary failure", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
-    vi.mocked(ModelRegistry.create).mockReturnValueOnce({
-      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
-      getAll: vi.fn().mockReturnValue([]),
-      registerProvider: vi.fn(),
-      refresh: vi.fn(),
-    } as any);
     const onFallbackModelUsed = vi.fn();
     const sonnet5NotFoundError =
       'Error: 404 {"type":"error","error":{"type":"not_found_error","message":"Not found"},"request_id":"req_011CcawcZ3Ra9CennJXM8oWC"}';

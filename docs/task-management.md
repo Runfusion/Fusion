@@ -106,6 +106,10 @@ Dashboard surfaces this as a yellow Duplicate chip plus modal actions only while
 
 This layer complements, rather than replaces, FN-4829 similarity detection, FN-4918 deterministic deduplication, and FN-4892 same-agent intake heuristics.
 
+### Workspace worktree cleanup on archive
+
+Archiving a workspace (multi-repository) task now synchronously removes every recorded per-sub-repository worktree, including archives initiated by `fn_task_archive` and CLI paths that do not construct an executor. Each path is protected by a per-repository cross-process reservation until backend removal and branch cleanup finish. If one removal fails, its reservation is quarantined and the next acquisition reconciles that orphan; successful sibling repositories are still released. `archiveTask(..., { cleanup: false })` intentionally retains worktrees, and the self-healing workspace sweep remains an idempotent backstop.
+
 #### Explicit duplicate-marker guard (FN-5220)
 
 Fusion also recognizes the canonical one-line redirect marker:

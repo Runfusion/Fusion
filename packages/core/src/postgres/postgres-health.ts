@@ -171,6 +171,10 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ schema?: string; table: s
   // Additive column not present in the baseline snapshot, so existing embedded-PG
   // databases must self-heal it via ALTER TABLE ADD COLUMN IF NOT EXISTS on boot.
   { table: "tasks", column: "plan_review_replan_count", type: "integer" },
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker. Additive nullable
+  // timestamp column absent from older embedded-PG snapshots, so it must self-heal via
+  // ALTER TABLE ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS never upgrades).
+  { table: "tasks", column: "bulk_completion_refusal_at", type: "text" },
   // distributed_task_id_state
   { table: "distributed_task_id_state", column: "prefix", type: "text" },
   { table: "distributed_task_id_state", column: "next_sequence", type: "integer" },

@@ -3556,11 +3556,11 @@ describe("requirePlanApproval setting", () => {
       status: "planning",
       steps: [{ name: "Old step", status: "pending" }],
     } as Partial<Task>);
-    const clearWorkflowRunStepInstances = vi.fn();
+    const clearWorkflowRunStepInstancesAsync = vi.fn().mockResolvedValue(undefined);
     const store = createMockStore({
       getTask: vi.fn().mockResolvedValue(task),
       parseStepsFromPrompt: vi.fn().mockResolvedValue([{ name: "Fresh step", status: "pending" }]),
-      clearWorkflowRunStepInstances,
+      clearWorkflowRunStepInstancesAsync,
     } as Partial<TaskStore>);
     const processor = new TriageProcessor(store, rootDir);
 
@@ -3572,7 +3572,7 @@ describe("requirePlanApproval setting", () => {
       { requirePlanApproval: false } as Settings,
     );
 
-    expect(clearWorkflowRunStepInstances).toHaveBeenCalledWith("FN-7224");
+    expect(clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-7224");
     expect(store.moveTask).toHaveBeenCalledWith("FN-7224", "todo");
   });
 
@@ -5169,6 +5169,87 @@ describe("taskCreate tool model inheritance", () => {
       }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({ status: "failed" }));
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952-TRANSIENT", expect.objectContaining({
+        title: expect.any(String),
+      }));
+    });
+
+    /*
+    FNXC:TriageFallbackTitle 2026-07-16-00:00:
+    Still-retrying deterministic and transient branches must preserve retry scheduling and never backfill a blank title; only terminal failures backfill.
+    */
+    it("does not backfill blank titles while deterministic validation retries remain", async () => {
+      const task = {
+        id: "FN-8155-DETERMINISTIC-RETRY",
+        title: "",
+        description: "Keep blank titles while deterministic validation retries remain",
+        column: "triage",
+        status: "planning",
+        recoveryRetryCount: 1,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockResolvedValue({
+        session: {
+          state: {},
+          sessionManager: {},
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          navigateTree: vi.fn(),
+        },
+      });
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-8155-DETERMINISTIC-RETRY", expect.objectContaining({
+        status: null,
+        error: null,
+        recoveryRetryCount: 2,
+        nextRecoveryAt: expect.any(String),
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-DETERMINISTIC-RETRY", expect.objectContaining({ status: "failed" }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-DETERMINISTIC-RETRY", expect.objectContaining({
+        title: expect.any(String),
+      }));
+    });
+
+    it("does not backfill blank titles while transient retries remain", async () => {
+      const task = {
+        id: "FN-8155-TRANSIENT-RETRY",
+        title: "",
+        description: "Keep blank titles while transient connection retries remain",
+        column: "triage",
+        status: "planning",
+        recoveryRetryCount: 1,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+      });
+      mockCreateFnAgent.mockRejectedValue(new Error("connection reset"));
+
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+      await processor.specifyTask(task);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-8155-TRANSIENT-RETRY", expect.objectContaining({
+        status: null,
+        recoveryRetryCount: 2,
+        nextRecoveryAt: expect.any(String),
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-TRANSIENT-RETRY", expect.objectContaining({ status: "failed" }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-8155-TRANSIENT-RETRY", expect.objectContaining({
         title: expect.any(String),
       }));
     });
@@ -6874,21 +6955,48 @@ describe("evictStaleProcessing", () => {
     expect(processor.getProcessingTaskIds().has("FN-001")).toBe(false);
   });
 
-  it("does not evict tasks that have been in processing less than 30 minutes", () => {
+  it("retains stale tasks with a live non-aborted triage session", () => {
     const store = createMockStore();
     const processor = new TriageProcessor(store, "/tmp/root");
 
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    (processor as any).processing.add("FN-001");
-    (processor as any).processingSince.set("FN-001", Date.now());
+    (processor as any).processing.add("FN-live");
+    (processor as any).processingSince.set("FN-live", Date.now());
+    (processor as any).activeSessions.set("FN-live", { dispose: vi.fn() });
 
-    // Advance time 29 minutes — not stale yet
+    vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted).toEqual(new Set());
+    expect(processor.getProcessingTaskIds().has("FN-live")).toBe(true);
+    expect((processor as any).activeSessions.has("FN-live")).toBe(true);
+  });
+
+  it("does not evict tasks that have been in processing less than 30 minutes regardless of session state", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    for (const taskId of ["FN-no-session", "FN-live", "FN-stuck-aborted"]) {
+      (processor as any).processing.add(taskId);
+      (processor as any).processingSince.set(taskId, Date.now());
+    }
+    (processor as any).activeSessions.set("FN-live", { dispose: vi.fn() });
+    (processor as any).activeSessions.set("FN-stuck-aborted", { dispose: vi.fn() });
+    (processor as any).stuckAborted.add("FN-stuck-aborted");
+
+    // Advance time 29 minutes — not stale yet.
     vi.setSystemTime(new Date("2026-01-01T00:29:00.000Z"));
 
     const evicted = processor.evictStaleProcessing();
 
     expect(evicted.size).toBe(0);
-    expect(processor.getProcessingTaskIds().has("FN-001")).toBe(true);
+    expect(processor.getProcessingTaskIds()).toEqual(new Set([
+      "FN-no-session",
+      "FN-live",
+      "FN-stuck-aborted",
+    ]));
   });
 
   it("cleans up activeSessions and stuckAborted when evicting", () => {

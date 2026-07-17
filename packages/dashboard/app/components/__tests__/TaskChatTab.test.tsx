@@ -1039,13 +1039,13 @@ describe("TaskChatTab", () => {
     expect(within(standaloneEntry).getByLabelText("Tool entry timestamp")).toHaveTextContent(expectedTime);
   });
 
-  it("renders thinking in a collapsed-by-default expandable block", async () => {
+  it("renders thinking in a collapsed-by-default expandable block for inactive tasks", async () => {
     const user = userEvent.setup();
     mockLogs([
       makeEntry({ agent: "triage", type: "thinking", text: "I am considering options" }),
     ]);
 
-    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    render(<TaskChatTab task={makeTask({ column: "done" })} active addToast={vi.fn()} />);
 
     const thinking = screen.getByTestId("task-chat-thinking");
     expect(thinking).not.toHaveAttribute("open");
@@ -1062,6 +1062,43 @@ describe("TaskChatTab", () => {
 
     expect(thinking).not.toHaveAttribute("open");
     expect(screen.getByText("I am considering options")).not.toBeVisible();
+  });
+
+  it.each(["in-progress", "in-review"] as const)("defaults thinking blocks open for %s tasks", (column) => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Live reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("task-chat-thinking")).toHaveAttribute("open");
+  });
+
+  it.each(["todo", "done", "triage", "archived"] as const)("keeps thinking blocks collapsed for %s tasks", (column) => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Historical reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("task-chat-thinking")).not.toHaveAttribute("open");
+  });
+
+  it("lets users collapse auto-expanded thinking blocks", async () => {
+    const user = userEvent.setup();
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Active reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column: "in-progress" })} active addToast={vi.fn()} />);
+
+    const thinking = screen.getByTestId("task-chat-thinking");
+    expect(thinking).toHaveAttribute("open");
+
+    await user.click(within(thinking).getByText("Thinking"));
+
+    expect(thinking).not.toHaveAttribute("open");
+    expect(screen.getByText("Active reasoning")).not.toBeVisible();
   });
 
   it("renders consecutive thinking entries as one continuous section", () => {
@@ -1091,7 +1128,7 @@ describe("TaskChatTab", () => {
       makeEntry({ agent: "executor", type: "tool_result", text: "second tool", detail: "second detail" }),
     ]);
 
-    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    render(<TaskChatTab task={makeTask({ column: "todo" })} active addToast={vi.fn()} />);
 
     const toolGroups = screen.getAllByTestId("task-chat-tool-group");
     expect(toolGroups).toHaveLength(2);

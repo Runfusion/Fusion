@@ -343,7 +343,7 @@ export async function syncStartupModels(options: StartupSyncOptions): Promise<vo
  * opencodeGoModelSync setting.
  */
 export async function handleOpencodeGoApiKeySaved(
-  dashboardAuthStorage: AuthStorageLike,
+  dashboardLegacyCredentialStorage: AuthStorageLike,
   store: { getSettings: () => Promise<SettingsLike> },
   modelRegistry: ModelRegistryLike,
   log: (scope: string, message: string) => void,
@@ -352,6 +352,6 @@ export async function handleOpencodeGoApiKeySaved(
   if (settings.opencodeGoModelSync === false) {
     return { registeredCount: 0, reason: "disabled-by-settings" };
   }
-  const opencodeGoKey = await dashboardAuthStorage.getApiKey("opencode-go") ?? await dashboardAuthStorage.getApiKey("opencode");
+  const opencodeGoKey = await dashboardLegacyCredentialStorage.getApiKey("opencode-go") ?? await dashboardLegacyCredentialStorage.getApiKey("opencode");
   return await refreshOpencodeGoModels({ modelRegistry, log, apiKey: opencodeGoKey });
 }

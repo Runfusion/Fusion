@@ -6,6 +6,7 @@ import {
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
+  resolveTaskMergerModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
   resolveMergerFallbackModel,
@@ -16,6 +17,14 @@ import {
 } from "../model-resolution.js";
 
 describe("model-resolution", () => {
+  it("uses only a complete task merger pair before settings and preserves test mode", () => {
+    const settings = { mergerProvider: "settings-provider", mergerModelId: "settings-model" };
+    expect(resolveTaskMergerModel({ mergerModelProvider: "task-provider", mergerModelId: "task-model" }, settings)).toEqual({ provider: "task-provider", modelId: "task-model" });
+    expect(resolveTaskMergerModel({ mergerModelProvider: "partial-provider" }, settings)).toEqual({ provider: "settings-provider", modelId: "settings-model" });
+    expect(resolveTaskMergerModel({}, settings)).toEqual({ provider: "settings-provider", modelId: "settings-model" });
+    expect(resolveTaskMergerModel({ mergerModelProvider: "task-provider", mergerModelId: "task-model" }, { ...settings, testMode: true })).toEqual(TEST_MODE_RESOLVED);
+  });
+
   it("resolves executor fallback before the shared fallback and forces mock in test mode", () => {
     expect(resolveExecutorFallbackModel({
       executionFallbackProvider: "executor-provider",
