@@ -597,7 +597,7 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
     } catch (err) {
       // The task row was never created, so any default-workflow steps we
       // materialized above would orphan with no task/selection pointing at them.
-      store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
       throw err;
     }
 
@@ -800,7 +800,7 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     } catch (err) {
       // The task row was never created, so any default-workflow steps we
       // materialized above would orphan with no task/selection pointing at them.
-      store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
       throw err;
     }
 

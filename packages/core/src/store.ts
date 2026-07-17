@@ -109,7 +109,7 @@ import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWi
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
-import { pruneOperationalLogsAsync, type OperationalLogPruneResult } from "./task-store/async-maintenance.js";
+import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async-maintenance.js";
 import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async-phantom-reservations.js";
 import { queryRunAuditEvents } from "./task-store/async-audit.js";
 import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
@@ -2394,7 +2394,7 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   public purgeTaskWorkflowSelectionRows(taskId: string): void {
     return purgeTaskWorkflowSelectionRowsImpl(this, taskId);
   }
-  public cleanupOrphanedMaterializedSteps(stepIds: string[] | undefined): void {
+  public cleanupOrphanedMaterializedSteps(stepIds: string[] | undefined): Promise<void> {
     return cleanupOrphanedMaterializedStepsImpl(this, stepIds);
   }
   public async materializeWorkflowSteps( workflowId: string, inputs: import("./types.js").WorkflowStepInput[], ): Promise<string[]> {
@@ -2479,6 +2479,21 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
   pruneAgentLogFiles(retentionDays: number): { prunedFiles: number; prunedEntries: number; freedBytes: number } {
     return pruneAgentLogFilesImpl(this, retentionDays);
+  }
+  /**
+   * FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+   * Backend-mode entry point for agent-log-file pruning. The sync
+   * `pruneAgentLogFiles` reads inactive task ids via `this.db` and throws in
+   * backend mode; callers (the self-healing maintenance sweep) MUST use this
+   * async variant, which routes to `project.tasks` when an AsyncDataLayer is
+   * present and falls back to the legacy sync path otherwise. Mirrors
+   * `pruneOperationalLogsAsync`.
+   */
+  async pruneAgentLogFilesAsync(retentionDays: number): Promise<{ prunedFiles: number; prunedEntries: number; freedBytes: number }> {
+    if (!this.asyncLayer) {
+      return this.pruneAgentLogFiles(retentionDays);
+    }
+    return pruneAgentLogFilesAsync(this.asyncLayer, this.tasksDir, retentionDays);
   }
   getRootDir(): string {
     return this.rootDir;

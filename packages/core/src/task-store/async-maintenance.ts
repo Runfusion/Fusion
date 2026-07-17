@@ -1,9 +1,44 @@
 import { sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import { pruneAgentLogFiles as pruneAgentLogFileEntries } from "../agent-log-file-store.js";
 
 export interface OperationalLogPruneResult {
   deletedByTable: Record<string, number>;
   deletedTotal: number;
+}
+
+/**
+ * Prune per-task agent-log JSONL files for tasks that are no longer active,
+ * against the PostgreSQL backend.
+ *
+ * FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+ * The sync `pruneAgentLogFilesImpl` reads inactive task ids via `store.db`,
+ * which throws the removed-SQLite stub in backend mode. The self-healing
+ * maintenance sweep (`prune-agent-log-files`) called it unguarded, so every PG
+ * sweep with retention enabled threw and agent-log pruning never ran. This
+ * async variant is the PostgreSQL equivalent: it reads the inactive task ids
+ * (`deleted_at IS NOT NULL OR column = 'archived'`, project-scoped) from
+ * `project.tasks` and delegates the file pruning to the shared helper. Query
+ * semantics mirror the SQLite path exactly.
+ */
+export async function pruneAgentLogFilesAsync(
+  layer: AsyncDataLayer,
+  tasksDir: string,
+  retentionDays: number,
+): Promise<{ prunedFiles: number; prunedEntries: number; freedBytes: number }> {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+    return { prunedFiles: 0, prunedEntries: 0, freedBytes: 0 };
+  }
+  const boundProjectId = layer.projectId?.trim();
+  if (!boundProjectId) {
+    console.warn("[fusion] PostgreSQL agent-log-file pruning is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
+  }
+  const projectId = boundProjectId || "__legacy_unscoped__";
+  const rows = (await layer.db.execute(
+    sql`SELECT id FROM project.tasks WHERE project_id = ${projectId} AND (deleted_at IS NOT NULL OR "column" = 'archived')`,
+  )) as unknown as Array<{ id: string }>;
+  const inactiveTaskIds = new Set(rows.map((row) => row.id));
+  return pruneAgentLogFileEntries(tasksDir, retentionDays, inactiveTaskIds);
 }
 
 /**

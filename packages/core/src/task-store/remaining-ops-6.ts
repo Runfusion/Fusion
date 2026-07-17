@@ -937,6 +937,15 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
      */
     const boundProjectId = store.asyncLayer?.projectId;
     if (boundProjectId) return boundProjectId;
+    /*
+    FNXC:PostgresWorkflowSettings 2026-07-17-14:20:
+    An unscoped backend store (asyncLayer present but projectId empty) must NOT
+    reach `store.db` below — it throws the removed-SQLite stub, which the catch
+    then swallows, so the throw was invisible. Return the same rootDir key the
+    swallow produced, without the spurious stub throw. Only the true legacy
+    (non-backend) path consults the SQLite identity.
+    */
+    if (store.backendMode) return store.rootDir;
     try {
       return store.db.getProjectIdentity()?.id ?? store.rootDir;
     } catch {

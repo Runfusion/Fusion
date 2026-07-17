@@ -4859,7 +4859,16 @@ export class TaskExecutor {
     Task execution sessions must honor the assigned permanent agent's runtimeConfig like chat sessions do. If the live executor was handed an agents-less worktree AgentStore, fall back to the authoritative project `.fusion` AgentStore instead of letting `resolveExecutorSessionModel` see an empty runtimeConfig and silently drift to the pi built-in model.
     */
     try {
-      this.authoritativeAssignedAgentStore ??= new AgentStore({ rootDir: join(this.rootDir, ".fusion"), taskStore: this.store });
+      /*
+      FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+      The authoritative-agent fallback AgentStore MUST inherit the TaskStore's AsyncDataLayer so it runs in PostgreSQL backend mode. AgentStore does not derive `asyncLayer` from `taskStore`, so omitting it left this store in legacy-SQLite mode; in a PG deployment `init()`/`getAgent()` then hit the removed SQLite stub, the throw was swallowed by the catch below, and this method silently returned null — reintroducing the exact model-drift to the pi built-in that this fallback exists to prevent. Pass the layer (mirrors the canonical site in agent-tools.ts).
+      */
+      const authoritativeAgentLayer = this.store.getAsyncLayer();
+      this.authoritativeAssignedAgentStore ??= new AgentStore({
+        rootDir: join(this.rootDir, ".fusion"),
+        taskStore: this.store,
+        ...(authoritativeAgentLayer ? { asyncLayer: authoritativeAgentLayer } : {}),
+      });
       await this.authoritativeAssignedAgentStore.init();
       return await this.authoritativeAssignedAgentStore.getAgent(normalizedId).catch(() => null);
     } catch (err: unknown) {

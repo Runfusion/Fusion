@@ -1241,6 +1241,16 @@ export async function unlinkGithubIssueImpl(store: TaskStore, id: string): Promi
   }
 
 export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string[]> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Dead legacy-SQLite path (no live caller): uses store.archiveDb + store.db,
+    both of which throw the removed-SQLite stub in backend mode. It was never
+    ported to the AsyncDataLayer. Fail fast with an actionable message so a future
+    re-exposure is caught here rather than surfacing the cryptic stub error.
+    */
+    if (store.backendMode) {
+      throw new Error("cleanupArchivedTasks is not implemented for the PostgreSQL backend (no async port exists). Use the async archive lifecycle helpers instead.");
+    }
     const archivedTasks = await store.listTasks({ column: "archived" });
 
     const cleanedUpIds: string[] = [];

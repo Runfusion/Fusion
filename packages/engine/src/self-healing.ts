@@ -2584,7 +2584,7 @@ export class SelfHealingManager {
               log.log("Maintenance batch 1 step \"prune-agent-log-files\" skipped — agentLogFileRetentionDays is not enabled");
               return;
             }
-            const { prunedFiles, prunedEntries, freedBytes } = this.store.pruneAgentLogFiles(days);
+            const { prunedFiles, prunedEntries, freedBytes } = await this.store.pruneAgentLogFilesAsync(days);
             log.log(`Maintenance batch 1 step "prune-agent-log-files" succeeded — files=${prunedFiles} entries=${prunedEntries} bytes=${freedBytes}`);
           },
         },

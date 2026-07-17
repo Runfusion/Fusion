@@ -541,6 +541,15 @@ export class AgentStore extends EventEmitter {
    * Runtime reads come from SQLite; this only seeds old projects.
    */
   async importLegacyFileRuns(): Promise<number> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    One-shot legacy SQLite migration. In backend mode the INSERT below hits the
+    removed-SQLite stub, and this method's per-file try/catch would swallow the
+    throw and silently report "0 imported". There are no legacy SQLite file runs
+    to import against PostgreSQL (the PG baseline already covers this), so no-op
+    cleanly instead of laundering a stub throw into a false success.
+    */
+    if (this.backendMode) return 0;
     const entries = await readdir(this.agentsDir, { withFileTypes: true }).catch(() => []);
     const runDirs = entries.filter((entry) => entry.isDirectory() && entry.name.endsWith("-runs"));
 

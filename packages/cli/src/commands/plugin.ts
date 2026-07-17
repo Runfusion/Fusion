@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import * as readline from "node:readline";
-import { PluginStore, PluginLoader, validatePluginManifest, resolveGlobalDir } from "@fusion/core";
+import { PluginStore, PluginLoader, validatePluginManifest, resolveGlobalDir, CentralCore } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
 
 export interface BuiltinPluginCatalogEntry {
@@ -110,9 +110,23 @@ export async function createPluginStore(
     await pluginStore.init();
     return pluginStore;
   } catch {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Unregistered-project fallback. PluginStore persists install/state rows in the
+    central DB and needs an AsyncDataLayer to run in PostgreSQL backend mode; the
+    old fallback constructed it WITHOUT one, so `init()` hit the removed-SQLite
+    stub and threw in every PG deployment. Bootstrap a layer-less CentralCore
+    (which self-bootstraps the embedded-PG AsyncDataLayer in init()) and pass its
+    layer so the fallback store is backend-mode just like the resolveProject path.
+    */
     const projectPath = await getProjectPath(projectName);
+    const centralGlobalDir = options?.centralGlobalDir ?? resolveGlobalDir();
+    const central = new CentralCore(centralGlobalDir);
+    await central.init();
+    const backendLayer = central.asyncLayer;
     const pluginStore = new PluginStore(projectPath, {
-      centralGlobalDir: options?.centralGlobalDir ?? resolveGlobalDir(),
+      centralGlobalDir,
+      ...(backendLayer ? { asyncLayer: backendLayer } : {}),
     });
     await pluginStore.init();
     return pluginStore;

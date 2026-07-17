@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import {AsyncMissionStore} from "../async-mission-store.js";
 import {TaskHasLineageChildrenError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -155,6 +156,27 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
         },
       });
     });
+
+    /*
+    FNXC:MissionStore 2026-07-17-14:20:
+    PostgreSQL hard-delete mirror of the SQLite mission feature/task-link cleanup
+    in deleteTaskImpl (archive-lifecycle.ts). That sync transaction callback could
+    only drive the sync MissionStore, so in backend mode the unlink was skipped and
+    orphaned mission feature→task links leaked on every hard delete. The async
+    unlink cannot join the just-closed transaction, so run it here best-effort
+    (like the task:deleted emit) — the delete is already committed.
+    */
+    try {
+      const missionStore = store.getMissionStore();
+      if (missionStore instanceof AsyncMissionStore) {
+        const linkedFeature = await missionStore.getFeatureByTaskId(id);
+        if (linkedFeature) {
+          await missionStore.unlinkFeatureFromTask(linkedFeature.id);
+        }
+      }
+    } catch (missionCleanupErr) {
+      storeLog.warn(`Best-effort mission feature/task-link cleanup after hard delete of ${id} failed: ${missionCleanupErr instanceof Error ? missionCleanupErr.message : String(missionCleanupErr)}`);
+    }
 
     // Emit lifecycle event (best-effort, outside the transaction).
     store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });

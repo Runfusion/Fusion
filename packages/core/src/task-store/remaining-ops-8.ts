@@ -656,8 +656,26 @@ export async function purgeTaskWorkflowSelectionRowsAsyncImpl(store: TaskStore, 
   store.workflowStepsCache = null;
 }
 
-export function cleanupOrphanedMaterializedStepsImpl(store: TaskStore, stepIds: string[] | undefined): void {
+export async function cleanupOrphanedMaterializedStepsImpl(store: TaskStore, stepIds: string[] | undefined): Promise<void> {
     if (!stepIds || stepIds.length === 0) return;
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Backend mode deletes the orphaned workflow_steps rows via the AsyncDataLayer.
+    The former sync `store.db.prepare(DELETE...)` threw the removed-SQLite stub in
+    backend mode and was swallowed by the best-effort catch, silently leaking every
+    materialized workflow_steps row created before a failed task-create (the callers
+    are the task-creation failure catches). Mirrors removeMaterializedSelectionImpl.
+    */
+    const layer = store.getAsyncLayer();
+    if (layer) {
+      try {
+        await layer.db.delete(schema.project.workflowSteps).where(inArray(schema.project.workflowSteps.id, stepIds));
+      } catch {
+        // Best-effort cleanup.
+      }
+      store.workflowStepsCache = null;
+      return;
+    }
     for (const stepId of stepIds) {
       try {
         store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId);

@@ -635,6 +635,16 @@ export async function getAllDocumentsImpl(store: TaskStore, options?: { searchQu
   }
 
 export async function deleteWorkflowStepImpl(store: TaskStore, id: string): Promise<void> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Dead legacy-SQLite path (the REST route + client helper were removed in U5):
+    unlike its migrated siblings createWorkflowStep/updateWorkflowStep, this never
+    got a backend branch, so store.db here throws the removed-SQLite stub in backend
+    mode. Fail fast with an actionable message if a future route re-exposes it.
+    */
+    if (store.backendMode) {
+      throw new Error("deleteWorkflowStep is not implemented for the PostgreSQL backend (no async port exists). Materialized workflow_steps are cleaned up via the async workflow-ops helpers.");
+    }
     const deleted = store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
       changes?: number;
     };

@@ -307,6 +307,15 @@ export async function applyTaskPatchImpl(store: TaskStore,
     changedColumns: Iterable<keyof TaskRow>,
     options?: { existingRow?: TaskRow; auditInput?: { agentId?: string; runId?: string; timestamp?: string; operation?: string } },
   ): Promise<void> {
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
+    Dead legacy-SQLite path (no live caller): drives a sync store.db.transactionImmediate,
+    which throws the removed-SQLite stub in backend mode. Never ported to the async
+    data layer. Fail fast with an actionable message if re-exposed.
+    */
+    if (store.backendMode) {
+      throw new Error("applyTaskPatch is not implemented for the PostgreSQL backend (no async port exists). Use the async task update/patch helpers instead.");
+    }
     let result: { deletedAt?: string; current?: Task } | undefined;
     store.db.transactionImmediate(() => {
       result = store.patchTaskRowInTransaction(id, task, changedColumns, options?.existingRow);
