@@ -172,15 +172,21 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | null>(null);
+  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | "merger" | null>(null);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
   const [executorModelId, setExecutorModelId] = useState<string | undefined>(undefined);
   const [validatorProvider, setValidatorProvider] = useState<string | undefined>(undefined);
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const [mergerProvider, setMergerProvider] = useState<string | undefined>(undefined);
+  const [mergerModelId, setMergerModelId] = useState<string | undefined>(undefined);
   /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: inline quick-entry bar carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
+  const [validatorThinkingLevel, setValidatorThinkingLevel] = useState<string>("");
+  const [planningThinkingLevel, setPlanningThinkingLevel] = useState<string>("");
+  const [mergerThinkingLevel, setMergerThinkingLevel] = useState<string>("");
+  /* FNXC:QuickAddModels 2026-07-16-12:00: Quick Add reuses CustomModelDropdown for merger and each lane's independent thinking override. */
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
@@ -415,11 +421,13 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
   const planningSelectionValue = getModelSelectionValue(planningProvider, planningModelId);
+  const mergerSelectionValue = getModelSelectionValue(mergerProvider, mergerModelId);
 
   const hasExecutorOverride = Boolean(executorProvider && executorModelId);
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
   const hasPlanningOverride = Boolean(planningProvider && planningModelId);
-  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride);
+  const hasMergerOverride = Boolean(mergerProvider && mergerModelId);
+  const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride) + Number(hasMergerOverride);
   const modelMenuLabel = selectedPresetId
     ? settings?.modelPresets?.find((p) => p.id === selectedPresetId)?.name ?? t("tasks.models", "Models")
     : selectedModelCount > 0
@@ -613,7 +621,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setValidatorModelId(undefined);
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
+    setMergerProvider(undefined);
+    setMergerModelId(undefined);
     setThinkingLevel("");
+    setValidatorThinkingLevel("");
+    setPlanningThinkingLevel("");
+    setMergerThinkingLevel("");
     setSelectedPresetId(undefined);
     setEnabledOptionalStepIds(optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId));
     setIsFastMode(false);
@@ -739,6 +752,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
+        mergerModelProvider: hasMergerOverride ? mergerProvider : undefined,
+        mergerModelId: hasMergerOverride ? mergerModelId : undefined,
+        validatorThinkingLevel: validatorThinkingLevel !== "" ? (validatorThinkingLevel as ThinkingLevel) : undefined,
+        planningThinkingLevel: planningThinkingLevel !== "" ? (planningThinkingLevel as ThinkingLevel) : undefined,
+        mergerThinkingLevel: mergerThinkingLevel !== "" ? (mergerThinkingLevel as ThinkingLevel) : undefined,
         thinkingLevel: thinkingLevel !== "" ? (thinkingLevel as ThinkingLevel) : undefined,
         /*
         FNXC:QuickAddWorkflowSteps 2026-06-29-01:31:
@@ -1510,8 +1528,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setValidatorModelId(next.modelId);
   }, []);
 
-  const handleThinkingLevelChange = useCallback((value: string) => {
-    setThinkingLevel(value);
+  const handleThinkingLevelChange = useCallback((value: string) => setThinkingLevel(value), []);
+  const handleMergerModelChange = useCallback((value: string) => {
+    const next = parseModelSelection(value);
+    setMergerProvider(next.provider);
+    setMergerModelId(next.modelId);
   }, []);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
@@ -2425,6 +2446,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
                   </button>
+                  <button type="button" className={`model-menu-item ${hasMergerOverride ? "model-menu-item--active" : ""}`} onClick={() => setActiveModelSubmenu("merger")} data-testid="model-menu-merger">
+                    <span className="model-menu-item-label"><Brain size={12} /> {t("tasks.mergerModel", "Merger Model")}</span>
+                    <span className="model-menu-item-value">{hasMergerOverride ? getModelBadgeLabel(mergerProvider, mergerModelId) : t("tasks.usingDefault", "Using default")}</span><ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
+                  </button>
                 </div>
               ) : (
                 // Submenu with CustomModelDropdown for the selected target
@@ -2442,6 +2467,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     {activeModelSubmenu === "plan" && t("tasks.planModel", "Plan Model")}
                     {activeModelSubmenu === "executor" && t("tasks.executorModel", "Executor Model")}
                     {activeModelSubmenu === "validator" && t("tasks.reviewerModel", "Reviewer Model")}
+                    {activeModelSubmenu === "merger" && t("tasks.mergerModel", "Merger Model")}
                   </div>
                   <CustomModelDropdown
                     models={loadedModels}
@@ -2450,14 +2476,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                         ? planningSelectionValue
                         : activeModelSubmenu === "executor"
                           ? executorSelectionValue
-                          : validatorSelectionValue
+                          : activeModelSubmenu === "validator" ? validatorSelectionValue : mergerSelectionValue
                     }
                     onChange={
                       activeModelSubmenu === "plan"
                         ? handlePlanningModelChange
                         : activeModelSubmenu === "executor"
                           ? handleExecutorChange
-                          : handleValidatorChange
+                          : activeModelSubmenu === "validator" ? handleValidatorChange : handleMergerModelChange
                     }
                     placeholder={t("tasks.usingDefault", "Using default")}
                     disabled={modelsLoading}
@@ -2467,9 +2493,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     onToggleFavorite={handleToggleFavorite}
                     favoriteModels={effectiveFavoriteModels}
                     onToggleModelFavorite={handleToggleModelFavorite}
-                    thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : undefined}
-                    onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : undefined}
-                    defaultThinkingLevel={activeModelSubmenu === "executor" ? settings?.defaultThinkingLevel ?? "off" : undefined}
+                    thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : activeModelSubmenu === "plan" ? planningThinkingLevel : activeModelSubmenu === "validator" ? validatorThinkingLevel : mergerThinkingLevel}
+                    onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : activeModelSubmenu === "plan" ? setPlanningThinkingLevel : activeModelSubmenu === "validator" ? setValidatorThinkingLevel : setMergerThinkingLevel}
+                    defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
                   />
                   {modelsError && (
                     <div className="model-submenu-error">

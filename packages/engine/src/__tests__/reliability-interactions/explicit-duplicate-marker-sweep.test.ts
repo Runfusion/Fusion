@@ -46,7 +46,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("resolves an FN-5217-style stuck marker task during maintenance", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -54,16 +54,15 @@ const canRun = hasGit && hasPg;
 
     await (fx.manager as any).runMaintenance();
 
-    await expect(fx.store.getTask(duplicate.id)).rejects.toThrow(`Task ${duplicate.id} not found`);
-    const softDeletedDuplicate = await fx.store.getTask(duplicate.id, { includeDeleted: true });
-    expect(softDeletedDuplicate.deletedAt).toEqual(expect.any(String));
+    const parkedDuplicate = await fx.store.getTask(duplicate.id);
+    expect(parkedDuplicate).toMatchObject({ paused: true, pausedReason: "duplicate-decision-required", sourceMetadata: expect.objectContaining({ nearDuplicateOf: canonical.id, duplicateSource: "triage-marker" }) });
     const liveTasks = await fx.store.listTasks({ includeArchived: false });
-    expect(liveTasks.map((task) => task.id)).not.toContain(duplicate.id);
+    expect(liveTasks.map((task) => task.id)).toContain(duplicate.id);
     expect((await fx.store.getTask(canonical.id)).column).toBe("todo");
     const activity = await fx.store.getActivityLog({ type: "task:auto-archived-duplicate", limit: 20 });
     expect(activity.find((entry) => entry.taskId === duplicate.id)).toEqual(
       expect.objectContaining({
-        metadata: expect.objectContaining({ canonicalTaskId: canonical.id, source: "explicit-marker-sweep" }),
+        metadata: expect.objectContaining({ canonicalTaskId: canonical.id, source: "triage-marker-flagged" }),
       }),
     );
   });
@@ -88,7 +87,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("leaves marker tasks alone when the canonical target is missing", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const duplicate = await createPromptTask(fx, { id: "FN-5301", column: "triage", prompt: "DUPLICATE: FN-9999\n" });
@@ -101,7 +100,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("leaves full specs untouched", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const duplicate = await createPromptTask(fx, { id: "FN-5302", column: "todo", prompt: FULL_SPEC });
@@ -124,7 +123,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("caps work at 50 tasks per sweep", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -148,7 +147,7 @@ const canRun = hasGit && hasPg;
   }, 20_000);
 
   it("fails open when one delete throws and continues processing later tasks", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN" } });
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });

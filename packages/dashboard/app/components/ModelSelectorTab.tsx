@@ -8,6 +8,7 @@ import {
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
+  resolveTaskMergerModel,
 } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useFavorites } from "../hooks/useFavorites";
@@ -54,6 +55,13 @@ function getPlanningSelection(task: Task | TaskDetail): ModelSelection {
   };
 }
 
+function getMergerSelection(task: Task | TaskDetail): ModelSelection {
+  return {
+    provider: normalizeModelField(task.mergerModelProvider),
+    modelId: normalizeModelField(task.mergerModelId),
+  };
+}
+
 function resolveEffectiveExecutor(
   task: Task | TaskDetail,
   settings?: Settings,
@@ -73,6 +81,13 @@ function resolveEffectivePlanning(
   settings?: Settings,
 ): ModelSelection {
   return resolveTaskPlanningModel(task, settings);
+}
+
+function resolveEffectiveMerger(
+  task: Task | TaskDetail,
+  settings?: Settings,
+): ModelSelection {
+  return resolveTaskMergerModel(task, settings);
 }
 
 function parseModelValue(value: string): ModelSelection {
@@ -98,7 +113,7 @@ function selectionsEqual(a: ModelSelection, b: ModelSelection): boolean {
 }
 
 function getSuccessToastMessage(
-  target: "executor" | "validator" | "planning",
+  target: "executor" | "validator" | "planning" | "merger",
   selection: ModelSelection,
   t: (key: string, defaultValue: string, options?: Record<string, unknown>) => string,
 ): string {
@@ -106,6 +121,7 @@ function getSuccessToastMessage(
     executor: { key: "models.targetLabels.executor", defaultValue: "Executor" },
     validator: { key: "models.targetLabels.validator", defaultValue: "Reviewer" },
     planning: { key: "models.targetLabels.planning", defaultValue: "Planning" },
+    merger: { key: "tasks.mergerModel", defaultValue: "Merger" },
   };
   const labelEntry = labelKeys[target] ?? { key: `models.targetLabels.${target}`, defaultValue: target };
   const label = t(labelEntry.key, labelEntry.defaultValue);
@@ -138,13 +154,17 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
   const [savedValidator, setSavedValidator] = useState<ModelSelection>(() => getValidatorSelection(task));
   const [selectedPlanning, setSelectedPlanning] = useState<ModelSelection>(() => getPlanningSelection(task));
   const [savedPlanning, setSavedPlanning] = useState<ModelSelection>(() => getPlanningSelection(task));
+  const [selectedMerger, setSelectedMerger] = useState<ModelSelection>(() => getMergerSelection(task));
+  const [savedMerger, setSavedMerger] = useState<ModelSelection>(() => getMergerSelection(task));
   const [selectedThinking, setSelectedThinking] = useState<string | null>(() => task.thinkingLevel ?? null);
   const [savedThinking, setSavedThinking] = useState<string | null>(() => task.thinkingLevel ?? null);
   const [selectedValidatorThinking, setSelectedValidatorThinking] = useState<string | null>(() => task.validatorThinkingLevel ?? null);
   const [savedValidatorThinking, setSavedValidatorThinking] = useState<string | null>(() => task.validatorThinkingLevel ?? null);
   const [selectedPlanningThinking, setSelectedPlanningThinking] = useState<string | null>(() => task.planningThinkingLevel ?? null);
   const [savedPlanningThinking, setSavedPlanningThinking] = useState<string | null>(() => task.planningThinkingLevel ?? null);
-  const [savingTarget, setSavingTarget] = useState<"executor" | "validator" | "planning" | "thinking" | null>(null);
+  const [selectedMergerThinking, setSelectedMergerThinking] = useState<string | null>(() => task.mergerThinkingLevel ?? null);
+  const [savedMergerThinking, setSavedMergerThinking] = useState<string | null>(() => task.mergerThinkingLevel ?? null);
+  const [savingTarget, setSavingTarget] = useState<"executor" | "validator" | "planning" | "merger" | "thinking" | null>(null);
 
   const activeTaskIdRef = useRef(task.id);
 
@@ -170,6 +190,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
     const nextExecutor = getExecutorSelection(task);
     const nextValidator = getValidatorSelection(task);
     const nextPlanning = getPlanningSelection(task);
+    const nextMerger = getMergerSelection(task);
 
     setSelectedExecutor(nextExecutor);
     setSavedExecutor(nextExecutor);
@@ -177,32 +198,40 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
     setSavedValidator(nextValidator);
     setSelectedPlanning(nextPlanning);
     setSavedPlanning(nextPlanning);
+    setSelectedMerger(nextMerger);
+    setSavedMerger(nextMerger);
     const nextThinking = task.thinkingLevel ?? null;
     const nextValidatorThinking = task.validatorThinkingLevel ?? null;
     const nextPlanningThinking = task.planningThinkingLevel ?? null;
+    const nextMergerThinking = task.mergerThinkingLevel ?? null;
     setSelectedThinking(nextThinking);
     setSavedThinking(nextThinking);
     setSelectedValidatorThinking(nextValidatorThinking);
     setSavedValidatorThinking(nextValidatorThinking);
     setSelectedPlanningThinking(nextPlanningThinking);
     setSavedPlanningThinking(nextPlanningThinking);
+    setSelectedMergerThinking(nextMergerThinking);
+    setSavedMergerThinking(nextMergerThinking);
     setSavingTarget(null);
-  }, [task.id, task.modelProvider, task.modelId, task.validatorModelProvider, task.validatorModelId, task.planningModelProvider, task.planningModelId, task.thinkingLevel, task.validatorThinkingLevel, task.planningThinkingLevel]);
+  }, [task.id, task.modelProvider, task.modelId, task.validatorModelProvider, task.validatorModelId, task.planningModelProvider, task.planningModelId, task.mergerModelProvider, task.mergerModelId, task.thinkingLevel, task.validatorThinkingLevel, task.planningThinkingLevel, task.mergerThinkingLevel]);
 
   const executorValue = useMemo(() => getDropdownValue(selectedExecutor), [selectedExecutor]);
   const validatorValue = useMemo(() => getDropdownValue(selectedValidator), [selectedValidator]);
   const planningValue = useMemo(() => getDropdownValue(selectedPlanning), [selectedPlanning]);
+  const mergerValue = useMemo(() => getDropdownValue(selectedMerger), [selectedMerger]);
   const effectiveExecutor = useMemo(() => resolveEffectiveExecutor(task, settings), [task, settings]);
   const effectiveValidator = useMemo(() => resolveEffectiveValidator(task, settings), [task, settings]);
   const effectivePlanning = useMemo(() => resolveEffectivePlanning(task, settings), [task, settings]);
+  const effectiveMerger = useMemo(() => resolveEffectiveMerger(task, settings), [task, settings]);
   const isSaving = savingTarget !== null;
 
   const saveSelection = useCallback(
-    async (target: "executor" | "validator" | "planning", nextSelection: ModelSelection) => {
+    async (target: "executor" | "validator" | "planning" | "merger", nextSelection: ModelSelection) => {
       const requestTaskId = task.id;
       const previousSavedExecutor = savedExecutor;
       const previousSavedValidator = savedValidator;
       const previousSavedPlanning = savedPlanning;
+      const previousSavedMerger = savedMerger;
 
       setSavingTarget(target);
 
@@ -218,7 +247,12 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
                   validatorModelProvider: nextSelection.provider ?? null,
                   validatorModelId: nextSelection.modelId ?? null,
                 }
-              : {
+              : target === "merger"
+                ? {
+                    mergerModelProvider: nextSelection.provider ?? null,
+                    mergerModelId: nextSelection.modelId ?? null,
+                  }
+                : {
                   planningModelProvider: nextSelection.provider ?? null,
                   planningModelId: nextSelection.modelId ?? null,
                 })
@@ -229,6 +263,8 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               validatorModelId: (target === "validator" ? nextSelection : savedValidator).modelId ?? null,
               planningModelProvider: (target === "planning" ? nextSelection : savedPlanning).provider ?? null,
               planningModelId: (target === "planning" ? nextSelection : savedPlanning).modelId ?? null,
+              mergerModelProvider: (target === "merger" ? nextSelection : savedMerger).provider ?? null,
+              mergerModelId: (target === "merger" ? nextSelection : savedMerger).modelId ?? null,
             };
 
         /*
@@ -244,6 +280,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
         const nextSavedExecutor = getExecutorSelection(updatedTask);
         const nextSavedValidator = getValidatorSelection(updatedTask);
         const nextSavedPlanning = getPlanningSelection(updatedTask);
+        const nextSavedMerger = getMergerSelection(updatedTask);
 
         setSavedExecutor(nextSavedExecutor);
         setSelectedExecutor(nextSavedExecutor);
@@ -251,12 +288,15 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
         setSelectedValidator(nextSavedValidator);
         setSavedPlanning(nextSavedPlanning);
         setSelectedPlanning(nextSavedPlanning);
+        setSavedMerger(nextSavedMerger);
+        setSelectedMerger(nextSavedMerger);
         onTaskUpdated?.(updatedTask);
 
         const targetSelections: Record<string, ModelSelection> = {
           executor: nextSavedExecutor,
           validator: nextSavedValidator,
           planning: nextSavedPlanning,
+          merger: nextSavedMerger,
         };
 
         addToast(
@@ -272,8 +312,10 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
           setSelectedExecutor(previousSavedExecutor);
         } else if (target === "validator") {
           setSelectedValidator(previousSavedValidator);
-        } else {
+        } else if (target === "planning") {
           setSelectedPlanning(previousSavedPlanning);
+        } else {
+          setSelectedMerger(previousSavedMerger);
         }
 
         addToast(getErrorMessage(err) || t("models.errors.failedSaveSettings", "Failed to save model settings"), "error");
@@ -283,7 +325,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
         }
       }
     },
-    [task.id, savedExecutor, savedValidator, savedPlanning, addToast, onTaskUpdated, projectId, t],
+    [task.id, savedExecutor, savedValidator, savedPlanning, savedMerger, addToast, onTaskUpdated, projectId, t],
   );
 
   const handleExecutorChange = useCallback(
@@ -326,6 +368,15 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
       void saveSelection("planning", nextSelection);
     },
     [savedPlanning, saveSelection],
+  );
+
+  const handleMergerChange = useCallback(
+    (value: string) => {
+      const nextSelection = parseModelValue(value);
+      setSelectedMerger(nextSelection);
+      if (!selectionsEqual(nextSelection, savedMerger)) void saveSelection("merger", nextSelection);
+    },
+    [savedMerger, saveSelection],
   );
 
   const handleThinkingChange = useCallback(
@@ -482,13 +533,36 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
     [task.id, savedPlanningThinking, settings, addToast, onTaskUpdated, projectId, t],
   );
 
+  const handleMergerThinkingChange = useCallback(async (value: string) => {
+    const requestTaskId = task.id;
+    const previousThinking = savedMergerThinking;
+    const nextValue = value === "" ? null : value;
+    setSelectedMergerThinking(nextValue);
+    setSavingTarget("thinking");
+    try {
+      const updatedTask = await updateTask(requestTaskId, { mergerThinkingLevel: nextValue }, projectId);
+      if (activeTaskIdRef.current !== requestTaskId) return;
+      const nextThinking = updatedTask.mergerThinkingLevel ?? null;
+      setSavedMergerThinking(nextThinking);
+      setSelectedMergerThinking(nextThinking);
+      onTaskUpdated?.(updatedTask);
+    } catch (err) {
+      if (activeTaskIdRef.current !== requestTaskId) return;
+      setSelectedMergerThinking(previousThinking);
+      addToast(getErrorMessage(err) || t("models.errors.failedSaveThinking", "Failed to save thinking level"), "error");
+    } finally {
+      if (activeTaskIdRef.current === requestTaskId) setSavingTarget(null);
+    }
+  }, [task.id, savedMergerThinking, addToast, onTaskUpdated, projectId, t]);
+
   /*
    * FNXC:Settings-ThinkingLevel 2026-07-13-00:27:
-   * Reviewer and Planning task-detail model boxes carry independent per-lane reasoning-effort overrides persisted to task.validatorThinkingLevel and task.planningThinkingLevel while the Executor box continues to use task.thinkingLevel.
+   * Reviewer, Planning, and Merger task-detail model boxes carry independent per-lane reasoning-effort overrides. Merger selection reuses CustomModelDropdown and remains independent of its provider/model pair.
    */
   const executorUsingDefault = !savedExecutor.provider && !savedExecutor.modelId;
   const validatorUsingDefault = !savedValidator.provider && !savedValidator.modelId;
   const planningUsingDefault = !savedPlanning.provider && !savedPlanning.modelId;
+  const mergerUsingDefault = !savedMerger.provider && !savedMerger.modelId;
 
   return (
     <div className="model-selector-tab">
@@ -605,8 +679,17 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
           </div>
 
 
+          <div className="form-group">
+            <label htmlFor="mergerModel">{t("tasks.mergerModel", "Merger Model")}</label>
+            <div className="model-selector-current">
+              {mergerUsingDefault ? <span className="model-badge model-badge-default">{t("models.states.usingDefault", "Using default")}{effectiveMerger.provider && effectiveMerger.modelId ? ` (${effectiveMerger.provider}/${effectiveMerger.modelId})` : ""}</span> : <span className="model-badge model-badge-custom">{savedMerger.provider && <ProviderIcon provider={savedMerger.provider} size="sm" />}{savedMerger.provider}/{savedMerger.modelId}</span>}
+            </div>
+            <CustomModelDropdown id="mergerModel" label={t("tasks.mergerModel", "Merger Model")} value={mergerValue} onChange={handleMergerChange} models={availableModels} disabled={isSaving} placeholder={t("tasks.usingDefault", "Using default")} favoriteProviders={favoriteProviders} onToggleFavorite={handleToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={handleToggleModelFavorite} thinkingLevel={selectedMergerThinking ?? ""} onThinkingLevelChange={handleMergerThinkingChange} defaultThinkingLevel={settings?.mergerThinkingLevel ?? "off"} />
+            <small>{t("models.descriptions.merger", "The AI model used to merge this task.")}</small>
+          </div>
+
           <div className="model-selector-status">
-            {executorUsingDefault && validatorUsingDefault && planningUsingDefault && savedThinking === null && savedValidatorThinking === null && savedPlanningThinking === null
+            {executorUsingDefault && validatorUsingDefault && planningUsingDefault && mergerUsingDefault && savedThinking === null && savedValidatorThinking === null && savedPlanningThinking === null && savedMergerThinking === null
               ? t("models.messages.usingDefaults", "Using project or global default models.")
               : t("models.messages.upToDate", "Model settings are up to date.")}
           </div>

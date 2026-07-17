@@ -1453,7 +1453,8 @@ describe("ChatView core interactions", () => {
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const betaRow = screen.getByTestId("chat-session-session-002");
-      await userEvent.click(within(betaRow).getByTestId("chat-session-rename-btn"));
+      await userEvent.click(within(betaRow).getByTestId("chat-session-menu-btn"));
+      await userEvent.click(screen.getByTestId("chat-context-rename"));
 
       expect(selectSession).not.toHaveBeenCalled();
       const dialog = screen.getByRole("dialog", { name: /rename conversation/i });
@@ -1473,7 +1474,7 @@ describe("ChatView core interactions", () => {
       expect(selectSession).toHaveBeenCalledWith("session-002");
     });
 
-    it("uses Untitled in the sidebar rename button name for empty session titles", async () => {
+    it("uses Untitled in the sidebar action menu name for empty session titles", async () => {
       const renameSession = vi.fn().mockResolvedValue(undefined);
       const untitledSession: ChatSessionInfo = {
         id: "session-empty-title",
@@ -1493,10 +1494,11 @@ describe("ChatView core interactions", () => {
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       const row = screen.getByTestId("chat-session-session-empty-title");
-      const renameButton = within(row).getByRole("button", { name: /rename conversation untitled/i });
-      expect(renameButton).toHaveAttribute("data-testid", "chat-session-rename-btn");
+      const menuButton = within(row).getByRole("button", { name: /conversation actions for untitled/i });
+      expect(menuButton).toHaveAttribute("data-testid", "chat-session-menu-btn");
 
-      await userEvent.click(renameButton);
+      await userEvent.click(menuButton);
+      await userEvent.click(screen.getByTestId("chat-context-rename"));
       const dialog = screen.getByRole("dialog", { name: /rename conversation/i });
       const input = within(dialog).getByTestId("chat-rename-input") as HTMLInputElement;
       expect(input).toHaveValue("");

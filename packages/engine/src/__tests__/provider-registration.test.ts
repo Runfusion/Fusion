@@ -127,6 +127,23 @@ describe("seedDashboardProviders", () => {
     expect(providerIds).toEqual(expect.arrayContaining(["zai", "openrouter", "kimi-coding", "grok-cli"]));
   });
 
+  it("keeps native Kimi K3 available through the installed pi model registry", async () => {
+    // FNXC:ModelCatalog 2026-07-16-19:05: FN-8180 requires catalog coverage to
+    // exercise pi's real 0.80.10 built-in registry, not a hand-written Kimi fixture.
+    const modelRegistry = await createInMemoryModelRegistry();
+    await modelRegistry.refresh();
+
+    expect(modelRegistry.find("kimi-coding", "k3")).toMatchObject({
+      provider: "kimi-coding",
+      id: "k3",
+      name: "Kimi K3",
+      api: "anthropic-messages",
+      baseUrl: "https://api.kimi.com/coding",
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    });
+  });
+
   it("registers one custom provider alongside built-ins", async () => {
     const store = makeStore([customProvider()]);
     const authStorage = makeAuthStorage();

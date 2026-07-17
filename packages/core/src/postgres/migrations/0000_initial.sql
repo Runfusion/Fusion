@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   validator_model_id text,
   planning_model_provider text,
   planning_model_id text,
+  merger_model_provider text,
+  merger_model_id text,
+  merger_thinking_level text,
   merge_retries integer,
   workflow_step_retries integer,
   resume_limbo_count integer DEFAULT 0,
@@ -78,6 +81,8 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   execute_requeue_loop_signature text,
   recovery_retry_count integer,
   task_done_retry_count integer DEFAULT 0,
+  -- FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (nullable ISO timestamp).
+  bulk_completion_refusal_at text,
   worktree_session_retry_count integer DEFAULT 0,
   completion_handoff_limbo_recovery_count integer DEFAULT 0,
   merge_conflict_bounce_count integer DEFAULT 0,

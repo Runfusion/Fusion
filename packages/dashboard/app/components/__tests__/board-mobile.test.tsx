@@ -287,7 +287,7 @@ describe("TaskCard mobile", () => {
     expectRuleToContain(mobileSection, ".card-archive-btn", "opacity: 1;");
   });
 
-  it("keeps archive/unarchive/send-back visible without min-height overrides in the mobile media block", () => {
+  it("keeps archive/unarchive/Promote controls visible without min-height overrides in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
@@ -312,7 +312,7 @@ describe("TaskCard mobile", () => {
     }
   });
 
-  it("FN-4351: archive/unarchive/send-back buttons have no min-height in the mobile media block", () => {
+  it("FN-4351: archive/unarchive/Promote buttons have no min-height in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
@@ -456,7 +456,7 @@ describe("TaskCard mobile", () => {
     );
 
     expect(container.querySelector(".card-revert-btn")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Task actions" }));
     expect(screen.getByRole("menuitem", { name: "Revert" })).toBeTruthy();
   });
 

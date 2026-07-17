@@ -1,14 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { TaskStore } from "@fusion/core";
+import {
+  createTaskStoreForTest,
+  pgDescribe,
+  type PgTestHarness,
+} from "../../../core/src/__test-utils__/pg-test-harness.js";
 import type { TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
 
 /** The exact param type the store's save method expects (WorkflowRunStepInstance
  *  is not exported via the barrel; derive it from the method signature). */
-type SaveInstanceArg = Parameters<TaskStore["saveWorkflowRunStepInstance"]>[0];
+type SaveInstanceArg = Parameters<TaskStore["saveWorkflowRunStepInstanceAsync"]>[0];
 
 import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
 import type {
@@ -20,7 +21,7 @@ import { type WorkflowLegacySeams } from "../workflow-node-handlers.js";
 
 /**
  * runId/foreachNodeId wiring regression coverage (FIX 1). These tests wire the
- * REAL store (an in-memory TaskStore) through store-backed persistence + projection
+ * REAL PostgreSQL-backed TaskStore through store-backed persistence + projection
  * adapters that MIRROR the executor's production adapters, then assert that:
  *   (i)   after a foreach expands + persists, a pin-protection probe under the
  *         PRODUCTION runId sees the rows (would be empty under the old `:run` literal);
@@ -31,10 +32,6 @@ import { type WorkflowLegacySeams } from "../workflow-node-handlers.js";
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 
-function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "fn-foreach-wiring-"));
-}
-
 /** The production run id derivation: `${task.id}:${definition.id}`. */
 const DEFINITION_ID = "wf-coding";
 const runIdFor = (taskId: string) => `${taskId}:${DEFINITION_ID}`;
@@ -43,10 +40,10 @@ const runIdFor = (taskId: string) => `${taskId}:${DEFINITION_ID}`;
 function storePersistence(store: TaskStore): WorkflowStepInstancePersistence {
   return {
     saveInstanceState: (state) =>
-      store.saveWorkflowRunStepInstance(state as unknown as SaveInstanceArg),
-    loadInstanceStates: (taskId, runId) =>
-      store.loadWorkflowRunStepInstances(taskId, runId) as unknown as WorkflowStepInstanceState[],
-    clearStaleInstanceStates: (taskId, keepRunId) => store.clearWorkflowRunStepInstances(taskId, keepRunId),
+      store.saveWorkflowRunStepInstanceAsync(state as unknown as SaveInstanceArg),
+    loadInstanceStates: async (taskId, runId) =>
+      await store.loadWorkflowRunStepInstancesAsync(taskId, runId) as WorkflowStepInstanceState[],
+    clearStaleInstanceStates: (taskId, keepRunId) => store.clearWorkflowRunStepInstancesAsync(taskId, keepRunId),
   };
 }
 
@@ -58,11 +55,11 @@ function storeProjection(store: TaskStore): IntegrationProjection {
       await store.updateStep(STORED_TASK_ID, stepIndex, "done", { source: "graph" });
     },
     markInstanceIntegrated: async (stepIndex, integratedAt, identity) => {
-      const rows = store.loadWorkflowRunStepInstances(STORED_TASK_ID, identity.runId);
+      const rows = await store.loadWorkflowRunStepInstancesAsync(STORED_TASK_ID, identity.runId);
       const existing = rows.find(
         (r) => r.foreachNodeId === identity.foreachNodeId && r.stepIndex === stepIndex,
       );
-      store.saveWorkflowRunStepInstance({
+      await store.saveWorkflowRunStepInstanceAsync({
         ...(existing ?? {}),
         taskId: STORED_TASK_ID,
         runId: identity.runId,
@@ -117,17 +114,14 @@ function baseSeams(overrides: Partial<WorkflowLegacySeams>): WorkflowLegacySeams
   return { planning: ok, execute: ok, review: ok, merge: ok, schedule: ok, ...overrides };
 }
 
-describe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
-  let rootDir: string;
-  let globalDir: string;
+pgDescribe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
   let taskId: string;
 
   beforeEach(async () => {
-    rootDir = makeTmpDir();
-    globalDir = join(rootDir, ".fusion-global");
-    store = new TaskStore(rootDir, globalDir);
-    await store.init();
+    harness = await createTaskStoreForTest({ prefix: "fusion_foreach_wiring" });
+    store = harness.store;
     const task = await store.createTask({ description: "wiring task" });
     taskId = task.id;
     STORED_TASK_ID = taskId;
@@ -141,8 +135,7 @@ describe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
   });
 
   afterEach(async () => {
-    store?.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await harness?.teardown();
   });
 
   function makeExecutor() {
@@ -183,9 +176,9 @@ describe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
 
     // (i) Pin-protection probe under the PRODUCTION runId sees rows; the old buggy
     // `${taskId}:run` literal would see nothing.
-    const rowsProd = store.loadWorkflowRunStepInstances(taskId, prodRunId);
+    const rowsProd = await store.loadWorkflowRunStepInstancesAsync(taskId, prodRunId);
     expect(rowsProd.length).toBe(2);
-    expect(store.loadWorkflowRunStepInstances(taskId, `${taskId}:run`)).toEqual([]);
+    expect(await store.loadWorkflowRunStepInstancesAsync(taskId, `${taskId}:run`)).toEqual([]);
 
     // (ii) Each instance row was FLIPPED in place to completed/integratedAt — and
     // there are NO orphan rows (no foreachNodeId:"" rows, exactly 2 rows total).
@@ -204,7 +197,7 @@ describe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
     await executor.run(detail, settingsOn(), foreachIr({ mode: "parallel" }));
 
     // Resume-equivalent probe: load under the production runId.
-    const rows = store.loadWorkflowRunStepInstances(taskId, runIdFor(taskId));
+    const rows = await store.loadWorkflowRunStepInstancesAsync(taskId, runIdFor(taskId));
     expect(rows.length).toBe(2);
     expect(rows.map((r) => r.stepIndex).sort()).toEqual([0, 1]);
     expect(rows.every((r) => r.branchName?.includes("step-"))).toBe(true);
@@ -212,7 +205,7 @@ describe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
 
   it("prunes stale-run instance rows at run start, keeping the current run", async () => {
     // Seed a stale row from a prior run.
-    store.saveWorkflowRunStepInstance({
+    await store.saveWorkflowRunStepInstanceAsync({
       taskId,
       runId: `${taskId}:stale-run`,
       foreachNodeId: "fe",
@@ -223,15 +216,15 @@ describe("foreach runId/foreachNodeId wiring (FIX 1)", () => {
       reworkCount: 0,
       updatedAt: new Date().toISOString(),
     });
-    expect(store.loadWorkflowRunStepInstances(taskId, `${taskId}:stale-run`).length).toBe(1);
+    expect((await store.loadWorkflowRunStepInstancesAsync(taskId, `${taskId}:stale-run`)).length).toBe(1);
 
     const detail = (await store.getTask(taskId)) as unknown as TaskDetail;
     const { executor } = makeExecutor();
     await executor.run(detail, settingsOn(), foreachIr({ mode: "parallel" }));
 
     // The stale run's rows were pruned at run start (keepRunId = production runId).
-    expect(store.loadWorkflowRunStepInstances(taskId, `${taskId}:stale-run`)).toEqual([]);
+    expect(await store.loadWorkflowRunStepInstancesAsync(taskId, `${taskId}:stale-run`)).toEqual([]);
     // The current run's rows survive.
-    expect(store.loadWorkflowRunStepInstances(taskId, runIdFor(taskId)).length).toBe(2);
+    expect((await store.loadWorkflowRunStepInstancesAsync(taskId, runIdFor(taskId))).length).toBe(2);
   });
 });

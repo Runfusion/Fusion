@@ -124,6 +124,7 @@ describe("resolve model-lane thinking levels", () => {
     expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
     expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
 
+    expect(resolveMergerFallbackThinkingLevel({ mergerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", mergerThinkingLevel: "medium" }, "minimal")).toBe("minimal");
     expect(resolveMergerFallbackThinkingLevel({ mergerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", mergerThinkingLevel: "medium" })).toBe("xhigh");
     expect(resolveMergerFallbackThinkingLevel({ fallbackThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
     expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
@@ -339,6 +340,13 @@ describe("resolve session model parity", () => {
       defaultProvider: "anthropic",
       defaultModelId: "claude-sonnet-4-5",
     }, staleRuntimeConfig)).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+  });
+
+  it("prefers a complete per-task merger pair, ignores partial pairs, and still forces test mode", () => {
+    const settings = { mergerProvider: "settings-provider", mergerModelId: "settings-model" };
+    expect(resolveMergerSessionModel(settings, undefined, { mergerModelProvider: "task-provider", mergerModelId: "task-model" })).toEqual({ provider: "task-provider", modelId: "task-model" });
+    expect(resolveMergerSessionModel(settings, undefined, { mergerModelProvider: "partial-provider" })).toEqual({ provider: "settings-provider", modelId: "settings-model" });
+    expect(resolveMergerSessionModel({ ...settings, testMode: true }, undefined, { mergerModelProvider: "task-provider", mergerModelId: "task-model" })).toEqual({ provider: "mock", modelId: "scripted" });
   });
 
   it("prefers the dedicated merger lane over default and other AI role lanes", () => {

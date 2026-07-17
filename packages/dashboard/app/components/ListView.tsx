@@ -17,13 +17,14 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { isTaskStuck } from "../utils/taskStuck";
+import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { getUnifiedTaskProgress, isPlanReviewRunning } from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
-import { getTaskStatusBadgeLabel } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, shouldSuppressPlanningStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
@@ -1704,14 +1705,7 @@ export function ListView({
   }, [addToast, onTasksUpdated, t]);
 
   const buildListContextMenuActions = useCallback((task: Task): TaskMenuActionDescriptor[] => {
-    const canRetryTask =
-      task.status === "failed" ||
-      task.status === "stuck-killed" ||
-      task.status === "planning" ||
-      task.status === "needs-replan" ||
-      (task.stuckKillCount ?? 0) > 0 ||
-      (task.recoveryRetryCount ?? 0) > 0 ||
-      Boolean(task.nextRecoveryAt);
+    const canRetryTask = isTaskManuallyRetryable(task, lastFetchTimeMs);
     const isTaskPaused = Boolean(task.paused || task.userPaused);
     const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMerge ?? false });
     const model = buildTaskActionMenuModel({
@@ -1846,7 +1840,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, getTaskPlanningWorkflowId, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, lastFetchTimeMs, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPlanningMode, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t, useSinglePaneList]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
@@ -2671,11 +2665,14 @@ export function ListView({
                         columnTasks.map((task) => {
                           const isDoneColumn = isCompleteColumn(task.column);
                           const visualStatus = isDoneColumn ? "done" : task.status;
-                          const isFailed = !isDoneColumn && task.status === "failed";
+                          const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
                           const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
-                          const hasStatus = typeof visualStatus === "string" && visualStatus.trim().length > 0;
+                          // FNXC:TaskStatusBadge 2026-07-16-12:00: FN-8170 keeps mobile and table list status rendering aligned with TaskCard through the shared Todo/In Progress planning suppression predicate.
+                          const hasStatus = typeof visualStatus === "string"
+                            && visualStatus.trim().length > 0
+                            && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const planReviewRunning = isPlanReviewRunning(task);
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
@@ -2884,11 +2881,13 @@ export function ListView({
                           columnTasks.map((task) => {
                             const isDoneColumn = isCompleteColumn(task.column);
                             const visualStatus = isDoneColumn ? "done" : task.status;
-                            const isFailed = !isDoneColumn && task.status === "failed";
+                            const isFailed = !isDoneColumn && task.status === "failed" && !hasPendingAutomaticRecovery(task, lastFetchTimeMs);
                             const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
                             const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
+                            const showStatusBadge = Boolean(visualStatus)
+                              && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
                             const planReviewRunning = isPlanReviewRunning(task);
                             const isDragging = draggingTaskId === task.id;
 
@@ -2953,7 +2952,7 @@ export function ListView({
                                       <span className="list-status-badge stuck">
                                         {t("listView.stuck", "Stuck")}
                                       </span>
-                                    ) : visualStatus ? (
+                                    ) : showStatusBadge ? (
                                       <span
                                         className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""

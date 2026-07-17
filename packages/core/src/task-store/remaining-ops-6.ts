@@ -22,7 +22,7 @@ import { validateNodeOverrideChange } from "../node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
 import { WorkflowSettingDefinition } from "../workflow-ir-types.js";
-import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -423,29 +423,14 @@ export async function saveWorkflowRunStepInstanceImpl(store: TaskStore,
     state: import("../types.js").WorkflowRunStepInstance,
   ): Promise<void> {
     /*
-    FNXC:PostgresOnlyDataAccess 2026-07-16-12:10:
+    FNXC:PostgresOnlyDataAccess 2026-07-16-13:40:
     Backend mode previously swallowed the sync throw, so foreach step-instance
-    checkpoints were never persisted on PostgreSQL. ON CONFLICT targets the PK
-    by constraint name because project-schema PKs lead with project_id (which
-    itself comes from the column's current_setting default under RLS).
+    checkpoints were never persisted on PostgreSQL. Delegate to the FN-8157
+    async sibling (single PG code path); its !backendMode branch routes back
+    here, guarded so there is no recursion.
     */
     if (store.backendMode) {
-      await store.asyncLayer!.db.execute(sql`
-        INSERT INTO project.workflow_run_step_instances
-          (task_id, run_id, foreach_node_id, step_index, pinned_step_count, current_node_id, status, baseline_sha, checkpoint_id, rework_count, branch_name, integrated_at, updated_at)
-        VALUES (${state.taskId}, ${state.runId}, ${state.foreachNodeId}, ${state.stepIndex}, ${state.pinnedStepCount}, ${state.currentNodeId ?? null}, ${state.status}, ${state.baselineSha ?? null}, ${state.checkpointId ?? null}, ${state.reworkCount ?? 0}, ${state.branchName ?? null}, ${state.integratedAt ?? null}, ${new Date().toISOString()})
-        ON CONFLICT ON CONSTRAINT workflow_run_step_instances_pkey DO UPDATE SET
-          pinned_step_count = EXCLUDED.pinned_step_count,
-          current_node_id = EXCLUDED.current_node_id,
-          status = EXCLUDED.status,
-          baseline_sha = EXCLUDED.baseline_sha,
-          checkpoint_id = EXCLUDED.checkpoint_id,
-          rework_count = EXCLUDED.rework_count,
-          branch_name = EXCLUDED.branch_name,
-          integrated_at = EXCLUDED.integrated_at,
-          updated_at = EXCLUDED.updated_at
-      `);
-      return;
+      return saveWorkflowRunStepInstanceAsyncImpl(store, state);
     }
     try {
       store.db
@@ -488,29 +473,9 @@ export async function loadWorkflowRunStepInstancesImpl(store: TaskStore,
     taskId: string,
     runId: string,
   ): Promise<import("../types.js").WorkflowRunStepInstance[]> {
-    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:10: see saveWorkflowRunStepInstanceImpl.
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-13:40: see saveWorkflowRunStepInstanceImpl.
     if (store.backendMode) {
-      const table = schema.project.workflowRunStepInstances;
-      const rows = await store.asyncLayer!.db
-        .select({
-          taskId: table.taskId,
-          runId: table.runId,
-          foreachNodeId: table.foreachNodeId,
-          stepIndex: table.stepIndex,
-          pinnedStepCount: table.pinnedStepCount,
-          currentNodeId: table.currentNodeId,
-          status: table.status,
-          baselineSha: table.baselineSha,
-          checkpointId: table.checkpointId,
-          reworkCount: table.reworkCount,
-          branchName: table.branchName,
-          integratedAt: table.integratedAt,
-          updatedAt: table.updatedAt,
-        })
-        .from(table)
-        .where(and(eq(table.taskId, taskId), eq(table.runId, runId)))
-        .orderBy(table.stepIndex);
-      return rows as unknown as import("../types.js").WorkflowRunStepInstance[];
+      return loadWorkflowRunStepInstancesAsyncImpl(store, taskId, runId);
     }
     try {
       const rows = store.db
@@ -528,15 +493,9 @@ export async function loadWorkflowRunStepInstancesImpl(store: TaskStore,
 }
 
 export async function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: string, keepRunId?: string): Promise<void> {
-    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:10: see saveWorkflowRunStepInstanceImpl.
+    // FNXC:PostgresOnlyDataAccess 2026-07-16-13:40: see saveWorkflowRunStepInstanceImpl.
     if (store.backendMode) {
-      const table = schema.project.workflowRunStepInstances;
-      await store.asyncLayer!.db
-        .delete(table)
-        .where(keepRunId === undefined
-          ? eq(table.taskId, taskId)
-          : and(eq(table.taskId, taskId), ne(table.runId, keepRunId)));
-      return;
+      return clearWorkflowRunStepInstancesAsyncImpl(store, taskId, keepRunId);
     }
     try {
       if (keepRunId === undefined) {
@@ -553,6 +512,113 @@ export async function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId
     } catch {
       // Legacy/missing table — pruning is additive, so degrade silently.
     }
+}
+
+/*
+FNXC:WorkflowStepInstancePersistence 2026-07-16-20:20:
+PostgreSQL backend mode cannot use the removed synchronous SQLite `store.db`
+path. These async siblings preserve the existing identity, pin-clearing, and
+stale-run pruning semantics through the Drizzle async layer rather than
+silently dropping foreach crash-resume state.
+*/
+export async function saveWorkflowRunStepInstanceAsyncImpl(
+  store: TaskStore,
+  state: import("../types.js").WorkflowRunStepInstance,
+): Promise<void> {
+  if (!store.backendMode) {
+    return saveWorkflowRunStepInstanceImpl(store, state);
+  }
+  const layer = store.asyncLayer!;
+  const now = new Date().toISOString();
+  await layer.db
+    .insert(schema.project.workflowRunStepInstances)
+    .values({
+      taskId: state.taskId,
+      runId: state.runId,
+      foreachNodeId: state.foreachNodeId,
+      stepIndex: state.stepIndex,
+      pinnedStepCount: state.pinnedStepCount,
+      currentNodeId: state.currentNodeId ?? null,
+      status: state.status,
+      baselineSha: state.baselineSha ?? null,
+      checkpointId: state.checkpointId ?? null,
+      reworkCount: state.reworkCount ?? 0,
+      branchName: state.branchName ?? null,
+      integratedAt: state.integratedAt ?? null,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        schema.project.workflowRunStepInstances.projectId,
+        schema.project.workflowRunStepInstances.taskId,
+        schema.project.workflowRunStepInstances.runId,
+        schema.project.workflowRunStepInstances.foreachNodeId,
+        schema.project.workflowRunStepInstances.stepIndex,
+      ],
+      set: {
+        pinnedStepCount: state.pinnedStepCount,
+        currentNodeId: state.currentNodeId ?? null,
+        status: state.status,
+        baselineSha: state.baselineSha ?? null,
+        checkpointId: state.checkpointId ?? null,
+        reworkCount: state.reworkCount ?? 0,
+        branchName: state.branchName ?? null,
+        integratedAt: state.integratedAt ?? null,
+        updatedAt: now,
+      },
+    });
+}
+
+export async function loadWorkflowRunStepInstancesAsyncImpl(
+  store: TaskStore,
+  taskId: string,
+  runId: string,
+): Promise<import("../types.js").WorkflowRunStepInstance[]> {
+  if (!store.backendMode) {
+    return loadWorkflowRunStepInstancesImpl(store, taskId, runId);
+  }
+  const layer = store.asyncLayer!;
+  const rows = await layer.db
+    .select()
+    .from(schema.project.workflowRunStepInstances)
+    .where(and(
+      eq(schema.project.workflowRunStepInstances.taskId, taskId),
+      eq(schema.project.workflowRunStepInstances.runId, runId),
+    ))
+    .orderBy(asc(schema.project.workflowRunStepInstances.stepIndex));
+  return rows.map((row) => ({
+    taskId: row.taskId,
+    runId: row.runId,
+    foreachNodeId: row.foreachNodeId,
+    stepIndex: row.stepIndex,
+    pinnedStepCount: row.pinnedStepCount,
+    currentNodeId: row.currentNodeId,
+    status: row.status as import("../types.js").WorkflowRunStepInstanceStatus,
+    baselineSha: row.baselineSha,
+    checkpointId: row.checkpointId,
+    reworkCount: row.reworkCount,
+    branchName: row.branchName,
+    integratedAt: row.integratedAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+export async function clearWorkflowRunStepInstancesAsyncImpl(
+  store: TaskStore,
+  taskId: string,
+  keepRunId?: string,
+): Promise<void> {
+  if (!store.backendMode) {
+    return clearWorkflowRunStepInstancesImpl(store, taskId, keepRunId);
+  }
+  const layer = store.asyncLayer!;
+  const conditions = [eq(schema.project.workflowRunStepInstances.taskId, taskId)];
+  if (keepRunId !== undefined) {
+    conditions.push(ne(schema.project.workflowRunStepInstances.runId, keepRunId));
+  }
+  await layer.db
+    .delete(schema.project.workflowRunStepInstances)
+    .where(and(...conditions));
 }
 
 export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?: string): Promise<string | undefined> {
@@ -745,7 +811,7 @@ export async function resetPromptCheckboxesImpl(store: TaskStore, dir: string): 
 
 export async function updateTaskImpl(store: TaskStore,
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("../types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("../types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("../types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("../types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("../types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("../types.js").TaskReview | null; reviewState?: import("../types.js").TaskReviewState | null; workflowStepResults?: import("../types.js").WorkflowStepResult[] | null; mergeDetails?: import("../types.js").MergeDetails | null; sourceIssue?: import("../types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("../types.js").TaskGithubTracking | null; tokenUsage?: import("../types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("../types.js").WorkflowTransitionNotificationMarker | undefined; sessionAdvisorEnabled?: boolean | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:StateMachine 2026-07-07-12:00:

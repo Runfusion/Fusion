@@ -17,9 +17,17 @@ interface ModelSelectionModalProps {
   executorValue: string;
   validatorValue: string;
   planningValue?: string;
+  mergerValue?: string;
   onExecutorChange: (value: string) => void;
   onValidatorChange: (value: string) => void;
   onPlanningChange?: (value: string) => void;
+  onMergerChange?: (value: string) => void;
+  mergerThinkingLevel?: string;
+  onMergerThinkingLevelChange?: (value: string) => void;
+  validatorThinkingLevel?: string;
+  onValidatorThinkingLevelChange?: (value: string) => void;
+  planningThinkingLevel?: string;
+  onPlanningThinkingLevelChange?: (value: string) => void;
   /** Current thinking-level override, or "" for the effective default. Optional so pre-existing callers keep compiling unchanged. */
   thinkingLevel?: string;
   /**
@@ -64,9 +72,17 @@ export function ModelSelectionModal({
   executorValue,
   validatorValue,
   planningValue = "",
+  mergerValue = "",
   onExecutorChange,
   onValidatorChange,
   onPlanningChange,
+  onMergerChange,
+  mergerThinkingLevel = "",
+  onMergerThinkingLevelChange,
+  validatorThinkingLevel = "",
+  onValidatorThinkingLevelChange,
+  planningThinkingLevel = "",
+  onPlanningThinkingLevelChange,
   thinkingLevel = "",
   onThinkingLevelChange,
   defaultThinkingLevel,
@@ -173,6 +189,7 @@ export function ModelSelectionModal({
   const hasExecutorOverride = Boolean(executorValue);
   const hasValidatorOverride = Boolean(validatorValue);
   const hasPlanningOverride = Boolean(planningValue);
+  const hasMergerOverride = Boolean(mergerValue);
 
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true" data-testid="model-selection-modal">
@@ -269,6 +286,9 @@ export function ModelSelectionModal({
                           onToggleFavorite={onToggleFavorite}
                           favoriteModels={favoriteModels}
                           onToggleModelFavorite={onToggleModelFavorite}
+                          thinkingLevel={planningThinkingLevel}
+                          onThinkingLevelChange={onPlanningThinkingLevelChange}
+                          defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                         />
                       </div>
                     </div>
@@ -303,6 +323,12 @@ export function ModelSelectionModal({
                     </div>
                   </div>
 
+                  {onMergerChange ? <div className="task-detail-section"><div className="inline-create-model-row">
+                    <label htmlFor="model-selection-merger" className="inline-create-model-label">{t("tasks.mergerModel", "Merger Model")}</label>
+                    <span className={`model-badge ${hasMergerOverride ? "model-badge-custom" : "model-badge-default"}`}>{getModelBadgeLabel(models, mergerValue, t)}</span>
+                    <CustomModelDropdown id="model-selection-merger" label={t("tasks.mergerModel", "Merger Model")} value={mergerValue} onChange={onMergerChange} models={models} placeholder={t("tasks.usingDefault", "Using default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} thinkingLevel={mergerThinkingLevel} onThinkingLevelChange={onMergerThinkingLevelChange} defaultThinkingLevel={defaultThinkingLevel ?? "off"} />
+                  </div></div> : null}
+
                   <div className="task-detail-section">
                     <div className="inline-create-model-row">
                       <label htmlFor="model-selection-validator" className="inline-create-model-label">
@@ -325,6 +351,9 @@ export function ModelSelectionModal({
                         onToggleFavorite={onToggleFavorite}
                         favoriteModels={favoriteModels}
                         onToggleModelFavorite={onToggleModelFavorite}
+                        thinkingLevel={validatorThinkingLevel}
+                        onThinkingLevelChange={onValidatorThinkingLevelChange}
+                        defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                       />
                     </div>
                   </div>

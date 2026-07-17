@@ -250,8 +250,9 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(false);
     expect(result.noOp).toBe(false);
-    expect(result.error).toContain("done=1, incomplete=5");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({ error: expect.stringContaining("done=1, incomplete=5") }));
+    // "Verify"/"Testing" are skipped verification steps → precise reason naming them.
+    expect(result.error).toContain("skipped verification step");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({ error: expect.stringContaining("skipped verification step") }));
     expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-NO-COMMITS", "done");
     expect(store.logEntry).toHaveBeenCalledWith(

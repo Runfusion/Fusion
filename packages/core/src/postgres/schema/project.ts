@@ -96,6 +96,9 @@ export const tasks = projectSchema.table("tasks", {
   validatorModelId: text("validator_model_id"),
   planningModelProvider: text("planning_model_provider"),
   planningModelId: text("planning_model_id"),
+  mergerModelProvider: text("merger_model_provider"),
+  mergerModelId: text("merger_model_id"),
+  mergerThinkingLevel: text("merger_thinking_level"),
   mergeRetries: integer("merge_retries"),
   workflowStepRetries: integer("workflow_step_retries"),
   resumeLimboCount: integer("resume_limbo_count").default(0),
@@ -111,6 +114,8 @@ export const tasks = projectSchema.table("tasks", {
   executeRequeueLoopSignature: text("execute_requeue_loop_signature"),
   recoveryRetryCount: integer("recovery_retry_count"),
   taskDoneRetryCount: integer("task_done_retry_count").default(0),
+  // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker (nullable ISO timestamp).
+  bulkCompletionRefusalAt: text("bulk_completion_refusal_at"),
   worktreeSessionRetryCount: integer("worktree_session_retry_count").default(0),
   completionHandoffLimboRecoveryCount: integer("completion_handoff_limbo_recovery_count").default(0),
   mergeConflictBounceCount: integer("merge_conflict_bounce_count").default(0),
@@ -1917,7 +1922,13 @@ Import auto-translation must survive modal close and page reload — the operato
 `projectId` is part of the PK because all projects share one flat `project` schema — omitting it (as the older `verification_cache` PK does) would leak one project's translations into another.
 */
 export const importTranslationCache = projectSchema.table("import_translation_cache", {
-  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  /*
+  FNXC:GitHubImportTranslate 2026-07-16-23:30:
+  An unbound compatibility store owns cache rows in the explicit legacy
+  partition. Match fusion_assign_project_id so a defaulted insert and the
+  application scope predicate cannot disagree after a process restart.
+  */
+  projectId: text("project_id").notNull().default(sql`COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')`),
   /** Import source: "github" | "gitlab". */
   provider: text("provider").notNull(),
   /** Canonical repo identity, e.g. "owner/repo" (GitLab: project path). */

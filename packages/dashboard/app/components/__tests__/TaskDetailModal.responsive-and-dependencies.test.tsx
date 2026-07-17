@@ -70,6 +70,17 @@ function getCssAtRuleBlockContaining(css: string, atRule: string, selector: stri
   throw new Error(`Missing ${atRule} block containing ${selector}`);
 }
 
+function getCssAtRuleBlocks(css: string, atRule: string): string[] {
+  const blocks: string[] = [];
+  let startAt = 0;
+  while (css.indexOf(atRule, startAt) >= 0) {
+    const { block, endIndex } = getCssAtRuleBlock(css, atRule, startAt);
+    blocks.push(block);
+    startAt = endIndex;
+  }
+  return blocks;
+}
+
 function getExactCssRuleBlock(css: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const ruleMatch = neutralizeCssCommentBraces(css).match(new RegExp(`(?:^|[}\\n])\\s*${escapedSelector}\\s*\\{([^}]*)\\}`));
@@ -666,9 +677,59 @@ describe("TaskDetailModal", () => {
       expect(overlayBlock).toContain("position: absolute;");
       expect(overlayBlock).toContain("top: var(--space-md);");
       expect(overlayBlock).toContain("right: var(--space-md);");
-      expect(mobileBlock).toContain("  .detail-activity {\n    padding-inline-end: var(--space-md);\n  }");
+      expect(mobileBlock).toContain("  .detail-activity {\n    padding-inline-end: 0;\n  }");
       expect(mobileOverlayBlock).toContain("top: var(--space-sm);");
       expect(mobileOverlayBlock).toContain("right: var(--space-sm);");
+
+      /*
+      FNXC:TaskDetailActivity 2026-07-16-00:00:
+      FN-8166 requires Feed to inherit the symmetric mobile `.detail-body` inset,
+      while only its first visible row reserves space for the opaque overlay toggle.
+      This contract also prevents non-Feed task-detail surfaces from adding a
+      container-level right-only inset or mobile horizontal overflow.
+      */
+      const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
+      const mobileInterventionsBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity--interventions");
+      const mobilePrBlock = getExactCssRuleBlock(
+        getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-pr-tab"),
+        ".detail-pr-tab",
+      );
+      const embeddedBodyBlock = getExactCssRuleBlock(
+        css,
+        ".task-detail-content--embedded .modal-header,\n.task-detail-content--embedded .detail-body,\n.task-detail-content--embedded .detail-tabs,\n.task-detail-content--embedded .modal-actions",
+      );
+      const allMobileCss = getCssAtRuleBlocks(css, "@media (max-width: 768px)").join("\n");
+
+      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(mobileDetailBodyBlock).toContain("overflow-x: hidden;");
+      expect(mobileInterventionsBlock).toContain("padding-inline-end: 0;");
+      expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > h4,");
+      expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > .detail-log-loading,");
+      expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > .detail-log-empty,");
+      expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child");
+      expect(mobileBlock).toContain("padding-inline-end: calc(var(--space-2xl) + var(--space-sm));");
+      expect(mobilePrBlock.trim()).toBe("gap: var(--space-md);");
+      expect(embeddedBodyBlock).toContain("width: 100%;");
+      expect(embeddedBodyBlock).toContain("min-width: 0;");
+      expect(embeddedBodyBlock).toContain("max-width: 100%;");
+      expect(allMobileCss).not.toMatch(/\.task-changes-tab\s*\{[^}]*\bpadding(?:-[\w-]+)?\s*:/);
+
+      for (const selector of [
+        ".detail-section",
+        ".detail-section--plan-prompt",
+        ".detail-section--original-prompt",
+        ".detail-body--chat",
+        ".detail-section--chat",
+        ".detail-body--agent-log",
+      ]) {
+        const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const exactSelector = `${escapedSelector}(?![-\\w])`;
+        const declarations = [...neutralizeCssCommentBraces(allMobileCss).matchAll(new RegExp(`${exactSelector}[^{}]*\\{([^{}]*)\\}`, "g"))]
+          .map((match) => match[1])
+          .join("\n");
+        expect(declarations, `${selector} mobile right inset`).not.toMatch(/\bpadding-(?:inline-end|right)\s*:/);
+        expect(declarations, `${selector} mobile asymmetric padding`).not.toMatch(/\bpadding\s*:/);
+      }
     });
 
     it("renders responsive structural classes (modal-lg, overlay, spacer, tabs, detail-body)", () => {

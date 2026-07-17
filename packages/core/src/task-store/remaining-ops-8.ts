@@ -24,7 +24,7 @@ import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
 import { createAsyncDistributedTaskIdAllocator } from "./async-allocator.js";
 import { getWorkflowRow, listWorkflowRows } from "../async-workflow-store.js";
-import { taskProjectScope } from "../postgres/data-layer.js";
+import { projectOwnershipPartition, projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMergedTaskIds as getTaskMergedTaskIdsAsync } from "./async-audit.js";
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
@@ -1092,11 +1092,18 @@ export interface ImportTranslationCacheKey {
   sourceHash: string;
 }
 
+/*
+FNXC:GitHubImportTranslate 2026-07-16-23:30:
+The cache write, read, and prune paths must resolve the identical ownership
+partition. In particular, compatibility layers without a project binding write
+to `__legacy_unscoped__`; querying with an omitted/blank predicate afterwards
+made those durable rows look like cache misses after a restart.
+*/
 function importTranslationScope(store: TaskStore) {
-  const projectId = store.asyncLayer?.projectId;
-  return projectId
-    ? eq(schema.project.importTranslationCache.projectId, projectId)
-    : undefined;
+  return projectScopeFor(
+    schema.project.importTranslationCache.projectId,
+    projectOwnershipPartition(store.asyncLayer?.projectId),
+  );
 }
 
 /**
@@ -1153,11 +1160,11 @@ export async function recordImportTranslationImpl(
 ): Promise<void> {
   if (!store.asyncLayer) return;
   const table = schema.project.importTranslationCache;
-  const projectId = store.asyncLayer.projectId;
+  const projectId = projectOwnershipPartition(store.asyncLayer.projectId);
   await store.asyncLayer.db
     .insert(table)
     .values({
-      ...(projectId ? { projectId } : {}),
+      projectId,
       provider: key.provider,
       repoKey: key.repoKey,
       issueNumber: key.issueNumber,

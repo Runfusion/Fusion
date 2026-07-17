@@ -1353,6 +1353,41 @@ export interface PrThreadState {
   updatedAt: number;
 }
 
+/**
+ * FNXC:Lifecycle 2026-07-16-09:40:
+ * FN-8141 cross-stage overseer memory. FN-8141 was laundered into `done`
+ * because the planner overseer is stage-scoped and memoryless: it emitted
+ * `stage=executor signal=failed` (parked failed with work incomplete) twice,
+ * then an hour later saw `stage=merger signal=progressing` and let an empty
+ * no-op merge finalize the task `done` — nothing connected the failed executor
+ * verdict to the merger's finalize decision.
+ *
+ * This is the derived (NOT persisted-as-a-column) most-recent executor-stage
+ * overseer signal, reconstructed on demand from the durable
+ * `overseer:intervention` timeline the overseer already writes (see
+ * `deriveExecutorSignalMemory` in the engine). It is the evidence the
+ * merger-layer no-op-finalize veto (`evaluateNoOpFinalizeExecutorVeto`) reads
+ * to refuse completing a zero-diff task whose executor never finished green.
+ * Since the executor stage only exists while a task is `in-progress`, a later
+ * green re-execution appends a non-`failed` executor observation that becomes
+ * the newest entry (clearing `incompleteWork`) — this is how "no subsequent
+ * execution completed green" is derived: the memory always reflects the LATEST
+ * executor observation.
+ */
+export interface ExecutorOverseerSignalMemory {
+  /** The most recent executor-stage `OverseerObservationSignal` (bare string to avoid pulling the engine stage taxonomy into core). */
+  signal: string;
+  /**
+   * True iff `signal` is the failed-with-incomplete-work executor shape
+   * (the overseer's `signal: "failed"` executor observation — "Executor stage
+   * parked failed with work incomplete"). A later `progressing`/`complete`/etc.
+   * executor observation supersedes it, deriving `false`.
+   */
+  incompleteWork: boolean;
+  /** epoch-ms (or intervention-entry timestamp) of the observation that produced this memory. */
+  observedAt: number;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
@@ -1581,6 +1616,13 @@ export interface Task {
    *  Must be set together with `planningModelProvider`. When both planning model
    *  fields are undefined, the triage agent uses global settings defaults. */
   planningModelId?: string;
+  /**
+   * FNXC:Settings-MergerModel 2026-07-16-12:00:
+   * Per-task merger overrides take precedence over the project/global merger lane only when both fields are set; merger sessions otherwise retain their existing settings-based resolution.
+   */
+  mergerModelProvider?: string;
+  /** Must be set together with `mergerModelProvider`. */
+  mergerModelId?: string;
   /** IDs of workflow steps enabled for this task, run after implementation completes */
   enabledWorkflowSteps?: string[];
   /** Results from workflow step executions (populated after task implementation) */
@@ -1664,6 +1706,17 @@ export interface Task {
    *  failures. Capped by `MAX_TASK_DONE_RETRIES`; when exhausted the task stays
    *  in `in-review` for human inspection. Cleared on successful completion. */
   taskDoneRetryCount?: number;
+  /**
+   * FNXC:Lifecycle 2026-07-16-21:40:
+   * ISO-8601 timestamp stamped when the executor's `bulk-step-completion-without-review`
+   * refusal fires for this task's current execution lifecycle (FN-8141). While set, any
+   * step in `skipped` state is "tainted": it must not count toward AUTOMATIC promotion
+   * (executor completion-finalize, self-healing stuck-in-progress / stranded-todo recovery,
+   * graph merge boundary) — see `evaluateSkipBypassTaint`. Cleared on an honest exit: an
+   * ACCEPTED fn_task_done (explicit or non-tainted implicit) or an operator manual retry.
+   * Null/undefined means no active taint.
+   */
+  bulkCompletionRefusalAt?: string;
   /** Number of times self-healing auto-requeued an `in-review` task that failed
    *  at session start with an unusable-worktree error. Bounded by
    *  `MAX_WORKTREE_SESSION_RETRIES`; when exhausted the task remains parked in
@@ -1761,6 +1814,8 @@ export interface Task {
    */
   validatorThinkingLevel?: ThinkingLevel;
   planningThinkingLevel?: ThinkingLevel;
+  /** Independent per-task merger reasoning-effort override; unset inherits merger settings. */
+  mergerThinkingLevel?: ThinkingLevel;
   /** Execution mode for task implementation.
    *  - "standard": Full execution with complete review workflow (default)
    *  - "fast": Expedited execution with minimal overhead for simple tasks
@@ -2038,6 +2093,9 @@ export interface TaskCreateInput {
    *  Must be set together with `planningModelProvider`. When both planning model
    *  fields are undefined, the triage agent uses global settings defaults. */
   planningModelId?: string;
+  /** Per-task merger override; provider and model id must be supplied together. */
+  mergerModelProvider?: string;
+  mergerModelId?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
   /**
@@ -2046,6 +2104,8 @@ export interface TaskCreateInput {
    */
   validatorThinkingLevel?: ThinkingLevel;
   planningThinkingLevel?: ThinkingLevel;
+  /** Independent per-task merger reasoning-effort override; unset inherits merger settings. */
+  mergerThinkingLevel?: ThinkingLevel;
   /** When true, trigger AI title summarization if description is long and no title provided */
   summarize?: boolean;
   /** Mission ID to link this task to (for mission hierarchy) */
@@ -3882,6 +3942,12 @@ export interface ProjectSettings {
    * `archived`, so the dashboard's yellow "Duplicate" chip with Keep/Archive
    * actions surfaces it for a human decision. Default: false. */
   autoArchiveDuplicateTasksEnabled?: boolean;
+  /**
+   * FNXC:DuplicateIntake 2026-07-16-13:00:
+   * Issue #2225 requires triage marker duplicates to stay visible by default: `prompt`
+   * blocks for Keep/Delete, `keep` replans, and `delete` restores legacy deletion.
+   */
+  triageDuplicateResolution?: "prompt" | "keep" | "delete";
   /** How much agent log content to preserve when a task is moved to cold archive storage.
    *  - "compact": deterministic summary plus a small recent-entry snapshot (default)
    *  - "full": copy the full agent.log into archive.db
@@ -4583,6 +4649,9 @@ export interface ArchivedTaskEntry {
   /** Optional: planning model override for triage agent */
   planningModelProvider?: string;
   planningModelId?: string;
+  mergerModelProvider?: string;
+  mergerModelId?: string;
+  mergerThinkingLevel?: ThinkingLevel;
   /** Per-task token/cost accounting (input/output/cache) preserved across archival. */
   tokenUsage?: TaskTokenUsage;
   /** Optional: other metadata to preserve */
@@ -7323,6 +7392,7 @@ export {
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
+  resolveTaskMergerModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
   resolveTitleSummarizerSettingsModel,

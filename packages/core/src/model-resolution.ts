@@ -42,6 +42,8 @@ type TaskModelLike = {
   validatorModelId?: string | null;
   planningModelProvider?: string | null;
   planningModelId?: string | null;
+  mergerModelProvider?: string | null;
+  mergerModelId?: string | null;
 };
 
 function hasCompleteModelPair(pair: ModelPair): pair is { provider: string; modelId: string } {
@@ -326,6 +328,24 @@ export function resolveTaskPlanningModel(
         modelId: task.planningModelId,
       },
       resolvePlanningSettingsModel(settings),
+    ),
+    settings,
+  );
+}
+
+/**
+ * FNXC:Settings-MergerModel 2026-07-16-12:00:
+ * A complete task pair wins before the project/global merger lane. Partial pairs
+ * are deliberately ignored, preserving the established lane-pair invariant.
+ */
+export function resolveTaskMergerModel(
+  task: TaskModelLike,
+  settings?: Partial<Settings>,
+): ResolvedModelSelection {
+  return applyTestModeOverrides(
+    pickFirstModelPair(
+      { provider: task.mergerModelProvider, modelId: task.mergerModelId },
+      resolveMergerSettingsModel(settings),
     ),
     settings,
   );

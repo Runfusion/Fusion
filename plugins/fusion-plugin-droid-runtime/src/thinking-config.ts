@@ -1,9 +1,14 @@
 /**
  * Thinking effort configuration for mapping pi's ThinkingLevel to Droid CLI --effort flags.
  *
- * Maps pi's reasoning levels (minimal/low/medium/high/xhigh) to the CLI's effort
+ * Maps pi's reasoning levels (minimal/low/medium/high/xhigh/max) to the CLI's effort
  * levels (low/medium/high/max). Opus models get an elevated mapping where medium
  * becomes high and high becomes max, leveraging their superior reasoning capability.
+ *
+ * FNXC:DroidThinking 2026-07-16-18:20:
+ * Fusion now resolves pi 0.80.10 workspace-wide, whose ThinkingLevel adds `max`.
+ * Keep both exhaustive mappings explicit: non-Opus must still avoid the CLI's max
+ * effort, while Opus may use it.
  *
  * IMPORTANT: The CLI does NOT support --thinking-budget. Only --effort is supported.
  */
@@ -23,6 +28,7 @@ const STANDARD_EFFORT_MAP: Record<ThinkingLevel, CliEffortLevel> = {
   medium: "medium",
   high: "high",
   xhigh: "high", // non-Opus: silently downgrade (max not supported)
+  max: "high", // non-Opus: silently downgrade (max not supported)
 };
 
 /**
@@ -35,6 +41,7 @@ const OPUS_EFFORT_MAP: Record<ThinkingLevel, CliEffortLevel> = {
   medium: "high", // shifted: standard high
   high: "max", // shifted: maximum capability
   xhigh: "max", // Opus gets max
+  max: "max", // Opus gets max
 };
 
 /**

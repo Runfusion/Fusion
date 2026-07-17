@@ -20,6 +20,7 @@ import {
   Hash,
   Pin,
   PinOff,
+  MoreHorizontal,
 } from "lucide-react";
 import { FN_AGENT_ID, useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
@@ -3206,49 +3207,28 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       data-testid={`chat-session-${session.id}`}
                     >
                       {/*
-                      FNXC:ChatSidebar 2026-07-02-00:00:
-                      Direct conversation rows need an always-discoverable rename affordance before delete while preserving row selection. Keep edit/delete as sibling buttons that stop propagation and share the existing rename/delete flows.
+                      FNXC:ChatSidebar 2026-07-16-00:00:
+                      FN-8173 consolidates Pin, Rename, and Delete into this single three-dot trigger so long conversation titles retain usable row width. It opens the existing context-menu state so click and right-click share the same labeled action list and handlers.
                       */}
-                      <div className="chat-session-actions">
-                        <button
-                          type="button"
-                          className="btn-icon chat-session-action-btn chat-session-pin-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handlePin(session.id, !session.pinnedAt);
-                          }}
-                          data-testid="chat-session-pin-btn"
-                          aria-label={session.pinnedAt ? t("chat.unpinConversationAria", "Unpin conversation {{title}}", { title: sessionTitle }) : t("chat.pinConversationAria", "Pin conversation {{title}}", { title: sessionTitle })}
-                          title={!session.pinnedAt && pinnedCount >= 3 ? t("chat.pinLimit", "You can pin up to 3 conversations") : undefined}
-                          disabled={!session.pinnedAt && pinnedCount >= 3}
-                        >
-                          {session.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon chat-session-action-btn chat-session-rename-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openRenameDialog(session.id);
-                          }}
-                          data-testid="chat-session-rename-btn"
-                          aria-label={t("chat.renameConversationAria", "Rename conversation {{title}}", { title: sessionTitle })}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon chat-session-action-btn chat-session-delete-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDelete(session.id);
-                          }}
-                          data-testid="chat-session-delete-btn"
-                          aria-label={t("chat.deleteConversation", "Delete conversation")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="btn-icon chat-session-menu-btn"
+                        data-testid="chat-session-menu-btn"
+                        aria-label={t("chat.conversationActionsAria", "Conversation actions for {{title}}", { title: sessionTitle })}
+                        aria-haspopup="menu"
+                        aria-expanded={contextMenu?.sessionId === session.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (contextMenu?.sessionId === session.id) {
+                            setContextMenu(null);
+                            return;
+                          }
+                          const bounds = e.currentTarget.getBoundingClientRect();
+                          setContextMenu({ sessionId: session.id, x: bounds.right, y: bounds.bottom });
+                        }}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
                       <div className="chat-session-title">
                         {sessionTitle}
                         {session.pinnedAt ? <Pin className="chat-session-pinned-indicator" size={14} data-testid={`chat-session-pinned-indicator-${session.id}`} aria-label={t("chat.pinned", "Pinned")} /> : null}
@@ -3419,6 +3399,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       {contextMenu && (
         <div
           className="chat-session-context-menu"
+          role="menu"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -3428,6 +3409,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               !contextMenuSession?.pinnedAt,
             )}
             data-testid="chat-context-pin"
+            title={pinnedCount >= 3 && !contextMenuSession?.pinnedAt ? t("chat.pinLimit", "You can pin up to 3 conversations") : undefined}
             disabled={pinnedCount >= 3 && !contextMenuSession?.pinnedAt}
           >
             {contextMenuSession?.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
