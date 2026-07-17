@@ -2408,6 +2408,51 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    /*
+    FNXC:Lifecycle 2026-07-16-10:30:
+    FN-8141 — the same laundering can start from the in-progress column. The stuck-in-progress
+    promoter must also withhold an all-steps-done/skipped task whose most recent execution ended in a
+    failure/refusal park, and emit `task:reconcile-stranded-completed-no-action` (sweep stuck-in-progress).
+    */
+    it("FN-8141: does NOT promote a stuck-in-progress task whose last execution ended in a failure park", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141-IP",
+          column: "in-progress",
+          paused: false,
+          steps: [{ status: "done" }, { status: "done" }, { status: "skipped" }],
+        },
+      ]);
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-8141-IP",
+        lineageId: "lin-8141-ip",
+        log: [
+          { timestamp: "2026-07-16T10:00:02.000Z", action: "bulk-step-completion-without-review — fn_task_done refusal retry budget exhausted" },
+          { timestamp: "2026-07-16T10:00:03.000Z", action: "FN-8141-IP: task parked failed during no-fn_task_done retry — honoring park, not retrying" },
+        ],
+      });
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+      const emitted = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([ev]) =>
+          (ev as { mutationType?: string }).mutationType === "task:reconcile-stranded-completed-no-action" &&
+          (ev as { metadata?: { sweep?: string } }).metadata?.sweep === "stuck-in-progress",
+      );
+      expect(emitted).toBe(true);
+
+      managerWithRecovery.stop();
+    });
+
     it("skips tasks that are actively executing", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
       const getExecuting = vi.fn().mockReturnValue(new Set(["FN-001"]));
@@ -2981,6 +3026,107 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-106" }));
+
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:Lifecycle 2026-07-16-10:30:
+    FN-8141 — the stranded-todo promoter must not launder a failed task into in-review. A candidate
+    with all steps done/skipped whose MOST RECENT durable-log execution-outcome is a failure/refusal
+    park is withheld and emits `task:reconcile-stranded-completed-no-action` (reason failure-provenance)
+    once; the same task after a fresh clean execution IS promoted; the escape hatch is operator retry.
+    */
+    it("FN-8141: does NOT promote a stranded-todo task whose last execution ended in a failure park, and emits the no-action event once", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      // Slim board row: 3 done + 2 skipped, no error/active status (exactly the FN-8141 shape that
+      // passed all existing exclusions).
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141",
+          column: "todo",
+          paused: false,
+          error: null,
+          reviewLevel: 2,
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }, { status: "skipped" }, { status: "skipped" }],
+        },
+      ]);
+      // Full task carries the durable failure-park provenance the slim row cannot.
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-8141",
+        lineageId: "lin-8141",
+        log: [
+          { timestamp: "2026-07-16T10:00:01.000Z", action: "All steps complete — implicit fn_task_done (agent did not call tool explicitly)" },
+          { timestamp: "2026-07-16T10:00:02.000Z", action: "bulk-step-completion-without-review — fn_task_done refusal retry budget exhausted" },
+          { timestamp: "2026-07-16T10:00:03.000Z", action: "FN-8141: task parked failed during no-fn_task_done retry — honoring park, not retrying" },
+          { timestamp: "2026-07-16T10:00:04.000Z", action: "Execution paused — session preserved for resume, moved to todo" },
+        ],
+      });
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+      const auditCalls = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls;
+      const noActionEvents = auditCalls.filter(
+        ([ev]) =>
+          (ev as { mutationType?: string }).mutationType === "task:reconcile-stranded-completed-no-action" &&
+          (ev as { metadata?: { reason?: string; sweep?: string } }).metadata?.reason === "failure-provenance" &&
+          (ev as { metadata?: { sweep?: string } }).metadata?.sweep === "stranded-todo",
+      );
+      expect(noActionEvents).toHaveLength(1);
+
+      // Deduped: a second sweep with the same unchanged provenance does not re-emit.
+      await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+      const noActionEventsAfter = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([ev]) => (ev as { mutationType?: string }).mutationType === "task:reconcile-stranded-completed-no-action",
+      );
+      expect(noActionEventsAfter).toHaveLength(1);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("FN-8141: DOES promote the same task once a fresh clean execution completes all steps after the failure park", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141",
+          column: "todo",
+          paused: false,
+          error: null,
+          reviewLevel: 2,
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }],
+        },
+      ]);
+      // Log: the old failure park is followed by a fresh clean completion (operator retry escape hatch).
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-8141",
+        lineageId: "lin-8141",
+        log: [
+          { timestamp: "2026-07-16T10:00:02.000Z", action: "bulk-step-completion-without-review — fn_task_done refusal retry budget exhausted" },
+          { timestamp: "2026-07-16T10:00:03.000Z", action: "FN-8141: task parked failed during no-fn_task_done retry — honoring park, not retrying" },
+          { timestamp: "2026-07-16T10:00:04.000Z", action: "Resuming execution after unpause" },
+          { timestamp: "2026-07-16T10:00:05.000Z", action: "Task marked done by agent" },
+        ],
+      });
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(1);
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-8141" }));
 
       managerWithRecovery.stop();
     });

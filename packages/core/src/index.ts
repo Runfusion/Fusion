@@ -723,6 +723,8 @@ export {
 } from "./no-op-completion-marker.js";
 export { evaluateNoCommitsNoOpFinalize } from "./no-commits-finalize-guard.js";
 export type { NoCommitsNoOpFinalizeEvaluation } from "./no-commits-finalize-guard.js";
+export { evaluateCompletedPromotionFailureProvenance } from "./completed-promotion-failure-provenance.js";
+export type { CompletedPromotionFailureProvenanceEvaluation } from "./completed-promotion-failure-provenance.js";
 export {
   __getDeterministicGuardMutexSize,
   deterministicGuardLocks,

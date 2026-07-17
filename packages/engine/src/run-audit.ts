@@ -799,7 +799,17 @@ export type DatabaseMutationType =
    * withheld state persists unchanged.
    * Metadata: { taskId: string; reason: "user-paused" | "auto-merge-off-human-review"; stage?: string; oversightLevel?: string }
    */
-  | "overseer:oversight-withheld-human-control";
+  | "overseer:oversight-withheld-human-control"
+  /**
+   * FNXC:Lifecycle 2026-07-16-10:30:
+   * FN-8141 no-action event: a stranded-completed promoter (`recoverCompletedTasks` stuck-in-progress
+   * sweep OR `recoverStrandedCompletedTodoTasks` stranded-todo sweep in self-healing.ts) withheld
+   * promotion of an all-steps-done/skipped task because its most recent execution-outcome in the
+   * durable task log was a failure/refusal park (`evaluateCompletedPromotionFailureProvenance`).
+   * Emitted at most once per taskId while the blocking provenance persists (deduped in-memory).
+   * Metadata: { taskId, reason: "failure-provenance", sweep: "stuck-in-progress" | "stranded-todo", marker?: string }
+   */
+  | "task:reconcile-stranded-completed-no-action";
 
 // ── Filesystem mutation types ─────────────────────────────────────────────────
 

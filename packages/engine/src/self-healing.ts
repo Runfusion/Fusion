@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -743,6 +743,14 @@ export class SelfHealingManager {
   private workspacePartialLandDrops: Map<string, number> = new Map();
   private orphanWorktreeRemovalFailures: Map<string, number> = new Map();
   private finalizeUnprovenWarned = new Set<string>();
+  /*
+   * FNXC:Lifecycle 2026-07-16-10:30:
+   * FN-8141 dedup: `task:reconcile-stranded-completed-no-action` is emitted at most once per taskId
+   * while a failure-provenance block persists, so the sweeps don't spam run-audit every housekeeping
+   * cycle. Cleared on stop(); a fresh clean execution that clears the block re-arms emission naturally
+   * because the task leaves the promotable state before returning to it.
+   */
+  private strandedCompletedFailureProvenanceWarned = new Set<string>();
   private metaResolvedSkipAuditMemo = new Map<string, string>();
   private metaStalledSkipAuditMemo = new Map<string, string>();
   private preservedQueuedOverlapLogged = new Map<string, string>();
@@ -1043,6 +1051,68 @@ export class SelfHealingManager {
       log.warn(`[${stage}] ${task.id}: no-action audit emission failed: ${message}`);
     }
     log.log(`[${stage}] ${task.id}: triple-proof not satisfied — no action (operator-decides)`);
+  }
+
+  /*
+   * FNXC:Lifecycle 2026-07-16-10:30:
+   * FN-8141 — a stranded-completed promoter must respect failure provenance. Before promoting an
+   * all-steps-done/skipped candidate to in-review, verify its MOST RECENT execution-outcome in the
+   * durable task log was not a failure/refusal park; a park bounced to `todo`/`in-progress` by the
+   * pause-abort machinery must not be laundered into `in-review`. Slim listings strip `log`, so the
+   * full task is fetched only for candidates that already cleared the cheap step/status filters.
+   * On block, emits `task:reconcile-stranded-completed-no-action` once per taskId (deduped) and
+   * withholds promotion. Escape hatch: an operator retrying/moving the task starts a fresh execution
+   * whose clean completion marker supersedes the failure park, clearing the block with no code change.
+   * Fail-closed: if the full task cannot be read this cycle, withhold promotion rather than risk
+   * laundering a failed park.
+   */
+  private async isStrandedCompletedPromotionBlockedByFailureProvenance(
+    taskId: string,
+    sweep: "stuck-in-progress" | "stranded-todo",
+  ): Promise<boolean> {
+    let fullTask: Task;
+    try {
+      fullTask = await this.store.getTask(taskId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(`[stranded-completed-provenance] ${taskId}: full-task fetch failed (${message}) — withholding ${sweep} promotion this cycle`);
+      return true;
+    }
+
+    const evaluation = evaluateCompletedPromotionFailureProvenance(fullTask);
+    if (!evaluation.blocked) {
+      // Provenance cleared (fresh clean execution or never-failed): re-arm the dedup so a later
+      // re-failure is reported again.
+      this.strandedCompletedFailureProvenanceWarned.delete(taskId);
+      return false;
+    }
+
+    if (!this.strandedCompletedFailureProvenanceWarned.has(taskId)) {
+      this.strandedCompletedFailureProvenanceWarned.add(taskId);
+      try {
+        await createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("self-healing-stranded-completed-provenance", taskId),
+          agentId: "self-healing",
+          taskId,
+          taskLineageId: fullTask.lineageId,
+          phase: "stranded-completed-provenance",
+        }).database({
+          type: "task:reconcile-stranded-completed-no-action" as DatabaseMutationType,
+          target: taskId,
+          metadata: {
+            taskId,
+            reason: evaluation.reason ?? "failure-provenance",
+            sweep,
+            ...(evaluation.markerAction ? { marker: evaluation.markerAction } : {}),
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warn(`[stranded-completed-provenance] ${taskId}: no-action audit emission failed: ${message}`);
+      }
+    }
+    log.log(`[stranded-completed-provenance] ${taskId}: withholding ${sweep} promotion — most recent execution ended in a failure/refusal park (operator-decides)`);
+    return true;
   }
 
   private async listActiveHeartbeatTaskIds(): Promise<Set<string>> {
@@ -1409,6 +1479,7 @@ export class SelfHealingManager {
     }
 
     this.finalizeUnprovenWarned.clear();
+    this.strandedCompletedFailureProvenanceWarned.clear();
     this.metaResolvedSkipAuditMemo.clear();
     this.metaStalledSkipAuditMemo.clear();
     this.preservedQueuedOverlapLogged.clear();
@@ -2810,6 +2881,11 @@ export class SelfHealingManager {
           log.log(`${task.id} started executing concurrently — skipping recovery this cycle`);
           continue;
         }
+        // FN-8141: never promote a stuck-in-progress task whose most recent execution ended in a
+        // failure/refusal park — honor the honest failure instead of laundering it into in-review.
+        if (await this.isStrandedCompletedPromotionBlockedByFailureProvenance(task.id, "stuck-in-progress")) {
+          continue;
+        }
         log.log(`Recovering completed task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
         const success = await recoverFn(task);
         if (success) recovered++;
@@ -2864,6 +2940,11 @@ export class SelfHealingManager {
         const latestExecutingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
         if (latestExecutingIds.has(task.id)) {
           log.log(`${task.id} started executing concurrently — skipping stranded todo recovery this cycle`);
+          continue;
+        }
+        // FN-8141: never promote a stranded-todo task whose most recent execution ended in a
+        // failure/refusal park — the pause-abort bounce to todo must not launder the failure.
+        if (await this.isStrandedCompletedPromotionBlockedByFailureProvenance(task.id, "stranded-todo")) {
           continue;
         }
 
