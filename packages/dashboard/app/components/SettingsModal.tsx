@@ -824,6 +824,8 @@ interface SettingsModalProps {
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
   /** Mirrors pending Quick Chat launcher changes into the app shell immediately. */
   onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
+  /** Mirrors pending mobile quick-action changes into the app shell immediately. */
+  onMobileNavPrimaryItemsChange?: (items: string[]) => void;
   /** Optional callback when user wants to reopen the onboarding guide */
   onReopenOnboarding?: () => void;
   /** Optional callback to open approvals/mailbox view. */
@@ -1087,6 +1089,7 @@ export function SettingsModal({
   onDashboardFontScaleChange,
   onShadcnCustomColorsChange,
   onQuickChatButtonModeChange,
+  onMobileNavPrimaryItemsChange,
   onReopenOnboarding,
   onOpenApprovals,
   onOpenWorkflowSettings,
@@ -3822,6 +3825,7 @@ export function SettingsModal({
             prefixError={prefixError}
             setPrefixError={setPrefixError}
             onQuickChatButtonModeChange={onQuickChatButtonModeChange}
+            onMobileNavPrimaryItemsChange={onMobileNavPrimaryItemsChange}
           />
         );
       case "source-control":

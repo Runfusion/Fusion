@@ -3,6 +3,7 @@ import { resolve } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileNavBar } from "../MobileNavBar";
+import { MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../core/src/mobile-nav-primary-items";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 
 vi.mock("../../api", () => ({
@@ -161,11 +162,24 @@ describe("MobileNavBar", () => {
     expect(container.querySelector('[data-testid="mobile-nav-tab-missions"]')).toBeNull();
   });
 
-  it("never promotes overflow-only ids and always keeps More", () => {
+  it("promotes eligible settings and always keeps More", () => {
     render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={["settings", "planning"]} />);
-    expect(screen.queryByTestId("mobile-nav-tab-settings")).toBeNull();
+    expect(screen.getByTestId("mobile-nav-tab-settings")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-nav-tab-planning")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-nav-tab-more")).toBeInTheDocument();
+  });
+
+  it("renders every available selectable destination exactly once across tab and More", () => {
+    const gated = new Set(["skills", "insights", "memory", "research", "evals", "goals", "todos", "dev-server"]);
+    const moreTestIds: Record<string, string> = { automation: "schedules", "github-import": "github", workflows: "workflow" };
+    for (const item of MOBILE_NAV_SELECTABLE_ITEMS) {
+      const { unmount } = render(<MobileNavBar {...createDefaultProps()} mobileNavPrimaryItems={[item]} showSkillsTab experimentalFeatures={{ insights: true, memoryView: true, researchView: true, evalsView: true, goalsView: true, todoView: true, devServerView: true }} />);
+      expect(screen.getAllByTestId(`mobile-nav-tab-${item}`)).toHaveLength(1);
+      fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+      expect(screen.queryByTestId(`mobile-more-item-${moreTestIds[item] ?? item}`)).toBeNull();
+      unmount();
+    }
+    expect(gated.size).toBe(8);
   });
 
   it("does not render legacy roadmaps tab", () => {

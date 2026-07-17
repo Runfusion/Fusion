@@ -1777,4 +1777,4 @@ Escalation is enabled only when the toggle is true and either a complete provide
 
 ### `mobileNavPrimaryItems`
 
-Project-scoped ordered list of mobile footer quick actions. The default is `command-center`, `tasks`, `agents`, `missions`, `chat`, `mailbox`. The only selectable ids are those six plus `planning`; unknown, `more`, and overflow-only ids are ignored. Omitted selectable destinations remain reachable in the More sheet, whose trailing footer tab is always present.
+Project-scoped ordered list of up to six mobile footer quick actions. The default remains `command-center`, `tasks`, `agents`, `missions`, `chat`, `mailbox`. Settings shows selected items in order with move/remove controls and an add dropdown for eligible navigation destinations (including More-sheet actions and gated views); edits preview in the live footer before Save. Unknown ids plus `more`, Terminal/scripts, shell controls, plugin views, and separators are ignored. Omitted available destinations remain reachable in More, whose trailing footer tab is always present. Disabled feature-gated destinations render nowhere until their feature is enabled.

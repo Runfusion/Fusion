@@ -2054,4 +2054,4 @@ When enabled, a proactive question holds the planner at `awaiting_input`, sends 
 
 ### Mobile footer quick actions
 
-In **Settings → General**, choose up to six Mobile footer quick actions with the ordered checkbox list. Planning can replace a default destination; use the adjacent earlier/later controls to set the footer order. Any unselected quick action moves to More, so it remains reachable.
+In **Settings → General**, choose up to six Mobile footer quick actions from the add dropdown. The selected list is ordered: use its earlier/later controls or remove actions to adjust the footer, and see each change immediately while Settings remains open. Eligible sidebar and More-sheet destinations can be promoted; unselected available destinations stay reachable in More. Feature-gated views remain hidden until enabled, and the trailing More tab is always present.

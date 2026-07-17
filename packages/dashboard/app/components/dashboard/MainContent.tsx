@@ -49,6 +49,7 @@ export function MainContent({
   setShadcnCustomColors,
   resolvedThemeMode,
   setQuickChatButtonModeImmediate,
+  setMobileNavPrimaryItemsImmediate,
   reopenOnboardingWithNav,
   viewMode,
   projects,
@@ -229,6 +230,7 @@ export function MainContent({
             onDashboardFontScaleChange={setDashboardFontScalePct}
             onShadcnCustomColorsChange={setShadcnCustomColors}
             onQuickChatButtonModeChange={setQuickChatButtonModeImmediate}
+            onMobileNavPrimaryItemsChange={setMobileNavPrimaryItemsImmediate}
             onReopenOnboarding={reopenOnboardingWithNav}
             onOpenApprovals={() => handleChangeTaskView("mailbox")}
             onOpenWorkflowSettings={() => {

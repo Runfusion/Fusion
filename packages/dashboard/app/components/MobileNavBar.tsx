@@ -378,14 +378,6 @@ export function MobileNavBar({
   const skillsEnabled = Boolean(showSkillsTab);
   const todoViewEnabled = Boolean(experimentalFeatures?.todoView);
 
-  // Keep optional primary tabs limited to preserve touch-target width.
-  // Overflowed destinations remain available in the More sheet.
-  /*
-  FNXC:Navigation 2026-06-22-01:40:
-  Skills is never a top-level mobile tab; when enabled it lives only in the three-dot More overflow sheet.
-  */
-  const showSkillsTopLevel = false;
-  const showSkillsInMore = skillsEnabled && !showSkillsTopLevel;
   const sortedPrimaryPluginViews = pluginDashboardViews
     .filter((entry) => entry.view.placement === "primary")
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
@@ -407,43 +399,63 @@ export function MobileNavBar({
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
 
   const { primaryItems, omittedItems } = resolveMobileNavPrimaryItems({ mobileNavPrimaryItems });
-  const isMoreActive =
-    omittedItems.some((item) => (item === "tasks" ? view === "board" || view === "list" : view === item))
-    || view === "documents"
-    || (Boolean(experimentalFeatures?.evalsView) && view === "evals")
-    || (Boolean(experimentalFeatures?.goalsView) && view === "goalsView")
-    || view === "research"
-    || view === "insights"
-    || view === "memory"
-    || view === "secrets"
-    || view === "devserver"
-    || view === "dev-server"
-    || (view === "todos" && todoViewEnabled)
-    || (view === "skills" && !showSkillsTopLevel)
+  /*
+  FNXC:Navigation 2026-07-17-00:00:
+  Selectable mobile destinations use one registry so an available destination is rendered exactly once:
+  configured items are tabs and omitted items are More entries. Feature gates are enforced here rather
+  than by the core resolver, keeping persisted choices valid if an operator later enables a feature.
+  */
+  const destinationRegistry: Record<MobileNavSelectableItem, {
+    icon: ReactNode;
+    labelKey: string;
+    fallback: string;
+    moreTestId: string;
+    isActive: boolean;
+    isAvailable: boolean;
+    navigate: (surface: "primary" | "more") => void;
+    indicator?: boolean;
+    indicatorLabel?: string;
+    badge?: number;
+  }> = {
+    "command-center": { icon: <Gauge />, labelKey: "nav.commandCenter", fallback: "Dashboard", moreTestId: "mobile-more-item-command-center", isActive: view === "command-center", isAvailable: true, navigate: () => onChangeView("command-center") },
+    tasks: { icon: <LayoutGrid />, labelKey: "nav.tasks", fallback: "Tasks", moreTestId: "mobile-more-item-tasks", isActive: view === "board" || view === "list", isAvailable: true, navigate: () => onChangeView(view === "board" || view === "list" ? view : "board") },
+    agents: { icon: <Bot />, labelKey: "nav.agents", fallback: "Agents", moreTestId: "mobile-more-item-agents", isActive: view === "agents", isAvailable: true, navigate: () => onChangeView("agents") },
+    missions: { icon: <Target />, labelKey: "nav.missions", fallback: "Missions", moreTestId: "mobile-more-item-missions", isActive: view === "missions", isAvailable: true, navigate: () => onChangeView("missions") },
+    chat: { icon: <MessageSquare />, labelKey: "nav.chat", fallback: "Chat", moreTestId: "mobile-more-item-chat", isActive: view === "chat", isAvailable: true, navigate: () => onChangeView("chat"), indicator: chatHasUnreadResponse && view !== "chat", indicatorLabel: t("nav.chatUnreadAriaLabel", "Unread chat response") },
+    mailbox: { icon: <Mail />, labelKey: "nav.mailbox", fallback: "Mailbox", moreTestId: "mobile-more-item-mailbox", isActive: view === "mailbox", isAvailable: true, navigate: () => onChangeView("mailbox"), indicator: mailboxPendingApprovalCount > 0 && view !== "mailbox", indicatorLabel: t("nav.mailboxPendingAriaLabel", "Pending approvals"), badge: mailboxUnreadCount },
+    planning: { icon: <Lightbulb />, labelKey: "nav.planning", fallback: "Planning", moreTestId: "mobile-more-item-planning", isActive: view === "planning", isAvailable: true, navigate: (surface) => surface === "primary" ? planningHandler?.() : handleMoreAction(planningHandler), indicator: planningNeedsInput && view !== "planning", indicatorLabel: t("nav.planningNeedsInputAriaLabel", "Planning needs your input"), badge: activePlanningSessionCount },
+    activity: { icon: <Activity />, labelKey: "nav.activityLog", fallback: "Activity Log", moreTestId: "mobile-more-item-activity", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenActivityLog?.() : handleMoreAction(onOpenActivityLog) },
+    git: { icon: <GitBranch />, labelKey: "nav.gitManager", fallback: "Git Manager", moreTestId: "mobile-more-item-git", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenGitManager?.() : handleMoreAction(onOpenGitManager), badge: stashOrphanCount },
+    files: { icon: <Folder />, labelKey: "nav.files", fallback: "Files", moreTestId: "mobile-more-item-files", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenFiles?.() : handleMoreAction(onOpenFiles) },
+    workflows: { icon: <Workflow />, labelKey: "nav.workflows", fallback: "Workflows", moreTestId: "mobile-more-item-workflow", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenWorkflowEditor?.() : handleMoreAction(onOpenWorkflowEditor) },
+    automation: { icon: <Clock />, labelKey: "nav.automation", fallback: "Automation", moreTestId: "mobile-more-item-schedules", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenSchedules?.() : handleMoreAction(onOpenSchedules) },
+    "github-import": { icon: <GitHubLogo />, labelKey: "nav.importFromGitHub", fallback: "Import from GitHub", moreTestId: "mobile-more-item-github", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenGitHubImport?.() : handleMoreAction(onOpenGitHubImport) },
+    usage: { icon: <Activity />, labelKey: "nav.usage", fallback: "Usage", moreTestId: "mobile-more-item-usage", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenUsage?.() : handleMoreAction(onOpenUsage) },
+    projects: { icon: <Grid3X3 />, labelKey: "nav.projects", fallback: "Projects", moreTestId: "mobile-more-item-projects", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onViewAllProjects?.() : handleMoreAction(onViewAllProjects) },
+    documents: { icon: <FileText />, labelKey: "nav.documents", fallback: "Artifacts", moreTestId: "mobile-more-item-documents", isActive: view === "documents", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("documents") : handleMoreAction(() => onChangeView("documents")) },
+    secrets: { icon: <Lock />, labelKey: "nav.secrets", fallback: "Secrets", moreTestId: "mobile-more-item-secrets", isActive: view === "secrets", isAvailable: true, navigate: (surface) => surface === "primary" ? onChangeView("secrets") : handleMoreAction(() => onChangeView("secrets")) },
+    settings: { icon: <Settings />, labelKey: "nav.settings", fallback: "Settings", moreTestId: "mobile-more-item-settings", isActive: false, isAvailable: true, navigate: (surface) => surface === "primary" ? onOpenSettings?.() : handleMoreAction(onOpenSettings) },
+    skills: { icon: <Zap />, labelKey: "nav.skills", fallback: "Skills", moreTestId: "mobile-more-item-skills", isActive: view === "skills", isAvailable: skillsEnabled, navigate: (surface) => surface === "primary" ? onChangeView("skills") : handleMoreAction(() => onChangeView("skills")) },
+    insights: { icon: <Sparkles />, labelKey: "nav.insights", fallback: "Insights", moreTestId: "mobile-more-item-insights", isActive: view === "insights", isAvailable: Boolean(experimentalFeatures?.insights), navigate: (surface) => surface === "primary" ? onChangeView("insights") : handleMoreAction(() => onChangeView("insights")) },
+    memory: { icon: <Brain />, labelKey: "nav.memory", fallback: "Memory", moreTestId: "mobile-more-item-memory", isActive: view === "memory", isAvailable: Boolean(experimentalFeatures?.memoryView), navigate: (surface) => surface === "primary" ? onChangeView("memory") : handleMoreAction(() => onChangeView("memory")) },
+    research: { icon: <Search />, labelKey: "nav.research", fallback: "Research", moreTestId: "mobile-more-item-research", isActive: view === "research", isAvailable: Boolean(experimentalFeatures?.researchView), navigate: (surface) => surface === "primary" ? onChangeView("research") : handleMoreAction(() => onChangeView("research")) },
+    evals: { icon: <Target />, labelKey: "nav.evals", fallback: "Evals", moreTestId: "mobile-more-item-evals", isActive: view === "evals", isAvailable: Boolean(experimentalFeatures?.evalsView), navigate: (surface) => surface === "primary" ? onChangeView("evals") : handleMoreAction(() => onChangeView("evals")) },
+    goals: { icon: <Target />, labelKey: "nav.goals", fallback: "Goals", moreTestId: "mobile-more-item-goals", isActive: view === "goalsView", isAvailable: Boolean(experimentalFeatures?.goalsView), navigate: (surface) => surface === "primary" ? onChangeView("goalsView") : handleMoreAction(() => onChangeView("goalsView")) },
+    todos: { icon: <CheckSquare />, labelKey: "nav.todos", fallback: "Todos", moreTestId: "mobile-more-item-todos", isActive: view === "todos", isAvailable: todoViewEnabled, navigate: (surface) => surface === "primary" ? onChangeView("todos") : handleMoreAction(() => onChangeView("todos")) },
+    "dev-server": { icon: <Monitor />, labelKey: "nav.devServer", fallback: "Dev Server", moreTestId: "mobile-more-item-dev-server", isActive: view === "dev-server" || view === "devserver", isAvailable: Boolean(experimentalFeatures?.devServerView), navigate: (surface) => surface === "primary" ? onChangeView("dev-server") : handleMoreAction(() => onChangeView("dev-server")) },
+  };
+  const effectivePrimaryItems = primaryItems.filter((item) => destinationRegistry[item].isAvailable);
+  const effectiveOmittedItems = omittedItems.filter((item) => destinationRegistry[item].isAvailable);
+  const isMoreActive = effectiveOmittedItems.some((item) => destinationRegistry[item].isActive)
     || view === "graph"
     || (isPluginViewId(view) && !topLevelPrimaryPluginViews.some((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === view));
 
-  /*
-  FNXC:Navigation 2026-07-17-00:00:
-  A configured quick-action destination renders exactly once: as a footer tab or as a More-sheet item.
-  This preserves its handlers and indicators while ensuring invalid settings cannot strand navigation.
-  */
   const renderSelectableItem = (item: MobileNavSelectableItem, surface: "primary" | "more") => {
+    const destination = destinationRegistry[item];
     const isPrimary = surface === "primary";
-    const active = item === "tasks" ? view === "board" || view === "list" : view === item;
-    const navigate = () => {
-      if (item === "tasks") onChangeView(view === "board" || view === "list" ? view : "board");
-      else if (item === "planning") { if (isPrimary) planningHandler?.(); else handleMoreAction(planningHandler); }
-      else if (isPrimary) onChangeView(item);
-      else handleMoreAction(() => onChangeView(item));
-    };
-    const icon = item === "command-center" ? <Gauge /> : item === "tasks" ? <LayoutGrid /> : item === "agents" ? <Bot /> : item === "missions" ? <Target /> : item === "chat" ? <MessageSquare /> : item === "mailbox" ? <Mail /> : <Lightbulb />;
-    const label = t(`nav.${item === "command-center" ? "commandCenter" : item}`, item === "command-center" ? "Dashboard" : item[0].toUpperCase() + item.slice(1));
-    const indicator = (item === "chat" && chatHasUnreadResponse && !active) || (item === "mailbox" && mailboxPendingApprovalCount > 0 && !active) || (item === "planning" && planningNeedsInput && !active);
-    const badge = item === "mailbox" ? mailboxUnreadCount : item === "planning" ? activePlanningSessionCount : 0;
-    const indicatorLabel = item === "chat" ? t("nav.chatUnreadAriaLabel", "Unread chat response") : item === "mailbox" ? t("nav.mailboxPendingAriaLabel", "Pending approvals") : t("nav.planningNeedsInputAriaLabel", "Planning needs your input");
-    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${active ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-selected={active} onClick={navigate}><span className="mobile-nav-tab-icon-wrapper">{icon}{indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={indicatorLabel} />}</span><span className="mobile-nav-tab-label">{label}</span>{badge > 0 && <span className="mobile-nav-tab-badge">{formatCount(badge)}</span>}</button>;
-    return <button key={item} type="button" className="mobile-more-item" data-testid={`mobile-more-item-${item}`} onClick={navigate}><span className="mobile-more-item-icon-wrapper">{icon}{indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={indicatorLabel} />}</span><span>{label}</span>{badge > 0 && <span className="mobile-more-item-badge">{formatCount(badge)}</span>}</button>;
+    const label = t(destination.labelKey, destination.fallback);
+    if (isPrimary) return <button key={item} type="button" className={`mobile-nav-tab${destination.isActive ? " mobile-nav-tab--active" : ""}`} data-testid={`mobile-nav-tab-${item}`} role="tab" aria-selected={destination.isActive} onClick={() => destination.navigate("primary")}><span className="mobile-nav-tab-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-nav-chat-unread-dot" aria-label={destination.indicatorLabel} />}</span><span className="mobile-nav-tab-label">{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-nav-tab-badge">{formatCount(destination.badge)}</span> : null}</button>;
+    return <button key={item} type="button" className="mobile-more-item" data-testid={destination.moreTestId} onClick={() => destination.navigate("more")}><span className="mobile-more-item-icon-wrapper">{destination.icon}{destination.indicator && <span className="status-dot status-dot--pending mobile-more-item-icon-dot" aria-label={destination.indicatorLabel} />}</span><span>{label}</span>{destination.badge && destination.badge > 0 ? <span className="mobile-more-item-badge">{formatCount(destination.badge)}</span> : null}</button>;
   };
 
   return (
@@ -454,23 +466,8 @@ export function MobileNavBar({
         role="tablist"
         aria-label={t("nav.primaryNavAriaLabel", "Primary navigation")}
       >
-        {primaryItems.map((item) => renderSelectableItem(item, "primary"))}
+        {effectivePrimaryItems.map((item) => renderSelectableItem(item, "primary"))}
 
-        {showSkillsTopLevel && (
-          <button
-            type="button"
-            className={`mobile-nav-tab${view === "skills" ? " mobile-nav-tab--active" : ""}`}
-            data-testid="mobile-nav-tab-skills"
-            role="tab"
-            aria-selected={view === "skills"}
-            onClick={() => onChangeView("skills")}
-          >
-            <span className="mobile-nav-tab-icon-wrapper">
-              <Zap />
-            </span>
-            <span className="mobile-nav-tab-label">{t("nav.skills", "Skills")}</span>
-          </button>
-        )}
 
 
         {topLevelPrimaryPluginViews.map((entry) => {
@@ -540,27 +537,6 @@ export function MobileNavBar({
                 {shellConnectionControl}
               </div>
             ) : null}
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-activity"
-              onClick={() => handleMoreAction(onOpenActivityLog)}
-            >
-              <Activity />
-              <span>{t("nav.activityLog", "Activity Log")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-git"
-              onClick={() => handleMoreAction(onOpenGitManager)}
-            >
-              <GitBranch />
-              <span>{t("nav.gitManager", "Git Manager")}</span>
-              {stashOrphanCount > 0 ? <span className="mobile-more-item-badge">{formatCount(stashOrphanCount)}</span> : null}
-            </button>
 
             <div className="mobile-more-split-row">
               <button
@@ -648,185 +624,9 @@ export function MobileNavBar({
               </div>
             )}
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-files"
-              onClick={() => handleMoreAction(onOpenFiles)}
-            >
-              <Folder />
-              <span>{t("nav.files", "Files")}</span>
-            </button>
 
-            {omittedItems.map((item) => renderSelectableItem(item, "more"))}
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-workflow"
-              onClick={() => handleMoreAction(onOpenWorkflowEditor)}
-            >
-              <Workflow />
-              <span>{t("nav.workflows", "Workflows")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-schedules"
-              onClick={() => handleMoreAction(onOpenSchedules)}
-            >
-              <Clock />
-              <span>{t("nav.automation", "Automation")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-github"
-              onClick={() => handleMoreAction(onOpenGitHubImport)}
-            >
-              <GitHubLogo />
-              <span>{t("nav.importFromGitHub", "Import from GitHub")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-usage"
-              onClick={() => handleMoreAction(onOpenUsage)}
-            >
-              <Activity />
-              <span>{t("nav.usage", "Usage")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-projects"
-              onClick={() => handleMoreAction(onViewAllProjects)}
-            >
-              <Grid3X3 />
-              <span>{t("nav.projects", "Projects")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-documents"
-              onClick={() => handleMoreAction(() => onChangeView("documents"))}
-            >
-              <FileText />
-              {/* FNXC:Navigation 2026-06-21-18:25: FN-6890 changes only the displayed top-level label to Artifacts; mobile-more-item-documents and the documents view id stay stable. */}
-              <span>{t("nav.documents", "Artifacts")}</span>
-            </button>
-
-            {experimentalFeatures?.evalsView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-evals"
-                onClick={() => handleMoreAction(() => onChangeView("evals"))}
-              >
-                <Target />
-                <span>{t("nav.evals", "Evals")}</span>
-              </button>
-            )}
-            {experimentalFeatures?.goalsView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-goals"
-                onClick={() => handleMoreAction(() => onChangeView("goalsView"))}
-              >
-                <Target />
-                <span>{t("nav.goals", "Goals")}</span>
-              </button>
-            )}
-
-            {showSkillsInMore && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-skills"
-                onClick={() => handleMoreAction(() => onChangeView("skills"))}
-              >
-                <Zap />
-                <span>{t("nav.skills", "Skills")}</span>
-              </button>
-            )}
-
-            {experimentalFeatures?.researchView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-research"
-                onClick={() => handleMoreAction(() => onChangeView("research"))}
-              >
-                <Search />
-                <span>{t("nav.research", "Research")}</span>
-              </button>
-            )}
-
-            {experimentalFeatures?.insights && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-insights"
-                onClick={() => handleMoreAction(() => onChangeView("insights"))}
-              >
-                <Sparkles />
-                <span>{t("nav.insights", "Insights")}</span>
-              </button>
-            )}
-
-            {experimentalFeatures?.memoryView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-memory"
-                onClick={() => handleMoreAction(() => onChangeView("memory"))}
-              >
-                <Brain />
-                <span>{t("nav.memory", "Memory")}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-secrets"
-              onClick={() => handleMoreAction(() => onChangeView("secrets"))}
-            >
-              <Lock />
-              <span>{t("nav.secrets", "Secrets")}</span>
-            </button>
-
-            {experimentalFeatures?.devServerView && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-dev-server"
-                onClick={() => {
-                  handleMoreAction(() => onChangeView("dev-server"));
-                }}
-              >
-                <Monitor />
-                <span>{t("nav.devServer", "Dev Server")}</span>
-              </button>
-            )}
-
-            {todoViewEnabled && (
-              <button
-                type="button"
-                className="mobile-more-item"
-                data-testid="mobile-more-item-todos"
-                onClick={() => handleMoreAction(() => onChangeView("todos"))}
-              >
-                <CheckSquare />
-                <span>{t("nav.todos", "Todos")}</span>
-              </button>
-            )}
+            {effectiveOmittedItems.map((item) => renderSelectableItem(item, "more"))}
 
             {overflowPluginViews.map((entry) => {
                 const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
@@ -847,15 +647,6 @@ export function MobileNavBar({
 
             <div className="mobile-more-separator" />
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-settings"
-              onClick={() => handleMoreAction(onOpenSettings)}
-            >
-              <Settings />
-              <span>{t("nav.settings", "Settings")}</span>
-            </button>
           </div>
         </>
       )}

@@ -84,6 +84,7 @@ export interface MainContentProps {
   setShadcnCustomColors: (colors: Record<string, string>) => void;
   resolvedThemeMode: "dark" | "light";
   setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
+  setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   reopenOnboardingWithNav: () => void;
   viewMode: ViewMode;
   projects: ProjectInfoWithSource[];
