@@ -596,7 +596,16 @@ function detectPendingReviewBlock(
 }
 
 function formatTaskDoneRefusal(refusalClass: TaskDoneRefusalClass, reason: string): string {
-  return `fn_task_done refused (${refusalClass}): ${reason}. ${TASK_DONE_REFUSAL_SUFFIX}`;
+  /*
+  FNXC:Lifecycle 2026-07-16-10:20:
+  FN-8141 — when the bulk-completion gate refuses (steps lack APPROVE verdicts), the agent must NOT reach for
+  skip-every-step-then-complete as the escape hatch (that is exactly how FN-8141 laundered a failure into `done`).
+  Name the honest blocked exit in the refusal so the sanctioned path is the advertised one.
+  */
+  const blockedHint = refusalClass === "bulk-step-completion-without-review"
+    ? " If the work genuinely cannot proceed, do NOT skip the remaining steps to force completion — call fn_task_done(outcome=\"blocked\", reason=\"...\") instead."
+    : "";
+  return `fn_task_done refused (${refusalClass}): ${reason}. ${TASK_DONE_REFUSAL_SUFFIX}${blockedHint}`;
 }
 
 export function evaluateTaskDoneRefusal(
@@ -1324,7 +1333,7 @@ You execute task specs in isolated worktrees, produce production-quality changes
 You MUST end every turn by either:
 - (a) calling another tool to make progress, OR
 - (b) calling \`fn_task_done\` if the entire task is complete, OR
-- (c) calling \`fn_task_done\` with a summary explaining what is blocked, if you cannot make progress for any reason
+- (c) calling \`fn_task_done(outcome="blocked", reason="...")\` if the work genuinely cannot proceed (see "Cannot proceed" below)
 
 You MUST NOT end a turn by writing prose that asks the user a question, summarizes progress, or requests permission to continue. The following are FORBIDDEN turn-endings:
 - "If you want, I can continue with..."
@@ -1339,7 +1348,8 @@ If you have just finished a step's work, immediately call \`fn_task_update\` to 
 
 The user is not watching this conversation in real-time. They will read the final result. Asking permission wastes a full retry cycle and may orphan committed work.
 
-If you genuinely cannot proceed (blocked on a dependency, missing information, or an unresolvable error), call \`fn_task_done\` with a clear explanation of what is blocked and what is needed to unblock it. Never write the question as plain prose.
+**Cannot proceed — the honest blocked exit.** If the work genuinely cannot be finished (an upstream API break, a missing prerequisite task, an unresolvable external error), call \`fn_task_done(outcome="blocked", reason="<concrete blocker + what would unblock it>", blockedBy=["FN-XXXX"])\`. This parks the task as failed WITHOUT any completion claim, leaves your steps in their true statuses, preserves your worktree/branch, and records \`blockedBy\` task IDs as dependencies so the task requeues once the blocker completes.
+This is THE correct action when you are stuck — do NOT instead mark the remaining steps \`skipped\` and call \`fn_task_done\` to make the task look finished. Skipping steps to escape a blocker launders a failure into \`done\` and is never the right move. (\`skipped\` remains valid only for the stale-premise path below, when the requested work is already present on HEAD.) Never write the blocker as plain prose.
 
 ## How to work
 1. Read the PROMPT.md carefully — it contains your mission, steps, file scope, acceptance criteria, and Do NOT constraints
@@ -1369,6 +1379,8 @@ PROMPT.md is captured at task-creation time; HEAD may have moved on since then. 
 4. Call \`fn_task_done\` with a summary that begins \`PREMISE STALE:\` followed by the concrete reason (e.g. \`PREMISE STALE: targeted reproduction passes unchanged on HEAD; PROMPT claimed MOBILE_MEDIA_QUERY had been expanded but useViewportMode.ts:9 still exports the legacy value\`).
 
 This path exists specifically to prevent the executor from looping when PROMPT.md is out of sync with HEAD. Use it only after running the actual reproduction — do not invoke it to dodge real work. If a task is verified as a no-op, duplicate, or redundant for the same reason (the requested behavior is already present on HEAD), \`fn_task_done\` may also use a leading sentinel summary of \`NO-OP:\`, \`NOOP:\`, \`DUPLICATE: FN-NNNN ...\`, or \`REDUNDANT:\`. These sentinels are audit-logged and allow a verified zero-commit completion; ordinary zero-commit implementation completions without a recognized leading sentinel are still refused.
+
+**Stale premise vs. blocked — do not confuse them.** Skipping remaining steps is ONLY for the stale-premise case above, where the requested work is already present on HEAD so there is nothing left to do. If the work is real but you CANNOT do it (upstream broke, a prerequisite task is missing, an external error is unresolvable), that is NOT a stale premise — do NOT skip steps to fake completion. Use \`fn_task_done(outcome="blocked", reason="...", blockedBy=[...])\` instead (see "Cannot proceed" above).
 
 **Logging important actions:** \`fn_task_log(message="what happened")\`
 
@@ -14431,16 +14443,108 @@ export class TaskExecutor {
       name: "fn_task_done",
       label: "Mark Task Done",
       description:
-        "Signal that all steps are complete, tests pass, and documentation is updated. " +
-        "Call this as the final action after finishing all work. " +
-        "Automatically marks all remaining steps as done. " +
-        "Optionally provide a summary of what was changed/fixed.",
+        "End the task. With outcome=\"completed\" (default): signal that all steps are complete, tests pass, and " +
+        "documentation is updated — call as the final action after finishing all work; automatically marks all " +
+        "remaining steps as done; optionally provide a summary of what was changed/fixed. " +
+        "With outcome=\"blocked\": honestly park the task when the work genuinely cannot proceed (upstream API break, " +
+        "missing dependency task, unresolvable external blocker). Blocked is NOT a completion claim — it does not " +
+        "trip the review/completion gates, does not auto-complete or auto-skip steps, and preserves your worktree/" +
+        "branch/step progress so the task can be requeued once the blocker clears. Prefer blocked over marking steps " +
+        "skipped when the task cannot be finished.",
       parameters: Type.Object({
         summary: Type.Optional(Type.String({
-          description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences)",
+          description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences). Used when outcome=\"completed\".",
+        })),
+        /*
+        FNXC:Lifecycle 2026-07-16-10:20:
+        FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
+        gate refused it, the requeue budget re-ran the doomed task 5 times, and the only remaining affordance (skip every
+        step) made `isTaskComplete()` return true so self-healing + the AI merger finalized an empty diff as done. The
+        `blocked` outcome is the sanctioned honest exit: it parks the task `failed` (error `BLOCKED: <reason>`) without any
+        completion claim, so laundering is never the cheapest path.
+        */
+        outcome: Type.Optional(Type.Union(
+          [Type.Literal("completed"), Type.Literal("blocked")],
+          { description: "\"completed\" (default) finishes the task; \"blocked\" honestly parks it as failed because the work cannot proceed. Use \"blocked\" instead of skipping steps + completing when you are stuck." },
+        )),
+        blockedBy: Type.Optional(Type.Array(Type.String(), {
+          description: "When outcome=\"blocked\": task IDs (e.g. [\"FN-8145\"]) that must complete before this task can proceed. Recorded as real dependency edges so the task requeues behind the blocker.",
+        })),
+        reason: Type.Optional(Type.String({
+          description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it.",
         })),
       }),
-      execute: async (_id: string, params: { summary?: string }) => {
+      execute: async (_id: string, params: { summary?: string; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
+        /*
+        FNXC:Lifecycle 2026-07-16-10:20:
+        FN-8141 — the blocked exit runs BEFORE every completion gate (completion blocker, verdict providers, worktree
+        invariants, bulk-completion refusal). Blocked is not a completion claim, so none of those gates apply; parking
+        `failed` with a `BLOCKED:` error + real dependency edges is the whole action. Steps keep their true statuses
+        (no auto-done, no auto-skip) so a laundered "all steps skipped ⇒ complete" state can never form.
+        */
+        if (params.outcome === "blocked") {
+          const reason = params.reason?.trim();
+          if (!reason) {
+            const message = "fn_task_done(outcome=\"blocked\") requires a non-empty `reason` describing what is blocking the work. Provide `reason` (and optional `blockedBy` task IDs) and call again.";
+            return {
+              content: [{ type: "text" as const, text: message }],
+              details: { error: message },
+            };
+          }
+
+          const blockedTask = await store.getTask(taskId);
+          const blockedByIds = Array.from(
+            new Set((params.blockedBy ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+          );
+
+          const parkError = `BLOCKED: ${reason}`;
+          // Record blockedBy as real dependency edges (union with existing) so the task requeues
+          // behind the blocker rather than re-running the doomed work. Preserve worktree/branch/
+          // step progress (FN-7863 EXECUTION_DISPATCH_LOOP_EXHAUSTED park convention) — do NOT
+          // call onDone() so the outer loop's `liveTask.status === "failed"` honor-park branch keeps
+          // the row parked for the blocker/operator instead of handing off to review.
+          const mergedDependencies = blockedByIds.length > 0
+            ? Array.from(new Set([...(blockedTask.dependencies ?? []), ...blockedByIds]))
+            : undefined;
+          await store.updateTask(taskId, {
+            status: "failed",
+            error: parkError,
+            paused: false,
+            pausedByAgentId: null,
+            ...(mergedDependencies ? { dependencies: mergedDependencies } : {}),
+          }, this.getRunContextFor(taskId));
+
+          await store.logEntry(
+            taskId,
+            `${parkError}${blockedByIds.length > 0 ? ` — recorded dependencies: ${blockedByIds.join(", ")}` : ""} — parked failed (honest blocked exit; steps preserved)`,
+            undefined,
+            this.getRunContextFor(taskId),
+          );
+          await this.store.recordRunAuditEvent?.({
+            taskId,
+            agentId: "executor",
+            runId: generateSyntheticRunId("execution-blocked", taskId),
+            domain: "database",
+            mutationType: "task:execution-blocked-parked",
+            target: taskId,
+            metadata: {
+              taskId,
+              blockedBy: blockedByIds,
+              hasReason: true,
+            },
+          });
+          await this.persistTokenUsage(taskId);
+          executorLog.log(`⛔ ${taskId} parked failed via blocked exit${blockedByIds.length > 0 ? ` (blockedBy: ${blockedByIds.join(", ")})` : ""}`);
+
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Task parked as blocked (failed). ${blockedByIds.length > 0 ? `Recorded ${blockedByIds.length} blocking dependency(ies); it will requeue once they complete. ` : ""}Steps left in their true statuses; no completion recorded.`,
+            }],
+            details: {},
+          };
+        }
+
         const task = await store.getTask(taskId);
         const completionBlocker = await this.getTaskCompletionBlocker(task);
         if (completionBlocker) {
