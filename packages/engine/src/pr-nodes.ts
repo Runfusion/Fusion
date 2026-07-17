@@ -222,7 +222,6 @@ export function buildRespondCallback(
    */
   pluginRunner?: import("./plugin-runner.js").PluginRunner,
 ): NonNullable<PrNodeDeps["respond"]> {
-  const gitOps = makePrResponseGitOps(ops.getCwd);
   return async ({ entity }) => {
     const store = getStore();
     // The engine owns a concrete TaskStore behind the structural PrNodeStore; the
@@ -247,7 +246,25 @@ export function buildRespondCallback(
     }
 
     const taskId = ops.getTaskId(entity);
-    const cwd = ops.getCwd(entity);
+    /*
+     * FNXC:PrMergeAutoMerge 2026-07-17-17:58 (gh-4):
+     * Resolve the review-response run cwd from the task's recorded worktree first.
+     * The CLI-injected ops.getCwd defaults to process.cwd() (no CLI composition
+     * site wires getTaskWorktree), which in a centrally-installed multi-project
+     * server is the install dir — git ops and the response agent would run outside
+     * the project repo. The engine owns the store, so it recovers the worktree
+     * here; ops.getCwd stays the single-project fallback.
+     */
+    // try/catch (not .catch) so structural stores without getTask — PrNodeStore
+    // does not declare it — degrade to the fallback instead of a TypeError.
+    let respondTask: { worktree?: string } | null = null;
+    try {
+      respondTask = await fullStore.getTask(taskId);
+    } catch {
+      respondTask = null;
+    }
+    const cwd = respondTask?.worktree || ops.getCwd(entity);
+    const gitOps = makePrResponseGitOps(() => cwd);
     const runAgent = makePrResponseAgentRunner(settings, taskId, cwd, fullStore, pluginRunner);
 
     const result = await runPrResponseRun({
