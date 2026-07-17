@@ -49,8 +49,8 @@ import type {
  * Defined locally to avoid importing from @fusion/dashboard.
  */
 interface GitHubOperations {
-  findPrForBranch(params: { head: string; state?: "open" | "closed" | "all" }): Promise<PrInfo | null>;
-  createPr(params: { title: string; body: string; head: string; base?: string }): Promise<PrInfo>;
+  findPrForBranch(params: { owner?: string; repo?: string; head: string; state?: "open" | "closed" | "all" }): Promise<PrInfo | null>;
+  createPr(params: { owner?: string; repo?: string; title: string; body: string; head: string; base?: string }): Promise<PrInfo>;
   getPrMergeStatus(owner?: string, repo?: string, number?: number): Promise<{
     prInfo: PrInfo;
     reviewDecision: string | null;
@@ -58,7 +58,7 @@ interface GitHubOperations {
     mergeReady: boolean;
     blockingReasons: string[];
   }>;
-  mergePr(params: { number: number; method?: "merge" | "squash" | "rebase"; expectedHeadOid?: string }): Promise<PrInfo>;
+  mergePr(params: { owner?: string; repo?: string; number: number; method?: "merge" | "squash" | "rebase"; expectedHeadOid?: string }): Promise<PrInfo>;
   getPrStatus(owner: string, repo: string, number: number): Promise<PrInfo>;
   /** Reply to a specific review thread (U2). */
   replyToReviewThread(threadId: string, body: string): Promise<void>;
@@ -735,6 +735,9 @@ export async function processPullRequestMergeTask(
   /*
    * FNXC:PrMergeAutoMerge 2026-06-27-13:14:
    * FN-7133 requires PR-mode merge status to resolve owner/repo from the project cwd because multi-project daemons cannot rely on process cwd. Never pass branch names into gh pr view --repo; getPrMergeStatus forwards its first two args as the repository slug.
+   *
+   * FNXC:PrMergeAutoMerge 2026-07-17-16:46 (gh-4):
+   * The same requirement extends to EVERY GitHub call in this path: findPrForBranch/createPr/mergePr must carry prRepo explicitly, because GitHubClient.resolveRepo's fallback resolves from process.cwd(), which in a centrally-installed multi-project server is the install dir (throws "Could not determine repository") or, worse, some unrelated repo (silently targets the wrong repository).
    */
   const prRepo = getCurrentRepo(cwd);
   if (!prRepo) {
@@ -794,11 +797,13 @@ export async function processPullRequestMergeTask(
       // terminal PR for this head branch must NOT be reattached (that reintroduces
       // the terminal-PR reuse bug createGroupPrCallback fixed); treat it as
       // not-found and fall through to push + createPr for a fresh open PR.
-      groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "open" });
+      groupPrInfo = await github.findPrForBranch({ owner: prRepo.owner, repo: prRepo.repo, head: branchGroup.branchName, state: "open" });
       if (!groupPrInfo) {
         await pushTaskBranchToOrigin(cwd, branchGroup.branchName);
         try {
           groupPrInfo = await github.createPr({
+            owner: prRepo.owner,
+            repo: prRepo.repo,
             title: buildGroupPullRequestTitle(branchGroup, members),
             body: buildGroupPullRequestBody(branchGroup, membersWithCommits),
             head: branchGroup.branchName,
@@ -867,7 +872,7 @@ export async function processPullRequestMergeTask(
     }
 
     await store.updateTask(task.id, { status: "merging-pr" });
-    const mergedPr = await github.mergePr({ number: refreshedPrInfo.number, method: "squash" });
+    const mergedPr = await github.mergePr({ owner: prRepo.owner, repo: prRepo.repo, number: refreshedPrInfo.number, method: "squash" });
     await store.updateBranchGroup(branchGroup.id, {
       prNumber: mergedPr.number,
       prUrl: mergedPr.url,
@@ -894,7 +899,7 @@ export async function processPullRequestMergeTask(
   if (!prInfo) {
     await store.updateTask(task.id, { status: "creating-pr" });
 
-    const existingPr = await github.findPrForBranch({ head: branch, state: "all" });
+    const existingPr = await github.findPrForBranch({ owner: prRepo.owner, repo: prRepo.repo, head: branch, state: "all" });
     if (!existingPr) {
       // gh pr create / GitHub REST require the head branch to exist on
       // origin. Nothing else in the merge path publishes the per-task
@@ -903,6 +908,8 @@ export async function processPullRequestMergeTask(
     }
     try {
       prInfo = existingPr ?? await github.createPr({
+        owner: prRepo.owner,
+        repo: prRepo.repo,
         title: buildPullRequestTitle(task),
         body: buildPullRequestBody(task),
         head: branch,
@@ -987,7 +994,7 @@ export async function processPullRequestMergeTask(
   await store.updateTask(task.id, { status: "merging-pr" });
   let mergedPr: PrInfo;
   try {
-    mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
+    mergedPr = await github.mergePr({ owner: prRepo.owner, repo: prRepo.repo, number: prInfo.number, method: "squash" });
   } catch (err: unknown) {
     let refreshedStatus: Awaited<ReturnType<GitHubOperations["getPrMergeStatus"]>>;
     try {
