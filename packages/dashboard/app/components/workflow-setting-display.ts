@@ -41,6 +41,18 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
     label: "Executor model",
     description: "Model used by task implementation agents.",
   },
+  /*
+   * FNXC:SettingsModels 2026-07-16-00:00:
+   * FN-8169 requires the Executor fallback to remain in the Models group so the shared lane catalog can render it immediately after Executor. Without these existing key classifications, pair filtering suppresses the fallback row entirely.
+   */
+  executionFallbackProvider: {
+    group: "models",
+    label: "Executor fallback provider",
+  },
+  executionFallbackModelId: {
+    group: "models",
+    label: "Executor fallback model",
+  },
   validatorProvider: {
     group: "models",
     label: "Reviewer provider",

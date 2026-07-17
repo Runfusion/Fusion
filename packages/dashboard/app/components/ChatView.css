@@ -356,7 +356,7 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2));
+  padding-right: calc((var(--space-md) * 2) + var(--space-sm));
 }
 
 .chat-session-preview {
@@ -365,7 +365,7 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2));
+  padding-right: calc((var(--space-md) * 2) + var(--space-sm));
 }
 
 .chat-session-meta {
@@ -391,34 +391,26 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
 }
 
 /*
-FNXC:ChatSidebar 2026-07-02-00:00:
-Direct conversation rows expose edit and delete as a compact action pair. Keep the pair outside the row text flow so title/preview truncation stays stable across desktop, mobile, and compact right-dock layouts.
+FNXC:ChatSidebar 2026-07-16-00:00:
+FN-8173 replaces the inline Pin/Rename/Delete cluster with one overflow trigger. Keep it outside row text flow and reserve only its tokenized width so long titles stay readable at desktop and mobile breakpoints.
 */
-.chat-session-actions {
+.chat-session-menu-btn {
   position: absolute;
   top: var(--space-sm);
   right: var(--space-sm);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.chat-session-action-btn {
   width: calc(var(--space-md) * 2);
   min-width: calc(var(--space-md) * 2);
   height: calc(var(--space-md) * 2);
   min-height: calc(var(--space-md) * 2);
-  flex: 0 0 auto;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
 }
 
-.chat-session-action-btn:hover,
-.chat-session-action-btn:focus-visible {
+.chat-session-menu-btn:hover,
+.chat-session-menu-btn:focus-visible {
   color: var(--text);
 }
 
-.chat-session-action-btn:disabled,
 .chat-mobile-session-pin:disabled {
   color: var(--text-dim);
   cursor: not-allowed;
@@ -443,10 +435,6 @@ Direct conversation rows expose edit and delete as a compact action pair. Keep t
   border-bottom: 1px solid var(--border);
 }
 
-.chat-session-delete-btn:hover,
-.chat-session-delete-btn:focus-visible {
-  color: var(--color-error);
-}
 
 /* Context menu for session items */
 .chat-session-context-menu {
@@ -2561,10 +2549,10 @@ Queued-message banners stack above the composer input with a capped scroll area,
     min-height: calc(var(--space-lg) * 2.25);
   }
 
-  /* FN-4352/FN-4385/FN-7441: direct session row action pair stays visible and text keeps clearance for both edit and delete touch targets. */
+  /* FNXC:ChatSidebar 2026-07-16-00:00: Match the shared sidebar row's one-button overflow gutter on mobile. */
   .chat-session-title,
   .chat-session-preview {
-    padding-right: calc((var(--space-md) * 4) + (var(--space-xs) * 2));
+    padding-right: calc((var(--space-md) * 2) + var(--space-sm));
   }
 
   .chat-message--assistant .chat-message-render-toggle {

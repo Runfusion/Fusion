@@ -6955,21 +6955,48 @@ describe("evictStaleProcessing", () => {
     expect(processor.getProcessingTaskIds().has("FN-001")).toBe(false);
   });
 
-  it("does not evict tasks that have been in processing less than 30 minutes", () => {
+  it("retains stale tasks with a live non-aborted triage session", () => {
     const store = createMockStore();
     const processor = new TriageProcessor(store, "/tmp/root");
 
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    (processor as any).processing.add("FN-001");
-    (processor as any).processingSince.set("FN-001", Date.now());
+    (processor as any).processing.add("FN-live");
+    (processor as any).processingSince.set("FN-live", Date.now());
+    (processor as any).activeSessions.set("FN-live", { dispose: vi.fn() });
 
-    // Advance time 29 minutes — not stale yet
+    vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+    const evicted = processor.evictStaleProcessing();
+
+    expect(evicted).toEqual(new Set());
+    expect(processor.getProcessingTaskIds().has("FN-live")).toBe(true);
+    expect((processor as any).activeSessions.has("FN-live")).toBe(true);
+  });
+
+  it("does not evict tasks that have been in processing less than 30 minutes regardless of session state", () => {
+    const store = createMockStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    for (const taskId of ["FN-no-session", "FN-live", "FN-stuck-aborted"]) {
+      (processor as any).processing.add(taskId);
+      (processor as any).processingSince.set(taskId, Date.now());
+    }
+    (processor as any).activeSessions.set("FN-live", { dispose: vi.fn() });
+    (processor as any).activeSessions.set("FN-stuck-aborted", { dispose: vi.fn() });
+    (processor as any).stuckAborted.add("FN-stuck-aborted");
+
+    // Advance time 29 minutes — not stale yet.
     vi.setSystemTime(new Date("2026-01-01T00:29:00.000Z"));
 
     const evicted = processor.evictStaleProcessing();
 
     expect(evicted.size).toBe(0);
-    expect(processor.getProcessingTaskIds().has("FN-001")).toBe(true);
+    expect(processor.getProcessingTaskIds()).toEqual(new Set([
+      "FN-no-session",
+      "FN-live",
+      "FN-stuck-aborted",
+    ]));
   });
 
   it("cleans up activeSessions and stuckAborted when evicting", () => {
