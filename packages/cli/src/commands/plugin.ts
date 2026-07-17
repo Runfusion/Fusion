@@ -128,6 +128,19 @@ export async function createPluginStore(
       centralGlobalDir,
       ...(backendLayer ? { asyncLayer: backendLayer } : {}),
     });
+    /*
+    FNXC:PostgresOnlyDataAccess 2026-07-17-16:30:
+    `central.init()` bootstraps and OWNS an embedded-Postgres backend (pool +
+    postmaster). Since we don't return `central`, tie its teardown to the returned
+    store: closing the PluginStore also closes the CentralCore so the CLI process
+    can exit cleanly instead of leaking the pool. The async close is fire-and-forget
+    because PluginStore.close() is synchronous.
+    */
+    const closePluginStore = pluginStore.close.bind(pluginStore);
+    pluginStore.close = () => {
+      closePluginStore();
+      void central.close().catch(() => undefined);
+    };
     await pluginStore.init();
     return pluginStore;
   }
