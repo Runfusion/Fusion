@@ -13,6 +13,7 @@ import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
 import { fromJson } from "../db.js";
 import * as schema from "../postgres/schema/index.js";
+import { taskProjectScope } from "../postgres/data-layer.js";
 import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePrEntityForSource as ensurePrEntityForSourceAsync, getActivePrEntityBySource as getActivePrEntityBySourceAsync, getBranchGroup as getBranchGroupAsync, getBranchGroupByBranchName as getBranchGroupByBranchNameAsync, getBranchGroupBySource as getBranchGroupBySourceAsync, getPrEntity as getPrEntityAsync, getPrThreadState as getPrThreadStateAsync, listActivePrEntities as listActivePrEntitiesAsync, listBranchGroups as listBranchGroupsAsync, listPrThreadStates as listPrThreadStatesAsync, recordPrThreadOutcome as recordPrThreadOutcomeAsync } from "./async-branch-groups.js";
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
 import { type TaskRow } from "./persistence.js";
@@ -635,6 +636,18 @@ export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?:
         isNull(schema.project.tasks.deletedAt),
         inArray(schema.project.tasks.status, ["merging", "merging-pr"]),
       ];
+      /*
+       * FNXC:PostgresProjectIsolation 2026-07-17-00:00:
+       * The cross-process merge guard is documented (project-engine.ts) as
+       * "another process is already merging a task for THIS project" — in
+       * SQLite mode the per-project DB file made that scoping implicit. The
+       * shared PG tasks table needs the explicit project_id filter; without it
+       * one merging task anywhere serializes merges across ALL projects
+       * (observed: 697 cross-project "Merge deferred" retries in 10 minutes on
+       * a 6-project deployment, collapsing merge throughput ~6x).
+       */
+      const scope = taskProjectScope(layer);
+      if (scope) conditions.push(scope);
       if (excludeTaskId) {
         conditions.push(ne(schema.project.tasks.id, excludeTaskId));
       }
