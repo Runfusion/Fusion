@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -2864,7 +2864,13 @@ export class SelfHealingManager {
         !t.paused &&
         !executingIds.has(t.id) &&
         t.steps.length > 0 &&
-        t.steps.every((s) => s.status === "done" || s.status === "skipped"),
+        t.steps.every((s) => s.status === "done" || s.status === "skipped") &&
+        // FNXC:Lifecycle 2026-07-16-21:40:
+        // FN-8141 — do not auto-recover a skip-bypass-tainted task: its steps were skipped
+        // after a bulk-step-completion refusal with no accepted fn_task_done, so promoting it
+        // to in-review would launder unreviewed work. It stays in-progress until an accepted
+        // fn_task_done or operator retry clears the taint.
+        !evaluateSkipBypassTaint(t).blocked,
       );
 
       if (stuckCompleted.length === 0) return 0;
@@ -2925,6 +2931,14 @@ export class SelfHealingManager {
          * FN-6461 keeps skipped-to-completion no-commits tasks out of the stranded-todo promoter so a finalize guard demotion cannot loop back into in-review before an operator fixes the incomplete work.
          */
         if (evaluateNoCommitsNoOpFinalize(task).blocked) return false;
+        /*
+         * FNXC:Lifecycle 2026-07-16-21:40:
+         * FN-8141 — the stranded-todo promoter was the exact path that laundered FN-8141 into
+         * in-review. A skip-bypass-tainted task (steps skipped after a bulk-step-completion
+         * refusal with no accepted fn_task_done) must not promote here; the bounded
+         * requeue/park machinery converges it to a human instead.
+         */
+        if (evaluateSkipBypassTaint(task).blocked) return false;
         if (task.error) return false;
         if (task.status && STRANDED_COMPLETED_TODO_ACTIVE_STATUSES.has(task.status)) return false;
         if (task.reviewState?.refreshStatus === "refreshing") return false;

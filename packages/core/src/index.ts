@@ -725,6 +725,8 @@ export { evaluateNoCommitsNoOpFinalize } from "./no-commits-finalize-guard.js";
 export type { NoCommitsNoOpFinalizeEvaluation } from "./no-commits-finalize-guard.js";
 export { evaluateCompletedPromotionFailureProvenance } from "./completed-promotion-failure-provenance.js";
 export type { CompletedPromotionFailureProvenanceEvaluation } from "./completed-promotion-failure-provenance.js";
+export { evaluateSkipBypassTaint } from "./skip-bypass-taint-guard.js";
+export type { SkipBypassTaintEvaluation } from "./skip-bypass-taint-guard.js";
 export {
   __getDeterministicGuardMutexSize,
   deterministicGuardLocks,

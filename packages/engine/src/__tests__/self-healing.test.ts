@@ -2511,6 +2511,36 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — the stuck-in-progress recovery path must
+    // not auto-promote a skip-bypass-tainted task (skips after a bulk-step-completion refusal).
+    it("skips a skip-bypass-tainted in-progress task", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141b",
+          column: "in-progress",
+          paused: false,
+          bulkCompletionRefusalAt: "2026-07-16T21:40:00.000Z",
+          steps: [{ status: "done" }, { status: "skipped" }, { status: "skipped" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverCompletedTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("skips paused tasks", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
       const getExecuting = vi.fn().mockReturnValue(new Set<string>());
@@ -3078,8 +3108,10 @@ describe("SelfHealingManager", () => {
         getExecutingTaskIds: () => new Set<string>(),
       });
 
-      // Slim board row: 3 done + 2 skipped, no error/active status (exactly the FN-8141 shape that
-      // passed all existing exclusions).
+      // Slim board row: all steps done (the skipped-step shape is now owned by the generalized
+      // FN-6461/FN-8141 no-commits guard `evaluateNoCommitsNoOpFinalize`, which filters skipped
+      // tasks earlier; failure-provenance's distinct role is withholding an otherwise-complete task
+      // whose MOST RECENT execution ended in a failure/refusal park). No error/active status.
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-8141",
@@ -3087,7 +3119,7 @@ describe("SelfHealingManager", () => {
           paused: false,
           error: null,
           reviewLevel: 2,
-          steps: [{ status: "done" }, { status: "done" }, { status: "done" }, { status: "skipped" }, { status: "skipped" }],
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }],
         },
       ]);
       // Full task carries the durable failure-park provenance the slim row cannot.
@@ -3160,6 +3192,80 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-8141" }));
+
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:Lifecycle 2026-07-16-21:40:
+    FN-8141 — the stranded-todo promoter was the exact path that laundered FN-8141 into
+    in-review. The composed exclusions (no-commits step-evidence, failure-provenance, and the
+    skip-bypass taint) are independent — any one blocks — so the tainted FN-8141 shape must NOT
+    promote. (In this lane the skipped steps are also caught by evaluateNoCommitsNoOpFinalize;
+    the taint guard's independent load-bearing behavior is proven at the in-progress
+    recoverCompletedTasks surface, where the no-commits guard is not applied.)
+    */
+    it("does NOT promote a skip-bypass-tainted todo task (FN-8141 sequence)", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8141-TAINT",
+          column: "todo",
+          paused: false,
+          error: null,
+          reviewLevel: 2,
+          // 3 done + 2 skipped, and a bulk-step-completion refusal already fired.
+          bulkCompletionRefusalAt: "2026-07-16T21:40:00.000Z",
+          steps: [
+            { status: "done" }, { status: "done" }, { status: "done" },
+            { status: "skipped" }, { status: "skipped" },
+          ],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("still promotes a clean all-done todo task with no refusal marker (taint guard does not over-block)", async () => {
+      // Confirms the added skip-bypass-taint filter does not regress normal promotion: an
+      // untainted, fully-complete task still promotes. (The skipped-step promotion case in the
+      // stranded-todo lane is now owned by evaluateNoCommitsNoOpFinalize; the taint guard's own
+      // skipped-step semantics are covered by the pure evaluateSkipBypassTaint unit tests and by
+      // the in-progress recoverCompletedTasks suite, where the no-commits guard is not applied.)
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-200",
+          column: "todo",
+          paused: false,
+          error: null,
+          reviewLevel: 2,
+          bulkCompletionRefusalAt: undefined,
+          steps: [{ status: "done" }, { status: "done" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(1);
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-200" }));
 
       managerWithRecovery.stop();
     });

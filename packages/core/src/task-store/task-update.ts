@@ -413,6 +413,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.taskDoneRetryCount !== undefined) {
         task.taskDoneRetryCount = updates.taskDoneRetryCount;
       }
+      // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 skip-bypass taint marker; null clears the taint.
+      if (updates.bulkCompletionRefusalAt === null) {
+        task.bulkCompletionRefusalAt = undefined;
+      } else if (updates.bulkCompletionRefusalAt !== undefined) {
+        task.bulkCompletionRefusalAt = updates.bulkCompletionRefusalAt;
+      }
       if (updates.worktreeSessionRetryCount === null) {
         task.worktreeSessionRetryCount = undefined;
       } else if (updates.worktreeSessionRetryCount !== undefined) {
