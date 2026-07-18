@@ -3028,13 +3028,14 @@ export class TaskExecutor {
   ) {
     executorLog.log(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
     this.unregisterTaskMoveDisposer = registerTaskMoveDisposer(store, async (task) => {
-      // Stop children first while the parent is still blocked in its active
-      // session. Otherwise the parent's abort can enter its outer finally and
-      // race this same child cleanup.
-      await this.terminateAllChildren(task.id);
-      await this.awaitAbortInFlightTaskWork(task.id, "user moved task from in-progress to todo", {
+      // Start both paths without awaiting between them. Each synchronously
+      // detaches its current targets before its first await, fencing late
+      // cleanup from a replacement execution after the move timeout expires.
+      const children = this.terminateAllChildren(task.id);
+      const activeWork = this.awaitAbortInFlightTaskWork(task.id, "user moved task from in-progress to todo", {
         userCanceled: true,
       });
+      await Promise.all([children, activeWork]);
     });
     /* FNXC:WorkflowLifecycle 2026-07-16-10:00: Executor replaces the baseline only for its own TaskStore, so archive awaits abort/sweep/removal before branch deletion without cross-store coupling. */
     this.unregisterArchiveWorktreeDisposer = registerArchiveWorktreeDisposer(store, async (task) => {
@@ -19456,11 +19457,11 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     if (!childIds || childIds.size === 0) return;
 
     executorLog.log(`Terminating ${childIds.size} child agents for parent ${parentTaskId}`);
-
-    for (const childId of childIds) {
-      await this.terminateChildAgent(childId);
-    }
+    // Detach the parent generation before any agent-store await. A replacement
+    // execution may register a new set for the same task ID while cleanup is
+    // still settling; the old generation must never delete that new set.
     this.spawnedAgents.delete(parentTaskId);
+    await Promise.all([...childIds].map((childId) => this.terminateChildAgent(childId)));
   }
 
   /**

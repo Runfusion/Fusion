@@ -47,6 +47,51 @@ describe("TaskExecutor user cancel handling", () => {
     expect((executor as any).userCanceledTaskIds.has("FN-AWAITED")).toBe(true);
   });
 
+  it("does not let late cancellation cleanup touch a replacement execution", async () => {
+    resetExecutorMocks();
+    let resolveChildStateUpdate: (() => void) | undefined;
+    const childStateUpdate = new Promise<void>((resolve) => {
+      resolveChildStateUpdate = resolve;
+    });
+    const agentStore = {
+      updateAgentState: vi.fn(() => childStateUpdate),
+      deleteAgent: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = createMockStore();
+    const executor = new TaskExecutor(store as any, "/tmp/test", { agentStore } as any);
+    const oldSession = {
+      prompt: vi.fn(),
+      abort: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    } as any;
+    const oldChildSession = { dispose: vi.fn() } as any;
+    (executor as any).activeSessions.set("FN-GENERATION", {
+      session: oldSession,
+      seenSteeringIds: new Set<string>(),
+    });
+    (executor as any).spawnedAgents.set("FN-GENERATION", new Set(["old-child"]));
+    (executor as any).childSessions.set("old-child", oldChildSession);
+
+    const disposer = getTaskMoveDisposer(store as any)!;
+    const disposal = disposer({ id: "FN-GENERATION" } as any);
+
+    const replacementSession = { dispose: vi.fn() } as any;
+    const replacementChildren = new Set(["new-child"]);
+    (executor as any).activeSessions.set("FN-GENERATION", {
+      session: replacementSession,
+      seenSteeringIds: new Set<string>(),
+    });
+    (executor as any).spawnedAgents.set("FN-GENERATION", replacementChildren);
+
+    resolveChildStateUpdate?.();
+    await disposal;
+
+    expect(oldSession.abort).toHaveBeenCalledOnce();
+    expect(oldChildSession.dispose).toHaveBeenCalledOnce();
+    expect((executor as any).activeSessions.get("FN-GENERATION")?.session).toBe(replacementSession);
+    expect((executor as any).spawnedAgents.get("FN-GENERATION")).toBe(replacementChildren);
+  });
+
   it("aborts before dispose when user moves in-progress task back to todo", async () => {
     resetExecutorMocks();
     const store = createMockStore();
