@@ -838,7 +838,12 @@ describe("SettingsModal", () => {
       );
       expect(initialCallHasDisabled).toBe(true);
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Memory/ }));
+      /*
+      FNXC:DashboardTests 2026-07-18-13:35:
+      Settings nav also exposes "Memory Backups"; /Memory/ matches both. Use the exact
+      Memory section label so the deferred memory-backend status hook test stays scoped.
+      */
+      await settingsModalUser.click(screen.getByRole("button", { name: "Memory" }));
 
       await waitFor(() => {
         const enabledCallSeen = mockUseMemoryBackendStatus.mock.calls.some(

@@ -142,8 +142,16 @@ export function renderModal(props: Partial<ComponentProps<typeof SettingsModal>>
 }
 
 export async function waitForSettingsModalReady() {
+  /*
+  FNXC:DashboardTests 2026-07-18-13:35:
+  Full Suite shard 4 failed when mockFetchSettings was called but the modal still showed
+  Loading… on the next paint (OAuth incomplete-toast test). Wait for Loading to clear so
+  Authentication/section clicks do not race the initial settings fetch.
+  */
   await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+  });
 }
 
 export async function renderModalSection(
