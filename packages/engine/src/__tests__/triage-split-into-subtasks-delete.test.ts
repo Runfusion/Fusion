@@ -165,11 +165,17 @@ describe("triage split/delete lineage forwarding", () => {
         autoMerge: true,
         triageDuplicateResolution: "delete",
       } as Settings),
-      getTask: vi.fn().mockImplementation(async (id: string) => (
-        id === "FN-4894"
-          ? createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null })
-          : undefined
-      )),
+      /*
+      FNXC:EngineTests 2026-07-17-18:10:
+      PR #2275 review: keep the createStore default current-task mock for non-canonical
+      IDs. Returning undefined risks NPEs if recovery re-fetches FN-001 mid-path.
+      */
+      getTask: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "FN-4894") {
+          return createTask({ id: "FN-4894", title: "Canonical", column: "todo", status: null });
+        }
+        return createTask({ attachments: [], comments: [] } as any);
+      }),
       deleteTask: vi.fn().mockResolvedValue(undefined),
     });
 
