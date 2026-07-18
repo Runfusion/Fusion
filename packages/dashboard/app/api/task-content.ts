@@ -26,13 +26,14 @@ export async function uploadAttachment(id: string, file: File, projectId?: strin
     headers: withTokenHeader(),
     body: formData,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data as { error?: string }).error || "Upload failed");
+  // Non-JSON error bodies (e.g. gateway 413/502 HTML) must not throw SyntaxError over the HTTP failure.
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || `Upload failed: HTTP ${res.status}`);
   return data as TaskAttachment;
 }
 
 export async function deleteAttachment(id: string, filename: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/attachments/${filename}`, projectId), { method: "DELETE" });
+  return api<Task>(withProjectId(`/tasks/${id}/attachments/${encodeURIComponent(filename)}`, projectId), { method: "DELETE" });
 }
 
 export function fetchAgentLogs(
@@ -127,11 +128,11 @@ export function fetchTaskDocuments(taskId: string, projectId?: string): Promise<
 }
 
 export function fetchTaskDocument(taskId: string, key: string, projectId?: string): Promise<TaskDocument> {
-  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId));
+  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${encodeURIComponent(key)}`, projectId));
 }
 
 export function fetchTaskDocumentRevisions(taskId: string, key: string, projectId?: string): Promise<TaskDocumentRevision[]> {
-  return api<TaskDocumentRevision[]>(withProjectId(`/tasks/${taskId}/documents/${key}/revisions`, projectId));
+  return api<TaskDocumentRevision[]>(withProjectId(`/tasks/${taskId}/documents/${encodeURIComponent(key)}/revisions`, projectId));
 }
 
 export interface FetchAllDocumentsOptions {
@@ -258,7 +259,7 @@ export function putTaskDocument(
   opts?: { author?: string; metadata?: Record<string, unknown> },
   projectId?: string,
 ): Promise<TaskDocument> {
-  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
+  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${encodeURIComponent(key)}`, projectId), {
     method: "PUT",
     body: JSON.stringify({
       content,
@@ -269,7 +270,7 @@ export function putTaskDocument(
 }
 
 export function deleteTaskDocument(taskId: string, key: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
+  return api<void>(withProjectId(`/tasks/${taskId}/documents/${encodeURIComponent(key)}`, projectId), {
     method: "DELETE",
   });
 }

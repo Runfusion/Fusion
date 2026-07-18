@@ -265,6 +265,7 @@ export type {
   MarkdownFileEntry,
   MarkdownFileListResponse,
   FetchArtifactsOptions,
+  FetchProjectMarkdownFilesOptions,
   UpdateArtifactInput,
 } from "./task-content.js";
 // Artifact types still re-exported from core for callers of legacy barrel

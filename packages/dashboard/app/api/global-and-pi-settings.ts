@@ -57,7 +57,8 @@ export function updatePiExtensions(disabledIds: string[], projectId?: string): P
 export function testNotification(providerId: string, config?: Record<string, unknown>, projectId?: string): Promise<{ success: boolean }> {
   return api<{ success: boolean }>(withProjectId("/settings/test-notification", projectId), {
     method: "POST",
-    body: JSON.stringify({ providerId, ...(config ?? {}) }),
+    // Pin providerId last so config.providerId cannot override the selected provider.
+    body: JSON.stringify({ ...(config ?? {}), providerId }),
   });
 }
 
