@@ -568,6 +568,27 @@ function AppInner() {
   }, [initialLoadComplete]);
 
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [quickChatEverOpenedProjectId, setQuickChatEverOpenedProjectId] = useState<string | null>(null);
+  const quickChatProjectIdRef = useRef<string | undefined>(undefined);
+
+  /*
+  FNXC:ChatModal 2026-07-18-00:00:
+  FN-8257 requires Quick Chat to mount only after its first open, then remain mounted and hidden
+  across close/reopen so ChatView retains its selected session, transcript, and scroll position.
+  Reset the latch when the project changes so a hidden ChatView cannot leak one project's state
+  into another project; the FloatingWindow key supplies the matching React identity boundary.
+  */
+  useEffect(() => {
+    const projectId = currentProject?.id;
+    if (quickChatProjectIdRef.current !== projectId) {
+      quickChatProjectIdRef.current = projectId;
+      setQuickChatEverOpenedProjectId(quickChatOpen && projectId ? projectId : null);
+      return;
+    }
+    if (quickChatOpen && projectId) {
+      setQuickChatEverOpenedProjectId(projectId);
+    }
+  }, [currentProject?.id, quickChatOpen]);
 
   const { keyboardOpen } = useMobileKeyboard({ enabled: isMobile });
   // Keyboard visibility controls both MobileNavBar rendering and whether
@@ -1829,9 +1850,11 @@ function AppInner() {
           onOpenChange={setQuickChatOpen}
         />
       )}
-      {quickChatOpen && currentProject && (
+      {currentProject && quickChatEverOpenedProjectId === currentProject.id && (
         <FloatingWindow
+          key={currentProject.id}
           windowKey="chat-modal"
+          hidden={!quickChatOpen}
           title="Chat"
           onClose={() => setQuickChatOpen(false)}
           closeOnOutsidePointerDown={quickChatCloseOnOutsideClick}

@@ -2,7 +2,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAllAppCss, loadStylesCss } from "../../test/cssFixture";
-import { FloatingWindow } from "../FloatingWindow";
+import { FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, FloatingWindow } from "../FloatingWindow";
 
 const floatingWindowCss = readFileSync("app/components/FloatingWindow.css", "utf8");
 const allAppCss = loadAllAppCss();
@@ -849,6 +849,94 @@ describe("FloatingWindow", () => {
     expect(chatPanel.style.height).toBe("390px");
     expect(chatPanel.style.left).toBe("220px");
     expect(chatPanel.style.top).toBe("140px");
+  });
+
+  it("keeps hidden children mounted while suspending invisible-window effects and reclaiming the task-detail stack", () => {
+    const onClose = vi.fn();
+    const geometryEvents = vi.fn();
+    const storageKey = "floating-window:hidden";
+    window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
+
+    const { rerender } = render(
+      <>
+        <FloatingWindow
+          windowKey="hidden-chat"
+          title="Chat"
+          onClose={onClose}
+          hidden
+          closeOnOutsidePointerDown
+          persistGeometryKey={storageKey}
+          layer="task-detail"
+        >
+          <div data-testid="retained-hidden-child">retained chat</div>
+        </FloatingWindow>
+        <FloatingWindow windowKey="active-task" title="Task" onClose={() => {}} layer="task-detail">
+          <div>active task</div>
+        </FloatingWindow>
+      </>,
+    );
+
+    const hiddenOverlay = screen.getByTestId("floating-window-overlay-hidden-chat");
+    const retainedChild = screen.getByTestId("retained-hidden-child");
+    const activeTask = screen.getByTestId("floating-window-active-task");
+    expect(hiddenOverlay).toHaveClass("floating-window-overlay--hidden");
+    expect(hiddenOverlay).toHaveAttribute("aria-hidden", "true");
+    expect(geometryEvents).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+
+    rerender(
+      <>
+        <FloatingWindow
+          windowKey="hidden-chat"
+          title="Chat"
+          onClose={onClose}
+          closeOnOutsidePointerDown
+          persistGeometryKey={storageKey}
+          layer="task-detail"
+        >
+          <div data-testid="retained-hidden-child">retained chat</div>
+        </FloatingWindow>
+        <FloatingWindow windowKey="active-task" title="Task" onClose={() => {}} layer="task-detail">
+          <div>active task</div>
+        </FloatingWindow>
+      </>,
+    );
+
+    const visibleOverlay = screen.getByTestId("floating-window-overlay-hidden-chat");
+    const shownChat = screen.getByTestId("floating-window-hidden-chat");
+    expect(visibleOverlay).not.toHaveClass("floating-window-overlay--hidden");
+    expect(visibleOverlay).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByTestId("retained-hidden-child")).toBe(retainedChild);
+    expect(geometryEvents).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(storageKey)).not.toBeNull();
+    expect(Number(shownChat.style.zIndex)).toBeGreaterThan(Number(activeTask.style.zIndex));
+    fireEvent.pointerDown(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
+  });
+
+  it("keeps the hidden prop opt-in so existing callers retain visible, interactive behavior", () => {
+    const onClose = vi.fn();
+    const geometryEvents = vi.fn();
+    const storageKey = "floating-window:default-hidden-off";
+    window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
+
+    render(
+      <FloatingWindow windowKey="default-hidden-off" title="Visible by default" onClose={onClose} closeOnOutsidePointerDown persistGeometryKey={storageKey}>
+        <div>existing caller body</div>
+      </FloatingWindow>,
+    );
+
+    const overlay = screen.getByTestId("floating-window-overlay-default-hidden-off");
+    expect(overlay).not.toHaveClass("floating-window-overlay--hidden");
+    expect(overlay).not.toHaveAttribute("aria-hidden");
+    expect(geometryEvents).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(storageKey)).not.toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, geometryEvents);
   });
 
   it("makes only the mobile chat floating window full-screen", () => {
