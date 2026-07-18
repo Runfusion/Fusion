@@ -62,6 +62,28 @@ vi.mock("../../api", () => ({
   fetchAiSession: (...args: any[]) => mockFetchAiSession(...args),
   parseConversationHistory: (...args: any[]) => mockParseConversationHistory(...args),
   fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+  /*
+  FNXC:PlanningModeSettings 2026-07-18-10:50:
+  Product mounts fetchGlobalSettings for clarification gating. Without this export
+  the suite fails at render (full-suite shard 4). Sync-settle like planning-flow
+  so Start Planning is not blocked by a microtask.
+  */
+  fetchGlobalSettings: vi.fn(() => {
+    const settled = {
+      then(onFulfilled: (settings: Record<string, never>) => unknown) {
+        onFulfilled({});
+        return settled;
+      },
+      catch() {
+        return settled;
+      },
+      finally(onFinally: () => unknown) {
+        onFinally();
+        return settled;
+      },
+    };
+    return settled;
+  }),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
