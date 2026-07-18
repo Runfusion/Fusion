@@ -867,6 +867,54 @@ export function isReviewArtifactGenerationEligible(
 }
 
 /**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Chat and mail share this compact reference contract so their consumers never invent
+ * incompatible structure identifiers. `roadmap-item` remains a deferred future kind until
+ * its plugin exposes a PostgreSQL-safe read adapter and a restored dashboard destination.
+ */
+export interface NativeStructureRef {
+  kind: "mission" | "milestone" | "research-finding" | "eval-result" | "goal";
+  id: string;
+  projectId?: string;
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Dashboard destinations are callback/view-state based rather than HTML routes. Consumers use
+ * this stable descriptor with their navigation callback; it is intentionally not a URL.
+ */
+export interface NativeStructureOpenTarget {
+  view: "missions" | "insights" | "evals" | "goals";
+  id: string;
+  missionId?: string;
+}
+
+/** A previewable native structure projected by the dashboard read layer. */
+export interface NativeStructurePreviewPayload {
+  available: true;
+  kind: NativeStructureRef["kind"];
+  kindLabel: string;
+  title: string;
+  excerpt: string;
+  openTarget: NativeStructureOpenTarget;
+}
+
+/** A native structure whose existing lifecycle state makes it unavailable for preview. */
+export interface NativeStructureUnavailablePayload {
+  available: false;
+  kind: NativeStructureRef["kind"];
+  id: string;
+  reason: "missing" | "soft-deleted";
+}
+
+/**
+ * FNXC:NativeStructureEmbed 2026-07-16-12:00:
+ * Unavailability is a typed result so shared consumers show a safe placeholder instead of
+ * crashing. Eval results have no archive lifecycle and therefore only return `missing`.
+ */
+export type NativeStructurePreviewResult = NativeStructurePreviewPayload | NativeStructureUnavailablePayload;
+
+/**
  * Goal-citation Slice 2 success-signal surfaces where goal IDs are extracted.
  */
 export type GoalCitationSurface = "agent_log" | "task_document";
