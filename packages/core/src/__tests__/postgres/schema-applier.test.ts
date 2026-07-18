@@ -45,6 +45,7 @@ import {
   IMPORT_TRANSLATION_CACHE_VERSION,
   IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
   IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+  TASK_PROPOSAL_CLAIM_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -161,6 +162,12 @@ describe("schema-applier: immutable migration identities", () => {
     expect(BULK_COMPLETION_REFUSAL_AT_VERSION).toBe("0018");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(BULK_COMPLETION_REFUSAL_AT_VERSION));
   });
+
+  it("keeps the task proposal claim marker assigned to version 0020", () => {
+    expect(TASK_PROPOSAL_CLAIM_VERSION).toBe("0020");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_PROPOSAL_CLAIM_VERSION));
+  });
+
 });
 
 /*
@@ -1143,6 +1150,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1188,6 +1196,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
     ]);
   });
 
@@ -1322,6 +1331,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
     ]);
   });
 
@@ -1381,6 +1391,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
     ]);
   });
 
@@ -1440,6 +1451,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
     ]);
   });
 });
