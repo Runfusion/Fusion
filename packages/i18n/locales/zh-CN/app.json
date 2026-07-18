@@ -1580,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "组织导出 / 导入",
+      "description": "下载或预览已清除机密的组织配置包。",
+      "export": {
+        "action": "导出组织包",
+        "working": "正在导出…",
+        "success": "导出就绪",
+        "error": "导出失败"
+      },
+      "import": {
+        "label": "组织包 JSON",
+        "placeholder": "粘贴已清除机密的组织包",
+        "preview": "预览导入",
+        "previewing": "正在预览…",
+        "previewReady": "预览就绪。确认后应用此包。",
+        "apply": "应用导入",
+        "importing": "正在导入…",
+        "invalid": "请粘贴有效的组织包 JSON 文档",
+        "error": "无法预览或导入包",
+        "confirmTitle": "导入组织包？",
+        "confirmMessage": "这会将预览的配置应用到此项目。",
+        "confirmApply": "导入包"
+      },
+      "versions": {
+        "title": "配置版本",
+        "description": "恢复任意已记录的项目配置版本。",
+        "loading": "正在加载版本…",
+        "empty": "尚无配置版本。",
+        "loadError": "无法加载配置版本",
+        "rollback": "回滚",
+        "rollingBack": "正在回滚…",
+        "rollbackError": "无法回滚配置",
+        "confirmTitle": "回滚配置？",
+        "confirmMessage": "恢复此版本？回滚会记录为新版本。",
+        "confirmRollback": "回滚"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -5902,7 +5939,9 @@
       "ephemeralAgentTaskCreationPolicyHint": "无默认值 — 未设置时回退为允许。需验证会将提案发送到邮箱供一键批准；拒绝则禁止创建后续任务。",
       "ephemeralAgentTaskCreationPolicyAllow": "允许",
       "ephemeralAgentTaskCreationPolicyUponValidation": "需验证",
-      "ephemeralAgentTaskCreationPolicyDeny": "拒绝"
+      "ephemeralAgentTaskCreationPolicyDeny": "拒绝",
+      "reportModeHelp": "应用内缺陷/反馈/想法/帮助报告的提交方式。默认：draft-review（提交前由操作者审阅草稿）。",
+      "reportModeByActionHelp": "可选的按操作覆盖项目报告模式（缺陷、反馈、想法或帮助）。无默认值 — 未设置的操作继承 reportMode。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6768,6 +6807,12 @@
     },
     "modelPricing": {
       "description": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 嵌入式 PostgreSQL 的最大服务器连接数。重启 Fusion 后生效。范围：32–2,000。默认：500。外部 PostgreSQL 使用其提供方的连接限制。",
+      "embeddedConnectionCap": "嵌入式 PostgreSQL 连接上限",
+      "embeddedConnectionCapError": "请输入 32 到 2,000 之间的值。",
+      "advanced": "高级数据库设置"
     }
   },
   "setup": {

@@ -2647,7 +2647,14 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
     expect(text).not.toContain("fn_task_update requires at least one of");
   });
 
-  it("narrates a store-accepted skipped transition exactly once", async () => {
+  it("accepts a store-accepted skipped transition without tool-side agent-log narration", async () => {
+    /*
+    FNXC:ProactiveChatStatus 2026-07-18-12:40:
+    FN-8064 moved step start/success/skip narration into TaskStore.updateStep (merge-queue-ops)
+    so workflow projection, review auto-approval, and self-healing share the same chat rows.
+    fn_task_update only reports progress text; appendAgentLog is store-owned when
+    proactiveTaskChatEnabled is true. Covered by packages/core proactive-step-status.pg.test.ts.
+    */
     const { store, tool } = makeTool();
     store.updateStep.mockResolvedValue(createMockTaskDetail({
       steps: [{ name: "No code change needed", status: "skipped", dependsOn: [] }],
@@ -2656,14 +2663,10 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
     const result = await tool.execute("call-1", { step: 0, status: "skipped" });
 
     expect(result.isError).not.toBe(true);
-    expect(store.appendAgentLog).toHaveBeenCalledTimes(1);
-    expect(store.appendAgentLog).toHaveBeenCalledWith(
-      "FN-001",
-      "Step 0 was skipped — No code change needed.",
-      "status",
-      undefined,
-      "executor",
-    );
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Step 0");
+    expect(text).toContain("skipped");
+    expect(store.appendAgentLog).not.toHaveBeenCalled();
   });
 });
 

@@ -3272,10 +3272,13 @@ describe("executeHeartbeat", () => {
       /*
       FNXC:TaskAgentLog 2026-07-16-08:05:
       Heartbeat customTools include FN-8058 fn_task_logs_read after fn_task_log so durable agents can read agent-log.jsonl. Count stays exact so new tools fail loudly.
+
+      FNXC:MissionToolParity 2026-07-18-12:40:
+      FN-8294 adds the full Mission hierarchy surface (15 tools) to task-scoped heartbeat sessions via createMissionTools, after agent provisioning and before goal retrieval. Count rose 43→58; keep exact so new tools fail loudly.
       */
-      // fn_artifact_register/list/view, agent config/provisioning, goals/evaluations/identity,
+      // fn_artifact_register/list/view, agent config/provisioning, mission hierarchy, goals/evaluations/identity,
       // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
-      expect(callArgs.customTools).toHaveLength(43);
+      expect(callArgs.customTools).toHaveLength(58);
       expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
         "fn_task_create",
         "fn_task_log",
@@ -3292,6 +3295,21 @@ describe("executeHeartbeat", () => {
         "fn_update_agent_config",
         "fn_agent_create",
         "fn_agent_delete",
+        "fn_mission_list",
+        "fn_mission_show",
+        "fn_mission_create",
+        "fn_mission_update",
+        "fn_mission_delete",
+        "fn_milestone_add",
+        "fn_milestone_update",
+        "fn_milestone_delete",
+        "fn_slice_add",
+        "fn_slice_activate",
+        "fn_slice_delete",
+        "fn_feature_add",
+        "fn_feature_update",
+        "fn_feature_delete",
+        "fn_feature_link_task",
         "fn_goal_list",
         "fn_goal_show",
         "fn_read_evaluations",

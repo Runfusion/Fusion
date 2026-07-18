@@ -1580,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "組織匯出 / 匯入",
+      "description": "下載或預覽已清除機密的組織設定包。",
+      "export": {
+        "action": "匯出組織包",
+        "working": "正在匯出…",
+        "success": "匯出就緒",
+        "error": "匯出失敗"
+      },
+      "import": {
+        "label": "組織包 JSON",
+        "placeholder": "貼上已清除機密的組織包",
+        "preview": "預覽匯入",
+        "previewing": "正在預覽…",
+        "previewReady": "預覽就緒。確認後套用此包。",
+        "apply": "套用匯入",
+        "importing": "正在匯入…",
+        "invalid": "請貼上有效的組織包 JSON 文件",
+        "error": "無法預覽或匯入包",
+        "confirmTitle": "匯入組織包？",
+        "confirmMessage": "這會將預覽的設定套用到此專案。",
+        "confirmApply": "匯入包"
+      },
+      "versions": {
+        "title": "設定版本",
+        "description": "還原任意已記錄的專案設定版本。",
+        "loading": "正在載入版本…",
+        "empty": "尚無設定版本。",
+        "loadError": "無法載入設定版本",
+        "rollback": "回滾",
+        "rollingBack": "正在回滾…",
+        "rollbackError": "無法回滾設定",
+        "confirmTitle": "回滾設定？",
+        "confirmMessage": "還原此版本？回滾會記錄為新版本。",
+        "confirmRollback": "回滾"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -5902,7 +5939,9 @@
       "ephemeralAgentTaskCreationPolicyHint": "無預設值 — 未設定時回退為允許。需驗證會將提案傳送到信箱供一鍵核准；拒絕則禁止建立後續任務。",
       "ephemeralAgentTaskCreationPolicyAllow": "允許",
       "ephemeralAgentTaskCreationPolicyUponValidation": "需驗證",
-      "ephemeralAgentTaskCreationPolicyDeny": "拒絕"
+      "ephemeralAgentTaskCreationPolicyDeny": "拒絕",
+      "reportModeHelp": "應用內缺陷/回饋/想法/說明報告的提交方式。預設：draft-review（提交前由操作者審閱草稿）。",
+      "reportModeByActionHelp": "可選的依操作覆寫專案報告模式（缺陷、回饋、想法或說明）。無預設值 — 未設定的操作繼承 reportMode。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6768,6 +6807,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 內嵌 PostgreSQL 的最大伺服器連線數。重新啟動 Fusion 後生效。範圍：32–2,000。預設：500。外部 PostgreSQL 使用其提供者的連線限制。",
+      "embeddedConnectionCap": "內嵌 PostgreSQL 連線上限",
+      "embeddedConnectionCapError": "請輸入 32 到 2,000 之間的值。",
+      "advanced": "進階資料庫設定"
     }
   },
   "setup": {

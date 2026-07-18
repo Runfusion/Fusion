@@ -1580,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "Export / import d'organisation",
+      "description": "Téléchargez ou prévisualisez un bundle d'organisation expurgé des secrets.",
+      "export": {
+        "action": "Exporter le bundle d'organisation",
+        "working": "Export en cours…",
+        "success": "Export prêt",
+        "error": "Échec de l'export"
+      },
+      "import": {
+        "label": "JSON du bundle d'organisation",
+        "placeholder": "Collez un bundle d'organisation expurgé des secrets",
+        "preview": "Prévisualiser l'import",
+        "previewing": "Prévisualisation…",
+        "previewReady": "Aperçu prêt. Confirmez pour appliquer ce bundle.",
+        "apply": "Appliquer l'import",
+        "importing": "Import en cours…",
+        "invalid": "Collez un document JSON de bundle d'organisation valide",
+        "error": "Impossible de prévisualiser ou d'importer le bundle",
+        "confirmTitle": "Importer le bundle d'organisation ?",
+        "confirmMessage": "Cela applique la configuration prévisualisée à ce projet.",
+        "confirmApply": "Importer le bundle"
+      },
+      "versions": {
+        "title": "Versions de configuration",
+        "description": "Restaurez n'importe quelle version de configuration de projet enregistrée.",
+        "loading": "Chargement des versions…",
+        "empty": "Aucune version de configuration pour l'instant.",
+        "loadError": "Impossible de charger les versions de configuration",
+        "rollback": "Revenir en arrière",
+        "rollingBack": "Retour en cours…",
+        "rollbackError": "Impossible de revenir en arrière sur la configuration",
+        "confirmTitle": "Revenir à une configuration antérieure ?",
+        "confirmMessage": "Restaurer cette version ? Le retour est enregistré comme une nouvelle version.",
+        "confirmRollback": "Revenir en arrière"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -5902,7 +5939,9 @@
       "ephemeralAgentTaskCreationPolicyHint": "Pas de valeur par défaut — non défini revient à Autoriser. « Sur validation » envoie une proposition à votre boîte pour une approbation en un clic ; Refuser bloque la création de tâches de suivi.",
       "ephemeralAgentTaskCreationPolicyAllow": "Autoriser",
       "ephemeralAgentTaskCreationPolicyUponValidation": "Sur validation",
-      "ephemeralAgentTaskCreationPolicyDeny": "Refuser"
+      "ephemeralAgentTaskCreationPolicyDeny": "Refuser",
+      "reportModeHelp": "Comment les rapports in-app (bug, feedback, idée, aide) sont déposés. Par défaut : draft-review (l'opérateur revoit un brouillon avant dépôt).",
+      "reportModeByActionHelp": "Surcharge optionnelle par action du mode de rapport du projet (bug, feedback, idée ou aide). Aucune valeur par défaut — les actions non définies héritent de reportMode."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6768,6 +6807,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Nombre maximal de connexions serveur pour le PostgreSQL embarqué de Fusion. Appliqué après redémarrage de Fusion. Plage : 32–2 000. Par défaut : 500. PostgreSQL externe utilise la limite de son fournisseur.",
+      "embeddedConnectionCap": "Plafond de connexions PostgreSQL embarqué",
+      "embeddedConnectionCapError": "Saisissez une valeur entre 32 et 2 000.",
+      "advanced": "Paramètres de base de données avancés"
     }
   },
   "setup": {

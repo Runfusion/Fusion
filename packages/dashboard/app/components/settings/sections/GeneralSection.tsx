@@ -280,14 +280,20 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         the four guided report actions can explicitly opt into direct filing.
         Persist overrides as one map so the pipeline resolves them consistently.
         */}
-        <label htmlFor="reportMode">In-app report mode</label>
+        {/*
+        FNXC:ReportPipeline 2026-07-18-12:40:
+        FN-8277 report mode is a plain Settings control; bind help to i18n paths that state the
+        draft-review default and the unset per-action override so settings-default-descriptions stays green.
+        */}
+        <label htmlFor="reportMode">{t("settings.general.reportMode", "In-app report mode")}</label>
         <select id="reportMode" value={form.reportMode ?? "draft-review"} onChange={(e) => setForm((f) => ({ ...f, reportMode: e.target.value as "draft-review" | "auto-file" }))}>
-          <option value="draft-review">Review draft before filing</option>
-          <option value="auto-file">File automatically</option>
+          <option value="draft-review">{t("settings.general.reportModeDraftReview", "Review draft before filing")}</option>
+          <option value="auto-file">{t("settings.general.reportModeAutoFile", "File automatically")}</option>
         </select>
+        <p className="form-help">{t("settings.general.reportModeHelp", "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).")}</p>
         {(["bug", "feedback", "idea", "help"] as const).map((action) => (
           <label key={action} htmlFor={`reportMode-${action}`}>
-            {`${action[0].toUpperCase()}${action.slice(1)} report override`}
+            {t(`settings.general.reportModeOverride.${action}`, `${action[0].toUpperCase()}${action.slice(1)} report override`)}
             <select id={`reportMode-${action}`} value={form.reportModeByAction?.[action] ?? ""} onChange={(e) => setForm((current) => {
               const reportModeByAction = { ...current.reportModeByAction };
               const selected = e.target.value as "" | "draft-review" | "auto-file";
@@ -295,12 +301,13 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
               else delete reportModeByAction[action as ReportActionType];
               return { ...current, reportModeByAction: Object.keys(reportModeByAction).length ? reportModeByAction : undefined };
             })}>
-              <option value="">Use project default</option>
-              <option value="draft-review">Review draft before filing</option>
-              <option value="auto-file">File automatically</option>
+              <option value="">{t("settings.general.reportModeUseProjectDefault", "Use project default")}</option>
+              <option value="draft-review">{t("settings.general.reportModeDraftReview", "Review draft before filing")}</option>
+              <option value="auto-file">{t("settings.general.reportModeAutoFile", "File automatically")}</option>
             </select>
           </label>
         ))}
+        <p className="form-help">{t("settings.general.reportModeByActionHelp", "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.")}</p>
       </div>
       {/*
         FNXC:SettingsGeneral 2026-07-15-17:35:

@@ -5963,7 +5963,9 @@
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).",
       "aiUndoTaskWorkflow": "AI-undo task workflow",
       "aiUndoTaskWorkflowInherit": "Inherit project default workflow",
-      "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy."
+      "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.",
+      "reportModeHelp": "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).",
+      "reportModeByActionHelp": "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
@@ -6815,6 +6817,12 @@
       "resetAllProjectAction": "Reset all project settings",
       "menuResetSuccess": "{{section}} settings reset to defaults",
       "allProjectResetSuccess": "All project settings reset to defaults"
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.",
+      "embeddedConnectionCap": "Embedded PostgreSQL connection cap",
+      "embeddedConnectionCapError": "Enter a value between 32 and 2,000.",
+      "advanced": "Advanced database settings"
     }
   },
   "setup": {

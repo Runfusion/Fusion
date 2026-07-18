@@ -1580,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "조직 내보내기 / 가져오기",
+      "description": "비밀이 제거된 조직 번들을 다운로드하거나 미리 봅니다.",
+      "export": {
+        "action": "조직 번들 내보내기",
+        "working": "내보내는 중…",
+        "success": "내보내기 준비됨",
+        "error": "내보내기 실패"
+      },
+      "import": {
+        "label": "조직 번들 JSON",
+        "placeholder": "비밀이 제거된 조직 번들을 붙여넣으세요",
+        "preview": "가져오기 미리보기",
+        "previewing": "미리보는 중…",
+        "previewReady": "미리보기가 준비되었습니다. 이 번들을 적용하려면 확인하세요.",
+        "apply": "가져오기 적용",
+        "importing": "가져오는 중…",
+        "invalid": "유효한 조직 번들 JSON 문서를 붙여넣으세요",
+        "error": "번들을 미리보거나 가져올 수 없습니다",
+        "confirmTitle": "조직 번들을 가져올까요?",
+        "confirmMessage": "미리본 구성을 이 프로젝트에 적용합니다.",
+        "confirmApply": "번들 가져오기"
+      },
+      "versions": {
+        "title": "구성 버전",
+        "description": "기록된 프로젝트 구성 버전을 복원합니다.",
+        "loading": "버전 불러오는 중…",
+        "empty": "아직 구성 버전이 없습니다.",
+        "loadError": "구성 버전을 불러올 수 없습니다",
+        "rollback": "롤백",
+        "rollingBack": "롤백 중…",
+        "rollbackError": "구성을 롤백할 수 없습니다",
+        "confirmTitle": "구성을 롤백할까요?",
+        "confirmMessage": "이 버전을 복원할까요? 롤백은 새 버전으로 기록됩니다.",
+        "confirmRollback": "롤백"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -5902,7 +5939,9 @@
       "ephemeralAgentTaskCreationPolicyHint": "기본값 없음 — 미설정 시 허용으로 폴백합니다. 검증 후는 받은편지함으로 제안을 보내 원클릭 승인합니다. 거부는 후속 작업 생성을 거부합니다.",
       "ephemeralAgentTaskCreationPolicyAllow": "허용",
       "ephemeralAgentTaskCreationPolicyUponValidation": "검증 후",
-      "ephemeralAgentTaskCreationPolicyDeny": "거부"
+      "ephemeralAgentTaskCreationPolicyDeny": "거부",
+      "reportModeHelp": "인앱 버그/피드백/아이디어/도움말 리포트 제출 방식. 기본값: draft-review(제출 전 운영자가 초안 검토).",
+      "reportModeByActionHelp": "버그·피드백·아이디어·도움말 등 작업별 프로젝트 리포트 모드 선택 재정의. 기본값 없음 — 미설정 작업은 reportMode를 상속합니다."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6768,6 +6807,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 내장 PostgreSQL의 최대 서버 연결 수. Fusion 재시작 후 적용. 범위: 32–2,000. 기본값: 500. 외부 PostgreSQL은 제공자 연결 한도를 사용합니다.",
+      "embeddedConnectionCap": "내장 PostgreSQL 연결 상한",
+      "embeddedConnectionCapError": "32에서 2,000 사이의 값을 입력하세요.",
+      "advanced": "고급 데이터베이스 설정"
     }
   },
   "setup": {

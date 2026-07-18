@@ -163,6 +163,12 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryBackupRetention: "backups.numberOfMemoryBackupsToKeepOldestAre",
   memoryBackupDir: "backups.directoryForMemoryBackupsRelativeToProjectRoot",
   memoryBackupScope: "backups.memoryBackupScopeHint",
+  /*
+  FNXC:EmbeddedPostgres 2026-07-18-12:40:
+  feat(postgres) surfaces embeddedPostgresMaxConnections in DatabaseBackupsSection advanced
+  disclosure; map the existing help string so the DEFAULT_SETTINGS inventory stays complete.
+  */
+  embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
   memoryEnabled: "memory.agentsGetMemorySearchMemoryGetAndMemory",
   memoryAutoSummarizeEnabled: "memory.automaticallyCompactMemoryWhenItExceedsTheThreshold",
@@ -255,6 +261,14 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   // GeneralSection beside the other import-scoped GitHub settings.
   githubImportAutoTranslate: "general.autoTranslateImportedIssuesHelp",
   importTranslateTargetLocale: "general.translationTargetLanguageHelp",
+  /*
+  FNXC:ReportPipeline 2026-07-18-12:40:
+  FN-8277 surfaces reportMode + per-action overrides in GeneralSection; map them here so
+  DEFAULT_SETTINGS bookkeeping requires a default-stating description (draft-review project default;
+  reportModeByAction is unset until an action opts in).
+  */
+  reportMode: "general.reportModeHelp",
+  reportModeByAction: "general.reportModeByActionHelp",
   githubTrackingDedupEnabled: "general.whenEnabledFusionChecksOpenAndClosedIssues",
   githubTrackingEnabledByDefault: "general.offDefault",
   sessionAdvisorEnabledByDefault: "general.offDefault",

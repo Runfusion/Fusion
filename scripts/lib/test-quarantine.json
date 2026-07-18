@@ -10,6 +10,11 @@
       "file": "packages/cli/src/commands/__tests__/task-lock-retry.test.ts",
       "reason": "Full-suite shard 4 after FN-8271 restore (runs 29648812375 / 29648952207): 5s timeouts / store.getTask not a function under package-lane shard load without product-bug evidence; fake-timer board-write mock recovery remains load-sensitive. Quarantine on sight per AGENTS.md. Mirrored in packages/cli/vitest.config.ts.",
       "quarantinedAt": "2026-07-18"
+    },
+    {
+      "file": "plugins/fusion-plugin-quality/src/__tests__/async-quality-store.pg.test.ts",
+      "reason": "Full-suite shard 3 (run 29657633544): 5s timeout + leftover psql child under package-lane load without product-bug evidence; embedded-PG lifecycle remains load-sensitive. Quarantine on sight per AGENTS.md. Mirrored in plugins/fusion-plugin-quality/vitest.config.ts.",
+      "quarantinedAt": "2026-07-18"
     }
   ]
 }
