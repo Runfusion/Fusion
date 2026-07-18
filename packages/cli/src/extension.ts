@@ -69,6 +69,7 @@ import {
   isInReviewMissingWorktreeSessionStartFailure,
   normalizeAgentLogPaging,
   renderAgentLogEntries,
+  createAgentTask,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
@@ -1164,7 +1165,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
       Gate ephemeral task-worker callers behind the project `ephemeralAgentsCanCreateTasks` toggle (default true). Only runtime-managed agents are affected; humans/CLI/dashboard calls carry no ctx.agentId and pass through.
       */
-      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const fnCtx = ctx as typeof ctx & { agentId?: string; taskId?: string };
       const projectSettingsForGate = await store.getSettings();
       const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId);
       if (callerIsEphemeral) {
@@ -1213,13 +1214,13 @@ export default function kbExtension(pi: ExtensionAPI) {
         );
         const workflowId = params.workflow_id?.trim() || undefined;
 
-        const task = await store.createTask({
+        const { task, wasDuplicate } = await createAgentTask(store, {
           description: params.description.trim(),
           dependencies: params.depends,
           assignedAgentId: normalizedAgentId === null ? undefined : normalizedAgentId,
           priority: params.priority as TaskPriority | undefined,
           ...(workflowId ? { workflowId } : {}),
-          source: { sourceType: "api" },
+          source: { sourceType: "api", sourceAgentId: fnCtx.agentId, sourceParentTaskId: fnCtx.taskId },
           githubTracking: resolvedTracking.enabled
             ? {
                 enabled: true,
@@ -1228,7 +1229,7 @@ export default function kbExtension(pi: ExtensionAPI) {
                   : {}),
               }
             : undefined,
-        });
+        }, { rootDir: ctx.cwd, sourceAgentId: fnCtx.agentId, sourceTaskId: fnCtx.taskId });
 
         const label =
           task.description.length > 80
@@ -1248,7 +1249,7 @@ export default function kbExtension(pi: ExtensionAPI) {
             {
               type: "text",
               text:
-                `Created ${task.id}: ${label}${workflowId ? ` (workflow: ${workflowId})` : ""}\n` +
+                `${wasDuplicate ? "Linked existing" : "Created"} ${task.id}: ${label}${workflowId && !wasDuplicate ? ` (workflow: ${workflowId})` : ""}\n` +
                 `Column: ${task.column}\n` +
                 (task.dependencies.length
                   ? `Dependencies: ${task.dependencies.join(", ")}\n`

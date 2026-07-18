@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Agent, AgentStore, TaskStore, Task } from "@fusion/core";
-import { createAgentTask, createListAgentsTool, createDelegateTaskTool } from "../agent-tools.js";
+import { createAgentTask, createListAgentsTool, createDelegateTaskTool, createTaskCreateTool } from "../agent-tools.js";
 
 function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
   return {
@@ -14,6 +14,7 @@ function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
 function createMockTaskStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
     getSettings: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
     findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
     updateTask: vi.fn(),
     moveTask: vi.fn(),
@@ -299,6 +300,71 @@ describe("createDelegateTaskTool", () => {
     expect(result.task).toBe(existing);
     expect(taskStore.updateTask).not.toHaveBeenCalled();
     expect(taskStore.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("reuses paraphrased follow-ups from the same parent without collapsing distinct sibling intents", async () => {
+    const tasks: Task[] = [];
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);
+    vi.mocked(taskStore.createTask).mockImplementation(async (input) => {
+      const created = {
+        id: `FN-${tasks.length + 1}`, title: input.title, description: input.description,
+        dependencies: input.dependencies ?? [], column: "triage" as const,
+        sourceType: input.source?.sourceType, sourceAgentId: input.source?.sourceAgentId,
+        sourceParentTaskId: input.source?.sourceParentTaskId,
+        steps: [], currentStep: 0, log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      } as Task;
+      tasks.push(created);
+      return created;
+    });
+    const descriptions = [
+      "Add optional screenshot and short activity-trace context capture to in-app agentic reports, preserving the scrub-before-egress boundary.",
+      "Add GitHub Discussions as a selectable filing target for in-app agentic reports.",
+      "Add public-roadmap (FR-30) as a deduplication source for in-app agentic reports.",
+    ];
+    for (const description of descriptions) {
+      expect((await createAgentTask(taskStore, { description }, { sourceTaskId: "FN-PARENT" })).wasDuplicate).toBe(false);
+    }
+    const replay = await createAgentTask(taskStore, {
+      description: "Add screenshot and activity-trace context capture to in-app Bug/Feedback/Idea/Help reports, with privacy scrub coverage before GitHub egress.",
+    }, { sourceTaskId: "FN-PARENT" });
+    expect(replay.wasDuplicate).toBe(true);
+    expect(replay.task.id).toBe("FN-1");
+    expect(tasks).toHaveLength(3);
+  });
+
+  it("persists option-based parent provenance on the step-session fn_task_create surface", async () => {
+    const tool = createTaskCreateTool(taskStore, undefined, { sourceTaskId: "FN-PARENT", sourceAgentId: "agent-worker" });
+    await tool.execute("call-1", { description: "Capture optional report screenshots" }, undefined as any, undefined as any, undefined as any);
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ sourceType: "api", sourceAgentId: "agent-worker", sourceParentTaskId: "FN-PARENT" }),
+    }), expect.anything());
+  });
+
+  it("serializes three concurrent paraphrased creates from one parent", async () => {
+    const tasks: Task[] = [];
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);
+    vi.mocked(taskStore.createTask).mockImplementation(async (input) => {
+      await Promise.resolve();
+      const created = { id: `FN-${tasks.length + 1}`, description: input.description, dependencies: [], column: "triage" as const,
+        sourceParentTaskId: input.source?.sourceParentTaskId, steps: [], currentStep: 0, log: [],
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Task;
+      tasks.push(created); return created;
+    });
+    const results = await Promise.all([
+      "Add screenshot and activity-trace capture with privacy scrub coverage.",
+      "Add screenshot and activity-trace capture while preserving privacy scrubbing.",
+      "Capture screenshots and activity traces with mandatory privacy scrubbing.",
+    ].map((description) => createAgentTask(taskStore, { description }, { sourceTaskId: "FN-PARENT" })));
+    expect(results.filter((result) => result.wasDuplicate)).toHaveLength(2);
+    expect(tasks).toHaveLength(1);
+  });
+
+  it("fails closed when parent-scoped duplicate lookup is unavailable", async () => {
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockRejectedValue(new Error("database unavailable"));
+    await expect(createAgentTask(taskStore, {
+      description: "Add screenshot and activity-trace capture",
+    }, { sourceTaskId: "FN-PARENT" })).rejects.toThrow("Unable to verify parent-scoped task uniqueness");
+    expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
   it("carries delegation routing onto the reconcile canonical task", async () => {

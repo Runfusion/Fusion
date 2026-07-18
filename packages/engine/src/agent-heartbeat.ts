@@ -3718,14 +3718,23 @@ export class HeartbeatMonitor {
       execute: async (id: string, params: Static<typeof taskCreateParams>, signal, onUpdate, ctx) => {
         const result = await baseCreateTool.execute(id, params, signal, onUpdate, ctx);
 
-        const createdTaskId = (result.details as { taskId?: string })?.taskId ?? "unknown";
+        const resultDetails = result.details as { taskId?: string; wasDuplicate?: boolean };
+        const createdTaskId = resultDetails.taskId ?? "unknown";
+        const wasDuplicate = resultDetails.wasDuplicate === true;
 
         // Log agent link on the created task with run context for correlation
         try {
-          await taskStore.logEntry(createdTaskId, `Created by agent ${agentId} during heartbeat run`, undefined, runContext);
+          await taskStore.logEntry(
+            createdTaskId,
+            `${wasDuplicate ? "Linked existing task" : "Created"} by agent ${agentId} during heartbeat run`,
+            undefined,
+            runContext,
+          );
         } catch (taskCreateLogErr) {
           heartbeatLog.warn(`Task ${createdTaskId} agent-link log failed: ${taskCreateLogErr instanceof Error ? taskCreateLogErr.message : String(taskCreateLogErr)}`);
         }
+
+        if (wasDuplicate) return result;
 
         // Audit trail: record task creation (FN-1404)
         await audit?.database({ type: "task:create", target: createdTaskId });

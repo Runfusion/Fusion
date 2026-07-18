@@ -2988,6 +2988,7 @@ describe("HeartbeatTriggerScheduler", () => {
       // Create a minimal mock TaskStore
       const mockTaskStore = {
         createTask: vi.fn().mockResolvedValue({ id: "FN-200", description: "New task created", dependencies: [] }),
+        findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
         logEntry: vi.fn().mockResolvedValue({}),
         getTask: vi.fn().mockResolvedValue({
           id: "FN-001",
@@ -3023,10 +3024,41 @@ describe("HeartbeatTriggerScheduler", () => {
       );
     });
 
+    it("does not audit a reused heartbeat follow-up as a new task", async () => {
+      const canonical = {
+        id: "FN-200", title: "", description: "Add GitHub Discussions as a filing target",
+        dependencies: [], column: "triage", sourceParentTaskId: "FN-001",
+        steps: [], currentStep: 0, log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const mockTaskStore = {
+        getSettings: vi.fn().mockResolvedValue({}),
+        findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
+        findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([canonical]),
+        createTask: vi.fn(),
+        logEntry: vi.fn().mockResolvedValue({}),
+      } as unknown as import("@fusion/core").TaskStore;
+      const audit = { database: vi.fn() } as any;
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const tool = monitor.createHeartbeatTools("agent-abc", mockTaskStore, "FN-001", undefined, audit)
+        .find((candidate) => candidate.name === "fn_task_create")!;
+
+      const result = await tool.execute("call-replay", {
+        description: "Add GitHub Discussions as an optional filing target",
+      }, undefined as any, undefined as any, undefined as any);
+
+      expect((result.details as { wasDuplicate?: boolean }).wasDuplicate).toBe(true);
+      expect(mockTaskStore.createTask).not.toHaveBeenCalled();
+      expect(audit.database).not.toHaveBeenCalled();
+      expect(mockTaskStore.logEntry).toHaveBeenCalledWith(
+        "FN-200", "Linked existing task by agent agent-abc during heartbeat run", undefined, undefined,
+      );
+    });
+
     it("createHeartbeatTools works without runContext (backward compat)", async () => {
       // Create a minimal mock TaskStore
       const mockTaskStore = {
         createTask: vi.fn().mockResolvedValue({ id: "FN-NEW", description: "New task" }),
+        findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
         logEntry: vi.fn().mockResolvedValue({}),
         getTask: vi.fn().mockResolvedValue({
           id: "FN-001",
@@ -3268,4 +3300,3 @@ describe("HeartbeatTriggerScheduler", () => {
     });
   });
 });
-

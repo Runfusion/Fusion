@@ -727,6 +727,35 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     return rows.map((row) => store.rowToTask(row));
 }
 
+export async function findRecentTasksBySourceParentTaskIdImpl(
+  store: TaskStore,
+  sourceParentTaskId: string,
+  options?: { windowMs?: number },
+): Promise<Task[]> {
+  const parentId = sourceParentTaskId.trim();
+  if (!parentId) return [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  const windowMs = Math.max(1, Math.min(dayMs, Math.trunc(options?.windowMs ?? dayMs)));
+  const cutoffIso = new Date(Date.now() - windowMs).toISOString();
+  if (store.backendMode) {
+    const layer = store.asyncLayer!;
+    const rows = await layer.db.select().from(schema.project.tasks).where(and(
+      isNull(schema.project.tasks.deletedAt), taskProjectScope(layer),
+      eq(schema.project.tasks.sourceParentTaskId, parentId),
+      sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
+      ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done"),
+    )).orderBy(asc(schema.project.tasks.createdAt));
+    return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
+  }
+  const selectClause = store.getTaskSelectClause(false, "t");
+  const rows = store.db.prepare(`
+    SELECT ${selectClause} FROM tasks t
+     WHERE t."deletedAt" IS NULL AND t.sourceParentTaskId = ? AND t.createdAt >= ?
+       AND t."column" NOT IN ('archived', 'done') ORDER BY t.createdAt ASC
+  `).all(parentId, cutoffIso) as TaskRow[];
+  return rows.map((row) => store.rowToTask(row));
+}
+
 export async function clearNearDuplicateReferencesToFailSoftImpl(store: TaskStore,
     canonicalId: string,
     inactiveState: { column?: ColumnId | null; deletedAt?: string | null; reason: string },

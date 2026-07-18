@@ -60,6 +60,7 @@ export {
   createWorkflowSettingsTool,
   createTraitListTool,
   createWorkflowAuthoringTools,
+  createAgentTask,
   taskCreateParams,
   taskListParams,
   taskShowParams,

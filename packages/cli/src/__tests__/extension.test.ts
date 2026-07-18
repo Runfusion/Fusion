@@ -362,6 +362,20 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
       expect(result.details.priority).toBe("normal");
     });
 
+    it("persists ambient task provenance for agent-created follow-ups", async () => {
+      const tool = api.tools.get("fn_task_create")!;
+      const result = await tool.execute("call-parented", { description: "Capture optional report screenshots" }, undefined, undefined,
+        { cwd: tmpDir, taskId: "FN-PARENT", agentId: "agent-worker" } as ToolExecuteContext);
+      const task = await h.store().getTask(result.details.taskId);
+      expect(task.sourceParentTaskId).toBe("FN-PARENT");
+      expect(task.sourceAgentId).toBe("agent-worker");
+      const replay = await tool.execute("call-parented-replay", {
+        description: "Capture optional report screenshots with privacy context",
+      }, undefined, undefined, { cwd: tmpDir, taskId: "FN-PARENT", agentId: "agent-worker" } as ToolExecuteContext);
+      expect(replay.details.taskId).toBe(result.details.taskId);
+      expect(replay.content[0].text).toContain("Linked existing");
+    });
+
     it("creates a task with explicit priority", async () => {
       const tool = api.tools.get("fn_task_create")!;
       const result = await tool.execute(

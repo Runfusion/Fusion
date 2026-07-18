@@ -16,7 +16,7 @@ import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
-import { DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
+import { computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
@@ -973,6 +973,16 @@ export async function createAgentTask(
     ? await store.getSettings()
     : {} as Settings;
   const rootDir = options?.rootDir;
+  const sourceParentTaskId = input.source?.sourceParentTaskId ?? options?.sourceTaskId;
+  const sourceAgentId = input.source?.sourceAgentId ?? options?.sourceAgentId;
+  const effectiveSource = input.source || sourceParentTaskId || sourceAgentId
+    ? {
+        sourceType: input.source?.sourceType ?? "api" as const,
+        ...input.source,
+        sourceAgentId,
+        sourceParentTaskId,
+      }
+    : undefined;
   const guard = await runDeterministicDuplicateGuard(store, {
     title: input.title,
     description: input.description,
@@ -980,6 +990,7 @@ export async function createAgentTask(
     lockScope: rootDir ?? store.getRootDir?.() ?? "agent-tools",
     bypass: options?.bypassDuplicateCheck === true,
     acknowledgedDuplicates: options?.acknowledgedDuplicates,
+    serializationKey: sourceParentTaskId ? `parent:${sourceParentTaskId}` : undefined,
     logger: log,
   });
 
@@ -991,13 +1002,44 @@ export async function createAgentTask(
       };
     }
 
+    if (sourceParentTaskId && options?.bypassDuplicateCheck !== true) {
+      try {
+        const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
+        const candidates = await store.findRecentTasksBySourceParentTaskId(sourceParentTaskId);
+        const matches = findSameAgentDuplicates({
+          title: input.title,
+          description: input.description,
+          sourceParentTaskId,
+        }, candidates.map((candidate) => ({
+          id: candidate.id,
+          title: candidate.title ?? "",
+          description: candidate.description,
+          column: candidate.column,
+          createdAt: Date.parse(candidate.createdAt),
+          sourceAgentId: candidate.sourceAgentId ?? null,
+          sourceParentTaskId: candidate.sourceParentTaskId ?? null,
+        })), { sourceAgentId: sourceAgentId ?? null });
+        const match = matches.find((candidate) => !acknowledged.has(candidate.id));
+        const canonical = match ? candidates.find((candidate) => candidate.id === match.id) : undefined;
+        if (canonical) {
+          return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
+        }
+      } catch (error) {
+        log.warn("Parent-scoped task duplicate pre-check failed; aborting creation", {
+          sourceParentTaskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new Error(`Unable to verify parent-scoped task uniqueness for ${sourceParentTaskId}`, { cause: error });
+      }
+    }
+
     const sourceMetadata = {
-      ...(input.source?.sourceMetadata ?? {}),
+      ...(effectiveSource?.sourceMetadata ?? {}),
       ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
     };
-    const nextSource = input.source
+    const nextSource = effectiveSource
       ? {
-          ...input.source,
+          ...effectiveSource,
           sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
         }
       : undefined;
@@ -1014,6 +1056,11 @@ export async function createAgentTask(
       input.githubTracking?.enabled !== false && resolvedTracking.enabled;
     const createInput: TaskCreateInput = {
       ...input,
+      proposalClaimId: input.proposalClaimId ?? (
+        options?.bypassDuplicateCheck === true
+          ? undefined
+          : computeParentIntentClaimId({ title: input.title, description: input.description, sourceParentTaskId }) ?? undefined
+      ),
       summarize: !input.title?.trim() ? true : undefined,
       source: nextSource,
       githubTracking: shouldPrefillGithubTrackingEnabled
@@ -1137,7 +1184,7 @@ export function createTaskCreateTool(
             type: "text" as const,
             text: `${wasDuplicate ? "Linked existing" : "Created"} ${task.id}: ${params.description}${deps}${workflow}`,
           }],
-          details: { taskId: task.id },
+          details: { taskId: task.id, wasDuplicate },
         };
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("Task ID already exists:")) {
