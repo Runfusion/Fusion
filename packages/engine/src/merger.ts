@@ -261,7 +261,16 @@ import {
   type SquashAuditFindings,
 } from "./merger-squash-audit.js";
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merger-overlap-guard.js";
-import { checkDiffVolume, DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
+import {
+  checkDiffVolume,
+  DiffVolumeRegressionError,
+  resolveDiffVolumeGateSettings,
+  formatDiffVolumeFindings,
+} from "./merger-diff-volume-gate.js";
+export {
+  resolveDiffVolumeGateSettings,
+  formatDiffVolumeFindings,
+} from "./merger-diff-volume-gate.js";
 import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./already-merged-detector.js";
 import { decideAutoPrerebase, probeDivergence, runAutoPrerebase } from "./merger-auto-prerebase.js";
 import {
@@ -497,30 +506,6 @@ const MERGE_USER_COMMENTS_MAX_CHARS = 4000;
  */
 export const summarizeVerificationOutputLocal = summarizeVerificationOutput;
 
-
-interface DiffVolumeGateSettings {
-  minLines: number;
-  threshold: number;
-  allowlistGlobs: string[];
-}
-
-function resolveDiffVolumeGateSettings(settings?: Settings): DiffVolumeGateSettings {
-  const minLinesRaw = settings?.mergeDiffVolumeMinLines ?? 20;
-  const thresholdRaw = settings?.mergeDiffVolumeThreshold ?? 0.2;
-  return {
-    minLines: Math.max(1, Math.trunc(Number.isFinite(minLinesRaw) ? minLinesRaw : 20)),
-    threshold: Math.min(1, Math.max(0, Number.isFinite(thresholdRaw) ? thresholdRaw : 0.2)),
-    allowlistGlobs: Array.isArray(settings?.mergeDiffVolumeAllowlist)
-      ? settings.mergeDiffVolumeAllowlist.filter((glob): glob is string => typeof glob === "string" && glob.trim().length > 0)
-      : [],
-  };
-}
-
-function formatDiffVolumeFindings(findings: ReadonlyArray<{ file: string; branchNet: number; staged: number; ratio: number }>): string {
-  return findings
-    .map((finding) => `${finding.file} (branchNet=${finding.branchNet}, staged=${finding.staged}, ratio=${finding.ratio.toFixed(3)})`)
-    .join("\n");
-}
 
 async function resetToIntegrationTarget(rootDir: string, integrationTargetSha: string): Promise<void> {
   await execAsync(`git reset --hard ${quoteArg(integrationTargetSha)}`, {

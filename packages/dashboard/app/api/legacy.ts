@@ -2,10 +2,7 @@ import type {
   Task,
   TaskDetail,
   TaskReviewData,
-  TaskAttachment,
-  TaskComment,
   AgentLogEntry,
-  Settings,
   GlobalSettings,
   ProjectSettings,
   BatchStatusResult,
@@ -20,12 +17,6 @@ import type {
   PluginUiSlotDefinition,
   PluginUiContributionDefinition,
   PluginDashboardViewDefinition,
-  TaskDocument,
-  TaskDocumentRevision,
-  TaskDocumentWithTask,
-  Artifact,
-  ArtifactType,
-  ArtifactWithTask,
 
   Message,
   MessageMetadata,
@@ -224,6 +215,64 @@ export {
 export type { UpdateInstallResponse } from "./settings.js";
 
 /*
+ * FNXC:CodeOrganization 2026-07-17-12:00:
+ * Preserve legacy global/pi settings and task-content imports via satellites.
+ */
+export {
+  fetchGlobalSettings,
+  updateGlobalSettings,
+  fetchSettingsByScope,
+  fetchPiExtensions,
+  updatePiExtensions,
+  testNotification,
+  testNtfyNotification,
+  fetchPiSettings,
+  updatePiSettings,
+  installPiPackage,
+  reinstallFusionPiPackage,
+} from "./global-and-pi-settings.js";
+export type {
+  PiExtensionEntry,
+  PiExtensionSettings,
+  PiSettings,
+} from "./global-and-pi-settings.js";
+
+export {
+  uploadAttachment,
+  deleteAttachment,
+  fetchAgentLogs,
+  fetchAgentLogsWithMeta,
+  fetchSessionFiles,
+  fetchTaskComments,
+  addTaskComment,
+  updateTaskComment,
+  deleteTaskComment,
+  fetchTaskDocuments,
+  fetchTaskDocument,
+  fetchTaskDocumentRevisions,
+  fetchArtifacts,
+  artifactMediaUrl,
+  artifactMediaUrlWithToken,
+  fetchArtifact,
+  updateArtifact,
+  fetchAllDocuments,
+  fetchProjectMarkdownFiles,
+  putTaskDocument,
+  deleteTaskDocument,
+} from "./task-content.js";
+export type {
+  FetchAllDocumentsOptions,
+  MarkdownFileEntry,
+  MarkdownFileListResponse,
+  FetchArtifactsOptions,
+  FetchProjectMarkdownFilesOptions,
+  UpdateArtifactInput,
+} from "./task-content.js";
+// Artifact types still re-exported from core for callers of legacy barrel
+export type { Artifact, ArtifactType, ArtifactWithTask } from "@fusion/core";
+
+
+/*
  * FNXC:CodeOrganization 2026-07-16-20:00:
  * Preserve legacy board/remote/memory imports while implementations live in satellites.
  */
@@ -320,368 +369,6 @@ export type {
   SkillFileEntry,
   SkillFileContent,
 };
-
-export function fetchGlobalSettings(options?: FetchOptions): Promise<GlobalSettings> {
-  return dedupe("/settings/global", () => api<GlobalSettings>("/settings/global"), options);
-}
-
-/** Update global (user-level) settings. These persist across all fn projects. */
-export function updateGlobalSettings(settings: Partial<GlobalSettings>): Promise<Settings> {
-  return api<Settings>("/settings/global", {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-/** Fetch settings separated by scope: { global, project } */
-export function fetchSettingsByScope(projectId?: string): Promise<{ global: GlobalSettings; project: Partial<ProjectSettings> }> {
-  return api<{ global: GlobalSettings; project: Partial<ProjectSettings> }>(withProjectId("/settings/scopes", projectId));
-}
-
-export interface PiExtensionEntry {
-  id: string;
-  name: string;
-  path: string;
-  source: "fusion-global" | "pi-global" | "fusion-project" | "pi-project" | "package";
-  enabled: boolean;
-}
-
-export interface PiExtensionSettings {
-  extensions: PiExtensionEntry[];
-  disabledIds: string[];
-  settingsPath: string;
-}
-
-export function fetchPiExtensions(projectId?: string): Promise<PiExtensionSettings> {
-  return api<PiExtensionSettings>(withProjectId("/settings/pi-extensions", projectId));
-}
-
-export function updatePiExtensions(disabledIds: string[], projectId?: string): Promise<PiExtensionSettings> {
-  return api<PiExtensionSettings>(withProjectId("/settings/pi-extensions", projectId), {
-    method: "PUT",
-    body: JSON.stringify({ disabledIds }),
-  });
-}
-
-/**
- * Test a notification provider by sending a test notification.
- * Supports "ntfy" and "webhook" provider IDs.
- */
-export function testNotification(providerId: string, config?: Record<string, unknown>, projectId?: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>(withProjectId("/settings/test-notification", projectId), {
-    method: "POST",
-    body: JSON.stringify({ providerId, ...(config ?? {}) }),
-  });
-}
-
-/**
- * Backward-compatible ntfy test helper.
- * Wraps testNotification() while preserving the legacy function signature.
- */
-export function testNtfyNotification(
-  config?: {
-    ntfyEnabled?: boolean;
-    ntfyTopic?: string;
-    ntfyBaseUrl?: string;
-    ntfyAccessToken?: string;
-  },
-  projectId?: string,
-): Promise<{ success: boolean }> {
-  return testNotification("ntfy", config as Record<string, unknown> | undefined, projectId);
-}
-
-/** Pi extension settings from ~/.pi/agent/settings.json (global scope) */
-export interface PiSettings {
-  packages: Array<string | { source: string; extensions?: string[]; skills?: string[]; prompts?: string[]; themes?: string[] }>;
-  extensions: string[];
-  skills: string[];
-  prompts: string[];
-  themes: string[];
-}
-
-/** Fetch pi extension settings (global scope from ~/.pi/agent/settings.json) */
-export function fetchPiSettings(): Promise<PiSettings> {
-  return api<PiSettings>("/pi-settings");
-}
-
-/** Update pi extension settings (partial update, global scope) */
-export async function updatePiSettings(settings: Partial<PiSettings>): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/pi-settings", {
-    method: "PUT",
-    body: JSON.stringify(settings),
-  });
-}
-
-/** Install a new pi package source (adds to ~/.pi/agent/settings.json) */
-export async function installPiPackage(source: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/pi-settings/packages", {
-    method: "POST",
-    body: JSON.stringify({ source }),
-  });
-}
-
-/** Reinstall Fusion's bundled pi package and ensure it remains in global Pi settings. */
-export async function reinstallFusionPiPackage(projectId?: string): Promise<{ success: boolean; source: string }> {
-  return api<{ success: boolean; source: string }>(withProjectId("/pi-settings/reinstall-fusion", projectId), {
-    method: "POST",
-  });
-}
-
-export async function uploadAttachment(id: string, file: File, projectId?: string): Promise<TaskAttachment> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(buildApiUrl(withProjectId(`/tasks/${id}/attachments`, projectId)), {
-    method: "POST",
-    headers: withTokenHeader(),
-    body: formData,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data as { error?: string }).error || "Upload failed");
-  return data as TaskAttachment;
-}
-
-export async function deleteAttachment(id: string, filename: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/attachments/${filename}`, projectId), { method: "DELETE" });
-}
-
-export function fetchAgentLogs(
-  taskId: string,
-  projectId?: string,
-  options?: { limit?: number; offset?: number },
-): Promise<AgentLogEntry[]> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) {
-    params.set("limit", String(options.limit));
-  }
-  if (options?.offset !== undefined) {
-    params.set("offset", String(options.offset));
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  return api<AgentLogEntry[]>(withProjectId(`/tasks/${taskId}/logs${suffix}`, projectId));
-}
-
-/**
- * Fetch agent logs with pagination metadata.
- * Returns entries along with total count and hasMore flag from response headers.
- */
-export async function fetchAgentLogsWithMeta(
-  taskId: string,
-  projectId?: string,
-  options?: { limit?: number; offset?: number },
-): Promise<{ entries: AgentLogEntry[]; total: number; hasMore: boolean }> {
-  const params = new URLSearchParams();
-  if (options?.limit !== undefined) {
-    params.set("limit", String(options.limit));
-  }
-  if (options?.offset !== undefined) {
-    params.set("offset", String(options.offset));
-  }
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  const url = withProjectId(`/tasks/${taskId}/logs${suffix}`, projectId);
-
-  const response = await fetch(buildApiUrl(url), {
-    headers: withTokenHeader(),
-  });
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: "Failed to fetch agent logs" }));
-    throw new Error((data as { error?: string }).error || `HTTP ${response.status}`);
-  }
-
-  const entries = await response.json() as AgentLogEntry[];
-
-  // Read pagination headers
-  const total = response.headers.has("X-Total-Count")
-    ? parseInt(response.headers.get("X-Total-Count")!, 10)
-    : entries.length;
-  const hasMore = response.headers.has("X-Has-More")
-    ? response.headers.get("X-Has-More") === "true"
-    : false;
-
-  return { entries, total, hasMore };
-}
-
-export function fetchSessionFiles(taskId: string, projectId?: string): Promise<string[]> {
-  return api<string[]>(withProjectId(`/tasks/${taskId}/session-files`, projectId));
-}
-
-export function fetchTaskComments(id: string, projectId?: string): Promise<TaskComment[]> {
-  return api<TaskComment[]>(withProjectId(`/tasks/${id}/comments`, projectId));
-}
-
-export function addTaskComment(id: string, text: string, author?: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/comments`, projectId), {
-    method: "POST",
-    body: JSON.stringify({ text, author }),
-  });
-}
-
-export function updateTaskComment(id: string, commentId: string, text: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/comments/${commentId}`, projectId), {
-    method: "PATCH",
-    body: JSON.stringify({ text }),
-  });
-}
-
-export function deleteTaskComment(id: string, commentId: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/comments/${commentId}`, projectId), {
-    method: "DELETE",
-  });
-}
-
-// ── Task Document API Functions ──────────────────────────────────────────────
-
-export function fetchTaskDocuments(taskId: string, projectId?: string): Promise<TaskDocument[]> {
-  return api<TaskDocument[]>(withProjectId(`/tasks/${taskId}/documents`, projectId));
-}
-
-export function fetchTaskDocument(taskId: string, key: string, projectId?: string): Promise<TaskDocument> {
-  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId));
-}
-
-export function fetchTaskDocumentRevisions(taskId: string, key: string, projectId?: string): Promise<TaskDocumentRevision[]> {
-  return api<TaskDocumentRevision[]>(withProjectId(`/tasks/${taskId}/documents/${key}/revisions`, projectId));
-}
-
-export interface FetchAllDocumentsOptions {
-  q?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface MarkdownFileEntry {
-  path: string;
-  name: string;
-  size: number;
-  mtime: string;
-}
-
-export interface MarkdownFileListResponse {
-  files: MarkdownFileEntry[];
-}
-
-export type { Artifact, ArtifactType, ArtifactWithTask };
-
-export interface FetchArtifactsOptions {
-  type?: ArtifactType;
-  authorId?: string;
-  taskId?: string;
-  q?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export async function fetchArtifacts(
-  options?: FetchArtifactsOptions,
-  projectId?: string,
-): Promise<ArtifactWithTask[]> {
-  const params = new URLSearchParams();
-  if (options?.type) params.set("type", options.type);
-  if (options?.authorId) params.set("authorId", options.authorId);
-  if (options?.taskId) params.set("taskId", options.taskId);
-  if (options?.q) params.set("q", options.q);
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  const queryString = params.toString();
-  const path = `/artifacts${queryString ? `?${queryString}` : ""}`;
-  return api<ArtifactWithTask[]>(withProjectId(path, projectId));
-}
-
-/*
-FNXC:ArtifactRegistry 2026-07-15-12:00:
-Keep artifactMediaUrl token-free so fetch callers and script-capable HTML previews can authenticate via Authorization without putting the daemon token into a URL that executable artifact content could read.
-
-FNXC:ArtifactMediaAuth 2026-07-15-14:24:
-Main previously always-tokenized this helper for browser-native media loads. FN-7976 supersedes that by splitting tokenized element/link loads into artifactMediaUrlWithToken while this base URL stays clean for header-auth fetch and HTML blob previews.
-*/
-export function artifactMediaUrl(id: string, projectId?: string): string {
-  return buildApiUrl(withProjectId(`/artifacts/${encodeURIComponent(id)}/media`, projectId));
-}
-
-/*
-FNXC:ArtifactRegistry 2026-07-15-12:00:
-Artifact media element loads and link navigations cannot attach an Authorization header, so authenticated daemon media routes require the dashboard-owned fn_token query fallback. Keep artifactMediaUrl token-free for fetch callers and script-capable HTML previews; consumers that hand the URL to an img, video, audio, iframe, or anchor must use this helper unless executable content could read the URL.
-*/
-export function artifactMediaUrlWithToken(id: string, projectId?: string): string {
-  return appendTokenQuery(artifactMediaUrl(id, projectId));
-}
-
-/*
-FNXC:ArtifactRegistry 2026-07-10-15:20:
-The Artifacts view document viewer needs the full artifact INCLUDING inline content (list responses strip content), and edit mode persists title/description/content through PATCH.
-*/
-export async function fetchArtifact(id: string, projectId?: string): Promise<Artifact> {
-  return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId));
-}
-
-export interface UpdateArtifactInput {
-  title?: string;
-  description?: string;
-  content?: string;
-}
-
-export async function updateArtifact(id: string, updates: UpdateArtifactInput, projectId?: string): Promise<Artifact> {
-  return api<Artifact>(withProjectId(`/artifacts/${encodeURIComponent(id)}`, projectId), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-}
-
-export async function fetchAllDocuments(
-  options?: FetchAllDocumentsOptions,
-  projectId?: string,
-): Promise<TaskDocumentWithTask[]> {
-  const params = new URLSearchParams();
-  if (options?.q) params.set("q", options.q);
-  if (options?.limit !== undefined) params.set("limit", String(options.limit));
-  if (options?.offset !== undefined) params.set("offset", String(options.offset));
-  const queryString = params.toString();
-  const path = `/documents${queryString ? `?${queryString}` : ""}`;
-  return api<TaskDocumentWithTask[]>(withProjectId(path, projectId));
-}
-
-export interface FetchProjectMarkdownFilesOptions {
-  showHidden?: boolean;
-}
-
-export function fetchProjectMarkdownFiles(
-  projectId?: string,
-  options?: FetchProjectMarkdownFilesOptions,
-): Promise<MarkdownFileListResponse> {
-  const params = new URLSearchParams();
-  if (options?.showHidden) {
-    params.set("showHidden", "1");
-  }
-
-  const query = params.toString();
-  const path = `/files/markdown-list${query ? `?${query}` : ""}`;
-
-  return api<MarkdownFileListResponse>(withProjectId(path, projectId));
-}
-
-export function putTaskDocument(
-  taskId: string,
-  key: string,
-  content: string,
-  opts?: { author?: string; metadata?: Record<string, unknown> },
-  projectId?: string,
-): Promise<TaskDocument> {
-  return api<TaskDocument>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
-    method: "PUT",
-    body: JSON.stringify({
-      content,
-      author: opts?.author,
-      metadata: opts?.metadata,
-    }),
-  });
-}
-
-export function deleteTaskDocument(taskId: string, key: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/tasks/${taskId}/documents/${key}`, projectId), {
-    method: "DELETE",
-  });
-}
 
 export function addSteeringComment(id: string, text: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/steer`, projectId), {
