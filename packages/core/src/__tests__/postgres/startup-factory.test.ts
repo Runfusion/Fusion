@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createTaskStoreForBackend,
+  isEncodingConversionError,
   shouldUsePostgresBackend,
   isEmbeddedPgRequested,
   isEmbeddedPgOptedOut,
@@ -194,5 +195,33 @@ describe("startup-factory: backend descriptor propagation", () => {
         backend,
       }),
     ).rejects.toThrow();
+  });
+});
+
+/*
+FNXC:PostgresEmbedded 2026-07-18-01:10:
+Issue #2286 auto-recovery trigger. The classifier must catch PostgreSQL's
+encoding-conversion failure raised when a non-UTF-8 cluster (WIN1252/WIN1254
+from a pre-fix initdb on a non-UTF-8 OS locale) receives the UTF-8 schema
+SQL — and nothing else, so ordinary schema errors never delete a data dir.
+*/
+describe("isEncodingConversionError (#2286 recovery trigger)", () => {
+  it("matches the encoding-conversion failure from a non-UTF-8 cluster", () => {
+    expect(
+      isEncodingConversionError(
+        'character with byte sequence 0xe2 0x86 0x92 in encoding "UTF8" has no equivalent in encoding "WIN1254"',
+      ),
+    ).toBe(true);
+    expect(
+      isEncodingConversionError(
+        'Failed query: CREATE TABLE ... params: caused by: character with byte sequence 0xe2 0x86 0x92 in encoding "UTF8" has no equivalent in encoding "WIN1252"',
+      ),
+    ).toBe(true);
+  });
+
+  it("does not match unrelated schema or connection errors", () => {
+    expect(isEncodingConversionError('syntax error at or near "CREATE"')).toBe(false);
+    expect(isEncodingConversionError("connection refused")).toBe(false);
+    expect(isEncodingConversionError('FATAL: invalid value for parameter "shared_memory_type"')).toBe(false);
   });
 });

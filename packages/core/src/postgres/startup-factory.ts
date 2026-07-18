@@ -37,7 +37,7 @@
  */
 
 import { join, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
@@ -53,7 +53,8 @@ import {
   createConnectionSetFromUrl,
   type PostgresConnections,
 } from "./connection.js";
-import { applySchemaBaseline } from "./schema-applier.js";
+import { applySchemaBaseline, MIGRATION_BOOKKEEPING_TABLE } from "./schema-applier.js";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
 import {
   invalidateEmbeddedRuntimeUrl,
@@ -234,7 +235,89 @@ async function stopEmbeddedRuntime(
  * Callers retain ownership of the returned resources and may replace the
  * administrative pool with an RLS-bound runtime pool after migration.
  */
+/*
+FNXC:PostgresEmbedded 2026-07-18-01:10:
+Issue #2286 auto-recovery. An embedded cluster initdb'd by an earlier version
+on a non-UTF-8 OS locale (WIN1252/WIN1254) rejects the UTF-8 schema SQL with
+`character ... has no equivalent in encoding`. Such a cluster can NEVER have
+completed a boot: the whole baseline runs in one transaction whose query
+string fails encoding conversion before execution, so no schema was applied
+and the SQLite auto-migration (which runs after schema boot) never moved any
+data. Deleting the data dir and re-initdb'ing (now forced UTF-8) is therefore
+lossless — but only when proven, so recovery requires ALL of:
+  1. embedded mode (Fusion owns the data dir),
+  2. the encoding-conversion error signature,
+  3. the live cluster confirming a non-UTF-8 server_encoding,
+  4. zero tables in project/central/archive and no recorded migration
+     versions (the never-successfully-booted state),
+  5. this process owns the postmaster (never delete under a foreign owner).
+One retry only; a second failure surfaces the manual re-init hint.
+*/
+class NonUtf8EmbeddedClusterError extends Error {
+  constructor(readonly dataDir: string, override readonly cause: unknown) {
+    super(`embedded cluster at ${dataDir} has a non-UTF-8 encoding and is empty; auto re-initializing`);
+  }
+}
+
+/** Matches PostgreSQL's encoding-conversion failure raised by a non-UTF-8 cluster. */
+export function isEncodingConversionError(chainText: string): boolean {
+  return /has no equivalent in encoding/i.test(chainText);
+}
+
+/**
+ * Prove the cluster is in the recoverable state: non-UTF-8 server encoding AND
+ * no applied schema (no tables in Fusion's schemas, no migration versions).
+ * Any query failure means "not proven" — the caller keeps the original error.
+ */
+async function isEmptyNonUtf8Cluster(db: PostgresJsDatabase<Record<string, never>>): Promise<boolean> {
+  const encodingRows = (await db.execute(
+    sql`SELECT current_setting('server_encoding') AS encoding`,
+  )) as unknown as Array<{ encoding: string }>;
+  const encoding = (encodingRows[0]?.encoding ?? "").toUpperCase();
+  if (encoding === "UTF8" || encoding === "") return false;
+
+  const tableRows = (await db.execute(sql`
+    SELECT count(*)::int AS tables
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname IN ('project', 'central', 'archive') AND c.relkind = 'r'
+  `)) as unknown as Array<{ tables: number }>;
+  if ((tableRows[0]?.tables ?? 1) !== 0) return false;
+
+  const versionRows = (await db.execute(sql`
+    SELECT count(*)::int AS versions
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = ${MIGRATION_BOOKKEEPING_TABLE} AND c.relkind = 'r'
+  `)) as unknown as Array<{ versions: number }>;
+  if ((versionRows[0]?.versions ?? 0) !== 0) {
+    const applied = (await db.execute(sql.raw(
+      `SELECT count(*)::int AS applied FROM public.${MIGRATION_BOOKKEEPING_TABLE}`,
+    ))) as unknown as Array<{ applied: number }>;
+    if ((applied[0]?.applied ?? 1) !== 0) return false;
+  }
+  return true;
+}
+
 async function bootSchemaBackend(
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax">,
+  bypassProjectIsolation = false,
+): Promise<SchemaBackendBootResult> {
+  try {
+    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
+  } catch (error) {
+    if (!(error instanceof NonUtf8EmbeddedClusterError)) throw error;
+    log.warn(
+      `startup-factory: embedded cluster at ${error.dataDir} was created with a non-UTF-8 OS-locale ` +
+        `encoding by an earlier version and never completed a boot (issue #2286). ` +
+        `Re-initializing it as UTF-8 and retrying once.`,
+    );
+    rmSync(error.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return await bootSchemaBackendOnce(options, bypassProjectIsolation);
+  }
+}
+
+async function bootSchemaBackendOnce(
   options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax">,
   bypassProjectIsolation = false,
 ): Promise<SchemaBackendBootResult> {
@@ -252,10 +335,12 @@ async function bootSchemaBackend(
   let embeddedRuntimeUrl: string | null = null;
   let embeddedOwnsProcess = false;
   let resolvedBackend = backend;
+  let embeddedDataDir: string | null = null;
   if (backend.mode === "embedded") {
     const { EmbeddedPostgresLifecycle, defaultEmbeddedDataDir, DEFAULT_EMBEDDED_DATABASE } =
       await import("./embedded-lifecycle.js");
     const dataDir = resolve(options.embeddedDataDir ?? defaultEmbeddedDataDir());
+    embeddedDataDir = dataDir;
     log.log(`startup-factory: starting embedded PostgreSQL (data dir ${dataDir})`);
     embeddedLifecycle = new EmbeddedPostgresLifecycle({
       dataDir,
@@ -308,6 +393,23 @@ async function bootSchemaBackend(
       embeddedOwnsProcess,
     };
   } catch (error) {
+    /*
+    FNXC:PostgresEmbedded 2026-07-18-01:10:
+    Classify the #2286 non-UTF-8-cluster state while the connection is still
+    open (the proof queries need it), then tear down before signalling the
+    retry wrapper. Never recover a joined instance (embeddedOwnsProcess false):
+    deleting a data dir under a foreign postmaster is not ours to do.
+    */
+    let recoverable = false;
+    if (
+      embeddedLifecycle !== null &&
+      embeddedOwnsProcess &&
+      connections !== undefined &&
+      embeddedDataDir !== null &&
+      isEncodingConversionError(error instanceof Error ? `${error.message} ${String(error.cause ?? "")}` : String(error))
+    ) {
+      recoverable = await isEmptyNonUtf8Cluster(connections.migration).catch(() => false);
+    }
     await connections?.close().catch(() => undefined);
     await stopEmbeddedRuntime(
       embeddedLifecycle,
@@ -315,6 +417,9 @@ async function bootSchemaBackend(
       embeddedRuntimeUrl,
       embeddedOwnsProcess,
     ).catch(() => undefined);
+    if (recoverable && embeddedDataDir !== null) {
+      throw new NonUtf8EmbeddedClusterError(embeddedDataDir, error);
+    }
     throw error;
   }
 }

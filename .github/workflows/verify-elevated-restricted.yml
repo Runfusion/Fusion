@@ -9,7 +9,7 @@ name: Verify Elevated Restricted-Token Postgres
 on:
   workflow_dispatch:
   push:
-    branches: [feature/win-elevated-no-user]
+    branches: [feature/win-elevated-no-user, fix/embedded-pg-encoding-auto-reinit]
 
 jobs:
   verify-elevated-restricted:
@@ -74,6 +74,11 @@ jobs:
 
       - name: Boot smoke (fn --help + serve /api/health, elevated)
         run: pnpm smoke:boot
+
+      # Issue #2286 auto-recovery: seed a real non-UTF-8 cluster, then prove a
+      # full `fn serve` self-heals it to UTF-8 and reaches a healthy state.
+      - name: Encoding auto-recovery (seeded WIN1252 cluster)
+        run: node scripts/verify-windows-encoding-recovery.mjs
 
       - name: Assert no fusion-pg account was created
         shell: pwsh
