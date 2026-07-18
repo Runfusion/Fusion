@@ -74,6 +74,17 @@ describe("NativeStructurePreview", () => {
     await waitFor(() => expect(screen.getByTestId("native-structure-preview-error")).toBeInTheDocument());
   });
 
+  it("lets a later caller-supplied payload replace a failed fetch", async () => {
+    fetchPreview.mockRejectedValueOnce(new Error("offline"));
+    const { rerender } = render(<NativeStructurePreview ref={refs[0]} onOpen={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("native-structure-preview-error")).toBeInTheDocument());
+
+    rerender(<NativeStructurePreview ref={refs[0]} payload={payload(refs[0])} onOpen={vi.fn()} />);
+
+    expect(screen.getByTestId("native-structure-preview")).toBeInTheDocument();
+    expect(screen.queryByTestId("native-structure-preview-error")).toBeNull();
+  });
+
   it("keeps the open affordance inside the mobile layout contract", () => {
     const { container } = render(<NativeStructurePreview ref={refs[0]} payload={payload(refs[0])} onOpen={vi.fn()} />);
     expect(container.querySelector(".native-structure-preview__open")).toBeInTheDocument();

@@ -51,7 +51,8 @@ export const NativeStructurePreview = memo(function NativeStructurePreview({ ref
     return () => { active = false; };
   }, [payload, ref.kind, ref.id, ref.projectId, refKey]);
 
-  if (error) {
+  // FNXC:NativeStructureEmbed 2026-07-16-14:05: A caller-supplied projection is authoritative after a transient fetch failure, so it must replace the error placeholder for the same ref.
+  if (error && !payload) {
     return (
       <section className="native-structure-preview native-structure-preview--unavailable" data-testid="native-structure-preview-error">
         <Icon aria-hidden="true" />
