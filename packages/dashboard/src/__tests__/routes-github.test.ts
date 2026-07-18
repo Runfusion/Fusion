@@ -211,6 +211,12 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
     getGlobalSettingsStore: vi.fn().mockReturnValue(createMockGlobalSettingsStore()),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TaskCreateDedup 2026-07-18-15:55:
+    FN-8277 parent-scoped uniqueness pre-check requires findRecentTasksBySourceParentTaskId;
+    default empty so subtask create-tasks routes return 201 under mock stores.
+    */
+    findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
     // FNXC:GitHubImportAttachments 2026-07-15-11:20: import downloads issue screenshots into task attachments.
     addAttachment: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),

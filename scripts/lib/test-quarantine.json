@@ -35,6 +35,11 @@
       "file": "packages/cli/src/__tests__/extension-dist-barrel.test.ts",
       "reason": "Full-suite shard 4 (run 29662476909): beforeAll hook timed out at 10s under package-lane load without product-bug evidence (prior FN-8093/FN-8271 rescue). Quarantine on sight per AGENTS.md. Mirrored in packages/cli/vitest.config.ts.",
       "quarantinedAt": "2026-07-18"
+    },
+    {
+      "file": "packages/engine/src/__tests__/reliability-interactions/merge-reuse-task-worktree.slow.test.ts",
+      "reason": "Full-suite engine-slow (run 29663725381): FN-5363 queue-head pollution handoff left leased merge-queue row after merge under load without product-bug evidence. Quarantine on sight per AGENTS.md. Mirrored in packages/engine/vitest.config.ts engine-slow exclude.",
+      "quarantinedAt": "2026-07-18"
     }
   ]
 }

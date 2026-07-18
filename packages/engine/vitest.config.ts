@@ -404,6 +404,13 @@ export default defineConfig({
             "src/__tests__/reliability-interactions/branch-group-single-pr-e2e.slow.test.ts",
             "src/__tests__/reliability-interactions/shared-branch-group-lifecycle.slow.test.ts",
             // SQLite-path (delete-sqlite-runtime-final PHASE A): uses inMemoryDb via _helpers.ts.
+            /*
+            FNXC:EngineTests 2026-07-18-15:55:
+            Full-suite engine-slow (run 29663725381): FN-5363 queue-head pollution handoff left a
+            leased merge-queue row after successful merge under load without product-bug evidence.
+            Quarantine on sight — mirrored in scripts/lib/test-quarantine.json.
+            */
+            "src/__tests__/reliability-interactions/merge-reuse-task-worktree.slow.test.ts",
           ],
           minWorkers: 1,
           maxWorkers: 1,
