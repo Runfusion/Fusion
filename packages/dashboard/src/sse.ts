@@ -597,6 +597,7 @@ export function createSSE(
       settingIds: string[];
       mutationId: string;
     }) => {
+      if (projectId && data.projectId !== projectId) return;
       send(`event: workflow:setting-values-updated\ndata: ${JSON.stringify(data)}\n\n`);
     };
 

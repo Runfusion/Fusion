@@ -572,12 +572,22 @@ describe("createSSE client cleanup", () => {
 });
 
 describe("workflow setting value SSE", () => {
-  it("forwards authoritative workflow setting mutations and removes the listener on close", () => {
+  it("forwards only same-project workflow setting mutations and removes the listener on close", () => {
     const { req, res, store } = openSseConnection("workflow-settings-client", "project-1");
     const onCall = vi.mocked(store.on).mock.calls.find(([event]) => event === "workflow:setting-values-updated");
     const handler = onCall?.[1] as ((payload: unknown) => void) | undefined;
 
     expect(typeof handler).toBe("function");
+    const writeCountBeforeMutation = res.write.mock.calls.length;
+    handler?.({
+      workflowId: "builtin:coding",
+      projectId: "project-2",
+      settingIds: ["plannerOversightLevel"],
+      mutationId: "other-project-revision",
+    });
+
+    expect(res.write).toHaveBeenCalledTimes(writeCountBeforeMutation);
+
     handler?.({
       workflowId: "builtin:coding",
       projectId: "project-1",

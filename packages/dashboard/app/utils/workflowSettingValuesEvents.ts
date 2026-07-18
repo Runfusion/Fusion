@@ -34,7 +34,7 @@ export interface WorkflowSettingValuesSsePayload {
   mutationId?: unknown;
 }
 
-/** Bridge an authoritative store/SSE mutation into the card-local revision event.
+/** FNXC:PlannerOversight 2026-07-18-13:35: Bridge an authoritative store/SSE mutation into the card-local revision event.
  * Duplicate dashboard consumers may receive the same multiplexed SSE message, so
  * mutation IDs are bounded and de-duplicated before advancing the revision. */
 export function notifyWorkflowSettingValuesUpdatedFromSse(payload: WorkflowSettingValuesSsePayload): void {
