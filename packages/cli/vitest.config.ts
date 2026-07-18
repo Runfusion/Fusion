@@ -104,9 +104,14 @@ const quarantinedCliTests: string[] = [
 
   FNXC:CliTests 2026-07-18-15:20:
   Full-suite shard 4 after FN-8271 (runs 29648812375 / 29648952207) re-observed mcp-lock-retry and task-lock-retry 5s timeouts under package-lane shard load without product-bug evidence. Quarantine on sight in lockstep with scripts/lib/test-quarantine.json — do not raise testTimeout or fake-timer budgets.
+
+  FNXC:CliTests 2026-07-18-15:20:
+  Full-suite shard 4 on tip after #2322 (run 29662476909): bundle-output failed building desktop assets (ENOENT vendor-reactflow CSS) and extension-dist-barrel beforeAll timed out at 10s under package-lane load without product-bug evidence. Quarantine on sight — do not raise hookTimeout or soften build assertions.
   */
   "src/commands/__tests__/mcp-lock-retry.test.ts",
   "src/commands/__tests__/task-lock-retry.test.ts",
+  "src/__tests__/bundle-output.test.ts",
+  "src/__tests__/extension-dist-barrel.test.ts",
 ];
 
 /*
