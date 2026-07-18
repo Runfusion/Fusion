@@ -176,7 +176,12 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     // Same issue number, edited body -> must re-request.
     rerender({ items: [{ number: 1, title: "t1", body: "EDITED", state: "open" as const }] });
     await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(2));
-    expect(result.current.translations.get(1)?.title).toBe("T1");
+    /*
+    FNXC:GitHubImportTranslate 2026-07-18-10:10:
+    Full-suite can observe the second request before the streamed map is committed.
+    Wait for the translated title, not only the mock call count.
+    */
+    await waitFor(() => expect(result.current.translations.get(1)?.title).toBe("T1"));
   });
 
   it("does NOT re-request when the same issue set re-renders unchanged", async () => {
