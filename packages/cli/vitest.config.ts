@@ -101,7 +101,12 @@ const quarantinedCliTests: string[] = [
   /*
   FNXC:CliTests 2026-07-18-07:30:
   FN-8271 rescued the shard-4 cascade after removing unrelated PostgreSQL template-copy and persistent-seeding work from extension-dist-barrel's built-dist hook. All fourteen affected CLI files return to the default lane with their matching quarantine-ledger rows removed; retain normal worker budgets and timeout defaults rather than reintroducing appeasement.
+
+  FNXC:CliTests 2026-07-18-15:20:
+  Full-suite shard 4 after FN-8271 (runs 29648812375 / 29648952207) re-observed mcp-lock-retry and task-lock-retry 5s timeouts under package-lane shard load without product-bug evidence. Quarantine on sight in lockstep with scripts/lib/test-quarantine.json — do not raise testTimeout or fake-timer budgets.
   */
+  "src/commands/__tests__/mcp-lock-retry.test.ts",
+  "src/commands/__tests__/task-lock-retry.test.ts",
 ];
 
 /*

@@ -524,16 +524,27 @@ describe("PlanningModeModal", () => {
       expect(mockAcquireSessionLock).not.toHaveBeenCalled();
       expect(mockForceAcquireSessionLock).not.toHaveBeenCalled();
 
-      fireEvent.click(screen.getByText("Small"));
-      fireEvent.click(screen.getByText("Continue"));
+      /*
+      FNXC:DashboardTests 2026-07-18-15:20:
+      Full Suite shard 3 (29648952207) observed Small+Continue not reaching respondToPlanning
+      under load (0 calls). Click the option radio by role and wait for checked + respond
+      with the same settle bound as "allows normal question interaction".
+      */
+      const smallOption = screen.getByRole("radio", { name: /Small/i });
+      fireEvent.click(smallOption);
+      await waitFor(() => expect(smallOption).toBeChecked());
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-      await waitFor(() => {
-        expect(mockRespondToPlanning).toHaveBeenCalledWith(
-          "session-123",
-          { "q-scope": "small" },
-          undefined,
-        );
-      });
+      await waitFor(
+        () => {
+          expect(mockRespondToPlanning).toHaveBeenCalledWith(
+            "session-123",
+            { "q-scope": "small" },
+            undefined,
+          );
+        },
+        { timeout: 3000 },
+      );
     });
 
     it("allows normal question interaction", async () => {
