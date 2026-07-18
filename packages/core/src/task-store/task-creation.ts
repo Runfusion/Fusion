@@ -44,7 +44,7 @@ function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
   );
 }
 
-export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
     }
@@ -205,7 +205,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
         title,
         resolvedWorkflowSteps,
         reservation.taskId,
-        { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn },
+        { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn, onProposalClaimConflict: options?.onProposalClaimConflict },
       );
       await allocator.commitDistributedTaskIdReservation({
         reservationId: reservation.reservationId,
@@ -289,7 +289,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     return task;
   }
 
-export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; },): Promise<Task> {
+export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
     const normalizedTitle = normalizeTitleForTaskId(title, id);
@@ -388,7 +388,10 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       */
       if (input.proposalClaimId && isTaskIdConflictError(error)) {
         const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
-        if (existing) return existing;
+        if (existing) {
+          options?.onProposalClaimConflict?.(existing);
+          return existing;
+        }
       }
       if (isTaskIdConflictError(error)) {
         throw new Error(`Task ID already exists: ${task.id}`);
@@ -445,7 +448,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     return task;
   }
 
-export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; }): Promise<Task> {
+export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; }): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:10:
     // Backend-mode createTask: delegates to createTaskBackend which uses the
     // async DistributedTaskIdAllocator (now wired for backend mode) and the
@@ -462,7 +465,10 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
     if (input.proposalClaimId) {
       ensureSqliteProposalClaimUniqueness(store);
       const existing = (await store.listTasks()).find((task) => task.proposalClaimId === input.proposalClaimId);
-      if (existing) return existing;
+      if (existing) {
+        options?.onProposalClaimConflict?.(existing);
+        return existing;
+      }
     }
 
     const selfDefeatingDep = detectSelfDefeatingDependency(input.title, input.dependencies ?? []);
@@ -626,7 +632,7 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
             title,
             resolvedWorkflowSteps,
             taskId,
-            { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn },
+            { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn, onProposalClaimConflict: options?.onProposalClaimConflict },
           );
         },
       });
@@ -636,7 +642,10 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
       await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
       if (input.proposalClaimId && isTaskIdConflictError(err)) {
         const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
-        if (existing) return existing;
+        if (existing) {
+          options?.onProposalClaimConflict?.(existing);
+          return existing;
+        }
       }
       throw err;
     }
@@ -869,7 +878,7 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     return createdTask;
   }
 
-export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; },): Promise<Task> {
+export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
     const now = options?.createdAt ?? new Date().toISOString();
     // FN-5077: null normalized titles are treated as "no title" and allow standard fallback/summarization behavior.
     const normalizedTitle = normalizeTitleForTaskId(title, id);
@@ -1128,4 +1137,3 @@ export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, 
       storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
     }
   }
-

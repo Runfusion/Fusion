@@ -973,7 +973,7 @@ export async function createAgentTask(
     ? await store.getSettings()
     : {} as Settings;
   const rootDir = options?.rootDir;
-  const sourceParentTaskId = input.source?.sourceParentTaskId ?? options?.sourceTaskId;
+  const sourceParentTaskId = (input.source?.sourceParentTaskId ?? options?.sourceTaskId)?.trim().toUpperCase();
   const sourceAgentId = input.source?.sourceAgentId ?? options?.sourceAgentId;
   const effectiveSource = input.source || sourceParentTaskId || sourceAgentId
     ? {
@@ -1074,8 +1074,10 @@ export async function createAgentTask(
         : input.githubTracking,
     };
 
+    let proposalClaimConflict = false;
     const createdTask = await store.createTask(createInput, {
       settings,
+      onProposalClaimConflict: () => { proposalClaimConflict = true; },
     });
 
     const reconcile = await reconcileDeterministicDuplicate(store, {
@@ -1085,10 +1087,12 @@ export async function createAgentTask(
     });
 
     return {
-      task: reconcile.outcome === "archived"
+      task: proposalClaimConflict
+        ? await carryCanonicalTaskRouting(store, createdTask, input)
+        : reconcile.outcome === "archived"
         ? await carryCanonicalTaskRouting(store, reconcile.canonical, input)
         : reconcile.canonical,
-      wasDuplicate: reconcile.outcome === "archived",
+      wasDuplicate: proposalClaimConflict || reconcile.outcome === "archived",
     };
   } finally {
     guard.releaseLock();

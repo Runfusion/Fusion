@@ -97,6 +97,13 @@ describe("findSameAgentDuplicates", () => {
     ];
     expect(findSameAgentDuplicates({ description: "Add screenshot deletion support", sourceParentTaskId: "FN-PARENT" }, candidates, { nowMs })).toEqual([]);
     expect(findSameAgentDuplicates({ description: "Add GitHub Issues as a filing target", sourceParentTaskId: "FN-PARENT" }, candidates, { nowMs })).toEqual([]);
+    expect(findSameAgentDuplicates({
+      description: "Add OAuth token revocation for the GitHub API",
+      sourceParentTaskId: "FN-PARENT",
+    }, [{
+      id: "FN-ROTATE", title: "", description: "Add OAuth token rotation for the GitHub API",
+      column: "triage", createdAt: nowMs - 60_000, sourceAgentId: null, sourceParentTaskId: "FN-PARENT",
+    }], { nowMs })).toEqual([]);
   });
 
   it("derives stable database claims for paraphrases and distinct claims for sibling actions", () => {
@@ -109,6 +116,7 @@ describe("findSameAgentDuplicates", () => {
     );
     expect(claim("Add screenshot upload support")).not.toBe(claim("Add screenshot deletion support"));
     expect(claim("Add GitHub Discussions as a target")).not.toBe(claim("Add GitHub Issues as a target"));
+    expect(claim("Add new support")).toMatch(/^agent-parent-intent:FN-8277:[a-f0-9]{64}$/);
   });
 
   it("does not match sibling with different parent task", () => {

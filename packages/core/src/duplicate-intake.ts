@@ -1,4 +1,4 @@
-import { findDuplicateMatches, tokenize } from "./duplicate-detection.js";
+import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "./types.js";
 import type { TaskStore } from "./store.js";
 
@@ -40,11 +40,20 @@ const INTENT_BOILERPLATE_TOKENS = new Set([
   "selectable", "support", "target", "use",
 ]);
 
-function intentBigrams(title: string | null | undefined, description: string): Set<string> {
-  const tokens = tokenize(`${title ?? ""} ${description}`)
+function intentTokens(title: string | null | undefined, description: string): string[] {
+  return tokenize(`${title ?? ""} ${description}`)
     .filter((token) => token.length >= 2 && !INTENT_BOILERPLATE_TOKENS.has(token))
     .map((token) => token.length > 4 && token.endsWith("s") && !token.endsWith("ss") ? token.slice(0, -1) : token);
+}
+
+function intentBigrams(title: string | null | undefined, description: string): Set<string> {
+  const tokens = intentTokens(title, description);
   return new Set(tokens.slice(0, -1).map((token, index) => `${token}:${tokens[index + 1]}`));
+}
+
+function hasSingleTokenReplacement(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && left.filter((token, index) => token !== right[index]).length === 1;
 }
 
 function stableIntentAnchor(title: string | null | undefined, description: string): string | null {
@@ -53,7 +62,9 @@ function stableIntentAnchor(title: string | null | undefined, description: strin
     ...(text.match(/[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+/g) ?? []),
     ...(text.match(/\b[A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)+\b/g) ?? []),
   ].map((value) => value.toLowerCase().split(/[\s-]+/)
-    .filter((token) => token && !INTENT_BOILERPLATE_TOKENS.has(token)).join("-"))
+    .filter((token) => token && !INTENT_BOILERPLATE_TOKENS.has(token))
+    .map((token) => token.length > 4 && token.endsWith("s") && !token.endsWith("ss") ? token.slice(0, -1) : token)
+    .join(":"))
     .filter(Boolean)
     .sort();
   return namedAnchors[0] ?? [...intentBigrams(title, description)].sort()[0] ?? null;
@@ -62,7 +73,8 @@ function stableIntentAnchor(title: string | null | undefined, description: strin
 /** Stable database idempotency claim for one parent-scoped follow-up intent. */
 export function computeParentIntentClaimId(input: SameAgentDuplicateInput): string | null {
   const parentId = input.sourceParentTaskId?.trim().toUpperCase();
-  const anchor = stableIntentAnchor(input.title, input.description);
+  const anchor = stableIntentAnchor(input.title, input.description)
+    ?? computeContentFingerprint({ title: input.title, description: input.description });
   return parentId && anchor ? `agent-parent-intent:${parentId}:${anchor}` : null;
 }
 
@@ -128,13 +140,22 @@ export function findSameAgentDuplicates(
   Bigrams keep distinct actions such as "screenshot upload" and "screenshot delete"
   separate while recognizing stable concepts such as "GitHub Discussions".
   */
+  const sourceTokens = intentTokens(input.title, input.description);
   const sourceBigrams = intentBigrams(input.title, input.description);
+  const sourceAnchor = stableIntentAnchor(input.title, input.description);
   if (sourceBigrams.size === 0) return [];
   return recent.flatMap((candidate) => {
     if (candidate.column === "done" || candidate.column === "archived") return [];
+    const candidateTokens = intentTokens(candidate.title, candidate.description);
+    if (sourceAnchor !== stableIntentAnchor(candidate.title, candidate.description)
+      || hasSingleTokenReplacement(sourceTokens, candidateTokens)) return [];
     const candidateBigrams = intentBigrams(candidate.title, candidate.description);
     const sharedCount = [...sourceBigrams].filter((bigram) => candidateBigrams.has(bigram)).length;
-    return sharedCount > 0 ? [{ id: candidate.id, score: sharedCount }] : [];
+    const identicalIntent = sourceTokens.join(":") === candidateTokens.join(":");
+    const diceScore = (2 * sharedCount) / (sourceBigrams.size + candidateBigrams.size);
+    return identicalIntent || (sharedCount >= 2 && diceScore >= 0.3)
+      ? [{ id: candidate.id, score: diceScore }]
+      : [];
   }).sort((left, right) =>
     (metadataById.get(left.id)?.createdAt ?? Number.POSITIVE_INFINITY)
     - (metadataById.get(right.id)?.createdAt ?? Number.POSITIVE_INFINITY),

@@ -367,6 +367,28 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
+  it("normalizes parent provenance and reports database claim reuse as a duplicate", async () => {
+    const canonical = {
+      id: "FN-1", title: "", description: "Add new support", dependencies: [], column: "triage" as const,
+      sourceParentTaskId: "FN-PARENT", proposalClaimId: "claim", steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    } as Task;
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockResolvedValue([]);
+    vi.mocked(taskStore.createTask).mockImplementation(async (_input, options) => {
+      options?.onProposalClaimConflict?.(canonical);
+      return canonical;
+    });
+
+    const result = await createAgentTask(taskStore, { description: "Add new support" }, { sourceTaskId: "fn-parent" });
+
+    expect(taskStore.findRecentTasksBySourceParentTaskId).toHaveBeenCalledWith("FN-PARENT");
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ sourceParentTaskId: "FN-PARENT" }),
+      proposalClaimId: expect.stringMatching(/^agent-parent-intent:FN-PARENT:/),
+    }), expect.anything());
+    expect(result).toMatchObject({ task: canonical, wasDuplicate: true });
+  });
+
   it("carries delegation routing onto the reconcile canonical task", async () => {
     const created = {
       id: "FN-new",
