@@ -5897,7 +5897,12 @@
       "selectNavItem": "Choisir une destination",
       "removeNavItem": "Retirer {{item}}",
       "moveNavItemEarlier": "Déplacer {{item}} plus tôt",
-      "moveNavItemLater": "Déplacer {{item}} plus tard"
+      "moveNavItemLater": "Déplacer {{item}} plus tard",
+      "ephemeralAgentTaskCreationPolicy": "Tâches de suivi des agents éphémères",
+      "ephemeralAgentTaskCreationPolicyHint": "Pas de valeur par défaut — non défini revient à Autoriser. « Sur validation » envoie une proposition à votre boîte pour une approbation en un clic ; Refuser bloque la création de tâches de suivi.",
+      "ephemeralAgentTaskCreationPolicyAllow": "Autoriser",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "Sur validation",
+      "ephemeralAgentTaskCreationPolicyDeny": "Refuser"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

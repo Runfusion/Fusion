@@ -5897,7 +5897,12 @@
       "selectNavItem": "選擇目的地",
       "removeNavItem": "移除 {{item}}",
       "moveNavItemEarlier": "將 {{item}} 前移",
-      "moveNavItemLater": "將 {{item}} 後移"
+      "moveNavItemLater": "將 {{item}} 後移",
+      "ephemeralAgentTaskCreationPolicy": "臨時代理後續任務",
+      "ephemeralAgentTaskCreationPolicyHint": "無預設值 — 未設定時回退為允許。需驗證會將提案傳送到信箱供一鍵核准；拒絕則禁止建立後續任務。",
+      "ephemeralAgentTaskCreationPolicyAllow": "允許",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "需驗證",
+      "ephemeralAgentTaskCreationPolicyDeny": "拒絕"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

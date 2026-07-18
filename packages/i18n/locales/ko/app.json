@@ -5897,7 +5897,12 @@
       "selectNavItem": "대상 선택",
       "removeNavItem": "{{item}} 제거",
       "moveNavItemEarlier": "{{item}} 앞으로 이동",
-      "moveNavItemLater": "{{item}} 뒤로 이동"
+      "moveNavItemLater": "{{item}} 뒤로 이동",
+      "ephemeralAgentTaskCreationPolicy": "임시 에이전트 후속 작업",
+      "ephemeralAgentTaskCreationPolicyHint": "기본값 없음 — 미설정 시 허용으로 폴백합니다. 검증 후는 받은편지함으로 제안을 보내 원클릭 승인합니다. 거부는 후속 작업 생성을 거부합니다.",
+      "ephemeralAgentTaskCreationPolicyAllow": "허용",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "검증 후",
+      "ephemeralAgentTaskCreationPolicyDeny": "거부"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

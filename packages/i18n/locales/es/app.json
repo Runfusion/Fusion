@@ -5897,7 +5897,12 @@
       "selectNavItem": "Elegir un destino",
       "removeNavItem": "Quitar {{item}}",
       "moveNavItemEarlier": "Mover {{item}} antes",
-      "moveNavItemLater": "Mover {{item}} después"
+      "moveNavItemLater": "Mover {{item}} después",
+      "ephemeralAgentTaskCreationPolicy": "Tareas de seguimiento de agentes efímeros",
+      "ephemeralAgentTaskCreationPolicyHint": "Sin valor predeterminado — si no se define, se usa Permitir. «Tras validación» envía una propuesta a tu buzón para aprobar con un clic; Denegar rechaza la creación de tareas de seguimiento.",
+      "ephemeralAgentTaskCreationPolicyAllow": "Permitir",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "Tras validación",
+      "ephemeralAgentTaskCreationPolicyDeny": "Denegar"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

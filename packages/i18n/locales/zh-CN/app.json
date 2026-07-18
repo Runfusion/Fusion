@@ -5897,7 +5897,12 @@
       "selectNavItem": "选择目标",
       "removeNavItem": "移除 {{item}}",
       "moveNavItemEarlier": "将 {{item}} 前移",
-      "moveNavItemLater": "将 {{item}} 后移"
+      "moveNavItemLater": "将 {{item}} 后移",
+      "ephemeralAgentTaskCreationPolicy": "临时代理后续任务",
+      "ephemeralAgentTaskCreationPolicyHint": "无默认值 — 未设置时回退为允许。需验证会将提案发送到邮箱供一键批准；拒绝则禁止创建后续任务。",
+      "ephemeralAgentTaskCreationPolicyAllow": "允许",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "需验证",
+      "ephemeralAgentTaskCreationPolicyDeny": "拒绝"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",

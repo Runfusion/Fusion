@@ -517,6 +517,12 @@ describe("PlanningModeModal", () => {
     });
 
     it("shows loading state with appropriate text after submitting a response", async () => {
+      /*
+      FNXC:DashboardTests 2026-07-18-11:45:
+      Full Suite shard 3 failed when a 50ms setTimeout second-question race skipped the
+      loading paint under CI load. Gate the next SSE question on an explicit release so
+      `.planning-loading` is assertable before the follow-up question arrives.
+      */
       const secondQuestion: PlanningQuestion = {
         id: "q-requirements",
         type: "text",
@@ -525,6 +531,10 @@ describe("PlanningModeModal", () => {
       };
 
       let streamHandlers: any = null;
+      let releaseSecondQuestion: (() => void) | null = null;
+      const secondQuestionGate = new Promise<void>((resolve) => {
+        releaseSecondQuestion = resolve;
+      });
 
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamHandlers = handlers;
@@ -540,12 +550,12 @@ describe("PlanningModeModal", () => {
       });
 
       mockRespondToPlanning.mockImplementation(async () => {
-        // Simulate server broadcasting second question via the existing SSE connection
-        setTimeout(() => {
+        // Hold the follow-up question until the loading UI has been observed.
+        void secondQuestionGate.then(() => {
           if (streamHandlers) {
             streamHandlers.onQuestion?.(secondQuestion);
           }
-        }, 50);
+        });
         return { sessionId: "session-123", currentQuestion: null, summary: null };
       });
 
@@ -581,10 +591,14 @@ describe("PlanningModeModal", () => {
       // Verify thinking container is visible during loading
       expect(container.querySelector(".planning-thinking-container")).not.toBeNull();
 
+      await act(async () => {
+        releaseSecondQuestion?.();
+      });
+
       // Wait for second question to appear
       await waitFor(() => {
         expect(screen.getByText("What are the key requirements?")).toBeDefined();
-      }, { timeout: 3000 });
+      });
     });
   });
 
