@@ -11,7 +11,7 @@
 }
 
 .native-structure-preview > svg {
-  color: var(--color-accent);
+  color: var(--accent);
 }
 
 .native-structure-preview__content {
