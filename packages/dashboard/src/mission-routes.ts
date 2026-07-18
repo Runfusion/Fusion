@@ -442,7 +442,7 @@ export function createMissionRouter(
   router.post(
     "/",
     catchTypedHandler(async (req, res) => {
-      const { title, description, autoAdvance, baseBranch, branchStrategy, goalIds } = req.body;
+      const { title, description, autoAdvance, autoMerge, baseBranch, branchStrategy, goalIds } = req.body;
 
       const validatedTitle = validateTitle(title);
       const validatedDescription = validateDescription(description);
@@ -453,6 +453,14 @@ export function createMissionRouter(
         description: validatedDescription,
         baseBranch: validateDescription(baseBranch),
         branchStrategy: validateMissionBranchStrategy(branchStrategy),
+        ...(autoMerge !== undefined
+          ? {
+              // FNXC:MissionAutoMerge 2026-07-18-12:00: Create accepts only a real boolean; null is reserved for PATCH clear-to-inherited.
+              autoMerge: typeof autoMerge === "boolean"
+                ? validateBoolean(autoMerge, "autoMerge")
+                : (() => { throw badRequest("autoMerge must be a boolean"); })(),
+            }
+          : {}),
       };
 
       const mission = await missionStore.createMission(input);
@@ -1079,7 +1087,7 @@ export function createMissionRouter(
     "/:missionId",
     catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
-      const { title, description, status, autoAdvance, autopilotEnabled, baseBranch, branchStrategy, goalIds } = req.body;
+      const { title, description, status, autoAdvance, autoMerge, autopilotEnabled, baseBranch, branchStrategy, goalIds } = req.body;
 
       if (!validateMissionId(missionId)) {
         throw badRequest("Invalid mission ID format");
@@ -1104,6 +1112,12 @@ export function createMissionRouter(
       }
       if (autoAdvance !== undefined) {
         updates.autoAdvance = validateBoolean(autoAdvance, "autoAdvance");
+      }
+      // FNXC:MissionAutoMerge 2026-07-18-12:00: PATCH null explicitly clears a mission override; omission preserves it.
+      if (autoMerge === null) {
+        updates.autoMerge = undefined;
+      } else if (autoMerge !== undefined) {
+        updates.autoMerge = validateBoolean(autoMerge, "autoMerge");
       }
       if (autopilotEnabled !== undefined) {
         updates.autopilotEnabled = validateBoolean(autopilotEnabled, "autopilotEnabled");

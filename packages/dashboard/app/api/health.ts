@@ -26,6 +26,26 @@ export interface DashboardHealthResponse {
   status: string;
   version: string;
   uptime: number;
+  /*
+  FNXC:MigrationHoldingPage 2026-07-17-12:35:
+  While the CLI's boot-window holding server owns the dashboard port (real
+  server not yet listening), /api/health answers with status "migrating" (or
+  "starting") and this progress snapshot — and OMITS engine/database/
+  taskIdIntegrity. Consumers of those fields must optional-chain (the
+  DashboardBanners gates already do) so boot-window polls don't fire the
+  engine/db-corruption banners. The real server never sets `migration`.
+  */
+  holding?: boolean;
+  migration?: {
+    active: boolean;
+    phase?: string;
+    label?: string;
+    table?: string;
+    tableIndex?: number;
+    tableCount?: number;
+    processedRows?: number;
+    sourceRows?: number;
+  };
   engine?: {
     available: boolean;
   };

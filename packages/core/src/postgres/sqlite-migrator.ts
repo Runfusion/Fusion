@@ -1212,6 +1212,35 @@ function classifyColumnType(pgCol: {
   return "plain";
 }
 
+/*
+FNXC:PostgresMigrationNulSanitize 2026-07-17-10:05:
+PostgreSQL rejects U+0000 in text/varchar ("invalid byte sequence" / "\u0000 cannot be converted to text") and in json/jsonb ("unsupported Unicode escape sequence"), but SQLite TEXT stores it freely, so legacy databases can contain NUL bytes that abort the first-boot auto-migration. Strip U+0000 from every migrated string — plain text cells, string values and object keys inside JSON documents, and opaque legacy-preservation text cells — rather than failing the cutover. Sanitization happens inside convertValue/tagLegacyCell so the content-checksum verification (computeSourceCanonicalRows reuses convertValue) compares the sanitized source against the sanitized target and still passes.
+*/
+// eslint-disable-next-line no-control-regex -- matching the NUL control character is the point
+const NUL_CHAR_RE = /\u0000/g;
+
+function stripNulChars(text: string): string {
+  return text.includes("\u0000") ? text.replace(NUL_CHAR_RE, "") : text;
+}
+
+/** Recursively strip U+0000 from all string values and object keys in a parsed JSON document. */
+function deepStripNulChars(value: unknown): unknown {
+  if (typeof value === "string") {
+    return stripNulChars(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(deepStripNulChars);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(
+        ([key, entry]) => [stripNulChars(key), deepStripNulChars(entry)],
+      ),
+    );
+  }
+  return value;
+}
+
 /**
  * Convert a SQLite value to its PostgreSQL representation based on the column
  * type classification.
@@ -1255,14 +1284,14 @@ function convertValue(
           return nullJsonbFallback ?? (preserveEmptyJsonbString ? JSON.stringify(value) : null);
         }
         try {
-          return JSON.stringify(JSON.parse(trimmed));
+          return JSON.stringify(deepStripNulChars(JSON.parse(trimmed)));
         } catch {
           // Malformed JSON — store as a JSON-encoded string scalar (valid jsonb).
-          return JSON.stringify(value);
+          return JSON.stringify(stripNulChars(value));
         }
       }
       // Already a JS value (object/array/number/boolean) — stringify it.
-      return JSON.stringify(value);
+      return JSON.stringify(deepStripNulChars(value));
     }
     case "bytea": {
       if (Buffer.isBuffer(value)) {
@@ -1280,7 +1309,8 @@ function convertValue(
     case "identity":
     case "generated":
     default:
-      return value;
+      // PostgreSQL text/varchar rejects U+0000 outright; see NUL-sanitize note above.
+      return typeof value === "string" ? stripNulChars(value) : value;
   }
 }
 
@@ -1330,7 +1360,9 @@ function tagLegacyCell(value: unknown): TaggedLegacyCell {
   if (typeof value === "number" || typeof value === "bigint") {
     return { type: "number", value: Object.is(value, -0) ? "-0" : String(value) };
   }
-  return { type: "text", value: String(value) };
+  // Legacy-preservation rows are stored as jsonb; jsonb rejects \u0000, so
+  // opaque text cells get the same NUL sanitization as regular columns.
+  return { type: "text", value: stripNulChars(String(value)) };
 }
 
 function canonicalizeLegacyRows(

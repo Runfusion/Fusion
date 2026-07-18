@@ -5,6 +5,13 @@ import {
   DEPENDENCY_BLOCKED_TODO_TITLE_PREFIX,
 } from "../dependency-blocked-todo-reporter.js";
 
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-04:15:
+VAL-REMOVAL-005 reporters await the PostgreSQL-shaped insight-store contract.
+Keep mock reads promise-based so cooldown and payload assertions exercise the
+same asynchronous collaborator boundary as production.
+*/
+
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-1",
@@ -85,7 +92,7 @@ describe("DependencyBlockedTodoReporter", () => {
       createTask({ id: "FN-5085", dependencies: ["FN-5090"] }),
       createTask({ id: "FN-5089", dependencies: ["FN-5090"] }),
     ];
-    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockReturnValue([]) };
+    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) };
     const store = createStore({ tasks, insightStore });
     const reporter = new DependencyBlockedTodoReporter({ store, projectId: "/tmp/project", logger, now: () => now });
 
@@ -110,7 +117,7 @@ describe("DependencyBlockedTodoReporter", () => {
     ];
     const insightStore = {
       upsertInsight: vi.fn(),
-      listInsights: vi.fn().mockReturnValue([{ title: `${DEPENDENCY_BLOCKED_TODO_TITLE_PREFIX} 2026-05-18`, updatedAt: "2026-05-18T11:59:30.000Z" }]),
+      listInsights: vi.fn().mockResolvedValue([{ title: `${DEPENDENCY_BLOCKED_TODO_TITLE_PREFIX} 2026-05-18`, updatedAt: "2026-05-18T11:59:30.000Z" }]),
     };
     const store = createStore({ tasks, insightStore, settings: { dependencyBlockedTodoReportCooldownMs: 60_000 } });
     const reporter = new DependencyBlockedTodoReporter({ store, projectId: "/tmp/project", logger, now: () => now });
@@ -126,7 +133,7 @@ describe("DependencyBlockedTodoReporter", () => {
     ];
     const insightStore = {
       upsertInsight: vi.fn(),
-      listInsights: vi.fn().mockReturnValue([{ title: `${DEPENDENCY_BLOCKED_TODO_TITLE_PREFIX} 2026-05-17`, updatedAt: "2026-05-18T11:58:00.000Z" }]),
+      listInsights: vi.fn().mockResolvedValue([{ title: `${DEPENDENCY_BLOCKED_TODO_TITLE_PREFIX} 2026-05-17`, updatedAt: "2026-05-18T11:58:00.000Z" }]),
     };
     const store = createStore({ tasks, insightStore, settings: { dependencyBlockedTodoReportCooldownMs: 60_000 } });
     const reporter = new DependencyBlockedTodoReporter({ store, projectId: "/tmp/project", logger, now: () => now });
@@ -156,7 +163,7 @@ describe("DependencyBlockedTodoReporter", () => {
       createTask({ id: "FN-5085", dependencies: ["FN-5090"] }),
       createTask({ id: "FN-5089", dependencies: ["FN-5090"] }),
     ];
-    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockReturnValue([]) };
+    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) };
     const store = createStore({ tasks, insightStore });
     const reporter = new DependencyBlockedTodoReporter({ store, projectId: "/tmp/project", logger, now: () => Date.parse("2026-05-18T12:00:00.000Z") });
     await reporter.report();

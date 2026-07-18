@@ -230,6 +230,13 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    /*
+    FNXC:DashboardTests 2026-07-18-09:45:
+    Backup automation path calls resolveGlobalBackupRoot(store) which requires
+    getGlobalSettingsDir. Full-suite shard 4 failed FN-7537 manual backup parity
+    with "store.getGlobalSettingsDir is not a function" after product drift.
+    */
+    getGlobalSettingsDir: vi.fn().mockReturnValue("/fake/global/.fusion"),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     createWorkflowStep: vi.fn(),
     getWorkflowStep: vi.fn(),
@@ -1402,7 +1409,15 @@ describe("Automation routes", () => {
             ...FAKE_SCHEDULE,
             command: "fn backup --create",
           });
-          const store = createMockStore({ getFusionDir: vi.fn().mockReturnValue(fusionDir) } as any);
+          /*
+          FNXC:DashboardTests 2026-07-18-09:45:
+          resolveGlobalBackupRoot reads getGlobalSettingsDir (not getFusionDir). Point both
+          at the temp fixture so FN-7537 still asserts the in-process backup intercept.
+          */
+          const store = createMockStore({
+            getFusionDir: vi.fn().mockReturnValue(fusionDir),
+            getGlobalSettingsDir: vi.fn().mockReturnValue(fusionDir),
+          } as any);
           const app = express();
           app.use(express.json());
           app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));
@@ -1445,7 +1460,10 @@ describe("Automation routes", () => {
               },
             ],
           });
-          const store = createMockStore({ getFusionDir: vi.fn().mockReturnValue(fusionDir) } as any);
+          const store = createMockStore({
+            getFusionDir: vi.fn().mockReturnValue(fusionDir),
+            getGlobalSettingsDir: vi.fn().mockReturnValue(fusionDir),
+          } as any);
           const app = express();
           app.use(express.json());
           app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));
@@ -1472,7 +1490,10 @@ describe("Automation routes", () => {
             ...FAKE_SCHEDULE,
             command: "fn backup --create",
           });
-          const store = createMockStore({ getFusionDir: vi.fn().mockReturnValue(fusionDir) } as any);
+          const store = createMockStore({
+            getFusionDir: vi.fn().mockReturnValue(fusionDir),
+            getGlobalSettingsDir: vi.fn().mockReturnValue(fusionDir),
+          } as any);
           const app = express();
           app.use(express.json());
           app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));

@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "Error al obtener proyectos"
     },
-    "testMode": "Modo de prueba — sin llamadas reales de IA"
+    "testMode": "Modo de prueba — sin llamadas reales de IA",
+    "migrationInProgress": "Migración de base de datos en curso — el panel se reconectará cuando termine."
   },
   "appName": "",
   "approval": {
@@ -1165,29 +1166,6 @@
     "manageConnection": "Administrar conexión",
     "retryConnection": "Reintentar conexión",
     "retrying": "Reintentando…"
-  },
-  "backgroundTasks": {
-    "dismissButton": "Descartar",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "Tareas de fondo",
-    "status": {
-      "failed": "Fallido",
-      "generating": "generando...",
-      "needsInput": "necesita entrada"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "Entrevista de hito",
-      "missionInterview": "Entrevista de misión",
-      "planning": "Planificación",
-      "sliceInterview": "Entrevista de segmento",
-      "subtask": "Desglose de subtareas"
-    }
   },
   "board": {
     "archived": "Archivado",
@@ -1602,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "Exportación / importación de organización",
+      "description": "Descarga o previsualiza un paquete de organización sin secretos.",
+      "export": {
+        "action": "Exportar paquete de organización",
+        "working": "Exportando…",
+        "success": "Exportación lista",
+        "error": "Error al exportar"
+      },
+      "import": {
+        "label": "JSON del paquete de organización",
+        "placeholder": "Pega un paquete de organización sin secretos",
+        "preview": "Vista previa de importación",
+        "previewing": "Generando vista previa…",
+        "previewReady": "Vista previa lista. Confirma para aplicar este paquete.",
+        "apply": "Aplicar importación",
+        "importing": "Importando…",
+        "invalid": "Pega un documento JSON de paquete de organización válido",
+        "error": "No se pudo previsualizar o importar el paquete",
+        "confirmTitle": "¿Importar paquete de organización?",
+        "confirmMessage": "Esto aplica la configuración previsualizada a este proyecto.",
+        "confirmApply": "Importar paquete"
+      },
+      "versions": {
+        "title": "Versiones de configuración",
+        "description": "Restaura cualquier versión de configuración del proyecto registrada.",
+        "loading": "Cargando versiones…",
+        "empty": "Aún no hay versiones de configuración.",
+        "loadError": "No se pudieron cargar las versiones de configuración",
+        "rollback": "Revertir",
+        "rollingBack": "Revirtiendo…",
+        "rollbackError": "No se pudo revertir la configuración",
+        "confirmTitle": "¿Revertir la configuración?",
+        "confirmMessage": "¿Restaurar esta versión? La reversión se registra como una nueva versión.",
+        "confirmRollback": "Revertir"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -1792,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "Artefactos de revisión"
     },
     "team": {
       "agent": "",
@@ -1870,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "Artefactos de revisión",
+      "empty": "Aún no hay artefactos de revisión disponibles."
     }
   },
   "comments": {
@@ -2007,6 +2027,7 @@
     "connectRemoteButton": "Conectarse a Fusion remoto",
     "couldNotStart": "No se puede iniciar Fusion local",
     "loading": "Cargando Fusion…",
+    "migrationInProgress": "Migración de base de datos en curso — puede tardar unos minutos.",
     "opening": "Abriendo…",
     "retry": "Reintentar",
     "runLocalButton": "Ejecutar Fusion localmente",
@@ -3322,7 +3343,8 @@
     "unpauseUnavailable": "La acción de reanudar no está disponible",
     "useProjectDefault": "Usar predeterminado del proyecto",
     "viewOptions": "Opciones de vista",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "Replanificar"
   },
   "mailbox": {
     "agent": "Agente",
@@ -5656,7 +5678,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "Sesiones de IA que necesitan entrada o han fallado",
     "resume": "Reanudar",
-    "retry": "Reintentar"
+    "retry": "Reintentar",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5906,7 +5932,25 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "Acciones rápidas del pie móvil",
+      "mobileNavPrimaryItemsHint": "Predeterminado: Panel, Tareas, Agentes, Misiones, Chat, Buzón. Añade destinos elegibles; los no seleccionados permanecen en Más.",
+      "addNavItem": "Añadir acción rápida",
+      "selectNavItem": "Elegir un destino",
+      "removeNavItem": "Quitar {{item}}",
+      "moveNavItemEarlier": "Mover {{item}} antes",
+      "moveNavItemLater": "Mover {{item}} después",
+      "ephemeralAgentTaskCreationPolicy": "Tareas de seguimiento de agentes efímeros",
+      "ephemeralAgentTaskCreationPolicyHint": "Sin valor predeterminado — si no se define, se usa Permitir. «Tras validación» envía una propuesta a tu buzón para aprobar con un clic; Denegar rechaza la creación de tareas de seguimiento.",
+      "ephemeralAgentTaskCreationPolicyAllow": "Permitir",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "Tras validación",
+      "ephemeralAgentTaskCreationPolicyDeny": "Denegar",
+      "reportModeHelp": "Cómo se archivan los informes in-app (error, feedback, idea, ayuda). Predeterminado: draft-review (el operador revisa un borrador antes de archivar).",
+      "reportModeByActionHelp": "Anulación opcional por acción del modo de informe del proyecto (error, feedback, idea o ayuda). Sin valor predeterminado: las acciones no definidas heredan reportMode.",
+      "reviewArtifacts": "Artefactos de revisión",
+      "reviewArtifactsHint": "Controla si las tareas futuras elegibles generan entregables de revisión. Los informes de usuario y la captura de actividad se mantienen independientes. Predeterminado: desactivado.",
+      "reportRoadmapDedup": "Comprobar la hoja de ruta antes de enviar informes",
+      "reportRoadmapDedupHelp": "Cuando está activado, las funciones coincidentes se muestran en línea en lugar de crear otro problema o discusión de GitHub. Predeterminado: desactivado."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5944,7 +5988,9 @@
       "gitLabAuthTokenHint": "",
       "dismissModalsByClickingOutsideHint": "",
       "skipConfirmationDialogs": "",
-      "skipConfirmationDialogsHint": ""
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6770,6 +6816,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Máximo de conexiones de servidor para el PostgreSQL integrado de Fusion. Se aplica al reiniciar Fusion. Rango: 32–2.000. Predeterminado: 500. PostgreSQL externo usa el límite de su proveedor.",
+      "embeddedConnectionCap": "Límite de conexiones de PostgreSQL integrado",
+      "embeddedConnectionCapError": "Introduce un valor entre 32 y 2.000.",
+      "advanced": "Ajustes avanzados de base de datos"
     }
   },
   "setup": {
@@ -8381,7 +8433,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "Replanificar"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9084,5 +9137,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "Ya está en la hoja de ruta",
+      "message": "Este informe coincide con una función que ya está planificada."
+    }
   }
 }

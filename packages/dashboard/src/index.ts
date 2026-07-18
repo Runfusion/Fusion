@@ -74,6 +74,10 @@ export {
   type KnowledgeQueryOptions,
 } from "./knowledge-index.js";
 export { KnowledgeIndexRefreshService } from "./knowledge-index-refresh.js";
+export { runReportPipeline, endorseDuplicate, resolveReportMode, type ReportInput, type ReportResult, type ReportPipelineDeps, type StructuredReport } from "./report-pipeline.js";
+export { createProjectRoadmapDedupSource, createRoadmapDedupSourceForTaskStore, type RoadmapCandidate, type RoadmapDedupSource, type RoadmapDedupSourceDeps } from "./report-roadmap-source.js";
+export { scrubReportPayload, scrubReportText, type ReportScrubContext } from "./report-scrub.js";
+export { selfCheckHelp, type HelpKnowledgeResult } from "./report-help-selfcheck.js";
 export {
   recordDeployment,
   ingestIncidentSignal,

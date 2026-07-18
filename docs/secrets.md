@@ -211,3 +211,13 @@ Track follow-up: **FN-5031** (missing `packages/core/src/__tests__/secrets-env.t
 - Pending advanced capabilities:
   - Master-key rotation UX and key lifecycle tooling
   - TTL/rotation automation, env-set profiles, KMS/Vault backends, per-node asymmetric sync
+
+## Organization bundles
+
+`fn org-export <file>` creates a portable bundle for one selected project plus global
+settings. Exports scrub credential values by default: provider keys, daemon and remote
+access tokens, webhook secrets, and inline `secretsEnv` values are omitted. MCP and
+other secret references remain key-only, so importing a bundle requires the destination
+operator to provision the referenced secrets. `secretsAccessPolicy` and
+`secretsSyncPassphraseConfigured` remain because they are configuration/state rather
+than secret values.

@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   source_message_id text,
   source_parent_task_id text,
   source_metadata jsonb,
+  proposal_claim_id text,
   checked_out_by text,
   checked_out_at text,
   checkout_node_id text,
@@ -1521,6 +1522,7 @@ CREATE INDEX IF NOT EXISTS "idxTasksUpdatedAt" ON project.tasks(updated_at DESC)
 -- filters on source_parent_task_id on every archive/delete. Without this index
 -- the gate is a full tasks-table scan. Sparse: most rows have NULL parent.
 CREATE INDEX IF NOT EXISTS "idxTasksSourceParentTaskId" ON project.tasks(source_parent_task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS "uqTasksProjectProposalClaimId" ON project.tasks(project_id, proposal_claim_id) WHERE proposal_claim_id IS NOT NULL;
 -- FNXC:TaskStoreReads 2026-06-26-10:00:
 -- Partial index for the hot kanban / board-read query shape
 -- WHERE deleted_at IS NULL AND "column" = ? (every live board hydration).

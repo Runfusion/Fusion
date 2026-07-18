@@ -253,6 +253,30 @@ describe("TaskDetailModal", () => {
       expect(css).not.toMatch(/@media \(max-width: 640px\)\s*\{[^}]*\.detail-meta-inline-controls\s*\{[^}]*flex-direction:\s*column;/);
     });
 
+    it("gives every task-detail inline action the shared square tokenized box across themes (FN-8287)", () => {
+      const css = readDashboardStylesSource();
+      const sharedSizingSelector = [
+        ".detail-inline-attach",
+        ".detail-inline-github-toggle",
+        ".detail-priority-trigger",
+        ".detail-oversight-menu-trigger",
+        ".detail-execution-mode-toggle",
+      ].join(",\n");
+      const sharedSizingBlock = getCssRuleBlock(css, sharedSizingSelector);
+
+      // FNXC:TaskDetail 2026-07-17-17:30: Attach, GitHub, Priority,
+      // Oversight, and Fast must read one common rule so theme-specific
+      // spacing/icon tokens cannot desynchronize their square footprints.
+      expect(sharedSizingBlock).toContain("height: var(--detail-priority-control-min-height);");
+      expect(sharedSizingBlock).toContain("min-height: var(--detail-priority-control-min-height);");
+      expect(sharedSizingBlock).toContain("width: var(--detail-priority-control-min-height);");
+      expect(sharedSizingBlock).toContain("min-width: var(--detail-priority-control-min-height);");
+      expect(sharedSizingBlock).toContain("box-sizing: border-box;");
+      expect(sharedSizingBlock).toContain("border-width: var(--btn-border-width);");
+      expect(sharedSizingBlock).toContain("border-color: var(--border);");
+      expect(sharedSizingBlock).toContain("border-radius: var(--detail-control-border-radius);");
+    });
+
     it.skip("unifies border/radius/height across the Priority, Execution-mode, and Oversight quick controls (FN-7585)", () => {
       const css = readDashboardStylesSource();
 

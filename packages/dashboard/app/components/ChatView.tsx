@@ -99,6 +99,9 @@ export interface ChatViewProps {
   onMaximize?: () => void;
   onMinimize?: () => void;
   onClose?: () => void;
+  /** Optional external composer seed; paired with a nonce so repeated opens reseed intentionally. */
+  initialComposerDraft?: string;
+  initialComposerDraftNonce?: number;
 }
 
 // Keep a generous cap so pasted multi-paragraph text stays visible while
@@ -107,6 +110,12 @@ const CHAT_INPUT_MAX_HEIGHT_PX = 640;
 const TABLET_INPUT_MAX_HEIGHT_PX = 200;
 const CHAT_CONTEXT_MENU_FALLBACK_WIDTH_PX = 200;
 const CHAT_CONTEXT_MENU_VIEWPORT_MARGIN_PX = 8;
+
+/** Returns an issue or pull-request URL as a standalone composer line. */
+export function buildIssueChatPrefill(url: string): string {
+  const trimmedUrl = url.trim();
+  return trimmedUrl ? `${trimmedUrl}\n\n` : "";
+}
 
 export function resolveChatContextMenuPosition(
   anchorX: number,
@@ -521,7 +530,7 @@ interface RoomContext {
   memberIds: ReadonlySet<string>;
 }
 
-export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose, chatCommandContext, initialComposerDraft, initialComposerDraftNonce }: ChatViewProps) {
   const { t } = useTranslation("app");
   useEffect(() => {
     recordResumeEvent({
@@ -784,6 +793,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   // quick re-tap never scrolls the document while iOS is raising the keyboard.
   const blurScrollResetTimeoutRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const appliedComposerDraftNonceRef = useRef<number | undefined>(undefined);
+  const focusComposerAfterPrefillRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const mentionCursorPosRef = useRef(0);
@@ -903,6 +914,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     chatScope === "rooms" ? rooms.activeRoom?.id : activeSession?.id,
   );
   const lastDraftKeyRef = useRef<string | null>(activeDraftKey);
+  const skipNextDraftRestoreRef = useRef(false);
 
   useEffect(() => {
     if (activeDraftKey === lastDraftKeyRef.current) {
@@ -910,6 +922,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
 
     lastDraftKeyRef.current = activeDraftKey;
+    if (skipNextDraftRestoreRef.current) {
+      skipNextDraftRestoreRef.current = false;
+      return;
+    }
     setMessageInput(getPersistedChatDraft(activeDraftKey));
   }, [activeDraftKey]);
 
@@ -1645,8 +1661,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         setShowNewDialog(false);
         // On mobile, hide sidebar after selecting
         if (isChatMobile) setSidebarVisible(false);
+        return true;
       } catch {
         addToast(t("chat.failedToCreateSession", "Failed to create chat session"), "error");
+        return false;
       }
     },
     [createSession, addToast, isChatMobile, t],
@@ -1693,7 +1711,57 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   useLayoutEffect(() => {
     resizeComposer();
+    if (focusComposerAfterPrefillRef.current) {
+      focusComposerAfterPrefillRef.current = false;
+      inputRef.current?.focus();
+    }
   }, [chatScope, messageInput, activeSession?.id, rooms.activeRoom?.id, resizeComposer]);
+
+  /*
+  FNXC:ChatComposerPrefill 2026-07-30-12:00:
+  The GitHub Import Chat action seeds, but never sends, a selected issue or PR link. A nonce makes
+  repeated opens deliberate reseeds rather than render-time clobbers; each seed returns Chat to
+  direct scope and focuses the composer so the operator can add their question immediately.
+
+  FNXC:ChatComposerPrefill 2026-07-30-12:30:
+  Draft-restore suppression is only armed when the prefill changes draft scope/session. If an
+  always-default session creation fails while already direct, leave other sessions' saved drafts
+  eligible for restoration instead of leaking the imported link into the next selected session.
+  */
+  useEffect(() => {
+    if (
+      initialComposerDraftNonce === undefined ||
+      initialComposerDraftNonce === appliedComposerDraftNonceRef.current ||
+      !initialComposerDraft?.trim()
+    ) {
+      return;
+    }
+
+    appliedComposerDraftNonceRef.current = initialComposerDraftNonce;
+    const seedComposer = (willChangeDraftTarget: boolean) => {
+      if (willChangeDraftTarget) {
+        skipNextDraftRestoreRef.current = true;
+      }
+      setChatScope("direct");
+      focusComposerAfterPrefillRef.current = true;
+      setMessageInput(initialComposerDraft);
+    };
+
+    if (!isStreaming && chatSettings?.chatNewSessionMode === "always-default" && chatDefaultTarget) {
+      const input = chatDefaultTarget.kind === "agent"
+        ? { agentId: chatDefaultTarget.agentId }
+        : {
+            agentId: FN_AGENT_ID,
+            modelProvider: chatDefaultTarget.modelProvider,
+            modelId: chatDefaultTarget.modelId,
+            thinkingLevel: chatDefaultTarget.thinkingLevel,
+          };
+      void handleCreateSession(input).then((created) => seedComposer(created || chatScope !== "direct"));
+      return;
+    }
+
+    seedComposer(chatScope !== "direct");
+  }, [chatDefaultTarget, chatScope, chatSettings?.chatNewSessionMode, handleCreateSession, initialComposerDraft, initialComposerDraftNonce, isStreaming, resizeComposer]);
 
   const clearComposerState = useCallback(() => {
     setMessageInput("");

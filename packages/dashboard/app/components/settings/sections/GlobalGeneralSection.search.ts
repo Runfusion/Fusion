@@ -43,6 +43,15 @@ export const globalGeneralSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-general",
+    key: "proactiveTaskChatEnabled",
+    labelKey: "settings.globalGeneral.enableProactiveTaskChat",
+    labelFallback: " Enable proactive task-chat updates ",
+    helpKey: "settings.globalGeneral.enableProactiveTaskChatHint",
+    helpFallback: " When enabled, Task chat reports step progress, failures, reviews, and rollbacks in real time. Default: disabled. ",
+    keywords: ["task chat", "progress", "status", "rollback", "failure"],
+  },
+  {
+    sectionId: "global-general",
     key: "updateCheckFrequency",
     labelKey: "settings.globalGeneral.frequency",
     labelFallback: "Frequency",

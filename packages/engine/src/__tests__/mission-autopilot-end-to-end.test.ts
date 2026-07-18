@@ -72,6 +72,7 @@ function makeHarness({
     handlers.set(event, [...(handlers.get(event) ?? []), cb]);
   });
 
+  let missionStore: any;
   const taskStore = {
     getTask: vi.fn(async () => task),
     getRootDir: vi.fn(() => "/tmp"),
@@ -83,11 +84,13 @@ function makeHarness({
     moveTask: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
+    updateSettings: vi.fn(async () => ({})),
+    getMissionStore: vi.fn(() => missionStore),
     on,
     off: vi.fn(),
   } as unknown as TaskStore;
 
-  const missionStore: any = {
+  missionStore = {
     getMission: vi.fn(() => mission),
     listMissions: vi.fn(() => [mission]),
     updateMission: vi.fn((_id: string, updates: any) => ({ ...mission, ...updates })),
@@ -121,8 +124,10 @@ function makeHarness({
       }
       return next;
     }),
-    listAssertionsForFeature: vi.fn(() => (withAssertions ? [{ id: "CA-1", milestoneId: milestone.id, title: "assert", assertion: "works", status: "pending", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] : [])),
-    startValidatorRun: vi.fn(() => ({ id: "VR-001", featureId: feature.id, milestoneId: milestone.id, sliceId: "SL-001", status: "running", triggerType: "task_completion", implementationAttempt: 1, validatorAttempt: 1, startedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
+    listAssertionsForFeature: vi.fn(async () => (withAssertions ? [{ id: "CA-1", milestoneId: milestone.id, title: "assert", assertion: "works", status: "pending", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] : [])),
+    ensureFeatureAssertionLinked: vi.fn(async () => (withAssertions ? [{ id: "CA-1", milestoneId: milestone.id, title: "generated assert", assertion: "works", status: "pending", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] : [])),
+    listGoalIdsForMission: vi.fn(async () => []),
+    startValidatorRun: vi.fn(async () => ({ id: "VR-001", featureId: feature.id, milestoneId: milestone.id, sliceId: "SL-001", status: "running", triggerType: "task_completion", implementationAttempt: 1, validatorAttempt: 1, startedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
     completeValidatorRun: vi.fn(),
     recordValidatorFailures: vi.fn(),
     createGeneratedFixFeature: vi.fn(),
@@ -137,9 +142,10 @@ function makeHarness({
     const f = missionStore.getFeature(featureId);
     if (f?.taskId) await autopilot.handleTaskCompletion(f.taskId);
   } } });
-  vi.spyOn(loop as any, "runValidation").mockImplementation(
-    runValidationImpl ?? (async () => ({ status: "pass", assertions: [], summary: "ok" })),
-  );
+  vi.spyOn(loop as any, "runValidation").mockImplementation(async () => ({
+    result: await (runValidationImpl ?? (async () => ({ status: "pass" as const, assertions: [], summary: "ok" })))(),
+    inspection: { workspaceStale: false },
+  }));
   loop.start();
 
   const scheduler = new Scheduler(taskStore, {
@@ -159,8 +165,6 @@ function makeHarness({
     task.column = to;
     const callbacks = handlers.get("task:moved") ?? [];
     await Promise.all(callbacks.map((cb) => cb({ task, from: "in-progress", to })));
-    await Promise.resolve();
-    await Promise.resolve();
   };
 
   scheduler.start();
@@ -174,10 +178,11 @@ describe("mission autopilot end-to-end wiring", () => {
 
     const processSpy = vi.spyOn(h.loop, "processTaskOutcome");
     await h.emitTaskMoved("done");
+    await vi.waitFor(() => expect(h.missionStore.getFeatureByTaskId("FN-001")?.status).toBe("done"));
 
     expect(h.missionStore.getFeatureByTaskId("FN-001")?.status).toBe("done");
     expect(processSpy).toHaveBeenCalledWith("FN-001");
-    expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok");
     expect(h.slices.get("SL-001").status).toBe("complete");
     expect(h.activateSpy).toHaveBeenCalledWith("M-001");
@@ -189,6 +194,7 @@ describe("mission autopilot end-to-end wiring", () => {
     const h = makeHarness({ withAssertions: false });
 
     await h.emitTaskMoved("done");
+    await vi.waitFor(() => expect(h.slices.get("SL-001").status).toBe("complete"));
 
     expect(h.missionStore.startValidatorRun).not.toHaveBeenCalled();
     expect(h.slices.get("SL-001").status).toBe("complete");
@@ -202,7 +208,7 @@ describe("mission autopilot end-to-end wiring", () => {
 
     await h.loop.processTaskOutcome("FN-001");
 
-    expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok");
     expect(h.missionStore.getFeature("F-001")?.status).toBe("done");
     expect(h.slices.get("SL-001").status).toBe("complete");
@@ -239,6 +245,7 @@ describe("mission autopilot end-to-end wiring", () => {
     });
 
     await h.emitTaskMoved("done");
+    await vi.waitFor(() => expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "error", "runtime unavailable"));
 
     expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "error", "runtime unavailable");
     expect(h.missionStore.logMissionEvent).toHaveBeenCalledWith(

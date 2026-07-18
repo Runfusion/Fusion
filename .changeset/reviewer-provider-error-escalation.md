@@ -1,7 +1,0 @@
----
-"@runfusion/fusion": patch
----
-
-summary: Stop reviewer rate limits and network blips from looping and spamming the task log.
-category: fix
-dev: The reviewer was the only AI lane that never classified provider errors, so a 429 became an `UNAVAILABLE` verdict. With no validator fallback configured the fallback ladder re-ran the SAME model instantly, and `fn_review_step` told the agent "code review remains blocking; retry once" — bounding the loop with prompt text rather than code. The tool's catch-all also swallowed the error into tool output, so `withRateLimitRetry`, `UsageLimitPauser`, and `RetryStormError` never fired. Reviewer provider failures now throw `ReviewerProviderError` (usage-limit → global pause; transient → bounded recovery), transient blips retry in-lane with jittered backoff via `withRetry`, code review gets a real `MAX_CODE_REVIEW_UNAVAILABLE_RETRIES` counter, and the fatal escapes `agentWork` via `throwDeferredReviewerFatal` (pi-agent-core converts tool throws into `tool_error` results, so a tool cannot throw out of `session.prompt()`). Separately, `AgentLogType` gains `status` for complete engine messages: `text` means "streamed delta" and is re-glued with `join("")`, which is why N standalone markers rendered as one run-on string.

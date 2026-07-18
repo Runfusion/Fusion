@@ -96,6 +96,7 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       missionId: task.missionId,
       sliceId: task.sliceId,
       assigneeUserId: task.assigneeUserId,
+      mergeDetails: task.mergeDetails,
     };
   }
 

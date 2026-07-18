@@ -8,6 +8,7 @@ import { useConfirm } from "../../hooks/useConfirm";
 // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Concurrency card adopts the shared global-concurrency hook so it and the footer EngineControlMenu read/write ONE source of truth (no more duplicated fetch/debounce/clobber logic).
 import { useGlobalConcurrency } from "../../hooks/useGlobalConcurrency";
 import { ThemeDropdown } from "../ThemeDropdown";
+import { OrgPortabilityControls } from "./OrgPortabilityControls";
 import type { TaskView } from "../../hooks/useViewState";
 import "./CommandCenterControls.css";
 
@@ -387,6 +388,8 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
           />
         </section>
+
+        <OrgPortabilityControls projectId={projectId} onSettingsRefresh={refresh} />
 
         <section className="card cc-controls-card cc-controls-card--concurrency" data-testid="cc-controls-concurrency">
           <div className="cc-controls-card-header">

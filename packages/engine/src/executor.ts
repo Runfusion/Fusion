@@ -17,6 +17,7 @@ import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import { RetryStormError, serializeRetryStormError, isExperimentalFeatureEnabled, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
+import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
 import {
@@ -69,9 +70,6 @@ import {
   buildReviewRollbackFailureMessage,
   buildReviewVerdictMessage,
   buildStepFailureMessage,
-  buildStepSkippedMessage,
-  buildStepStartMessage,
-  buildStepSuccessMessage,
   emitProactiveStatus,
   sanitizeFailureReason,
 } from "./proactive-status.js";
@@ -232,6 +230,8 @@ import {
   createListAgentsTool,
   createMemoryTools,
   createGoalRetrievalTools,
+  createMissionTools,
+  createIdeationTools,
   createWebFetchTool,
   createReadMessagesTool,
   createReflectOnPerformanceTool,
@@ -1635,6 +1635,8 @@ export interface TaskExecutorOptions {
   onStart?: (task: Task, worktreePath: string) => void;
   onComplete?: (task: Task) => void;
   onError?: (task: Task, error: Error) => void;
+  /** Testable, best-effort completion-deliverable seam; production uses generateFeatureVideo. */
+  reviewArtifactGenerator?: (options: GenerateFeatureVideoOptions) => Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>;
   /** Optional runtime-owned dispatch seam that lets a flag-gated workflow
    * interpreter own the authoritative lifecycle for default coding tasks.
    * Return true when the task was fully handled and legacy execute() should stop. */
@@ -2236,6 +2238,7 @@ export class TaskExecutor {
    */
   private async handoffTaskToReview(task: Task, reason: string, runId = this.getRunContextFor(task.id)?.runId): Promise<Task> {
     const agentId = this.getRunContextFor(task.id)?.agentId;
+    await this.generateCompletionFeatureVideo(task);
     if (reason.startsWith("workflow-")) {
       await ensureWorkflowCompletionSummary(this.store, task as TaskDetail, {
         reason,
@@ -2268,6 +2271,35 @@ export class TaskExecutor {
     await this.maybeObserveWorkflowParity(task.id, settings);
 
     return handedOff;
+  }
+
+  /*
+  FNXC:ReviewArtifacts 2026-07-19-10:00:
+  A successful executor handoff may offer reviewers a short local feature-video, but
+  capture is strictly best-effort. Bound and swallow this optional work before the
+  review transition so browser, scenario, and artifact failures never delay or fail it.
+  */
+  private async generateCompletionFeatureVideo(task: Task): Promise<void> {
+    try {
+      const [settings, detail] = await Promise.all([this.store.getSettings(), this.store.getTask(task.id)]);
+      const generator = this.options.reviewArtifactGenerator ?? generateFeatureVideo;
+      const result = await this.awaitFeatureVideoBounded(generator({ store: this.store, task: detail ?? task, settings }));
+      executorLog.log(`${task.id}: feature-video ${result.status}${"reason" in result ? ` (${result.reason})` : ""}`);
+    } catch (error) {
+      executorLog.warn(`${task.id}: feature-video capture ignored: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async awaitFeatureVideoBounded(result: Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>): Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        result,
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("feature-video timeout")), 20_000); }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   private getModelRegistry(): Promise<ModelRegistry> {
@@ -11046,6 +11078,9 @@ export class TaskExecutor {
           // Pass agentStore and messageStore for delegation and messaging tools
           agentStore: this.options.agentStore,
           messageStore: this.options.messageStore,
+          callerIsEphemeral: !stepIdentityAgent || isEphemeralAgent(stepIdentityAgent),
+          sourceTaskId: task.id,
+          sourceAgentId: stepIdentityAgent?.id,
           taskEnv,
           onStepStart: (stepIndex) => {
             this.options.stuckTaskDetector?.recordProgress(task.id);
@@ -11053,7 +11088,6 @@ export class TaskExecutor {
               this.store.updateStep(task.id, stepIndex, "in-progress", stepProjectionOptions).catch((err) => {
                 executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
               });
-              void emitProactiveStatus(this.store, task.id, buildStepStartMessage(stepIndex, detail.steps[stepIndex]?.name), "executor");
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status to in-progress: ${err}`);
             }
@@ -11064,12 +11098,16 @@ export class TaskExecutor {
               this.store.updateStep(task.id, stepIndex, result.success ? "done" : "skipped", stepProjectionOptions).catch((err) => {
                 executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
               });
-              const stepName = detail.steps[stepIndex]?.name;
               const safeReason = result.success ? undefined : sanitizeFailureReason(result.error);
-              const message = result.success
-                ? buildStepSuccessMessage(stepIndex, stepName)
-                : buildStepFailureMessage(stepIndex, stepName, safeReason!);
-              void emitProactiveStatus(this.store, task.id, message, "executor", safeReason);
+              if (!result.success) {
+                void emitProactiveStatus(
+                  this.store,
+                  task.id,
+                  buildStepFailureMessage(stepIndex, detail.steps[stepIndex]?.name, safeReason!),
+                  "executor",
+                  safeReason,
+                );
+              }
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
             }
@@ -11609,7 +11647,7 @@ export class TaskExecutor {
         this.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stepCheckpoints, stuckDetector),
         this.createTaskLogTool(task.id),
         this.createTaskLogsReadTool(task.id),
-        this.createTaskCreateTool(!identityAgent || isEphemeralAgent(identityAgent)),
+        this.createTaskCreateTool(!identityAgent || isEphemeralAgent(identityAgent), task.id, identityAgent?.id),
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }, audit),
         createRunVerificationTool({
@@ -11665,6 +11703,8 @@ export class TaskExecutor {
             getSettings: async () => this.store.getSettings(),
           })
           : []),
+        ...createMissionTools(this.store),
+        ...createIdeationTools(this.store),
         ...createGoalRetrievalTools(this.store, {
           runContext: {
             runId: engineRunContext.runId,
@@ -13814,18 +13854,6 @@ export class TaskExecutor {
           };
         }
 
-        // FNXC:ProactiveChatStatus 2026-07-16-12:45:
-        // Only store-accepted transitions narrate progress. A skipped step is terminal work too,
-        // so it needs its own status row rather than silently looking like an ignored no-op.
-        const narration = status === "in-progress"
-          ? buildStepStartMessage(stepIndex, stepInfo.name)
-          : status === "done"
-            ? buildStepSuccessMessage(stepIndex, stepInfo.name)
-            : status === "skipped"
-              ? buildStepSkippedMessage(stepIndex, stepInfo.name)
-              : null;
-        void emitProactiveStatus(this.store, taskId, narration, "executor");
-
         return {
           content: [{
             type: "text" as const,
@@ -13849,8 +13877,8 @@ export class TaskExecutor {
   FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
   A task-execution session is an ephemeral worker when no permanent identity agent governs it (default executor-FN-XXXX worker) or the governing agent is itself ephemeral. Pass that through so fn_task_create honors the project `ephemeralAgentsCanCreateTasks` toggle; permanent-agent sessions are never gated.
   */
-  private createTaskCreateTool(callerIsEphemeral: boolean): ToolDefinition {
-    return sharedCreateTaskCreateTool(this.store, { sourceType: "api" }, { rootDir: this.rootDir, callerIsEphemeral });
+  private createTaskCreateTool(callerIsEphemeral: boolean, sourceTaskId?: string, sourceAgentId?: string): ToolDefinition {
+    return sharedCreateTaskCreateTool(this.store, { sourceType: "api", sourceAgentId, sourceParentTaskId: sourceTaskId }, { rootDir: this.rootDir, callerIsEphemeral, sourceTaskId, sourceAgentId, messageStore: this.options.messageStore });
   }
 
   private createTaskDocumentWriteTool(taskId: string): ToolDefinition {

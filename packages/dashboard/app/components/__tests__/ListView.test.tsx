@@ -460,6 +460,44 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  it("renders the active Planning badge for a fresh status-null triage card in grouped mobile cards", () => {
+    const viewportSpy = mockMobileViewport();
+    try {
+      renderListView({
+        tasks: [createMockTask({
+          id: "FN-8300-mobile",
+          status: null as any,
+          recentAgentActivityAt: new Date().toISOString(),
+        })],
+      });
+
+      const card = screen.getByText("FN-8300-mobile").closest(".list-card") as HTMLElement;
+      expect(card).toHaveClass("agent-active");
+      expect(within(card).getByLabelText("Planning")).toHaveClass("list-status-badge", "pulsing");
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("renders the active Planning badge for a fresh status-null triage card in desktop table rows", () => {
+    const viewportSpy = mockDesktopViewport();
+    try {
+      renderListView({
+        tasks: [createMockTask({
+          id: "FN-8300-desktop",
+          status: null as any,
+          recentAgentActivityAt: new Date().toISOString(),
+        })],
+      });
+
+      const row = screen.getByText("FN-8300-desktop").closest("tr") as HTMLElement;
+      expect(row).toHaveClass("agent-active");
+      expect(within(row).getByLabelText("Planning")).toHaveClass("list-status-badge", "pulsing");
+    } finally {
+      viewportSpy.mockRestore();
+    }
+  });
+
   it("falls back malformed task columns to Planning group instead of crashing", () => {
     const malformedTask = {
       ...createMockTask({ id: "FN-404" }),

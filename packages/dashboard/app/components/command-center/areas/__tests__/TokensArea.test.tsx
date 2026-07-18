@@ -7,6 +7,7 @@ import type { DateRange } from "../../DateRangePicker";
 const apiMock = vi.fn();
 
 vi.mock("../../../../api/legacy", () => ({
+  fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
   withProjectId: (path: string, projectId?: string) =>
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,

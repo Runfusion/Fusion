@@ -1,5 +1,5 @@
 import "./MailboxModal.css";
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useContext, useMemo, useRef, type CSSProperties } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -39,6 +39,7 @@ import {
 } from "../api";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
+import { MailboxTaskProposal } from "./MailboxTaskProposal";
 import { MessageComposer } from "./MessageComposer";
 import { ViewHeader } from "./ViewHeader";
 import { WorktrunkInstallApprovalDetails } from "./WorktrunkInstallApprovalDetails";
@@ -46,6 +47,7 @@ import { GatedActionApprovalDetails } from "./GatedActionApprovalDetails";
 import { subscribeSse } from "../sse-bus";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
@@ -263,6 +265,7 @@ export function MailboxView({
   );
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
+  const navigationHistory = useContext(NavigationHistoryContext);
   const isSplitPane = !isMobile;
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readMailboxSidebarWidth(projectId));
   const splitLayoutRef = useRef<HTMLDivElement>(null);
@@ -582,6 +585,7 @@ export function MailboxView({
         "message:received": onMailboxUpdate,
         "message:read": onMailboxUpdate,
         "message:deleted": onMailboxUpdate,
+        "message:updated": onMailboxUpdate,
         "approval:requested": onMailboxUpdate,
         "approval:updated": onMailboxUpdate,
         "approval:decided": onMailboxUpdate,
@@ -682,6 +686,11 @@ export function MailboxView({
     setConversationMessages([]);
   }, [consumeCurrentDeepLink]);
 
+  const dismissMessage = useCallback(() => {
+    navigationHistory?.removeNav(handleCloseMessage);
+    handleCloseMessage();
+  }, [handleCloseMessage, navigationHistory]);
+
   const handleMarkAllRead = useCallback(async () => {
     try {
       const result = await markAllMessagesRead(projectId);
@@ -706,8 +715,7 @@ export function MailboxView({
     consumeCurrentDeepLink();
     try {
       await deleteMessage(id, projectId);
-      setSelectedMessage(null);
-      setConversationMessages([]);
+      dismissMessage();
       // Refresh current tab
       if (activeTab === "inbox") loadInbox();
       else if (activeTab === "outbox") loadOutbox();
@@ -717,31 +725,44 @@ export function MailboxView({
     } catch {
       addToast?.("Failed to delete message", "error");
     }
-  }, [projectId, activeTab, selectedAgentId, loadInbox, loadOutbox, loadAgentMailbox, loadAllAgentsMailbox, addToast, consumeCurrentDeepLink]);
+  }, [projectId, activeTab, selectedAgentId, loadInbox, loadOutbox, loadAgentMailbox, loadAllAgentsMailbox, addToast, consumeCurrentDeepLink, dismissMessage]);
 
   const handleReply = useCallback((message: Message) => {
-    consumeCurrentDeepLink();
+    dismissMessage();
     setComposeRecipient({ id: message.fromId, type: message.fromType });
     setComposeReplyContext({
       messageId: message.id,
       preview: messagePreview(message.content, 120),
     });
     setShowComposer(true);
-  }, [consumeCurrentDeepLink]);
+  }, [dismissMessage]);
 
-  const handleMessageSent = useCallback(() => {
+  const handleCloseComposer = useCallback(() => {
+    consumeCurrentDeepLink();
     setShowComposer(false);
     setComposeRecipient(null);
     setComposeReplyContext(null);
+  }, [consumeCurrentDeepLink]);
+
+  const dismissComposer = useCallback(() => {
+    navigationHistory?.removeNav(handleCloseComposer);
+    handleCloseComposer();
+  }, [handleCloseComposer, navigationHistory]);
+
+  const handleMessageSent = useCallback(() => {
+    dismissComposer();
     addToast?.("Message sent", "success");
     // Refresh current tab
     if (activeTab === "outbox") loadOutbox();
     else if (activeTab === "agents" && selectedAgentId === ALL_AGENTS_MAILBOX_ID) loadAllAgentsMailbox();
     else if (activeTab === "agents" && selectedAgentId) loadAgentMailbox(selectedAgentId);
     refreshUnreadCount();
-  }, [activeTab, loadOutbox, selectedAgentId, loadAgentMailbox, loadAllAgentsMailbox, addToast, refreshUnreadCount]);
+  }, [activeTab, loadOutbox, selectedAgentId, loadAgentMailbox, loadAllAgentsMailbox, addToast, refreshUnreadCount, dismissComposer]);
 
   const handleOpenCompose = useCallback(() => {
+    if (isMobile && selectedMessage) {
+      dismissMessage();
+    }
     consumeCurrentDeepLink();
     // Pre-fill recipient from selected agent if available
     if (activeTab === "agents" && selectedAgentId && selectedAgentId !== ALL_AGENTS_MAILBOX_ID) {
@@ -751,14 +772,9 @@ export function MailboxView({
     }
     setComposeReplyContext(null);
     setShowComposer(true);
-  }, [activeTab, selectedAgentId, consumeCurrentDeepLink]);
+  }, [activeTab, selectedAgentId, consumeCurrentDeepLink, dismissMessage, isMobile, selectedMessage]);
 
-  const handleComposeCancel = useCallback(() => {
-    consumeCurrentDeepLink();
-    setShowComposer(false);
-    setComposeRecipient(null);
-    setComposeReplyContext(null);
-  }, [consumeCurrentDeepLink]);
+  const handleComposeCancel = dismissComposer;
 
   const handleOpenApproval = useCallback(async (request: ApprovalRequestSummary) => {
     consumeCurrentDeepLink();
@@ -770,6 +786,15 @@ export function MailboxView({
       addToast?.("Failed to load approval request", "error");
     }
   }, [projectId, addToast, consumeCurrentDeepLink]);
+
+  const handleCloseApproval = useCallback(() => {
+    setSelectedApproval(null);
+  }, []);
+
+  const dismissApproval = useCallback(() => {
+    navigationHistory?.removeNav(handleCloseApproval);
+    handleCloseApproval();
+  }, [handleCloseApproval, navigationHistory]);
 
   const handleApprovalDecision = useCallback(async (decision: "approve" | "deny") => {
     if (!selectedApproval || approvalDecisionLoading) return;
@@ -788,6 +813,48 @@ export function MailboxView({
     }
   }, [selectedApproval, approvalDecisionLoading, approvalComment, projectId, loadApprovals, approvalSubTab, addToast]);
 
+  /*
+  FNXC:MailboxMobile 2026-07-16-16:00:
+  Mobile mailbox overlays must register modal history entries so iOS swipe-back,
+  Android native Back, and browser Back dismiss the current overlay before leaving
+  the mailbox. Programmatic closers remove their matching entries; nullable context
+  keeps the provider-less MailboxView test and embedded renders operational.
+  */
+  useEffect(() => {
+    if (!isMobile || !selectedMessage || showComposer || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: handleCloseMessage });
+  }, [handleCloseMessage, isMobile, navigationHistory, selectedMessage, showComposer]);
+
+  useEffect(() => {
+    if (!isMobile || !showComposer || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: handleCloseComposer });
+  }, [handleCloseComposer, isMobile, navigationHistory, showComposer]);
+
+  useEffect(() => {
+    if (!isMobile || !selectedApproval || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: handleCloseApproval });
+  }, [handleCloseApproval, isMobile, navigationHistory, selectedApproval]);
+
+  const handleSelectTab = useCallback((tab: MailboxTab) => {
+    consumeCurrentDeepLink();
+    dismissMessage();
+    dismissApproval();
+    setActiveTab(tab);
+  }, [consumeCurrentDeepLink, dismissApproval, dismissMessage]);
+
+  const handleAgentSelection = useCallback((agentId: string) => {
+    consumeCurrentDeepLink();
+    dismissMessage();
+    setSelectedAgentId(agentId);
+    setAgentSubTab("inbox");
+  }, [consumeCurrentDeepLink, dismissMessage]);
+
+  const handleAgentSubTab = useCallback((tab: "inbox" | "outbox") => {
+    consumeCurrentDeepLink();
+    dismissMessage();
+    setAgentSubTab(tab);
+  }, [consumeCurrentDeepLink, dismissMessage]);
+
   // ── Render ────────────────────────────────────────────────────────────
 
   const renderMessageDetail = () => {
@@ -801,7 +868,7 @@ export function MailboxView({
           {isMobile && (
             <button
               className="btn btn-sm btn-secondary"
-              onClick={handleCloseMessage}
+              onClick={dismissMessage}
               data-testid="mailbox-back-to-list"
             >
               ← {t("mailbox.back", "Back")}
@@ -885,6 +952,7 @@ export function MailboxView({
                     taskId={msg.metadata?.taskId}
                     onOpenTask={onOpenTask}
                   />
+                  <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                 </div>
               );
             })}
@@ -911,6 +979,7 @@ export function MailboxView({
               taskId={selectedMessage.metadata?.taskId}
               onOpenTask={onOpenTask}
             />
+            <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
           </>
         )}
       </div>
@@ -993,14 +1062,14 @@ export function MailboxView({
           <div className="mailbox-approval-filters" data-testid="mailbox-approval-filters">
             <button
               className={`btn btn-sm btn-secondary mailbox-agent-subtab ${approvalSubTab === "pending" ? "active" : ""}`}
-              onClick={() => { setApprovalSubTab("pending"); setSelectedApproval(null); }}
+              onClick={() => { setApprovalSubTab("pending"); dismissApproval(); }}
               data-testid="mailbox-approval-filter-pending"
             >
               {t("mailbox.pending", "Pending")}
             </button>
             <button
               className={`btn btn-sm btn-secondary mailbox-agent-subtab ${approvalSubTab === "history" ? "active" : ""}`}
-              onClick={() => { setApprovalSubTab("history"); setSelectedApproval(null); }}
+              onClick={() => { setApprovalSubTab("history"); dismissApproval(); }}
               data-testid="mailbox-approval-filter-history"
             >
               {t("mailbox.history", "History")}
@@ -1049,7 +1118,7 @@ export function MailboxView({
                   <select
                     className="message-composer-select mailbox-agent-select"
                     value={selectedAgentId}
-                    onChange={(e) => { consumeCurrentDeepLink(); setSelectedAgentId(e.target.value); setAgentSubTab("inbox"); setSelectedMessage(null); }}
+                    onChange={(e) => handleAgentSelection(e.target.value)}
                     data-testid="mailbox-agent-select"
                   >
                     <option value={ALL_AGENTS_MAILBOX_ID}>{t("mailbox.allAgents", "All agents")}</option>
@@ -1074,7 +1143,7 @@ export function MailboxView({
                 <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
                   <button
                     className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
-                    onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("inbox"); setSelectedMessage(null); }}
+                    onClick={() => handleAgentSubTab("inbox")}
                     data-testid="mailbox-agent-subtab-inbox"
                   >
                     <InboxIcon size={12} />
@@ -1085,7 +1154,7 @@ export function MailboxView({
                   </button>
                   <button
                     className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
-                    onClick={() => { consumeCurrentDeepLink(); setAgentSubTab("outbox"); setSelectedMessage(null); }}
+                    onClick={() => handleAgentSubTab("outbox")}
                     data-testid="mailbox-agent-subtab-outbox"
                   >
                     <Send size={12} />
@@ -1213,7 +1282,7 @@ export function MailboxView({
       return (
         <div className="mailbox-message-detail mailbox-approval-detail" data-testid="mailbox-approval-detail">
           {isMobile && (
-            <button className="btn btn-sm btn-secondary" onClick={() => setSelectedApproval(null)} data-testid="mailbox-approval-back-to-list">← {t("mailbox.back", "Back")}</button>
+            <button className="btn btn-sm btn-secondary" onClick={dismissApproval} data-testid="mailbox-approval-back-to-list">← {t("mailbox.back", "Back")}</button>
           )}
           <div className="mailbox-message-detail-header">
             <div className="mailbox-message-detail-meta">
@@ -1283,8 +1352,18 @@ export function MailboxView({
     );
   };
 
+  /*
+  FNXC:MailboxMobile 2026-07-17-13:43:
+  FN-8238 gates the full-page mailbox's compact mobile layout on this class, mirroring
+  isMobileViewport() exactly. CSS media or pointer queries cannot read the runtime
+  physical-screen and visualViewport signals that determine the mobile classification.
+  */
   return (
-    <div className="mailbox-view" style={containerKeyboardStyle} data-testid="mailbox-view">
+    <div
+      className={`mailbox-view${isMobile ? " mailbox-view--mobile" : ""}`}
+      style={containerKeyboardStyle}
+      data-testid="mailbox-view"
+    >
       {/*
       FNXC:Navigation 2026-06-22-01:10:
       Mailbox adopts the shared ViewHeader (Command Center-modeled) for a consistent main-content title row. The unread count badge stays beside the title (preserving the mailbox-unread-badge test id), and Compose / Mark-all-read / Refresh controls move into the header actions cluster so they keep working. Tabs remain below the header as their own row.
@@ -1342,7 +1421,7 @@ export function MailboxView({
       <div className="mailbox-tabs" data-testid="mailbox-tabs">
         <button
           className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "inbox" ? "active" : ""}`}
-          onClick={() => { consumeCurrentDeepLink(); setActiveTab("inbox"); setSelectedMessage(null); setSelectedApproval(null); }}
+          onClick={() => handleSelectTab("inbox")}
           data-testid="mailbox-tab-inbox"
         >
           <InboxIcon size={14} />
@@ -1351,7 +1430,7 @@ export function MailboxView({
         </button>
         <button
           className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "outbox" ? "active" : ""}`}
-          onClick={() => { consumeCurrentDeepLink(); setActiveTab("outbox"); setSelectedMessage(null); setSelectedApproval(null); }}
+          onClick={() => handleSelectTab("outbox")}
           data-testid="mailbox-tab-outbox"
         >
           <Send size={14} />
@@ -1359,7 +1438,7 @@ export function MailboxView({
         </button>
         <button
           className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "agents" ? "active" : ""}`}
-          onClick={() => { consumeCurrentDeepLink(); setActiveTab("agents"); setSelectedMessage(null); setSelectedApproval(null); }}
+          onClick={() => handleSelectTab("agents")}
           data-testid="mailbox-tab-agents"
         >
           <Bot size={14} />
@@ -1367,7 +1446,7 @@ export function MailboxView({
         </button>
         <button
           className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "approvals" ? "active" : ""}`}
-          onClick={() => { consumeCurrentDeepLink(); setActiveTab("approvals"); setSelectedMessage(null); setSelectedApproval(null); }}
+          onClick={() => handleSelectTab("approvals")}
           data-testid="mailbox-tab-approvals"
         >
           <CheckCheck size={14} />

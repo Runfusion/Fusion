@@ -292,8 +292,9 @@ describe("TaskCard", () => {
   });
 
   it("repaints the memoized card when plannerOverseerState changes, and renders nothing when absent", () => {
-    const idleTask = makeTask({ plannerOverseerState: undefined });
+    const idleTask = makeTask({ plannerOversightLevel: "autonomous", plannerOverseerState: undefined });
     const watchingTask = makeTask({
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "watching",
         oversightLevel: "autonomous",
@@ -320,6 +321,28 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("planner-overseer-state-badge")).toBeInTheDocument();
   });
 
+  it.each(["in-progress", "in-review"] as const)("hides the stale non-off overseer snapshot and header wrapper when a task override resolves oversight off in %s", (column) => {
+    const staleSnapshotTask = makeTask({
+      column,
+      plannerOversightLevel: "off",
+      plannerOverseerState: {
+        state: "watching",
+        oversightLevel: "autonomous",
+        watchedStage: column === "in-review" ? "reviewer" : "executor",
+        signal: "progressing",
+        attemptCount: 0,
+        attemptLimit: 3,
+        pendingConfirmation: false,
+        observedAt: 1700000000000,
+      },
+    });
+
+    render(<TaskCard task={staleSnapshotTask} onOpenDetail={noop} addToast={noop} />);
+
+    expect(screen.queryByTestId("planner-overseer-state-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-header-badges")).not.toBeInTheDocument();
+  });
+
   it("does not render an overseer badge for a stale non-idle oversight-off snapshot", () => {
     const staleOffTask = makeTask({
       column: "in-review",
@@ -338,6 +361,7 @@ describe("TaskCard", () => {
     render(<TaskCard task={staleOffTask} onOpenDetail={noop} addToast={noop} />);
 
     expect(screen.queryByTestId("planner-overseer-state-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-header-badges")).not.toBeInTheDocument();
   });
 
   // FN-7563: the badge used to print the raw kebab-case state (e.g.
@@ -347,6 +371,7 @@ describe("TaskCard", () => {
   it("explains an in-review awaiting-confirmation badge with a readable label and a reason-bearing tooltip", () => {
     const task = makeTask({
       column: "in-review",
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "awaiting-confirmation",
         oversightLevel: "autonomous",
@@ -380,6 +405,7 @@ describe("TaskCard", () => {
   it("renders readable labels for in-progress watching and recovering overseer states", () => {
     const watchingTask = makeTask({
       column: "in-progress",
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "watching",
         oversightLevel: "autonomous",
@@ -403,6 +429,7 @@ describe("TaskCard", () => {
 
     const recoveringTask = makeTask({
       column: "in-progress",
+      plannerOversightLevel: "autonomous",
       plannerOverseerState: {
         state: "recovering",
         oversightLevel: "autonomous",
@@ -2429,10 +2456,25 @@ describe("TaskCard", () => {
     expect(headerBadges.contains(badge)).toBe(true);
   });
 
-  it("does not render a status badge when task.status is falsy", () => {
+  it("renders an active Planning badge when a status-null triage card has fresh planner activity", () => {
+    const recentAgentActivityAt = new Date().toISOString();
     const { container } = render(
-      <TaskCard task={makeTask({ status: undefined as any })} onOpenDetail={noop} addToast={noop} />,
+      <TaskCard
+        task={makeTask({ column: "triage", status: null as any, recentAgentActivityAt })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
     );
+
+    expect(container.querySelector(".card")).toHaveClass("agent-active");
+    expect(screen.getByLabelText("Planning")).toHaveClass("card-status-badge", "pulsing");
+  });
+
+  it("does not render a status badge when a status-null triage card has no fresh planner activity", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ column: "triage", status: undefined as any })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(container.querySelector(".card")).not.toHaveClass("agent-active");
     expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
@@ -3897,27 +3939,39 @@ describe("TaskCard", () => {
       const { container } = render(
         <TaskCard task={makeTask({ size })} onOpenDetail={noop} addToast={noop} />,
       );
+      const header = container.querySelector(".card-header");
+      const cardId = container.querySelector(".card-id");
       const badge = container.querySelector(".card-size-badge");
       expect(badge).not.toBeNull();
       expect(badge?.classList.contains(expectedClasses[index])).toBe(true);
+      expect(container.querySelectorAll(".card-size-badge")).toHaveLength(1);
+      expect(badge?.parentElement).toBe(header);
+      expect(cardId?.nextElementSibling).toBe(badge);
       // Clean up for next iteration
       container.remove();
     });
   });
 
-  it("places size badge inside card-header-actions container", () => {
+  it("places size badge directly after the task id outside header badge and action groups", () => {
     const { container } = render(
       <TaskCard task={makeTask({ size: "M" })} onOpenDetail={noop} addToast={noop} />,
     );
+    const header = container.querySelector(".card-header");
+    const cardId = container.querySelector(".card-id");
+    const headerBadges = container.querySelector(".card-header-badges");
     const actionsContainer = container.querySelector(".card-header-actions");
     const sizeBadge = container.querySelector(".card-size-badge");
-    
-    expect(actionsContainer).not.toBeNull();
+
+    expect(header).not.toBeNull();
     expect(sizeBadge).not.toBeNull();
-    expect(actionsContainer?.contains(sizeBadge)).toBe(true);
+    expect(sizeBadge?.parentElement).toBe(header);
+    expect(cardId?.nextElementSibling).toBe(sizeBadge);
+    expect(actionsContainer?.contains(sizeBadge)).toBe(false);
+    expect(headerBadges?.contains(sizeBadge) ?? false).toBe(false);
+    expect(sizeBadge?.closest(".card-header-badges")).toBeNull();
   });
 
-  it("renders size badge as the right-most header action after trailing controls", () => {
+  it("keeps trailing controls in header actions after the id-adjacent size badge", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({ column: "in-progress", status: "executing" as any, size: "M" })}
@@ -3926,6 +3980,9 @@ describe("TaskCard", () => {
         onPauseTask={async () => makeTask({ paused: true })}
       />,
     );
+    const header = container.querySelector(".card-header");
+    const cardId = container.querySelector(".card-id");
+    const headerBadges = container.querySelector(".card-header-badges");
     const actionsContainer = container.querySelector(".card-header-actions") as HTMLElement | null;
     const menuButton = container.querySelector(".card-menu-btn");
     const sizeBadge = container.querySelector(".card-size-badge");
@@ -3933,9 +3990,11 @@ describe("TaskCard", () => {
     expect(actionsContainer).not.toBeNull();
     expect(menuButton).not.toBeNull();
     expect(sizeBadge).not.toBeNull();
+    expect(sizeBadge?.parentElement).toBe(header);
+    expect(cardId?.nextElementSibling).toBe(sizeBadge);
+    expect(sizeBadge?.compareDocumentPosition(headerBadges!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(actionsContainer?.contains(menuButton)).toBe(true);
-    expect(actionsContainer?.lastElementChild).toBe(sizeBadge);
-    expect(sizeBadge?.nextElementSibling).toBeNull();
+    expect(actionsContainer?.contains(sizeBadge)).toBe(false);
   });
 
   it("places card-header-actions as a direct header child after the wrapped badge group", () => {
@@ -5753,6 +5812,78 @@ describe("TaskCard", () => {
       </CostBadgeProvider>,
     );
     expect(noUsage.container.querySelector(".card-cost-indicator")).toBeNull();
+  });
+
+  it("places an enabled cost badge below Promote without leaving it in the footer cluster", () => {
+    const pricedTask = makeTask({
+      id: "FN-8324",
+      column: "todo",
+      tokenUsage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 1_000_000,
+        firstUsedAt: "2026-01-01T00:00:00Z",
+        lastUsedAt: "2026-01-01T00:00:00Z",
+        modelProvider: "openai",
+        modelId: "gpt-5-mini",
+      },
+    } as Partial<Task>);
+
+    const { container } = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard
+          task={pricedTask}
+          onOpenDetail={noop}
+          addToast={noop}
+          onPromote={vi.fn().mockResolvedValue(undefined)}
+        />
+      </CostBadgeProvider>,
+    );
+
+    const promoteButton = screen.getByTestId("card-promote-FN-8324");
+    const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
+    const costRow = container.querySelector(".card-promote-cost-row");
+    expect(costBadge).not.toBeNull();
+    expect(costBadge?.closest(".card-promote-cost-row")).toBe(costRow);
+    expect(costBadge?.closest(".card-footer-row-right")).toBeNull();
+    expect(promoteButton.compareDocumentPosition(costBadge!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const css = loadAllAppCss();
+    expect(css).toMatch(/\.card-promote-cost-row\s*\{[^}]*justify-content:\s*flex-end;[^}]*margin-top:\s*var\(--space-xs\);[^}]*\}/);
+    expect(css).toMatch(/@media[^{}]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-promote-cost-row\s*\{[^}]*justify-content:\s*flex-end;[^}]*\}/);
+  });
+
+  it("keeps the cost badge absent below Promote when disabled or without token usage", () => {
+    const onPromote = vi.fn().mockResolvedValue(undefined);
+    const pricedTask = makeTask({
+      id: "FN-8324-disabled",
+      column: "todo",
+      tokenUsage: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 1_000_000,
+        firstUsedAt: "2026-01-01T00:00:00Z",
+        lastUsedAt: "2026-01-01T00:00:00Z",
+        modelProvider: "openai",
+        modelId: "gpt-5-mini",
+      },
+    } as Partial<Task>);
+    const disabled = render(<TaskCard task={pricedTask} onOpenDetail={noop} addToast={noop} onPromote={onPromote} />);
+    expect(disabled.container.querySelector(".card-cost-indicator")).toBeNull();
+    expect(disabled.container.querySelector(".card-promote-cost-row")).toBeNull();
+    disabled.unmount();
+
+    const noUsage = render(
+      <CostBadgeProvider value={{ enabled: true }}>
+        <TaskCard task={makeTask({ id: "FN-8324-no-usage", column: "todo" })} onOpenDetail={noop} addToast={noop} onPromote={onPromote} />
+      </CostBadgeProvider>,
+    );
+    expect(noUsage.container.querySelector(".card-cost-indicator")).toBeNull();
+    expect(noUsage.container.querySelector(".card-promote-cost-row")).toBeNull();
   });
 
   it("places a todo cost badge inside the meta row when the footer has no leading content", () => {

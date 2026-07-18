@@ -203,9 +203,10 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   // ════════════════ MISSION CRUD ════════════════
-  async createMission(input: MissionCreateInput & { autopilotEnabled?: boolean }): Promise<Mission> {
+  /* FNXC:Ideation 2026-07-30-15:30: Accept a caller transaction so ideation convergence and canonical Mission creation commit or roll back together. */
+  async createMission(input: MissionCreateInput & { autopilotEnabled?: boolean }, handle: QueryHandle = this.db): Promise<Mission> {
     const now = new Date().toISOString();
-    const mission = await createMission(this.db, {
+    const mission = await createMission(handle, {
       id: this.generateId("M"),
       title: input.title,
       description: input.description,
@@ -592,11 +593,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   // ════════════════ MILESTONE OPS ════════════════
-  async addMilestone(missionId: string, input: MilestoneCreateInput): Promise<Milestone> {
-    const mission = await getMission(this.db, missionId);
+  async addMilestone(missionId: string, input: MilestoneCreateInput, handle: QueryHandle = this.db): Promise<Milestone> {
+    const mission = await getMission(handle, missionId);
     if (!mission) throw new Error(`Mission ${missionId} not found`);
     const now = new Date().toISOString();
-    const existing = await listMilestones(this.db, missionId);
+    const existing = await listMilestones(handle, missionId);
     const orderIndex = existing.length > 0 ? Math.max(...existing.map((m) => m.orderIndex)) + 1 : 0;
     const milestone: Milestone = {
       id: this.generateId("MS"),
@@ -614,7 +615,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       createdAt: now,
       updatedAt: now,
     };
-    const created = await createMilestone(this.db, milestone);
+    const created = await createMilestone(handle, milestone);
     this.emit("milestone:created", created);
     return created;
   }
@@ -693,11 +694,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   // ════════════════ SLICE OPS ════════════════
-  async addSlice(milestoneId: string, input: SliceCreateInput): Promise<Slice> {
-    const milestone = await getMilestone(this.db, milestoneId);
+  async addSlice(milestoneId: string, input: SliceCreateInput, handle: QueryHandle = this.db): Promise<Slice> {
+    const milestone = await getMilestone(handle, milestoneId);
     if (!milestone) throw new Error(`Milestone ${milestoneId} not found`);
     const now = new Date().toISOString();
-    const existing = await listSlices(this.db, milestoneId);
+    const existing = await listSlices(handle, milestoneId);
     const orderIndex = existing.length > 0 ? Math.max(...existing.map((s) => s.orderIndex)) + 1 : 0;
     const slice: Slice = {
       id: this.generateId("SL"),
@@ -712,7 +713,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       createdAt: now,
       updatedAt: now,
     };
-    const created = await createSlice(this.db, slice);
+    const created = await createSlice(handle, slice);
     this.emit("slice:created", created);
     return created;
   }
@@ -802,8 +803,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   // ════════════════ FEATURE OPS ════════════════
-  async addFeature(sliceId: string, input: FeatureCreateInput): Promise<MissionFeature> {
-    const slice = await getSlice(this.db, sliceId);
+  async addFeature(sliceId: string, input: FeatureCreateInput, handle: QueryHandle = this.db): Promise<MissionFeature> {
+    const slice = await getSlice(handle, sliceId);
     if (!slice) throw new Error(`Slice ${sliceId} not found`);
     const now = new Date().toISOString();
     const feature: MissionFeature = {
@@ -819,7 +820,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       implementationAttemptCount: 0,
       validatorAttemptCount: 0,
     };
-    const created = await createFeature(this.db, feature);
+    const created = await createFeature(handle, feature);
     this.emit("feature:created", created);
     await this.recomputeSliceStatus(sliceId);
     await this.applyDerivedMilestoneAcceptanceCriteria(slice.milestoneId);
@@ -1653,6 +1654,11 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
                 },
               }
             : {}),
+          /*
+          FNXC:MissionAutoMerge 2026-07-18-12:00:
+          An autoMerge:false mission stamps each newly triaged task so its shared branch produces one PR instead of per-task auto-merges. Duplicate reuse intentionally bypasses this create-only override.
+          */
+          ...(mission?.autoMerge === false ? { autoMerge: false } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
         });
         if (guard.fingerprint) {

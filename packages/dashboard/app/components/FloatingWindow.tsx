@@ -58,7 +58,17 @@ export interface FloatingWindowProps {
    * Persistent task/terminal pop-outs must omit this so page clicks do not close them.
    */
   closeOnOutsidePointerDown?: boolean;
-  /** Layer band for z-index claiming. Task details stay with the board/task-detail surface; utilities use the global floating stack. */
+  /*
+  FNXC:FloatingWindow 2026-07-18-00:00:
+  Quick Chat must hide without unmounting so its active session, messages, and scroll position
+  reopen instantly. This opt-in flag keeps children mounted but removes the window from paint and
+  interaction; defaulting to false preserves every existing FloatingWindow caller unchanged.
+  */
+  hidden?: boolean;
+  /**
+   * Layer band for z-index claiming. Task-detail peers (including Quick Chat) interleave by
+   * interaction; unrelated utilities use the global floating stack.
+   */
   layer?: "utility" | "task-detail";
   // FNXC:FloatingWindow 2026-07-11-11:30: accessible name for the dialog overlay so headerless windows (e.g. artifact viewers with their own header chrome) stay queryable/announcable by label.
   ariaLabel?: string;
@@ -183,6 +193,7 @@ export function FloatingWindow({
   suspendGeometryPersistenceOnMobile = false,
   suspendGeometryPersistenceOnShortViewport = false,
   closeOnOutsidePointerDown = false,
+  hidden = false,
   layer = "utility",
   ariaLabel,
 }: FloatingWindowProps) {
@@ -213,8 +224,10 @@ export function FloatingWindow({
   const claimFrontZ = useCallback(() => (layer === "task-detail" ? nextTaskDetailFloatingZ() : nextFloatingZ()), [layer]);
   const readCurrentZ = useCallback(() => (layer === "task-detail" ? currentTaskDetailFloatingZ() : currentFloatingZ()), [layer]);
   /*
-  FNXC:TaskPopupLayer 2026-07-04-18:36:
-  Task-detail popups intentionally claim the lower board/task-detail band, while utility FloatingWindow callers keep the higher global stack. This preserves raise/focus among multiple task popups without making ordinary board popups cover utility surfaces like Terminal or Quick Chat.
+  FNXC:TaskPopupLayer 2026-07-17-15:55:
+  Task-detail popups and Quick Chat intentionally claim the same board/task-detail interaction
+  band, so either may rise above the other on pointer/focus. Other utility FloatingWindow callers
+  retain the higher global stack; only Chat opts into this task-popup peer contract.
   */
   const [zIndex, setZIndex] = useState<number>(() => claimFrontZ());
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -233,6 +246,24 @@ export function FloatingWindow({
       return claimFrontZ();
     });
   }, [claimFrontZ, readCurrentZ]);
+
+  /*
+  FNXC:FloatingWindow 2026-07-18-00:00:
+  A hidden Quick Chat must reclaim a fresh z-index when reopened because another task-detail
+  popup may have been focused while chat was invisible. Hidden windows do not otherwise affect
+  the shared interaction stack.
+
+  FNXC:FloatingWindow 2026-07-18-07:15:
+  Only reclaim on the hidden→visible transition. Initial mount already claims via useState;
+  re-claiming after sibling mount (RightDockExpandModal, etc.) inverted last-mounted-on-top
+  and broke the shared-stack cross-type contract in FloatingWindowStack.cross-type.test.
+  */
+  const wasHiddenRef = useRef(hidden);
+  useEffect(() => {
+    const wasHidden = wasHiddenRef.current;
+    wasHiddenRef.current = hidden;
+    if (wasHidden && !hidden) bringToFront();
+  }, [bringToFront, hidden]);
 
   const handleDragPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -379,16 +410,16 @@ export function FloatingWindow({
   Root-portaled Activity menus cannot inherit movement from a dragged/resized task popup. Emit a bounded geometry-change signal after FloatingWindow commits new geometry so owning task-detail content can recompute fixed menu coordinates from the live Activity trigger rect.
   */
   useLayoutEffect(() => {
-    if (typeof window === "undefined") return;
+    if (hidden || typeof window === "undefined") return;
     window.dispatchEvent(new CustomEvent(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, { detail: { windowKey, layer } }));
-  }, [layer, position, size, windowKey]);
+  }, [hidden, layer, position, size, windowKey]);
 
   /*
   FNXC:FloatingWindow 2026-06-27-00:00:
   Outside-click dismissal is opt-in because the overlay is intentionally click-through for coexisting floating windows. A capture-phase document pointerdown listener is the only reliable outside signal, and it must ignore in-flight drag/resize gestures plus nested modal/floating surfaces so Quick Chat can dismiss from bare-page clicks without making persistent task pop-outs fragile.
   */
   useEffect(() => {
-    if (!closeOnOutsidePointerDown || typeof document === "undefined") return;
+    if (hidden || !closeOnOutsidePointerDown || typeof document === "undefined") return;
 
     let lastTouchAt = 0;
     const markTouch = () => {
@@ -418,20 +449,20 @@ export function FloatingWindow({
       document.removeEventListener("touchend", markTouch);
       document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
     };
-  }, [closeOnOutsidePointerDown, onClose]);
+  }, [closeOnOutsidePointerDown, hidden, onClose]);
 
   /*
   FNXC:ChatModal 2026-06-22-14:57:
   Quick Chat reopens should restore the last desktop floating-window size and position while still clamping onto the current viewport. Keep persistence generic and opt-in with persistGeometryKey so each caller controls whether geometry is shared or isolated.
   */
   useEffect(() => {
-    if (!persistGeometryKey || typeof window === "undefined" || geometryPersistenceSuspended) return;
+    if (hidden || !persistGeometryKey || typeof window === "undefined" || geometryPersistenceSuspended) return;
     try {
       localStorage.setItem(persistGeometryKey, JSON.stringify({ size, position }));
     } catch {
       // Ignore storage failures; geometry persistence is a convenience only.
     }
-  }, [geometryPersistenceSuspended, persistGeometryKey, position, size]);
+  }, [geometryPersistenceSuspended, hidden, persistGeometryKey, position, size]);
 
   const panelStyle = {
     left: `${position.x}px`,
@@ -444,12 +475,18 @@ export function FloatingWindow({
   /*
   FNXC:FloatingWindow 2026-06-22-21:10:
   Rendered via a portal to document.body so the window escapes every ancestor stacking context (board card badges, the List view's sticky sort header + column divider, transformed columns, etc.). Without the portal the panel's z-index battles inside whatever subtree mounted it, letting card dependency/overlap tags and the list divider/sort header paint over the modal. At document.body the 4000+ z-index wins over all page content.
+
+  FNXC:FloatingWindow 2026-07-18-00:00:
+  Hidden windows remain portaled so their child component identity survives a close/reopen cycle.
+  The hidden overlay is display:none and aria-hidden, which removes it from paint, focus, and
+  pointer interaction while the effects above suspend invisible-window side effects.
   */
   return createPortal(
     <div
-      className="floating-window-overlay"
+      className={`floating-window-overlay${hidden ? " floating-window-overlay--hidden" : ""}`}
       role="dialog"
       aria-modal="false"
+      aria-hidden={hidden || undefined}
       aria-label={ariaLabel}
       data-testid={`floating-window-overlay-${windowKey}`}
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.

@@ -152,6 +152,7 @@ export interface TaskRow {
   sourceMessageId: string | null;
   sourceParentTaskId: string | null;
   sourceMetadata: string | null;
+  proposalClaimId: string | null;
   checkedOutBy: string | null;
   checkedOutAt: string | null;
   checkoutNodeId: string | null;
@@ -353,7 +354,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("sourceMessageId", (task) => task.sourceMessageId ?? null),
   defineTaskColumn("sourceParentTaskId", (task) => task.sourceParentTaskId ?? null),
   defineTaskColumn("sourceMetadata", (task) => toJsonNullable(task.sourceMetadata)),
-  defineTaskColumn("checkedOutBy", (task) => task.checkedOutBy ?? null),
+  defineTaskColumn("proposalClaimId", (task) => task.proposalClaimId ?? null),
+  defineTaskColumn("checkedOutBy",  (task) => task.checkedOutBy ?? null),
   defineTaskColumn("checkedOutAt", (task) => task.checkedOutAt ?? null),
   defineTaskColumn("checkoutNodeId", (task) => task.checkoutNodeId ?? null),
   defineTaskColumn("checkoutRunId", (task) => task.checkoutRunId ?? null),

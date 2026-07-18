@@ -604,7 +604,7 @@ describe("MissionFactory Parity: Engine Scheduler/Autopilot", () => {
       missionStore.addMission(mission);
 
       await autopilot.watchMission(mission.id);
-      autopilot.unwatchMission(mission.id);
+      await autopilot.unwatchMission(mission.id);
 
       expect(missionStore.updateMission).toHaveBeenCalledWith("M-TEST1", {
         autopilotState: "inactive",

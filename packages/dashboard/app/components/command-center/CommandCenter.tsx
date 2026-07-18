@@ -10,6 +10,7 @@ import { TokensArea } from "./areas/TokensArea";
 import { ToolsArea } from "./areas/ToolsArea";
 import { ActivityArea } from "./areas/ActivityArea";
 import { ProductivityArea } from "./areas/ProductivityArea";
+import { ReviewArtifactsArea } from "./areas/ReviewArtifactsArea";
 import { TeamArea } from "./areas/TeamArea";
 import { WorkflowArea } from "./areas/WorkflowArea";
 import { EcosystemArea } from "./areas/EcosystemArea";
@@ -20,6 +21,7 @@ import { SystemStatsArea } from "./areas/SystemStatsArea";
 import { SystemControlsArea } from "./areas/SystemControlsArea";
 import { PluginManager } from "../PluginManager";
 import { MissionControlPanel } from "./MissionControlPanel";
+import { IdeationPanel } from "./IdeationPanel";
 import { CommandCenterControls } from "./CommandCenterControls";
 import { ReliabilityView } from "../ReliabilityView";
 import { NodesView } from "../NodesView";
@@ -40,6 +42,7 @@ type SubViewId =
   | "tools"
   | "activity"
   | "productivity"
+  | "review-artifacts"
   | "team"
   | "workflows"
   | "ecosystem"
@@ -50,7 +53,8 @@ type SubViewId =
   | "plugins"
   | "nodes"
   | "reliability"
-  | "mission-control";
+  | "mission-control"
+  | "ideation";
 
 interface SubView {
   id: SubViewId;
@@ -84,6 +88,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     { id: "tools", label: t("commandCenter.tabs.tools", "Tools") },
     { id: "activity", label: t("commandCenter.tabs.activity", "Activity") },
     { id: "productivity", label: t("commandCenter.tabs.productivity", "Productivity") },
+    { id: "review-artifacts", label: t("commandCenter.tabs.reviewArtifacts", "Review artifacts") },
     { id: "team", label: t("commandCenter.tabs.team", "Team") },
     { id: "workflows", label: t("commandCenter.tabs.workflows", "Workflows") },
     { id: "ecosystem", label: t("commandCenter.tabs.ecosystem", "Ecosystem") },
@@ -95,6 +100,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     ...(nodesEnabled ? [{ id: "nodes" as const, label: t("commandCenter.tabs.nodes", "Nodes") }] : []),
     { id: "reliability", label: t("commandCenter.tabs.reliability", "Reliability") },
     { id: "mission-control", label: t("commandCenter.tabs.missionControl", "Mission Control") },
+    { id: "ideation", label: t("commandCenter.tabs.ideation", "Ideation") },
   ];
 }
 
@@ -619,6 +625,8 @@ export function CommandCenter({
         return <ActivityArea range={range} projectId={projectId} />;
       case "productivity":
         return <ProductivityArea range={range} projectId={projectId} />;
+      case "review-artifacts":
+        return <ReviewArtifactsArea projectId={projectId} addToast={addToast} />;
       case "team":
         return <TeamArea range={range} projectId={projectId} addToast={addToast} />;
       case "workflows":
@@ -664,6 +672,8 @@ export function CommandCenter({
         return <ReliabilityView projectId={projectId} />;
       case "mission-control":
         return <MissionControlPanel projectId={projectId} />;
+      case "ideation":
+        return <IdeationPanel projectId={projectId} />;
       default:
         return <PlaceholderTab tabId={activeTab} />;
     }

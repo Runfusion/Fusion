@@ -15,6 +15,7 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 vi.mock("../../api/legacy", () => ({
+  fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
   fetchFnBinaryStatus: vi.fn(() => Promise.resolve({
     binary: { binary: "fn", installed: false, path: null, version: null },
     expectedVersion: "1.2.3",
@@ -29,6 +30,8 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
 }));
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   useViewportMode: () => "desktop",
   getViewportMode: () => "desktop",
   isMobileViewport: () => false,

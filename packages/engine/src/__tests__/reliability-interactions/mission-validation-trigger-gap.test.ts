@@ -250,7 +250,11 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       taskStore: taskStore as any,
       rootDir: process.cwd(),
     });
-    vi.spyOn(loop as any, "runValidation").mockResolvedValue({ status: "pass", summary: "ok" });
+    // FNXC:EngineTests 2026-07-17-11:50: runFeatureValidation destructures { result, inspection }.
+    vi.spyOn(loop as any, "runValidation").mockResolvedValue({
+      result: { status: "pass", summary: "ok" },
+      inspection: { rootDir: process.cwd() },
+    });
     loop.start();
 
     const periodicMaintenancePass = async () => loop.recoverActiveMissions();
@@ -258,7 +262,8 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     await periodicMaintenancePass();
 
     expect(missionStore.ensureFeatureAssertionLinked).toHaveBeenCalledWith("F-001");
-    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    // FNXC:EngineTests 2026-07-17-11:45: startValidatorRun now threads the completing task id.
+    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     const noAssertionEvents = missionStore.logMissionEvent.mock.calls.filter(
       ([, type, , payload]) => type === "warning" && payload?.code === "validation_auto_passed_no_assertions",
     );
@@ -316,13 +321,18 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     };
 
     const loop = new MissionExecutionLoop({ missionStore: missionStore as any, taskStore: taskStore as any, rootDir: process.cwd() });
-    vi.spyOn(loop as any, "runValidation").mockResolvedValue({ status: "pass", summary: "ok" });
+    // FNXC:EngineTests 2026-07-17-11:50: runFeatureValidation destructures { result, inspection }.
+    vi.spyOn(loop as any, "runValidation").mockResolvedValue({
+      result: { status: "pass", summary: "ok" },
+      inspection: { rootDir: process.cwd() },
+    });
     loop.start();
 
     await loop.recoverActiveMissions();
 
     expect(missionStore.ensureFeatureAssertionLinked).toHaveBeenCalledWith("F-001");
-    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    // FNXC:EngineTests 2026-07-17-11:45: startValidatorRun now threads the completing task id.
+    expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     const noAssertionEvents = missionStore.logMissionEvent.mock.calls.filter(
       ([, type, , payload]) => type === "warning" && payload?.code === "validation_auto_passed_no_assertions",
     );

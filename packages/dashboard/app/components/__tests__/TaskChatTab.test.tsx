@@ -395,16 +395,50 @@ describe("TaskChatTab", () => {
     expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
   });
 
-  it("renders loading state without timestamp shells or invalid-date text", () => {
+  it("renders delayed loading state without timestamp shells or invalid-date text", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
 
     const transcript = screen.getByTestId("task-chat-transcript");
+    expect(within(transcript).queryByText("Loading agent output…")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(150));
     expect(within(transcript).getByText("Loading agent output…")).toBeTruthy();
     expect(within(transcript).queryByTestId("task-chat-group-time")).not.toBeInTheDocument();
     expect(within(transcript).queryByTestId("task-chat-user-time")).not.toBeInTheDocument();
     expect(within(transcript).queryByTestId("task-chat-block-time")).not.toBeInTheDocument();
     expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
+  });
+
+  it("FN-8303: does not paint the loading spinner before a fast initial transcript response", () => {
+    vi.useFakeTimers();
+    const loadedEntries = [makeEntry({ agent: "executor", text: "initial loaded output" })];
+    mockedUseAgentLogs
+      .mockReturnValueOnce({ entries: [], loading: true, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: 0, loadingMore: false })
+      .mockReturnValueOnce({ entries: loadedEntries, loading: false, clear: vi.fn(), loadMore: vi.fn(), hasMore: false, total: 1, loadingMore: false });
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    expect(screen.getByText("initial loaded output")).toBeVisible();
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+  });
+
+  it("FN-8303: does not reuse a prior task's slow-request spinner after task selection", () => {
+    vi.useFakeTimers();
+    mockLogs([], true);
+    const { rerender } = render(<TaskChatTab task={makeTask({ id: "FN-8303-first" })} active addToast={vi.fn()} />);
+
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.getByText("Loading agent output…")).toBeVisible();
+
+    rerender(<TaskChatTab task={makeTask({ id: "FN-8303-next" })} active addToast={vi.fn()} />);
+
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.getByText("Loading agent output…")).toBeVisible();
   });
 
   it("renders the collapsed icon-only expand toggle inside the chat view and calls the toggle handler", () => {
@@ -437,13 +471,15 @@ describe("TaskChatTab", () => {
     expect(toggle).not.toHaveTextContent("Expand");
   });
 
-  it("renders the icon-only expand toggle while the transcript is loading", () => {
+  it("renders the icon-only expand toggle while a slow transcript request is loading", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} onToggleExpanded={vi.fn()} />);
 
     const toggle = screen.getByTestId("task-chat-expand-toggle");
     expect(screen.getByTestId("task-chat-tab")).toContainElement(toggle);
     expect(toggle).not.toHaveTextContent("Expand");
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByText("Loading agent output…")).toBeInTheDocument();
   });
 
@@ -631,8 +667,10 @@ describe("TaskChatTab", () => {
   });
 
   it("keeps List View split chat empty and loading states free of header shells", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     const loading = renderListSplitTaskChat();
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByText(/Loading agent output/)).toBeVisible();
     expect(document.querySelector(".task-chat-group-header")).not.toBeInTheDocument();
     expect(document.querySelector(".task-chat-group-bubbles")).not.toBeInTheDocument();
@@ -1512,8 +1550,10 @@ describe("TaskChatTab", () => {
   });
 
   it("does not render the jump-to-bottom button for loading or empty transcripts", () => {
+    vi.useFakeTimers();
     mockLogs([], true);
     const loading = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    act(() => vi.advanceTimersByTime(150));
     expect(screen.getByText(/Loading agent output/)).toBeVisible();
     expect(screen.queryByTestId("task-chat-jump-to-bottom")).not.toBeInTheDocument();
     loading.unmount();

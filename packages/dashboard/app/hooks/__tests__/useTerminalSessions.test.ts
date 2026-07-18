@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { StrictMode } from "react";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { useTerminalSessions } from "../useTerminalSessions";
 import { scopedKey } from "../../utils/projectStorage";
@@ -69,6 +70,50 @@ describe("useTerminalSessions", () => {
       });
 
       expect(mockCreateTerminalSession).toHaveBeenCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+    });
+
+    it("converges when a scope change invalidates an in-flight first-tab creation", async () => {
+      let resolveFirstCreate: (session: { sessionId: string; shell: string; cwd: string }) => void;
+      mockCreateTerminalSession
+        .mockImplementationOnce(
+          () => new Promise((resolve) => {
+            resolveFirstCreate = resolve;
+          }),
+        )
+        .mockResolvedValueOnce({
+          sessionId: "session-current-generation",
+          shell: "/bin/bash",
+          cwd: "/project/.worktrees/FN-8302",
+        });
+
+      const { result, rerender } = renderHook(
+        ({ storageScope }: { storageScope?: string }) =>
+          useTerminalSessions(TEST_PROJECT_ID, { storageScope }),
+        { initialProps: { storageScope: undefined }, wrapper: StrictMode },
+      );
+
+      await waitFor(() => {
+        expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+      });
+
+      rerender({ storageScope: "task:FN-8302" });
+
+      await waitFor(() => {
+        expect(mockCreateTerminalSession).toHaveBeenCalledTimes(2);
+      });
+
+      await act(async () => {
+        resolveFirstCreate!({
+          sessionId: "session-stale-generation",
+          shell: "/bin/bash",
+          cwd: "/project",
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeTab?.sessionId).toBe("session-current-generation");
+        expect(result.current.bootstrapError).toBeNull();
+      });
     });
 
     it("auto-creates first scoped tab in defaultCwd with a basename title", async () => {

@@ -37,6 +37,8 @@ vi.mock("../../api", async (importOriginal) => {
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   getViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   isMobileViewport: () => mockUseViewportMode() === "mobile",

@@ -110,6 +110,14 @@ export function getAuthToken(): string | undefined {
   return undefined;
 }
 
+/*
+FNXC:AuthTokenRecovery 2026-07-14-00:00:
+Cold PWA and bare-URL starts can receive the one-shot daemon-auth 401 recovery event before React mounts its listener. Keep the latched failure queryable so the recovery hook can open the token dialog on mount instead of stranding the user on the backend error page.
+*/
+export function hasDaemonAuthFailure(): boolean {
+  return daemonAuthFailureSignaled;
+}
+
 /** Persist a token for future dashboard API requests in this browser session. */
 export function setAuthToken(token: string): void {
   cachedToken = token;

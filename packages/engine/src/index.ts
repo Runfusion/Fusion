@@ -1,5 +1,6 @@
 export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agent-logger.js";
 export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agent-action-gate.js";
+export type { AgentActionGateContext } from "./agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth-storage.js";
 export {
   wrapAuthStorageWithApiKeyProviders,
@@ -31,6 +32,8 @@ export {
   createGetAgentConfigTool,
   createWebFetchTool,
   createGoalRetrievalTools,
+  createMissionTools,
+  createIdeationTools,
   createMemoryTools,
   createResearchTools,
   createArtifactListTool,
@@ -57,6 +60,7 @@ export {
   createWorkflowSettingsTool,
   createTraitListTool,
   createWorkflowAuthoringTools,
+  createAgentTask,
   taskCreateParams,
   taskListParams,
   taskShowParams,
@@ -92,6 +96,21 @@ export {
   memoryGetParams,
   goalListParams,
   goalShowParams,
+  missionListParams,
+  missionShowParams,
+  missionCreateParams,
+  missionUpdateParams,
+  missionDeleteParams,
+  milestoneAddParams,
+  milestoneUpdateParams,
+  milestoneDeleteParams,
+  sliceAddParams,
+  sliceActivateParams,
+  sliceDeleteParams,
+  featureAddParams,
+  featureUpdateParams,
+  featureDeleteParams,
+  featureLinkTaskParams,
   researchRunParams,
   researchListParams,
   researchGetParams,

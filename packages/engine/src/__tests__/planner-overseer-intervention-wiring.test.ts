@@ -23,11 +23,9 @@
  * FN-7840 removes the only real-tick producer of advisory merger awaiting-confirmation interventions, so this live-wiring harness now proves suppression at the source rather than request/resolution emission for an unreachable advisory pending-confirmation path.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { TaskStore, getPlannerInterventionTimeline, type Task } from "@fusion/core";
+import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { ProjectEngine } from "../project-engine.js";
 import { PlannerOverseerMonitor, type OverseerStageObservation } from "../planner-overseer.js";
 import { PlannerRecoveryController, type PlannerRecoveryHandlers, type PlannerRecoverySnapshotProvider } from "../planner-recovery-controller.js";
@@ -36,12 +34,12 @@ interface EngineOverseerInternals {
   plannerObservationEmitDedup: Map<string, string>;
   plannerEscalationEmitDedup: Set<string>;
   buildPlannerRecoveryHandlers(store: TaskStore): PlannerRecoveryHandlers;
-  emitOverseerObservationDeduped(store: TaskStore, observation: OverseerStageObservation): void;
+  emitOverseerObservationDeduped(store: TaskStore, observation: OverseerStageObservation): Promise<void>;
   emitOverseerEscalationDeduped(
     store: TaskStore,
     taskId: string,
     decision: { watchedStage: string | null; reason: string; attemptCount: number; attemptLimit: number; sourceLinks: unknown[] },
-  ): void;
+  ): Promise<void>;
 }
 
 /** Extracts the real `ProjectEngine` prototype methods FN-7551 wired without running its heavy constructor/`start()`. */
@@ -57,7 +55,7 @@ function wireRealEngineOverseer(store: TaskStore) {
   const internals = makeEngineInternals();
   const monitor = new PlannerOverseerMonitor({
     store,
-    onObservation: (observation) => internals.emitOverseerObservationDeduped(store, observation),
+    onObservation: async (observation) => internals.emitOverseerObservationDeduped(store, observation),
   });
   const handlers = internals.buildPlannerRecoveryHandlers(store);
   const controllerFromMonitor = new PlannerRecoveryController({ snapshotProvider: monitor, handlers });
@@ -91,24 +89,17 @@ function observation(overrides: Partial<OverseerStageObservation> = {}): Oversee
   };
 }
 
-describe("FN-7551 — overseer decision points populate the intervention timeline via the live wiring", () => {
-  let rootDir: string;
-  let globalDir: string;
+pgDescribe("FN-7551 — overseer decision points populate the intervention timeline via the live wiring", () => {
+  const harness = createSharedPgTaskStoreTestHarness({ prefix: "fusion_overseer_wiring" });
   let store: TaskStore;
 
+  beforeAll(harness.beforeAll);
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "fn-7551-engine-root-"));
-    globalDir = mkdtempSync(join(tmpdir(), "fn-7551-engine-global-"));
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    await harness.beforeEach();
+    store = harness.store();
   });
-
-  afterEach(() => {
-    store.stopWatching();
-    store.close();
-    rmSync(rootDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
-  });
+  afterEach(harness.afterEach);
+  afterAll(harness.afterAll);
 
   async function seedTask(column: "in-progress" | "in-review" = "in-progress"): Promise<Task> {
     const task = await store.createTask({ title: "T", description: "d" });
@@ -245,9 +236,9 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
       sourceLinks: [],
     };
 
-    emitEscalation(task.id, exhaustedDecision);
-    emitEscalation(task.id, exhaustedDecision);
-    emitEscalation(task.id, exhaustedDecision);
+    await emitEscalation(task.id, exhaustedDecision);
+    await emitEscalation(task.id, exhaustedDecision);
+    await emitEscalation(task.id, exhaustedDecision);
 
     const timeline = await getPlannerInterventionTimeline(store, task.id);
     const escalations = timeline.filter((e) => e.action === "escalate");

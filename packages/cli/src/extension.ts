@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import { Type, type TSchema } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import * as fusionCore from "@fusion/core";
@@ -68,6 +69,7 @@ import {
   isInReviewMissingWorktreeSessionStartFailure,
   normalizeAgentLogPaging,
   renderAgentLogEntries,
+  createAgentTask,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
@@ -1163,19 +1165,30 @@ export default function kbExtension(pi: ExtensionAPI) {
       FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
       Gate ephemeral task-worker callers behind the project `ephemeralAgentsCanCreateTasks` toggle (default true). Only runtime-managed agents are affected; humans/CLI/dashboard calls carry no ctx.agentId and pass through.
       */
-      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const fnCtx = ctx as typeof ctx & { agentId?: string; taskId?: string };
       const projectSettingsForGate = await store.getSettings();
-      if (
-        projectSettingsForGate.ephemeralAgentsCanCreateTasks === false &&
-        (await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId))
-      ) {
-        const error =
-          "Ephemeral task-worker agents are not allowed to create tasks (ephemeralAgentsCanCreateTasks is disabled for this project).";
-        return {
-          content: [{ type: "text", text: `ERROR: ${error}` }],
-          isError: true,
-          details: { error, rule: "ephemeral-agents-cannot-create-tasks", callerAgentId: fnCtx.agentId },
-        };
+      const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId);
+      if (callerIsEphemeral) {
+        const policy = fusionCore.resolveEphemeralTaskCreationPolicy(projectSettingsForGate);
+        if (policy === "deny") {
+          const error = "Ephemeral task-worker agents are not allowed to create tasks (ephemeral agent task creation is denied for this project).";
+          return { content: [{ type: "text", text: `ERROR: ${error}` }], isError: true, details: { error, rule: "ephemeral-agents-cannot-create-tasks", callerAgentId: fnCtx.agentId } };
+        }
+        if (policy === "upon_validation") {
+          /*
+          FNXC:EphemeralAgentTaskCreation 2026-07-30-19:10:
+          Validation proposals must work for both durable backends. PostgreSQL uses
+          the scoped async layer; legacy SQLite uses the TaskStore database so an
+          ephemeral CLI caller is never denied merely because it is not backend-mode.
+          */
+          const layer = store.getAsyncLayer();
+          const messageStore = layer
+            ? new fusionCore.MessageStore(null, { asyncLayer: layer })
+            : new fusionCore.MessageStore(store.getDatabase());
+          const title = params.description.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) || "Follow-up task";
+          await messageStore.sendMessage({ fromId: fnCtx.agentId ?? "ephemeral-worker", fromType: "agent", toId: fusionCore.DASHBOARD_USER_ID, toType: "user", type: "agent-to-user", content: `Task proposal awaiting validation: ${title}`, metadata: { kind: "task-proposal", proposalStatus: "pending", proposalIdempotencyKey: randomUUID(), proposedTask: { title, description: params.description, priority: params.priority as TaskPriority | undefined, workflowId: params.workflow_id, dependencies: params.depends } } });
+          return { content: [{ type: "text", text: "Task proposal submitted to the operator for validation; no task was created." }], details: { proposed: true } };
+        }
       }
 
       const normalizedAgentId = normalizeNullableStringInput(params.agentId);
@@ -1201,13 +1214,13 @@ export default function kbExtension(pi: ExtensionAPI) {
         );
         const workflowId = params.workflow_id?.trim() || undefined;
 
-        const task = await store.createTask({
+        const { task, wasDuplicate } = await createAgentTask(store, {
           description: params.description.trim(),
           dependencies: params.depends,
           assignedAgentId: normalizedAgentId === null ? undefined : normalizedAgentId,
           priority: params.priority as TaskPriority | undefined,
           ...(workflowId ? { workflowId } : {}),
-          source: { sourceType: "api" },
+          source: { sourceType: "api", sourceAgentId: fnCtx.agentId, sourceParentTaskId: fnCtx.taskId },
           githubTracking: resolvedTracking.enabled
             ? {
                 enabled: true,
@@ -1216,7 +1229,7 @@ export default function kbExtension(pi: ExtensionAPI) {
                   : {}),
               }
             : undefined,
-        });
+        }, { rootDir: ctx.cwd, sourceAgentId: fnCtx.agentId, sourceTaskId: fnCtx.taskId });
 
         const label =
           task.description.length > 80
@@ -1236,7 +1249,7 @@ export default function kbExtension(pi: ExtensionAPI) {
             {
               type: "text",
               text:
-                `Created ${task.id}: ${label}${workflowId ? ` (workflow: ${workflowId})` : ""}\n` +
+                `${wasDuplicate ? "Linked existing" : "Created"} ${task.id}: ${label}${workflowId && !wasDuplicate ? ` (workflow: ${workflowId})` : ""}\n` +
                 `Column: ${task.column}\n` +
                 (task.dependencies.length
                   ? `Dependencies: ${task.dependencies.join(", ")}\n`
@@ -1250,6 +1263,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           ],
           details: {
             taskId: task.id,
+            wasDuplicate,
             column: task.column,
             dependencies: task.dependencies,
             assignedAgentId: task.assignedAgentId,
@@ -4186,8 +4200,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       try {
+        // FNXC:MissionToolParity 2026-07-29-12:00: linkFeatureToTask owns both feature and project-scoped task linkage; do not duplicate a route/tool-level slice update.
         const updated = await missionStore.linkFeatureToTask(params.featureId, params.taskId);
-        await store.updateTask(params.taskId, { sliceId: feature.sliceId });
 
         return {
           content: [

@@ -1,5 +1,5 @@
 import "./ArtifactsGallery.css";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -22,6 +22,7 @@ import { artifactMediaUrl, artifactMediaUrlWithToken, fetchArtifact, updateArtif
 import { withTokenHeader } from "../auth";
 import { FileEditor } from "./FileEditor";
 import { FloatingWindow } from "./FloatingWindow";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 
 /*
 FNXC:ArtifactRegistry 2026-07-10-15:40:
@@ -98,6 +99,7 @@ interface ViewerState {
 
 export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onOpenTask, onArtifactUpdated }: ArtifactsGalleryProps) {
   const { t } = useTranslation("app");
+  const navigationHistory = useContext(NavigationHistoryContext);
   const [categoryFilter, setCategoryFilter] = useState<ArtifactCategoryFilter>("all");
   const [viewer, setViewer] = useState<ViewerState | null>(null);
   const viewerReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -135,6 +137,22 @@ export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onO
     viewerReturnFocusRef.current?.focus();
     viewerReturnFocusRef.current = null;
   }, []);
+
+  /*
+  FNXC:ArtifactViewerMobileBack 2026-07-16-17:00:
+  A mobile artifact viewer must dismiss before navigation on iOS swipe-back, Android native Back, and browser Back.
+  Register one stable modal closer for every viewer kind; nullable context keeps provider-less gallery renders working.
+  Programmatic close uses removeNav to consume its pushed entry, while popstate invokes closeViewer directly without a double-back.
+  */
+  useEffect(() => {
+    if (!isMobile || !viewer || !navigationHistory) return;
+    navigationHistory.pushNav({ type: "modal", close: closeViewer });
+  }, [closeViewer, isMobile, navigationHistory, viewer]);
+
+  const dismissViewer = useCallback(() => {
+    navigationHistory?.removeNav(closeViewer);
+    closeViewer();
+  }, [closeViewer, navigationHistory]);
 
   const visibleCategories = ARTIFACT_CATEGORY_ORDER.filter((category) =>
     grouped.has(category) && (categoryFilter === "all" || categoryFilter === category));
@@ -195,10 +213,10 @@ export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onO
       })}
 
       {viewer && viewer.kind === "media" && (
-        <MediaLightbox artifact={viewer.artifact} projectId={projectId} t={t} onClose={closeViewer} onOpenTask={onOpenTask} />
+        <MediaLightbox artifact={viewer.artifact} projectId={projectId} t={t} onClose={dismissViewer} onOpenTask={onOpenTask} />
       )}
       {viewer && viewer.kind === "pdf" && (
-        <PdfViewer artifact={viewer.artifact} projectId={projectId} t={t} onClose={closeViewer} onOpenTask={onOpenTask} />
+        <PdfViewer artifact={viewer.artifact} projectId={projectId} t={t} onClose={dismissViewer} onOpenTask={onOpenTask} />
       )}
       {viewer && viewer.kind === "doc" && (
         <DocViewer
@@ -206,7 +224,7 @@ export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onO
           projectId={projectId}
           t={t}
           addToast={addToast}
-          onClose={closeViewer}
+          onClose={dismissViewer}
           onOpenTask={onOpenTask}
           onArtifactUpdated={onArtifactUpdated}
         />

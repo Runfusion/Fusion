@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type WorkflowDefinition } from "@fusion/core";
-import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS } from "../../../../../core/src/mobile-nav-primary-items";
+import { DEPRECATED_BUILTIN_WORKFLOW_IDS, isLocale, SUPPORTED_LOCALES, type ReportActionType, type WorkflowDefinition } from "@fusion/core";
+import { DEFAULT_MOBILE_NAV_PRIMARY_ITEMS, MAX_MOBILE_NAV_PRIMARY_ITEMS, MOBILE_NAV_SELECTABLE_ITEMS, MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS } from "../../../../../core/src/mobile-nav-primary-items";
 import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
@@ -26,6 +26,8 @@ export interface GeneralSectionProps extends SectionBaseProps {
     prefixError: string | null;
     setPrefixError: (value: string | null) => void;
     onQuickChatButtonModeChange?: (mode: "floating" | "footer" | "off") => void;
+    /** Updates the live footer without persisting the draft until Settings is saved. */
+    onMobileNavPrimaryItemsChange?: (items: string[]) => void;
 }
 /*
 FNXC:SettingsStyling 2026-07-15-17:35:
@@ -39,7 +41,7 @@ Bespoke rows no longer render their help as inline `<small>` paragraphs. Their c
 FNXC:SourceControl 2026-07-15-20:30:
 GitHub/GitLab settings are NOT in this section. The tracking block, the tracking-repo select, and the GitLab disclosure moved to "Source Control · Project" (SourceControlSection.tsx), which also absorbed Merge's GitHub/GitLab auth blocks. Do not add source-control settings back here: `gitlabEnabled` was previously writable from both this section and Merge, and one owning section is what keeps that from recurring.
 */
-export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, }: GeneralSectionProps) {
+export function GeneralSection({ form, setForm, projectId, addToast, prefixError, setPrefixError, onQuickChatButtonModeChange, onMobileNavPrimaryItemsChange, }: GeneralSectionProps) {
     const { t } = useTranslation("app");
     const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
     useEffect(() => {
@@ -206,18 +208,24 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         </div>
       </div>
       {/*
-        FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
-        Default-on toggle controlling whether ephemeral task-worker agents may open new tasks via fn_task_create. Turning it off confines task creation to humans and permanent agents; ephemeral callers get a rejection.
+        FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
+        Operators choose free creation, an operator-mailbox proposal, or denial for ephemeral worker follow-ups.
+        The legacy boolean only supplies the displayed fallback; changing this control persists the non-default policy key.
       */}
-      <SettingsToggleRow
+      <SettingsSelectRow
         descriptor={{
-          key: "ephemeralAgentsCanCreateTasks",
-          label: t("settings.general.allowEphemeralAgentsToCreateTasks", " Allow ephemeral agents to create tasks "),
-          help: t("settings.general.allowEphemeralAgentsToCreateTasksHint", "When enabled (default), ephemeral task-worker agents can open follow-up tasks via fn_task_create. When disabled, only humans and permanent agents can create tasks; ephemeral callers are rejected."),
+          key: "ephemeralAgentTaskCreationPolicy",
+          label: t("settings.general.ephemeralAgentTaskCreationPolicy", "Ephemeral agent follow-up tasks"),
+          help: t("settings.general.ephemeralAgentTaskCreationPolicyHint", "No default — unset policy falls back to Allow. Upon validation sends a proposal to your mailbox for one-click approval; Deny rejects follow-up task creation."),
           scope: "project",
+          options: [
+            { value: "allow", label: t("settings.general.ephemeralAgentTaskCreationPolicyAllow", "Allow") },
+            { value: "upon_validation", label: t("settings.general.ephemeralAgentTaskCreationPolicyUponValidation", "Upon validation") },
+            { value: "deny", label: t("settings.general.ephemeralAgentTaskCreationPolicyDeny", "Deny") },
+          ],
         }}
-        value={form.ephemeralAgentsCanCreateTasks !== false}
-        onChange={(v) => setForm((f) => ({ ...f, ephemeralAgentsCanCreateTasks: v === true }))}
+        value={form.ephemeralAgentTaskCreationPolicy ?? (form.ephemeralAgentsCanCreateTasks === false ? "deny" : "allow")}
+        onChange={(v) => setForm((f) => ({ ...f, ephemeralAgentTaskCreationPolicy: v as "allow" | "upon_validation" | "deny" }))}
       />
       {/*
         FNXC:Workspace 2026-06-24-16:00:
@@ -265,6 +273,72 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
           <option value="changelog">{t("settings.general.requireChangelogUpdateExistingChangelog", "Require changelog update (existing changelog)")}</option>
         </select>
       </div>
+      <div className="form-group">
+        {/*
+        FNXC:ReviewArtifacts 2026-07-17-12:00:
+        Operators choose whether future tasks may generate review deliverables.
+        Per-task PROMPT.md markers remain the final override, so conservative
+        project policy does not require new task-store persistence.
+        */}
+        <div className="settings-field-label-row">
+          <label htmlFor="reviewArtifacts">{t("settings.general.reviewArtifacts", "Review Artifacts")}</label>
+          <SettingsHelpTip settingKey="reviewArtifacts">{t("settings.general.reviewArtifactsHint", " Controls whether eligible future tasks generate review deliverables. User-facing limits generation to user-facing work; on enables it for all eligible tasks. Individual PROMPT.md headers can override this. Default: off.")}</SettingsHelpTip>
+        </div>
+        <select id="reviewArtifacts" value={form.reviewArtifacts || "off"} onChange={(e) => setForm((f) => ({
+          ...f,
+          reviewArtifacts: e.target.value as "off" | "user-facing" | "on",
+        }))}>
+          <option value="off">{t("settings.general.off", "Off")}</option>
+          <option value="user-facing">{t("settings.general.userFacing", "User-facing work")}</option>
+          <option value="on">{t("settings.general.on", "On")}</option>
+        </select>
+      </div>
+      <div className="form-group">
+        {/*
+        FNXC:ReportPipeline 2026-07-16-19:15:
+        A privacy-safe draft review remains the project default, while each of
+        the four guided report actions can explicitly opt into direct filing.
+        Persist overrides as one map so the pipeline resolves them consistently.
+        */}
+        {/*
+        FNXC:ReportPipeline 2026-07-18-12:40:
+        FN-8277 report mode is a plain Settings control; bind help to i18n paths that state the
+        draft-review default and the unset per-action override so settings-default-descriptions stays green.
+        */}
+        <label htmlFor="reportMode">{t("settings.general.reportMode", "In-app report mode")}</label>
+        <select id="reportMode" value={form.reportMode ?? "draft-review"} onChange={(e) => setForm((f) => ({ ...f, reportMode: e.target.value as "draft-review" | "auto-file" }))}>
+          <option value="draft-review">{t("settings.general.reportModeDraftReview", "Review draft before filing")}</option>
+          <option value="auto-file">{t("settings.general.reportModeAutoFile", "File automatically")}</option>
+        </select>
+        <p className="form-help">{t("settings.general.reportModeHelp", "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).")}</p>
+        {(["bug", "feedback", "idea", "help"] as const).map((action) => (
+          <label key={action} htmlFor={`reportMode-${action}`}>
+            {t(`settings.general.reportModeOverride.${action}`, `${action[0].toUpperCase()}${action.slice(1)} report override`)}
+            <select id={`reportMode-${action}`} value={form.reportModeByAction?.[action] ?? ""} onChange={(e) => setForm((current) => {
+              const reportModeByAction = { ...current.reportModeByAction };
+              const selected = e.target.value as "" | "draft-review" | "auto-file";
+              if (selected) reportModeByAction[action as ReportActionType] = selected;
+              else delete reportModeByAction[action as ReportActionType];
+              return { ...current, reportModeByAction: Object.keys(reportModeByAction).length ? reportModeByAction : undefined };
+            })}>
+              <option value="">{t("settings.general.reportModeUseProjectDefault", "Use project default")}</option>
+              <option value="draft-review">{t("settings.general.reportModeDraftReview", "Review draft before filing")}</option>
+              <option value="auto-file">{t("settings.general.reportModeAutoFile", "File automatically")}</option>
+            </select>
+          </label>
+        ))}
+        <p className="form-help">{t("settings.general.reportModeByActionHelp", "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.")}</p>
+        <SettingsToggleRow
+          descriptor={{
+            key: "reportRoadmapDedup",
+            label: t("settings.general.reportRoadmapDedup", "Check roadmap before filing reports"),
+            help: t("settings.general.reportRoadmapDedupHelp", "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off."),
+            scope: "project",
+          }}
+          value={form.reportRoadmapDedup === true}
+          onChange={(value) => setForm((current) => ({ ...current, reportRoadmapDedup: value ?? false }))}
+        />
+      </div>
       {/*
         FNXC:SettingsGeneral 2026-07-15-17:35:
         `showQuickChatFAB` is written alongside `quickChatButtonMode` on every change: the legacy boolean
@@ -293,45 +367,52 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
       />
       {/*
         FNXC:Navigation 2026-07-17-00:00:
-        The Settings control exposes only the fixed seven-item quick-action universe. Checkboxes choose
-        destinations and the adjacent controls preserve their selected order; core still sanitizes persisted
-        values so unselected destinations remain reachable through More and its trailing tab cannot be removed.
+        Render the selected quick actions in persisted order so move controls visibly reorder their rows.
+        The add picker exposes every eligible destination, while each mutation updates the live footer before
+        Settings is saved; More, Terminal/scripts, shell controls, and plugin views remain unavailable here.
         */}
       <SettingsFieldRow
         htmlFor="mobileNavPrimaryItems"
         label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}
-        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Unselected destinations remain in the More menu.")}
+        help={t("settings.general.mobileNavPrimaryItemsHint", "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.")}
         scope="project"
       >
         <div role="group" aria-label={t("settings.general.mobileNavPrimaryItems", "Mobile footer quick actions")}>
-          {MOBILE_NAV_SELECTABLE_ITEMS.map((item) => {
-            const selectedItems = Array.isArray(form.mobileNavPrimaryItems)
-              ? form.mobileNavPrimaryItems
-              : DEFAULT_MOBILE_NAV_PRIMARY_ITEMS;
-            const selectedIndex = selectedItems.indexOf(item);
-            const selected = selectedIndex >= 0;
-            const label = t(`nav.${item === "command-center" ? "commandCenter" : item}`, item);
-            const updateItems = (nextItems: string[]) => setForm((current) => ({ ...current, mobileNavPrimaryItems: nextItems }));
-            return (
-              <div key={item}>
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={!selected && selectedItems.length >= MAX_MOBILE_NAV_PRIMARY_ITEMS}
-                    onChange={(event) => updateItems(event.target.checked ? [...selectedItems, item] : selectedItems.filter((selectedItem) => selectedItem !== item))}
-                  />
+          {(() => {
+            const selectedItems = Array.isArray(form.mobileNavPrimaryItems) && form.mobileNavPrimaryItems.length > 0
+              ? form.mobileNavPrimaryItems.filter((item): item is typeof MOBILE_NAV_SELECTABLE_ITEMS[number] => MOBILE_NAV_SELECTABLE_ITEMS.includes(item as typeof MOBILE_NAV_SELECTABLE_ITEMS[number]))
+              : [...DEFAULT_MOBILE_NAV_PRIMARY_ITEMS];
+            const updateItems = (nextItems: string[]) => {
+              setForm((current) => ({ ...current, mobileNavPrimaryItems: nextItems }));
+              onMobileNavPrimaryItemsChange?.(nextItems);
+            };
+            const availableItems = MOBILE_NAV_SELECTABLE_ITEMS.filter((item) => !selectedItems.includes(item));
+            return <>
+              {selectedItems.map((item, selectedIndex) => {
+                const label = t(MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS[item], item);
+                const move = (offset: number) => {
+                  const nextItems = [...selectedItems];
+                  [nextItems[selectedIndex], nextItems[selectedIndex + offset]] = [nextItems[selectedIndex + offset], nextItems[selectedIndex]];
+                  updateItems(nextItems);
+                };
+                return <div key={item} className="settings-field-label-row">
                   <span>{label}</span>
-                </label>
-                {selected && (
-                  <>
-                    <button type="button" className="btn btn-icon" disabled={selectedIndex === 0} aria-label={t("settings.general.moveNavItemEarlier", "Move {{item}} earlier", { item: label })} onClick={() => updateItems(selectedItems.map((selectedItem, index) => index === selectedIndex - 1 ? item : index === selectedIndex ? selectedItems[index - 1] : selectedItem))}>↑</button>
-                    <button type="button" className="btn btn-icon" disabled={selectedIndex === selectedItems.length - 1} aria-label={t("settings.general.moveNavItemLater", "Move {{item}} later", { item: label })} onClick={() => updateItems(selectedItems.map((selectedItem, index) => index === selectedIndex + 1 ? item : index === selectedIndex ? selectedItems[index + 1] : selectedItem))}>↓</button>
-                  </>
-                )}
-              </div>
-            );
-          })}
+                  <span>
+                    <button type="button" className="btn btn-icon" disabled={selectedIndex === 0} aria-label={t("settings.general.moveNavItemEarlier", "Move {{item}} earlier", { item: label })} onClick={() => move(-1)}>↑</button>
+                    <button type="button" className="btn btn-icon" disabled={selectedIndex === selectedItems.length - 1} aria-label={t("settings.general.moveNavItemLater", "Move {{item}} later", { item: label })} onClick={() => move(1)}>↓</button>
+                    <button type="button" className="btn btn-icon" aria-label={t("settings.general.removeNavItem", "Remove {{item}}", { item: label })} onClick={() => updateItems(selectedItems.filter((selectedItem) => selectedItem !== item))}>×</button>
+                  </span>
+                </div>;
+              })}
+              <label className="checkbox-label">
+                <span>{t("settings.general.addNavItem", "Add quick action")}</span>
+                <select id="mobileNavPrimaryItems" value="" disabled={selectedItems.length >= MAX_MOBILE_NAV_PRIMARY_ITEMS} onChange={(event) => { if (event.target.value) updateItems([...selectedItems, event.target.value]); }}>
+                  <option value="">{t("settings.general.selectNavItem", "Choose a destination")}</option>
+                  {availableItems.map((item) => <option key={item} value={item}>{t(MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS[item], item)}</option>)}
+                </select>
+              </label>
+            </>;
+          })()}
         </div>
       </SettingsFieldRow>
       {/*

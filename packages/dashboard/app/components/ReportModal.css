@@ -1,0 +1,9 @@
+.report-modal-backdrop { position: fixed; inset: 0; z-index: var(--z-modal); display: grid; place-items: center; padding: var(--space-4); background: color-mix(in srgb, var(--bg-base) 70%, transparent); }
+.report-modal { position: relative; display: grid; gap: var(--space-3); inline-size: min(var(--space-96), 100%); padding: var(--space-5); }
+.report-modal textarea { min-block-size: var(--space-32); resize: vertical; }
+.report-modal__close { position: absolute; inset-block-start: var(--space-2); inset-inline-end: var(--space-2); }
+.report-modal__error { color: var(--color-error); }
+.report-modal__screenshot-option { display: flex; gap: var(--space-2); align-items: center; }
+.report-modal__screenshot-preview { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-raised) 85%, transparent); }
+.report-modal__screenshot-preview img { max-inline-size: 100%; max-block-size: var(--space-96); object-fit: contain; }
+@media (max-width: 768px) { .report-modal { inline-size: 100%; padding: var(--space-4); } }

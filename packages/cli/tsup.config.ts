@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuildBuild } from "esbuild";
@@ -29,6 +30,7 @@ const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   // FNXC:GrokAcp 2026-07-11-14:00: Grok ACP ships mcp-schema-server.cjs so
   // session/new can forward executable Fusion fn_* tools to grok agent stdio.
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-claude-runtime",
   // FNXC:OmpAcp 2026-07-14-00:05: OMP ACP ships the same bridge asset for fn_* tools.
   "fusion-plugin-omp-runtime",
 ]);
@@ -245,6 +247,42 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
     cpSync(mcpServerAsset, join(destDir, "mcp-schema-server.cjs"));
   }
 
+  if (pluginId === "fusion-plugin-claude-runtime") {
+    /*
+     * FNXC:ClaudeAcpRuntime 2026-07-18-12:30:
+     * A published CLI npm package is portable, while ACP's native binary is
+     * platform-specific. Do not bake the build host's binary into the staged
+     * plugin: stage the identity-pinned JS launcher and declare it as a CLI
+     * dependency so npm installs exactly the matching optional native package
+     * on every operator platform. The launcher resolves that package by name
+     * through the installed CLI's ancestor node_modules.
+     */
+    const bridgeRequire = createRequire(join(srcDir, "package.json"));
+    const launcherPackageJson = bridgeRequire.resolve("claude-code-cli-acp/package.json");
+    const launcherSourceDir = dirname(launcherPackageJson);
+    const bridgeDest = join(destDir, "bridge");
+    const launcherDestDir = join(bridgeDest, "node_modules", "claude-code-cli-acp");
+
+    mkdirSync(launcherDestDir, { recursive: true });
+    cpSync(join(launcherSourceDir, "bin"), join(launcherDestDir, "bin"), { recursive: true });
+    cpSync(launcherPackageJson, join(launcherDestDir, "package.json"));
+
+    const bridgeWrapper = join(bridgeDest, `claude-code-cli-acp${process.platform === "win32" ? ".cmd" : ""}`);
+    if (process.platform === "win32") {
+      writeFileSync(bridgeWrapper, "@echo off\r\nnode \"%~dp0node_modules\\claude-code-cli-acp\\bin\\claude-code-cli-acp.js\" %*\r\n");
+    } else {
+      writeFileSync(
+        bridgeWrapper,
+        "#!/usr/bin/env node\nimport \"./node_modules/claude-code-cli-acp/bin/claude-code-cli-acp.js\";\n",
+      );
+      chmodSync(bridgeWrapper, 0o755);
+    }
+
+    if (!existsSync(join(launcherDestDir, "bin", "claude-code-cli-acp.js"))) {
+      throw new Error(`[tsup] Missing required Claude ACP launcher after staging`);
+    }
+  }
+
   const bundledOutput = join(destDir, "bundled.js");
   if (!existsSync(bundledOutput)) {
     throw new Error(`[tsup] Missing bundled output for ${pluginId}: expected ${bundledOutput}`);
@@ -330,7 +368,23 @@ function assertAllStagedBundledPluginsLoadable() {
 const pluginSdkEntry = join(__dirname, "..", "plugin-sdk", "src", "index.ts");
 
 const cliBuildConfig = {
-  entry: ["src/bin.ts", "src/extension.ts"],
+  /*
+   * FNXC:CliPackaging 2026-07-17-21:05:
+   * Projects with isolationMode "child-process" fork a runtime worker that the engine's
+   * getWorkerPath() resolves as child-process-worker.js NEXT TO the running compiled module —
+   * i.e. dist/child-process-worker.js beside the bundled dist/bin.js in a published install.
+   * The published package never shipped that file, so child-process isolation always failed
+   * with ERR_MODULE_NOT_FOUND. Emit the engine worker as a sibling named entry here so it
+   * inherits the exact bin.js bundling shape (ESM, @fusion/* bundled via noExternal, native and
+   * platform-specific deps external and resolved from the installed package's node_modules,
+   * createRequire banner). The worker is spawned with node fork() + IPC, so it must be a plain
+   * Node-runnable ESM file; every external below is a published dependency of @runfusion/fusion.
+   */
+  entry: {
+    bin: "src/bin.ts",
+    extension: "src/extension.ts",
+    "child-process-worker": "../engine/src/runtimes/child-process-worker.ts",
+  },
   format: ["esm"],
   platform: "node",
   target: "node22",
@@ -358,6 +412,13 @@ const cliBuildConfig = {
     "cpu-features",
     "embedded-postgres",
     /^@embedded-postgres\//,
+    /*
+    FNXC:ReviewArtifacts 2026-07-19-10:00:
+    The engine lazy-loads playwright-core only for a gated local feature-video.
+    Keep it external because Playwright has optional Chromium BiDi internals that
+    esbuild cannot resolve, while the published CLI installs this direct runtime dep.
+    */
+    "playwright-core",
   ],
   splitting: false,
   // Keep clean disabled so the dedicated plugin-sdk tsup config can emit into
@@ -384,6 +445,22 @@ const cliBuildConfig = {
       console.warn(
         `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply schema migrations.`,
       );
+    }
+
+    /*
+    FNXC:CliPackaging 2026-07-17-19:55:
+    The dashboard's plugin-registry route resolves ./registry-manifest.json next to the
+    bundled server (new URL relative to import.meta.url in plugin-routes.ts), i.e.
+    dist/registry-manifest.json beside bin.js after bundling. It was never staged into
+    the CLI dist, so every published install served an empty plugin registry with a
+    warning. Stage it from the dashboard source of truth in both fast and full modes.
+    */
+    const registryManifestSrc = join(__dirname, "..", "dashboard", "src", "registry-manifest.json");
+    if (existsSync(registryManifestSrc)) {
+      cpSync(registryManifestSrc, join(__dirname, "dist", "registry-manifest.json"));
+      console.log("Copied registry-manifest.json to dist/");
+    } else {
+      console.warn(`WARNING: registry manifest not found at ${registryManifestSrc}; plugin registry will be empty.`);
     }
 
     /*

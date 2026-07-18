@@ -19,13 +19,12 @@ export const generalSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "general",
-    key: "ephemeralAgentsCanCreateTasks",
-    labelKey: "settings.general.allowEphemeralAgentsToCreateTasks",
-    labelFallback: " Allow ephemeral agents to create tasks ",
-    helpKey: "settings.general.allowEphemeralAgentsToCreateTasksHint",
-    helpFallback:
-      "When enabled (default), ephemeral task-worker agents can open follow-up tasks via fn_task_create. When disabled, only humans and permanent agents can create tasks; ephemeral callers are rejected.",
-    keywords: ["follow-up", "permissions"],
+    key: "ephemeralAgentTaskCreationPolicy",
+    labelKey: "settings.general.ephemeralAgentTaskCreationPolicy",
+    labelFallback: "Ephemeral agent follow-up tasks",
+    helpKey: "settings.general.ephemeralAgentTaskCreationPolicyHint",
+    helpFallback: "Allow creates follow-up tasks immediately. Upon validation sends a proposal to your mailbox for one-click approval. Deny rejects follow-up task creation.",
+    keywords: ["follow-up", "permissions", "validation", "proposal"],
   },
   {
     sectionId: "general",

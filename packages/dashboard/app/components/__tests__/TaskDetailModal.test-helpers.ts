@@ -148,6 +148,20 @@ vi.mock("lucide-react", () => ({
   // FN-7582's copy change) — keep this list in sync with the node-editor icon set.
   HelpCircle: () => null,
   DoorOpen: () => null,
+  /*
+  FNXC:ReviewArtifacts 2026-07-18-13:25:
+  FN-8286 mounts ArtifactsGallery + TaskReviewTab from TaskDetailModal. Their lucide imports
+  (Image/FileText/FileType/Video/AudioLines/Package/Download/User) must stay on this shared mock
+  or every focused TaskDetailModal suite fails at import with missing lucide exports.
+  */
+  Image: (props: any) => React.createElement("svg", { "data-testid": "image-icon", ...props }),
+  FileText: (props: any) => React.createElement("svg", { "data-testid": "file-text-icon", ...props }),
+  FileType: (props: any) => React.createElement("svg", { "data-testid": "file-type-icon", ...props }),
+  Video: (props: any) => React.createElement("svg", { "data-testid": "video-icon", ...props }),
+  AudioLines: (props: any) => React.createElement("svg", { "data-testid": "audio-lines-icon", ...props }),
+  Package: (props: any) => React.createElement("svg", { "data-testid": "package-icon", ...props }),
+  Download: (props: any) => React.createElement("svg", { "data-testid": "download-icon", ...props }),
+  User: (props: any) => React.createElement("svg", { "data-testid": "user-icon", ...props }),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({

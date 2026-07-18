@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "프로젝트를 불러오지 못했습니다"
     },
-    "testMode": "테스트 모드 — 실제 AI 호출 없음"
+    "testMode": "테스트 모드 — 실제 AI 호출 없음",
+    "migrationInProgress": "데이터베이스 마이그레이션 진행 중 — 완료되면 대시보드가 다시 연결됩니다."
   },
   "appName": "",
   "approval": {
@@ -1165,29 +1166,6 @@
     "manageConnection": "연결 관리",
     "retryConnection": "연결 재시도",
     "retrying": "재시도 중…"
-  },
-  "backgroundTasks": {
-    "dismissButton": "닫기",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "백그라운드 작업",
-    "status": {
-      "failed": "실패",
-      "generating": "생성 중...",
-      "needsInput": "입력 필요"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "마일스톤 인터뷰",
-      "missionInterview": "미션 인터뷰",
-      "planning": "계획",
-      "sliceInterview": "슬라이스 인터뷰",
-      "subtask": "하위 작업 분류"
-    }
   },
   "board": {
     "archived": "보관됨",
@@ -1602,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "조직 내보내기 / 가져오기",
+      "description": "비밀이 제거된 조직 번들을 다운로드하거나 미리 봅니다.",
+      "export": {
+        "action": "조직 번들 내보내기",
+        "working": "내보내는 중…",
+        "success": "내보내기 준비됨",
+        "error": "내보내기 실패"
+      },
+      "import": {
+        "label": "조직 번들 JSON",
+        "placeholder": "비밀이 제거된 조직 번들을 붙여넣으세요",
+        "preview": "가져오기 미리보기",
+        "previewing": "미리보는 중…",
+        "previewReady": "미리보기가 준비되었습니다. 이 번들을 적용하려면 확인하세요.",
+        "apply": "가져오기 적용",
+        "importing": "가져오는 중…",
+        "invalid": "유효한 조직 번들 JSON 문서를 붙여넣으세요",
+        "error": "번들을 미리보거나 가져올 수 없습니다",
+        "confirmTitle": "조직 번들을 가져올까요?",
+        "confirmMessage": "미리본 구성을 이 프로젝트에 적용합니다.",
+        "confirmApply": "번들 가져오기"
+      },
+      "versions": {
+        "title": "구성 버전",
+        "description": "기록된 프로젝트 구성 버전을 복원합니다.",
+        "loading": "버전 불러오는 중…",
+        "empty": "아직 구성 버전이 없습니다.",
+        "loadError": "구성 버전을 불러올 수 없습니다",
+        "rollback": "롤백",
+        "rollingBack": "롤백 중…",
+        "rollbackError": "구성을 롤백할 수 없습니다",
+        "confirmTitle": "구성을 롤백할까요?",
+        "confirmMessage": "이 버전을 복원할까요? 롤백은 새 버전으로 기록됩니다.",
+        "confirmRollback": "롤백"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -1792,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "리뷰 산출물"
     },
     "team": {
       "agent": "",
@@ -1870,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "리뷰 산출물",
+      "empty": "아직 사용 가능한 리뷰 산출물이 없습니다."
     }
   },
   "comments": {
@@ -2007,6 +2027,7 @@
     "connectRemoteButton": "원격 Fusion에 연결",
     "couldNotStart": "로컬 Fusion을 시작할 수 없습니다",
     "loading": "Fusion 로드 중…",
+    "migrationInProgress": "데이터베이스 마이그레이션 진행 중 — 몇 분 정도 걸릴 수 있습니다.",
     "opening": "열고 있는 중…",
     "retry": "다시 시도",
     "runLocalButton": "로컬에서 Fusion 실행",
@@ -3322,7 +3343,8 @@
     "unpauseUnavailable": "재개 작업을 사용할 수 없습니다",
     "useProjectDefault": "프로젝트 기본값 사용",
     "viewOptions": "보기 옵션",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "재계획"
   },
   "mailbox": {
     "agent": "에이전트",
@@ -5656,7 +5678,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "입력 대기 중이거나 실패한 AI 세션",
     "resume": "재개",
-    "retry": "재시도"
+    "retry": "재시도",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5906,7 +5932,25 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "모바일 하단 빠른 작업",
+      "mobileNavPrimaryItemsHint": "기본값: 대시보드, 작업, 에이전트, 미션, 채팅, 메일함. 가능한 대상을 추가하세요. 선택하지 않은 항목은 더보기에 유지됩니다.",
+      "addNavItem": "빠른 작업 추가",
+      "selectNavItem": "대상 선택",
+      "removeNavItem": "{{item}} 제거",
+      "moveNavItemEarlier": "{{item}} 앞으로 이동",
+      "moveNavItemLater": "{{item}} 뒤로 이동",
+      "ephemeralAgentTaskCreationPolicy": "임시 에이전트 후속 작업",
+      "ephemeralAgentTaskCreationPolicyHint": "기본값 없음 — 미설정 시 허용으로 폴백합니다. 검증 후는 받은편지함으로 제안을 보내 원클릭 승인합니다. 거부는 후속 작업 생성을 거부합니다.",
+      "ephemeralAgentTaskCreationPolicyAllow": "허용",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "검증 후",
+      "ephemeralAgentTaskCreationPolicyDeny": "거부",
+      "reportModeHelp": "인앱 버그/피드백/아이디어/도움말 리포트 제출 방식. 기본값: draft-review(제출 전 운영자가 초안 검토).",
+      "reportModeByActionHelp": "버그·피드백·아이디어·도움말 등 작업별 프로젝트 리포트 모드 선택 재정의. 기본값 없음 — 미설정 작업은 reportMode를 상속합니다.",
+      "reviewArtifacts": "리뷰 산출물",
+      "reviewArtifactsHint": "적격한 향후 작업이 리뷰 산출물을 생성할지 제어합니다. 사용자 보고와 활동 캡처는 별도로 유지됩니다. 기본값: 꺼짐.",
+      "reportRoadmapDedup": "보고서를 제출하기 전에 로드맵 확인",
+      "reportRoadmapDedupHelp": "활성화하면 일치하는 로드맵 기능이 다른 GitHub 이슈나 토론을 만들지 않고 인라인으로 표시됩니다. 기본값: 꺼짐."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5944,7 +5988,9 @@
       "gitLabAuthTokenHint": "",
       "dismissModalsByClickingOutsideHint": "",
       "skipConfirmationDialogs": "",
-      "skipConfirmationDialogsHint": ""
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6770,6 +6816,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 내장 PostgreSQL의 최대 서버 연결 수. Fusion 재시작 후 적용. 범위: 32–2,000. 기본값: 500. 외부 PostgreSQL은 제공자 연결 한도를 사용합니다.",
+      "embeddedConnectionCap": "내장 PostgreSQL 연결 상한",
+      "embeddedConnectionCapError": "32에서 2,000 사이의 값을 입력하세요.",
+      "advanced": "고급 데이터베이스 설정"
     }
   },
   "setup": {
@@ -8381,7 +8433,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "재계획"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9084,5 +9137,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "이미 로드맵에 있습니다",
+      "message": "이 보고서는 이미 계획된 기능과 일치합니다."
+    }
   }
 }

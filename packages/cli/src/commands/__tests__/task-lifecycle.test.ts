@@ -4,10 +4,12 @@ import { EventEmitter } from "node:events";
 // Mock child_process so we can intercept the `git push -u origin <branch>`
 // call that processPullRequestMergeTask issues before createPr.
 const execMock = vi.hoisted(() => vi.fn());
-// Records raw (file, args[]) tuples for execFile so tests can assert a no-shell
-// invocation (Fix #11) — i.e. the branch is a discrete argv entry, not shell-
-// interpolated.
-const execFileCalls = vi.hoisted(() => [] as Array<{ file: string; args: string[] }>);
+// Records raw (file, args[], cwd) tuples for execFile so tests can assert a
+// no-shell invocation (Fix #11) — i.e. the branch is a discrete argv entry, not
+// shell-interpolated — and that git ops target the task worktree cwd (gh-4).
+const execFileCalls = vi.hoisted(
+  () => [] as Array<{ file: string; args: string[]; cwd: string | undefined }>,
+);
 vi.mock("node:child_process", () => ({
   exec: (cmd: string, opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     try {
@@ -19,7 +21,7 @@ vi.mock("node:child_process", () => ({
   },
   execFile: (file: string, args: string[] | undefined, opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     try {
-      execFileCalls.push({ file, args: args ?? [] });
+      execFileCalls.push({ file, args: args ?? [], cwd: (opts as { cwd?: string } | undefined)?.cwd });
       const result = execMock(`${file} ${(args ?? []).join(" ")}`.trim(), opts);
       cb(null, typeof result === "string" ? result : "", "");
     } catch (err) {
@@ -41,6 +43,7 @@ import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
   createGroupPrCallback,
+  createPrNodeGithubOps,
   processPullRequestMergeTask,
   getTaskBranchName,
   syncGroupPrCallback,
@@ -155,6 +158,141 @@ describe("processPullRequestMergeTask", () => {
     execMock.mockReset();
     execFileCalls.length = 0;
     vi.mocked(getCurrentRepo).mockReturnValue({ owner: "owner", repo: "repo" });
+  });
+
+  describe("central-install repo threading (gh-4)", () => {
+    // FNXC:PrMergeAutoMerge 2026-07-17-19:18 (gh-4):
+    // Simulate a centrally-installed multi-project daemon: process.cwd() is NOT
+    // a git repo, so cwd-less getCurrentRepo() returns null; only the
+    // per-project cwd resolves. Any PR call that relies on the client's
+    // process-cwd fallback would blow up with "Could not determine repository".
+    beforeEach(() => {
+      vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
+        cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+    });
+
+    it("threads explicit owner/repo into findPrForBranch, createPr, and mergePr on the per-task path", async () => {
+      const task: MockTask = { id: "FN-9401", title: "t", description: "d", column: "in-review" };
+      const branch = getTaskBranchName(task.id);
+      const store = makeStatefulStore(task);
+      execMock.mockReturnValue("");
+
+      const github = {
+        findPrForBranch: vi.fn(async () => null),
+        createPr: vi.fn(async () => ({
+          number: 77,
+          url: "https://github.com/central-owner/central-repo/pull/77",
+          status: "open" as const,
+          headBranch: branch,
+          baseBranch: "main",
+        })),
+        getPrMergeStatus: vi.fn(async () => ({
+          prInfo: {
+            number: 77,
+            url: "https://github.com/central-owner/central-repo/pull/77",
+            status: "open" as const,
+          },
+          reviewDecision: null,
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })),
+        mergePr: vi.fn(async () => ({
+          number: 77,
+          url: "https://github.com/central-owner/central-repo/pull/77",
+          status: "merged" as const,
+        })),
+      };
+
+      const result = await processPullRequestMergeTask(
+        store as never,
+        "/projects/repo-a",
+        task.id,
+        github as never,
+        () => undefined,
+      );
+
+      expect(result).toBe("merged");
+      expect(github.findPrForBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: branch }),
+      );
+      expect(github.createPr).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: branch }),
+      );
+      expect(github.mergePr).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "central-owner", repo: "central-repo", number: 77, method: "squash" }),
+      );
+    });
+
+    it("threads explicit owner/repo into findPrForBranch, createPr, and mergePr on the shared-branch-group path", async () => {
+      const task: MockTask = {
+        id: "FN-9402",
+        title: "t",
+        description: "d",
+        column: "in-review",
+        branchContext: { groupId: "planning:g4", source: "planning", assignmentMode: "shared" },
+      };
+      const store = makeStore(task, { baseBranch: "main" });
+      (store.getBranchGroup as ReturnType<typeof vi.fn>).mockReturnValue({
+        id: "BG-4",
+        sourceType: "planning",
+        sourceId: "planning:g4",
+        branchName: "fusion/groups/planning-g4",
+        autoMerge: true,
+        prState: "none",
+        status: "open",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      (store.listTasksByBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue([task]);
+      execMock.mockImplementation((cmd: string) => (cmd.includes("rev-list --count") ? "1\n" : ""));
+
+      const github = {
+        findPrForBranch: vi.fn(async () => null),
+        createPr: vi.fn(async () => ({
+          number: 88,
+          url: "https://github.com/central-owner/central-repo/pull/88",
+          status: "open" as const,
+          headBranch: "fusion/groups/planning-g4",
+          baseBranch: "main",
+        })),
+        getPrMergeStatus: vi.fn(async () => ({
+          prInfo: {
+            number: 88,
+            url: "https://github.com/central-owner/central-repo/pull/88",
+            status: "open" as const,
+          },
+          reviewDecision: null,
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })),
+        mergePr: vi.fn(async () => ({
+          number: 88,
+          url: "https://github.com/central-owner/central-repo/pull/88",
+          status: "merged" as const,
+        })),
+      };
+
+      const result = await processPullRequestMergeTask(
+        store as never,
+        "/projects/repo-a",
+        task.id,
+        github as never,
+        () => undefined,
+      );
+
+      expect(result).toBe("merged");
+      expect(github.findPrForBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/groups/planning-g4" }),
+      );
+      expect(github.createPr).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/groups/planning-g4" }),
+      );
+      expect(github.mergePr).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "central-owner", repo: "central-repo", number: 88, method: "squash" }),
+      );
+    });
   });
 
   it("pushes the per-task branch to origin before creating a new PR", async () => {
@@ -1103,7 +1241,7 @@ describe("processPullRequestMergeTask", () => {
     );
 
     expect(result).toBe("merged");
-    expect(github.mergePr).toHaveBeenCalledWith({ number: 124, method: "squash" });
+    expect(github.mergePr).toHaveBeenCalledWith({ owner: "owner", repo: "repo", number: 124, method: "squash" });
     expect(github.getPrMergeStatus).toHaveBeenCalledTimes(2);
     expect(github.getPrMergeStatus).toHaveBeenNthCalledWith(1, "owner", "repo", 124);
     expect(github.getPrMergeStatus).toHaveBeenNthCalledWith(2, "owner", "repo", 124);
@@ -1174,7 +1312,7 @@ describe("processPullRequestMergeTask", () => {
       ),
     ).rejects.toThrow(mergeError.message);
 
-    expect(github.mergePr).toHaveBeenCalledWith({ number: 125, method: "squash" });
+    expect(github.mergePr).toHaveBeenCalledWith({ owner: "owner", repo: "repo", number: 125, method: "squash" });
     expect(github.getPrMergeStatus).toHaveBeenCalledTimes(2);
     expect(store.updatePrInfo).not.toHaveBeenCalledWith("FN-9105", expect.objectContaining({ status: "merged" }));
     expect(store.moveTask).not.toHaveBeenCalled();
@@ -1231,7 +1369,7 @@ describe("processPullRequestMergeTask", () => {
       ),
     ).rejects.toThrow(mergeError.message);
 
-    expect(github.mergePr).toHaveBeenCalledWith({ number: 126, method: "squash" });
+    expect(github.mergePr).toHaveBeenCalledWith({ owner: "owner", repo: "repo", number: 126, method: "squash" });
     expect(github.getPrMergeStatus).toHaveBeenCalledTimes(2);
     expect(store.moveTask).not.toHaveBeenCalled();
   });
@@ -1398,7 +1536,7 @@ describe("processPullRequestMergeTask", () => {
       );
 
       expect(result).toBe("merged");
-      expect(github.mergePr).toHaveBeenCalledWith({ number: 100, method: "squash" });
+      expect(github.mergePr).toHaveBeenCalledWith({ owner: "owner", repo: "repo", number: 100, method: "squash" });
     });
 
     it("preserves existing behavior when requirePrApproval is false", async () => {
@@ -1654,7 +1792,12 @@ describe("createGroupPrCallback", () => {
       baseBranch: "main",
     });
 
-    expect(github.findPrForBranch).toHaveBeenCalledWith({ head: group.branchName, state: "open" });
+    expect(github.findPrForBranch).toHaveBeenCalledWith({
+      owner: "owner",
+      repo: "repo",
+      head: group.branchName,
+      state: "open",
+    });
   });
 
   it("does not reuse a closed PR from a prior group — creates a fresh one", async () => {
@@ -1679,13 +1822,134 @@ describe("createGroupPrCallback", () => {
       baseBranch: "main",
     });
 
-    expect(github.findPrForBranch).toHaveBeenCalledWith({ head: group.branchName, state: "open" });
+    expect(github.findPrForBranch).toHaveBeenCalledWith({
+      owner: "owner",
+      repo: "repo",
+      head: group.branchName,
+      state: "open",
+    });
     expect(github.createPr).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       prNumber: 123,
       prUrl: "https://github.com/owner/repo/pull/123",
       prState: "open",
     });
+  });
+
+  it("resolves the repo from the callback cwd and threads owner/repo into findPrForBranch/createPr (gh-4)", async () => {
+    vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
+      cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+    execMock.mockReturnValue("");
+
+    const github = {
+      findPrForBranch: vi.fn(async () => null),
+      createPr: vi.fn(async () => ({
+        number: 5,
+        url: "https://github.com/central-owner/central-repo/pull/5",
+        status: "open" as const,
+      })),
+    };
+
+    const callback = createGroupPrCallback(github as never);
+    const result = await callback({
+      cwd: "/projects/repo-a",
+      group: { id: "BG-9", branchName: "fusion/groups/g9" } as never,
+      members: [{ id: "FN-9501", title: "m1" }] as never,
+      headBranch: "fusion/groups/g9",
+      baseBranch: "main",
+    });
+
+    expect(vi.mocked(getCurrentRepo)).toHaveBeenCalledWith("/projects/repo-a");
+    expect(github.findPrForBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/groups/g9" }),
+    );
+    expect(github.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/groups/g9" }),
+    );
+    expect(result.prNumber).toBe(5);
+  });
+});
+
+describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
+  beforeEach(() => {
+    execMock.mockReset();
+    execFileCalls.length = 0;
+    vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
+      cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+  });
+
+  const githubStub = () => ({
+    createPr: vi.fn(async () => ({ number: 9, url: "https://github.com/central-owner/central-repo/pull/9", status: "open" as const })),
+    mergePr: vi.fn(async () => ({ number: 9, url: "https://github.com/central-owner/central-repo/pull/9", status: "merged" as const })),
+    getPrStatus: vi.fn(),
+    replyToReviewThread: vi.fn(),
+    resolveReviewThread: vi.fn(),
+    getViewerLogin: vi.fn(),
+    getPrReviewThreadsDetailed: vi.fn(),
+  });
+
+  it("resolvePrSource resolves the repo slug from the task worktree, not process.cwd()", async () => {
+    const ops = createPrNodeGithubOps(githubStub() as never);
+    const source = await ops.resolvePrSource(
+      { id: "FN-9601", worktree: "/projects/repo-a/.worktrees/fn-9601" } as never,
+      {} as never,
+    );
+    expect(source.repo).toBe("central-owner/central-repo");
+    expect(vi.mocked(getCurrentRepo)).toHaveBeenCalledWith("/projects/repo-a/.worktrees/fn-9601");
+  });
+
+  it("resolvePrSource treats the configured getTaskWorktree resolver as authoritative over task.worktree", async () => {
+    const ops = createPrNodeGithubOps(githubStub() as never, {
+      getTaskWorktree: (taskId) => `/resolved/${taskId}`,
+    });
+    const source = await ops.resolvePrSource(
+      { id: "FN-9601", worktree: "/stale/recorded/worktree" } as never,
+      {} as never,
+    );
+    expect(source.repo).toBe("central-owner/central-repo");
+    expect(vi.mocked(getCurrentRepo)).toHaveBeenCalledWith("/resolved/FN-9601");
+  });
+
+  it("resolvePrSource throws instead of persisting entity.repo as '' when no repo resolves (central install, no worktree)", async () => {
+    // Worktree-less task in a central install: every cwd candidate (including
+    // process.cwd(), the install dir) fails to resolve a repo. Persisting ""
+    // would poison downstream splitRepoSlug consumers into the client's
+    // process-cwd fallback — the exact gh-4 failure mode.
+    vi.mocked(getCurrentRepo).mockReturnValue(null as never);
+    const ops = createPrNodeGithubOps(githubStub() as never);
+    expect(() => ops.resolvePrSource({ id: "FN-9601" } as never, {} as never)).toThrow(
+      /pr-create: could not determine repository for task FN-9601/,
+    );
+  });
+
+  it("createPr pushes from the task worktree and passes owner/repo parsed from entity.repo", async () => {
+    execMock.mockReturnValue("");
+    const github = githubStub();
+    const ops = createPrNodeGithubOps(github as never);
+    const result = await ops.createPr({
+      task: { id: "FN-9601", title: "t", description: "d", worktree: "/projects/repo-a/.worktrees/fn-9601" },
+      entity: { id: "e1", sourceId: "FN-9601", repo: "central-owner/central-repo", headBranch: "fusion/fn-9601", baseBranch: "main" },
+    } as never);
+    expect(github.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fusion/fn-9601" }),
+    );
+    const pushCall = execFileCalls.find((c) => c.file === "git" && c.args[0] === "push");
+    expect(pushCall).toBeDefined();
+    // The push must run in the task worktree, not process.cwd() (gh-4).
+    expect(pushCall?.cwd).toBe("/projects/repo-a/.worktrees/fn-9601");
+    expect(result.prNumber).toBe(9);
+  });
+
+  it("mergePr passes owner/repo parsed from entity.repo", async () => {
+    const github = githubStub();
+    const ops = createPrNodeGithubOps(github as never);
+    const result = await ops.mergePr({
+      entity: { id: "e1", sourceId: "FN-9601", repo: "central-owner/central-repo", prNumber: 9, headOid: "abc123" },
+    } as never);
+    expect(result).toEqual({ status: "merged-requested" });
+    expect(github.mergePr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", number: 9, method: "squash", expectedHeadOid: "abc123" }),
+    );
   });
 });
 

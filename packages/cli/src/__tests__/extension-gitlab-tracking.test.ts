@@ -38,6 +38,7 @@ vi.mock("@fusion/dashboard", () => {
 vi.mock("@fusion/engine", () => ({
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   createFnAgent: vi.fn(),
+  createAgentTask: vi.fn(),
   fetchWebContent: vi.fn(),
   assertNoSecretPlaintext: vi.fn(),
   emitGoalRetrievalAudit: vi.fn(),

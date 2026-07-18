@@ -229,6 +229,21 @@ export interface CreatedIssue {
   createdAt: string;
 }
 
+export interface DiscussionCandidate {
+  id: string;
+  number: number;
+  title: string;
+  body: string | null;
+  url: string;
+  state: "open" | "closed";
+}
+
+export interface CreatedDiscussion {
+  id: string;
+  number: number;
+  htmlUrl: string;
+}
+
 export interface PrComment {
   id: number;
   body: string;
@@ -2126,11 +2141,95 @@ export class GitHubClient {
     }));
   }
 
+  /*
+  FNXC:ReportPipeline 2026-07-16-23:45:
+  Feedback and unresolved Help reports can belong in repository Discussions,
+  not only Issues. Keep their search, creation, and data-point comments in the
+  existing GitHub client so the established gh/token transport and auth fallback
+  remain the only egress mechanism.
+  */
+  async searchDiscussions(owner: string, repo: string, query: string, options?: { limit?: number }): Promise<DiscussionCandidate[]> {
+    const limit = Math.max(1, options?.limit ?? 1000);
+    const words = query.toLocaleLowerCase().split(/\s+/).filter((word) => word.length > 3);
+    const matches: DiscussionCandidate[] = [];
+    let cursor: string | null = null;
+    let hasNextPage = true;
+    type DiscussionConnection = {
+      nodes?: Array<{ id: string; number: number; title: string; body: string | null; url: string; isClosed?: boolean | null }> | null;
+      pageInfo?: { hasNextPage: boolean; endCursor: string | null } | null;
+    };
+    type DiscussionSearchPayload = { repository?: { discussions?: DiscussionConnection | null } | null };
+
+    /*
+    FNXC:ReportPipeline 2026-07-18-11:15:
+    Discussion dedupe must not only inspect the most recently updated page.
+    Page through open and older discussions until the caller's explicit bound,
+    so reports cannot silently miss a duplicate merely because it is inactive.
+    */
+    while (hasNextPage && matches.length < limit) {
+      const payload: DiscussionSearchPayload | undefined = await this.runGraphqlQuery<DiscussionSearchPayload>(`query($owner:String!, $repo:String!, $cursor:String) {
+        repository(owner:$owner, name:$repo) { discussions(first:100, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}) { nodes { id number title body url isClosed } pageInfo { hasNextPage endCursor } } }
+      }`, { owner, repo, cursor });
+      const discussions: DiscussionConnection | undefined = payload?.repository?.discussions ?? undefined;
+      for (const discussion of discussions?.nodes ?? []) {
+        if (discussion.isClosed) continue;
+        if (words.length > 0 && !words.some((word) => `${discussion.title} ${discussion.body ?? ""}`.toLocaleLowerCase().includes(word))) continue;
+        matches.push({ ...discussion, state: "open" });
+        if (matches.length >= limit) break;
+      }
+      hasNextPage = discussions?.pageInfo?.hasNextPage === true;
+      cursor = discussions?.pageInfo?.endCursor ?? null;
+      if (hasNextPage && !cursor) break;
+    }
+    return matches;
+  }
+
+  /** Adds the same visible +1 signal to a Discussion duplicate as to an Issue duplicate. */
+  async addDiscussionReaction(discussionId: string): Promise<void> {
+    const payload = await this.runGraphqlQuery<{
+      addReaction?: { reaction?: { content?: string | null } | null } | null;
+    }>(`mutation($subjectId:ID!) {
+      addReaction(input:{subjectId:$subjectId, content:THUMBS_UP}) { reaction { content } }
+    }`, { subjectId: discussionId });
+    if (!payload?.addReaction?.reaction) throw new Error("GitHub did not return the discussion reaction.");
+  }
+
+  async createDiscussion(owner: string, repo: string, title: string, body: string): Promise<CreatedDiscussion> {
+    const categoryPayload = await this.runGraphqlQuery<{
+      repository?: { id?: string; discussionCategories?: { nodes?: Array<{ id: string }> | null } | null } | null;
+    }>(`query($owner:String!, $repo:String!) {
+      repository(owner:$owner, name:$repo) { id discussionCategories(first:1) { nodes { id } } }
+    }`, { owner, repo });
+    const repositoryId = categoryPayload?.repository?.id;
+    const categoryId = categoryPayload?.repository?.discussionCategories?.nodes?.[0]?.id;
+    if (!repositoryId || !categoryId) throw new Error(`Discussions are not enabled for ${owner}/${repo}.`);
+    const payload = await this.runGraphqlQuery<{
+      createDiscussion?: { discussion?: { id: string; number: number; url: string } | null } | null;
+    }>(`mutation($repositoryId:ID!, $categoryId:ID!, $title:String!, $body:String!) {
+      createDiscussion(input:{repositoryId:$repositoryId, categoryId:$categoryId, title:$title, body:$body}) { discussion { id number url } }
+    }`, { repositoryId, categoryId, title, body });
+    const discussion = payload?.createDiscussion?.discussion;
+    if (!discussion) throw new Error("GitHub did not return the created discussion.");
+    return { id: discussion.id, number: discussion.number, htmlUrl: discussion.url };
+  }
+
+  async commentOnDiscussion(discussionId: string, body: string): Promise<{ url: string }> {
+    const payload = await this.runGraphqlQuery<{
+      addDiscussionComment?: { comment?: { url: string } | null } | null;
+    }>(`mutation($discussionId:ID!, $body:String!) {
+      addDiscussionComment(input:{discussionId:$discussionId, body:$body}) { comment { url } }
+    }`, { discussionId, body });
+    const url = payload?.addDiscussionComment?.comment?.url;
+    if (!url) throw new Error("GitHub did not return the discussion comment.");
+    return { url };
+  }
+
   /** Run a read-only GraphQL query (gh CLI when available, else token/REST). */
-  private async runGraphqlQuery<T>(query: string, variables: Record<string, string | number>): Promise<T | undefined> {
+  private async runGraphqlQuery<T>(query: string, variables: Record<string, string | number | null>): Promise<T | undefined> {
     if (this.hasGhAuth()) {
       const args = ["api", "graphql", "-f", `query=${query}`];
       for (const [key, value] of Object.entries(variables)) {
+        if (value === null) continue;
         const flag = typeof value === "number" ? "-F" : "-f";
         args.push(flag, `${key}=${value}`);
       }
@@ -2491,10 +2590,47 @@ export class GitHubClient {
     return response.json() as Promise<PrComment[]>;
   }
 
-  async commentOnIssue(owner: string, repo: string, issueNumber: number, body: string): Promise<void> {
+  /**
+   * Adds a GitHub reaction to an issue through the same authenticated client
+   * transport used for issue comments.
+   */
+  async addIssueReaction(owner: string, repo: string, issueNumber: number, content: "+1" = "+1"): Promise<void> {
+    const endpoint = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}/reactions`;
     if (this.forceMode === "gh-cli") {
       this.requireGh();
-      runGh([
+      await runGhJsonAsync(["api", "--method", "POST", endpoint, "-f", `content=${content}`]);
+      return;
+    }
+
+    if (this.forceMode === "token") {
+      this.requireToken();
+    } else if (this.hasGhAuth()) {
+      try {
+        await runGhJsonAsync(["api", "--method", "POST", endpoint, "-f", `content=${content}`]);
+        return;
+      } catch (err) {
+        if (!this.token) throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (!this.token) {
+      throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+    }
+    const result = await this.fetchThrottled(`${this.baseUrl}/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/vnd.github+json",
+      },
+      body: JSON.stringify({ content }),
+    });
+    if (!result.success) throw new Error(result.error ?? "Failed to react to GitHub issue");
+  }
+
+  async commentOnIssue(owner: string, repo: string, issueNumber: number, body: string): Promise<{ url?: string }> {
+    if (this.forceMode === "gh-cli") {
+      this.requireGh();
+      const output = runGh([
         "issue",
         "comment",
         String(issueNumber),
@@ -2503,14 +2639,14 @@ export class GitHubClient {
         "--body",
         body,
       ]);
-      return;
+      return { url: output.match(/https:\/\/github\.com\/[^\s]+/i)?.[0] };
     }
 
     if (this.forceMode === "token") {
       this.requireToken();
     } else if (this.hasGhAuth()) {
       try {
-        runGh([
+        const output = runGh([
           "issue",
           "comment",
           String(issueNumber),
@@ -2519,7 +2655,7 @@ export class GitHubClient {
           "--body",
           body,
         ]);
-        return;
+        return { url: output.match(/https:\/\/github\.com\/[^\s]+/i)?.[0] };
       } catch (err) {
         if (!this.token) {
           throw new Error(getGhErrorMessage(err));
@@ -2532,7 +2668,7 @@ export class GitHubClient {
     }
 
     const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}/comments`;
-    const result = await this.fetchThrottled<{ id: number }>(
+    const result = await this.fetchThrottled<{ id: number; html_url?: string }>(
       url,
       {
         method: "POST",
@@ -2546,6 +2682,7 @@ export class GitHubClient {
     if (!result.success) {
       throw new Error(result.error ?? "Failed to comment on GitHub issue");
     }
+    return { url: result.data?.html_url };
   }
 
   async setIssueState(

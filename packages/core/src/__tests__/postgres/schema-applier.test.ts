@@ -44,6 +44,10 @@ import {
   MISSION_FIX_IDEMPOTENCY_VERSION,
   IMPORT_TRANSLATION_CACHE_VERSION,
   IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
+  IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+  TASK_PROPOSAL_CLAIM_VERSION,
+  CONFIGURATION_REVISIONS_VERSION,
+  IDEATION_SCHEMA_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -145,6 +149,12 @@ describe("schema-applier: immutable migration identities", () => {
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION));
   });
 
+  it("keeps the import translation legacy-partition backfill assigned to version 0019", () => {
+    expect(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION).toBe("0019");
+    expect(Number(SCHEMA_BASELINE_VERSION))
+      .toBeGreaterThanOrEqual(Number(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION));
+  });
+
   it("keeps the per-task merger model lane assigned to version 0017", () => {
     expect(TASK_MERGER_MODEL_LANE_VERSION).toBe("0017");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_MERGER_MODEL_LANE_VERSION));
@@ -154,6 +164,12 @@ describe("schema-applier: immutable migration identities", () => {
     expect(BULK_COMPLETION_REFUSAL_AT_VERSION).toBe("0018");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(BULK_COMPLETION_REFUSAL_AT_VERSION));
   });
+
+  it("keeps the task proposal claim marker assigned to version 0020", () => {
+    expect(TASK_PROPOSAL_CLAIM_VERSION).toBe("0020");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_PROPOSAL_CLAIM_VERSION));
+  });
+
 });
 
 /*
@@ -504,7 +520,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 90 project tables, 18 central tables, 1 archive table", async () => {
+  it("creates all 93 project tables, 18 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -520,9 +536,11 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     `)) as unknown as Array<{ table_schema: string; n: number }>;
     const bySchema = Object.fromEntries(rows.map((r) => [r.table_schema, r.n]));
     // Project: 87 typed core tables + 2 lossless legacy preservation tables
-    // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30).
+    // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30)
+    // + 1 configuration_revisions (FNXC:ConfigVersioning 2026-07-18-14:00)
+    // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295).
     // Plugin tables are added separately by the hook.
-    expect(bySchema.project).toBe(90);
+    expect(bySchema.project).toBe(93);
     expect(bySchema.central).toBe(18);
     expect(bySchema.archive).toBe(1);
   });
@@ -1057,6 +1075,15 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       );
       /* FNXC:GitHubImportTranslate 2026-07-16-23:30: Later durable-task migrations run after this historical 0000 fixture, so retain their required task table surface. */
       CREATE TABLE project.tasks (id text PRIMARY KEY);
+      /*
+      FNXC:Ideation 2026-07-18-13:25:
+      FN-8295 migration 0022 FKs ideation rows to missions/mission_features on (project_id, id).
+      A historical 0000 fixture must retain those parent tables so 0006 can rewrite their PKs to
+      composite ownership before 0022 attaches FKs; otherwise upgrade-from-0000 tests fail with
+      missing relation project.missions.
+      */
+      CREATE TABLE project.missions (id text PRIMARY KEY);
+      CREATE TABLE project.mission_features (id text PRIMARY KEY);
       CREATE TABLE project.automations (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -1135,6 +1162,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
+      CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1179,6 +1210,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
+      CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 
@@ -1221,6 +1256,42 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
     `)) as unknown as Array<{ qual: string }>;
     expect(policies[0]?.qual).toContain("__legacy_unscoped__");
     expect(await getAppliedMigrations(ctx.db)).toContain(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-17-23:48:
+  Existing deployments can contain a blank cache partition from pre-0016
+  writes. Recreate that durable row, then apply only the new forward migration
+  and prove the post-restart legacy scope can discover it.
+  */
+  it("backfills historic blank import translation cache partitions", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.import_translation_cache DISABLE TRIGGER fusion_assign_project_id;
+      ALTER TABLE project.import_translation_cache DISABLE ROW LEVEL SECURITY;
+      INSERT INTO project.import_translation_cache (
+        project_id, provider, repo_key, issue_number, target_locale, source_hash,
+        translated_title, translated_body, detected_locale, recorded_at
+      ) VALUES (
+        '', 'github', 'owner/repo', 42, 'en', 'legacy-source-hash',
+        'Translated title', 'Translated body', NULL, '2026-07-16T00:00:00.000Z'
+      );
+      ALTER TABLE project.import_translation_cache ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE project.import_translation_cache ENABLE TRIGGER fusion_assign_project_id;
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0019';
+    `));
+
+    expect(await getAppliedMigrations(ctx.db))
+      .not.toContain(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+
+    await expect(ctx.db.execute(sql`
+      SELECT project_id FROM project.import_translation_cache
+      WHERE provider = 'github' AND repo_key = 'owner/repo' AND issue_number = 42
+    `)).resolves.toEqual([{ project_id: "__legacy_unscoped__" }]);
+    expect(await getAppliedMigrations(ctx.db))
+      .toContain(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
   });
 
   it("upgrades a 0001 database by backfilling analytics ownership", async () => {
@@ -1276,6 +1347,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
+      CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 
@@ -1334,6 +1409,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
+      CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 
@@ -1392,6 +1471,10 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION,
       TASK_MERGER_MODEL_LANE_VERSION,
       BULK_COMPLETION_REFUSAL_AT_VERSION,
+      IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
+      TASK_PROPOSAL_CLAIM_VERSION,
+      CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 });
@@ -1430,7 +1513,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
         "incidents",
       ]),
     );
-    expect(rows.length).toBe(8);
+    expect(rows.length).toBe(9);
   });
 
   it("sequence continuity: consecutive inserts produce increasing IDs without collision", async () => {

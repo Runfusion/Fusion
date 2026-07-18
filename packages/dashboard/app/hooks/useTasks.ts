@@ -32,17 +32,17 @@ function filterActiveTasks(tasks: Task[]): Task[] {
 
 type AgentLogActivityEvent = Pick<AgentLogEntry, "taskId" | "timestamp" | "type" | "agent">;
 
-function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
-  if (task.id !== entry.taskId || task.column !== "in-review") return task;
+function hasFreshAgentLog(task: Task, entry: AgentLogActivityEvent): boolean {
+  if (task.id !== entry.taskId) return false;
   const logTimestampMs = Date.parse(entry.timestamp);
   const taskUpdatedAtMs = Date.parse(task.updatedAt);
-  if (
-    Number.isFinite(logTimestampMs) &&
-    Number.isFinite(taskUpdatedAtMs) &&
-    logTimestampMs <= taskUpdatedAtMs
-  ) {
-    return task;
-  }
+  return Number.isFinite(logTimestampMs)
+    && Number.isFinite(taskUpdatedAtMs)
+    && logTimestampMs > taskUpdatedAtMs;
+}
+
+function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
+  if (task.column !== "in-review" || !hasFreshAgentLog(task, entry)) return task;
   if (!task.inReviewStall && !task.inReviewStalled && !task.stalledReview) return task;
 
   /*
@@ -55,6 +55,27 @@ function clearInReviewStallForFreshAgentLog(task: Task, entry: AgentLogActivityE
     inReviewStalled: undefined,
     stalledReview: undefined,
   };
+}
+
+function addRecentPlannerActivityForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
+  if (
+    task.column !== "triage"
+    || task.status === "planning"
+    || entry.agent !== "triage"
+    || !hasFreshAgentLog(task, entry)
+  ) {
+    return task;
+  }
+
+  /*
+  FNXC:TaskActivity 2026-07-28-12:00:
+  A Planning card's border and pulsing badge must agree with the live planner
+  timeline. A fresh triage log can arrive before its status row, so retain this
+  client-only render signal until an authoritative task update replaces the row.
+  */
+  return task.recentAgentActivityAt === entry.timestamp
+    ? task
+    : { ...task, recentAgentActivityAt: entry.timestamp };
 }
 
 /**
@@ -687,8 +708,9 @@ export function useTasks(options?: UseTasksOptions) {
         let changed = false;
         const next = prev.map((task) => {
           const cleared = clearInReviewStallForFreshAgentLog(task, entry);
-          if (cleared !== task) changed = true;
-          return cleared;
+          const updated = addRecentPlannerActivityForFreshAgentLog(cleared, entry);
+          if (updated !== task) changed = true;
+          return updated;
         });
         return changed ? next : prev;
       });

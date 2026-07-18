@@ -563,6 +563,69 @@ describe("Planning Mode Routes", () => {
         expect(res.body.firstQuestion.type).toBe("single_select");
       });
 
+      it("rejects a first-turn completion until the agent asks a clarifying question", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const responses = [
+          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
+          JSON.stringify({ type: "question", data: { id: "q-required", type: "text", question: "Which constraint matters most?" } }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a detailed account-management experience" }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.firstQuestion).toMatchObject({ id: "q-required", question: "Which constraint matters most?" });
+        expect(res.body.firstQuestion.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(messages).toHaveLength(4);
+        expect(messages[2]?.content).toContain("Before producing a plan");
+      });
+
+      it("shows the mandatory first question when clarification is disabled", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: JSON.stringify({
+                type: "question",
+                data: { id: "q-required-disabled", type: "text", question: "Who is the primary user?" },
+              }) });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Build a feature", clarificationEnabled: false }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        expect(res.body.firstQuestion).toMatchObject({ id: "q-required-disabled" });
+        expect(res.body.firstQuestion.id).not.toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(messages).toHaveLength(2);
+      });
+
       it("requires initialPlan in body", async () => {
         const res = await REQUEST(
           buildApp(),
@@ -660,6 +723,44 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/start-streaming", () => {
+      it("broadcasts a mandatory question instead of accepting a first-turn completion", async () => {
+        const messages: Array<{ role: string; content: string }> = [];
+        const responses = [
+          JSON.stringify({ type: "complete", data: { title: "Too early", description: "A plan", keyDeliverables: [] } }),
+          JSON.stringify({ type: "question", data: { id: "q-stream-required", type: "text", question: "What risk should the plan address?" } }),
+        ];
+        let responseIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[responseIndex++]! });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({ initialPlan: "Build a detailed reporting workflow", clarificationEnabled: false, planningDepth: "small", customQuestionCount: 1 }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(201);
+        planningStreamManager.consumeInitialTurn(res.body.sessionId)!();
+        await vi.waitFor(() => {
+          const questions = planningStreamManager.getBufferedEvents(res.body.sessionId, 0)
+            .filter((event) => event.event === "question");
+          expect(questions).toHaveLength(1);
+          expect(JSON.parse(questions[0]!.data)).toMatchObject({ id: "q-stream-required" });
+        });
+        expect(messages).toHaveLength(4);
+        expect(messages[2]?.content).toContain("Before producing a plan");
+      });
+
       it("rejects invalid planning depth", async () => {
         const res = await REQUEST(
           buildApp(),
@@ -1638,6 +1739,10 @@ describe("Planning Mode Routes", () => {
       it("prefers AI-authored deepeningThemes over generic themes on both completion paths", async () => {
         const responses = [
           JSON.stringify({
+            type: "question",
+            data: { id: "q-offline-context", type: "text", question: "Which offline scenarios matter most?" },
+          }),
+          JSON.stringify({
             type: "complete",
             data: {
               title: "Plan offline sync",
@@ -1673,9 +1778,18 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        expect(startRes.body.firstQuestion.question).toBe(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
-        expect(startRes.body.firstQuestion.options?.[0]?.id).toBe(PLANNING_DEEPEN_PROCEED_OPTION_ID);
-        expect(startRes.body.firstQuestion.options?.map((option: { label: string }) => option.label)).toEqual([
+        expect(startRes.body.firstQuestion.question).toBe("Which offline scenarios matter most?");
+
+        const interviewRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-offline-context": "Conflicts and recovery" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(interviewRes.body.data.question).toBe(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+        expect(interviewRes.body.data.options?.[0]?.id).toBe(PLANNING_DEEPEN_PROCEED_OPTION_ID);
+        expect(interviewRes.body.data.options?.map((option: { label: string }) => option.label)).toEqual([
           "Proceed to final plan",
           "Conflict resolution strategy",
         ]);

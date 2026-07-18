@@ -932,3 +932,11 @@ Authoring surfaces:
 ![Workflow quality-gate results](./screenshots/workflow-steps.png)
 
 See also: [Task Management](./task-management.md) and [Settings Reference](./settings-reference.md).
+
+## Best-effort Feature-Video Review Artifacts
+
+When the project or task-level [`reviewArtifacts`](./settings-reference.md) policy permits a completed task, the executor attempts a short feature-video immediately before its clean handoff to review. It is an optional deliverable: browser discovery, navigation, recording, and artifact-registration failures are logged and never block completion or review handoff.
+
+The MVP requires a persisted `review-artifact-scenario` task document containing JSON such as `{ "baseUrl": "http://127.0.0.1:5173", "targetRoute": "/settings" }`. The URL must be `http` or `https` on `127.0.0.1`, `localhost`, or `::1`; missing, malformed, remote, or unreachable scenarios are skipped. Fusion does not start or manage this server. An optional `flowScript` identifier is accepted for future registered flows; unknown identifiers use the default navigate-and-settle recording.
+
+Capture uses local Chromium through `playwright-core` and records WebM. Recording is capped at 15 seconds (normally three seconds); output over the size cap is rejected without artifact registration rather than trimmed or re-encoded. A successful recording is registered through the normal artifact registry as `type="video"`, `mimeType="video/webm"`, and linked to its task, so existing review-artifact galleries display it.

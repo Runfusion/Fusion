@@ -6,6 +6,9 @@ import {
   MAX_TRANSLATE_TEXT_LENGTH,
   MIN_TRANSLATE_TEXT_LENGTH,
   checkRateLimit,
+  checkTranslateRateLimit,
+  resetTranslateRateLimits,
+  MAX_TRANSLATE_REQUESTS_PER_HOUR,
   ValidationError,
   AiServiceError,
 } from "../ai-translate.js";
@@ -36,6 +39,7 @@ describe("ai-translate module", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     __resetRefineState();
+    resetTranslateRateLimits();
     vi.clearAllMocks();
     mockCreateFnAgent.mockResolvedValue(null);
     mockResolveMcpServersForStore.mockResolvedValue({ servers: [], errors: [] });
@@ -129,6 +133,22 @@ describe("ai-translate module", () => {
       expect(() => parseTranslateResponse("not json at all", { title: "t" })).toThrow(
         AiServiceError,
       );
+    });
+  });
+
+  /*
+  FNXC:GitHubImportTranslate 2026-07-17-12:50:
+  FN-8230 reserves cost only for uncached model calls, but the ceiling must allow every one of
+  the 300 issues a user can traverse from the import fetch cap, while still rejecting overflow.
+  */
+  describe("translate-only rate budget", () => {
+    it("allows one complete 300-item traversal and rejects the next uncached call", () => {
+      const ip = "10.0.0.2";
+      for (let page = 0; page < 10; page++) {
+        expect(checkTranslateRateLimit(ip, 30)).toBe(true);
+      }
+      expect(MAX_TRANSLATE_REQUESTS_PER_HOUR).toBe(300);
+      expect(checkTranslateRateLimit(ip, 1)).toBe(false);
     });
   });
 

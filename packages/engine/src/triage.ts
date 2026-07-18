@@ -8,6 +8,9 @@ import type {
   Settings,
   WorkflowStepResult,
   WorkflowIr,
+  Agent,
+  AgentPermissionPolicy,
+  PermanentAgentGatingContext,
 } from "@fusion/core";
 import {
   DUPLICATE_OF_METADATA_KEY,
@@ -41,6 +44,10 @@ import {
   applyFrontendUxCriteria,
   applyOriginalDescription,
   extractEffectiveWriteScopeFromPrompt,
+  ApprovalRequestStore,
+  AWAITING_APPROVAL_PAUSE_REASON,
+  isEphemeralAgent,
+  resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
   upsertWorkflowStepResult,
   deriveFallbackTaskTitle,
@@ -164,6 +171,8 @@ import {
   createListAgentsTool,
   createMemoryTools,
   createGoalRetrievalTools,
+  createMissionTools,
+  createIdeationTools,
   createResearchTools,
   createWebFetchTool,
   createTaskDocumentReadTool,
@@ -182,6 +191,8 @@ import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { reviewStep } from "./reviewer.js";
 import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
+import type { AgentActionGateContext } from "./agent-action-gate.js";
+import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
 
 
 export interface TriageProcessorOptions {
@@ -238,6 +249,7 @@ export class TriageProcessor {
   private stuckAborted = new Set<string>();
   private taskDeletedHandler?: (task: Task) => void;
   private taskPausedHandler?: (task: Task) => void;
+  private _approvalRequestStore?: ApprovalRequestStore;
 
   /**
    * @param store — Task store instance (also used to listen for `settings:updated` events)
@@ -249,6 +261,103 @@ export class TriageProcessor {
    * terminated. When `enginePaused` transitions, only new work dispatch is
    * affected — running sessions continue to completion.
    */
+  private get approvalRequestStore(): ApprovalRequestStore {
+    if (!this._approvalRequestStore) {
+      const layer = this.store.getAsyncLayer();
+      if (!layer) throw new Error("Triage TaskStore is missing its PostgreSQL AsyncDataLayer");
+      this._approvalRequestStore = new ApprovalRequestStore(null, { asyncLayer: layer });
+    }
+    return this._approvalRequestStore;
+  }
+
+  /*
+  FNXC:TriageMissionGating 2026-07-30-10:25:
+  Mission hierarchy mutations are available during triage, but must use the same
+  policy and approval contexts as executor and heartbeat sessions. A planner is
+  not a policy bypass: every non-read Mission tool remains action-gated and
+  permanent-agent gated under the effective assigned-agent or project policy.
+  */
+  private buildActionGateContext(
+    taskId: string,
+    runId: string,
+    agent: Agent | null,
+    projectDefaultPolicy?: { rules?: Partial<AgentPermissionPolicy["rules"]>; toolRules?: AgentPermissionPolicy["toolRules"] },
+  ): AgentActionGateContext {
+    const actorId = agent?.id ?? `triage-${taskId}`;
+    const actorName = agent?.name ?? `Triage planner ${taskId}`;
+    const permissionPolicy = resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy);
+    return {
+      agentId: actorId,
+      agentName: actorName,
+      isEphemeral: !agent || isEphemeralAgent(agent),
+      taskId,
+      runId,
+      permissionPolicy,
+      createApprovalRequest: async (decision, args) => await this.approvalRequestStore.create({
+        requester: { actorId, actorType: "agent", actorName },
+        taskId,
+        runId,
+        targetAction: {
+          category: decision.category === "exempt" ? "command_execution" : decision.category,
+          action: decision.operation,
+          summary: decision.summary,
+          resourceType: decision.resourceType,
+          resourceId: decision.resourceId ?? "",
+          context: { ...decision.metadata, approvalDedupeKey: decision.approvalDedupeKey, toolName: decision.toolName, toolArgs: args },
+        },
+      }),
+      findApprovalByDedupeKey: async (dedupeKey) => {
+        const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
+        return latest ? { id: latest.id, status: latest.status } : null;
+      },
+      pauseForApproval: async ({ approvalRequestId, decision }) => {
+        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage" }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+        await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`);
+        if (agent && this.options.agentStore) {
+          await this.options.agentStore.updateAgentState(agent.id, "paused");
+          await this.options.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
+        }
+        queueMicrotask(() => this.activeSessions.get(taskId)?.dispose());
+      },
+      markApprovalCompleted: async (approvalRequestId) => {
+        await this.approvalRequestStore.markCompleted(approvalRequestId, { actor: { actorId, actorType: "agent", actorName }, note: "Tool executed after approval" });
+      },
+    };
+  }
+
+  private buildPermanentAgentGatingContext(
+    taskId: string,
+    runId: string,
+    agent: Agent | null,
+    projectDefaultPolicy?: { rules?: Partial<AgentPermissionPolicy["rules"]>; toolRules?: AgentPermissionPolicy["toolRules"] },
+  ): PermanentAgentGatingContext {
+    const actorId = agent?.id ?? `triage-${taskId}`;
+    const actorName = agent?.name ?? `Triage planner ${taskId}`;
+    return {
+      permissionPolicy: resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy),
+      requester: { actorId, actorType: "agent", actorName },
+      taskId,
+      runId,
+      createApprovalRequest: async ({ category, toolName, args, approvalDedupeKey }) => await this.approvalRequestStore.create({
+        requester: { actorId, actorType: "agent", actorName },
+        taskId,
+        runId,
+        targetAction: {
+          category,
+          action: toolName,
+          summary: buildAgentGatedActionSummary(toolName, args),
+          resourceType: "tool",
+          resourceId: toolName,
+          context: { toolName, toolArgs: args, source: "agent-gating", ...(approvalDedupeKey ? { approvalDedupeKey } : {}) },
+        },
+      }),
+      findPendingApprovalRequest: async (dedupeKey) => {
+        const pending = await this.approvalRequestStore.list({ status: "pending", requesterActorId: actorId, taskId, limit: 100 });
+        return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+      },
+    };
+  }
+
   constructor(
     private store: TaskStore,
     private rootDir: string,
@@ -1090,6 +1199,8 @@ export class TriageProcessor {
               getSettings: async () => this.store.getSettings(),
             })
             : []),
+          ...createMissionTools(this.store),
+          ...createIdeationTools(this.store),
           ...createGoalRetrievalTools(this.store, {
             runContext: {
               runId: triageRunContext.runId,
@@ -1302,6 +1413,8 @@ export class TriageProcessor {
           ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
           taskId: task.id,
           taskTitle: task.title,
+          actionGateContext: this.buildActionGateContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
+          permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
           onFallbackModelUsed: createFallbackModelObserver({
             agent: "triage",
             label: "triage",
@@ -2339,7 +2452,12 @@ export class TriageProcessor {
           startedAt,
           completedAt,
         });
-        await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", diagnostic);
+        /*
+        FNXC:TriagePlanReview 2026-07-17-14:04:
+        A requested Plan Review revision is normal replan flow, not a terminal workflow-step
+        failure. Log only the dedicated revision action here; the pre-merge failed action is
+        reserved for terminal failures such as RetryStormError.
+        */
         await this.store.logEntry(
           task.id,
           "AI spec revision requested",
@@ -2502,7 +2620,12 @@ export class TriageProcessor {
         startedAt,
         completedAt,
       });
-      await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", review.review);
+      /*
+      FNXC:TriagePlanReview 2026-07-17-14:04:
+      Reviewer REVISE and RETHINK outcomes re-enter planning through the same normal revision
+      flow as deterministic evidence gaps. Their single human-facing log is the revision action;
+      retain the failed workflow-result projection for replan/recovery without emitting a failed log.
+      */
       await this.clearPlanReviewRecoveryBudget(task);
       const reviseFeedback = review.review || review.summary || "(no feedback captured)";
       await this.store.logEntry(

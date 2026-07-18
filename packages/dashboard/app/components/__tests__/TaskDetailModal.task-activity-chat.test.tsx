@@ -155,6 +155,47 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getByText("raw executor line")).toBeInTheDocument();
   });
 
+  it("FN-8303: suppresses the initial Live loading flash for overlay and embedded Activity defaults", () => {
+    mockedUseAgentLogs.mockReturnValue({
+      entries: [],
+      loading: true,
+      clear: vi.fn(),
+      loadMore: vi.fn(async () => {}),
+      hasMore: false,
+      total: 0,
+      loadingMore: false,
+    });
+
+    const overlay = renderModal({ taskDetailChatFirst: false });
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-chat-transcript")).toBeInTheDocument();
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+    overlay.unmount();
+
+    const embedded = render(
+      <TaskDetailContent
+        task={makeTask({ id: "FN-8303-embedded", column: "in-progress" as any, log: [], steeringComments: [], plannerOversightLevel: "off" })}
+        embedded
+        onRequestClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+        taskDetailChatFirst={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-chat-transcript")).toBeInTheDocument();
+    expect(screen.queryByText("Loading agent output…")).not.toBeInTheDocument();
+    embedded.unmount();
+
+    renderModal({ taskDetailChatFirst: true });
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-chat-transcript")).not.toBeInTheDocument();
+  });
+
   it("portals the mobile Activity view menu outside the tab scroller while keeping tabs and content visible", () => {
     const originalInnerWidth = window.innerWidth;
     const originalInnerHeight = window.innerHeight;

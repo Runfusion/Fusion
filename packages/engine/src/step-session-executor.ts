@@ -132,8 +132,12 @@ export interface StepSessionExecutorOptions {
   additionalSkillPaths?: string[];
   /** Optional agent store for delegation tools. */
   agentStore?: AgentStore;
-  /** Optional message store for messaging tools. */
+  /** Optional message store for messaging tools and validated follow-up proposals. */
   messageStore?: MessageStore;
+  /** Whether this step session is a runtime ephemeral worker subject to task-proposal policy. */
+  callerIsEphemeral?: boolean;
+  sourceTaskId?: string;
+  sourceAgentId?: string;
   /** Optional action-gate context for permanent assigned agents. */
   actionGateContext?: AgentActionGateContext;
   /** Optional permanent-agent action gating context. */
@@ -1307,7 +1311,7 @@ export class StepSessionExecutor {
               ]
             : [];
           const taskCreateTool = this.options.store
-            ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir })]
+            ? [createTaskCreateTool(this.options.store, undefined, { rootDir: this.options.rootDir, callerIsEphemeral: this.options.callerIsEphemeral, sourceTaskId: this.options.sourceTaskId ?? taskDetail.id, sourceAgentId: this.options.sourceAgentId ?? taskDetail.assignedAgentId, messageStore: this.options.messageStore })]
             : [];
 
           // Agent delegation tools — discover and delegate work to other agents.

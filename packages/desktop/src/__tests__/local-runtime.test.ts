@@ -165,6 +165,57 @@ describe("LocalRuntimeManager", () => {
     expect(manager.getServerPort()).toBe(4545);
   });
 
+  /*
+  FNXC:MigrationHoldingPage 2026-07-17-13:40:
+  Pins the desktop migration-progress contract: while createStore (which runs the
+  one-time SQLite→PG migration) is in flight, progress published through the
+  createStore callback must be visible on getStatus() as
+  state:"starting" + migration, and a terminal "running" status must not carry it.
+  */
+  it("publishes migration progress while starting and clears it when running", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const server = new FakeServer(4550);
+    let releaseStore: () => void = () => {};
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async (_rootDir, onMigrationProgress) => {
+        onMigrationProgress?.({
+          active: true,
+          phase: "table-progress",
+          label: "[3/12] project.tasks — 500/2000 rows",
+        });
+        await storeGate;
+        return store;
+      },
+      createDashboardServer: async () => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      },
+    });
+
+    const startPromise = manager.startLocal();
+    await vi.waitFor(() => {
+      expect(manager.getStatus()).toMatchObject({
+        source: "embedded-local",
+        state: "starting",
+        migration: {
+          active: true,
+          phase: "table-progress",
+          label: "[3/12] project.tasks — 500/2000 rows",
+        },
+      });
+    });
+
+    releaseStore();
+    const status = await startPromise;
+    expect(status.state).toBe("running");
+    expect(status.migration).toBeUndefined();
+    expect(manager.getStatus().migration).toBeUndefined();
+  });
+
   it("returns external-cli status without starting embedded runtime", async () => {
     const { LocalRuntimeManager } = await import("../local-runtime.ts");
     const manager = new LocalRuntimeManager({

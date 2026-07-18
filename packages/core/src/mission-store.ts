@@ -4066,6 +4066,11 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           FNXC:MissionWorkflows 2026-06-25-00:00:
           Apply the selected Missions header workflow atomically during TaskStore.createTask so newly triaged features land in the intended workflow lane. Duplicate-guard reuses skip this create path, preserving existing duplicate tasks without workflow mutation.
           */
+          /*
+          FNXC:MissionAutoMerge 2026-07-18-12:00:
+          An autoMerge:false mission stamps each newly triaged task so its shared branch produces one PR instead of per-task auto-merges. Duplicate reuse intentionally bypasses this create-only override.
+          */
+          ...(mission?.autoMerge === false ? { autoMerge: false } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
         });
 

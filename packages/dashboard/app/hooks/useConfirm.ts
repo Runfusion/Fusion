@@ -6,6 +6,15 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 export interface ConfirmOptions {
   title: string;
   message: string;
+  /*
+  FNXC:ConfirmDialogs 2026-07-18-06:00:
+  Dialogs that GATE an action on an informed choice (e.g. "git is missing —
+  create without a repo?") must render even when the operator globally skips
+  critical-action confirmations: auto-resolving "primary" would silently pick
+  an option the operator never saw (review finding: skip-confirmations turned
+  the git-missing clone dialog into an endless silent browser-tab opener).
+  */
+  alwaysAsk?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
@@ -59,7 +68,7 @@ export function ConfirmDialogProvider({
     FNXC:ConfirmDialogs 2026-07-16-05:30:
     Operators who globally skip critical-action confirmations must receive the same primary/default result as clicking the dialog's primary button. Never invent a different outcome or enqueue a hidden dialog; checkbox prompts retain their configured default value.
     */
-    if (skipConfirmationsRef.current) {
+    if (skipConfirmationsRef.current && !options.alwaysAsk) {
       return Promise.resolve({
         choice: "primary" as const,
         checkboxValue: options.checkbox?.defaultChecked ?? false,

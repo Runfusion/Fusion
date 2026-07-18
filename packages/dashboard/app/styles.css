@@ -497,6 +497,19 @@ svg.spinning {
   /* Foreground for content rendered on `--accent` (e.g., user chat bubble, primary FAB icon). Choose a value with WCAG AA contrast against the paired `--accent` in the same block. */
   --accent-text: #ffffff;
 
+  /*
+   * FNXC:DashboardTokenHygiene 2026-07-18-04:07:
+   * Workflow-status step chips use --ws-*, --color-merged, and --triage backgrounds.
+   * Their foreground must remain white across themes, unlike --accent-text, which only pairs with --accent and may be theme-variant.
+   */
+  --workflow-chip-foreground: #ffffff;
+
+  /*
+   * FNXC:DashboardPreviewCanvas 2026-07-18-04:07:
+   * Agent HTML mockups assume a light page background, so this canvas stays white in every theme.
+   */
+  --preview-page-bg: #ffffff;
+
   /* === Log Entry Background Tokens === */
   --log-tool-bg: color-mix(in srgb, var(--accent) 8%, transparent);
   --log-success-bg: color-mix(in srgb, var(--color-success) 6%, transparent);

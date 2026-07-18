@@ -35,8 +35,8 @@ export { checkRateLimit, getRateLimitResetTime, AiServiceError, ValidationError 
 /*
 FNXC:GitHubImportTranslate 2026-07-15-09:30:
 Translation needs its OWN request budget, separate from the 10/hour refine/draft budget it originally shared.
-Auto-translate fans out up to one call per listed issue (bounded at IMPORT_TRANSLATE_MAX_ISSUES), so on the shared budget a single panel open would both fail partway through AND starve refine/goal-draft for the rest of the hour.
-The budget stays bounded (not removed) because each request still spends real model tokens; it is sized to allow a couple of full panel loads per hour, with the durable cache absorbing repeat views.
+Auto-translate now fans out one client-side page at a time (at most 30 items), so the translate-only budget must fit one complete 300-item fetched-list traversal without starving refine/goal-draft.
+The budget stays bounded (not removed) because each uncached request still spends real model tokens; durable cache hits make repeat page views free.
 */
 
 /** Max issues auto-translated per panel load. Beyond this, remaining issues
@@ -44,7 +44,7 @@ The budget stays bounded (not removed) because each request still spends real mo
 export const IMPORT_TRANSLATE_MAX_ISSUES = 50;
 
 /** Max translate requests per IP per hour (own budget; see FNXC above). */
-export const MAX_TRANSLATE_REQUESTS_PER_HOUR = 150;
+export const MAX_TRANSLATE_REQUESTS_PER_HOUR = 300;
 
 interface TranslateRateLimitEntry {
   count: number;

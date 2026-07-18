@@ -13,6 +13,8 @@ import type { ScheduleType } from "./automation.js";
 import { Database, fromJson } from "./db.js";
 import { assertProjectRootDir } from "./project-root-guard.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import { appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration } from "./async-configuration-revision-store.js";
+import type { ConfigChangedBy, ConfigurationRevision } from "./types.js";
 /*
  * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
  * Async Drizzle helpers for backend-mode (PostgreSQL) AutomationStore operations.
@@ -102,6 +104,11 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     super();
     assertProjectRootDir(rootDir, "AutomationStore");
     this.asyncLayer = options?.asyncLayer ?? null;
+  }
+
+  private requireVersionedConfigurationBackend(): void {
+    /* FNXC:ConfigVersioning 2026-07-18-19:10: legacy SQLite automation writes have no durable atomic revision transaction, so reject before mutation rather than create non-rollbackable configuration. */
+    if (!this.backendMode) throw new Error("Automation configuration changes require the PostgreSQL revision store");
   }
 
   /**
@@ -269,7 +276,15 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
   // ── CRUD ───────────────────────────────────────────────────────────
 
-  async createSchedule(input: ScheduledTaskCreateInput): Promise<ScheduledTask> {
+  /*
+   * FNXC:ConfigVersioning 2026-07-18-12:15:
+   * Preserve the legacy SQLite CRUD seam while installations migrate. The
+   * PostgreSQL branch below journals mutations atomically; compatibility
+   * callers must not lose their pre-existing ability to manage automations.
+   */
+
+  async createSchedule(input: ScheduledTaskCreateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+    this.requireVersionedConfigurationBackend();
     if (!input.name?.trim()) {
       throw new Error("Name is required and cannot be empty");
     }
@@ -314,9 +329,41 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       updatedAt: now,
     };
 
-    await this.persistSchedule(schedule);
+    /*
+    FNXC:ConfigVersioning 2026-07-18-00:30:
+    FN-8282 treats automation definitions as versioned configuration. Create
+    and its immutable before/after snapshot share one backend transaction.
+    */
+    if (this.backendMode) {
+      await this.asyncLayer!.transactionImmediate(async (tx) => {
+        await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
+        const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before: null, after: schedule, changedBy });
+        if (revision) await appendConfigurationRevision(tx, revision);
+      });
+    } else {
+      await this.persistSchedule(schedule);
+    }
     this.emit("schedule:created", schedule);
     return schedule;
+  }
+
+  /** Restore an automation snapshot by stable id and append one rollback revision. */
+  async rollbackConfiguration(revisionId: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ConfigurationRevision> {
+    if (!this.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
+    const layer = this.asyncLayer!;
+    return layer.transactionImmediate((tx) => rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
+      readCurrent: async () => {
+        const revision = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
+        if (!revision || revision.configKind !== "automation") throw new Error(`Automation configuration revision ${revisionId} was not found`);
+        try { return await getScheduleAsync({ ...layer, db: tx }, String(revision.configTarget.automationId)); } catch (error) { if ((error as { code?: string }).code === "ENOENT") return null; throw error; }
+      },
+      replace: async (snapshot) => {
+        const target = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
+        const id = String(target?.configTarget.automationId ?? "");
+        if (snapshot === null) await deleteScheduleAsync({ ...layer, db: tx }, id);
+        else await upsertScheduleAsync({ ...layer, db: tx }, snapshot as ScheduledTask);
+      },
+    }));
   }
 
   async getSchedule(id: string): Promise<ScheduledTask> {
@@ -334,9 +381,11 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
     return rows.map((row) => this.rowToSchedule(row));
   }
 
-  async updateSchedule(id: string, updates: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
+  async updateSchedule(id: string, updates: ScheduledTaskUpdateInput, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+    this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
+      const before = structuredClone(schedule);
       const previousEnabled = schedule.enabled;
       const previousScheduleType = schedule.scheduleType;
       const previousCronExpression = schedule.cronExpression;
@@ -401,7 +450,15 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
       }
 
       schedule.updatedAt = new Date().toISOString();
-      await this.persistSchedule(schedule);
+      if (this.backendMode) {
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+          await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
+          const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before, after: schedule, changedBy });
+          if (revision) await appendConfigurationRevision(tx, revision);
+        });
+      } else {
+        await this.persistSchedule(schedule);
+      }
       this.emit("schedule:updated", schedule);
       return schedule;
     });
@@ -411,9 +468,11 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    * Reorder the steps of a schedule by providing the step IDs in the desired order.
    * The `stepIds` array must contain exactly the same IDs as the current steps.
    */
-  async reorderSteps(scheduleId: string, stepIds: string[]): Promise<ScheduledTask> {
+  async reorderSteps(scheduleId: string, stepIds: string[], changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+    this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(scheduleId, async () => {
       const schedule = await this.getSchedule(scheduleId);
+      const before = structuredClone(schedule);
       if (!schedule.steps || schedule.steps.length === 0) {
         throw new Error("Schedule has no steps to reorder");
       }
@@ -435,17 +494,30 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
 
       schedule.steps = reordered;
       schedule.updatedAt = new Date().toISOString();
-      await this.persistSchedule(schedule);
+      if (this.backendMode) {
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+          await upsertScheduleAsync({ ...this.asyncLayer!, db: tx }, schedule);
+          const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before, after: schedule, changedBy });
+          if (revision) await appendConfigurationRevision(tx, revision);
+        });
+      } else {
+        await this.persistSchedule(schedule);
+      }
       this.emit("schedule:updated", schedule);
       return schedule;
     });
   }
 
-  async deleteSchedule(id: string): Promise<ScheduledTask> {
+  async deleteSchedule(id: string, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<ScheduledTask> {
+    this.requireVersionedConfigurationBackend();
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
       if (this.backendMode) {
-        await deleteScheduleAsync(this.asyncLayer!, id);
+        await this.asyncLayer!.transactionImmediate(async (tx) => {
+          await deleteScheduleAsync({ ...this.asyncLayer!, db: tx }, id);
+          const revision = createConfigurationRevision({ projectId: this.asyncLayer!.projectId ?? "", ownerScope: "project", configKind: "automation", configTarget: { automationId: schedule.id }, before: schedule, after: null, changedBy });
+          if (revision) await appendConfigurationRevision(tx, revision);
+        });
       } else {
         // Delete from SQLite
         this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);

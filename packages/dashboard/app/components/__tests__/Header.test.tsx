@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { Header } from "../Header";
+import { Header, resolveReportContextRefs } from "../Header";
 
 // Mock fetchScripts for overflow submenu
 const mockFetchScripts = vi.fn();
@@ -49,6 +49,11 @@ function renderHeader(props = {}, tier: ViewportTier = "desktop") {
 }
 
 describe("Header", () => {
+  it("derives report context from task hash routes and legacy query parameters", () => {
+    expect(resolveReportContextRefs({ hash: "#/tasks/FN-8277", search: "?agentId=agent-1" })).toEqual({ taskId: "FN-8277", agentId: "agent-1" });
+    expect(resolveReportContextRefs({ hash: "", search: "?taskId=FN-8277" })).toEqual({ taskId: "FN-8277", agentId: undefined });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchScripts.mockResolvedValue({});

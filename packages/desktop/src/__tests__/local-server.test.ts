@@ -147,6 +147,8 @@ const mocks = vi.hoisted(() => {
 vi.mock("@fusion/core", () => ({
   TaskStore: mocks.TaskStore,
   createTaskStoreForBackend: mocks.createTaskStoreForBackend,
+  /* FNXC:MigrationHoldingPage 2026-07-17-13:50: local-server.ts formats migration progress for the launch gate. */
+  formatMigrationProgress: (event: { phase: string }) => `migration ${event.phase}`,
   CentralCore: mocks.CentralCore,
   PluginLoader: mocks.PluginLoader,
   ensureBundledPluginInstalled: mocks.ensureBundledPluginInstalled,

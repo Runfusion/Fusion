@@ -38,6 +38,10 @@ import {getActivityLog as getActivityLogAsync} from "../task-store/async-audit.j
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async-comments-attachments.js";
 import type { ArtifactRow } from "./row-types.js";
 import type {MergeQueueRow, CompletionHandoffMarkerRow, ActivityLogRow} from "../task-store/row-types.js";
+import {appendConfigurationRevision, createConfigurationRevision, getConfigurationRevision, rollbackConfiguration} from "../async-configuration-revision-store.js";
+import {readProjectConfig, writeProjectConfig} from "./async-settings.js";
+import {publishSettingsUpdated} from "./settings-ops.js";
+import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -604,7 +608,20 @@ export function getWorkflowPromptOverridesImpl(store: TaskStore, workflowId: str
     return store.parseWorkflowPromptOverrideJson(row?.overrides);
   }
 
-export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string, patch: Record<string, unknown>,): Promise<Record<string, unknown>> {
+export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string, patch: Record<string, unknown>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" },): Promise<Record<string, unknown>> {
+    /*
+    FNXC:ConfigVersioning 2026-07-18-19:10:
+    Workflow values are rollbackable only with the PostgreSQL target mutation
+    and revision in one transaction. Reject the legacy SQLite writer before it
+    can persist an unjournaled configuration change.
+    */
+    if (!store.backendMode) throw new Error("Workflow configuration changes require the PostgreSQL revision store");
+    /*
+    FNXC:ConfigVersioning 2026-07-18-12:15:
+    Preserve the established SQLite workflow-value writer for compatibility.
+    PostgreSQL installations take the transaction-backed journal branch below;
+    legacy projects retain their supported write behavior during migration.
+    */
     const declarations = await store.resolveWorkflowSettingDeclarations(workflowId);
     const result = validateSettingValuePatch(declarations, patch);
     if (result.rejections.length > 0) {
@@ -624,7 +641,7 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
      */
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      return layer.transactionImmediate(async (tx) => {
+      const committed = await layer.transactionImmediate(async (tx) => {
         const rows = await tx
           .select({ values: schema.project.workflowSettings.values })
           .from(schema.project.workflowSettings)
@@ -662,8 +679,28 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
               updatedAt: now,
             },
           });
-        return next;
+        /* FNXC:ConfigVersioning 2026-07-18-00:00: workflow values and their revision commit together. */
+        const revision = createConfigurationRevision({
+          projectId,
+          ownerScope: "project",
+          configKind: "workflow-settings",
+          configTarget: { workflowId, projectId },
+          before: current,
+          after: next,
+          changedBy,
+        });
+        if (revision) await appendConfigurationRevision(tx, revision);
+        return { next, revision };
       });
+      if (committed.revision) {
+        store.emit("workflow:setting-values-updated", {
+          workflowId,
+          projectId,
+          settingIds: committed.revision.diffs.map((diff) => diff.field),
+          mutationId: committed.revision.id,
+        });
+      }
+      return committed.next;
     }
     return store.db.transactionImmediate(() => {
       const current = store.getWorkflowSettingValues(workflowId, projectId);
@@ -689,6 +726,68 @@ export async function updateWorkflowSettingValuesImpl(store: TaskStore, workflow
       return next;
     });
   }
+
+export async function rollbackConfigurationImpl(store: TaskStore, revisionId: string, changedBy: ConfigChangedBy = {kind: "human", id: "local-user"}): Promise<ConfigurationRevision> {
+  if (!store.backendMode) throw new Error("Configuration rollback requires the PostgreSQL revision store");
+  const layer = store.asyncLayer!;
+  // First resolve project ownership without a bypass. The selected snapshot and
+  // current target are then read through one immediate transaction below.
+  const projectRevision = await getConfigurationRevision(layer.db, layer.projectId ?? "", revisionId);
+  if (!projectRevision) {
+    // Global revisions live in the reserved central partition and are queried
+    // through GlobalSettingsStore's privileged writer/reader.
+    const previous = await store.getSettings();
+    const rollback = await store.globalSettingsStore.rollbackConfiguration(revisionId, changedBy);
+    await publishSettingsUpdated(store, previous, await store.getSettings());
+    return rollback;
+  }
+  const previous = await store.getSettings();
+  const rollback = await layer.transactionImmediate(async (tx) => {
+    /* FNXC:ConfigVersioning 2026-07-18-02:00: read both the selected revision and current config via tx so rollback's forward `before` snapshot cannot race a concurrent settings write. */
+    const revision = await getConfigurationRevision(tx, layer.projectId ?? "", revisionId);
+    if (!revision) throw new Error(`Configuration revision ${revisionId} was not found`);
+    return rollbackConfiguration(tx, layer.projectId ?? "", revisionId, changedBy, {
+    readCurrent: async () => {
+      if (revision.configKind === "project-settings") return (await readProjectConfig(layer, tx)).settings ?? {};
+      if (revision.configKind === "workflow-settings") {
+        const workflowId = String(revision.configTarget.workflowId);
+        const projectId = String(revision.configTarget.projectId);
+        const rows = await tx.select({values: schema.project.workflowSettings.values}).from(schema.project.workflowSettings).where(and(eq(schema.project.workflowSettings.workflowId, workflowId), eq(schema.project.workflowSettings.projectId, projectId))).limit(1);
+        return rows[0]?.values ?? {};
+      }
+      throw new Error(`Configuration revision ${revisionId} belongs to ${revision.configKind}; use its resource store rollback API`);
+    },
+    replace: async (snapshot) => {
+      if (revision.configKind === "project-settings") {
+        await writeProjectConfig(layer, snapshot as Record<string, unknown>, undefined, tx);
+        return;
+      }
+      if (revision.configKind === "workflow-settings") {
+        const workflowId = String(revision.configTarget.workflowId);
+        const projectId = String(revision.configTarget.projectId);
+        await tx.insert(schema.project.workflowSettings).values({workflowId, projectId, values: snapshot as Record<string, unknown>, updatedAt: new Date().toISOString()}).onConflictDoUpdate({target: [schema.project.workflowSettings.workflowId, schema.project.workflowSettings.projectId], set: {values: snapshot as Record<string, unknown>, updatedAt: new Date().toISOString()}});
+        return;
+      }
+      throw new Error(`Configuration revision ${revisionId} cannot be restored by TaskStore`);
+    },
+    });
+  });
+  /* FNXC:ConfigVersioning 2026-07-18-14:20: exact replacement commits first; only then notify caches/listeners, matching forward settings writes. */
+  if (projectRevision.configKind === "project-settings") {
+    await publishSettingsUpdated(store, previous, await store.getSettings());
+  } else {
+    // Workflow VALUE changes do not alter the merged project settings object,
+    // but settings consumers still need the standard invalidation signal.
+    store.emit("settings:updated", { settings: await store.getSettings(), previous });
+    store.emit("workflow:setting-values-updated", {
+      workflowId: String(projectRevision.configTarget.workflowId),
+      projectId: String(projectRevision.configTarget.projectId),
+      settingIds: rollback.diffs.map((diff) => diff.field),
+      mutationId: rollback.id,
+    });
+  }
+  return rollback;
+}
 
 export async function cancelActiveWorkflowWorkItemsForTaskImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[]; now?: string; lastError?: string | null; excludeIds?: string[] } = {}, tx?: import("../postgres/data-layer.js").DbTransaction): Promise<WorkflowWorkItem[]> {
     // FNXC:PostgresCutover 2026-06-27-10:20:

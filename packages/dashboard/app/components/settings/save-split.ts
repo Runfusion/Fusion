@@ -101,7 +101,7 @@ the list for the "Reset this menu" feature.
 */
 export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   /* FNXC:SettingsBackups 2026-07-16-14:35: shared PostgreSQL backup policy may only write through its global Database Backups section. */
-  "backups-global": new Set(["autoBackupEnabled", "autoBackupSchedule", "autoBackupRetention", "autoBackupDir"]),
+  "backups-global": new Set(["autoBackupEnabled", "autoBackupSchedule", "autoBackupRetention", "autoBackupDir", "embeddedPostgresMaxConnections"]),
   appearance: new Set([
     "themeMode",
     "colorTheme",
@@ -143,6 +143,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "dismissModalsOnOutsideClick",
     "skipConfirmationDialogs",
     "persistAgentToolOutput",
+    "proactiveTaskChatEnabled",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",
     "fnBinaryCheckEnabled",

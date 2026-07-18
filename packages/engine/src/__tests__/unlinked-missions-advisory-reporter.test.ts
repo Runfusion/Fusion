@@ -23,10 +23,12 @@ function createStore(params: {
   goalIdsByMissionId?: Record<string, string[]>;
   insightStore?: { upsertInsight: ReturnType<typeof vi.fn>; listInsights: ReturnType<typeof vi.fn> };
   throwInsightStore?: boolean;
+  asyncMissionStore?: boolean;
 }): TaskStore {
+  const resolve = <T>(value: T) => params.asyncMissionStore ? Promise.resolve(value) : value;
   const missionStore = {
-    listMissions: vi.fn().mockReturnValue(params.missions ?? []),
-    listGoalIdsForMission: vi.fn().mockImplementation((missionId: string) => params.goalIdsByMissionId?.[missionId] ?? []),
+    listMissions: vi.fn().mockImplementation(() => resolve(params.missions ?? [])),
+    listGoalIdsForMission: vi.fn().mockImplementation((missionId: string) => resolve(params.goalIdsByMissionId?.[missionId] ?? [])),
   };
 
   return {
@@ -84,6 +86,20 @@ describe("UnlinkedMissionsAdvisoryReporter", () => {
       missionIds: ["M-UNLINKED"],
       detectedAt: "2026-06-03T12:00:00.000Z",
     });
+  });
+
+  it("supports promise-returning PostgreSQL-shaped mission stores", async () => {
+    const insightStore = { upsertInsight: vi.fn().mockResolvedValue(undefined), listInsights: vi.fn().mockResolvedValue([]) };
+    const store = createStore({
+      missions: [createMission({ id: "M-ASYNC" })],
+      insightStore,
+      asyncMissionStore: true,
+    });
+    const reporter = new UnlinkedMissionsAdvisoryReporter({ store, projectId: "/tmp/project", logger });
+
+    await expect(reporter.report()).resolves.toEqual({ alerted: true });
+    expect(insightStore.upsertInsight).toHaveBeenCalledTimes(1);
+    expect(store.getMissionStore).toHaveBeenCalledTimes(1);
   });
 
   it("excludes active missions that already have linked goals", async () => {

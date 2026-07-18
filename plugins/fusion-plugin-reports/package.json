@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/reports",
-  "version": "0.1.44",
+  "version": "0.1.49",
   "type": "module",
   "description": "Reports plugin for Fusion",
   "private": true,

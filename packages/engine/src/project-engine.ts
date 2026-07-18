@@ -750,6 +750,14 @@ export class ProjectEngine {
       return;
     }
 
+    /*
+    FNXC:EngineShutdown 2026-07-17-16:35:
+    stop() is a hard lifecycle boundary: public merge requests must remain
+    rejected after it settles. Reset the shutdown guard only when a subsequent
+    start begins a new lifecycle, never at the end of stop().
+    */
+    this.shuttingDown = false;
+
     // 1. Start the core runtime (TaskStore, Scheduler, Executor, Triage, etc.)
     await this.runtime.start();
 
@@ -849,9 +857,7 @@ export class ProjectEngine {
       // through the FN-7520 façade for each real observation the monitor
       // records, using the real TaskStore. Best-effort — never throws (the
       // monitor already swallows callback errors around `onObservation`).
-      onObservation: (observation) => {
-        this.emitOverseerObservationDeduped(store, observation);
-      },
+      onObservation: (observation) => this.emitOverseerObservationDeduped(store, observation),
     });
     // FN-7512: bounded autonomous-recovery dispatcher, wired to the existing
     // steering-comment API + store retry/re-enqueue path only — no new
@@ -1362,7 +1368,6 @@ export class ProjectEngine {
     await this.runtime.stop();
 
     this.started = false;
-    this.shuttingDown = false;
     runtimeLog.log(`ProjectEngine stopped for ${this.config.projectId}`);
   }
 
@@ -1554,6 +1559,12 @@ export class ProjectEngine {
    * recovery-controller ring buffers for this task (mirrors the poll's
    * leave-in-flight cleanup). This is a user action; it never mutates task
    * lifecycle/column and never performs a merge/PR/destructive side effect.
+   *
+   * FNXC:PlannerOversight 2026-07-18-12:00:
+   * FN-8247 requires Stop to disable BOTH lifecycle oversight and the
+   * independently-gated session advisor. Persisting explicit false wins over
+   * project/workflow defaults, then immediate runtime teardown prevents a
+   * live advisor from spending or injecting after the operator stops it.
    */
   async stopOverseerTask(taskId: string): Promise<{ applied: boolean; reason: string; task?: Task }> {
     try {
@@ -1568,9 +1579,14 @@ export class ProjectEngine {
         this.plannerRecoveryController?.recordManualAction(taskId, observation.stage, "manual_stop");
       }
 
-      const updatedTask = await store.updateTask(taskId, { plannerOversightLevel: "off" });
+      const updatedTask = await store.updateTask(taskId, {
+        plannerOversightLevel: "off",
+        sessionAdvisorEnabled: false,
+      });
       this.plannerOverseer?.clear(taskId);
       this.plannerRecoveryController?.clear(taskId);
+      this.sessionAdvisor?.clear(taskId);
+      this.sessionAdvisorLogCursor.delete(taskId);
       // FN-7551: release the observation/escalation emission-dedup state too,
       // so if oversight is later re-enabled for this task, the first new
       // observation/escalation emits rather than staying suppressed by stale
@@ -1630,9 +1646,9 @@ export class ProjectEngine {
    * try/catch-degrade-to-no-op contract every FN-7512/FN-7513/FN-7514
    * handler already follows).
    */
-  private emitOverseerInterventionSafe(fn: () => void): void {
+  private async emitOverseerInterventionSafe(fn: () => unknown | Promise<unknown>): Promise<void> {
     try {
-      fn();
+      await fn();
     } catch (err) {
       runtimeLog.warn(`Failed to emit overseer intervention: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1647,7 +1663,7 @@ export class ProjectEngine {
    * `(stage, signal)` pair emits. Best-effort: any store/façade failure is
    * swallowed so it never breaks `PlannerOverseerMonitor#observeTask`/the poll.
    */
-  private emitOverseerObservationDeduped(store: TaskStore, observation: import("./planner-overseer.js").OverseerStageObservation): void {
+  private async emitOverseerObservationDeduped(store: TaskStore, observation: import("./planner-overseer.js").OverseerStageObservation): Promise<void> {
     try {
       const dedupKey = `${observation.stage}:${observation.signal}`;
       const last = this.plannerObservationEmitDedup.get(observation.taskId);
@@ -1655,7 +1671,7 @@ export class ProjectEngine {
         return;
       }
       this.plannerObservationEmitDedup.set(observation.taskId, dedupKey);
-      emitOverseerObservation({
+      await emitOverseerObservation({
         store,
         taskId: observation.taskId,
         stage: observation.stage,
@@ -1679,18 +1695,18 @@ export class ProjectEngine {
    * clears the dedup entry and may escalate again in a future exhaustion).
    * Best-effort; never throws out of the poll.
    */
-  private emitOverseerEscalationDeduped(
+  private async emitOverseerEscalationDeduped(
     store: TaskStore,
     taskId: string,
     decision: { watchedStage: PlannerOversightStage | null; reason: string; attemptCount: number; attemptLimit: number; sourceLinks: ReadonlyArray<{ kind: string; ref: string; url?: string }> },
-  ): void {
+  ): Promise<void> {
     if (!decision.watchedStage) return;
     const dedupKey = `${taskId}::${decision.watchedStage}`;
     if (this.plannerEscalationEmitDedup.has(dedupKey)) {
       return;
     }
     this.plannerEscalationEmitDedup.add(dedupKey);
-    this.emitOverseerInterventionSafe(() =>
+    await this.emitOverseerInterventionSafe(() =>
       emitOverseerEscalation({
         store,
         taskId,
@@ -1733,7 +1749,7 @@ export class ProjectEngine {
         // comment succeeds, through the real store, so the timeline reflects
         // the same guidance the agent actually saw.
         // FNXC:PlannerOversight 2026-07-13-23:05: tag lifecycle source for timeline vs session-advisor.
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerSteering({
             store,
             taskId: task.id,
@@ -1748,7 +1764,7 @@ export class ProjectEngine {
         await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerRetry({
             store,
             taskId: task.id,
@@ -1766,7 +1782,7 @@ export class ProjectEngine {
           ? `[planner-oversight] targeted-fix requested: ${decision.reason} (source: ${sourceRef})`
           : `[planner-oversight] targeted-fix requested: ${decision.reason}`;
         await store.addSteeringComment(task.id, text, "agent");
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerRecoveryAttempt({
             store,
             taskId: task.id,
@@ -1799,7 +1815,7 @@ export class ProjectEngine {
       requestConfirmation: async (task, request) => {
         const text = `[planner-oversight] merge checkpoint (${request.sideEffectClass}): ${request.reason}`;
         await store.addSteeringComment(task.id, text, "agent");
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerConfirmation({
             store,
             taskId: task.id,
@@ -1816,7 +1832,7 @@ export class ProjectEngine {
       // the timeline shows both the request and its resolution. Never touches
       // the approve/deny execution path itself.
       onConfirmationResolved: async (taskId, request, resolution) => {
-        this.emitOverseerInterventionSafe(() =>
+        await this.emitOverseerInterventionSafe(() =>
           emitOverseerConfirmation({
             store,
             taskId,
@@ -2618,7 +2634,7 @@ export class ProjectEngine {
   }
 
   private internalEnqueueMerge(taskId: string): boolean {
-    if (this.shuttingDown) return false;
+    if (this.shuttingDown || !this.started) return false;
     if (this.mergeActive.has(taskId)) {
       // Distinguish "actually being processed" (queued or active) from a
       // leaked entry. Reconcile leaks immediately so recovery paths and fresh
@@ -2843,7 +2859,7 @@ export class ProjectEngine {
             // event — emit exactly one `escalate` entry per (taskId, stage)
             // while the stage remains exhausted across subsequent polls.
             if (decision?.exhausted && decision.watchedStage) {
-              this.emitOverseerEscalationDeduped(store, task.id, decision);
+              await this.emitOverseerEscalationDeduped(store, task.id, decision);
             }
           }
 

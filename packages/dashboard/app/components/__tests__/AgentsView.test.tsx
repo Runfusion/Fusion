@@ -79,6 +79,8 @@ const mockViewportMode = vi.fn<() => "mobile" | "tablet" | "desktop">(() => "des
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => mockViewportMode(),
   isMobileViewport: () => mockViewportMode() === "mobile",
   useViewportMode: () => mockViewportMode(),

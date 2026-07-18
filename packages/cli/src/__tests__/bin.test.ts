@@ -55,6 +55,8 @@ const commandMocks = vi.hoisted(() => ({
   runSettingsSet: vi.fn(),
   runSettingsExport: vi.fn(),
   runSettingsImport: vi.fn(),
+  runOrgExport: vi.fn(),
+  runOrgImport: vi.fn(),
 
   runGitStatus: vi.fn(),
   runGitFetch: vi.fn(),
@@ -212,6 +214,8 @@ vi.mock("../commands/settings.js", () => ({
 }));
 vi.mock("../commands/settings-export.js", () => ({ runSettingsExport: commandMocks.runSettingsExport }));
 vi.mock("../commands/settings-import.js", () => ({ runSettingsImport: commandMocks.runSettingsImport }));
+vi.mock("../commands/org-export.js", () => ({ runOrgExport: commandMocks.runOrgExport }));
+vi.mock("../commands/org-import.js", () => ({ runOrgImport: commandMocks.runOrgImport }));
 
 vi.mock("../commands/git.js", () => ({
   runGitStatus: commandMocks.runGitStatus,
@@ -421,6 +425,19 @@ describe("bin command routing and fallbacks", () => {
       output: "./out.json",
       projectName: "demo",
     });
+  });
+
+  it("routes organization export and import flags", async () => {
+    await runBin(["org-export", "bundle.json", "-P", "demo"]);
+    await runBin(["org-import", "bundle.json", "--dry-run", "--collision-mode", "suffix", "-P", "demo"]);
+
+    expect(commandMocks.runOrgExport).toHaveBeenCalledWith("bundle.json", { project: "demo" });
+    expect(commandMocks.runOrgImport).toHaveBeenCalledWith("bundle.json", { project: "demo", dryRun: true, collisionMode: "suffix" });
+  });
+
+  it("rejects an invalid organization import collision mode", async () => {
+    await expect(runBin(["org-import", "bundle.json", "--collision-mode", "replace"])).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith("--collision-mode must be skip or suffix");
   });
 
   it("routes settings import with file and flags", async () => {

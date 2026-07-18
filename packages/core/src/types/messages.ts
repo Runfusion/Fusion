@@ -1,7 +1,13 @@
 /**
  * FNXC:CodeOrganization 2026-07-17-12:00:
  * Messaging domain types peeled from types.ts.
+ *
+ * FNXC:CodeOrganization 2026-07-18-00:35:
+ * Main landed task-proposal metadata and ephemeral task-creation policy on the
+ * mailbox contract. Keep those symbols in this peel so types.ts only re-exports.
  */
+
+import type { TaskPriority } from "./board.js";
 
 export type ParticipantType = "agent" | "user" | "system";
 
@@ -33,6 +39,31 @@ export interface MessageReplyReference {
 }
 
 /** Optional metadata attached to mailbox messages. */
+export type EphemeralTaskCreationPolicy = "allow" | "upon_validation" | "deny";
+
+/** Resolve the non-default policy without masking legacy persisted settings. */
+export function resolveEphemeralTaskCreationPolicy(settings: {
+  ephemeralAgentTaskCreationPolicy?: EphemeralTaskCreationPolicy;
+  ephemeralAgentsCanCreateTasks?: boolean;
+}): EphemeralTaskCreationPolicy {
+  if (
+    settings.ephemeralAgentTaskCreationPolicy === "allow" ||
+    settings.ephemeralAgentTaskCreationPolicy === "upon_validation" ||
+    settings.ephemeralAgentTaskCreationPolicy === "deny"
+  ) {
+    return settings.ephemeralAgentTaskCreationPolicy;
+  }
+  return settings.ephemeralAgentsCanCreateTasks === false ? "deny" : "allow";
+}
+
+export interface ProposedTaskMetadata {
+  title: string;
+  description: string;
+  priority?: TaskPriority;
+  workflowId?: string;
+  dependencies?: string[];
+}
+
 export interface MessageMetadata extends Record<string, unknown> {
   /** Optional link to the original message when this message is a reply. */
   replyTo?: MessageReplyReference;
@@ -42,6 +73,17 @@ export interface MessageMetadata extends Record<string, unknown> {
    * use sparingly for urgent messages. Ignored when recipient is a user.
    */
   wakeRecipient?: boolean;
+  /** Structured operator-approved follow-up task proposal. */
+  kind?: string;
+  proposedTask?: ProposedTaskMetadata;
+  proposalStatus?: "pending" | "creating" | "created" | "dismissed";
+  createdTaskId?: string;
+  /** Stable proposal key issued at send time and never rotated across reclaims. */
+  proposalIdempotencyKey?: string;
+  /** Transient owner token for the current creating lease only. */
+  claimOwnerToken?: string;
+  /** Durable ISO timestamp used to reclaim a creator that died before task persistence. */
+  claimStartedAt?: string;
 }
 
 /** Message record stored in the system */

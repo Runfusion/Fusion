@@ -488,7 +488,7 @@ export async function updateTaskColumns(
  */
 export function isTaskIdConflictError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  if (/SQLITE_CONSTRAINT|UNIQUE constraint failed: tasks\.id|PRIMARY KEY constraint failed: tasks\.id/i.test(message)) {
+  if (/SQLITE_CONSTRAINT|UNIQUE constraint failed: tasks\.(id|proposalClaimId)|PRIMARY KEY constraint failed: tasks\.id/i.test(message)) {
     return true;
   }
   // PostgreSQL unique_violation (23505). The code may be on the error directly

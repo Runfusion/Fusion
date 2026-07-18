@@ -833,6 +833,55 @@ describe("ChatManager.sendMessage", () => {
     );
   });
 
+  it("passes action and permanent-agent gates to bound Mission chat sessions", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+      };
+    });
+    const taskStore = {
+      getSettings: vi.fn().mockResolvedValue({
+        defaultAgentPermissionPolicy: { rules: { task_agent_mutation: "block" } },
+      }),
+      getAsyncLayer: vi.fn(() => ({})),
+      getFusionDir: () => "/tmp/test/.fusion",
+    };
+
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      undefined,
+      undefined,
+      taskStore as any,
+    );
+    await chatManager.sendMessage("chat-001", "Create a mission");
+
+    /*
+    FNXC:ChatMissionGatingTests 2026-07-29-15:30:
+    Mission mutations in a bound chat session are safe only when both wrappers
+    receive the bound agent policy. The engine gating suites assert block and
+    approval execution; this dashboard seam asserts chat cannot omit either context.
+    */
+    expect(createOptions.actionGateContext).toMatchObject({
+      agentId: "agent-001",
+      permissionPolicy: { rules: { task_agent_mutation: "block" } },
+    });
+    expect(createOptions.permanentAgentGating).toMatchObject({
+      requester: { actorId: "agent-001" },
+      permissionPolicy: { rules: { task_agent_mutation: "block" } },
+    });
+    expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_mission_create");
+    expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_ideation_converge");
+  });
+
   it("exposes fn_task_document_* tools to the chat agent when a task store is present", async () => {
     let capturedTools: Array<{ name: string; execute?: (...args: any[]) => Promise<any> }> = [];
     __setCreateFnAgent(async (options: any) => {

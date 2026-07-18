@@ -38,7 +38,7 @@ import {
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskLogsReadTool, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createTaskAssignTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowValidateTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskLogsReadTool, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createTaskAssignTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createMissionTools, createIdeationTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowValidateTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructionsWithRatings,
@@ -2511,6 +2511,8 @@ export class HeartbeatMonitor {
             heartbeatTools.push(createPostRoomMessageTool(this.chatStore, agentId));
           }
 
+          heartbeatTools.push(...createMissionTools(taskStore));
+          heartbeatTools.push(...createIdeationTools(taskStore));
           heartbeatTools.push(...createGoalRetrievalTools(taskStore, { runContext }));
           heartbeatTools.push(createReadEvaluationsTool(this.store, this.reflectionStore, agentId));
           heartbeatTools.push(createUpdateIdentityTool(this.store, agentId));
@@ -3716,14 +3718,24 @@ export class HeartbeatMonitor {
       execute: async (id: string, params: Static<typeof taskCreateParams>, signal, onUpdate, ctx) => {
         const result = await baseCreateTool.execute(id, params, signal, onUpdate, ctx);
 
-        const createdTaskId = (result.details as { taskId?: string })?.taskId ?? "unknown";
+        const resultDetails = result.details as { taskId?: string; wasDuplicate?: boolean };
+        if (!resultDetails.taskId) return result;
+        const createdTaskId = resultDetails.taskId;
+        const wasDuplicate = resultDetails.wasDuplicate === true;
 
         // Log agent link on the created task with run context for correlation
         try {
-          await taskStore.logEntry(createdTaskId, `Created by agent ${agentId} during heartbeat run`, undefined, runContext);
+          await taskStore.logEntry(
+            createdTaskId,
+            `${wasDuplicate ? "Linked existing task" : "Created"} by agent ${agentId} during heartbeat run`,
+            undefined,
+            runContext,
+          );
         } catch (taskCreateLogErr) {
           heartbeatLog.warn(`Task ${createdTaskId} agent-link log failed: ${taskCreateLogErr instanceof Error ? taskCreateLogErr.message : String(taskCreateLogErr)}`);
         }
+
+        if (wasDuplicate) return result;
 
         // Audit trail: record task creation (FN-1404)
         await audit?.database({ type: "task:create", target: createdTaskId });
@@ -3773,6 +3785,8 @@ export class HeartbeatMonitor {
       tools.push(createPostRoomMessageTool(this.chatStore, agentId));
     }
 
+    tools.push(...createMissionTools(taskStore));
+    tools.push(...createIdeationTools(taskStore));
     tools.push(...createGoalRetrievalTools(taskStore, { runContext, taskId }));
     tools.push(createReadEvaluationsTool(this.store, this.reflectionStore, agentId));
     tools.push(createUpdateIdentityTool(this.store, agentId));

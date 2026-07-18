@@ -1,5 +1,21 @@
 # @fusion/core
 
+## 0.72.0
+
+## 0.71.0
+
+## 0.70.2
+
+## 0.70.1
+
+## 0.70.0
+
+### Patch Changes
+
+- be55d0a: summary: Fix dashboard skill discovery lifecycle in PostgreSQL mode.
+  category: fix
+  dev: Reuse and close backend-aware project stores, keep request-scoped discovery loaders from mutating persistent plugin runtime state, and make cluster-wide PostgreSQL runtime-role creation race-safe.
+
 ## 0.60.0
 
 ## 0.59.0

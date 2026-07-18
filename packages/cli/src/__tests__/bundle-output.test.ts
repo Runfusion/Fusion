@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolvePluginSkillBodyPath } from "@fusion/core";
@@ -378,6 +378,36 @@ describe("CLI bundle output", () => {
     expect(existsSync(join(stagedRoot, "bundled.js"))).toBe(true);
     expect(existsSync(join(stagedRoot, "mcp-schema-server.cjs"))).toBe(true);
   });
+
+  it("stages a portable Claude ACP launcher and declares every platform bridge", () => {
+    const bridgeRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-claude-runtime", "bridge");
+    const executableName = process.platform === "win32" ? "claude-code-cli-acp.cmd" : "claude-code-cli-acp";
+    const bridgePath = join(bridgeRoot, executableName);
+    const launcherManifestPath = join(bridgeRoot, "node_modules", "claude-code-cli-acp", "package.json");
+    const launcherManifest = JSON.parse(readFileSync(launcherManifestPath, "utf8")) as {
+      optionalDependencies?: Record<string, string>;
+    };
+    const cliManifest = JSON.parse(readFileSync(join(cliRoot, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    const supportedPlatformPackages = [
+      "claude-code-cli-acp-darwin-arm64",
+      "claude-code-cli-acp-darwin-x64",
+      "claude-code-cli-acp-linux-arm64",
+      "claude-code-cli-acp-linux-x64",
+      "claude-code-cli-acp-win32-arm64",
+      "claude-code-cli-acp-win32-x64",
+    ];
+
+    expect(existsSync(bridgePath)).toBe(true);
+    expect(existsSync(join(bridgeRoot, "node_modules", "claude-code-cli-acp", "bin", "claude-code-cli-acp.js"))).toBe(true);
+    expect(cliManifest.dependencies?.["claude-code-cli-acp"]).toBe("0.1.1");
+    expect(Object.keys(launcherManifest.optionalDependencies ?? {}).sort()).toEqual(supportedPlatformPackages);
+    if (process.platform !== "win32") expect(statSync(bridgePath).mode & 0o111).not.toBe(0);
+
+    // Native binaries intentionally are not staged from the build host. npm installs the matching
+    // optional package from this manifest on the operator's platform, including platforms unavailable to CI.
+  }, 35_000);
 
   it("dist/plugins/fusion-plugin-cursor-runtime/ is staged with a valid manifest", () => {
     const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-cursor-runtime");

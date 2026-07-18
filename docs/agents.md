@@ -550,7 +550,7 @@ Expected behavior and boundaries:
 - Durable conclusions should be persisted with `fn_task_document_write` (for example, `key="research"`)
 - Research runs require the project engine to be running for processing; `fn_research_run` creates the run but does not block for completion unless `wait_for_completion` is set
 
-For the full research workflow, builtin-default behavior, optional external provider setup, CLI commands, and API reference, see the [Research guide](./research.md).
+For the full research workflow, builtin-default behavior, optional external provider setup, CLI commands, and API reference, see the [Research guide](./research.md). For the agent/chat capability audit and phased route from research through roadmap, execution, and verification, see [Full-loop agent tool-surface audit](./agent-tool-surface-full-loop.md).
 
 ## Runtime Self-Awareness Preamble
 

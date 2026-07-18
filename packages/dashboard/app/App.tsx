@@ -48,6 +48,7 @@ import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
 import { useMobileKeyboard } from "./hooks/useMobileKeyboard";
 import { isIOS, useMobileKeyboardViewportLock, useMobileViewportRestoreReset } from "./hooks/useMobileScrollLock";
 import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
+import { recordActivity } from "./utils/activity-trace";
 import { closeViewShortcut, retainViewNavRevert } from "./utils/dashboardShortcutToggles";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useGithubSetupWarningDelay } from "./hooks/useGithubSetupWarningDelay";
@@ -93,8 +94,7 @@ import {
   resolveDesktopShellRedirectTarget,
   requiresNativeShellOnboarding,
   shouldShowFirstEverBootLoader,
-  isSessionNeedingInputForBanner,
-  isPlanningAwaitingInput,
+  shouldShowSessionInBanner,
   getCliActionDisabledReasonForBanner,
   executeCliSessionBannerAction,
 } from "./utils/appLifecycle";
@@ -106,7 +106,7 @@ export {
   requiresNativeShellOnboarding,
   shouldShowFirstEverBootLoader,
   isSessionNeedingInputForBanner,
-  isPlanningAwaitingInput,
+  shouldShowSessionInBanner,
   getCliActionDisabledReasonForBanner,
   executeCliSessionBannerAction,
 } from "./utils/appLifecycle";
@@ -272,6 +272,10 @@ export function closeTopmostDashboardPopupForShortcut(
 function AppInner() {
   const { t } = useTranslation("app");
   const { toasts, addToast, removeToast } = useToast();
+  useEffect(() => {
+    const latest = toasts[toasts.length - 1];
+    if (latest) recordActivity({ kind: latest.type === "error" ? "error" : "toast", label: latest.message });
+  }, [toasts]);
   const { shellApi, state: shellState, ready: shellReady, openConnectionManagerSignal } = useShellConnection();
   const shellHost = useShellHostContext();
 
@@ -382,18 +386,14 @@ function AppInner() {
   const { themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors } = useTheme();
 
   // Background AI sessions - required before useModalManager
-  const { sessions: bgSessions, generating: bgGenerating, needsInput: bgNeedsInput, planningSessions: bgPlanningSessions, dismissSession: bgDismiss } = useBackgroundSessions(currentProject?.id);
+  const { sessions: bgSessions, planningSessions: bgPlanningSessions } = useBackgroundSessions(currentProject?.id);
   /*
-   * FNXC:SessionBanner 2026-06-14-19:32:
-   * CLI agent sessions use `waiting_on_input` and `needs_attention` to represent user-actionable states. The banner feed must include those statuses in addition to the legacy planning-session statuses so visible CLI actions cannot be silently hidden from users.
-   *
-   * FNXC:SessionBanner 2026-07-05-00:00:
-   * Planning `awaiting_input` sessions are excluded from the banner feed: the banner's Resume button did not
-   * reliably redirect into Planning Mode. That signal now surfaces as a yellow `status-dot--pending` nav badge
-   * (see `planningNeedsInput` below) whose click target is the already-correct `planning` view navigation.
-   * Planning sessions in `error` status are unaffected and still render in the banner.
+   * FNXC:SessionBanner 2026-07-16-20:55:
+   * FN-8229 replaces the removed footer AI pill with this banner feed. It keeps
+   * non-planning generating and error sessions observable while Planning owns
+   * all of its statuses through the docked view and navigation badge.
    */
-  const sessionsNeedingInput = bgSessions.filter((s) => isSessionNeedingInputForBanner(s) && !isPlanningAwaitingInput(s));
+  const sessionsNeedingInput = bgSessions.filter(shouldShowSessionInBanner);
   const sessionBannersHidden = useSessionBannersHidden();
   const planningNeedsInput = bgPlanningSessions.some((s) => s.status === "awaiting_input");
 
@@ -425,6 +425,20 @@ function AppInner() {
     themeMode,
     setThemeMode,
   });
+
+  useEffect(() => {
+    recordActivity({ kind: "view", label: String(viewMode) });
+  }, [viewMode]);
+  useEffect(() => {
+    /*
+    FNXC:ReportPipeline 2026-07-18-12:50:
+    Report traces must retain uncaught client errors independently of toast UI.
+    Window errors reveal failures that never produce a typed error toast.
+    */
+    const recordError = (event: ErrorEvent) => recordActivity({ kind: "error", label: event.message });
+    window.addEventListener("error", recordError);
+    return () => window.removeEventListener("error", recordError);
+  }, []);
 
   const { views: rawPluginDashboardViews } = usePluginDashboardViews(currentProject?.id);
   const graphPluginTaskView = useMemo(() => {
@@ -573,6 +587,38 @@ function AppInner() {
   }, [initialLoadComplete]);
 
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [chatComposerPrefill, setChatComposerPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const [quickChatEverOpenedProjectId, setQuickChatEverOpenedProjectId] = useState<string | null>(null);
+  const quickChatProjectIdRef = useRef<string | undefined>(undefined);
+
+  /*
+  FNXC:ChatModal 2026-07-18-00:00:
+  FN-8257 requires Quick Chat to mount only after its first open, then remain mounted and hidden
+  across close/reopen so ChatView retains its selected session, transcript, and scroll position.
+  Reset the latch when the project changes so a hidden ChatView cannot leak one project's state
+  into another project; the FloatingWindow key supplies the matching React identity boundary.
+  */
+  useEffect(() => {
+    const projectId = currentProject?.id;
+    if (quickChatProjectIdRef.current !== projectId) {
+      quickChatProjectIdRef.current = projectId;
+      setQuickChatEverOpenedProjectId(quickChatOpen && projectId ? projectId : null);
+      return;
+    }
+    if (quickChatOpen && projectId) {
+      setQuickChatEverOpenedProjectId(projectId);
+    }
+  }, [currentProject?.id, quickChatOpen]);
+
+  /*
+  FNXC:GitHubImportChat 2026-07-30-12:00:
+  Import Tasks can hand a selected GitHub link to Quick Chat without creating a task. Keep the
+  value and nonce at App scope so both modal and embedded imports seed every Chat presentation.
+  */
+  const openChatWithPrefill = useCallback((text: string) => {
+    setChatComposerPrefill({ text, nonce: Date.now() });
+    setQuickChatOpen(true);
+  }, []);
 
   const { keyboardOpen } = useMobileKeyboard({ enabled: isMobile });
   // Keyboard visibility controls both MobileNavBar rendering and whether
@@ -700,6 +746,7 @@ function AppInner() {
     todosEnabled,
     goalsEnabled,
     setQuickChatButtonModeImmediate,
+    setMobileNavPrimaryItemsImmediate,
     toggleAutoMerge,
     togglePlanAutoApprove,
     refresh: refreshAppSettings,
@@ -1274,7 +1321,7 @@ function AppInner() {
 
   // Dismissing the "needs input" banner only hides the prompt — it must NOT
   // delete the underlying session. Sessions remain accessible from the
-  // Planning modal's sidebar (or the AI background tasks pill) so the user
+  // Planning modal's sidebar or the session notification banner so the user
   // can return to them later. The banner already tracks dismissals locally
   // via its own `dismissedIds` set, so these handlers are intentional no-ops.
   const handleDismissNeedingInputSession = useCallback(() => {
@@ -1417,6 +1464,7 @@ function AppInner() {
     setShadcnCustomColors,
     resolvedThemeMode,
     setQuickChatButtonModeImmediate,
+    setMobileNavPrimaryItemsImmediate,
     reopenOnboardingWithNav,
     viewMode,
     projects,
@@ -1448,6 +1496,8 @@ function AppInner() {
     skillsEnabled,
     experimentalFeatures,
     setQuickChatOpen,
+    chatComposerPrefill,
+    onOpenChatWithPrefill: openChatWithPrefill,
     setMailboxUnreadCount,
     setMissionTargetId,
     setMissionResumeSessionId,
@@ -1750,11 +1800,6 @@ function AppInner() {
           projectId={currentProject.id}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           staleHighFanoutBlockerAgeThresholdMs={staleHighFanoutBlockerAgeThresholdMs}
-          backgroundSessions={bgSessions}
-          backgroundGenerating={bgGenerating}
-          backgroundNeedsInput={bgNeedsInput}
-          onOpenBackgroundSession={handleOpenBackgroundSession}
-          onDismissBackgroundSession={bgDismiss}
           lastFetchTimeMs={lastFetchTimeMs}
           currentProjectPath={currentProject.path}
           onOpenProjectDirectory={handleOpenProjectDirectory}
@@ -1837,15 +1882,24 @@ function AppInner() {
           onOpenChange={setQuickChatOpen}
         />
       )}
-      {quickChatOpen && currentProject && (
+      {currentProject && quickChatEverOpenedProjectId === currentProject.id && (
         <FloatingWindow
+          key={currentProject.id}
           windowKey="chat-modal"
+          hidden={!quickChatOpen}
           title="Chat"
           onClose={() => setQuickChatOpen(false)}
           closeOnOutsidePointerDown={quickChatCloseOnOutsideClick}
           hideHeader
           dragHandleSelector=".chat-view--floating .view-header"
           className="floating-window--chat"
+          layer="task-detail"
+          /*
+          FNXC:ChatModal 2026-07-17-15:55:
+          Quick Chat and task-detail popups must share the task popup interaction stack: either
+          overlapping surface claims the front on pointer/focus. Other utility FloatingWindows keep
+          their higher utility band, so this scoped opt-in cannot change Terminal, Files, or New Task.
+          */
           /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Chat is a full-screen sheet at ≤768px, so preserve its desktop location and size instead of restoring or overwriting them there. */
           suspendGeometryPersistenceOnMobile
           persistGeometryKey="kb-dashboard-chat-floating-window"
@@ -1862,6 +1916,8 @@ function AppInner() {
               projectId={currentProject.id}
               experimentalFeatures={experimentalFeatures}
               floating
+              initialComposerDraft={chatComposerPrefill?.text}
+              initialComposerDraftNonce={chatComposerPrefill?.nonce}
               onMaximize={() => {
                 handleTaskViewChange("chat");
                 setQuickChatOpen(false);
@@ -1882,8 +1938,10 @@ function AppInner() {
       FNXC:TaskPopupGeometry 2026-07-03-00:00:
       Every task-detail FloatingWindow keeps its per-task windowKey for DOM identity, dedupe, cascade fallback, and z-index independence, but all task-detail popups share one persisted geometry key so operators do not resize or reposition the popup between tasks.
 
-      FNXC:TaskPopupLayer 2026-07-04-18:36:
-      Ordinary task-detail popups belong to the board/task-detail layer, not the global floating-utility stack. Pass the task-detail layer so board/right-dock task opens preserve the visible board context while utility windows keep the higher app-wide raise/focus contract.
+      FNXC:TaskPopupLayer 2026-07-17-15:55:
+      Task-detail popups and Quick Chat share the task-detail interaction stack, so pointer/focus
+      moves either overlapping surface above the other. Other utility windows retain their separate,
+      higher utility band and cannot be reordered by task-popup interaction.
 
       FNXC:TaskPopupViewGating 2026-07-15-15:20:
       Rendering uses only the active view's scoped entries; state keeps hidden snapshots so returning remounts them with shared geometry. Each FloatingWindow key includes its origin so identical task ids never collide across views.
@@ -1946,10 +2004,11 @@ function AppInner() {
           handleGitHubImport,
         }}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
+        onOpenChatWithPrefill={openChatWithPrefill}
         onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
         taskOperations={{ moveTask, deleteTask, mergeTask, archiveTask, revertTask, retryTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
-        settings={{ prAuthAvailable, autoMerge, taskDetailChatFirst, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate }}
+        settings={{ prAuthAvailable, autoMerge, taskDetailChatFirst, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate, setMobileNavPrimaryItemsImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}

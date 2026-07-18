@@ -116,6 +116,49 @@ export function createSmokeHtml() {
     `)
     .join("");
 
+  /*
+  FNXC:QuickAddActionRow 2026-07-17-12:00:
+  FN-8299 protects the localized Quick Add Save label with a production-CSS browser fixture.
+  The Board column's 300px effective minimum content width is the supported boundary: below it,
+  a fixed-height single-line action cannot promise an unbreakable label without changing the UX.
+  Render every supported translation here so the smoke measures the widest emitted-font label
+  instead of assuming French is widest from character count.
+
+  FNXC:QuickAddActionRow 2026-07-18-11:22:
+  The fixture must include all five production icon controls before Save, including the session
+  advisor toggle. Omitting it understates the primary group's minimum width and could conceal a
+  300px overflow or wrap regression on either Board or List.
+  */
+  const localizedSaveLabels = [
+    ["en", "Save"],
+    ["es", "Guardar"],
+    ["fr", "Enregistrer"],
+    ["ko", "저장"],
+    ["zh-CN", "保存"],
+    ["zh-TW", "儲存"],
+  ];
+  const quickAddComposerFixtures = [
+    ["board", "", "minimum", "300px", "disabled"],
+    ["board", "", "wide", "600px", "disabled"],
+    ["list", "quick-entry--single-line", "minimum", "300px", "enabled"],
+    ["list", "quick-entry--single-line", "wide", "600px", "enabled"],
+  ].flatMap(([surface, modifier, width, maxWidth, state]) => localizedSaveLabels.map(([locale, label]) => `
+    <section class="quick-entry-smoke-fixture" data-smoke="quick-add-save-${surface}-${width}-${locale}" style="width: min(${maxWidth}, calc(100vw - 24px)); margin: 0 auto 12px;">
+      <div class="quick-entry-box quick-entry-box--expanded ${modifier}" data-smoke="quick-add-${surface}-composer">
+        <div class="quick-entry-actions" data-smoke="quick-add-save-row">
+          <div class="quick-entry-primary-group">
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-attach" type="button" aria-label="Attach"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-github-toggle" type="button" aria-label="GitHub"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-session-advisor-toggle" type="button" aria-label="Session advisor"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 7s2-3 5-3 5 3 5 3-2 3-5 3-5-3-5-3Z"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-priority-button" type="button" aria-label="Priority"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-icon btn-sm" data-testid="quick-entry-fast-toggle" type="button" aria-label="Fast"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+            <button class="btn btn-task-create btn-sm" data-testid="quick-entry-save" data-smoke="quick-add-save-button" data-locale="${locale}" type="button" ${state === "disabled" ? "disabled" : ""}><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align: middle; margin-right: 4px;"><path d="M2 6h8"/></svg>${label}</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  `)).join("");
+
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -190,6 +233,10 @@ export function createSmokeHtml() {
           </div>
         </section>
       </main>
+
+      <section data-smoke="quick-add-save-fixtures" aria-label="Quick Add localized Save layout fixtures">
+        ${quickAddComposerFixtures}
+      </section>
 
       <footer class="executor-status-bar">
         <div class="executor-status-bar__segment">
@@ -1065,13 +1112,73 @@ async function runSmokeChecks(page, pageUrl) {
     JSON.stringify(mobileCommandCenterChartsLayout),
   );
 
+  const collectQuickAddSaveLayout = () => evaluate(page, `(() => {
+    const fixtures = [...document.querySelectorAll('[data-smoke^="quick-add-save-"][data-smoke*="-minimum-"], [data-smoke^="quick-add-save-"][data-smoke*="-wide-"]')];
+    return fixtures.map((fixture) => {
+      const save = fixture.querySelector('[data-smoke="quick-add-save-button"]');
+      const row = fixture.querySelector('[data-smoke="quick-add-save-row"]');
+      const composer = fixture.querySelector('[data-smoke$="-composer"]');
+      const rect = save.getBoundingClientRect();
+      return {
+        fixture: fixture.dataset.smoke,
+        locale: save.dataset.locale,
+        label: save.textContent.trim(),
+        saveWidth: rect.width,
+        saveOverflow: save.scrollWidth - save.clientWidth,
+        rowOverflow: row.scrollWidth - row.clientWidth,
+        composerOverflow: composer.scrollWidth - composer.clientWidth,
+        saveRight: rect.right,
+        composerRight: composer.getBoundingClientRect().right,
+      };
+    });
+  })()`);
+
   await page.send("Emulation.setDeviceMetricsOverride", {
-    width: 1280,
+    width: 412,
+    height: 915,
+    deviceScaleFactor: 2,
+    mobile: true,
+  });
+  await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
+  const mobileQuickAddSaveLayout = await collectQuickAddSaveLayout();
+  const frenchMobileWidth = mobileQuickAddSaveLayout.find((layout) => layout.fixture === "quick-add-save-board-minimum-fr")?.saveWidth;
+  const widestMobileWidth = Math.max(...mobileQuickAddSaveLayout
+    .filter((layout) => layout.fixture.includes("-minimum-"))
+    .map((layout) => layout.saveWidth));
+  assertSmokeResult(
+    "Quick Add localized Save labels fit at the 300px supported minimum on mobile",
+    frenchMobileWidth === widestMobileWidth
+      && mobileQuickAddSaveLayout.length === 24
+      && mobileQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
+        && layout.rowOverflow <= 1
+        && layout.composerOverflow <= 1
+        && layout.saveRight <= layout.composerRight + 1),
+    JSON.stringify(mobileQuickAddSaveLayout),
+  );
+
+  await page.send("Emulation.setDeviceMetricsOverride", {
+    width: 1400,
     height: 900,
     deviceScaleFactor: 1,
     mobile: false,
   });
   await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
+  const desktopQuickAddSaveLayout = await collectQuickAddSaveLayout();
+  const frenchDesktopWidth = desktopQuickAddSaveLayout.find((layout) => layout.fixture === "quick-add-save-board-minimum-fr")?.saveWidth;
+  const widestDesktopWidth = Math.max(...desktopQuickAddSaveLayout
+    .filter((layout) => layout.fixture.includes("-minimum-"))
+    .map((layout) => layout.saveWidth));
+  assertSmokeResult(
+    "Quick Add localized Save labels fit at the 300px supported minimum on desktop",
+    frenchDesktopWidth === widestDesktopWidth
+      && desktopQuickAddSaveLayout.length === 24
+      && desktopQuickAddSaveLayout.every((layout) => layout.saveOverflow <= 1
+        && layout.rowOverflow <= 1
+        && layout.composerOverflow <= 1
+        && layout.saveRight <= layout.composerRight + 1),
+    JSON.stringify(desktopQuickAddSaveLayout),
+  );
+  log(`Quick Add Save intrinsic widths at the 300px minimum: mobile French=${frenchMobileWidth}px, desktop French=${frenchDesktopWidth}px.`);
   const desktopCommandCenterChartsLayout = await collectCommandCenterChartLayout(page);
   assertSmokeResult(
     "command-center charts desktop layout",

@@ -44,6 +44,24 @@ export function DatabaseBackupsSection({ form, setForm, backupInfo, backupLoadin
         </div>)}
       </div>}
       <h4 className="settings-section-heading">{t("settings.backups.databaseBackups", "Database Backups")}</h4>
+      <details className="settings-advanced-disclosure">
+        <summary>{t("settings.database.advanced", "Advanced database settings")}</summary>
+        <SettingsNumberRow
+          descriptor={{
+            key: "embeddedPostgresMaxConnections",
+            label: t("settings.database.embeddedConnectionCap", "Embedded PostgreSQL connection cap"),
+            help: t("settings.database.embeddedConnectionCapHelp", "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit."),
+            scope: "global",
+            min: 32,
+            max: 2000,
+          }}
+          value={form.embeddedPostgresMaxConnections ?? 500}
+          onChange={(v) => setForm((f) => ({ ...f, embeddedPostgresMaxConnections: v ?? 500 }))}
+          error={form.embeddedPostgresMaxConnections !== undefined && (form.embeddedPostgresMaxConnections < 32 || form.embeddedPostgresMaxConnections > 2000)
+            ? t("settings.database.embeddedConnectionCapError", "Enter a value between 32 and 2,000.")
+            : undefined}
+        />
+      </details>
       <SettingsToggleRow
         descriptor={{
           key: "autoBackupEnabled",

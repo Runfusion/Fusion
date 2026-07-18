@@ -247,7 +247,7 @@ line is strictly better than a clipped label.
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   flex: 0 0 auto;
   margin-left: auto;
 }
@@ -309,6 +309,13 @@ the mobile touch-target block below (FN-5751: never a breakpoint-only fix).
 FNXC:QuickAddActionRow 2026-07-16-14:00:
 FN-8147 replaces the spacing-derived fixed height with a pinned literal root
 token so every shadcn theme retains the default 28px desktop control height.
+
+FNXC:QuickAddActionRow 2026-07-18-11:22:
+FN-8299 requires Save and all five production icon controls, including Session
+Advisor, to fit within a 300px Board column without clipping or horizontal
+overflow. Use the compact token gap at desktop widths too; the mobile rule
+already has this value, while the previous desktop gap left the localized Save
+label short of the available content width.
 */
 .quick-entry-actions .btn,
 .quick-entry-actions .wf-optional-steps-dropdown-trigger {

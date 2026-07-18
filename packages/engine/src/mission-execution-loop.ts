@@ -528,18 +528,27 @@ export class MissionExecutionLoop extends EventEmitter {
    * dispatch of the validation result.
    */
   private async runFeatureValidation(feature: MissionFeature): Promise<void> {
-    // Lazily guarantee a linked assertion before validation so every feature
-    // is evaluated by the validator even when legacy data is missing links.
-    let assertions = await this.missionStore.listAssertionsForFeature(feature.id);
-    if (assertions.length === 0) {
-      loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
-      assertions = await this.missionStore.ensureFeatureAssertionLinked(feature.id);
-    }
-
-    // Mark feature as being validated
+    /*
+    FNXC:MissionValidation 2026-07-17-16:40:
+    Claim validation before any asynchronous assertion lookup. Concurrent task
+    completion events must share one validator run, including the lazy-link path.
+    */
     this.activeValidations.add(feature.id);
 
     try {
+      // Lazily guarantee a linked assertion before validation so every feature
+      // is evaluated by the validator even when legacy data is missing links.
+      let assertions = await this.missionStore.listAssertionsForFeature(feature.id);
+      if (assertions.length === 0) {
+        loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
+        assertions = await this.missionStore.ensureFeatureAssertionLinked(feature.id);
+      }
+      if (assertions.length === 0) {
+        // FNXC:MissionValidation 2026-07-17-16:45: no-assertion features remain a valid completion path when linkage cannot derive an assertion.
+        await this.handleValidationPass(feature.id, undefined, "No assertions linked to feature");
+        return;
+      }
+
       loopLog.log(`Running internal validation for feature ${feature.id} — no board task created (policy: docs/missions.md)`);
 
       // FNXC:MissionValidation 2026-07-16-12:00:

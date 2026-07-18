@@ -69,10 +69,10 @@ import { redactConnectionString } from "./credential-redact.js";
 import type { ResolvedBackend } from "./backend-resolver.js";
 import {
   isWindowsElevatedAdmin,
-  startServerAsNonAdminUser,
-  type NonAdminServerHandle,
-  type NonAdminStartOptions,
-} from "./embedded-windows-admin.js";
+  startServerElevatedRestricted,
+  type ElevatedServerHandle,
+  type ElevatedStartOptions,
+} from "./embedded-windows-elevated.js";
 // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
 // Static import so tsup/esbuild bundles postgres.js into packages/cli/dist/bin.js.
 // A runtime require("postgres") resolved via the CLI createRequire banner against
@@ -80,9 +80,110 @@ import {
 // because @runfusion/fusion does not list postgres as a direct dependency.
 import postgres from "postgres";
 
-export { isWindowsElevatedAdmin } from "./embedded-windows-admin.js";
+export { isWindowsElevatedAdmin } from "./embedded-windows-elevated.js";
 
 const require = createRequire(import.meta.url);
+
+/*
+FNXC:StandaloneExeEmbeddedPg 2026-07-17-14:25:
+Inside the bun-compiled standalone `fn` binary, `createRequire(import.meta.url)`
+is anchored at the virtual /$bunfs/root filesystem, so the deliberate
+out-of-bundle `require("embedded-postgres")` fails with "Cannot find package
+'embedded-postgres'" and default embedded-PG boot dies. Worse, bun --compile
+binaries perform NO node_modules bare-specifier resolution at runtime at all
+(verified: requiring an absolute file path works, but that file's own bare
+imports like "pg" then fail), so a staged node_modules tree cannot help.
+The standalone build (packages/cli/build.ts) therefore stages a fully
+self-contained CJS bundle of embedded-postgres (pg and the
+@embedded-postgres/<platform> entry inlined) plus the native
+initdb/pg_ctl/postgres payload at
+  <dir-of-binary>/runtime/<platform>-<arch>/embedded-postgres/
+    dist/index.cjs   — the bundle, loaded below by absolute path
+    native/bin/...   — binaries the bundle resolves via ../native/
+These helpers locate that staged bundle (or FUSION_EMBEDDED_PG_RUNTIME_DIR
+when the operator relocates the payload). Resolution order is strictly
+additive: the normal createRequire path is tried first, so npm/tsup and
+desktop installs are untouched; the staged bundle is consulted only when the
+primary resolution fails.
+*/
+function embeddedPostgresStagedRootCandidates(): string[] {
+  const roots: string[] = [];
+  const envRoot = process.env.FUSION_EMBEDDED_PG_RUNTIME_DIR;
+  if (envRoot) roots.push(envRoot);
+  try {
+    const execDir = dirname(process.execPath);
+    // build.ts stages per-target dirs named after the bun target suffix. For
+    // darwin/linux that equals `${process.platform}-${process.arch}`; Windows
+    // cross-compiled release assets use "windows-x64" while process.platform is
+    // "win32", so probe both spellings.
+    roots.push(join(execDir, "runtime", `${process.platform}-${process.arch}`, "embedded-postgres"));
+    if (process.platform === "win32") {
+      roots.push(join(execDir, "runtime", `windows-${process.arch}`, "embedded-postgres"));
+    }
+  } catch {
+    // process.execPath is always defined in practice; keep the fallback silent.
+  }
+  return roots;
+}
+
+let stagedEmbeddedPgBundleCache: string | null | undefined;
+/** Absolute path of the staged self-contained embedded-postgres bundle, or null. */
+function getStagedEmbeddedPgBundlePath(): string | null {
+  if (stagedEmbeddedPgBundleCache !== undefined) return stagedEmbeddedPgBundleCache;
+  stagedEmbeddedPgBundleCache = null;
+  for (const root of embeddedPostgresStagedRootCandidates()) {
+    try {
+      const bundle = join(root, "dist", "index.cjs");
+      if (existsSync(bundle)) {
+        stagedEmbeddedPgBundleCache = bundle;
+        break;
+      }
+    } catch {
+      // Keep probing the remaining candidates.
+    }
+  }
+  return stagedEmbeddedPgBundleCache;
+}
+
+/**
+ * require("embedded-postgres") with the staged-standalone fallback (loaded by
+ * absolute path — the only require form a compiled bun binary can resolve
+ * outside its own bundle). Primary resolution always wins.
+ */
+function requireEmbeddedPostgresModule(): unknown {
+  try {
+    return require("embedded-postgres");
+  } catch (primaryError) {
+    const bundle = getStagedEmbeddedPgBundlePath();
+    if (bundle) {
+      try {
+        return require(bundle);
+      } catch {
+        // Fall through and surface the primary (normal-install) error.
+      }
+    }
+    throw primaryError;
+  }
+}
+
+/**
+ * require.resolve() for embedded-postgres-family specifiers with the
+ * staged-standalone fallback. The staged bundle inlines the platform package,
+ * so every family specifier resolves to the bundle path — which preserves the
+ * layout contract callers rely on: join(dirname(entrypoint), "..", "native")
+ * lands on the staged native/ tree.
+ */
+function resolveEmbeddedPostgresSpecifier(specifier: string): string {
+  try {
+    return require.resolve(specifier);
+  } catch (primaryError) {
+    const bundle = getStagedEmbeddedPgBundlePath();
+    if (bundle && (specifier === "embedded-postgres" || specifier.startsWith("@embedded-postgres/"))) {
+      return bundle;
+    }
+    throw primaryError;
+  }
+}
 
 const EMBEDDED_PG_BIN_NAMES = new Set([
   "postgres",
@@ -480,7 +581,7 @@ export function __setEmbeddedPostgresCtorForTests(ctor: EmbeddedPostgresCtor | n
 let windowsElevatedAdminForTests: boolean | null = null;
 let windowsNativeRootForTests: string | null = null;
 let windowsLauncherForTests:
-  | ((opts: NonAdminStartOptions) => Promise<NonAdminServerHandle>)
+  | ((opts: ElevatedStartOptions) => Promise<ElevatedServerHandle>)
   | null = null;
 
 export function __setWindowsElevatedAdminForTests(value: boolean | null): void {
@@ -492,7 +593,7 @@ export function __setWindowsEmbeddedPostgresNativeRootForTests(value: string | n
 }
 
 export function __setWindowsLauncherForTests(
-  launcher: ((opts: NonAdminStartOptions) => Promise<NonAdminServerHandle>) | null,
+  launcher: ((opts: ElevatedStartOptions) => Promise<ElevatedServerHandle>) | null,
 ): void {
   windowsLauncherForTests = launcher;
 }
@@ -505,7 +606,10 @@ function getEmbeddedPostgresCtor(): EmbeddedPostgresCtor {
   installElectronAsarNativePathPatch();
   // Use require() so the bundler leaves this as a runtime resolution (esbuild
   // keeps createRequire'd specifiers out of the static import graph).
-  const mod = require("embedded-postgres") as { default: EmbeddedPostgresCtor };
+  // FNXC:StandaloneExeEmbeddedPg 2026-07-17-14:25:
+  // requireEmbeddedPostgresModule adds the execPath-relative staged-bundle
+  // fallback used by the bun standalone binary; normal installs resolve as before.
+  const mod = requireEmbeddedPostgresModule() as { default: EmbeddedPostgresCtor };
   embeddedPostgresCtorCache = mod.default ?? (mod as unknown as EmbeddedPostgresCtor);
   return embeddedPostgresCtorCache;
 }
@@ -526,8 +630,44 @@ export const DEFAULT_EMBEDDED_DATABASE = "fusion";
  * so the zero-config cluster has been boot-smoke tested with a 64MB /dev/shm
  * lower bound. Defaults precede caller flags because PostgreSQL applies repeated
  * `-c key=value` settings last-wins, preserving an operator's explicit override.
+ *
+ * FNXC:PostgresEmbedded 2026-07-17-19:20:
+ * `mmap` is only valid on POSIX platforms. On Windows PostgreSQL accepts a single
+ * value, `windows`, and rejects `mmap` with FATAL `invalid value for parameter
+ * "shared_memory_type"` before opening the port — this broke every Windows
+ * embedded start (and the v0.70.0/v0.70.1 Windows release smoke) the day the
+ * mmap default landed. Windows needs no override at all, so the default flag set
+ * is empty there; the SysV exhaustion the mmap default fixes cannot occur on
+ * Windows anyway.
  */
-export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = ["-c", "shared_memory_type=mmap"] as const;
+export function defaultEmbeddedPostgresFlagsFor(platform: NodeJS.Platform): readonly string[] {
+  return platform === "win32" ? [] : ["-c", "shared_memory_type=mmap"];
+}
+
+export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = defaultEmbeddedPostgresFlagsFor(process.platform);
+
+/*
+FNXC:PostgresEmbedded 2026-07-18-00:20:
+GitHub issue #2286: initdb without --encoding inherits the OS locale's
+encoding. On non-UTF-8 Windows locales (Turkish WIN1254 in the report; the
+elevated CI runner's own English WIN1252 reproduces it) the cluster is
+created non-UTF-8 while Fusion always connects with client_encoding=UTF8 and
+ships UTF-8 characters (→, U+2192) in the schema SQL — schema apply then
+fails with `character ... has no equivalent in encoding "WIN12xx"` and the
+dashboard crash-loops. Force a UTF-8 cluster at creation, unconditionally on
+every platform (client_encoding is UTF8 everywhere; on already-UTF-8 systems
+this is a no-op). --locale=C keeps initdb from deriving the encoding from a
+non-UTF-8 inherited locale and gives deterministic collation. Caller-supplied
+--encoding/--locale flags win: initdb takes the LAST occurrence of a
+repeated option, and callers' flags are appended after these defaults.
+NOT retroactive: an existing non-UTF-8 cluster cannot be converted in place;
+affected installs must delete the embedded data dir and let Fusion recreate
+it (see the actionable schema-apply error hint in startup-factory).
+*/
+export const DEFAULT_EMBEDDED_INITDB_FLAGS: readonly string[] = [
+  "--encoding=UTF8",
+  "--locale=C",
+];
 
 /**
  * FNXC:PostgresEmbedded 2026-06-24-09:05:
@@ -684,7 +824,7 @@ function findPnpmVirtualStore(start: string): string | null {
 
 function resolvePnpmPlatformPackageNativeRoot(packageName: string): string | null {
   try {
-    const embeddedEntrypoint = require.resolve("embedded-postgres");
+    const embeddedEntrypoint = resolveEmbeddedPostgresSpecifier("embedded-postgres");
     const virtualStore = findPnpmVirtualStore(dirname(embeddedEntrypoint));
     if (!virtualStore) return null;
     const encodedName = packageName.replace("/", "+");
@@ -722,7 +862,10 @@ function resolveGenericEmbeddedPostgresNativeRoot(): string | null {
   const packageName = embeddedPostgresPlatformPackageName();
   if (!packageName) return null;
   try {
-    const entrypoint = require.resolve(packageName);
+    // FNXC:StandaloneExeEmbeddedPg 2026-07-17-13:35:
+    // Staged-standalone fallback included so the native initdb/pg_ctl/postgres
+    // payload resolves from the runtime dir shipped next to the fn binary.
+    const entrypoint = resolveEmbeddedPostgresSpecifier(packageName);
     return resolveElectronAsarUnpackedPath(join(dirname(entrypoint), "..", "native"));
   } catch {
     return resolvePnpmPlatformPackageNativeRoot(packageName);
@@ -784,16 +927,18 @@ const runningInstances = new Map<string, { port: number; database: string }>();
  * Read the port from a postmaster.pid file. The standard PostgreSQL format is:
  *   Line 1 (index 0): PID
  *   Line 2 (index 1): Data directory path
- *   Line 3 (index 2): Unix socket directory
- *   Line 4 (index 3): Listen address (e.g. localhost or *)
- *   Line 5 (index 4): Port number
- *   Line 6 (index 5): Shared memory key
- *   Line 7 (index 6): Postmaster start timestamp
+ *   Line 3 (index 2): Postmaster start timestamp
+ *   Line 4 (index 3): Port number
+ *   Line 5 (index 4): Unix socket directory
+ *   Line 6 (index 5): Listen address (e.g. localhost or *)
+ *   Line 7 (index 6): Shared memory key and id
+ *   Line 8 (index 7): Status
  *
  * FNXC:PostgresCutover 2026-06-27-14:30 (fix code-review P1):
- * Previously read line 3 (index 2, the socket dir) which is never a port
- * number, so singleton detection via postmaster.pid ALWAYS failed. Fixed to
- * read line 5 (index 4, the TCP port).
+ * The earlier correction still encoded the wrong field order and read line 5
+ * (the socket directory). Read PostgreSQL's actual line 4 port field so a
+ * second Fusion process joins the running postmaster instead of attempting a
+ * colliding start that can wedge extension TaskStore boot.
  *
  * Returns null if the file cannot be read or parsed.
  */
@@ -801,8 +946,8 @@ export function readPortFromPostmasterPid(dataDir: string): number | null {
   try {
     const content = readFileSync(join(dataDir, "postmaster.pid"), "utf-8");
     const lines = content.split("\n");
-    // Line 5 (index 4) is the TCP port in standard PostgreSQL postmaster.pid
-    const portStr = lines[4]?.trim();
+    // Line 4 (index 3) is the TCP port in standard PostgreSQL postmaster.pid.
+    const portStr = lines[3]?.trim();
     if (portStr) {
       const port = parseInt(portStr, 10);
       if (!isNaN(port) && port > 0) return port;
@@ -932,12 +1077,13 @@ export class EmbeddedPostgresLifecycle {
   private ownsProcess = true;
   private shutdownHookInstalled = false;
   /**
-   * FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
-   * When the process is an elevated Windows admin, the server is booted under a
-   * dedicated non-admin user (see embedded-windows-admin.ts) and this holds the
-   * stop handle. Null for normal (non-elevated / non-Windows) launches.
+   * FNXC:WindowsDesktopPackaging 2026-07-17-22:30:
+   * When the process is an elevated Windows admin, the server is booted via
+   * pg_ctl's restricted-token re-exec (see embedded-windows-elevated.ts — no
+   * helper account is created) and this holds the stop handle. Null for normal
+   * (non-elevated / non-Windows) launches.
    */
-  private nonAdminHandle: NonAdminServerHandle | null = null;
+  private nonAdminHandle: ElevatedServerHandle | null = null;
   /**
    * FNXC:PostgresEmbedded 2026-06-26-16:20 (fix migration-review P1 #24):
    * Active start() timeout timer, retained so it can be cleared on success or
@@ -952,7 +1098,7 @@ export class EmbeddedPostgresLifecycle {
       port: opts.port,
       user: opts.user ?? DEFAULT_EMBEDDED_USER,
       password: opts.password ?? DEFAULT_EMBEDDED_PASSWORD,
-      initdbFlags: opts.initdbFlags ?? [],
+      initdbFlags: [...DEFAULT_EMBEDDED_INITDB_FLAGS, ...(opts.initdbFlags ?? [])],
       postgresFlags: [...DEFAULT_EMBEDDED_POSTGRES_FLAGS, ...(opts.postgresFlags ?? [])],
       startTimeoutMs: opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS,
       onLog: opts.onLog ?? ((msg: string) => log.log(msg)),
@@ -1186,7 +1332,7 @@ export class EmbeddedPostgresLifecycle {
               "non-elevated, or ensure the embedded-postgres platform package is installed.",
           );
         }
-        this.nonAdminHandle = await (windowsLauncherForTests ?? startServerAsNonAdminUser)({
+        this.nonAdminHandle = await (windowsLauncherForTests ?? startServerElevatedRestricted)({
           nativeRoot,
           dataDir: this.options.dataDir,
           port,
@@ -1210,7 +1356,7 @@ export class EmbeddedPostgresLifecycle {
       // this process starts Postgres. Re-read that lock and join its instance
       // rather than surfacing the expected lock-file collision to the TUI.
       // FNXC:PostgresStartupRace 2026-07-15-20:06: A cancelled start must never
-      // be rescued into a success. `startServerAsNonAdminUser` rejects on abort
+      // be rescued into a success. `startServerElevatedRestricted` rejects on abort
       // from inside this try, so without this guard a timeout-cancelled launch
       // that happens to see a postmaster.pid would publish a joined instance
       // instead of the EmbeddedStartCancelledError the post-start phases raise.
@@ -1461,6 +1607,23 @@ export class EmbeddedPostgresLifecycle {
    * After stop, the data directory is preserved (persistent), so a subsequent
    * `start()` reuses it.
    */
+  /*
+  FNXC:DesktopClosePolicy 2026-07-18-06:00:
+  Operator chose "leave the embedded PostgreSQL running" at desktop quit.
+  Review finding: skipping only the stop call left this lifecycle's
+  process-level shutdown hook (SIGTERM/SIGINT/beforeExit -> stop()) armed, so
+  Electron teardown killed the postmaster anyway. Detach = disarm the hook and
+  forget the process WITHOUT stopping it; a later stop() becomes a no-op.
+  */
+  detachWithoutStop(): void {
+    this.uninstallShutdownHook();
+    this.pg = null;
+    this.nonAdminHandle = null;
+    this.running = false;
+    this.ownsProcess = false;
+    runningInstances.delete(this.options.dataDir);
+  }
+
   async stop(): Promise<void> {
     this.uninstallShutdownHook();
 

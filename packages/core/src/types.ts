@@ -127,6 +127,7 @@ import {
   PLANNER_OVERSIGHT_LEVELS,
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
   COMPLETION_DOCUMENTATION_MODES,
+  REVIEW_ARTIFACTS_MODES,
   THEME_MODES,
   COLOR_THEMES,
   SUPPORTED_LOCALES,
@@ -137,6 +138,7 @@ import type {
   ExecutionMode,
   PlannerOversightLevel,
   CompletionDocumentationMode,
+  ReviewArtifactsMode,
   ThemeMode,
   ColorTheme,
   Locale,
@@ -149,6 +151,7 @@ export {
   PLANNER_OVERSIGHT_LEVELS,
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
   COMPLETION_DOCUMENTATION_MODES,
+  REVIEW_ARTIFACTS_MODES,
   THEME_MODES,
   COLOR_THEMES,
   SUPPORTED_LOCALES,
@@ -159,6 +162,7 @@ export type {
   ExecutionMode,
   PlannerOversightLevel,
   CompletionDocumentationMode,
+  ReviewArtifactsMode,
   ThemeMode,
   ColorTheme,
   Locale,
@@ -793,6 +797,75 @@ export interface ArtifactWithTask extends Artifact {
   taskColumn?: string;
 }
 
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Remote-desktop producers can register a document descriptor through the existing
+artifact registry by assigning this MIME type. The descriptor remains a document
+in the gallery, avoiding a raw external-session link while still making the
+review deliverable visible on both review surfaces.
+*/
+export const LIVE_DEMO_ARTIFACT_MIME_TYPE = "application/vnd.runfusion.live-demo+json";
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-12:00:
+Review surfaces admit feature videos and explicitly marked live-demo descriptors.
+Ordinary documents remain excluded; the marker uses the existing persisted
+mimeType field because agent artifact registration already forwards it without
+requiring a parallel schema or metadata-registration path.
+*/
+export function isReviewArtifact(artifact: Pick<Artifact, "type" | "mimeType">): boolean {
+  return artifact.type === "video"
+    || (artifact.type === "document" && artifact.mimeType?.toLowerCase().split(";", 1)[0] === LIVE_DEMO_ARTIFACT_MIME_TYPE);
+}
+
+/** Reads the persisted PROMPT.md override without adding task-store persistence. */
+export function parseReviewArtifactsModeOverride(prompt: string | undefined): ReviewArtifactsMode | undefined {
+  if (!prompt) return undefined;
+  const match = prompt.match(/^\*\*Review Artifacts:\*\*\s*(off|user-facing|on)\s*$/im);
+  return match?.[1]?.toLowerCase() as ReviewArtifactsMode | undefined;
+}
+
+/** Resolves review-artifact generation policy: PROMPT header → project setting → conservative default. */
+export function resolveReviewArtifactsMode(
+  settings: Pick<ProjectSettings, "reviewArtifacts">,
+  prompt?: string,
+): ReviewArtifactsMode {
+  return parseReviewArtifactsModeOverride(prompt) ?? settings.reviewArtifacts ?? "off";
+}
+
+export type ReviewArtifactTaskClassification = "user-facing" | "backend" | "trivial";
+
+/*
+FNXC:ReviewArtifacts 2026-07-17-13:00:
+The `user-facing` policy must be a real generation gate, not a label that
+producers reinterpret. Triage may declare a task classification in PROMPT.md;
+otherwise a task with the standard frontend UX contract is user-facing and all
+other work conservatively remains backend. This keeps trivial/backend work from
+silently producing review media while allowing `on` or the existing mode header
+to explicitly opt in.
+*/
+export function classifyReviewArtifactTask(prompt: string | undefined): ReviewArtifactTaskClassification {
+  const explicit = prompt?.match(/^\*\*Review Artifact Task Type:\*\*\s*(user-facing|backend|trivial)\s*$/im)?.[1]?.toLowerCase();
+  if (explicit === "user-facing" || explicit === "backend" || explicit === "trivial") return explicit;
+  if (/^##\s+Frontend UX Criteria\s*$/im.test(prompt ?? "")) return "user-facing";
+  return "backend";
+}
+
+/**
+ * Determines whether an automatic review-artifact producer may generate media
+ * for a task. A mode marker still wins policy resolution; task classification
+ * controls the `user-facing` mode only.
+ */
+export function isReviewArtifactGenerationEligible(
+  settings: Pick<ProjectSettings, "reviewArtifacts">,
+  prompt?: string,
+  classification = classifyReviewArtifactTask(prompt),
+): boolean {
+  const mode = resolveReviewArtifactsMode(settings, prompt);
+  return mode === "on" || (mode === "user-facing" && classification === "user-facing");
+}
+
 /**
  * Goal-citation Slice 2 success-signal surfaces where goal IDs are extracted.
  */
@@ -1392,6 +1465,8 @@ export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
   lineageId?: string;
+  /** Stable task-proposal idempotency key; unique per project when present. */
+  proposalClaimId?: string;
   title?: string;
   description: string;
   /**
@@ -1441,6 +1516,12 @@ export interface Task {
    */
   customFields?: Record<string, unknown>;
   status?: string;
+  /**
+   * FNXC:TaskActivity 2026-07-28-12:00:
+   * Dashboard-only signal from a fresh planner agent-log SSE entry. It is never
+   * persisted or sent to the server; authoritative task updates clear it.
+   */
+  recentAgentActivityAt?: string;
   /** ID of the in-progress task whose file scope overlaps with this task,
    *  causing the scheduler to defer it. Set when the scheduler queues
    *  the task due to file-scope overlap; cleared (set to `undefined`)
@@ -2014,6 +2095,8 @@ export interface TaskCreateInput {
   title?: string;
   /** Optional lineage override for trusted replication/import paths only. */
   lineageId?: string;
+  /** Stable task-proposal idempotency key; repeated creates return the same task. */
+  proposalClaimId?: string;
   /**
    * Opt-in createTask override for soft-deleted ID reuse.
    * Not persisted to storage.
@@ -2436,6 +2519,8 @@ export interface BackupSettingsMigrationConflict {
 }
 
 export interface GlobalSettings {
+  /** Maximum PostgreSQL server connections for Fusion's embedded database. Applied on the next Fusion restart. */
+  embeddedPostgresMaxConnections?: number;
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
   /** Color theme preference for accent colors and styling. Default: "shadcn-ember"; "default" and "ocean" remain valid explicit legacy selections. */
@@ -2881,6 +2966,8 @@ export interface GlobalSettings {
    *  verbose `detail` payload is omitted to reduce log size/noise. Distinct
    *  from `persistAgentThinkingLog`, which controls `thinking` rows. */
   persistAgentToolOutput?: boolean;
+  /** When true, task chat receives engine-authored progress, failure, and rollback updates. Default: false. */
+  proactiveTaskChatEnabled?: boolean;
   /** When true, persist `thinking` log entries from agent reasoning deltas for
    *  permanent (non-ephemeral) agents. Default: false (suppressed). */
   persistAgentThinkingLogPermanent?: boolean;
@@ -3083,6 +3170,9 @@ export type SecretsEnvConfig = SecretsEnvSettings;
  * Runtime state fields (globalPause, enginePaused) also live here because
  * different projects may need independent pause control.
  */
+export type ReportMode = "draft-review" | "auto-file";
+export type ReportActionType = "bug" | "feedback" | "idea" | "help";
+
 export interface ProjectSettings {
   /** Hard stop: when true, all automated agent activity is **immediately**
    *  terminated — active triage, execution, and merge agent sessions are
@@ -3552,6 +3642,8 @@ export interface ProjectSettings {
    *  - "changelog": require updating an existing changelog file (do not invent a new one)
    *  Default: "off" */
   completionDocumentationMode?: CompletionDocumentationMode;
+  /** Controls whether task review deliverables are generated: off, user-facing, or on. PROMPT.md may override it. */
+  reviewArtifacts?: ReviewArtifactsMode;
   /** Mapping of task sizes to preset IDs used for auto-selection during task creation. */
   defaultPresetBySize?: { S?: string; M?: string; L?: string };
   /** When true, auto-merge will automatically resolve common conflict patterns
@@ -3718,11 +3810,13 @@ export interface ProjectSettings {
    *    to permanent executor agents using the reporting chain heuristic.
    *  Tasks without an eligible permanent executor remain queued. */
   ephemeralAgentsEnabled?: boolean;
-  /**
-   * FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
-   * Gates whether ephemeral/runtime-managed task-worker agents may create new tasks via `fn_task_create`.
-   * Default true preserves the existing behavior where a task-worker can spin off follow-up tasks.
-   * When false, an ephemeral caller's `fn_task_create` is rejected while human/dashboard/CLI callers and permanent agents remain unaffected. */
+  /*
+  FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
+  The three-state policy routes ephemeral-worker follow-ups to allow, operator validation, or deny.
+  The policy has no schema default because resolver fallback must preserve persisted legacy false as deny.
+  */
+  ephemeralAgentTaskCreationPolicy?: EphemeralTaskCreationPolicy;
+  /** @deprecated Legacy compatibility read only; resolve with resolveEphemeralTaskCreationPolicy. */
   ephemeralAgentsCanCreateTasks?: boolean;
   /** Approval policy for agent provisioning tools (fn_agent_create/fn_agent_delete). */
   agentProvisioning?: {
@@ -3987,6 +4081,19 @@ export interface ProjectSettings {
   /** Project default GitHub tracking repo in `owner/repo` format (FN-3868).
    *  Falls back to global githubTrackingDefaultRepo when unset. */
   githubTrackingDefaultRepo?: string;
+  /**
+   * FNXC:ReportPipeline 2026-07-16-12:00:
+   * In-app reports default to review before egress; operators can opt into
+   * direct filing globally or for one of the four guided report actions.
+   */
+  reportMode?: ReportMode;
+  reportModeByAction?: Partial<Record<ReportActionType, ReportMode>>;
+  /**
+   * FNXC:ReportPipeline 2026-07-18-12:00:
+   * Roadmap deduplication is opt-in because projects without a roadmap must
+   * retain the existing Issues-and-Discussions-only report behavior.
+   */
+  reportRoadmapDedup?: boolean;
   /**
    * FNXC:GitLabConfiguration 2026-07-02-00:00:
    * FN-7422 adds durable GitLab instance/API URL settings for GitLab.com and self-managed hosts. FN-7423 layers token settings onto the same project-over-global configuration contract without adding runtime GitLab imports or tracking.
@@ -6474,6 +6581,42 @@ export interface RevisionFieldDiff {
   newValue: unknown;
 }
 
+/*
+FNXC:ConfigVersioning 2026-07-18-00:00:
+FN-8282 requires every durable configuration mutation to retain an immutable
+before/after snapshot. Targets stay structured JSON; target keys are derived
+from canonical JSON rather than delimiter-concatenated identifiers.
+
+FNXC:ConfigVersioning 2026-07-18-10:30:
+Every provenance variant carries a stable ID. This makes agent and authenticated
+human writes auditable and makes intentional internal writes explicit as the
+system actor instead of allowing anonymous history rows.
+*/
+export type ConfigKind = "project-settings" | "global-settings" | "workflow-settings" | "routine" | "automation";
+export type ConfigChangedBy =
+  | { kind: "human"; id: string }
+  | { kind: "agent"; id: string }
+  | { kind: "system"; id: string }
+  | { kind: "rollback"; id: string };
+export type ConfigurationOwnerScope = "project" | "global";
+export type ConfigurationTarget = Readonly<Record<string, string>>;
+export interface ConfigurationRevision {
+  id: string;
+  projectId: string;
+  ownerScope: ConfigurationOwnerScope;
+  configKind: ConfigKind;
+  configTarget: ConfigurationTarget;
+  /** Canonical JSON representation used only for exact target indexing. */
+  configTargetKey: string;
+  before: unknown;
+  after: unknown;
+  diffs: RevisionFieldDiff[];
+  changedBy: ConfigChangedBy;
+  createdAt: string;
+  source: "mutation" | "rollback";
+  rollbackToRevisionId?: string;
+}
+
 /** A revision entry recording a configuration change to an agent */
 export interface AgentConfigRevision {
   /** Unique revision identifier */
@@ -6837,19 +6980,25 @@ export interface MigrationResult {
 }
 
 // ── Messaging Types ──────────────────────────────────────────────────────────
+// FNXC:CodeOrganization 2026-07-18-00:35: Keep stable re-exports after main
+// landed task-proposal metadata + ephemeral policy on the mailbox contract.
 
 import {
   DASHBOARD_USER_ID,
   normalizeMessageParticipant,
+  resolveEphemeralTaskCreationPolicy,
 } from "./types/messages.js";
 export {
   DASHBOARD_USER_ID,
   normalizeMessageParticipant,
+  resolveEphemeralTaskCreationPolicy,
 };
 import type {
   ParticipantType,
   MessageType,
   MessageReplyReference,
+  EphemeralTaskCreationPolicy,
+  ProposedTaskMetadata,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -6859,6 +7008,8 @@ export type {
   ParticipantType,
   MessageType,
   MessageReplyReference,
+  EphemeralTaskCreationPolicy,
+  ProposedTaskMetadata,
   MessageMetadata,
   Message,
   MessageCreateInput,
@@ -6883,6 +7034,19 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
 
   if (metadata.wakeRecipient !== undefined && typeof metadata.wakeRecipient !== "boolean") {
     throw new Error("metadata.wakeRecipient must be a boolean");
+  }
+
+  const proposalFieldsPresent = metadata.proposalStatus !== undefined || metadata.createdTaskId !== undefined || metadata.proposalIdempotencyKey !== undefined || metadata.claimOwnerToken !== undefined || metadata.claimStartedAt !== undefined;
+  if (metadata.kind === "task-proposal" || proposalFieldsPresent || metadata.proposedTask !== undefined) {
+    if (metadata.kind !== "task-proposal" || !metadata.proposedTask) throw new Error("task proposal metadata requires kind and proposedTask");
+    const proposal = metadata.proposedTask;
+    if (typeof proposal.title !== "string" || !proposal.title.trim() || typeof proposal.description !== "string" || !proposal.description.trim()) throw new Error("metadata.proposedTask requires non-empty title and description");
+    if (proposal.dependencies !== undefined && (!Array.isArray(proposal.dependencies) || proposal.dependencies.some((id) => typeof id !== "string"))) throw new Error("metadata.proposedTask.dependencies must be string[]");
+    if (proposal.priority !== undefined && !["low", "normal", "high", "urgent"].includes(proposal.priority)) throw new Error("metadata.proposedTask.priority is invalid");
+    if (metadata.proposalStatus !== undefined && !["pending", "creating", "created", "dismissed"].includes(metadata.proposalStatus)) throw new Error("metadata.proposalStatus is invalid");
+    if (typeof metadata.proposalIdempotencyKey !== "string" || !metadata.proposalIdempotencyKey.trim()) throw new Error("task proposal requires proposalIdempotencyKey");
+    if (metadata.claimStartedAt !== undefined && (typeof metadata.claimStartedAt !== "string" || Number.isNaN(Date.parse(metadata.claimStartedAt)))) throw new Error("metadata.claimStartedAt must be an ISO timestamp");
+    if (metadata.proposalStatus === "pending" && (metadata.claimOwnerToken !== undefined || metadata.claimStartedAt !== undefined)) throw new Error("pending proposal cannot have a creation lease");
   }
 }
 

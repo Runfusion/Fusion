@@ -57,6 +57,7 @@ export interface UseAppSettingsResult {
   toggleEnginePause: () => Promise<void>;
   toggleShowQuickChatFAB: () => Promise<void>;
   setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
+  setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   toggleAutoReloadOnVersionChange: () => Promise<void>;
   /** Re-fetches settings from the backend to pick up changes made externally (e.g., by SettingsModal). */
   refresh: () => Promise<void>;
@@ -317,6 +318,15 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setShowQuickChatFAB(mode === "floating");
   }, []);
 
+  /*
+  FNXC:Navigation 2026-07-17-00:00:
+  The settings draft previews mobile quick-action order and membership in the app shell before Save;
+  persistence remains owned by SettingsModal's normal save path.
+  */
+  const setMobileNavPrimaryItemsImmediate = useCallback((items: string[]) => {
+    setMobileNavPrimaryItems(resolveMobileNavPrimaryItems({ mobileNavPrimaryItems: items }).primaryItems);
+  }, []);
+
   const toggleAutoReloadOnVersionChange = useCallback(async () => {
     const next = !autoReloadOnVersionChange;
     setAutoReloadOnVersionChangeState(next);
@@ -375,6 +385,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     toggleEnginePause,
     toggleShowQuickChatFAB,
     setQuickChatButtonModeImmediate,
+    setMobileNavPrimaryItemsImmediate,
     toggleAutoReloadOnVersionChange,
     refresh,
   };

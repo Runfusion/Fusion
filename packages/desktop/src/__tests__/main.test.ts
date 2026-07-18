@@ -121,6 +121,7 @@ const mocks = vi.hoisted(() => {
     Menu,
     nativeImage,
     shell,
+    dialog: { showMessageBoxSync: vi.fn(() => 1) },
     screen,
     browserWindowInstance,
     browserWindowHandlers,
@@ -133,6 +134,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("electron", () => ({
   app: mocks.app,
+  dialog: mocks.dialog,
   BrowserWindow: mocks.BrowserWindow,
   ipcMain: mocks.ipcMain,
   Tray: mocks.Tray,
@@ -496,8 +498,14 @@ describe("main process", () => {
     expect(mocks.browserWindowInstance.on).toHaveBeenCalledWith("closed", expect.any(Function));
   });
 
-  it("windows window close saves state and allows quit cleanup instead of hiding", async () => {
+  /*
+  FNXC:DesktopClosePolicy 2026-07-18-06:40:
+  Windows close now asks: Minimize to tray keeps the app (and embedded
+  PostgreSQL) running in the background; Exit performs the full shutdown.
+  */
+  it("windows window close with Exit chosen saves state and allows quit cleanup instead of hiding", async () => {
     mockPlatform("win32");
+    mocks.dialog.showMessageBoxSync.mockReturnValue(1);
     const { initializeApp, run } = await importMainModule();
 
     await initializeApp();
@@ -516,6 +524,25 @@ describe("main process", () => {
     expect(mocks.browserWindowInstance.hide).not.toHaveBeenCalled();
     expect(mocks.app.quit).toHaveBeenCalledTimes(1);
     expect(mainDeps.stopLocal).toHaveBeenCalledTimes(1);
+  });
+
+  it("windows window close with Minimize to tray hides instead of quitting", async () => {
+    mockPlatform("win32");
+    mocks.dialog.showMessageBoxSync.mockReturnValue(0);
+    const { initializeApp, run } = await importMainModule();
+
+    await initializeApp();
+    run();
+    const closeHandler = mocks.browserWindowHandlers.get("close") as
+      | ((event: { preventDefault: () => void }) => void)
+      | undefined;
+    const event = { preventDefault: vi.fn() };
+
+    closeHandler?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mocks.browserWindowInstance.hide).toHaveBeenCalledTimes(1);
+    expect(mocks.app.quit).not.toHaveBeenCalled();
   });
 
   it("macOS window close hides to tray without quitting", async () => {

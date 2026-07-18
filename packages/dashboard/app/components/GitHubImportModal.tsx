@@ -1,5 +1,5 @@
 import "./GitHubImportModal.css";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useContext, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_LOCALE, getErrorMessage, isLocale, type Locale, type Task } from "@fusion/core";
 import {
@@ -44,11 +44,20 @@ import { useConfirm } from "../hooks/useConfirm";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { getGitHubImportState, saveGitHubImportState } from "../hooks/modalPersistence";
 import { FloatingWindow } from "./FloatingWindow";
+import { NavigationHistoryContext } from "../hooks/useNavigationHistory";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImport: (task: Task) => void;
+  /** Optional because callers without Planning Mode retain the direct-import-only surface. */
+  onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  /*
+  FNXC:GitHubImport 2026-07-30-12:00:
+  Chat is deliberately separate from direct import: it seeds a GitHub issue/PR link in the composer,
+  without creating a task or establishing GitHub sourceIssue tracking.
+  */
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   tasks: Task[];
   projectId?: string;
   /*
@@ -367,6 +376,23 @@ const ISSUES_PAGE_SIZE = 30;
  * FN-8110 lets an operator create a repair task from a failed PR check without retyping its context.
  * Keep this prompt composition pure so every check row carries its repository, PR, branch, status, and details-link evidence.
  */
+/*
+FNXC:GitHubImport 2026-07-30-00:00:
+Operators can choose direct task import or Planning Mode for GitHub issues. Planning receives a
+self-contained issue seed, including the source URL, but intentionally does not establish GitHub
+sourceIssue tracking or deduplication; those remain exclusive to direct import.
+*/
+export function buildIssuePlanningSeed(issue: GitHubIssue): string {
+  return [
+    `Plan work for GitHub issue: ${issue.title}`,
+    "",
+    "Issue description:",
+    issue.body?.trim() || "(no description)",
+    "",
+    `Source: ${issue.html_url}`,
+  ].join("\n");
+}
+
 export function buildCheckFixTaskPrompt(
   pull: GitHubPull,
   check: GitHubPullDetail["checks"][number],
@@ -390,10 +416,16 @@ export function buildCheckFixTaskPrompt(
   };
 }
 
-export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId, presentation = "modal" }: GitHubImportModalProps) {
+export function GitHubImportModal({ isOpen, onClose, onImport, onPlanningMode, onOpenChatWithPrefill, tasks, projectId, presentation = "modal" }: GitHubImportModalProps) {
   const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   useMobileScrollLock(isOpen && scrollLockEnabled);
   const { t, i18n } = useTranslation("app");
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  Standalone and embedded import surfaces have no navigation provider, so consume this context optionally rather than using the throwing context hook.
+  */
+  const navigationHistory = useContext(NavigationHistoryContext);
+  const { pushNav, removeNav } = navigationHistory ?? {};
   const { confirm } = useConfirm();
   /*
   FNXC:GitHubImportTranslate 2026-07-14-12:00:
@@ -488,10 +520,27 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const [selectedIssueNumber, setSelectedIssueNumber] = useState<number | null>(null);
   // FNXC:GitHubImport 2026-07-16-16:20: 0-based client-side page index for the issues list (reset on every reload/filter change).
   const [issuePage, setIssuePage] = useState(0);
+  /*
+  FNXC:GitHubImportTranslate 2026-07-17-12:50:
+  FN-8230 distinguishes a successful upstream issues reload from client-side paging. The translation
+  hook clears its accumulated page cache only when this monotonic generation advances, preventing
+  stale prose after reload without re-billing prior pages while the operator navigates them.
+  */
+  const [issuesReloadGeneration, setIssuesReloadGeneration] = useState(0);
 
   // Pulls state
   const [pulls, setPulls] = useState<GitHubPull[]>([]);
   const [selectedPullNumber, setSelectedPullNumber] = useState<number | null>(null);
+
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  Mobile Back must clear every import-detail selection through this one idempotent callback, so browser/native gesture dismissal, the sheet close affordance, and successful imports all return to the candidate list before the import form can close.
+  */
+  const clearDetailSelection = useCallback(() => {
+    setSelectedIssueNumber(null);
+    setSelectedPullNumber(null);
+    setSelectedGitlabKey(null);
+  }, []);
 
   /*
   FNXC:GitHubImport 2026-06-23-01:00:
@@ -806,6 +855,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       */
       const fetchedIssues = await apiFetchGitHubIssues(owner.trim(), repo.trim(), ISSUES_FETCH_CAP, labelArray.length > 0 ? labelArray : undefined);
       setIssues(fetchedIssues);
+      setIssuesReloadGeneration((generation) => generation + 1);
       if (fetchedIssues.length === 0) {
         setIsIssuesEmptyState(true);
       }
@@ -945,13 +995,13 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       if (selectedGitlabItem.webUrl) {
         setOptimisticImportedUrls((previous) => new Set(previous).add(selectedGitlabItem.webUrl));
       }
-      setSelectedGitlabKey(null);
+      clearDetailSelection();
     } catch (err) {
       setError(getErrorMessage(err) || t("git.failedToImportGitlab", "Failed to import GitLab resource"));
     } finally {
       setImporting(false);
     }
-  }, [selectedGitlabItem, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, t]);
+  }, [selectedGitlabItem, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, t, clearDetailSelection]);
 
   /*
   FNXC:GitHubImport 2026-07-07-00:00:
@@ -1070,8 +1120,8 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
    * Failures intentionally do not call this helper so the selected preview remains available for retry with the existing error affordance.
    */
   const returnToIssueListAfterSuccess = useCallback(() => {
-    setSelectedIssueNumber(null);
-  }, []);
+    clearDetailSelection();
+  }, [clearDetailSelection]);
 
   const handleImport = useCallback(async () => {
     if (activeTab === "issues") {
@@ -1121,7 +1171,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         if (importedPullUrl) {
           setOptimisticImportedUrls((previous) => new Set(previous).add(importedPullUrl));
         }
-        setSelectedPullNumber(null);
+        clearDetailSelection();
       } catch (err) {
         const msg = getErrorMessage(err);
         if (msg?.includes("already imported")) {
@@ -1133,7 +1183,19 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         setImporting(false);
       }
     }
-  }, [activeTab, selectedIssueNumber, selectedPullNumber, issues, pulls, owner, repo, projectId, onImport, returnToIssueListAfterSuccess]);
+  }, [activeTab, selectedIssueNumber, selectedPullNumber, issues, pulls, owner, repo, projectId, onImport, returnToIssueListAfterSuccess, clearDetailSelection]);
+
+  const handlePlanIssue = useCallback(() => {
+    const selectedIssue = activeTab === "issues"
+      ? issues.find((issue) => issue.number === selectedIssueNumber)
+      : undefined;
+    if (!selectedIssue || !onPlanningMode || importing || isUrlImported(selectedIssue.html_url)) return;
+
+    const seed = buildIssuePlanningSeed(selectedIssue);
+    // FNXC:GitHubImport 2026-07-30-00:00: Embedded close navigates to Board, so close first and open Planning last to preserve Planning as the final destination.
+    onClose();
+    onPlanningMode(seed);
+  }, [activeTab, importing, isUrlImported, issues, onClose, onPlanningMode, selectedIssueNumber]);
 
   const fetchPullDetail = useCallback((force: boolean) => {
     const requestId = ++pullDetailRequestRef.current;
@@ -1237,7 +1299,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
 
   /*
   FNXC:GitHubImport 2026-07-16-20:00:
-  Closing permanently mutates the upstream GitHub issue, so its danger styling and confirmation gate must precede every local state mutation and API call. Keep the detail FloatingWindow open through the success toast so local closed state can replace the action.
+  Closing permanently mutates the upstream GitHub issue, so its danger styling and confirmation gate must precede every local state mutation and API call.
+
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  A successful close returns through the shared detail dismissal callback, preserving the mobile navigation invariant that every programmatic detail close drains its matching Back entry.
   */
   const handleCloseIssue = useCallback(async () => {
     if (selectedIssueNumber === null || !owner.trim() || !repo.trim()) return;
@@ -1263,13 +1328,14 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         return next;
       });
       setCloseToast({ type: "success", message: t("git.issueClosedToast", "Issue #{{number}} closed", { number: issueNumber }) });
+      clearDetailSelection();
     } catch (err: unknown) {
       setCloseToast({ type: "error", message: getErrorMessage(err) });
     } finally {
       setClosingIssue(false);
       closeToastTimerRef.current = setTimeout(() => setCloseToast(null), 4000);
     }
-  }, [selectedIssueNumber, owner, repo, t, confirm]);
+  }, [selectedIssueNumber, owner, repo, t, confirm, clearDetailSelection]);
 
   /*
   FNXC:GitHubImport 2026-07-17-12:00:
@@ -1312,6 +1378,27 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
 
   const selectedIssue = issues.find((i) => i.number === selectedIssueNumber);
   const selectedPull = pulls.find((p) => p.number === selectedPullNumber);
+  const detailIsOpen = Boolean(selectedIssue || selectedPull || selectedGitlabItem);
+
+  const handleChatAboutSelection = useCallback(() => {
+    if (provider !== "github" || !onOpenChatWithPrefill) return;
+    const url = activeTab === "issues" ? selectedIssue?.html_url : selectedPull?.html_url;
+    const trimmedUrl = url?.trim();
+    if (!trimmedUrl) return;
+
+    onOpenChatWithPrefill(`${trimmedUrl}\n\n`);
+    onClose();
+  }, [activeTab, onClose, onOpenChatWithPrefill, provider, selectedIssue?.html_url, selectedPull?.html_url]);
+
+  /*
+  FNXC:GitHubImportSwipeBack 2026-07-28-12:00:
+  The import modal already owns the lower mobile Back entry. Register this nested detail entry only while an issue, pull, or GitLab sheet is visible, so one Back returns to the candidate list and a second can dismiss the import form. Optional context preserves provider-less and embedded renders.
+  */
+  useEffect(() => {
+    if (!detailIsOpen || !pushNav || !removeNav) return;
+    pushNav({ type: "view", revert: clearDetailSelection });
+    return () => removeNav(clearDetailSelection);
+  }, [detailIsOpen, pushNav, removeNav, clearDetailSelection]);
 
   const handleCreateCheckFixTask = useCallback(async (
     check: GitHubPullDetail["checks"][number],
@@ -1379,15 +1466,24 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   }, [provider, selectedGitlabItem, selectedGitlabKey, activeTab, selectedIssue, selectedPull]);
 
   /*
-  FNXC:GitHubImportTranslate 2026-07-15-09:30:
-  Requirement (2026-07-15): when auto-translate is on, translate foreign-language issues BEFORE showing them — so the list titles, not just the preview, read in the operator's language.
-  The 50-most-recent-open cap and the setting itself are enforced server-side; this only supplies the visible issue set and consumes the result.
+  FNXC:GitHubImportTranslate 2026-07-17-12:50:
+  Supply the exact paged render window so page 2+ translates on arrival. This calculation must precede
+  the hook (rather than use the whole fetched list) while retaining the shared page values used below.
   */
+  const translationVisibleIssues = hideImported ? issues.filter((issue) => !isUrlImported(issue.html_url)) : issues;
+  const translationIssuePageCount = Math.max(1, Math.ceil(translationVisibleIssues.length / ISSUES_PAGE_SIZE));
+  const translationClampedIssuePage = Math.min(issuePage, translationIssuePageCount - 1);
+  const translationPagedIssues = translationVisibleIssues.slice(
+    translationClampedIssuePage * ISSUES_PAGE_SIZE,
+    (translationClampedIssuePage + 1) * ISSUES_PAGE_SIZE,
+  );
+
   const autoTranslate = useGitHubImportAutoTranslate({
     enabled: autoTranslateEnabled && provider === "github" && activeTab === "issues",
     owner: owner.trim(),
     repo: repo.trim(),
-    items: issues,
+    items: translationPagedIssues,
+    reloadGeneration: issuesReloadGeneration,
     targetLocale: translateTargetLocale,
     projectId,
   });
@@ -1428,7 +1524,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   Hide imported removes imported rows from every provider's render set, while toggle-off preserves the original arrays and
   imported counts always use the full fetched sets. Use `isUrlImported` so optimistic imports also disappear immediately.
   */
-  const visibleIssues = hideImported ? issues.filter((issue) => !isUrlImported(issue.html_url)) : issues;
+  const visibleIssues = translationVisibleIssues;
   /*
   FNXC:GitHubImport 2026-07-16-16:20:
   Client-side page window over the (already label/hide-imported filtered) visible issues. issuePage is
@@ -1436,9 +1532,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   an out-of-range page. isIssuesTruncated flags that the repo hit ISSUES_FETCH_CAP so the operator knows
   the list is bounded, not complete.
   */
-  const issuePageCount = Math.max(1, Math.ceil(visibleIssues.length / ISSUES_PAGE_SIZE));
-  const clampedIssuePage = Math.min(issuePage, issuePageCount - 1);
-  const pagedIssues = visibleIssues.slice(clampedIssuePage * ISSUES_PAGE_SIZE, (clampedIssuePage + 1) * ISSUES_PAGE_SIZE);
+  const issuePageCount = translationIssuePageCount;
+  const clampedIssuePage = translationClampedIssuePage;
+  const pagedIssues = translationPagedIssues;
   const isIssuesTruncated = issues.length >= ISSUES_FETCH_CAP;
   const visiblePulls = hideImported ? pulls.filter((pull) => !isUrlImported(pull.html_url)) : pulls;
   const visibleGitlabItems = hideImported ? gitlabItems.filter((item) => !isUrlImported(item.webUrl)) : gitlabItems;
@@ -1713,6 +1809,35 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                 )}
               </div>
 
+              {/*
+              FNXC:GitHubImportTranslate 2026-07-17-15:48:
+              Eager list translation is intentionally background and fail-soft, but operators need a visible,
+              polite announcement while chunks are in flight and when a chunk fails. Render no container while
+              idle so auto-translate-off and cache-served loads leave no empty status shell in the issues list.
+              */}
+              {provider === "github" && activeTab === "issues" && (autoTranslate.loading || autoTranslate.error) && (
+                <div
+                  className="github-import-autotranslate-status"
+                  data-testid="github-import-autotranslate-status"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {autoTranslate.loading && (
+                    <div className="github-import-autotranslate-status__working">
+                      <span className="status-dot status-dot--connecting" aria-hidden="true" />
+                      <Loader2 size={14} className="spin" aria-hidden="true" />
+                      <span>{t("git.translateWorking", "Translating…")}</span>
+                    </div>
+                  )}
+                  {autoTranslate.error && (
+                    <div className="github-import-autotranslate-status__error">
+                      <span className="status-dot status-dot--error" aria-hidden="true" />
+                      <span>{autoTranslate.error}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="github-import-pane-content">
                 {!hasResultsContent && (
                   <div className="github-import-state github-import-state--idle" data-testid="github-import-results-idle">
@@ -1903,7 +2028,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     ? `#${selectedPull.number} — ${importTranslation.display.title}`
                     : t("git.importFromGitHub", "Import from GitHub")
               }
-              onClose={() => { setSelectedIssueNumber(null); setSelectedPullNumber(null); }}
+              onClose={clearDetailSelection}
               defaultSize={{ width: 760, height: 680 }}
               minSize={{ width: 420, height: 360 }}
               /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: Import detail is a ≤768px sheet, so preserve its desktop floating geometry instead of touching it on mobile. */
@@ -2202,6 +2327,27 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     {closingIssue ? <Loader2 size={14} className="spin" /> : t("git.closeIssue", "Close issue")}
                   </button>
                 )}
+                {activeTab === "issues" && selectedIssue && onPlanningMode && (
+                  <button
+                    type="button"
+                    className="btn github-import-action"
+                    data-testid="github-import-action-plan"
+                    onClick={handlePlanIssue}
+                    disabled={importing || isUrlImported(selectedIssue.html_url)}
+                  >
+                    {t("git.planIssue", "Plan")}
+                  </button>
+                )}
+                {onOpenChatWithPrefill && (activeTab === "issues" ? selectedIssue?.html_url?.trim() : selectedPull?.html_url?.trim()) && (
+                  <button
+                    type="button"
+                    className="btn github-import-action"
+                    data-testid="github-import-action-chat"
+                    onClick={handleChatAboutSelection}
+                  >
+                    {t("git.chatAboutIssue", "Chat")}
+                  </button>
+                )}
                 <button
                   className="btn btn-primary github-import-action"
                   data-testid="github-import-action-top"
@@ -2210,7 +2356,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     (activeTab === "issues" ? selectedIssueNumber === null || isUrlImported(selectedIssue?.html_url) : selectedPullNumber === null || isUrlImported(selectedPull?.html_url)) || importing
                   }
                 >
-                  {importing ? <Loader2 size={14} className="spin" /> : activeTab === "pulls" ? t("git.resolveFeedback", "Resolve feedback") : t("git.import", "Import")}
+                  {importing ? <Loader2 size={14} className="spin" /> : activeTab === "pulls" ? t("git.resolveFeedback", "Resolve feedback") : t("git.importAsTask", "Import as task")}
                 </button>
               </div>
               </div>
@@ -2271,7 +2417,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                     windowKey="github-import-detail"
                     /* FNXC:GitHubImport 2026-07-15-18:40: Mirrors the GitHub detail window — the title bar shows the same translated title as the card below rather than the raw upstream one. */
                     title={`${selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}${selectedGitlabItem.iid} — ${importTranslation.display.title}`}
-                    onClose={() => setSelectedGitlabKey(null)}
+                    onClose={clearDetailSelection}
                     defaultSize={{ width: 760, height: 680 }}
                     minSize={{ width: 420, height: 360 }}
                     /* FNXC:ModalGeometryPersistence 2026-07-15-19:30: GitLab detail shares the ≤768px import sheet behavior and must preserve the shared desktop geometry record. */

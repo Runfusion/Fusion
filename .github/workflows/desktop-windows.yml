@@ -2,6 +2,11 @@ name: Desktop Windows Build
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_pg_smoke:
+        description: "Skip the embedded-PG smoke (already covered by verify-elevated-restricted.yml)"
+        type: boolean
+        default: false
 
 jobs:
   build-windows-exe:
@@ -29,7 +34,13 @@ jobs:
       # Create the user and warm its profile once here, outside any test window;
       # the launcher resets the user's password before each run, but the warmed
       # profile persists, so every later launch is ~0.5s.
+      # FNXC:WindowsDesktopPackaging 2026-07-18-01:40:
+      # The smoke wedged a runner for 45+ min with Start-Process -Wait and no
+      # step timeout (baseline ~18 min). Cap it, and allow skipping it via
+      # dispatch input when the dedicated verify-elevated-restricted workflow
+      # already proves embedded PG on this ref — packaging does not depend on it.
       - name: Prewarm embedded-PG helper user profile
+        if: ${{ !inputs.skip_pg_smoke }}
         shell: pwsh
         run: |
           $user = "fusion-pg"
@@ -53,6 +64,8 @@ jobs:
       # the normal embedded-postgres path — no in-launcher Start-Process
       # -Credential / staging / process-kill races.
       - name: Smoke embedded Postgres on Windows
+        if: ${{ !inputs.skip_pg_smoke }}
+        timeout-minutes: 30
         shell: pwsh
         run: |
           $user = "fusion-pg"

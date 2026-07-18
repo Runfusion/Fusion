@@ -1,6 +1,4 @@
 # Planned work
-- Postgres migration
-- QA interface
 - OMP adapter
 - Import from Beads
 - Improved overseer
@@ -8,6 +6,8 @@
 - Paperclip Fusion plugin
 
 # Done
+- Postgres migration
+- QA interface
 - Coding (Ideas) workflow
 - Improved core engine reliability
 - Task terminal

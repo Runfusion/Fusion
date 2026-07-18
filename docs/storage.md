@@ -753,3 +753,9 @@ this fix, and this fix additionally removes the dependency on that condition bei
 There is no data-recovery step needed once the resolver is fixed — no rows were corrupted, they
 were written to (and remain recoverable from) the worktree-local `.fusion/fusion.db` if it still
 exists on disk.
+
+## Configuration revision history (FN-8282)
+
+Configuration changes are immutable `project.configuration_revisions` snapshots. Rows are partitioned by `(project_id, id)` and address resources with structured JSON targets plus a canonical JSON target key; history reads are newest-first by owner, kind, and target. A database identity sequence deterministically breaks same-millisecond timestamp ties. Project settings, workflow setting values, routine definitions, and automation definitions record their PostgreSQL mutations within the same transaction, so a failed revision insert rolls back the configuration write. The legacy SQLite writers reject versioned configuration mutations before side effects: accepting a write without an atomically durable revision would violate the rollback contract.
+
+User-global `~/.fusion/settings.json` history uses the reserved `__fusion_global_configuration__` owner identity rather than the project that initiated the write. Filesystem writes are serialized and stage a durable revision-intent file before replacing settings; a later mutation reconciles an interrupted intent by completing its journal append or restoring the old snapshot. When its revision append fails, the store restores the pre-write raw settings file before rejecting. `TaskStore.rollbackConfiguration()` exactly restores project/global/workflow snapshots; `RoutineStore` and `AutomationStore` expose the same rollback action for their stable-ID resources. Each rollback includes deletion/recreation semantics and appends exactly one forward revision marked `source: "rollback"`, rather than modifying history.

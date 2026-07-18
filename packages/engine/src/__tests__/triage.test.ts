@@ -135,6 +135,11 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     } as Settings),
     updateSettings: vi.fn(),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:TriageTestMock 2026-07-16-14:15:
+    Duplicate finalization records activity for near-duplicates and explicit DUPLICATE markers, so shared TaskStore mocks must provide an awaited no-op. The reviewer-outage retry test explicitly selects the delete resolution because the runtime default is prompt and only delete reaches deleteTask.
+    */
+    recordActivity: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getAgentLogs: vi.fn().mockResolvedValue([]),
     addSteeringComment: vi.fn(),
@@ -1698,6 +1703,14 @@ Planner rewrote mission without the raw request.
         expect.objectContaining({ workflowStepId: "plan-review", status: "failed", verdict: "REVISE" }),
       ]),
     }));
+    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([id, action]) => id === "FN-PLAN-REVISE" && action === "[pre-merge] Workflow step failed: Plan Review",
+    )).toBe(false);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-PLAN-REVISE",
+      "AI spec revision requested",
+      expect.stringContaining("Missing verification."),
+    );
   });
 
   it("keeps the task in triage with retry backoff when Plan Review is unavailable", async () => {
@@ -1893,7 +1906,10 @@ Planner rewrote mission without the raw request.
         if (id === canonicalId) return canonicalTask;
         return null;
       });
-      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
+      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        requirePlanApproval: false,
+        triageDuplicateResolution: "delete",
+      } as Settings);
       const retryProcessor = new TriageProcessor(retryStore, tempRoot);
 
       mockCreateFnAgent.mockClear();
@@ -2247,6 +2263,9 @@ Planner rewrote mission without the raw request.
         "AI spec revision requested",
         expect.stringContaining(feedback),
       );
+      expect((retryStore.logEntry as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([id, action]) => id === taskId && action === "[pre-merge] Workflow step failed: Plan Review",
+      )).toBe(false);
       expect(retryStore.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
         workflowStepResults: expect.arrayContaining([
           expect.objectContaining({ workflowStepId: "plan-review", status: "failed", verdict: "REVISE" }),
@@ -6770,8 +6789,9 @@ describe("TriageProcessor skillSelection regression (FN-1511)", () => {
   async function captureCreateFnAgentArgs(options?: {
     assignedAgentId?: string;
     assignedAgentSkills?: string[];
+    permissionPolicy?: Record<string, unknown>;
   }) {
-    const { assignedAgentId, assignedAgentSkills } = options || {};
+    const { assignedAgentId, assignedAgentSkills, permissionPolicy } = options || {};
 
     const mockAgentStore = {
       getAgent: vi.fn().mockImplementation(async (id: string) => {
@@ -6782,6 +6802,7 @@ describe("TriageProcessor skillSelection regression (FN-1511)", () => {
             role: "triage",
             state: "idle",
             metadata: { skills: assignedAgentSkills },
+            permissionPolicy,
           };
         }
         return null;
@@ -6862,6 +6883,36 @@ describe("TriageProcessor skillSelection regression (FN-1511)", () => {
 
       expect(args).not.toBeNull();
       expect(args.skillSelection?.sessionPurpose).toBe("triage");
+    });
+
+    it.each(["block", "require-approval"] as const)("passes triage Mission mutations through the %s action gate", async (disposition) => {
+      const args = await captureCreateFnAgentArgs({
+        assignedAgentId: "agent-001",
+        assignedAgentSkills: ["triage"],
+        permissionPolicy: {
+          presetId: "custom",
+          rules: {
+            git_write: "allow",
+            file_write_delete: "allow",
+            command_execution: "allow",
+            network_api: "allow",
+            task_agent_mutation: disposition,
+            review_gate_bypass: "allow",
+            file_scope: "allow",
+          },
+        },
+      });
+
+      const { evaluateAgentActionGate } = await import("../agent-action-gate.js");
+      expect(args.actionGateContext).toBeDefined();
+      expect(args.permanentAgentGating).toBeDefined();
+      expect(evaluateAgentActionGate({
+        agentId: args.actionGateContext.agentId,
+        taskId: args.actionGateContext.taskId,
+        toolName: "fn_mission_create",
+        args: { title: "Gated mission" },
+        permissionPolicy: args.actionGateContext.permissionPolicy,
+      })).toMatchObject({ category: "task_agent_mutation", disposition });
     });
 
     it("skillSelection is undefined when no agentStore provided (role fallback behavior)", async () => {

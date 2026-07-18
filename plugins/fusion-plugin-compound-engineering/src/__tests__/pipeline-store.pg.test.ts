@@ -34,18 +34,23 @@ import {
 import { CeSessionStore, PlanHandoffClaimError } from "../session/session-store.js";
 import {
   PG_AVAILABLE,
+  PG_TEST_URL_BASE,
   pgDescribe,
 } from "@fusion/test-utils/pg-test-harness";
 
-const PG_TEST_URL_BASE =
-  process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
-const PG_USER = process.env.USER ?? "postgres";
+/*
+FNXC:PgTestAuthFix 2026-07-18-07:40:
+The credentialed local default made embedded Fusion PostgreSQL runs fail because
+that database has no `postgres` role, cascading CI shard 4 failures. Derive all
+CE admin and test URLs from the shared PG_TEST_URL_BASE: its credential-free
+local default works with the current OS role and retains the CI override.
+*/
 
 function adminExec(statement: string): void {
   // Single short psql DDL call (CREATE/DROP DATABASE can't run in a tx). This
   // is the same acceptable execSync use as core's data-layer.test.ts.
   execSync(
-    `psql -h localhost -p 5432 -U ${PG_USER} -d postgres -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
+    `psql "${PG_TEST_URL_BASE}/postgres" -v ON_ERROR_STOP=1 -c "${statement.replace(/"/g, '\\"')}"`,
     { stdio: "pipe", env: process.env },
   );
 }

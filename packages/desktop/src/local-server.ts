@@ -38,6 +38,8 @@ export interface DesktopLocalServerState {
   status: "idle" | "starting" | "ready" | "error";
   port?: number;
   error?: string | null;
+  /* FNXC:MigrationHoldingPage 2026-07-17-13:25: mirrors local-runtime.ts — live SQLite→PG migration progress while status is "starting". */
+  migration?: { active: boolean; phase: string; label: string };
 }
 
 export class DesktopLocalServerManager {
@@ -67,7 +69,7 @@ export class DesktopLocalServerManager {
     let cleanup: RuntimeCleanup | undefined;
 
     try {
-      const { createTaskStoreForBackend } = await import("@fusion/core");
+      const { createTaskStoreForBackend, formatMigrationProgress } = await import("@fusion/core");
       const { CentralCore, PluginLoader, ensureBundledPluginInstalled, isBundledPluginId } = await import("@fusion/core");
       const { createServer } = await import("@fusion/dashboard");
       const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry, seedDashboardProviders } = await import("@fusion/engine");
@@ -75,7 +77,19 @@ export class DesktopLocalServerManager {
       // Consult the startup factory to boot a PostgreSQL-backed TaskStore.
       // Post default-flip: the factory boots embedded PG by default when
       // DATABASE_URL is unset and external PG when DATABASE_URL is set.
-      const backendBoot = await createTaskStoreForBackend({ rootDir: this.rootDir });
+      const backendBoot = await createTaskStoreForBackend({
+        rootDir: this.rootDir,
+        /* FNXC:MigrationHoldingPage 2026-07-17-13:25: keep this legacy path in sync with local-runtime.ts — publish live SQLite→PG migration progress while starting. */
+        onMigrationProgress: (event) => {
+          if (this.state.status === "starting") {
+            this.state = {
+              status: "starting",
+              error: null,
+              migration: { active: true, phase: event.phase, label: formatMigrationProgress(event) },
+            };
+          }
+        },
+      });
       /* FNXC:PostgresDesktopRuntime 2026-07-14-18:34: The legacy local-server entrypoint shares the same mandatory PostgreSQL startup contract as the primary desktop runtime. */
       store = backendBoot.taskStore as unknown as TaskStoreLike;
       (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =

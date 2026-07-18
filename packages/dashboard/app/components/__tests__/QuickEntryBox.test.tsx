@@ -482,6 +482,16 @@ function expectQuickEntryPrimaryIconCluster() {
 describe("QuickEntryBox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    /*
+    FNXC:QuickEntryFocus 2026-07-17-15:15:
+    FN-8245 found the fourth QuickEntryBox focus failure was cross-test jsdom
+    focus leakage, not a component refocus. Clear any detached predecessor's
+    active element before rendering so submit and action-button assertions start
+    from the same browser focus baseline under loaded worker execution.
+    */
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
     vi.mocked(fetchAgents).mockResolvedValue([]);
@@ -530,6 +540,9 @@ describe("QuickEntryBox", () => {
       vi.runOnlyPendingTimers();
     });
     vi.useRealTimers();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     localStorage.clear();
     restoreQuickEntryTestGlobals();
   });
@@ -1583,7 +1596,7 @@ describe("QuickEntryBox", () => {
 
   it("clears input after successful creation", async () => {
     const { props } = renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input");
+    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
     fireEvent.change(textarea, { target: { value: "Task to create" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1591,8 +1604,12 @@ describe("QuickEntryBox", () => {
     await waitFor(() => {
       expect(props.onCreate).toHaveBeenCalled();
     });
-
-    expect((textarea as HTMLTextAreaElement).value).toBe("");
+    /*
+    FNXC:DashboardTests 2026-07-18-07:25:
+    Full-suite shard load can observe onCreate before the optimistic setDescription("")
+    commit flushes into the DOM. Wait for the cleared value, not only the mock call.
+    */
+    await waitForSubmitSuccessToClear(textarea);
   });
 
   it("shows error toast on failure and keeps input content", async () => {
@@ -2694,8 +2711,11 @@ describe("QuickEntryBox", () => {
     it("resets Fast toggle to standard after successful task creation", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-fast-toggle")).toBeTruthy();
+      });
       fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
       fireEvent.change(textarea, { target: { value: "First fast task" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -2709,9 +2729,15 @@ describe("QuickEntryBox", () => {
           }),
         );
       });
+      /*
+      FNXC:DashboardTests 2026-07-18-08:15:
+      Wait for create to leave the "Creating..." disabled state before re-expanding;
+      full-suite observed onCreate while isSubmitting still true and the fast toggle unmounted.
+      */
+      await waitForSubmitSuccessToClear(textarea);
 
       expandQuickEntry();
-      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+      const fastToggle = await screen.findByTestId("quick-entry-fast-toggle");
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
 
       fireEvent.change(textarea, { target: { value: "Second standard task" } });
@@ -2746,9 +2772,12 @@ describe("QuickEntryBox", () => {
     it("resets priority to normal after successful task creation", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
       fireEvent.change(textarea, { target: { value: "Priority reset after save" } });
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-priority-button")).toBeTruthy();
+      });
       openPriorityMenu();
       fireEvent.click(screen.getByTestId("quick-entry-priority-option-high"));
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -2756,9 +2785,12 @@ describe("QuickEntryBox", () => {
       await waitFor(() => {
         expect(props.onCreate).toHaveBeenCalledTimes(1);
       });
+      await waitForSubmitSuccessToClear(textarea);
 
       expandQuickEntry();
-      expectQuickEntryPriorityButton("normal");
+      await waitFor(() => {
+        expectQuickEntryPriorityButton("normal");
+      });
     });
 
     it("resets priority to normal after Subtask flow", async () => {
@@ -4923,13 +4955,19 @@ describe("QuickEntryBox", () => {
       const outsideElement = document.createElement("div");
       document.body.appendChild(outsideElement);
       try {
-        fireEvent.mouseDown(outsideElement);
+        /*
+        FNXC:DashboardTests 2026-07-18-08:45:
+        Dispatch a bubbling native MouseEvent so the document mousedown listener
+        in QuickEntryBox sees the outside target (RTL fireEvent alone was flaky
+        under full-suite and failed locally for this agent portal).
+        */
+        outsideElement.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        await waitFor(() => {
+          expect(screen.queryByText("Select agent")).toBeNull();
+        });
       } finally {
-        document.body.removeChild(outsideElement);
+        if (outsideElement.parentNode) document.body.removeChild(outsideElement);
       }
-
-      // Picker should be closed
-      expect(screen.queryByText("Select agent")).toBeNull();
     });
 
     it("repositions portaled picker on window resize while open", async () => {

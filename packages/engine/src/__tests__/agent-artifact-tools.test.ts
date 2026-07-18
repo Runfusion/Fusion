@@ -20,7 +20,7 @@ const TASK_ID = "FN-6778";
 const AUTHOR_ID = "agent-007";
 const PNG_IMAGE_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
 
-type ArtifactStore = Pick<TaskStore, "registerArtifact" | "getArtifact" | "listArtifacts">;
+type ArtifactStore = Pick<TaskStore, "registerArtifact" | "getArtifact" | "listArtifacts" | "getTask" | "getSettings">;
 
 type ArtifactMessageStore = Pick<MessageStore, "sendMessage">;
 
@@ -157,6 +157,23 @@ describe("artifact register tool", () => {
     }));
     expect(getText(result)).toContain("Registered artifact");
     expect(getText(result)).not.toContain("ERROR:");
+  });
+
+  it("gates task review-artifact producers by user-facing task eligibility", async () => {
+    const registerArtifact = vi.fn<ArtifactStore["registerArtifact"]>().mockResolvedValue(createMockArtifact({ type: "video" }));
+    const getTask = vi.fn<ArtifactStore["getTask"]>();
+    const getSettings = vi.fn<ArtifactStore["getSettings"]>().mockResolvedValue({ reviewArtifacts: "user-facing" });
+    const store = { registerArtifact, getTask, getSettings } as unknown as TaskStore;
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+
+    getTask.mockResolvedValue({ prompt: "## Frontend UX Criteria\n- visible behavior" } as Awaited<ReturnType<TaskStore["getTask"]>>);
+    await runTool(tool, "call-user-facing-video", { type: "video", title: "Walkthrough", taskId: TASK_ID });
+    expect(registerArtifact).toHaveBeenCalledTimes(1);
+
+    getTask.mockResolvedValue({ prompt: "**Review Artifact Task Type:** backend" } as Awaited<ReturnType<TaskStore["getTask"]>>);
+    const blocked = await runTool(tool, "call-backend-video", { type: "video", title: "Backend walkthrough", taskId: TASK_ID });
+    expect(registerArtifact).toHaveBeenCalledTimes(1);
+    expect(getText(blocked)).toContain("Review artifact generation is disabled");
   });
 
   it("rejects empty, non-image, and arbitrary-byte base64 payloads without registering", async () => {

@@ -870,6 +870,104 @@ The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider d
   margin: 0;
 }
 
+/*
+FNXC:MailboxMobile 2026-07-17-13:43:
+FN-8238 keeps the full-page mobile title above one compact action row: unread badge,
+Compose, Mark all read, and Refresh remain visible together. This runtime-mode class
+mirrors isMobileViewport(); CSS media and pointer queries cannot observe its physical-screen
+or visualViewport classification, so desktop and tablet headers retain their shared chrome.
+*/
+.mailbox-view--mobile .view-header {
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.mailbox-view--mobile .view-header__title {
+  flex: 0 0 100%;
+}
+
+.mailbox-view--mobile .view-header__actions {
+  flex: 1 1 100%;
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  margin-left: 0;
+}
+
+.mailbox-view--mobile .view-header__actions .btn {
+  min-width: 0;
+  flex-shrink: 1;
+  padding: var(--space-xs);
+  white-space: nowrap;
+}
+
+.mailbox-view--mobile .view-header__actions .btn-icon,
+.mailbox-view--mobile .mailbox-unread-badge {
+  flex-shrink: 0;
+}
+
+/*
+FNXC:MailboxMobile 2026-07-17-13:43:
+FN-8238 requires Inbox, Outbox, Agents, and Approvals to remain on one compact mobile row.
+Tabs may shrink while retaining their badge and use horizontal scrolling only as the narrowest
+viewport fallback; this applies only when the runtime mobile class is present.
+*/
+.mailbox-view--mobile .mailbox-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mailbox-view--mobile .mailbox-tab {
+  min-width: 0;
+  flex: 1 1 0;
+  flex-shrink: 1;
+  padding: var(--space-xs);
+  font-size: var(--font-size-xs, 0.8rem);
+}
+
+/*
+FNXC:MailboxMobile 2026-07-17-13:43:
+FN-8238 keeps mobile message-detail Back, message meta, and Delete (plus Reply for agent
+messages) on one row. Meta may truncate before controls wrap, and this does not affect the
+separate approvals Back button outside this header or non-mobile mailbox layouts.
+*/
+.mailbox-view--mobile .mailbox-message-detail-header {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.mailbox-view--mobile .mailbox-message-detail-header > .btn,
+.mailbox-view--mobile .mailbox-message-detail-actions {
+  flex-shrink: 0;
+}
+
+.mailbox-view--mobile .mailbox-message-detail-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mailbox-view--mobile .mailbox-message-detail-meta > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mailbox-view--mobile .mailbox-message-detail-actions {
+  flex-wrap: nowrap;
+  gap: var(--space-xs);
+}
+
+.mailbox-view--mobile .mailbox-message-detail-actions .btn {
+  min-width: 0;
+  padding: var(--space-xs);
+  white-space: nowrap;
+}
+
 /* ── Mailbox — Mobile (≤ 768px) ───────────────────────────────────── */
 
 @media (max-width: 768px) {
@@ -994,7 +1092,14 @@ The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider d
     padding: var(--space-sm) var(--space-md);
   }
 
-  /* Mailbox View (full-page) mobile overrides */
+  /*
+  FNXC:MailboxMobile 2026-07-17-14:10:
+  FN-8238's runtime mobile class owns the compact full-page tabs and message-detail row.
+  Keep these legacy width-query fallbacks off that class: this media block follows the
+  compact rules in source order and would otherwise restore tab overflow and a wrapped
+  detail header on every actual phone viewport.
+  */
+  /* Mailbox View (full-page) width-query fallbacks outside runtime mobile mode */
   .mailbox-view .mailbox-header {
     flex-wrap: wrap;
     gap: var(--space-sm);
@@ -1014,7 +1119,7 @@ The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider d
     display: none;
   }
 
-  .mailbox-view .mailbox-tab {
+  .mailbox-view:not(.mailbox-view--mobile) .mailbox-tab {
     flex-shrink: 0;
     padding: var(--space-sm) var(--space-md);
     font-size: var(--font-size-xs, 0.8rem);
@@ -1053,12 +1158,12 @@ The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider d
     overflow: visible;
   }
 
-  .mailbox-view .mailbox-message-detail-header {
+  .mailbox-view:not(.mailbox-view--mobile) .mailbox-message-detail-header {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .mailbox-view .mailbox-message-detail-actions {
+  .mailbox-view:not(.mailbox-view--mobile) .mailbox-message-detail-actions {
     flex-wrap: wrap;
   }
 

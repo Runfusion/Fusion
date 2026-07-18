@@ -6,6 +6,7 @@ import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
 import { getGrokPickerModels, GROK_PICKER_PROVIDER_ID } from "../grok-model-cache.js";
+import { getClaudePickerModels, CLAUDE_PICKER_PROVIDER_ID } from "../claude-model-cache.js";
 import { getOmpPickerModels, OMP_PICKER_PROVIDER_ID } from "../omp-model-cache.js";
 import { getHermesPickerModels, HERMES_PICKER_PROVIDER_ID } from "../hermes-model-cache.js";
 import type { AuthStorageLike } from "../routes.js";
@@ -394,6 +395,15 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       so an existing row always wins over a colliding Grok row — purely
       additive, must never displace, overwrite, or filter out an existing row.
       */
+      if (useClaudeCli) {
+        try {
+          for (const model of await getClaudePickerModels()) {
+            const key = `${model.provider}/${model.id}`;
+            if (!seenModelKeys.has(key)) { seenModelKeys.add(key); models.push(model); }
+          }
+        } catch (error: unknown) { runtimeLogger.child("models").warn(`Failed to load claude-cli models: ${error instanceof Error ? error.message : String(error)}`); }
+      }
+
       if (useGrokCli) {
         // getGrokPickerModels never throws by contract (see
         // grok-model-cache.ts), but this try/catch is a defensive belt so a
@@ -452,6 +462,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       */
       const configuredProviders = await getConfiguredProviderNames(options?.authStorage);
       if (useClaudeCli) configuredProviders.add("pi-claude-cli");
+      if (useClaudeCli) configuredProviders.add(CLAUDE_PICKER_PROVIDER_ID);
       if (useDroidCli) configuredProviders.add("droid-cli");
       if (useLlamaCpp) configuredProviders.add("llama-server");
       // FNXC:ModelCatalog 2026-07-08-00:05 (FN-7696): allow-list "cursor-cli"

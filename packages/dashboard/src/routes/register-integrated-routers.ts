@@ -2,6 +2,7 @@ import type { Router } from "express";
 import type { TaskStore } from "@fusion/core";
 import type { ServerOptions } from "../server.js";
 import { createMissionRouter } from "../mission-routes.js";
+import { createIdeationRouter } from "../ideation-routes.js";
 import { createInsightsRouter } from "../insights-routes.js";
 import { createEvalsRouter } from "../evals-routes.js";
 import { createResearchRouter } from "../research-routes.js";
@@ -46,6 +47,7 @@ export function registerIntegratedRouters({
   // middleware resolves an explicit central-registry project id (request id →
   // registered launch project id) via the shared seam instead of the implicit
   // raw launch-dir store fallback.
+  router.use("/ideation", createIdeationRouter(store, options));
   router.use("/insights", createInsightsRouter(store, options));
   router.use("/evals", createEvalsRouter(store, options));
   router.use("/research", createResearchRouter(store, options));

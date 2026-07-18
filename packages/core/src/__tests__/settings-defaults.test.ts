@@ -36,6 +36,12 @@ describe("settings defaults invariants", () => {
     expect(isGlobalOnlySettingsKey("localNetworkDiscoveryEnabled")).toBe(true);
   });
 
+  it("keeps the embedded PostgreSQL connection cap global and high by default", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.embeddedPostgresMaxConnections).toBe(500);
+    expect(GLOBAL_SETTINGS_KEYS).toContain("embeddedPostgresMaxConnections");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("embeddedPostgresMaxConnections");
+  });
+
   it("defaults dashboard keyboard shortcuts globally", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
       quickChat: "Space",

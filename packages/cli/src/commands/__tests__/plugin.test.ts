@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     listPlugins: ReturnType<typeof vi.fn>;
     getPlugin: ReturnType<typeof vi.fn>;
     updatePluginSettings: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
   }> = [];
 
   let loaderTaskStore: { getRootDir?: () => string } | undefined;
@@ -50,6 +51,7 @@ const mocks = vi.hoisted(() => {
         listPlugins: vi.fn().mockResolvedValue([]),
         getPlugin: vi.fn(),
         updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
       };
       pluginStoreInstances.push(instance);
       return instance;
@@ -87,6 +89,13 @@ const mocks = vi.hoisted(() => {
 vi.mock("@fusion/core", () => ({
   PluginStore: mocks.PluginStore,
   PluginLoader: mocks.PluginLoader,
+  CentralCore: vi.fn(function CentralCore() {
+    return {
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      asyncLayer: undefined,
+    };
+  }),
   validatePluginManifest: vi.fn().mockReturnValue({ valid: true, errors: [] }),
   resolveGlobalDir: vi.fn().mockReturnValue("/tmp/fusion-global"),
 }));
@@ -272,6 +281,7 @@ describe("plugin commands", () => {
         .mockResolvedValueOnce({ id: "paperclip-runtime", name: "Paperclip Runtime", enabled: true, state: "started" })
         .mockResolvedValueOnce({ id: "paperclip-runtime", name: "Paperclip Runtime", enabled: true, state: "error", lastSecurityScan: { verdict: "blocked", summary: "blocked", findings: [], scannedAt: "now", scannedFiles: [] } }),
       updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
     };
     mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
     mocks.PluginLoader.mockImplementationOnce(() => ({ loadPlugin: vi.fn(), reloadPlugin: vi.fn().mockResolvedValue(undefined) }) as never);
@@ -291,6 +301,7 @@ describe("plugin commands", () => {
         settings: { enabled: true, retries: 2 },
       }),
       updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
     };
     mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
     await runPluginSettings("paperclip-runtime", undefined, undefined, { projectName: "demo" });

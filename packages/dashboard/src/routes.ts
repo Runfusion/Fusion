@@ -104,6 +104,7 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-grok-runtime",
+  "fusion-plugin-claude-runtime",
   "fusion-plugin-omp-runtime",
   "fusion-plugin-cli-printing-press",
   "fusion-plugin-compound-engineering",
@@ -172,6 +173,7 @@ import { registerAgentCoreListCreateRoutes, registerAgentCoreRoutes } from "./ro
 import { registerAgentRuntimeRoutes } from "./routes/register-agent-runtime-routes.js";
 import { registerAgentReflectionRatingRoutes } from "./routes/register-agent-reflection-rating-routes.js";
 import { registerAgentImportExportRoutes, registerAgentGenerationRoutes } from "./routes/register-agent-import-export-generation-routes.js";
+import { registerOrgPortabilityRoutes } from "./routes/register-org-portability-routes.js";
 import { registerAgentSkillsRoutes } from "./routes/register-agent-skills-routes.js";
 import { registerPluginsAutomationRoutes } from "./routes/register-plugins-automation.js";
 import { registerProxyRoutes } from "./routes/register-proxy-routes.js";
@@ -180,6 +182,7 @@ import { registerCustomProviderRoutes } from "./routes/register-custom-provider-
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
 import { registerCommandCenterRoutes } from "./routes/register-command-center-routes.js";
 import { registerKnowledgeRoutes } from "./routes/register-knowledge-routes.js";
+import { registerReportRoutes } from "./routes/register-report-routes.js";
 import { registerSignalRoutes } from "./routes/register-signal-routes.js";
 import { registerMonitorRoutes } from "./routes/monitor-routes.js";
 import { registerAuthRoutes } from "./routes/register-auth-routes.js";
@@ -2254,6 +2257,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // index holds sensitive repo/PR content so no endpoint is unauthenticated or
   // cross-project readable.
   registerKnowledgeRoutes(routeContext);
+  registerReportRoutes({ ...routeContext, reportUpload: upload });
   // U11 — inbound external signal webhooks (Sentry/Datadog/PagerDuty/generic).
   // Each route HMAC-verifies against a per-provider secret; never an
   // unauthenticated task-creation endpoint.
@@ -3387,6 +3391,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   registerAgentImportExportRoutes(routeContext);
+  registerOrgPortabilityRoutes(routeContext);
 
   registerAgentCoreRoutes(routeContext, {
     sanitizeAgentTaskLinks,
@@ -4151,7 +4156,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.status(204).send();
   });
 
-  // ── AI Session Routes (Background Tasks) ─────────────────────────────────
+  // ── AI Session Routes ─────────────────────────────────────────────────────
 
   /**
    * GET /api/ai-sessions

@@ -37,6 +37,7 @@ import {
 import { MessageComposer } from "./MessageComposer";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { MailboxArtifactAttachment } from "./MailboxArtifactAttachment";
+import { MailboxTaskProposal } from "./MailboxTaskProposal";
 import type { Agent } from "../api";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
@@ -394,6 +395,7 @@ export function MailboxModal({
         "message:received": onMailboxUpdate,
         "message:read": onMailboxUpdate,
         "message:deleted": onMailboxUpdate,
+        "message:updated": onMailboxUpdate,
       },
     });
   }, [isOpen, projectId, activeTab, selectedAgentId, refreshUnreadCount, loadInbox, loadOutbox, loadAgentMailbox, loadAllAgentsMailbox]);
@@ -900,6 +902,7 @@ export function MailboxModal({
                           taskId={msg.metadata?.taskId}
                           onOpenTask={onOpenTask}
                         />
+                        <MailboxTaskProposal messageId={msg.id} metadata={msg.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                       </div>
                     );
                   })}
@@ -931,6 +934,7 @@ export function MailboxModal({
                     taskId={selectedMessage.metadata?.taskId}
                     onOpenTask={onOpenTask}
                   />
+                  <MailboxTaskProposal messageId={selectedMessage.id} metadata={selectedMessage.metadata} projectId={projectId} onOpenTask={onOpenTask} />
                 </>
               )}
             </div>

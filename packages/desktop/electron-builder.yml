@@ -205,6 +205,11 @@ nsis:
   perMachine: false
   allowElevation: false
   allowToChangeInstallationDirectory: true
+  # FNXC:WindowsDesktopPackaging 2026-07-18-05:20:
+  # Uninstall must stop the embedded postmaster and remove Fusion-materialized
+  # runtime binaries; the database is user data and is only deleted after an
+  # interactive YES (never on silent or auto-update uninstalls).
+  include: build/uninstaller.nsh
 
 portable:
   artifactName: "${productName}-${version}-${os}-${arch}-portable.${ext}"

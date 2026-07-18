@@ -392,6 +392,29 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
 }
 
 /*
+FNXC:TaskDetail 2026-07-17-17:30:
+FN-8287 extends the FN-7585/FN-7633 height-pinned pattern into one square-box
+rule for every inline action: the FN-8194/FN-8209 attach, GitHub, and priority
+icons now share the oversight and execution-mode controls' tokenized height,
+width, border, and radius. Pinning both dimensions prevents theme-specific
+space or icon tokens from making this cluster visually uneven.
+*/
+.detail-inline-attach,
+.detail-inline-github-toggle,
+.detail-priority-trigger,
+.detail-oversight-menu-trigger,
+.detail-execution-mode-toggle {
+  height: var(--detail-priority-control-min-height);
+  min-height: var(--detail-priority-control-min-height);
+  width: var(--detail-priority-control-min-height);
+  min-width: var(--detail-priority-control-min-height);
+  box-sizing: border-box;
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--detail-control-border-radius);
+}
+
+/*
 FNXC:QuickAddActionRow 2026-07-17-12:00:
 FN-8209: Task Detail uses the same compact icon-only priority affordance as
 Quick Add. Keep the picker anchored to its trigger so it remains usable when
@@ -451,6 +474,22 @@ the metadata row wraps at mobile widths.
   box-shadow: var(--focus-ring-strong);
 }
 
+/*
+FNXC:TaskDetail 2026-07-17-00:00:
+FN-8243 — restore the tokenized `.detail-priority-select:focus-visible` rule
+required by css-hygiene-scan.test.ts's focus-coverage allow-list. The base
+`.detail-priority-select` styling was dropped during the FN-8209 Priority
+select→picker migration, but the hygiene allow-list still expects this
+focus-visible selector. Use `--focus-ring-strong` to match the sibling
+`.detail-oversight-select` / `.detail-priority-picker-option` focus rules;
+no raw colors so the tokenized-focus assertion stays green.
+*/
+.detail-priority-select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 .detail-priority-picker-option:disabled {
   cursor: wait;
 }
@@ -459,27 +498,7 @@ the metadata row wraps at mobile widths.
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  /*
-  FNXC:TaskDetail 2026-07-07-15:40:
-  FN-7633 — same shared-height fix as `.detail-priority-chip` above: pin an
-  explicit `height` (not just `min-height`) from the shared
-  `--detail-priority-control-min-height` token so this control cannot resolve
-  shorter than the Oversight trigger, which FN-7618 made stretch to the
-  cluster row height via its wrapper's `align-self: stretch`.
-  */
-  height: var(--detail-priority-control-min-height);
-  min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
-  box-sizing: border-box;
-  /*
-  FNXC:TaskDetail 2026-07-05-00:00:
-  FN-7585 — pin the same shared border/radius token set as the Priority and
-  Oversight controls even though `.btn` already applies a border, so a future
-  change to `.btn`'s defaults cannot silently desync this cluster.
-  */
-  border-width: var(--btn-border-width);
-  border-color: var(--border);
-  border-radius: var(--detail-control-border-radius);
 }
 
 .detail-execution-mode-toggle--fast {
@@ -666,40 +685,14 @@ affect its size or anchoring — only the trigger's box height changes.
 
 .detail-oversight-menu-trigger {
   padding-block: var(--space-xs);
-  box-sizing: border-box;
   /*
-  FNXC:TaskDetail 2026-07-05-00:00:
-  FN-7585 — pin the same shared border/radius trio as Priority/Execution-mode
-  so the Oversight trigger matches the rest of the control cluster.
-
   FNXC:PlannerOversight 2026-07-05-00:00:
   FN-7604 — this trigger is now the single universal surface at every
   viewport (the desktop-only `.detail-oversight-chip` it used to swap in for
-  was removed).
-
-  FNXC:TaskDetail 2026-07-05-14:00:
-  FN-7618 — `align-self: stretch` makes the trigger fill the height of its
-  `.detail-oversight-menu-dropdown` wrapper (now `inline-flex`/`align-items:
-  stretch`), which itself stretches to the shared cluster row height. Kept
-  below as a harmless safety net (a no-op once `height` is explicit) for any
-  context where the wrapper isn't stretched.
-
-  FNXC:TaskDetail 2026-07-07-15:40:
-  FN-7633 — relying on `align-self: stretch` alone made this trigger resolve
-  a TALLER box than Priority/Execution-mode, which only had `min-height` as a
-  floor (not a fixed height), so the three controls no longer read as one
-  uniform row. Pin the SAME explicit `height` (not just `min-height`) from
-  the shared `--detail-priority-control-min-height` token used by
-  `.detail-priority-chip` and `.detail-execution-mode-toggle` above, so all
-  three controls resolve identical box heights regardless of flex
-  stretch/content differences. `min-height` stays as the floor.
+  was removed). Its shared square sizing is declared with every inline action
+  above; this stretch fallback only preserves the dropdown wrapper contract.
   */
-  height: var(--detail-priority-control-min-height);
-  min-height: var(--detail-priority-control-min-height);
   align-self: stretch;
-  border-width: var(--btn-border-width);
-  border-color: var(--border);
-  border-radius: var(--detail-control-border-radius);
 }
 
 

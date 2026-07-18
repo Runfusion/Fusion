@@ -2,6 +2,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
 import { BacklogPressureReporter } from "../backlog-pressure-reporter.js";
 
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-04:15:
+VAL-REMOVAL-005 reporters await the PostgreSQL-shaped insight-store contract.
+Keep mock reads promise-based so cooldown and payload assertions exercise the
+same asynchronous collaborator boundary as production.
+*/
+
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-1",
@@ -86,7 +93,7 @@ describe("BacklogPressureReporter", () => {
       createTask({ id: "FN-5" }),
     ];
     const allTasks = [...todoFull, createTask({ id: "FN-0", column: "todo" })];
-    const store = createStore({ todoSlim, inProgressSlim, todoFull, allTasks, insightStore: { upsertInsight: vi.fn(), listInsights: vi.fn().mockReturnValue([]) } });
+    const store = createStore({ todoSlim, inProgressSlim, todoFull, allTasks, insightStore: { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) } });
     const reporter = new BacklogPressureReporter({ store, projectId: "/tmp/project", logger });
     await expect(reporter.report()).resolves.toEqual({ alerted: false, reason: "insufficient-candidates" });
   });
@@ -109,7 +116,7 @@ describe("BacklogPressureReporter", () => {
       createTask({ id: "FN-DEP-TODO", column: "todo" }),
       createTask({ id: "FN-DEP-DONE", column: "done" }),
     ];
-    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockReturnValue([]) };
+    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) };
     const reporter = new BacklogPressureReporter({
       store: createStore({ todoSlim, inProgressSlim, todoFull, allTasks, insightStore }),
       projectId: "/tmp/project",
@@ -136,7 +143,7 @@ describe("BacklogPressureReporter", () => {
     const todoSlim = Array.from({ length: 44 }, (_, i) => createTask({ id: `FN-T${i}` }));
     const inProgressSlim = [createTask({ id: "FN-P1", column: "in-progress" }), createTask({ id: "FN-P2", column: "in-progress" }), createTask({ id: "FN-P3", column: "in-progress" })];
     const todoFull = Array.from({ length: 8 }, (_, i) => createTask({ id: `FN-C${i}`, title: `Candidate ${i}`, priority: i === 0 ? "urgent" : "normal" }));
-    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockReturnValue([]) };
+    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) };
     const store = createStore({ todoSlim, inProgressSlim, todoFull, allTasks: todoFull, insightStore });
     const reporter = new BacklogPressureReporter({ store, projectId: "/tmp/project", logger, now: () => now });
 
@@ -162,7 +169,7 @@ describe("BacklogPressureReporter", () => {
       const todoFull = Array.from({ length: 5 }, (_, i) => createTask({ id: `FN-C${i}` }));
       const insightStore = {
         upsertInsight: vi.fn(),
-        listInsights: vi.fn().mockReturnValue([]),
+        listInsights: vi.fn().mockResolvedValue([]),
       };
       const store = createStore({ todoSlim, inProgressSlim, todoFull, allTasks: todoFull, insightStore, settings: { backlogPressureAlertCooldownMs: 60_000 } });
       const reporter = new BacklogPressureReporter({ store, projectId: "/tmp/project", logger, now: () => Date.now() });
@@ -170,14 +177,14 @@ describe("BacklogPressureReporter", () => {
       await reporter.report();
       expect(insightStore.upsertInsight).toHaveBeenCalledTimes(1);
 
-      insightStore.listInsights.mockReturnValue([
+      insightStore.listInsights.mockResolvedValue([
         { title: "Backlog pressure detected 2026-05-18", updatedAt: new Date(Date.now()).toISOString() },
       ]);
       await expect(reporter.report()).resolves.toEqual({ alerted: false, reason: "under-threshold" });
       expect(insightStore.upsertInsight).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(61_000);
-      insightStore.listInsights.mockReturnValue([
+      insightStore.listInsights.mockResolvedValue([
         { title: "Backlog pressure detected 2026-05-18", updatedAt: new Date(baseNow).toISOString() },
       ]);
       await reporter.report();

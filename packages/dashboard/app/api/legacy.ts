@@ -347,6 +347,7 @@ import type { MemoryFileInfo } from "./memory.js";
 import { api, ApiRequestError, buildApiUrl, looksLikeHtml, proxyApi } from "./client.js";
 import type { FetchOptions } from "./client.js";
 import { withProjectId } from "./health.js";
+import { notifyWorkflowSettingValuesUpdated } from "../utils/workflowSettingValuesEvents.js";
 
 // Import + re-export skills types so legacy monofile bodies can reference them
 // while hooks/components keep stable import paths via this barrel.
@@ -4424,18 +4425,22 @@ export function fetchWorkflowSettingValues(
  *  `values` map is validated against the named workflow's declarations; a `null`
  *  value deletes that key. A typed rejection surfaces as an ApiRequestError with
  *  `status: 400` and `details.rejections: WorkflowSettingRejection[]`. */
-export function updateWorkflowSettingValues(
+export async function updateWorkflowSettingValues(
   id: string,
   values: Record<string, unknown>,
   projectId?: string,
 ): Promise<WorkflowSettingValuesPayload> {
-  return api<WorkflowSettingValuesPayload>(
+  const payload = await api<WorkflowSettingValuesPayload>(
     withProjectId(`/workflows/${encodeURIComponent(id)}/setting-values`, projectId),
     {
       method: "PATCH",
       body: JSON.stringify({ values }),
     },
   );
+  if (Object.prototype.hasOwnProperty.call(values, "plannerOversightLevel")) {
+    notifyWorkflowSettingValuesUpdated(id, projectId);
+  }
+  return payload;
 }
 
 /** Read per-node prompt overrides for a workflow in the current project context. */
@@ -5977,6 +5982,8 @@ export interface ProjectCreateInput {
   cloneUrl?: string;
   workspaceMode?: boolean;
   taskPrefix?: string;
+  /** Confirmed "create anyway without a git repo" when git is missing on the host (never valid for clone mode). */
+  skipGitInit?: boolean;
 }
 
 export type DockerNodeConfigInfo = DockerNodeConfig;
@@ -6934,7 +6941,7 @@ export function fetchMissions(projectId?: string): Promise<MissionWithSummary[]>
 }
 
 /** Create a new mission */
-export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"] }, projectId?: string): Promise<Mission> {
+export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; autoMerge?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"] }, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId("/missions", projectId), {
     method: "POST",
     body: JSON.stringify(input),
@@ -6947,7 +6954,7 @@ export function fetchMission(missionId: string, projectId?: string): Promise<Mis
 }
 
 /** Update mission */
-export function updateMission(missionId: string, updates: Partial<Mission>, projectId?: string): Promise<Mission> {
+export function updateMission(missionId: string, updates: Partial<Mission> & { autoMerge?: boolean | null }, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId(`/missions/${encodeURIComponent(missionId)}`, projectId), {
     method: "PATCH",
     body: JSON.stringify(updates),
@@ -8107,7 +8114,7 @@ export function reorderTodoItems(listId: string, itemIds: string[], projectId?: 
   });
 }
 
-// ── AI Sessions (Background Tasks) ─────────────────────────────────────────
+// ── AI Sessions ────────────────────────────────────────────────────────────
 
 /**
  * Needs-attention variants for a CLI agent session (CLI Agent Executor, U11).
@@ -8446,6 +8453,11 @@ export function sendMessage(input: SendMessageInput, projectId?: string): Promis
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+/** Materialize an operator-approved task proposal exactly once. */
+export function createProposedTask(id: string, projectId?: string): Promise<{ task: import("@fusion/core").Task; proposal: Message }> {
+  return api(withProjectId(`/messages/${encodeURIComponent(id)}/create-proposed-task`, projectId), { method: "POST" });
 }
 
 /** Mark a specific message as read. */

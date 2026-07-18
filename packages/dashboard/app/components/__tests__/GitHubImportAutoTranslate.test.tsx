@@ -7,7 +7,7 @@ awaits the run. These pin that contract — a regression to a single all-or-noth
 as "no translations until every issue finishes", which is exactly what these detect.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor, cleanup } from "@testing-library/react";
+import { render, renderHook, waitFor, cleanup } from "@testing-library/react";
 
 const { autoTranslateImportIssues } = vi.hoisted(() => ({ autoTranslateImportIssues: vi.fn() }));
 
@@ -28,6 +28,7 @@ vi.mock("react-i18next", () => ({
 
 import {
   useGitHubImportAutoTranslate,
+  useGitHubImportTranslation,
   AUTO_TRANSLATE_CHUNK_SIZE,
   hashImportItemsForKey,
 } from "../GitHubImportTranslateControls";
@@ -65,7 +66,30 @@ afterEach(() => {
   cleanup();
 });
 
-const base = { enabled: true, owner: "o", repo: "r", targetLocale: "en" as const };
+const base = { enabled: true, owner: "o", repo: "r", reloadGeneration: 0, targetLocale: "en" as const };
+
+const REPORTED_CZECH_ISSUE_FORM = `
+# PWA na iOS: studený start bez tokenu skončí ve smyčce „Can't reach Fusion Backend" — dialog pro vložení tokenu se nikdy nezobrazí
+
+**GitHub issue:** Runfusion/Fusion#TBD
+**Verze Fusion:** 0.72.0 (zdrojový checkout)
+**Oblast:** Dashboard / autentizace (PWA, vzdálený přístup přes tunel)
+**Závažnost:** Vysoká — aplikaci přidanou na plochu iPhonu nelze vůbec autorizovat.
+
+## Shrnutí
+
+Dashboard zpřístupněný přes Remote Access funguje v mobilním Safari správně. Token přiteče přes přihlašovací URL a uloží se do localStorage. Po přidání na plochu na iOS ale instalovaná webová aplikace startuje bez tokenu v URL, běží v izolovaném úložišti a místo dialogu pro vložení tokenu zobrazí jen chybovou stránku Unauthorized.
+
+## Reprodukce
+
+1. Spusťte dashboard s aktivní bearer-token autentizací a zpřístupněte ho přes tunel.
+2. Na iPhonu otevřete přihlašovací URL v Safari a potom aplikaci přidejte na plochu.
+3. Otevřete aplikaci z plochy: zobrazí se chyba Unauthorized a tlačítko Retry Connection nic nedělá.
+
+## Očekávané chování
+
+Nepřihlášený studený start nabídne vložení tokenu, aby aplikace nebyla trvale nepoužitelná.
+`;
 
 describe("useGitHubImportAutoTranslate — background streaming", () => {
   it("returns immediately with no translations (the list never waits on it)", () => {
@@ -176,7 +200,12 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     // Same issue number, edited body -> must re-request.
     rerender({ items: [{ number: 1, title: "t1", body: "EDITED", state: "open" as const }] });
     await waitFor(() => expect(autoTranslateImportIssues).toHaveBeenCalledTimes(2));
-    expect(result.current.translations.get(1)?.title).toBe("T1");
+    /*
+    FNXC:GitHubImportTranslate 2026-07-18-10:10:
+    Full-suite can observe the second request before the streamed map is committed.
+    Wait for the translated title, not only the mock call count.
+    */
+    await waitFor(() => expect(result.current.translations.get(1)?.title).toBe("T1"));
   });
 
   it("does NOT re-request when the same issue set re-renders unchanged", async () => {
@@ -196,30 +225,61 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
   });
 
   /*
-  FNXC:GitHubImportTranslate 2026-07-15-20:15:
-  Regression: PR #2147 review. `capped` used to be state written from the translation effect, which
-  forced `capExceeded` into that effect's deps — so a 51st open issue appearing (eligible first 50
-  unchanged) cleared the translations and re-requested all 50 just to update a badge.
+  FNXC:GitHubImportTranslate 2026-07-17-12:50:
+  FN-8230 regression invariant: every reachable 30-item page translates, prior pages remain
+  accumulated, and revisiting unchanged prose spends no additional requests.
   */
-  it("does not restart translation when the open count crosses the cap", async () => {
+  it("translates page 2 issue #55 while retaining page 1 without re-billing it", async () => {
+    const allItems = makeItems(60);
     autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
-    const fifty = makeItems(50);
     const { rerender, result } = renderHook(
       ({ items }) => useGitHubImportAutoTranslate({ ...base, items }),
-      { initialProps: { items: fifty } },
+      { initialProps: { items: allItems.slice(0, 30) } },
     );
+    await waitFor(() => expect(result.current.translations.size).toBe(30));
+
+    rerender({ items: allItems.slice(30, 60) });
+    await waitFor(() => expect(result.current.translations.size).toBe(60));
+    expect(result.current.translations.get(1)?.title).toBe("T1");
+    expect(result.current.translations.get(55)?.title).toBe("T55");
+
+    const callsAfterTwoPages = autoTranslateImportIssues.mock.calls.length;
+    rerender({ items: allItems.slice(0, 30) });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const callsAfterFirstRun = autoTranslateImportIssues.mock.calls.length;
-    expect(result.current.capped).toBe(false);
-    expect(result.current.translations.size).toBe(50);
+    expect(autoTranslateImportIssues).toHaveBeenCalledTimes(callsAfterTwoPages);
+  });
 
-    // A 51st open issue appears: the eligible first 50 are unchanged, so this must
-    // flip `capped` WITHOUT clearing translations or re-billing the page.
-    rerender({ items: [...fifty, { number: 51, title: "t51", body: "b", state: "open" as const }] });
-    await waitFor(() => expect(result.current.capped).toBe(true));
+  it("re-requests changed prose and replaces its accumulated translation", async () => {
+    autoTranslateImportIssues
+      .mockImplementationOnce((_o, _r, chunk) => Promise.resolve(reply(chunk)))
+      .mockImplementationOnce((_o, _r, chunk) => Promise.resolve({ ...reply(chunk), translations: { 1: { title: "UPDATED", body: "UPDATED" } } }));
+    const original = [{ number: 1, title: "t1", body: "original", state: "open" as const }];
+    const { rerender, result } = renderHook(
+      ({ items }) => useGitHubImportAutoTranslate({ ...base, items }),
+      { initialProps: { items: original } },
+    );
+    await waitFor(() => expect(result.current.translations.get(1)?.title).toBe("T1"));
 
-    expect(autoTranslateImportIssues.mock.calls.length).toBe(callsAfterFirstRun);
-    expect(result.current.translations.size).toBe(50);
+    rerender({ items: [{ ...original[0], body: "edited" }] });
+    await waitFor(() => expect(result.current.translations.get(1)?.title).toBe("UPDATED"));
+    expect(autoTranslateImportIssues).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears accumulated prior pages when the reload generation changes", async () => {
+    const allItems = makeItems(60);
+    autoTranslateImportIssues.mockImplementation((_o, _r, chunk) => Promise.resolve(reply(chunk)));
+    const { rerender, result } = renderHook(
+      ({ items, reloadGeneration }) => useGitHubImportAutoTranslate({ ...base, items, reloadGeneration }),
+      { initialProps: { items: allItems.slice(0, 30), reloadGeneration: 0 } },
+    );
+    await waitFor(() => expect(result.current.translations.size).toBe(30));
+    rerender({ items: allItems.slice(30, 60), reloadGeneration: 0 });
+    await waitFor(() => expect(result.current.translations.size).toBe(60));
+
+    rerender({ items: allItems.slice(30, 60), reloadGeneration: 1 });
+    await waitFor(() => expect(result.current.translations.size).toBe(30));
+    expect(result.current.translations.has(1)).toBe(false);
+    expect(result.current.translations.get(55)?.title).toBe("T55");
   });
 
   it("never sends closed issues and caps the page at the 50 most recent open", async () => {
@@ -232,7 +292,6 @@ describe("useGitHubImportAutoTranslate — background streaming", () => {
     const sent = autoTranslateImportIssues.mock.calls.flatMap((c) => c[2] as { number: number }[]);
     expect(sent).toHaveLength(50);
     expect(sent.some((i) => i.number === 999)).toBe(false);
-    expect(result.current.capped).toBe(true);
   });
 });
 
@@ -242,6 +301,22 @@ Regression: PR #2147 review. The signature delimiter was ambiguous because prose
 moving a `|` between title and body produced an unchanged signature and the panel kept serving the
 OLD translation. Length-prefixing makes the encoding injective.
 */
+describe("useGitHubImportTranslation — manual offer", () => {
+  it("renders the translate offer for a foreign issue-form body when auto-translate is off", () => {
+    const { result } = renderHook(() => useGitHubImportTranslation({
+      selectionKey: "issue:2306",
+      title: "PWA na iOS bez tokenu",
+      body: REPORTED_CZECH_ISSUE_FORM,
+      dashboardLocale: "en",
+      autoTranslateEnabled: false,
+    }));
+
+    const view = render(result.current.controls);
+    expect(view.getByTestId("github-import-translate-message").textContent).toContain("This content appears");
+    expect(view.getByTestId("github-import-translate-action")).toHaveTextContent("Translate");
+  });
+});
+
 describe("hashImportItemsForKey", () => {
   it("distinguishes content that only differs in where a delimiter falls", () => {
     const a = [{ number: 1, title: "a|b", body: "c", state: "open" as const }];

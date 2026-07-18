@@ -78,6 +78,7 @@ vi.mock("@fusion/engine", () => ({
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   ...workflowAuthoringEngineMock,
   createFnAgent: vi.fn(),
+  createAgentTask: vi.fn(),
   fetchWebContent: vi.fn(),
   emitGoalRetrievalAudit: vi.fn(),
   createWorkflowAuthoringTools: vi.fn(() => ({})),

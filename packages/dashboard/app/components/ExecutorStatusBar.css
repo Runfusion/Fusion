@@ -463,9 +463,6 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
     max-width: min(26ch, 30vw);
   }
 
-  .background-tasks-indicator {
-    flex-shrink: 0;
-  }
 }
 
 /* Light theme support */

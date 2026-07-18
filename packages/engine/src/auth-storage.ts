@@ -352,7 +352,7 @@ async function refreshAnthropicOAuthCredential(credential: StoredCredential): Pr
       // Do not include scope: RFC 6749 refreshes preserve the granted scope only when omitted.
       body: JSON.stringify({
         grant_type: "refresh_token",
-        client_id: "9d1c250a-e6a1-44d9-88ed-5944d1962f5e",
+        client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
         refresh_token: credential.refresh,
       }),
     });

@@ -122,6 +122,25 @@ describe("runDeterministicDuplicateGuard", () => {
     secondResult.releaseLock();
   });
 
+  it("queues three different fingerprints behind one serialization key", async () => {
+    const { store } = makeStore();
+    const calls = [INPUT, { title: "Second", description: "second description" }, { title: "Third", description: "third description" }];
+    const first = await runDeterministicDuplicateGuard(store, calls[0]!, { lockScope: "p-1", serializationKey: "parent:FN-8277" });
+    const order: number[] = [];
+    const waiting = calls.slice(1).map((input, index) => runDeterministicDuplicateGuard(store, input, {
+      lockScope: "p-1", serializationKey: "parent:FN-8277",
+    }).then((result) => { order.push(index + 2); return result; }));
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    first.releaseLock();
+    const second = await waiting[0]!;
+    expect(order).toEqual([2]);
+    second.releaseLock();
+    const third = await waiting[1]!;
+    expect(order).toEqual([2, 3]);
+    third.releaseLock();
+  });
+
   it("allows concurrent proceed without shared lock scope", async () => {
     const { store } = makeStore();
     const [a, b] = await Promise.all([

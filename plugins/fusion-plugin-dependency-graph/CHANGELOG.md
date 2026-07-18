@@ -1,5 +1,41 @@
 # @fusion-plugin-examples/dependency-graph
 
+## 0.1.61
+
+### Patch Changes
+
+- @fusion/core@0.72.0
+- @fusion/plugin-sdk@0.72.0
+
+## 0.1.60
+
+### Patch Changes
+
+- @fusion/core@0.71.0
+- @fusion/plugin-sdk@0.71.0
+
+## 0.1.59
+
+### Patch Changes
+
+- @fusion/core@0.70.2
+- @fusion/plugin-sdk@0.70.2
+
+## 0.1.58
+
+### Patch Changes
+
+- @fusion/core@0.70.1
+- @fusion/plugin-sdk@0.70.1
+
+## 0.1.57
+
+### Patch Changes
+
+- Updated dependencies [be55d0a]
+  - @fusion/core@0.61.0
+  - @fusion/plugin-sdk@0.61.0
+
 ## 0.1.56
 
 ### Patch Changes

@@ -159,6 +159,8 @@ let viewportMode: "mobile" | "desktop" = "mobile";
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isFullScreenSheetViewport: () => false,
+  isShortViewport: () => false,
   getViewportMode: () => viewportMode,
   isMobileViewport: () => viewportMode === "mobile",
   useViewportMode: () => viewportMode,
@@ -836,7 +838,12 @@ describe("SettingsModal", () => {
       );
       expect(initialCallHasDisabled).toBe(true);
 
-      await settingsModalUser.click(screen.getByRole("button", { name: /Memory/ }));
+      /*
+      FNXC:DashboardTests 2026-07-18-13:35:
+      Settings nav also exposes "Memory Backups"; /Memory/ matches both. Use the exact
+      Memory section label so the deferred memory-backend status hook test stays scoped.
+      */
+      await settingsModalUser.click(screen.getByRole("button", { name: "Memory" }));
 
       await waitFor(() => {
         const enabledCallSeen = mockUseMemoryBackendStatus.mock.calls.some(
@@ -867,6 +874,7 @@ describe("SettingsModal", () => {
       */
       expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest(".settings-help-bubble")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
       // thinking-log checkboxes default to unchecked.
@@ -1010,6 +1018,25 @@ describe("SettingsModal", () => {
       if (mockUpdateSettings.mock.calls.length > 0) {
         const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
         expect(projectPayload.persistAgentToolOutput).toBeUndefined();
+      }
+    });
+
+    it("saves proactive task-chat updates only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Enable proactive task-chat updates" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.proactiveTaskChatEnabled).toBe(true);
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.proactiveTaskChatEnabled).toBeUndefined();
       }
     });
 
@@ -1221,6 +1248,26 @@ describe("SettingsModal", () => {
       expect(onQuickChatButtonModeChange).toHaveBeenCalledWith("footer");
     });
 
+    it("reorders, adds, and removes mobile quick actions before save", async () => {
+      const onMobileNavPrimaryItemsChange = vi.fn();
+      renderModal({ initialSection: "general", onMobileNavPrimaryItemsChange });
+      await waitForSettingsModalReady();
+
+      fireEvent.click(screen.getAllByRole("button", { name: /later$/i })[0]);
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "chat", "mailbox"]);
+      const rows = Array.from(screen.getByRole("group", { name: "Mobile footer quick actions" }).querySelectorAll(".settings-field-label-row"));
+      expect(rows[0].textContent).toContain("tasks");
+
+      fireEvent.click(screen.getByLabelText("Remove chat"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox"]);
+
+      await settingsModalUser.selectOptions(screen.getByLabelText("Add quick action"), "git");
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["tasks", "command-center", "agents", "missions", "mailbox", "git"]);
+
+      fireEvent.click(screen.getByLabelText("Remove tasks"));
+      expect(onMobileNavPrimaryItemsChange).toHaveBeenLastCalledWith(["command-center", "agents", "missions", "mailbox", "git"]);
+    });
+
     it("defaults task chats common-feed opt-in to unchecked", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
@@ -1238,6 +1285,14 @@ describe("SettingsModal", () => {
         value: "changeset",
         scope: "project",
         expectedKey: "completionDocumentationMode",
+      },
+      {
+        section: "General · Project",
+        label: "Review Artifacts",
+        kind: "select",
+        value: "user-facing",
+        scope: "project",
+        expectedKey: "reviewArtifacts",
       },
       {
         section: "General · Project",
@@ -1273,6 +1328,23 @@ describe("SettingsModal", () => {
       },
     ])("persists $expectedKey through the expected settings scope", async (input) => {
       await expectSettingPersists(input);
+    });
+
+    it("persists report default and per-action filing mode overrides", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      fireEvent.change(screen.getByLabelText("In-app report mode"), { target: { value: "auto-file" } });
+      fireEvent.change(screen.getByLabelText("Bug report override"), { target: { value: "draft-review" } });
+      fireEvent.click(screen.getByLabelText("Check roadmap before filing reports"));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      expect(mockUpdateSettings.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+        reportMode: "auto-file",
+        reportModeByAction: { bug: "draft-review" },
+        reportRoadmapDedup: true,
+      }));
     });
 
     it("saves ephemeral agent toggle in project settings payload", async () => {

@@ -40,6 +40,7 @@
  */
 
 import { exec } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -274,22 +275,33 @@ function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
  * forks against one PostgreSQL server, those DDL applies serialize and dominate
  * gate wall-time (mission-store.pg alone measured 6s isolated / 28s under load).
  *
- * Instead we apply the schema ONCE per worker process into a reusable template
- * database, then create each test database with `CREATE DATABASE ... TEMPLATE`
- * — a fast server-side file copy that skips re-running the DDL. The template is
- * keyed by pid so concurrent forks never collide, and dead-pid templates left
- * by crashed/prior runs are swept before creating a new one.
+ * Instead we apply the schema ONCE per worker module instance into a reusable
+ * template database, then create each test database with `CREATE DATABASE ... TEMPLATE`
+ * — a fast server-side file copy that skips re-running the DDL. Dead-pid templates
+ * left by crashed/prior runs are swept before creating a new one.
+ *
+ * FNXC:PgTestTemplateDb 2026-07-17-14:34:
+ * Vitest's `pool: "threads"` plus module isolation gives dashboard files separate
+ * harness module registries while they share one process pid. A pid-only template
+ * name let those independent memos concurrently drop and create the same database.
+ * A shared template guarded only during creation is insufficient because this
+ * module-local copy mutex cannot serialize cross-module `CREATE DATABASE ... TEMPLATE`
+ * calls against one source. Give each module instance a nonce-bearing template so
+ * creation and copying always use disjoint sources; the dead-pid sweep keeps every
+ * live sibling's template and reclaims only orphaned process-owned templates.
  */
 const SCHEMA_TEMPLATE_PREFIX = "fusion_schema_template";
+const schemaTemplateInstanceNonce = randomUUID().replace(/-/g, "").slice(0, 12);
+const schemaTemplateName = `${SCHEMA_TEMPLATE_PREFIX}_${process.pid}_${schemaTemplateInstanceNonce}`;
 
-/** The per-process template database name (pid-keyed so forks never collide). */
+/** The per-module template database name, disjoint across same-pid module registries. */
 function templateDbName(): string {
-  return `${SCHEMA_TEMPLATE_PREFIX}_${process.pid}`;
+  return schemaTemplateName;
 }
 
 /** Extract the pid embedded in a template DB name, or null if it doesn't match. */
 function parseTemplatePid(dbName: string): number | null {
-  const match = new RegExp(`^${SCHEMA_TEMPLATE_PREFIX}_(\\d+)$`).exec(dbName);
+  const match = new RegExp(`^${SCHEMA_TEMPLATE_PREFIX}_(\\d+)(?:_[a-z0-9]+)?$`).exec(dbName);
   if (!match) return null;
   const pid = Number.parseInt(match[1], 10);
   return Number.isFinite(pid) ? pid : null;
@@ -334,13 +346,48 @@ async function withMaintenanceSql<T>(
   }
 }
 
+/** Test-only lifecycle controls for deterministic template-state regression tests. */
+export const __pgTestTemplateTestHooks = {
+  templateName: templateDbName,
+  async templateExists(): Promise<boolean> {
+    const templateName = templateDbName();
+    return withMaintenanceSql(async (client) => {
+      const rows = await client<{ exists: boolean }[]>`
+        SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = ${templateName}) AS exists
+      `;
+      return rows[0]?.exists === true;
+    });
+  },
+  async dropTemplate(): Promise<void> {
+    const templateName = templateDbName();
+    await withMaintenanceSql(async (client) => {
+      await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
+    });
+  },
+  async createHalfBuiltTemplate(): Promise<void> {
+    const templateName = templateDbName();
+    await withMaintenanceSql(async (client) => {
+      await client.unsafe(`DROP DATABASE IF EXISTS "${templateName}" WITH (FORCE)`);
+      await client.unsafe(`CREATE DATABASE "${templateName}"`);
+    });
+  },
+};
+
+/*
+ * FNXC:PgTestTemplateDb 2026-07-17-22:25:
+ * Do not register module-local `beforeExit` cleanup. Vitest can reach a transient
+ * beforeExit state while sibling isolated module registries still copy from their
+ * templates, so that handler races and drops live sources. The dead-pid sweep in
+ * ensureSchemaTemplate reclaims templates after the owning worker actually exits.
+ */
+
 /**
  * FNXC:PgTestTemplateDb 2026-07-16-17:40:
  * CREATE DATABASE ... TEMPLATE connects to the source template and errors if
  * any other session is attached ("source database is being accessed by other
- * users"). Vitest forks get distinct pid-keyed templates, but a single process
- * can still issue concurrent `createTaskStoreForTest()` calls, so serialize the
- * template-copy step through a chained mutex.
+ * users"). Each module instance now owns a disjoint nonce-bearing template;
+ * concurrent calls within that instance still share its source, so serialize
+ * its template-copy step through a chained mutex.
  */
 let createFromTemplateChain: Promise<unknown> = Promise.resolve();
 function serializeTemplateCopy<T>(fn: () => Promise<T>): Promise<T> {
@@ -354,15 +401,15 @@ function serializeTemplateCopy<T>(fn: () => Promise<T>): Promise<T> {
 
 /**
  * FNXC:PgTestTemplateDb 2026-07-16-17:40:
- * Ensure this process's schema-template database exists with the full Fusion
- * schema baseline applied, and return its name. Memoized per process so the
- * ~530ms baseline apply happens exactly once regardless of how many test files
- * or `createTaskStoreForTest()` calls run in the worker.
+ * Ensure this module instance's schema-template database exists with the full
+ * Fusion schema baseline applied, and return its name. Memoized per module
+ * instance so the ~530ms baseline apply happens exactly once for that instance
+ * regardless of how many `createTaskStoreForTest()` calls it makes.
  *
  * On entry it sweeps dead-pid templates (crashed prior runs), then recreates
- * this pid's template from scratch so a half-built template from an earlier
- * aborted run in the same pid can never leak a corrupt schema into copies.
- * On failure the memo is cleared so a later call can retry.
+ * this instance's template from scratch so a half-built template can never leak
+ * a corrupt schema into copies. Live same-pid sibling templates are retained.
+ * On failure the memo is cleared so a later call can rebuild.
  */
 let schemaTemplateReady: Promise<string> | null = null;
 function ensureSchemaTemplate(): Promise<string> {
@@ -439,14 +486,27 @@ export async function createTaskStoreForTest(options?: {
 
   const dbName = uniqueDbName(prefix);
 
-  // FNXC:PgTestTemplateDb 2026-07-16-17:40:
-  // Create the test database as a copy of the pre-baked schema template
-  // (fast server-side file copy) instead of re-running the schema baseline per
-  // test. The template apply is memoized once per worker process; the copy is
-  // serialized because CREATE DATABASE ... TEMPLATE forbids concurrent access
-  // to the source template.
+  // FNXC:PgTestTemplateDb 2026-07-17-14:34:
+  // Create the test database as a copy of this module instance's pre-baked
+  // schema template (fast server-side file copy) instead of re-running the
+  // schema baseline per test. The per-instance copy is serialized because
+  // CREATE DATABASE ... TEMPLATE forbids concurrent access to one source;
+  // nonce-bearing template names keep isolated modules on disjoint sources.
   const template = await ensureSchemaTemplate();
   await serializeTemplateCopy(async () => {
+    /*
+     * FNXC:PgTestTemplateDb 2026-07-17-22:34:
+     * PostgreSQL can retain a just-closed baseline connection briefly. Terminate
+     * stale template sessions immediately before copying; the module-local copy
+     * mutex ensures this never interrupts a sibling copy using the same source.
+     */
+    await withMaintenanceSql(async (client) => {
+      await client`
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = ${template} AND pid <> pg_backend_pid()
+      `;
+    });
     try {
       await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}"`);
     } catch {

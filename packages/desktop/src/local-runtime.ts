@@ -30,12 +30,29 @@ function strace(msg: string): void {
 export type RuntimeSource = "embedded-local" | "external-cli" | "none";
 export type RuntimeState = "stopped" | "starting" | "running" | "error";
 
+/*
+FNXC:MigrationHoldingPage 2026-07-17-13:20:
+The one-time SQLite→PostgreSQL migration runs inside createTaskStoreForBackend
+BEFORE the embedded server listens, so during it the desktop window only shows
+the static "Starting local Fusion runtime…" gate. Surface structured migration
+progress through the runtime status → IPC getRuntimeStatus →
+fusionShell.getState().localRuntime → DesktopLaunchGate poll, which renders it
+and suspends its 30s startup timeout while progress advances. `label` is the
+same formatMigrationProgress() string the CLI logs.
+*/
+export interface DesktopMigrationProgress {
+  active: boolean;
+  phase: string;
+  label: string;
+}
+
 export interface DesktopRuntimeStatus {
   source: RuntimeSource;
   state: RuntimeState;
   port?: number;
   baseUrl?: string;
   error?: string;
+  migration?: DesktopMigrationProgress;
 }
 
 /*
@@ -69,7 +86,7 @@ type RuntimeInstance = {
 export interface LocalRuntimeManagerOptions {
   rootDir: string;
   getExternalPort?: () => number | undefined;
-  createStore?: (rootDir: string) => Promise<TaskStoreLike>;
+  createStore?: (rootDir: string, onMigrationProgress?: (progress: DesktopMigrationProgress) => void) => Promise<TaskStoreLike>;
   createDashboardServer?: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
   /**
    * FNXC:DesktopRuntime 2026-07-05-00:00:
@@ -95,20 +112,31 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
+async function createStoreDefault(
+  rootDir: string,
+  onMigrationProgress?: (progress: DesktopMigrationProgress) => void,
+): Promise<TaskStoreLike> {
   // FNXC:BackendFlip 2026-06-26-14:40:
   // Consult the startup factory to boot a PostgreSQL-backed TaskStore. Post
   // default-flip: the factory boots embedded PG by default when DATABASE_URL
   // is unset and external PG when DATABASE_URL is set. The backend shutdown handle is stashed on the returned object so
   // the runtime manager's stop path can release the pool / stop an embedded
   // cluster.
-  const { createTaskStoreForBackend } = await import("@fusion/core");
-  const backendBoot = await createTaskStoreForBackend({ rootDir });
+  const { createTaskStoreForBackend, formatMigrationProgress } = await import("@fusion/core");
+  const backendBoot = await createTaskStoreForBackend({
+    rootDir,
+    /* FNXC:MigrationHoldingPage 2026-07-17-13:20: forward the SQLite→PG migration stream so the launch gate can show live progress instead of a silent multi-minute "Starting…". */
+    onMigrationProgress: (event) =>
+      onMigrationProgress?.({ active: true, phase: event.phase, label: formatMigrationProgress(event) }),
+  });
   /* FNXC:PostgresDesktopRuntime 2026-07-14-18:34: Desktop startup must fail visibly if PostgreSQL cannot boot; the removed opt-out must never construct an unbacked SQLite TaskStore. */
   const store = backendBoot.taskStore as unknown as TaskStoreLike;
   // Attach the backend shutdown so LocalRuntimeManager can invoke it on stop.
   (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
     backendBoot.shutdown;
+  // FNXC:DesktopClosePolicy 2026-07-18-06:00: detach variant for the "leave PostgreSQL running" quit answer.
+  (store as TaskStoreLike & { __backendDetach?: () => Promise<void> }).__backendDetach =
+    backendBoot.detachKeepingEmbedded;
   return store;
 }
 
@@ -365,7 +393,7 @@ export class LocalRuntimeManager {
   private status: DesktopRuntimeStatus = { source: "none", state: "stopped" };
 
   private readonly getExternalPort: () => number | undefined;
-  private readonly createStore: (rootDir: string) => Promise<TaskStoreLike>;
+  private readonly createStore: (rootDir: string, onMigrationProgress?: (progress: DesktopMigrationProgress) => void) => Promise<TaskStoreLike>;
   private readonly createDashboardServer: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
   private readonly startupRetries: number;
   private readonly startupRetryDelayMs: number;
@@ -489,7 +517,18 @@ export class LocalRuntimeManager {
 
     try {
       strace(`startEmbedded: BEGIN rootDir=${this.options.rootDir}`);
-      store = await this.createStore(this.options.rootDir);
+      /*
+      FNXC:MigrationHoldingPage 2026-07-17-13:20:
+      Publish live migration progress into the "starting" status so the renderer's
+      DesktopLaunchGate (polling getRuntimeStatus every 250ms) can show it. Only
+      overwrite while still starting — a late/stale event must never clobber a
+      terminal running/error status.
+      */
+      store = await this.createStore(this.options.rootDir, (progress) => {
+        if (this.status.state === "starting") {
+          this.status = { source: "embedded-local", state: "starting", migration: progress };
+        }
+      });
       strace("startEmbedded: store.init");
       await store.init();
       strace("startEmbedded: store.watch");
@@ -531,12 +570,12 @@ export class LocalRuntimeManager {
     }
   }
 
-  async stopLocal(): Promise<DesktopRuntimeStatus> {
+  async stopLocal(options: { keepEmbeddedPostgres?: boolean } = {}): Promise<DesktopRuntimeStatus> {
     if (this.stopPromise) {
       return this.stopPromise;
     }
 
-    this.stopPromise = this.stopInternal();
+    this.stopPromise = this.stopInternal(options);
     try {
       return await this.stopPromise;
     } finally {
@@ -544,7 +583,7 @@ export class LocalRuntimeManager {
     }
   }
 
-  private async stopInternal(): Promise<DesktopRuntimeStatus> {
+  private async stopInternal(options: { keepEmbeddedPostgres?: boolean } = {}): Promise<DesktopRuntimeStatus> {
     if (this.runtime) {
       const runtime = this.runtime;
       this.runtime = null;
@@ -559,9 +598,28 @@ export class LocalRuntimeManager {
       // Release the backend connection pool / embedded PG cluster if the store
       // was booted via the startup factory. store.close() already closes the
       // AsyncDataLayer pool; this adds embedded-cluster teardown. Best-effort.
-      const backendShutdown = (runtime.store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
-      if (backendShutdown) {
-        await backendShutdown().catch(() => undefined);
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-05:00:
+      keepEmbeddedPostgres is the operator's Windows quit-prompt answer: close
+      the pools and the Fusion runtime but leave the embedded postmaster
+      running for other Fusion processes. Default (false) preserves the full
+      teardown for programmatic restarts and every non-prompted path.
+      */
+      const storeWithBackend = runtime.store as TaskStoreLike & {
+        __backendShutdown?: () => Promise<void>;
+        __backendDetach?: () => Promise<void>;
+      };
+      if (options.keepEmbeddedPostgres && storeWithBackend.__backendDetach) {
+        /*
+        FNXC:DesktopClosePolicy 2026-07-18-06:00:
+        Review finding: skipping the backend shutdown alone left the embedded
+        lifecycle's process shutdown hook armed, so Electron exit stopped the
+        postmaster despite the operator's "leave it running" answer. Detach
+        closes pools and DISARMS that hook without stopping the server.
+        */
+        await storeWithBackend.__backendDetach().catch(() => undefined);
+      } else if (storeWithBackend.__backendShutdown) {
+        await storeWithBackend.__backendShutdown().catch(() => undefined);
       } else {
         runtime.store.close();
       }

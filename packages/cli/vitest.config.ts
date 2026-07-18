@@ -65,8 +65,8 @@ const quarantinedCliTests: string[] = [
   (async-layer mock drift), skill-sync (undocumented engine tools), version
   (release-script assertion drift), dashboard (mesh lifecycle mock drift), and
   bundled-plugin-freshness (build freshness drift) are now git-history-only.
-  The quarantine ledger has no packages/cli rows. FN-8210 owns the separate
-  package-config.test.ts resolution; future lockstep coverage must include it.
+  The quarantine ledger has no packages/cli rows. FN-8223 now enforces full
+  CLI config↔ledger lockstep, including package-config.test.ts if re-quarantined.
   */
   /*
   FNXC:CliTests 2026-06-25-16:30:
@@ -98,7 +98,29 @@ const quarantinedCliTests: string[] = [
   FNXC:CliTests 2026-07-16-09:00:
   FN-8077 removed project-context.test.ts from this list and the ledger in lockstep. Its CentralCore coverage now uses the external PostgreSQL test harness under pgDescribe rather than launching an embedded postmaster for each test in forked loaded lanes; pure formatting coverage remains ungated.
   */
+  /*
+  FNXC:CliTests 2026-07-18-07:30:
+  FN-8271 rescued the shard-4 cascade after removing unrelated PostgreSQL template-copy and persistent-seeding work from extension-dist-barrel's built-dist hook. All fourteen affected CLI files return to the default lane with their matching quarantine-ledger rows removed; retain normal worker budgets and timeout defaults rather than reintroducing appeasement.
+
+  FNXC:CliTests 2026-07-18-15:20:
+  Full-suite shard 4 after FN-8271 (runs 29648812375 / 29648952207) re-observed mcp-lock-retry and task-lock-retry 5s timeouts under package-lane shard load without product-bug evidence. Quarantine on sight in lockstep with scripts/lib/test-quarantine.json — do not raise testTimeout or fake-timer budgets.
+  */
+  "src/commands/__tests__/mcp-lock-retry.test.ts",
+  "src/commands/__tests__/task-lock-retry.test.ts",
 ];
+
+/*
+FNXC:CliTests 2026-07-18-02:15:
+The full CLI suite must continue excluding quarantined integration tests, but an explicitly named quarantined file needs to remain runnable for focused diagnosis and regression verification. Preserve the quarantine for discovery runs while removing only the exact requested path from Vitest's exclude list (FN-8268).
+*/
+const explicitlyRequestedTestFiles = new Set(
+  process.argv
+    .filter((argument) => /(^|[/\\])src[/\\].+\.test\.(?:ts|tsx)$/.test(argument))
+    .map((argument) => argument.replace(/\\/g, "/").replace(/^\.\//, "")),
+);
+const activeQuarantinedCliTests = quarantinedCliTests.filter(
+  (testFile) => !explicitlyRequestedTestFiles.has(testFile),
+);
 
 export default defineConfig({
   resolve: {
@@ -158,6 +180,14 @@ export default defineConfig({
         replacement: resolve(__dirname, "../../plugins/fusion-plugin-grok-runtime/src/index.ts"),
       },
       /*
+      FNXC:PluginTests 2026-07-18-01:58:
+      runtime-provider-probes.ts is reached from @fusion/dashboard through server.ts, routes.ts, and register-runtime-provider-routes.ts, where it imports @fusion-plugin-examples/claude-runtime. Mirror the Cursor, Grok, and OMP source aliases so source checkouts without built plugin dist resolve the Claude runtime (FN-8268).
+      */
+      {
+        find: /^@fusion-plugin-examples\/claude-runtime$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-claude-runtime/src/index.ts"),
+      },
+      /*
       FNXC:OmpAcp 2026-07-11-23:35:
       runtime-provider-probes imports @fusion-plugin-examples/omp-runtime; alias source for checkout tests.
       */
@@ -168,6 +198,21 @@ export default defineConfig({
       {
         find: /^@fusion-plugin-examples\/omp-runtime$/,
         replacement: resolve(__dirname, "../../plugins/fusion-plugin-omp-runtime/src/index.ts"),
+      },
+      /*
+      FNXC:CliTests 2026-07-18-09:15:
+      runtime-provider-probes imports @fusion-plugin-examples/claude-runtime for probe/model
+      discovery only. Alias the package root to probes-entry (not full index) so CLI tests do
+      not load ACP/runtime-adapter or require @agentclientprotocol/sdk on the CLI resolver path.
+      Full-suite shard 4 failed with dist/ entry resolution + missing ACP deps under package lane.
+      */
+      {
+        find: /^@fusion-plugin-examples\/claude-runtime\/probe$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-claude-runtime/src/probe.ts"),
+      },
+      {
+        find: /^@fusion-plugin-examples\/claude-runtime$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-claude-runtime/src/probes-entry.ts"),
       },
       /*
       FNXC:PluginTests 2026-07-04-09:30:
@@ -193,7 +238,7 @@ export default defineConfig({
     // build-exe + build-exe-cross live in their own vitest project
     // (see vitest.build-exe.config.ts) so the rest of the CLI suite can
     // run with file parallelism enabled.
-    exclude: ["**/node_modules/**", "**/dist/**", "src/__tests__/build-exe*.test.ts", ...quarantinedCliTests],
+    exclude: ["**/node_modules/**", "**/dist/**", "src/__tests__/build-exe*.test.ts", ...activeQuarantinedCliTests],
     setupFiles: [
       resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts"),
     ],

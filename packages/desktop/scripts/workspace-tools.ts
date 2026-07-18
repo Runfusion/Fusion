@@ -42,8 +42,29 @@ export function runWorkspaceBin(command: string, args: string[], cwd: string): P
   });
 }
 
+/*
+ * FNXC:DesktopPostgresMigrations 2026-07-17-18:20:
+ * @fusion/core's build is bare tsc, which never copies the PostgreSQL migration
+ * .sql files into dist — core's schema-applier resolves them from
+ * dist/postgres/migrations at runtime (join(__dirname, "migrations", ...)).
+ * The CLI compensates in packages/cli/tsup.config.ts, but the desktop had no
+ * equivalent, so every packaged desktop build shipped without migrations and
+ * Local mode crashed schema init with ENOENT for 0000_initial.sql after the
+ * embedded Postgres started. Stage the migrations beside the compiled output
+ * whenever the desktop builds core so both dev and the pnpm-deploy staged
+ * closure (core's files field packs dist/**) contain them.
+ */
+const coreMigrationsSrcDir = resolve(workspaceRoot, "packages", "core", "src", "postgres", "migrations");
+
+async function stageCoreMigrations(coreDistDir: string): Promise<void> {
+  const dest = resolve(coreDistDir, "postgres", "migrations");
+  await rm(dest, { recursive: true, force: true });
+  await cp(coreMigrationsSrcDir, dest, { recursive: true });
+}
+
 export async function buildCore(): Promise<void> {
   await runWorkspaceBin("tsc", [], resolve(workspaceRoot, "packages", "core"));
+  await stageCoreMigrations(resolve(workspaceRoot, "packages", "core", "dist"));
 }
 
 // FNXC:DesktopBuild 2026-07-01-19:45:
@@ -85,6 +106,7 @@ export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
   "plugins/fusion-plugin-paperclip-runtime",
   "plugins/fusion-plugin-cursor-runtime",
   "plugins/fusion-plugin-grok-runtime",
+  "plugins/fusion-plugin-claude-runtime",
   "plugins/fusion-plugin-omp-runtime",
   "plugins/fusion-plugin-droid-runtime",
   "plugins/fusion-plugin-roadmap",
@@ -239,8 +261,32 @@ export async function stageDesktopDeploy(): Promise<void> {
     ? config.replace(/output:\s*dist-electron/, "output: ../dist-electron")
     : `directories:\n  output: ../dist-electron\n${config}`;
   await writeFile(stagedConfig, patched);
+
+  /*
+   * FNXC:DesktopPostgresMigrations 2026-07-17-18:20:
+   * pnpm deploy copies whatever is in core's dist at stage time. If core was
+   * last built by a bare `tsc` outside this package's scripts (e.g. root
+   * `pnpm build`), dist may lack the migration .sql files even though buildCore()
+   * above stages them. Re-stage them directly into the deployed closure
+   * (idempotent) and fail fast if the baseline migration is still missing, so a
+   * packaged app can never ship unable to initialize its embedded database.
+   */
+  await stageCoreMigrations(resolve(desktopDeployDir, "node_modules", "@fusion", "core", "dist"));
+  await verifyCoreMigrationsStaged();
   await verifyEmbeddedPostgresPayloads();
   console.log(`[desktop:build] Deploy staged at ${desktopDeployDir}`);
+}
+
+export async function verifyCoreMigrationsStaged(deployDir = desktopDeployDir): Promise<void> {
+  const baseline = resolve(deployDir, "node_modules", "@fusion", "core", "dist", "postgres", "migrations", "0000_initial.sql");
+  try {
+    await stat(baseline);
+  } catch {
+    throw new Error(
+      `Desktop staged closure is missing @fusion/core PostgreSQL migrations (${baseline}). ` +
+        "Packaged Local mode cannot initialize its embedded database without them.",
+    );
+  }
 }
 
 export async function buildDashboardClient(): Promise<void> {

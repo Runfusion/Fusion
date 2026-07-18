@@ -1144,7 +1144,8 @@
     "backendError": {
       "failedFetch": "Failed to fetch projects"
     },
-    "testMode": "Test mode — no real AI calls"
+    "testMode": "Test mode — no real AI calls",
+    "migrationInProgress": "Database migration in progress — the dashboard will reconnect when it completes."
   },
   "appName": "Fusion",
   "approval": {
@@ -1175,29 +1176,6 @@
     "manageConnection": "Manage Connection",
     "retryConnection": "Retry Connection",
     "retrying": "Retrying…"
-  },
-  "backgroundTasks": {
-    "dismissButton": "Dismiss",
-    "pillLabel_one": "AI {{count}}",
-    "pillLabel_other": "AI {{count}}",
-    "pillTitle_one": "{{count}} background AI task",
-    "pillTitle_other": "{{count}} background AI task",
-    "pillTitleWithInput_one": "{{count}} background AI task ({{needsInput}} needs input)",
-    "pillTitleWithInput_other": "{{count}} background AI task ({{needsInput}} needs input)",
-    "popoverHeader": "Background Tasks",
-    "status": {
-      "failed": "Failed",
-      "generating": "generating...",
-      "needsInput": "needs input"
-    },
-    "typeLabel": {
-      "cliAgent": "CLI Agent",
-      "milestoneInterview": "Milestone Interview",
-      "missionInterview": "Mission Interview",
-      "planning": "Planning",
-      "sliceInterview": "Slice Interview",
-      "subtask": "Subtask Breakdown"
-    }
   },
   "board": {
     "archived": "Archived",
@@ -1612,6 +1590,43 @@
       },
       "title": "Operator controls"
     },
+    "portability": {
+      "title": "Org export / import",
+      "description": "Download or preview a secret-scrubbed organization bundle.",
+      "export": {
+        "action": "Export org bundle",
+        "working": "Exporting…",
+        "success": "Export ready",
+        "error": "Export failed"
+      },
+      "import": {
+        "label": "Org bundle JSON",
+        "placeholder": "Paste a secret-scrubbed org bundle",
+        "preview": "Preview import",
+        "previewing": "Previewing…",
+        "previewReady": "Preview ready. Confirm to apply this bundle.",
+        "apply": "Apply import",
+        "importing": "Importing…",
+        "invalid": "Paste a valid org bundle JSON document",
+        "error": "Unable to preview or import bundle",
+        "confirmTitle": "Import organization bundle?",
+        "confirmMessage": "This applies the previewed configuration to this project.",
+        "confirmApply": "Import bundle"
+      },
+      "versions": {
+        "title": "Configuration versions",
+        "description": "Restore any recorded project configuration version.",
+        "loading": "Loading versions…",
+        "loadError": "Unable to load configuration versions",
+        "rollbackError": "Unable to roll back configuration",
+        "empty": "No configuration versions yet.",
+        "rollback": "Roll back",
+        "rollingBack": "Rolling back…",
+        "confirmTitle": "Roll back configuration?",
+        "confirmMessage": "Restore this version? The rollback is recorded as a new version.",
+        "confirmRollback": "Roll back"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "Ecosystem breadth",
       "empty": "No models or plugins active in the selected range.",
@@ -1750,6 +1765,10 @@
       "volumeHint": "volume, not outcome",
       "volumeTitle": "Volume (proxy)"
     },
+    "reviewArtifacts": {
+      "empty": "No review artifacts are available yet.",
+      "title": "Review artifacts"
+    },
     "range": {
       "custom": "Custom range",
       "dialogLabel": "Select date range",
@@ -1796,6 +1815,7 @@
       "nodes": "Nodes",
       "overview": "Overview",
       "productivity": "Productivity",
+      "reviewArtifacts": "Review artifacts",
       "reliability": "Reliability",
       "signals": "Signals",
       "system": "System",
@@ -2017,6 +2037,7 @@
     "connectRemoteButton": "Connect to Remote Fusion",
     "couldNotStart": "Couldn't start local Fusion",
     "loading": "Loading Fusion…",
+    "migrationInProgress": "Database migration in progress — this can take a few minutes.",
     "opening": "Opening…",
     "retry": "Retry",
     "runLocalButton": "Run Fusion Locally",
@@ -5665,9 +5686,13 @@
     "headerErrorPlural_other": "",
     "headerErrorSingular_one": "",
     "headerErrorSingular_other": "",
-    "regionLabel": "AI sessions needing input or failed",
+    "regionLabel": "AI sessions in progress, needing input, or failed",
     "resume": "Resume",
-    "retry": "Retry"
+    "retry": "Retry",
+    "headerGeneratingSingular": "{{count}} AI session in progress",
+    "headerGeneratingPlural": "{{count}} AI sessions in progress",
+    "headerMixed": "{{generatingCount}} AI sessions in progress, {{actionableCount}} need attention",
+    "inProgress": "In progress"
   },
   "settings": {
     "actions": {
@@ -5859,6 +5884,8 @@
       "chatHistory": "Chat history",
       "chatRooms": "Chat Rooms",
       "completionDocumentationAutomation": "Completion Documentation Automation",
+      "reviewArtifacts": "Review Artifacts",
+      "reviewArtifactsHint": "Controls whether eligible future tasks generate review deliverables. User-facing limits generation to user-facing work; on enables it for all eligible tasks. Individual PROMPT.md headers can override this. Default: off.",
       "controlsHowFutureTaskSpecsHandleReleaseNote": " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ",
       "controlsWhetherNewlyCreatedTasksHaveGitHubIssue": " Controls whether newly created tasks have GitHub issue tracking enabled by default. Individual tasks can still override this from the task detail modal. ",
       "defaultRepoUsedWhenCreatingGitHubIssuesFor": "Default repo used when creating GitHub issues for tracked tasks. Falls back to the global default if blank.",
@@ -5874,7 +5901,10 @@
       "learnMore": "Learn more",
       "loweringThisWindowMeansReliabilityMetricsChartsAnd": " Lowering this window means Reliability metrics/charts and the Activity feed will not show history older than the selected range. Per-task task detail history is unaffected. Default: 30 days. ",
       "mobileNavPrimaryItems": "Mobile footer quick actions",
-      "mobileNavPrimaryItemsHint": "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Unselected destinations remain in the More menu.",
+      "mobileNavPrimaryItemsHint": "Default: Dashboard, Tasks, Agents, Missions, Chat, Mailbox. Add eligible destinations; unselected destinations remain in More.",
+      "addNavItem": "Add quick action",
+      "selectNavItem": "Choose a destination",
+      "removeNavItem": "Remove {{item}}",
       "moveNavItemEarlier": "Move {{item}} earlier",
       "moveNavItemLater": "Move {{item}} later",
       "newTasksInheritThisCustomWorkflowsStepsOverridable": "New tasks inherit this custom workflow's steps (overridable per task). No default — unset (built-in default workflow).",
@@ -5931,11 +5961,20 @@
       "followDashboardLanguage": "Follow dashboard language",
       "gitLabEnabledHint": "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com. No default — unset (unset behaves as enabled until explicitly disabled).",
       "allowEphemeralAgentsToCreateTasksHint": "When enabled (default), ephemeral task-worker agents can open follow-up tasks via fn_task_create. When disabled, only humans and permanent agents can create tasks; ephemeral callers are rejected.",
+      "ephemeralAgentTaskCreationPolicy": "Ephemeral agent follow-up tasks",
+      "ephemeralAgentTaskCreationPolicyHint": "No default — unset policy falls back to Allow. Upon validation sends a proposal to your mailbox for one-click approval; Deny rejects follow-up task creation.",
+      "ephemeralAgentTaskCreationPolicyAllow": "Allow",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "Upon validation",
+      "ephemeralAgentTaskCreationPolicyDeny": "Deny",
       "quickChatCloseOnOutsideClickHint": "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.",
       "disabledFusionWorkflowsAreHiddenFromWorkflow": "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).",
       "aiUndoTaskWorkflow": "AI-undo task workflow",
       "aiUndoTaskWorkflowInherit": "Inherit project default workflow",
-      "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy."
+      "aiUndoTaskWorkflowHelp": "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.",
+      "reportModeHelp": "How in-app bug/feedback/idea/help reports are filed. Default: draft-review (operator reviews a draft before filing).",
+      "reportModeByActionHelp": "Optional per-action override of the project report mode for bug, feedback, idea, or help. No default — unset actions inherit reportMode.",
+      "reportRoadmapDedup": "Check roadmap before filing reports",
+      "reportRoadmapDedupHelp": "When enabled, matching roadmap features are shown inline instead of filing another GitHub Issue or Discussion. Default: off."
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": " and shows update notices in the CLI and dashboard. Cadence is governed by the frequency below. Default: enabled. ",
@@ -5960,6 +5999,8 @@
       "saveAIThinkingForPermanentAgents": " Save AI thinking for permanent agents ",
       "saveAIThinkingLogs": "Save AI thinking logs",
       "saveToolOutputInAgentLogs": " Save tool output in agent logs ",
+      "enableProactiveTaskChat": " Enable proactive task-chat updates ",
+      "enableProactiveTaskChatHint": " When enabled, Task chat reports step progress, failures, reviews, and rollbacks in real time. Default: disabled. ",
       "updates": "Updates",
       "weekly": "Weekly",
       "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",
@@ -6785,6 +6826,12 @@
       "resetAllProjectAction": "Reset all project settings",
       "menuResetSuccess": "{{section}} settings reset to defaults",
       "allProjectResetSuccess": "All project settings reset to defaults"
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Maximum server connections for Fusion's embedded PostgreSQL. Applies after restarting Fusion. Range: 32–2,000. Default: 500. External PostgreSQL uses its provider's connection limit.",
+      "embeddedConnectionCap": "Embedded PostgreSQL connection cap",
+      "embeddedConnectionCapError": "Enter a value between 32 and 2,000.",
+      "advanced": "Advanced database settings"
     }
   },
   "setup": {
@@ -7308,7 +7355,7 @@
     "generatingSubtasks": "AI is generating subtasks...",
     "groupedOnSharedBranch": "Grouped on shared branch",
     "hideThinking": "Hide thinking",
-    "keepSessionMessage": "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume.",
+    "keepSessionMessage": "Close this modal and keep the subtask session available from the session notification banner? Edited fields that have not been saved to the session may be reset when you resume.",
     "keepSessionTitle": "Keep subtask session available?",
     "modalTitle": "Subtask Breakdown",
     "moveDown": "Move down",
@@ -9090,5 +9137,11 @@
     "toolResult": "Tool result",
     "you": "You",
     "youMessage": "You message"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "Already on the roadmap",
+      "message": "This report matches a feature that is already planned."
+    }
   }
 }

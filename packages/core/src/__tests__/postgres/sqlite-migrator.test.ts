@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   deletedAt TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
-  projectId TEXT
+  projectId TEXT,
+  -- FNXC:EphemeralAgentTaskCreation 2026-07-30-16:00: legacy SQLite cutover sources preserve the durable proposal key so a migrated task remains the idempotency anchor.
+  proposalClaimId TEXT
 );
 `;
 
@@ -731,6 +733,101 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     });
     expect(rows[0].legacy_row_hash).toBe(rows[1].legacy_row_hash);
     expect(rows[0].source_schema_sql).toContain("CREATE TABLE mission_feature_evidence_links");
+  });
+
+  /*
+  FNXC:PostgresMigrationNulSanitize 2026-07-17-10:05:
+  Legacy SQLite data can contain U+0000 in TEXT cells and inside stored JSON documents. PostgreSQL rejects NUL in text and jsonb columns ("unsupported Unicode escape sequence" / "\u0000 cannot be converted to text"), which aborted the first-boot auto-migration. The migrator must strip NUL from plain text cells, JSON string values and object keys, malformed-JSON scalars, and opaque legacy-preservation cells — and the content-checksum verification must still pass on the sanitized rows.
+  */
+  it("strips U+0000 from legacy text and JSON values so the migration succeeds and verifies", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "fusion.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      const insert = legacy.prepare(
+        `INSERT INTO tasks (id, title, description, "column", customFields, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insert.run(
+        "FN-NUL-1",
+        "nul\u0000title",
+        "desc\u0000ription",
+        "todo",
+        JSON.stringify({ ["key\u0000nul"]: "value\u0000nul", nested: ["a\u0000b"] }),
+        "2026-07-17T00:00:00Z",
+        "2026-07-17T00:00:00Z",
+      );
+      insert.run(
+        "FN-NUL-2",
+        "clean title",
+        "malformed json cell",
+        "todo",
+        "not-json\u0000tail",
+        "2026-07-17T00:00:00Z",
+        "2026-07-17T00:00:00Z",
+      );
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(
+      ctx!.db,
+      [{ sqlitePath, pgSchema: "project" as const }],
+    );
+    const tasks = report.tables.find((table) => table.table === "tasks")!;
+    expect(tasks.verified).toBe(true);
+
+    const rows = await ctx!.db.execute(sql`
+      SELECT id, title, description, custom_fields
+      FROM project.tasks
+      WHERE id IN ('FN-NUL-1', 'FN-NUL-2')
+      ORDER BY id
+    `) as unknown as Array<{
+      id: string;
+      title: string | null;
+      description: string;
+      custom_fields: unknown;
+    }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0].title).toBe("nultitle");
+    expect(rows[0].description).toBe("description");
+    expect(rows[0].custom_fields).toEqual({ keynul: "valuenul", nested: ["ab"] });
+    // Malformed JSON is preserved as a jsonb string scalar, minus the NUL.
+    expect(rows[1].custom_fields).toBe("not-jsontail");
+  });
+
+  it("strips U+0000 from opaque legacy-preservation text cells", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "mission-nul.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`CREATE TABLE mission_feature_evidence_links (id TEXT, featureId TEXT)`);
+      legacy.prepare(`INSERT INTO mission_feature_evidence_links VALUES (?, ?)`)
+        .run("nul\u0000id", "feat\u0000ure");
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(
+      ctx!.db,
+      [{ sqlitePath, pgSchema: "project" as const }],
+      { projectId: "project-nul" },
+    );
+    expect(report.tables).toContainEqual(expect.objectContaining({
+      table: "mission_feature_evidence_links",
+      sourceRows: 1,
+      verified: true,
+      skipped: false,
+    }));
+
+    const rows = await ctx!.db.execute(sql`
+      SELECT legacy_row FROM project.mission_feature_evidence_links
+      WHERE project_id = 'project-nul'
+    `) as unknown as Array<{ legacy_row: Record<string, unknown> }>;
+    expect(rows).toEqual([{
+      legacy_row: {
+        featureId: { type: "text", value: "feature" },
+        id: { type: "text", value: "nulid" },
+      },
+    }]);
   });
 
   it("requires a project identity before preserving opaque project rows", async () => {
@@ -1566,6 +1663,12 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
 
   // VAL-MIGRATE-003 — JSON column fidelity
   it("round-trips JSON columns with identical shape (text-JSON → jsonb)", async () => {
+    const legacy = new DatabaseSync(join(ctx!.fusionDir, "fusion.db"));
+    try {
+      legacy.prepare("UPDATE tasks SET proposalClaimId = ? WHERE id = ?").run("legacy-proposal-claim", "FN-100");
+    } finally {
+      legacy.close();
+    }
     await migrateTest(ctx!.db, [
       { sqlitePath: join(ctx!.fusionDir, "fusion.db"), pgSchema: "project" as const },
     ]);
@@ -1578,6 +1681,10 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     expect(t.steps).toEqual([{ id: "s1", name: "step one" }]);
     expect(t.comments).toEqual([{ author: "agent", body: "hello" }]);
     expect(t.custom_fields).toEqual({ priority: "high", labels: ["a", "b"] });
+    const proposalClaim = (await ctx!.db.execute(sql`
+      SELECT proposal_claim_id FROM project.tasks WHERE id = 'FN-100'
+    `)) as unknown as Array<{ proposal_claim_id: string | null }>;
+    expect(proposalClaim[0].proposal_claim_id).toBe("legacy-proposal-claim");
 
     // Verify the column type is actually jsonb.
     const colInfo = (await ctx!.db.execute(sql`

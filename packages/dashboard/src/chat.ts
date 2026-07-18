@@ -27,9 +27,16 @@ import type {
   MessageStore,
   Settings,
   TaskStore,
+  PermanentAgentGatingContext,
 } from "@fusion/core";
-import type { SkillSelectionContext } from "@fusion/engine";
-import { summarizeTitle, FUSION_RUNTIME_SELF_AWARENESS } from "@fusion/core";
+import type { AgentActionGateContext, SkillSelectionContext } from "@fusion/engine";
+import {
+  ApprovalRequestStore,
+  isEphemeralAgent,
+  resolveEffectiveAgentPermissionPolicy,
+  summarizeTitle,
+  FUSION_RUNTIME_SELF_AWARENESS,
+} from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
@@ -68,6 +75,8 @@ import {
   createGetAgentConfigTool,
   createWebFetchTool,
   createGoalRetrievalTools,
+  createMissionTools,
+  createIdeationTools,
   createMemoryTools,
   createResearchTools,
   resolveMcpServersForStore,
@@ -347,6 +356,92 @@ export interface ChatFusionToolsetOptions {
   agentStore?: AgentStore;
   rootDir: string;
   agentId?: string;
+  /** True only when the session has both policy gate contexts for its bound agent. */
+  missionMutationGated?: boolean;
+}
+
+const CHAT_MISSION_READ_TOOL_NAMES = new Set(["fn_mission_list", "fn_mission_show"]);
+const CHAT_IDEATION_READ_TOOL_NAMES = new Set(["fn_ideation_list", "fn_ideation_show"]);
+
+async function createChatMissionGateContexts(
+  taskStore: TaskStore | undefined,
+  agentStore: AgentStore | undefined,
+  agent: Agent | null,
+): Promise<Pick<ChatFusionToolsetOptions, "missionMutationGated"> & Pick<import("@fusion/engine").AgentRuntimeOptions, "actionGateContext" | "permanentAgentGating">> {
+  if (!taskStore || !agentStore || !agent || isEphemeralAgent(agent)) {
+    return { missionMutationGated: false };
+  }
+
+  // Lightweight dashboard/test stores may provide hierarchy reads without the PostgreSQL approval layer.
+  const asyncLayer = typeof taskStore.getAsyncLayer === "function" ? taskStore.getAsyncLayer() : undefined;
+  if (!asyncLayer) {
+    return { missionMutationGated: false };
+  }
+
+  const settings = await taskStore.getSettings();
+  const permissionPolicy = resolveEffectiveAgentPermissionPolicy(
+    agent.permissionPolicy,
+    settings.defaultAgentPermissionPolicy,
+  );
+  const approvalStore = new ApprovalRequestStore(null, { asyncLayer });
+  const requester = { actorId: agent.id, actorType: "agent" as const, actorName: agent.name };
+  const createApprovalRequest: AgentActionGateContext["createApprovalRequest"] = async (decision, args) => await approvalStore.create({
+    requester,
+    targetAction: {
+      category: decision.category === "exempt" ? "command_execution" : decision.category,
+      action: decision.operation,
+      summary: decision.summary,
+      resourceType: decision.resourceType,
+      resourceId: decision.resourceId ?? "",
+      context: { ...decision.metadata, approvalDedupeKey: decision.approvalDedupeKey, toolName: decision.toolName, toolArgs: args },
+    },
+  });
+
+  /*
+  FNXC:ChatMissionGating 2026-07-29-15:30:
+  Bound permanent-agent chat sessions must carry the same action and permanent-agent
+  gate contexts as executor lanes. Unbound or ephemeral chat has no durable principal
+  or approval store, so it exposes only positively read-only Mission tools.
+  */
+  const actionGateContext: AgentActionGateContext = {
+    agentId: agent.id,
+    agentName: agent.name,
+    isEphemeral: false,
+    permissionPolicy,
+    createApprovalRequest,
+    findApprovalByDedupeKey: async (dedupeKey) => {
+      const latest = await approvalStore.findLatestByDedupeKey({ requesterActorId: agent.id, dedupeKey });
+      return latest ? { id: latest.id, status: latest.status } : null;
+    },
+    pauseForApproval: async () => {
+      await agentStore.updateAgentState(agent.id, "paused");
+      await agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
+    },
+    markApprovalCompleted: async (approvalRequestId) => {
+      await approvalStore.markCompleted(approvalRequestId, { actor: requester, note: "Tool executed after approval" });
+    },
+  };
+  const permanentAgentGating: PermanentAgentGatingContext = {
+    permissionPolicy,
+    requester,
+    createApprovalRequest: async ({ category, toolName, args, approvalDedupeKey }) => await approvalStore.create({
+      requester,
+      targetAction: {
+        category,
+        action: toolName,
+        summary: `Agent gated action for ${toolName}`,
+        resourceType: "tool",
+        resourceId: toolName,
+        context: { toolName, toolArgs: args, source: "agent-gating", ...(approvalDedupeKey ? { approvalDedupeKey } : {}) },
+      },
+    }),
+    findPendingApprovalRequest: async (dedupeKey) => {
+      const pending = await approvalStore.list({ status: "pending", requesterActorId: agent.id, limit: 100 });
+      return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+    },
+  };
+
+  return { missionMutationGated: true, actionGateContext, permanentAgentGating };
 }
 
 /*
@@ -354,11 +449,11 @@ FNXC:ChatAgentTools 2026-07-15-00:00:
 Chat agents, including Grok CLI sessions reached through the plugin MCP bridge,
 must receive one safe coordination/productivity toolset in both model-loop and
 room-responder lanes. Workflow, document, artifact, messaging, and task-planner
-tools stay additive at their call sites; agent lifecycle mutation and memory
-append remain excluded because chat has no action-gate context.
+tools stay additive at their call sites; unbound chat retains only read-only Mission
+tools because it has no durable action-gate principal.
 */
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
-  const { taskStore, agentStore, rootDir, agentId } = options;
+  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false } = options;
   const tools: ChatCustomTool[] = [];
 
   if (taskStore) {
@@ -368,6 +463,10 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskShowTool(taskStore),
       createTaskSearchTool(taskStore),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
+      /* FNXC:MissionToolParity 2026-07-29-15:30: Dashboard chat uses the engine factory, but only bound permanent-agent sessions with both policy contexts receive hierarchy mutations. */
+      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)),
+      /* FNXC:Ideation 2026-07-30-15:30: Unbound or ephemeral chat exposes only positive ideation reads; mutations require the same durable gate context as Mission writes. */
+      ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),
       /* FNXC:ChatAgentTools 2026-07-15-00:00: Chat exposes memory retrieval only and respects the workspace memory-enabled setting; prompt-triggered persistent writes stay excluded without an action-gate context. */
       ...createMemoryTools(rootDir, settings).filter((tool) => tool.name !== "fn_memory_append"),
@@ -1860,11 +1959,13 @@ export class ChatManager {
     );
 
     const workflowTools = createChatWorkflowAuthoringTools(this.taskStore, input.roomProjectId);
+    const missionGateContexts = await createChatMissionGateContexts(this.taskStore, this.agentStore, input.responder);
     const chatFusionTools = await createChatFusionToolset({
       taskStore: this.taskStore,
       agentStore: this.agentStore,
       rootDir: this.rootDir,
       agentId: input.responder.id,
+      missionMutationGated: missionGateContexts.missionMutationGated,
     });
 
     const resolvedSession = await createResolvedAgentSession({
@@ -1898,6 +1999,8 @@ export class ChatManager {
             fallbackModelId: chatModelSettings.fallbackModelId,
           }
         : {}),
+      ...(missionGateContexts.actionGateContext ? { actionGateContext: missionGateContexts.actionGateContext } : {}),
+      ...(missionGateContexts.permanentAgentGating ? { permanentAgentGating: missionGateContexts.permanentAgentGating } : {}),
       onFallbackModelUsed: (payload: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => {
         roomFallbackInfo = payload;
         diagnostics.warn(
@@ -2415,11 +2518,13 @@ export class ChatManager {
         ? [createTaskPlannerRefinementTool(this.taskStore, taskPlannerChatTaskId)]
         : [];
 
+      const missionGateContexts = await createChatMissionGateContexts(this.taskStore, this.agentStore, agent);
       const chatFusionTools = await createChatFusionToolset({
         taskStore: this.taskStore,
         agentStore: this.agentStore,
         rootDir: this.rootDir,
         agentId: agent?.id,
+        missionMutationGated: missionGateContexts.missionMutationGated,
       });
       const customTools = dedupeChatTools([
         createAskQuestionTool(),
@@ -2453,6 +2558,8 @@ export class ChatManager {
               fallbackModelId: chatModelSettings.fallbackModelId,
             }
           : {}),
+        ...(missionGateContexts.actionGateContext ? { actionGateContext: missionGateContexts.actionGateContext } : {}),
+        ...(missionGateContexts.permanentAgentGating ? { permanentAgentGating: missionGateContexts.permanentAgentGating } : {}),
         onFallbackModelUsed: (payload: {
           primaryModel: string;
           fallbackModel: string;

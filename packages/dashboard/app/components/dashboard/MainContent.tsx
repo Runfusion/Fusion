@@ -49,6 +49,7 @@ export function MainContent({
   setShadcnCustomColors,
   resolvedThemeMode,
   setQuickChatButtonModeImmediate,
+  setMobileNavPrimaryItemsImmediate,
   reopenOnboardingWithNav,
   viewMode,
   projects,
@@ -80,6 +81,8 @@ export function MainContent({
   skillsEnabled,
   experimentalFeatures,
   setQuickChatOpen,
+  chatComposerPrefill,
+  onOpenChatWithPrefill,
   setMailboxUnreadCount,
   setMissionTargetId,
   setMissionResumeSessionId,
@@ -229,6 +232,7 @@ export function MainContent({
             onDashboardFontScaleChange={setDashboardFontScalePct}
             onShadcnCustomColorsChange={setShadcnCustomColors}
             onQuickChatButtonModeChange={setQuickChatButtonModeImmediate}
+            onMobileNavPrimaryItemsChange={setMobileNavPrimaryItemsImmediate}
             onReopenOnboarding={reopenOnboardingWithNav}
             onOpenApprovals={() => handleChangeTaskView("mailbox")}
             onOpenWorkflowSettings={() => {
@@ -347,6 +351,8 @@ export function MainContent({
             addToast={addToast}
             projectId={currentProject?.id}
             experimentalFeatures={experimentalFeatures}
+            initialComposerDraft={chatComposerPrefill?.text}
+            initialComposerDraftNonce={chatComposerPrefill?.nonce}
             onPopOut={() => setQuickChatOpen(true)}
           />
         </Suspense>
@@ -660,6 +666,8 @@ export function MainContent({
             isOpen={true}
             onClose={() => handleChangeTaskView("board")}
             onImport={handleGitHubImport}
+            onPlanningMode={openPlanningWithInitialPlanWithNav}
+            onOpenChatWithPrefill={onOpenChatWithPrefill}
             tasks={tasks}
             projectId={currentProject?.id}
             presentation="embedded"

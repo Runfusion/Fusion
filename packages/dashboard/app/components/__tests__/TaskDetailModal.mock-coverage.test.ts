@@ -18,5 +18,9 @@ describe("TaskDetailModal lucide mock coverage", () => {
     expect(lucideMock.Pencil).toBeDefined();
     expect(lucideMock.Workflow).toBeDefined();
     expect(lucideMock.X).toBeDefined();
+    // FN-8286 ArtifactsGallery / TaskReviewTab icons
+    expect(lucideMock.Image).toBeDefined();
+    expect(lucideMock.FileText).toBeDefined();
+    expect(lucideMock.User).toBeDefined();
   });
 });

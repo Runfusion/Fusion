@@ -97,6 +97,10 @@ Supported modes:
 
 The Mission Manager create/edit form exposes this as **Branch strategy** plus a conditional **Branch name** field for `existing` and `custom-new`.
 
+### Mission auto-merge override
+
+The **Merge behavior** control can inherit the project default, explicitly enable auto-merge, or select **Single pull request**. In-context help explains that auto-merge lands each feature individually while a single pull request retains all features on a shared branch for joint review. The latter persists `autoMerge: false` on the mission and stamps newly triaged feature tasks with the same false override, while preserving the mission's shared branch group. Returning the control to inherited clears the mission override. Once a shared branch has members, Mission detail displays its branch name, member count, and PR state.
+
 ### Shared branch-group invariant across entry points
 
 Across all branch entry points (planning/subtask creation, mission triage, and New Task `shared-group` creation), Fusion enforces one rule:
@@ -662,3 +666,15 @@ This lifecycle is validated by integration tests in two dependent tasks:
 ![Mission manager](./screenshots/mission-manager.png)
 
 See also: [Multi-Project](./multi-project.md) and [Task Management](./task-management.md).
+
+## Agent and dashboard-chat tools
+
+Mission hierarchy operations are available with the same project-scoped `MissionStore` contract in the pi extension, engine-managed executor/triage/heartbeat agents, and provider-backed dashboard chat. The surface is `fn_mission_list`, `fn_mission_show`, `fn_mission_create`, `fn_mission_update`, `fn_mission_delete`, `fn_milestone_add`, `fn_milestone_update`, `fn_milestone_delete`, `fn_slice_add`, `fn_slice_activate`, `fn_slice_delete`, `fn_feature_add`, `fn_feature_update`, `fn_feature_delete`, and `fn_feature_link_task`.
+
+`fn_mission_list` and `fn_mission_show` are positively classified read-only. All other hierarchy operations mutate persisted project data and remain subject to the engine action gate and permanent-agent permission policy; they are never treated as unknown or exempt tools.
+
+For example, activate a ready work unit with `fn_slice_activate({ id: "SL-…" })`. Link it to live work with `fn_feature_link_task({ featureId: "F-…", taskId: "FN-…" })`. Linking delegates to `MissionStore.linkFeatureToTask()`: it verifies the task is a live row in the same project, changes the feature to `triaged`, and records the mission/slice linkage on the task. Archived, deleted, missing, and other-project tasks are rejected.
+
+## Ideation handoff
+
+[Persisted ideation](./ideation/persisted-diverge-converge.md) converges a selected candidate into this canonical hierarchy. It atomically creates or attaches a Mission and persists that linkage, rather than maintaining a parallel roadmap document.

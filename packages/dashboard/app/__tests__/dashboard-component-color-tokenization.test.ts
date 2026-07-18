@@ -8,7 +8,6 @@ const root = resolve(__dirname, "../components");
 const auditedCompliant = ["ChatView.css", "MobileNavBar.css", "ListView.css", "WorkflowResultsTab.css"];
 const cleanedFiles = [
   "AgentReflectionsTab.css",
-  "BackgroundTasksIndicator.css",
   "CliBinaryInstallBanner.css",
   "CliBinaryPanel.css",
   "FileMentionPopup.css",

@@ -77,6 +77,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
   skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
+  proactiveTaskChatEnabled: "globalGeneral.enableProactiveTaskChatHint",
   persistAgentThinkingLogPermanent: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   persistAgentThinkingLogEphemeral: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   fnBinaryCheckEnabled: "globalGeneral.disableThisIfYourLocalDevProcessIs",
@@ -162,6 +163,12 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryBackupRetention: "backups.numberOfMemoryBackupsToKeepOldestAre",
   memoryBackupDir: "backups.directoryForMemoryBackupsRelativeToProjectRoot",
   memoryBackupScope: "backups.memoryBackupScopeHint",
+  /*
+  FNXC:EmbeddedPostgres 2026-07-18-12:40:
+  feat(postgres) surfaces embeddedPostgresMaxConnections in DatabaseBackupsSection advanced
+  disclosure; map the existing help string so the DEFAULT_SETTINGS inventory stays complete.
+  */
+  embeddedPostgresMaxConnections: "database.embeddedConnectionCapHelp",
   // MemorySection
   memoryEnabled: "memory.agentsGetMemorySearchMemoryGetAndMemory",
   memoryAutoSummarizeEnabled: "memory.automaticallyCompactMemoryWhenItExceedsTheThreshold",
@@ -247,13 +254,23 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   chatRoomRecentVerbatimMessages: "general.numberOfMostRecentChatRoomMessagesKept",
   chatRoomSummaryMaxChars: "general.hardCapOnTheSynthesizedEarlierRoomContext",
   completionDocumentationMode: "general.workflowsOrChangelogModeWhenContributorsShouldUpdate",
-  ephemeralAgentsCanCreateTasks: "general.allowEphemeralAgentsToCreateTasksHint",
+  reviewArtifacts: "general.reviewArtifactsHint",
+  ephemeralAgentTaskCreationPolicy: "general.ephemeralAgentTaskCreationPolicyHint",
   ephemeralAgentsEnabled: "general.whenEnabledDefaultFusionSpawnsShortLived",
   githubLinkImportedIssuesToTracking: "general.whenEnabledImportedGitHubIssuesUseTheirSource",
   // FNXC:GitHubImportTranslate 2026-07-15-09:30: surfaced as plain rows in
   // GeneralSection beside the other import-scoped GitHub settings.
   githubImportAutoTranslate: "general.autoTranslateImportedIssuesHelp",
   importTranslateTargetLocale: "general.translationTargetLanguageHelp",
+  /*
+  FNXC:ReportPipeline 2026-07-18-12:40:
+  FN-8277 surfaces reportMode + per-action overrides in GeneralSection; map them here so
+  DEFAULT_SETTINGS bookkeeping requires a default-stating description (draft-review project default;
+  reportModeByAction is unset until an action opts in).
+  */
+  reportMode: "general.reportModeHelp",
+  reportModeByAction: "general.reportModeByActionHelp",
+  reportRoadmapDedup: "general.reportRoadmapDedupHelp",
   githubTrackingDedupEnabled: "general.whenEnabledFusionChecksOpenAndClosedIssues",
   githubTrackingEnabledByDefault: "general.offDefault",
   sessionAdvisorEnabledByDefault: "general.offDefault",
@@ -288,6 +305,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 
 /** Setting keys intentionally not surfaced as a plain Settings UI description field, with reasons. */
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
+  // Legacy compatibility input; GeneralSection exposes its policy replacement instead.
+  ephemeralAgentsCanCreateTasks: "legacy compatibility input replaced by ephemeralAgentTaskCreationPolicy",
   // Global-only serve/dashboard LAN discovery switch; no Settings UI description field exists.
   localNetworkDiscoveryEnabled: "global-only LAN discovery runtime switch",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in settings-schema.ts.

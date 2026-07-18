@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 
 /*
 FNXC:CliTests 2026-07-04-13:50:
@@ -24,9 +24,8 @@ vi.mock("../commands/task.js", () => ({
   runTaskPlan: vi.fn(),
 }));
 
-import { TaskStore, MAX_TASK_LIST_TEXT_CHARS } from "@fusion/core";
+import { MAX_TASK_LIST_TEXT_CHARS, type Task, type TaskStore } from "@fusion/core";
 import { hasBuiltCoreDistBarrel } from "@fusion/test-utils";
-import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -74,68 +73,39 @@ function makeCtx(cwd: string) {
   return { cwd } as any;
 }
 
-async function removeDirWithRetries(path: string) {
-  /*
-  FNXC:CliTests 2026-06-19-11:23:
-  FN-6734 showed fixture removal can race SQLite/WAL close on loaded CLI workers; retry cleanup long enough for handles to drain instead of masking test bodies with larger timeouts or worker limits.
-  */
-  const maxAttempts = 12;
+/*
+FNXC:CliTests 2026-07-18-07:15:
+FN-8271 removes the PG template-database fixture from this built-barrel regression guard. The tool only reads `listTasks`, so coupling its required dist recompilation to CREATE DATABASE ... TEMPLATE and twenty persistent writes made one beforeAll compete for both CPU and the shared PostgreSQL DDL server under shard-4 load. Keep the fixture in memory and inject it through the extension's explicit test cache seam: this preserves the actual fn_task_list formatting/truncation surface while leaving PG isolation coverage to the shared harness consumers that require it.
+*/
+const distBarrelTasks = Array.from({ length: 20 }, (_, index) => ({
+  id: `FN-${String(index + 1).padStart(3, "0")}`,
+  title: `Runtime-dist todo task ${String(index + 1).padStart(3, "0")} ${"x".repeat(300)}`,
+  description: `Runtime-dist todo task ${String(index + 1).padStart(3, "0")}`,
+  column: "todo",
+  dependencies: index === 0 ? [] : ["FN-001"],
+  paused: false,
+  steps: [],
+  currentStep: 0,
+}) satisfies Partial<Task>) as Task[];
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      await rm(path, { recursive: true, force: true });
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOTEMPTY" && code !== "EBUSY") {
-        throw error;
-      }
+const distBarrelListStore = {
+  listTasks: vi.fn(async () => distBarrelTasks),
+} as unknown as TaskStore;
 
-      if (attempt === maxAttempts) {
-        throw error;
-      }
-
-      await delay(50 * attempt);
-    }
-  }
-}
-
-pgDescribe.skipIf(!hasBuiltCoreDistBarrel(resolve(__dirname, "../../../core/dist")))(
+describe.skipIf(!hasBuiltCoreDistBarrel(resolve(__dirname, "../../../core/dist")))(
   "fn pi extension (dist-barrel recompilation slice)",
   () => {
     let tmpDir: string;
-    let fixtureHarness: PgTestHarness | undefined;
-    let fixtureStore: TaskStore | undefined;
     let listTool: RegisteredTool;
     let closeRuntimeCachedStores: (() => Promise<void>) | undefined;
     let runtimeDistArtifactUnavailable = false;
 
     beforeAll(async () => {
-      fixtureHarness = await createTaskStoreForTest({ prefix: "fn_ext_dist_barrel" });
-      tmpDir = fixtureHarness.rootDir;
-      await mkdir(join(tmpDir, ".fusion"), { recursive: true });
-      fixtureStore = fixtureHarness.store;
-      await fixtureStore.updateSettings({ taskPrefix: "FN" });
-      const first = await fixtureStore.createTask({
-        title: `Runtime-dist todo task 001 ${"x".repeat(300)}`,
-        description: "Runtime-dist todo task 001",
-        column: "todo",
-      });
-      for (let i = 2; i <= 20; i += 1) {
-        await fixtureStore.createTask({
-          title: `Runtime-dist todo task ${String(i).padStart(3, "0")} ${"x".repeat(300)}`,
-          description: `Runtime-dist todo task ${String(i).padStart(3, "0")}`,
-          column: "todo",
-          dependencies: [first.id],
-        });
-      }
+      tmpDir = await mkdtemp(join(tmpdir(), "fn-ext-dist-barrel-"));
 
       /*
-      FNXC:CliTests 2026-07-16-06:27:
-      FN-8093 rescues the dist-barrel guard by doing its entire CPU-bound recompilation unit and PostgreSQL fixture seeding once in beforeAll, outside each default-5s test body. The dynamic dist extension cannot bootstrap its PostgreSQL backend because its dist migration artifacts are absent, so inject this external fixture store through that module instance's own cache API. Its cache cleanup does not own external stores; afterAll closes the dynamic cache, then this store, before removing the temp root.
-
-      FNXC:CliTests 2026-07-16-06:27:
-      The synchronous barrel predicate covers its direct artifacts but cannot prove every transitive runtime import exists. beforeAll receives no Vitest test context, so record ERR_MODULE_NOT_FOUND here and have each test use its own context to skip cleanly instead of calling a nonexistent suite-hook ctx.skip().
+      FNXC:CliTests 2026-07-18-07:15:
+      The remaining beforeAll work is only built-dist recompilation. The synchronous barrel predicate covers its direct artifacts but cannot prove every transitive runtime import exists, so record ERR_MODULE_NOT_FOUND here and let each test use its own context to skip cleanly instead of calling a nonexistent suite-hook ctx.skip(). The list-only injected fixture has no connection or file handles; close the runtime cache before removing its temporary project root.
       */
       try {
         vi.resetModules();
@@ -148,7 +118,7 @@ pgDescribe.skipIf(!hasBuiltCoreDistBarrel(resolve(__dirname, "../../../core/dist
         closeRuntimeCachedStores = runtimeModule.closeCachedStores;
         const runtimeApi = createMockAPI();
         runtimeModule.default(runtimeApi);
-        runtimeModule.__setCachedStoreForTesting(resolve(tmpDir), fixtureStore);
+        runtimeModule.__setCachedStoreForTesting(resolve(tmpDir), distBarrelListStore);
         listTool = runtimeApi.tools.get("fn_task_list")!;
       } catch (error) {
         const code = error instanceof Error && "code" in error
@@ -165,12 +135,10 @@ pgDescribe.skipIf(!hasBuiltCoreDistBarrel(resolve(__dirname, "../../../core/dist
     afterAll(async () => {
       try {
         await closeRuntimeCachedStores?.();
-        await fixtureStore?.close();
         if (tmpDir) {
-          await removeDirWithRetries(tmpDir);
+          await rm(tmpDir, { recursive: true, force: true });
         }
       } finally {
-        await fixtureHarness?.teardown();
         vi.doUnmock("@fusion/core");
         vi.resetModules();
       }
@@ -207,6 +175,8 @@ pgDescribe.skipIf(!hasBuiltCoreDistBarrel(resolve(__dirname, "../../../core/dist
       expect(broadResult.content[0].type).toBe("text");
       expect(broadText.length).toBeLessThanOrEqual(MAX_TASK_LIST_TEXT_CHARS);
       expect(broadText).toContain("Todo (20):");
+      expect(broadText).toContain("FN-001");
+      expect(broadText).toContain("[deps: FN-001]");
       expect(broadText).toContain("truncated to fit; narrow with column/limit");
     });
 

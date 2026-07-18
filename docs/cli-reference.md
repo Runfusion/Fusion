@@ -1281,3 +1281,12 @@ Subcommands: `search`, `install`.
 | `--poll-ms` | `fn chat` |
 
 For configuration details used by these commands, see [Settings Reference](./settings-reference.md).
+
+### Organization portability
+
+- `fn org-export <file> [--project <name>]` writes a single secret-scrubbed bundle of
+  the selected project's agents, raw skill files, routines, automations, and settings
+  plus global settings.
+- `fn org-import <file> [--project <name>] [--dry-run] [--collision-mode skip|suffix]`
+  materializes a bundle. `--dry-run` reports the plan without modifying stores or files;
+  collision mode defaults to `skip` and `suffix` creates deterministically named copies.

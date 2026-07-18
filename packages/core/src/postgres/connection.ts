@@ -43,7 +43,10 @@ const log = createLogger("postgres-connection");
  * The embedded mode may use an even smaller pool. These can be tuned via
  * environment variables if needed.
  */
-const DEFAULT_POOL_MAX = 10;
+// External databases frequently impose a low connection quota. Each Fusion
+// store owns a runtime pool plus a migration session, so keep the default
+// deliberately small; callers with a known capacity can still override it.
+const DEFAULT_POOL_MAX = 3;
 const DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 20;
 

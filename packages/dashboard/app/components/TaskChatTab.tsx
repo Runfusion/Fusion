@@ -1,5 +1,5 @@
 import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from "@fusion/core";
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
@@ -53,6 +53,7 @@ type TaskChatToolGroupRow =
 
 const BOTTOM_FOLLOW_THRESHOLD = 48;
 const TOP_LOAD_THRESHOLD = 48;
+const INITIAL_LOADING_INDICATOR_DELAY_MS = 150;
 
 function isTranscriptNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
@@ -622,6 +623,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [loadingIndicatorTaskId, setLoadingIndicatorTaskId] = useState<string | null>(null);
   const sendingRef = useRef(false);
   const [optimisticMessages, setOptimisticMessages] = useState<UserChatMessage[]>([]);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
@@ -660,6 +662,27 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
     ? t("taskChat.donePlaceholder", "Start a refinement task for this completed task")
     : t("taskChat.activePlaceholder", "Steer the currently executing agent");
   const canSend = draft.trim().length > 0 && !sending;
+
+  useEffect(() => {
+    if (!loading || transcriptItemCount > 0) {
+      setLoadingIndicatorTaskId(null);
+      return;
+    }
+
+    /*
+     * FNXC:TaskDetailChat 2026-07-18-12:21:
+     * FN-8303 browser tracing showed that omitted-tab Activity → Live briefly paints
+     * “Loading agent output…” before its already-populated initial log response arrives.
+     * Delay that indicator so a fast default-open keeps the stable transcript shell rather
+     * than flashing spinner-to-content; slow requests still receive explicit feedback.
+     * Bind the delayed state to its task so a reused List split-detail instance cannot paint
+     * a prior task’s slow-request spinner while its newly selected task initializes.
+     */
+    const timer = window.setTimeout(() => setLoadingIndicatorTaskId(task.id), INITIAL_LOADING_INDICATOR_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [loading, task.id, transcriptItemCount]);
+
+  const showLoadingIndicator = loadingIndicatorTaskId === task.id;
 
   const resizeComposer = useCallback(() => {
     const textarea = textareaRef.current;
@@ -959,10 +982,12 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
           </div>
         ) : null}
         {loading && transcriptItemCount === 0 ? (
-          <div className="task-chat-empty" role="status">
-            <Loader2 className="animate-spin" aria-hidden="true" />
-            <span>{t("taskChat.loadingAgentOutput", "Loading agent output…")}</span>
-          </div>
+          showLoadingIndicator ? (
+            <div className="task-chat-empty" role="status">
+              <Loader2 className="animate-spin" aria-hidden="true" />
+              <span>{t("taskChat.loadingAgentOutput", "Loading agent output…")}</span>
+            </div>
+          ) : null
         ) : transcriptItemCount === 0 ? (
           <div className="task-chat-empty">{t("taskChat.emptyAgentOutput", "No agent output yet. Live messages from Planner, Executor, Reviewer, and Merger agents will appear here.")}</div>
         ) : (

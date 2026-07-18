@@ -201,6 +201,46 @@ describe("installAuthFetch", () => {
     window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
   });
 
+  it("reports daemon-auth failures through the getter and clears it with token changes", async () => {
+    window.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ error: "Unauthorized", message: "Valid bearer token required" }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    )) as unknown as typeof window.fetch;
+
+    const {
+      AUTH_TOKEN_RECOVERY_REQUIRED_EVENT,
+      clearAuthToken,
+      hasDaemonAuthFailure,
+      installAuthFetch,
+      setAuthToken,
+    } = await loadAuthModule();
+    installAuthFetch();
+
+    const waitForRecovery = () => new Promise<void>((resolve) => {
+      const handleRecovery = () => {
+        window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, handleRecovery);
+        resolve();
+      };
+      window.addEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, handleRecovery);
+    });
+
+    const firstRecovery = waitForRecovery();
+    await fetch("/api/tasks");
+    await firstRecovery;
+    expect(hasDaemonAuthFailure()).toBe(true);
+
+    setAuthToken("replacement-token");
+    expect(hasDaemonAuthFailure()).toBe(false);
+
+    const secondRecovery = waitForRecovery();
+    await fetch("/api/tasks?retry=1");
+    await secondRecovery;
+    expect(hasDaemonAuthFailure()).toBe(true);
+
+    clearAuthToken();
+    expect(hasDaemonAuthFailure()).toBe(false);
+  });
+
   it("fires recovery only for the exact daemon-auth 401 shape on same-origin /api requests", async () => {
     window.localStorage.setItem("fn.authToken", "stale-token");
     const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {

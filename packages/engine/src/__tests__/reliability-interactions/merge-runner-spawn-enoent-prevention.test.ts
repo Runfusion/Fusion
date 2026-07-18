@@ -19,7 +19,12 @@ vi.mock("../../pi.js", () => ({
 import type { Settings } from "@fusion/core";
 import { activeSessionRegistry, executingTaskLock } from "../../active-session-registry.js";
 import { aiMergeTask } from "../../merger.js";
-// FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-04:10:
+VAL-REMOVAL-005 reliability fixtures use PostgreSQL AsyncDataLayer storage. Read
+run audits through getRunAuditEventsAsync so each assertion observes committed
+backend events rather than the removed synchronous SQLite read surface.
+*/
 import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
@@ -129,7 +134,7 @@ describe("FN-6278 reliability interactions: merge runner cwd preflight", () => {
 
       const result = await aiMergeTask(store, rootDir, taskId);
       const taskAfter = await store.getTask(taskId);
-      const audits = store.getRunAuditEvents({ taskId });
+      const audits = await store.getRunAuditEventsAsync({ taskId });
       const auditTypes = audits.map((event) => event.mutationType);
 
       expect(result.merged).toBe(true);
@@ -181,7 +186,7 @@ describe("FN-6278 reliability interactions: merge runner cwd preflight", () => {
 
       const result = await aiMergeTask(store, rootDir, taskId);
       const taskAfter = await store.getTask(taskId);
-      const audits = store.getRunAuditEvents({ taskId });
+      const audits = await store.getRunAuditEventsAsync({ taskId });
       const auditTypes = audits.map((event) => event.mutationType);
 
       expect(result.merged).toBe(true);
@@ -218,7 +223,7 @@ describe("FN-6278 reliability interactions: merge runner cwd preflight", () => {
     try {
       const result = await aiMergeTask(store, rootDir, taskId);
       const taskAfter = await store.getTask(taskId);
-      const audits = store.getRunAuditEvents({ taskId });
+      const audits = await store.getRunAuditEventsAsync({ taskId });
       const auditTypes = audits.map((event) => event.mutationType);
 
       expect(result.merged).toBe(true);
@@ -248,7 +253,7 @@ describe("FN-6278 reliability interactions: merge runner cwd preflight", () => {
         gate: "active-session-binding",
       });
       const taskAfter = await store.getTask(taskId);
-      const audits = store.getRunAuditEvents({ taskId });
+      const audits = await store.getRunAuditEventsAsync({ taskId });
       const auditTypes = audits.map((event) => event.mutationType);
 
       expect(taskAfter?.column).toBe("in-review");

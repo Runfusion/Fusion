@@ -69,7 +69,8 @@ Simplified workflow view styling. Requirements encoded here:
   width: 32px;
   height: 32px;
   border-radius: var(--radius-md);
-  color: #fff;
+  /* FNXC:DashboardTokenHygiene 2026-07-18-04:07: Colored workflow-status chips require an always-white foreground, not theme-variant --accent-text. */
+  color: var(--workflow-chip-foreground);
 }
 
 /* Node family accents (icon chip background + a subtle left accent). */

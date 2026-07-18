@@ -1,8 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import kbExtension, { closeCachedStores } from "../extension.js";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import kbExtension, { __setCachedStoreForTesting, closeCachedStores } from "../extension.js";
 
 interface RegisteredTool {
   name: string;
@@ -42,21 +40,32 @@ function makeCtx(cwd: string) {
   return { cwd } as any;
 }
 
-describe("extension mission goal tools", () => {
+/*
+FNXC:CliTests 2026-07-18-07:45:
+FN-8271 restores this shard-4 collateral suite with the shared external PostgreSQL harness. Booting an embedded postmaster per test raced its own initialization and leaked child processes under the loaded CLI lane; inject the harness store through the extension test seam so tool coverage keeps real mission/goal persistence while one database is reset safely between cases.
+*/
+const h = createSharedPgTaskStoreTestHarness({ prefix: "fn_mission_goal_tools" });
+
+pgDescribe("extension mission goal tools", () => {
   let tmpDir: string;
   let api: ReturnType<typeof createMockAPI>;
 
+  beforeAll(h.beforeAll);
+
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "kb-mission-goal-tools-"));
-    await mkdir(join(tmpDir, ".fusion"), { recursive: true });
+    await h.beforeEach();
+    tmpDir = h.rootDir();
+    __setCachedStoreForTesting(tmpDir, h.store());
     api = createMockAPI();
     kbExtension(api);
   });
 
   afterEach(async () => {
     await closeCachedStores();
-    await rm(tmpDir, { recursive: true, force: true });
+    await h.afterEach();
   });
+
+  afterAll(h.afterAll);
 
   it("registers mission goal tools with schemas", () => {
     expect(api.tools.get("fn_mission_list_goals")?.parameters).toMatchObject({

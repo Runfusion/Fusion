@@ -5,6 +5,7 @@ DashboardBanners is the conditional banner cluster rendered above the dashboard-
 import type { DashboardBannersProps } from "./types";
 import type { SectionId } from "../SettingsModal";
 import { TestModeBanner } from "../TestModeBanner";
+import { MigrationInProgressBanner } from "../MigrationInProgressBanner";
 import { SqliteMigrationBanner } from "../SqliteMigrationBanner";
 import { EngineUnavailableBanner } from "../EngineUnavailableBanner";
 import { EngineStatusBanner } from "../EngineStatusBanner";
@@ -76,6 +77,15 @@ export function DashboardBanners({
 
   return (
     <>
+      {/* FNXC:MigrationHoldingPage 2026-07-17-12:45: Rendered OUTSIDE the
+          project gate — while the boot-window holding server reports
+          status "migrating", project data is not fetchable, yet the open tab
+          must still explain the outage. Clears on the next health poll of the
+          real server. */}
+      <MigrationInProgressBanner
+        isActive={dashboardHealth?.status === "migrating"}
+        progressLabel={dashboardHealth?.migration?.label}
+      />
       {viewMode === "project" && currentProject && (
         <>
           <TestModeBanner isActive={isTestMode} />
@@ -95,7 +105,13 @@ export function DashboardBanners({
           />
         </>
       )}
-      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
+      {/*
+       * FNXC:SessionBanner 2026-07-16-21:10:
+       * FN-8229 removed the always-visible footer AI pill, so active non-planning
+       * sessions must override the appearance preference that hides idle banners.
+       * Per-session dismissal still lets operators suppress an individual entry.
+       */}
+      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && (!sessionBannersHidden || sessionsNeedingInput.length > 0) && (
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}
           onResumeSession={handleOpenBackgroundSession}

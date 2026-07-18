@@ -145,6 +145,7 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 | [PostgreSQL Runtime Cutover Review (2026-07-14)](./postgres-migration-review-2026-07-14.md) | Current end-to-end authority inventory, intentional legacy SQLite readers, deployment contract, and verification record |
 | [SQLite → PostgreSQL Migration Review (2026-06-26, historical)](./postgres-migration-review-2026-06-26.md) | Historical multi-agent review of the incomplete migration branch and its original findings |
 | [Dashboard Theme & UI Plugin System Proposal (2026-07-01)](./proposals/2026-07-01-dashboard-theme-plugin-system.md) | Feasibility-spike proposal for a controlled dashboard theme/UI shell extension point sharing one backend source of truth |
+| [Full-loop Agent Tool-Surface Audit and Delivery Plan](./agent-tool-surface-full-loop.md) | Source-grounded audit of engine-agent and dashboard chat tool factories, gap analysis for mission hierarchy integration, and delivery plan (FN-8280) |
 
 ## External Resources
 

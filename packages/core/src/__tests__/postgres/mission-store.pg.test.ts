@@ -135,6 +135,41 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(tree!.milestones[0]!.slices[0]!.features[0]!.id).toBe(feature.id);
   });
 
+  it("stamps only autoMerge:false mission triage tasks while preserving the shared branch group", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Single PR", autoMerge: false });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const [single, bulk] = await Promise.all([
+      m.addFeature(slice.id, { title: "Single" }),
+      m.addFeature(slice.id, { title: "Bulk" }),
+    ]);
+
+    await m.triageFeature(single.id);
+    await m.triageSlice(slice.id);
+    const tasks = await h.store().listTasks();
+    const triaged = tasks.filter((task) => ["Single", "Bulk"].includes(task.title));
+    expect(triaged).toHaveLength(2);
+    expect(triaged.map((task) => task.autoMerge)).toEqual([false, false]);
+    // Single and bulk triage must join the one lazily-created mission group, not merely any group.
+    expect(new Set(triaged.map((task) => task.branchContext?.groupId))).toEqual(new Set([triaged[0]!.branchContext!.groupId]));
+    expect(triaged[0]!.branchContext?.groupId).toBeDefined();
+
+  });
+
+  it("leaves task autoMerge inherited for undefined and true mission overrides", async () => {
+    const m = missions();
+    for (const autoMerge of [undefined, true] as const) {
+      const mission = await m.createMission({ title: `Inherited ${String(autoMerge)}`, autoMerge });
+      const milestone = await m.addMilestone(mission.id, { title: "MS" });
+      const slice = await m.addSlice(milestone.id, { title: "SL" });
+      const feature = await m.addFeature(slice.id, { title: "Feature" });
+      await m.triageFeature(feature.id);
+      const task = (await h.store().listTasks()).find((candidate) => candidate.title === "Feature");
+      expect(task?.autoMerge).toBeUndefined();
+    }
+  });
+
   it("listMissionsWithSummaries returns hierarchy counts", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Counted" });

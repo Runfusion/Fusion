@@ -356,85 +356,147 @@ export function registerSystemRoutes(ctx: ApiRoutesContext, deps: SystemRouteDep
       if (oldest && oldest !== job.id) jobsById.delete(oldest);
     }
 
-    appendJobLine(job, "system", `Starting ${label} build (${scope})…`);
-    log.info("System rebuild started", { jobId: job.id, scope, restartAfter });
+    const spawnOptions = {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"] as Array<"ignore" | "pipe">,
+      maxLifetimeMs: REBUILD_MAX_LIFETIME_MS,
+      env: { ...process.env, FUSION_SKIP_STARTUP_UPDATE_PREFLIGHT: "1", FORCE_COLOR: "0" },
+    };
 
-    let child: ReturnType<typeof superviseSpawn>;
-    try {
-      child = superviseSpawn(process.execPath, args.map((a, i) => (i === 0 ? scriptPath : a)), {
-        cwd: root,
-        stdio: ["ignore", "pipe", "pipe"],
-        maxLifetimeMs: REBUILD_MAX_LIFETIME_MS,
-        env: { ...process.env, FUSION_SKIP_STARTUP_UPDATE_PREFLIGHT: "1", FORCE_COLOR: "0" },
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      appendJobLine(job, "system", `Failed to spawn build: ${message}`);
-      finishJob(job, "failed", { error: message });
-      rethrowAsApiError(err, "Failed to start rebuild");
-      return; // unreachable — rethrowAsApiError always throws
-    }
-
-    const stdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
-    const stderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
-    child.child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
-
-    void child.waitExit().then(async (exit) => {
-      stdout.flush();
-      stderr.flush();
-      const code = exit.code ?? (exit.signal ? 1 : 0);
-      if (code !== 0) {
-        appendJobLine(job, "system", `Build failed (exit ${exit.code ?? exit.signal ?? "unknown"})`);
-        finishJob(job, "failed", { exitCode: exit.code, error: `Build exited with ${exit.code ?? exit.signal}` });
-        log.warn("System rebuild failed", { jobId: job.id, scope, exitCode: exit.code, signal: exit.signal ?? undefined });
-        return;
-      }
-
-      appendJobLine(job, "system", "Build succeeded.");
-
-      if (scope === "plugins") {
-        try {
-          const result = await reloadStartedPlugins();
-          appendJobLine(
-            job,
-            "system",
-            `Reloaded ${result.reloaded.length} plugin(s)${result.failed.length ? `, ${result.failed.length} failed` : ""}.`,
-          );
-          for (const failure of result.failed) {
-            appendJobLine(job, "system", `Plugin reload failed: ${failure.id} — ${failure.error}`);
-          }
-          finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: result.reloaded });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          appendJobLine(job, "system", `Plugin reload unavailable: ${message}`);
-          finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: [] });
-        }
-        return;
-      }
-
-      let restartScheduled = false;
-      if (restartAfter && systemControl) {
-        restartScheduled = systemControl.requestRestart(`rebuild:${scope}`);
-        appendJobLine(
-          job,
-          "system",
-          restartScheduled
-            ? "Restarting server…"
-            : "Restart not available (no supervising parent) — restart manually to pick up the build.",
-        );
-      }
-      finishJob(job, "succeeded", { exitCode: 0, restartScheduled });
-      log.info("System rebuild succeeded", { jobId: job.id, scope, restartScheduled });
-    }).catch((err) => {
+    const failPostProcessing = (err: unknown): void => {
       // Never let an unexpected throw in the completion chain strand activeJob
       // (which would 409 every subsequent rebuild until process restart).
       const message = err instanceof Error ? err.message : String(err);
       appendJobLine(job, "system", `Rebuild post-processing failed: ${message}`);
       finishJob(job, "failed", { error: message });
       log.error("System rebuild post-processing failed", { jobId: job.id, scope, error: message });
-    });
+    };
 
+    const startBuild = (): void => {
+      appendJobLine(job, "system", `Starting ${label} build (${scope})…`);
+      let child: ReturnType<typeof superviseSpawn>;
+      try {
+        child = superviseSpawn(process.execPath, args.map((a, i) => (i === 0 ? scriptPath : a)), spawnOptions);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendJobLine(job, "system", `Failed to spawn build: ${message}`);
+        finishJob(job, "failed", { error: message });
+        return;
+      }
+
+      const stdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
+      const stderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
+      child.child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+
+      void child.waitExit().then(async (exit) => {
+        stdout.flush();
+        stderr.flush();
+        const code = exit.code ?? (exit.signal ? 1 : 0);
+        if (code !== 0) {
+          appendJobLine(job, "system", `Build failed (exit ${exit.code ?? exit.signal ?? "unknown"})`);
+          finishJob(job, "failed", { exitCode: exit.code, error: `Build exited with ${exit.code ?? exit.signal}` });
+          log.warn("System rebuild failed", { jobId: job.id, scope, exitCode: exit.code, signal: exit.signal ?? undefined });
+          return;
+        }
+
+        appendJobLine(job, "system", "Build succeeded.");
+
+        if (scope === "plugins") {
+          try {
+            const result = await reloadStartedPlugins();
+            appendJobLine(
+              job,
+              "system",
+              `Reloaded ${result.reloaded.length} plugin(s)${result.failed.length ? `, ${result.failed.length} failed` : ""}.`,
+            );
+            for (const failure of result.failed) {
+              appendJobLine(job, "system", `Plugin reload failed: ${failure.id} — ${failure.error}`);
+            }
+            finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: result.reloaded });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            appendJobLine(job, "system", `Plugin reload unavailable: ${message}`);
+            finishJob(job, "succeeded", { exitCode: 0, pluginsReloaded: [] });
+          }
+          return;
+        }
+
+        let restartScheduled = false;
+        if (restartAfter && systemControl) {
+          restartScheduled = systemControl.requestRestart(`rebuild:${scope}`);
+          appendJobLine(
+            job,
+            "system",
+            restartScheduled
+              ? "Restarting server…"
+              : "Restart not available (no supervising parent) — restart manually to pick up the build.",
+          );
+        }
+        finishJob(job, "succeeded", { exitCode: 0, restartScheduled });
+        log.info("System rebuild succeeded", { jobId: job.id, scope, restartScheduled });
+      }).catch(failPostProcessing);
+    };
+
+    /*
+    FNXC:SystemPanel 2026-07-17-12:35:
+    A full rebuild must refresh workspace dependencies before compiling so a changed lockfile or new dependency cannot build against stale node_modules. A failed install aborts both the build and restart. FUSION_SYSTEM_PNPM_BIN and FUSION_SYSTEM_PNPM_ARGS provide a validated test-only command seam; production resolves to `pnpm install`.
+    */
+    if (scope === "full") {
+      const pnpmArgsRaw = process.env.FUSION_SYSTEM_PNPM_ARGS;
+      let pnpmPreArgs: string[] = [];
+      if (pnpmArgsRaw) {
+        try {
+          const parsed: unknown = JSON.parse(pnpmArgsRaw);
+          if (!Array.isArray(parsed) || !parsed.every((arg) => typeof arg === "string")) {
+            throw new Error("FUSION_SYSTEM_PNPM_ARGS must be a JSON array of strings");
+          }
+          pnpmPreArgs = parsed;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          appendJobLine(job, "system", `Dependency install configuration failed: ${message}`);
+          finishJob(job, "failed", { error: message });
+          res.status(202).json(jobSnapshot(job, false));
+          return;
+        }
+      }
+
+      appendJobLine(job, "system", "Installing workspace dependencies (pnpm install)…");
+      let install: ReturnType<typeof superviseSpawn>;
+      try {
+        install = superviseSpawn(process.env.FUSION_SYSTEM_PNPM_BIN ?? "pnpm", [...pnpmPreArgs, "install"], {
+          ...spawnOptions,
+          shell: process.platform === "win32",
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendJobLine(job, "system", `Failed to spawn dependency install: ${message}`);
+        finishJob(job, "failed", { error: message });
+        res.status(202).json(jobSnapshot(job, false));
+        return;
+      }
+
+      const installStdout = createLineSplitter((text) => appendJobLine(job, "stdout", text));
+      const installStderr = createLineSplitter((text) => appendJobLine(job, "stderr", text));
+      install.child.stdout?.on("data", (chunk: Buffer) => installStdout.push(chunk));
+      install.child.stderr?.on("data", (chunk: Buffer) => installStderr.push(chunk));
+      void install.waitExit().then((exit) => {
+        installStdout.flush();
+        installStderr.flush();
+        const code = exit.code ?? (exit.signal ? 1 : 0);
+        if (code !== 0) {
+          appendJobLine(job, "system", `Dependency install failed (exit ${exit.code ?? exit.signal ?? "unknown"})`);
+          finishJob(job, "failed", { exitCode: exit.code, error: `Dependency install exited with ${exit.code ?? exit.signal}` });
+          return;
+        }
+        appendJobLine(job, "system", "Workspace dependencies installed.");
+        startBuild();
+      }).catch(failPostProcessing);
+    } else {
+      startBuild();
+    }
+
+    log.info("System rebuild started", { jobId: job.id, scope, restartAfter });
     res.status(202).json(jobSnapshot(job, false));
   });
 

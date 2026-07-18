@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
+import * as api from "../../api";
 import * as useChatModule from "../../hooks/useChat";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
 import type { ChatSessionInfo, UseChatReturn } from "../../hooks/useChat";
@@ -26,6 +27,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchAgents: vi.fn().mockResolvedValue([]),
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
     fetchTasks: vi.fn().mockResolvedValue([]),
+    fetchSettings: vi.fn().mockResolvedValue({}),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
   };
 });
@@ -40,6 +42,7 @@ async function renderWithAct(ui: Parameters<typeof rtlRender>[0]) {
 
 const mockUseChat = vi.mocked(useChatModule.useChat);
 const mockUseChatRooms = vi.mocked(useChatRoomsModule.useChatRooms);
+const mockFetchSettings = vi.mocked(api.fetchSettings);
 
 const sessionOne: ChatSessionInfo = {
   id: "session-001",
@@ -144,6 +147,7 @@ describe("ChatView draft persistence", () => {
     localStorage.clear();
     mockDesktopViewport();
     setup();
+    mockFetchSettings.mockResolvedValue({} as Awaited<ReturnType<typeof api.fetchSettings>>);
   });
 
   it("writes direct-session drafts to localStorage while typing", async () => {
@@ -216,6 +220,76 @@ describe("ChatView draft persistence", () => {
     await waitFor(() => {
       expect(localStorage.getItem("fusion:chat-draft:direct:session-001")).toBeNull();
     });
+  });
+
+  it("seeds and focuses a direct composer when an external nonce is provided", async () => {
+    localStorage.setItem("fusion:chat-scope", "rooms");
+    const { rerender } = await renderWithAct(
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        experimentalFeatures={{ chatRooms: true }}
+        initialComposerDraft={"https://github.com/owner/repo/issues/42\n\n"}
+        initialComposerDraftNonce={1}
+      />,
+    );
+
+    const textarea = screen.getByPlaceholderText("Type a message...");
+    await waitFor(() => expect(textarea).toHaveValue("https://github.com/owner/repo/issues/42\n\n"));
+    expect(textarea).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /Direct/i })).toHaveAttribute("aria-selected", "true");
+
+    rerender(
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        experimentalFeatures={{ chatRooms: true }}
+        initialComposerDraft={"https://github.com/owner/repo/pull/42\n\n"}
+        initialComposerDraftNonce={2}
+      />,
+    );
+    await waitFor(() => expect(textarea).toHaveValue("https://github.com/owner/repo/pull/42\n\n"));
+  });
+
+  it("restores another session's draft after an always-default prefill session fails", async () => {
+    localStorage.setItem("fusion:chat-scope", "direct");
+    localStorage.setItem("fusion:chat-draft:direct:session-002", "session two draft");
+    const createSession = vi.fn().mockRejectedValue(new Error("creation failed"));
+    setup({ createSession });
+    mockFetchSettings.mockResolvedValue({
+      chatNewSessionMode: "always-default",
+      chatDefaultKind: "agent",
+      chatDefaultAgentId: "agent-001",
+    } as Awaited<ReturnType<typeof api.fetchSettings>>);
+
+    const view = await renderChatView();
+    await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+    view.rerender(
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        experimentalFeatures={{ chatRooms: true }}
+        initialComposerDraft={"https://github.com/owner/repo/issues/42\n\n"}
+        initialComposerDraftNonce={1}
+      />,
+    );
+
+    await waitFor(() => expect(createSession).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByPlaceholderText("Type a message...")).toHaveValue("https://github.com/owner/repo/issues/42\n\n"));
+
+    setup({ activeSession: sessionTwo, sessions: [sessionOne, sessionTwo], filteredSessions: [sessionOne, sessionTwo], createSession });
+    view.rerender(
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        experimentalFeatures={{ chatRooms: true }}
+        initialComposerDraft={"https://github.com/owner/repo/issues/42\n\n"}
+        initialComposerDraftNonce={1}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByPlaceholderText("Type a message...")).toHaveValue("session two draft"));
   });
 
   it("uses room-scoped draft keys and keeps them isolated from direct drafts", async () => {

@@ -34,6 +34,7 @@ import {
   EmbeddedStartTimeoutError,
   DEFAULT_START_TIMEOUT_MS,
   DEFAULT_EMBEDDED_POSTGRES_FLAGS,
+  defaultEmbeddedPostgresFlagsFor,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
@@ -807,7 +808,7 @@ describe("embedded-lifecycle: startup race (cross-process)", () => {
       async start() {
         writeFileSync(
           join(dataDir, "postmaster.pid"),
-          ["12345", dataDir, "/tmp", "localhost", "55440", "5432101", String(Date.now())].join("\n") + "\n",
+          ["12345", dataDir, String(Date.now()), "55440", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
         );
         throw new Error('lock file "postmaster.pid" already exists');
       }
@@ -863,7 +864,7 @@ describe("embedded-lifecycle: startup race only joins on a lock collision", () =
         // A postmaster.pid exists (ours, or a racer's) but the failure is NOT a lock collision.
         writeFileSync(
           join(dataDir, "postmaster.pid"),
-          ["12345", dataDir, "/tmp", "localhost", "55442", "5432101", String(Date.now())].join("\n") + "\n",
+          ["12345", dataDir, String(Date.now()), "55442", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
         );
         throw new Error("could not start postgres: readiness poll timed out");
       }
@@ -890,7 +891,7 @@ describe("embedded-lifecycle: startup race only joins on a lock collision", () =
       async start() {
         writeFileSync(
           join(dataDir, "postmaster.pid"),
-          ["12345", dataDir, "/tmp", "localhost", "55444", "5432101", String(Date.now())].join("\n") + "\n",
+          ["12345", dataDir, String(Date.now()), "55444", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
         );
         throw new Error('lock file "postmaster.pid" already exists');
       }
@@ -917,7 +918,7 @@ describe("embedded-lifecycle: join-path database verify is best-effort", () => {
     // A port nothing is listening on: the verify's probe cannot succeed.
     writeFileSync(
       join(dataDir, "postmaster.pid"),
-      ["12345", dataDir, "/tmp", "localhost", "55441", "5432101", String(Date.now())].join("\n") + "\n",
+      ["12345", dataDir, String(Date.now()), "55441", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
     );
     const logLines: string[] = [];
 
@@ -1026,28 +1027,30 @@ describe("embedded-lifecycle: startup timeout (P1 #24)", () => {
 });
 
 describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", () => {
-  it("reads the TCP port from line 5 (index 4) of postmaster.pid", () => {
+  it("reads the TCP port from PostgreSQL's real line 4 (index 3) postmaster.pid layout", () => {
     const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
     try {
       const { writeFileSync } = require("node:fs");
       // Standard PostgreSQL postmaster.pid format:
       // Line 1: PID
       // Line 2: data directory
-      // Line 3: unix socket directory
-      // Line 4: listen address
-      // Line 5: port number
-      // Line 6: shared memory key
-      // Line 7: postmaster start timestamp
+      // Line 3: postmaster start timestamp
+      // Line 4: port number
+      // Line 5: unix socket directory
+      // Line 6: listen address
+      // Line 7: shared memory key and id
+      // Line 8: status
       writeFileSync(
         join(dir, "postmaster.pid"),
         [
           "12345",
           "/home/user/.fusion/embedded-postgres/default",
+          "1784361395",
+          "55432",
           "/tmp",
           "localhost",
-          "55432",
-          "5432101",
-          String(Date.now()),
+          "18446744071752735336 19857409",
+          "ready",
         ].join("\n") + "\n",
       );
 
@@ -1064,7 +1067,7 @@ describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", (
       const { writeFileSync } = require("node:fs");
       writeFileSync(
         join(dir, "postmaster.pid"),
-        ["12345", "/data", "/tmp", "localhost", "not-a-port", "5432101"].join("\n") + "\n",
+        ["12345", "/data", "1784361395", "not-a-port", "/tmp", "localhost", "5432101", "ready"].join("\n") + "\n",
       );
       expect(readPortFromPostmasterPid(dir)).toBeNull();
     } finally {
@@ -1081,16 +1084,15 @@ describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", (
     }
   });
 
-  it("does NOT read line 3 (index 2, socket dir) as the port", () => {
-    // Regression: the bug read lines[2] (socket dir) which is never the port.
-    // If the socket dir happened to contain digits, parseInt would produce
-    // a wrong port. This test ensures we skip past it.
+  it("does NOT read line 3 (index 2, start timestamp) as the port", () => {
+    // The start timestamp is numeric, so parsing the wrong adjacent line would
+    // produce a plausible-looking but unusable port.
     const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
     try {
       const { writeFileSync } = require("node:fs");
       writeFileSync(
         join(dir, "postmaster.pid"),
-        ["12345", "/data", "/var/run/postgresql", "localhost", "5433", "5432101"].join("\n") + "\n",
+        ["12345", "/data", "1784361395", "5433", "/var/run/postgresql", "localhost", "5432101", "ready"].join("\n") + "\n",
       );
       const port = readPortFromPostmasterPid(dir);
       expect(port).toBe(5433);
@@ -1124,6 +1126,24 @@ describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
     __setEmbeddedPostgresCtorForTests(RecordingEmbeddedPostgres as never);
   }
 
+  /*
+   * FNXC:PostgresEmbedded 2026-07-17-19:20:
+   * `shared_memory_type=mmap` is rejected by PostgreSQL on Windows (only value:
+   * `windows`) with a FATAL before the port opens — the mmap default broke every
+   * Windows embedded start and the v0.70.0/v0.70.1 Windows release smoke. The
+   * default flag set must stay platform-aware: no shared_memory_type override on
+   * win32, mmap everywhere else.
+   */
+  it.each(["win32", "darwin", "linux"] as const)("default flags are valid for %s", (platform) => {
+    const flags = defaultEmbeddedPostgresFlagsFor(platform);
+    if (platform === "win32") {
+      expect(flags).toEqual([]);
+    } else {
+      expect(flags).toEqual(["-c", "shared_memory_type=mmap"]);
+    }
+    expect(flags.join(" ")).not.toMatch(platform === "win32" ? /shared_memory_type/ : /shared_memory_type=(windows|sysv)/);
+  });
+
   it.each([
     ["omitted", undefined, [...DEFAULT_EMBEDDED_POSTGRES_FLAGS]],
     ["empty", [], [...DEFAULT_EMBEDDED_POSTGRES_FLAGS]],
@@ -1147,6 +1167,37 @@ describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  /*
+   * FNXC:PostgresEmbedded 2026-07-18-00:20:
+   * Issue #2286: initdb without --encoding inherits the OS locale encoding; on
+   * non-UTF-8 Windows locales (WIN1254/WIN1252) the cluster cannot store the
+   * UTF-8 schema SQL and the dashboard crash-loops. The lifecycle must force a
+   * UTF-8 cluster on EVERY platform, with caller flags appended after (initdb
+   * takes the last occurrence of a repeated option, so callers can override).
+   */
+  it("forces a UTF-8 initdb (issue #2286) and appends caller initdb flags after the defaults", async () => {
+    const dataDir = makeDataDir();
+    const records: Record<string, unknown>[] = [];
+    installCtorRecorder(records);
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        initdbFlags: ["--data-checksums"],
+      });
+
+      await expect(lifecycle.start()).rejects.toBe(sentinel);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.initdbFlags).toEqual([
+        "--encoding=UTF8",
+        "--locale=C",
+        "--data-checksums",
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
 
   it("passes the ordered defaults and caller override through the elevated Windows launcher", async () => {
     const dataDir = makeDataDir();

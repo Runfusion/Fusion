@@ -17,10 +17,27 @@ import type { PluginDashboardViewEntry } from "../api";
 import { buildPluginTaskViewId, isPluginViewId } from "../plugins/pluginViewRegistry";
 import { getPluginNavIcon } from "./pluginNavIcon";
 import type { ShellHostContext } from "../shell-host";
+import type { ReportActionType } from "@fusion/core";
+import { ReportActionMenu } from "./ReportActionMenu";
+import { ReportModal } from "./ReportModal";
 
 export { useViewportMode };
 
 const NO_BRANCH_FILTER_VALUE = "__fusion:no-branch__";
+
+/**
+ * FNXC:ReportPipeline 2026-07-16-19:30:
+ * Reports opened from task detail routes must gather the active task's logs,
+ * agent, and errors. Task navigation uses hash routes, while legacy links use
+ * query parameters, so resolve both at modal-open render time.
+ */
+export function resolveReportContextRefs(location: Pick<Location, "hash" | "search">): { taskId?: string; agentId?: string } | undefined {
+  const params = new URLSearchParams(location.search);
+  const hashTaskMatch = location.hash.match(/^#\/tasks\/([^/?#]+)/);
+  const taskId = hashTaskMatch?.[1] ? decodeURIComponent(hashTaskMatch[1]) : params.get("taskId") ?? undefined;
+  const agentId = params.get("agentId") ?? undefined;
+  return taskId || agentId ? { taskId, agentId } : undefined;
+}
 
 // Status icon config for project selector dropdown
 const PROJECT_STATUS_CONFIG: Record<ProjectStatus, { color: string }> = {
@@ -172,6 +189,10 @@ export function Header({
   const isTablet = mode === "tablet";
   const isCompact = isMobile || isTablet;
   const hideFullNav = isMobile && mobileNavEnabled;
+  const [reportAction, setReportAction] = useState<ReportActionType | null>(null);
+  // Resolve on every render so opening a report after in-app hash navigation
+  // uses the current task rather than the Header's initial route.
+  const reportContextRefs = typeof window === "undefined" ? undefined : resolveReportContextRefs(window.location);
   /*
   FNXC:Navigation 2026-06-19-00:00:
   When experimental left sidebar navigation is active on tablet/desktop, Header must suppress its view-toggle and More-views trigger so there is one canonical non-mobile navigation surface and no orphaned chevron remains.
@@ -963,6 +984,14 @@ export function Header({
         FNXC:Navigation 2026-06-22-00:00:
         When the left sidebar is active it owns Workflows as a main-content destination, so the Header drops its duplicate desktop Workflow button. The flag-off desktop layout keeps the Header button; mobile/tablet keep the overflow entry.
         */}
+        {/*
+        FNXC:ReportPipeline 2026-07-16-21:30:
+        Bug, Feedback, Idea, and Help must remain reachable at every responsive
+        breakpoint. Compact navigation can hide the overflow trigger entirely,
+        so the report menu lives directly in the header action row instead.
+        */}
+        <ReportActionMenu onSelect={setReportAction} />
+
         {!isCompact && !leftSidebarNavActive && onOpenWorkflowEditor && (
           <button
             className="btn-icon"
@@ -1294,6 +1323,7 @@ export function Header({
         )}
       </div>
     )}
+    {reportAction && <ReportModal actionType={reportAction} contextRefs={reportContextRefs} onClose={() => setReportAction(null)} />}
   </div>
 );
 }

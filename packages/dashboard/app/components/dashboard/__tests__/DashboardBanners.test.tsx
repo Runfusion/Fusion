@@ -219,7 +219,7 @@ function buildProps(overrides: Partial<DashboardBannersProps> = {}): DashboardBa
 }
 
 function querySessionBanner(): HTMLElement | null {
-  return screen.queryByRole("region", { name: /AI sessions needing input or failed/i });
+  return screen.queryByRole("region", { name: /AI sessions (in progress, )?needing input,? or failed/i });
 }
 
 function unavailableEngineHealth(): DashboardBannersProps["dashboardHealth"] {
@@ -359,8 +359,11 @@ describe("DashboardBanners engine remediation visibility", () => {
 
 describe("DashboardBanners session notification visibility", () => {
   /*
-  FNXC:SessionBanner 2026-06-25-00:00:
-  FN-7020 visibility surface enumeration: DashboardBanners.tsx is the only app-shell mount point for SessionNotificationBanner (grep-confirmed; other references are tests). The guard must remain viewMode === "project", currentProject present, taskView !== "missions", !modalManager.isPlanningOpen, and !sessionBannersHidden so Missions interviews and the Planning modal own their active AI-session UX while board/list surfaces still show needs-input sessions.
+  FNXC:SessionBanner 2026-07-16-21:10:
+  FN-8229 makes DashboardBanners the only app-shell entry point after removing
+  the footer AI pill. Missions and the Planning modal retain their dedicated
+  surfaces, while active non-planning sessions override the hidden-banner
+  preference so background work always remains reachable on board/list views.
   */
   it("does not render the session notification banner on the missions view", () => {
     render(<DashboardBanners {...buildProps({ taskView: "missions" })} />);
@@ -394,8 +397,25 @@ describe("DashboardBanners session notification visibility", () => {
     expect(screen.getByText("Needs attention")).toBeInTheDocument();
   });
 
-  it("does not render when the appearance setting hides session banners", () => {
-    render(<DashboardBanners {...buildProps({ sessionBannersHidden: true })} />);
+  it("keeps active sessions reachable when the appearance setting hides idle banners", () => {
+    const handleOpenBackgroundSession = vi.fn();
+    render(
+      <DashboardBanners
+        {...buildProps({
+          sessionBannersHidden: true,
+          sessionsNeedingInput: [buildSession({ id: "background-subtask", type: "subtask", status: "generating", title: "Background subtask" })],
+          handleOpenBackgroundSession,
+        })}
+      />,
+    );
+
+    expect(querySessionBanner()).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /resume/i }));
+    expect(handleOpenBackgroundSession).toHaveBeenCalledWith(expect.objectContaining({ id: "background-subtask" }));
+  });
+
+  it("does not render when banners are hidden and there are no active sessions", () => {
+    render(<DashboardBanners {...buildProps({ sessionBannersHidden: true, sessionsNeedingInput: [] })} />);
 
     expect(querySessionBanner()).not.toBeInTheDocument();
   });

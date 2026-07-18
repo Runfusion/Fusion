@@ -1,10 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { TaskStore, type WorkflowIr } from "@fusion/core";
+import { type TaskStore, type WorkflowIr } from "@fusion/core";
+import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { createTaskCreateTool } from "../agent-tools.js";
 
 /*
@@ -15,22 +13,18 @@ non-triage `intake`-trait column (e.g. "Inbox") must capture new cards there, in
 (bootstrap-stub PROMPT.md, no Planner spec generation), while the default builtin:coding
 workflow keeps landing cards in "triage" byte-identically.
 */
-describe("createTaskCreateTool intake-column wiring", () => {
-  let rootDir: string;
-  let globalDir: string;
+/* FNXC:PgMigrationQuarantine 2026-07-17-18:15: FN-8258 keeps intake-column behavior on a real PostgreSQL-backed TaskStore, replacing removed SQLite inMemoryDb setup. */
+pgDescribe("createTaskCreateTool intake-column wiring", () => {
+  let harness: PgTestHarness;
   let store: TaskStore;
 
   beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "kb-engine-agent-tools-intake-"));
-    globalDir = mkdtempSync(join(tmpdir(), "kb-engine-agent-tools-intake-global-"));
-    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
-    await store.init();
+    harness = await createTaskStoreForTest({ prefix: "fusion_agent_tools_intake" });
+    store = harness.store;
   });
 
   afterEach(async () => {
-    store.close();
-    await rm(rootDir, { recursive: true, force: true });
-    await rm(globalDir, { recursive: true, force: true });
+    await harness?.teardown();
   });
 
   function inboxWorkflowIr(name: string): WorkflowIr {
@@ -132,7 +126,7 @@ describe("createTaskCreateTool intake-column wiring", () => {
 
     expect((result as { isError?: boolean }).isError).toBeFalsy();
     const taskId = (result.details as { taskId: string }).taskId;
-    const prompt = await readFile(join(rootDir, ".fusion", "tasks", taskId, "PROMPT.md"), "utf-8");
+    const prompt = await readFile(join(harness.rootDir, ".fusion", "tasks", taskId, "PROMPT.md"), "utf-8");
     expect(prompt).toBe(`# ${taskId}\n\nInbox bootstrap prompt task\n`);
   });
 });

@@ -35,6 +35,7 @@ import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { PluginSlot } from "./PluginSlot";
 import { appendTokenQuery, OAUTH_RELOGIN_SUCCESS_EVENT } from "../auth";
+import { openExternalUrl } from "../utils/open-external";
 import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { filterVisibleOnboardingAndSettingsProviders } from "./providerVisibility";
 import { useShellConnection } from "../hooks/useShellConnection";
@@ -266,8 +267,11 @@ function getProviderDisplayName(providerId: string): string {
 FNXC:Onboarding 2026-07-03-00:00:
 Onboarding quick start must show practical first-run choices beyond Anthropic, including OpenAI/ChatGPT, Google/Gemini, OpenRouter, and Ollama when those visible providers are configured.
 Keep Anthropic subscription OAuth and raw Anthropic API-key auth as separate first-class cards; use the legacy `anthropic` id only as a fallback for older status payloads.
+
+FNXC:Onboarding 2026-07-18-03:40:
+The OpenAI Codex subscription card belongs in quick start (it was buried in Advanced), placed directly AFTER the Anthropic subscription and BEFORE the API-key options — subscription sign-ins are the primary first-run path, keys are the fallback.
 */
-const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "ollama"] as const;
+const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "ollama"] as const;
 
 const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
@@ -1438,7 +1442,7 @@ export function ModelOnboardingModal({
           setDeviceCodes((prev) => ({ ...prev, [providerId]: deviceCode }));
         }
         if (providerId !== "github-copilot" || !deviceCode) {
-          window.open(appendTokenQuery(deviceCode?.verificationUri ?? url), "_blank");
+          openExternalUrl(appendTokenQuery(deviceCode?.verificationUri ?? url));
         }
 
         // Poll for auth completion
@@ -2392,7 +2396,7 @@ export function ModelOnboardingModal({
               >
                 {t("setup.copyCode", "Copy code")}
               </button>
-              <button className="btn btn-sm" onClick={() => window.open(appendTokenQuery(deviceCodes[provider.id].verificationUri), "_blank")}>
+              <button className="btn btn-sm" onClick={() => openExternalUrl(appendTokenQuery(deviceCodes[provider.id].verificationUri))}>
                 {t("setup.openGitHub", "Open GitHub")}
               </button>
             </div>

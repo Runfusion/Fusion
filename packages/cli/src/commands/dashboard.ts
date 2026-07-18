@@ -78,6 +78,7 @@ import {
   createPrReconcileGithubOps,
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
+import { startMigrationHoldingServer } from "./migration-holding-server.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
@@ -893,9 +894,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   optional SQLite migrate) is the first large bucket after the PostgreSQL cutover.
   */
   const logPhase = (message: string, scope = "dashboard") => logSink.log(message, scope);
+  /*
+  FNXC:MigrationHoldingPage 2026-07-17-12:30:
+  The backend factory below performs the one-time SQLite→PostgreSQL migration
+  BEFORE the real HTTP server binds, so browsers hitting the dashboard during
+  that window previously saw "connection refused". Bind a temporary holding
+  server on the selected port for the boot window: fresh navigations get a
+  live "database migration in progress" page and already-open dashboard tabs
+  see a "migrating" /api/health status they render as a banner. The port is
+  released (awaited) right before the real app.listen(). Bind failure is soft.
+  */
+  const migrationHoldingServer = await startMigrationHoldingServer({
+    port: selectedPort,
+    host: selectedHost,
+    log: (message) => logSink.log(message, "dashboard"),
+  });
   const dashboardBackendBoot = await phaseTime(
     "backend.factory",
-    () => createTaskStoreForBackend({ rootDir: cwd }),
+    () => createTaskStoreForBackend({
+      rootDir: cwd,
+      onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
+    }),
     logPhase,
   );
   // FNXC:PostgresFinalCutover 2026-07-14-17:20: Dashboard runtime storage is
@@ -2704,6 +2723,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     }, POLL_MS).unref();
   }
 
+  /*
+  FNXC:MigrationHoldingPage 2026-07-17-12:30:
+  Release the boot-window holding server before binding the real server on the
+  same port. The close is awaited so the ports never race; the holding page
+  keeps polling through the swap and reloads into the real dashboard.
+  */
+  if (migrationHoldingServer) {
+    await migrationHoldingServer.close();
+  }
   const server = app.listen(selectedPort, selectedHost);
 
   server.on("error", (err: NodeJS.ErrnoException) => {

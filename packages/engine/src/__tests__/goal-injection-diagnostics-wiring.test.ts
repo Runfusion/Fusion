@@ -6,6 +6,13 @@ import {
   resolveGoalContextForDiagnostics,
 } from "../goal-injection-diagnostics.js";
 
+/*
+FNXC:PgMigrationQuarantine 2026-07-18-04:15:
+Goal injection awaits GoalStore listGoals under the PostgreSQL backend. These
+wiring mocks return promises to preserve diagnostic and audit assertions at
+the production-shaped async collaborator boundary.
+*/
+
 function goal(id: string, title: string, createdAt: string): Goal {
   return {
     id,
@@ -21,7 +28,7 @@ describe("goal injection diagnostics wiring seam", () => {
   it("resolveAndEmitGoalContext emits applied diagnostics and audit for planning lane", async () => {
     const goals = [goal("G-1", "one", "2026-01-01T00:00:00.000Z")];
     const store = {
-      getGoalStore: () => ({ listGoals: () => goals }),
+      getGoalStore: () => ({ listGoals: async () => goals }),
       logEntry: vi.fn().mockResolvedValue(undefined),
       recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     } as any;
@@ -42,7 +49,7 @@ describe("goal injection diagnostics wiring seam", () => {
 
   it("resolveAndEmitGoalContext emits no-goals semantics when goal store is empty", async () => {
     const store = {
-      getGoalStore: () => ({ listGoals: () => [] }),
+      getGoalStore: () => ({ listGoals: async () => [] }),
       logEntry: vi.fn().mockResolvedValue(undefined),
       recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     } as any;
@@ -68,7 +75,7 @@ describe("goal injection diagnostics wiring seam", () => {
     const lanes = ["heartbeat", "executor", "planning"] as const;
     for (const lane of lanes) {
       const store = {
-        getGoalStore: () => ({ listGoals: () => [goal("G-1", "one", "2026-01-01T00:00:00.000Z")] }),
+        getGoalStore: () => ({ listGoals: async () => [goal("G-1", "one", "2026-01-01T00:00:00.000Z")] }),
         getMissionStore: () => ({ listGoalIdsForTask: () => ["G-PROV-1", "G-PROV-2"] }),
         logEntry: vi.fn().mockResolvedValue(undefined),
         recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
@@ -160,7 +167,7 @@ describe("goal injection diagnostics wiring seam", () => {
 
   it("fails soft when provenance resolution throws", async () => {
     const store = {
-      getGoalStore: () => ({ listGoals: () => [goal("G-1", "one", "2026-01-01T00:00:00.000Z")] }),
+      getGoalStore: () => ({ listGoals: async () => [goal("G-1", "one", "2026-01-01T00:00:00.000Z")] }),
       getMissionStore: () => ({
         listGoalIdsForTask: () => {
           throw new Error("boom");

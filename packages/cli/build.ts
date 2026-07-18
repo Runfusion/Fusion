@@ -212,6 +212,165 @@ function ensureClientAssets(): ClientAssetMode {
   return "stub";
 }
 
+/*
+FNXC:StandaloneExeMigrations 2026-07-17-13:40:
+The compiled binary cannot read module-relative assets out of /$bunfs, so the
+PostgreSQL migrations must ship as real files next to the binary. Stage
+packages/core/src/postgres/migrations (same source tsup.config.ts stages into
+dist/migrations for the npm package) into the exe output dir; core's
+schema-applier resolves them execPath-relative at runtime.
+*/
+const pgMigrationsSrc = join(workspaceRoot, "packages", "core", "src", "postgres", "migrations");
+const pgMigrationsDest = join(outDir, "migrations");
+
+function stageMigrations(): void {
+  if (!existsSync(pgMigrationsSrc)) {
+    console.warn(
+      `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; the standalone binary will fail to apply schema migrations.`,
+    );
+    return;
+  }
+  if (existsSync(pgMigrationsDest)) {
+    rmSync(pgMigrationsDest, { recursive: true, force: true });
+  }
+  cpSync(pgMigrationsSrc, pgMigrationsDest, { recursive: true });
+  console.log(`  → ${pgMigrationsDest}`);
+}
+
+// ── Embedded PostgreSQL runtime staging ───────────────────────────────
+/*
+FNXC:StandaloneExeEmbeddedPg 2026-07-17-14:20:
+core's embedded-lifecycle loads `embedded-postgres` via createRequire at
+runtime (deliberately outside the bundler graph). Inside the compiled binary
+that resolution fails: bun --compile binaries perform NO node_modules
+bare-specifier resolution at runtime — not even through a createRequire
+anchored at a real on-disk directory (verified empirically: requiring an
+absolute path works, but any bare import like "pg" from that file then fails).
+A staged node_modules tree therefore cannot work. Instead, stage a fully
+self-contained esbuild CJS bundle of embedded-postgres (pg, async-exit-hook,
+and the matching @embedded-postgres/<platform> entry inlined) at
+  dist/runtime/<platform>/embedded-postgres/dist/index.cjs
+plus the native initdb/pg_ctl/postgres payload at
+  dist/runtime/<platform>/embedded-postgres/native/
+The platform package resolves its binaries via import.meta.url ("../native/
+bin/..."), so import.meta.url is defined to the bundle's own file URL and the
+native tree is staged one level up — the same relative layout the package
+expects. embedded-lifecycle probes this execPath-relative dir (or
+FUSION_EMBEDDED_PG_RUNTIME_DIR) only when normal resolution fails.
+pnpm-workspace.yaml supportedArchitectures limits local installs to the host
+OS, so targets whose platform payload is absent on the build host get a
+warning and no embedded payload (DATABASE_URL mode is unaffected), mirroring
+the spirit of verifyEmbeddedPostgresPayloads in
+packages/desktop/scripts/workspace-tools.ts.
+*/
+const coreRequire = createRequire(join(workspaceRoot, "packages", "core", "package.json"));
+
+const ALL_EMBEDDED_PG_PLATFORM_PACKAGES = [
+  "@embedded-postgres/darwin-arm64",
+  "@embedded-postgres/darwin-x64",
+  "@embedded-postgres/linux-arm64",
+  "@embedded-postgres/linux-x64",
+  "@embedded-postgres/linux-arm",
+  "@embedded-postgres/linux-ia32",
+  "@embedded-postgres/linux-ppc64",
+  "@embedded-postgres/windows-x64",
+] as const;
+
+/** Map a runtime prebuild name (e.g. "darwin-arm64", "windows-x64") to the platform package. */
+function embeddedPgPlatformPackageFor(prebuildName: string): string | null {
+  const [plat, arch] = prebuildName.split("-");
+  const os = plat === "windows" || plat === "win32" ? "windows" : plat;
+  const name = `@embedded-postgres/${os}-${arch}`;
+  return (ALL_EMBEDDED_PG_PLATFORM_PACKAGES as readonly string[]).includes(name) ? name : null;
+}
+
+function stageEmbeddedPostgresRuntime(target?: BunTarget): boolean {
+  const prebuildName = target ? targetToPrebuildName(target) : hostPrebuildName();
+  const destRoot = join(runtimeDir, prebuildName, "embedded-postgres");
+  try {
+    if (existsSync(destRoot)) {
+      rmSync(destRoot, { recursive: true, force: true });
+    }
+    mkdirSync(join(destRoot, "dist"), { recursive: true });
+
+    let embeddedPgJsonPath: string;
+    try {
+      embeddedPgJsonPath = coreRequire.resolve("embedded-postgres/package.json");
+    } catch {
+      console.warn(
+        `  WARNING: embedded-postgres is not resolvable from @fusion/core; the ${prebuildName} binary will not support the default embedded database mode.`,
+      );
+      return false;
+    }
+    const embeddedPgRoot = dirname(embeddedPgJsonPath);
+    const embeddedPgEntry = join(embeddedPgRoot, "dist", "index.js");
+    const embeddedPgRequire = createRequire(embeddedPgJsonPath);
+
+    // Resolve the target's native payload (an optionalDependency of
+    // embedded-postgres, resolved from its own location). Absent payloads are
+    // a warning, not a failure — pnpm only installs the host OS's packages.
+    const platformPkg = embeddedPgPlatformPackageFor(prebuildName);
+    let nativeSrc: string | null = null;
+    if (platformPkg) {
+      try {
+        const platformEntry = embeddedPgRequire.resolve(platformPkg);
+        const candidate = join(dirname(platformEntry), "..", "native");
+        if (existsSync(join(candidate, "bin"))) nativeSrc = candidate;
+      } catch {
+        nativeSrc = null;
+      }
+    }
+    if (!platformPkg || !nativeSrc) {
+      console.warn(
+        `  WARNING: embedded-postgres native payload (${platformPkg ?? "unmapped platform"}) is not installed on this host for target ${prebuildName}. ` +
+          `Embedded database mode will be unavailable in this build (DATABASE_URL mode is unaffected).`,
+      );
+    }
+
+    // Bundle embedded-postgres + deps into one self-contained CJS file. The
+    // target's platform package is inlined; the other platforms' dynamic
+    // imports stay external (their branches never execute at runtime).
+    const esbuildBin = join(workspaceRoot, "node_modules", ".bin", process.platform === "win32" ? "esbuild.cmd" : "esbuild");
+    if (!existsSync(esbuildBin)) {
+      console.warn(`  WARNING: esbuild not found at ${esbuildBin}; cannot stage embedded-postgres runtime.`);
+      return false;
+    }
+    const externals = ALL_EMBEDDED_PG_PLATFORM_PACKAGES.filter(
+      (name) => !(nativeSrc && name === platformPkg),
+    );
+    const outFile = join(destRoot, "dist", "index.cjs");
+    const esbuildArgs = [
+      embeddedPgEntry,
+      "--bundle",
+      "--platform=node",
+      "--format=cjs",
+      `--outfile=${outFile}`,
+      // The inlined platform package computes native binary paths from
+      // import.meta.url; point it at the bundle's own real file location.
+      "--define:import.meta.url=__fusionEmbeddedPgBundleUrl",
+      "--banner:js=const __fusionEmbeddedPgBundleUrl = require('node:url').pathToFileURL(__filename).href;",
+      "--external:pg-native",
+      ...externals.map((name) => `--external:${name}`),
+      "--log-level=warning",
+    ];
+    const bundleProc = Bun.spawnSync({ cmd: [esbuildBin, ...esbuildArgs], cwd: workspaceRoot, stdout: "inherit", stderr: "inherit" });
+    if (bundleProc.exitCode !== 0) {
+      console.error(`  ERROR: esbuild bundling of embedded-postgres failed for ${prebuildName} (exit ${bundleProc.exitCode}).`);
+      return false;
+    }
+
+    if (nativeSrc) {
+      // Preserve symlinks (macOS dylib ABI-compat links) and executable bits.
+      cpSync(nativeSrc, join(destRoot, "native"), { recursive: true });
+    }
+    console.log(`  → ${destRoot} (embedded-postgres runtime bundle${nativeSrc ? " + native payload" : ", JS only"})`);
+    return nativeSrc !== null;
+  } catch (err) {
+    console.error(`  ERROR: Failed to stage embedded-postgres runtime for ${prebuildName}:`, err);
+    return false;
+  }
+}
+
 // ── Copy native terminal assets for a specific target ─────────────────
 /**
  * Stage @homebridge/node-pty-prebuilt-multiarch native assets for the given target.
@@ -325,6 +484,10 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
     ? target.replace(/^bun-/, "") 
     : hostPrebuildName();
   copyNativeAssets(isCrossCompile ? target as BunTarget : undefined);
+  // FNXC:StandaloneExeEmbeddedPg 2026-07-17-13:40:
+  // Must run AFTER copyNativeAssets — that function recreates runtime/<plat>/
+  // and would wipe a previously staged embedded-postgres tree.
+  stageEmbeddedPostgresRuntime(isCrossCompile ? target as BunTarget : undefined);
 
   // Prepare asset paths for embedding
   const nativeAssetDir = join(runtimeDir, prebuildName);
@@ -382,6 +545,9 @@ const { targets } = parseArgs();
 
 // Stage assets once (shared across all binaries)
 const clientAssetMode = ensureClientAssets();
+// FNXC:StandaloneExeMigrations 2026-07-17-13:40:
+// PostgreSQL migrations ship next to the binary (platform-independent, staged once).
+stageMigrations();
 
 if (targets === null) {
   // Default: build for current platform → dist/fn

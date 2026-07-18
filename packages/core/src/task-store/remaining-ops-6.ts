@@ -100,8 +100,14 @@ export async function listBranchGroupsImpl(store: TaskStore, options?: { status?
     return (rows as BranchGroupRow[]).map((row) => store.rowToBranchGroup(row));
 }
 
+/*
+FNXC:BranchGroupCompletion 2026-07-18-01:55:
+Archived shared-branch members remain part of promotion completion: an unlanded archived
+member blocks promotion, while an archived member with persisted landing proof permits it.
+The PostgreSQL path must therefore load archived tasks before applying group membership.
+*/
 export async function listTasksByBranchGroupImpl(store: TaskStore, groupId: string): Promise<Task[]> {
-    const tasks = await store.listTasks({ includeArchived: false, slim: true });
+    const tasks = await store.listTasks({ includeArchived: true, slim: false });
     // Membership filter (incl. legacy synthetic-groupId fallback) is shared with
     // the dashboard list route via `filterTasksByBranchGroup` so semantics can't
     // drift between the two call sites (Fix #8/#9).
@@ -719,6 +725,35 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     `).all(trimmedFingerprint, cutoffIso) as TaskRow[];
 
     return rows.map((row) => store.rowToTask(row));
+}
+
+export async function findRecentTasksBySourceParentTaskIdImpl(
+  store: TaskStore,
+  sourceParentTaskId: string,
+  options?: { windowMs?: number },
+): Promise<Task[]> {
+  const parentId = sourceParentTaskId.trim();
+  if (!parentId) return [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  const windowMs = Math.max(1, Math.min(dayMs, Math.trunc(options?.windowMs ?? dayMs)));
+  const cutoffIso = new Date(Date.now() - windowMs).toISOString();
+  if (store.backendMode) {
+    const layer = store.asyncLayer!;
+    const rows = await layer.db.select().from(schema.project.tasks).where(and(
+      isNull(schema.project.tasks.deletedAt), taskProjectScope(layer),
+      eq(schema.project.tasks.sourceParentTaskId, parentId),
+      sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
+      ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done"),
+    )).orderBy(asc(schema.project.tasks.createdAt));
+    return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
+  }
+  const selectClause = store.getTaskSelectClause(false, "t");
+  const rows = store.db.prepare(`
+    SELECT ${selectClause} FROM tasks t
+     WHERE t."deletedAt" IS NULL AND t.sourceParentTaskId = ? AND t.createdAt >= ?
+       AND t."column" NOT IN ('archived', 'done') ORDER BY t.createdAt ASC
+  `).all(parentId, cutoffIso) as TaskRow[];
+  return rows.map((row) => store.rowToTask(row));
 }
 
 export async function clearNearDuplicateReferencesToFailSoftImpl(store: TaskStore,

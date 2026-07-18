@@ -59,7 +59,8 @@ type MovedProjectSettingsKey =
   | "validatorFallbackModelId"
   | "validatorFallbackThinkingLevel";
 
-type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
+type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy";
+type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>; 
 
 /**
  * Settings schema source of truth.
@@ -71,6 +72,10 @@ type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
 
 /** Default values for global (user-level) settings. */
 export const DEFAULT_GLOBAL_SETTINGS = {
+  // Embedded PostgreSQL is shared by all local Fusion projects and processes.
+  // Keep this well above the conservative external-pool budget while still
+  // bounded for a local machine.
+  embeddedPostgresMaxConnections: 500,
   /*
   FNXC:DashboardTheming 2026-07-03-00:00:
   Fresh installs must follow the operating system theme until the user explicitly chooses Light, Dark, or System. Keep this global default aligned with dashboard and desktop pre-hydration fallbacks.
@@ -266,6 +271,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Verbose tool arguments and results are default-off to reduce persisted log volume and payload exposure. Operators who need saved tool details can explicitly opt in with persistAgentToolOutput: true; tool timeline rows remain logged either way.
   */
   persistAgentToolOutput: false,
+  // Task chat remains an operator-directed conversation by default. Enable this
+  // explicitly to add engine-authored lifecycle narration to the transcript.
+  proactiveTaskChatEnabled: false,
   persistAgentThinkingLogPermanent: false,
   persistAgentThinkingLogEphemeral: false,
   persistAgentThinkingLog: false,
@@ -486,6 +494,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   modelPresets: [],
   autoSelectModelPreset: false,
   completionDocumentationMode: "off",
+  reviewArtifacts: "off",
   defaultPresetBySize: {},
   autoResolveConflicts: true,
   smartConflictResolution: true,
@@ -629,6 +638,9 @@ export const DEFAULT_PROJECT_SETTINGS = {
   sessionAdvisorEnabledByDefault: false,
   githubLinkImportedIssuesToTracking: false,
   githubTrackingDefaultRepo: undefined,
+  reportMode: "draft-review" as const,
+  reportModeByAction: undefined,
+  reportRoadmapDedup: false,
   gitlabEnabled: undefined,
   gitlabInstanceUrl: undefined,
   gitlabApiBaseUrl: undefined,
@@ -807,10 +819,20 @@ export const GLOBAL_SETTINGS_KEYS = Object.freeze(
   Object.keys(DEFAULT_GLOBAL_SETTINGS) as Array<keyof GlobalSettings>,
 );
 
+/*
+FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
+The validation policy is persisted as a project setting but intentionally absent from defaults.
+The resolver owns fallback so a legacy-only explicit false remains deny after settings merge.
+*/
+export const NON_DEFAULT_PROJECT_SETTINGS_KEYS = Object.freeze([
+  "ephemeralAgentTaskCreationPolicy",
+] as const satisfies readonly NonDefaultProjectSettingsKey[]);
+
 /** Keys that belong to the project settings scope. */
-export const PROJECT_SETTINGS_KEYS = Object.freeze(
-  Object.keys(DEFAULT_PROJECT_SETTINGS) as Array<keyof ProjectSettings>,
-);
+export const PROJECT_SETTINGS_KEYS = Object.freeze([
+  ...Object.keys(DEFAULT_PROJECT_SETTINGS),
+  ...NON_DEFAULT_PROJECT_SETTINGS_KEYS,
+] as Array<keyof ProjectSettings>);
 
 export function isGlobalSettingsKey(key: string): key is keyof GlobalSettings {
   return (GLOBAL_SETTINGS_KEYS as readonly string[]).includes(key);

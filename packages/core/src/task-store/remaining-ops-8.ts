@@ -19,6 +19,7 @@ import { ExperimentSessionStore } from "../experiment-session-store.js";
 import { MasterKeyManager } from "../master-key.js";
 import { MissionStore } from "../mission-store.js";
 import { AsyncMissionStore } from "../async-mission-store.js";
+import { AsyncIdeationStore } from "../async-ideation-store.js";
 import { type PluginGateVerdict } from "../plugin-gate-verdict.js";
 import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
@@ -967,6 +968,19 @@ export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissi
       }
     }
     return store.missionStore;
+}
+
+export function getIdeationStoreImpl(store: TaskStore): AsyncIdeationStore {
+  if (!store.ideationStore) {
+    const layer = store.getAsyncLayer();
+    if (!layer) throw new Error("IdeationStore is only available with the PostgreSQL AsyncDataLayer");
+    const missionStore = store.getMissionStore();
+    if (!(missionStore instanceof AsyncMissionStore)) {
+      throw new Error("IdeationStore requires the PostgreSQL AsyncMissionStore");
+    }
+    store.ideationStore = new AsyncIdeationStore(layer, missionStore);
+  }
+  return store.ideationStore;
 }
 
 export function getPluginStoreImpl(store: TaskStore): PluginStore {

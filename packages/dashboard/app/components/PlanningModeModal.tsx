@@ -369,6 +369,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const currentSessionIdRef = useRef<string | null>(null);
   const viewRef = useRef<ViewState>({ type: "initial" });
   /*
+  FNXC:PlanningRetry 2026-07-15-00:00:
+  FN-8332 permits automatic retry only for a generation this mounted Planning
+  Mode instance started. A reloaded session may reconnect to observe a server
+  turn, but its persisted error must stay manual instead of spending another
+  generation.
+  */
+  const liveGenerationSessionIdRef = useRef<string | null>(null);
+  /*
   FNXC:PlanningRetry 2026-07-13-00:00:
   FN-7946 requires stuck or terminal Planning Mode generation errors to auto-retry at most three times before the permanent error view appears. Keep the budget in refs for async SSE/poll/loadSession handlers, mirror the current attempt in state for the visible "Retrying" loading message, and reset the budget when successful progress reaches question or summary.
   */
@@ -438,7 +446,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [planningThinkingLevel, setPlanningThinkingLevel] = useState<ThinkingLevel | "">("");
   const [planningDepth, setPlanningDepth] = useState<"small" | "medium" | "large">("medium");
   const [customQuestionCount, setCustomQuestionCount] = useState("");
-  const [clarificationEnabled, setClarificationEnabled] = useState(false);
+  const [clarificationEnabled, setClarificationEnabled] = useState(true);
   const [clarificationSettingsLoading, setClarificationSettingsLoading] = useState(true);
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -665,7 +673,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           setStreamingOutput("");
         } else if (session.status === "error") {
           const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
-          const handled = await startPlanningAutoRetryRef.current(sessionId, errorMessage);
+          const handled = liveGenerationSessionIdRef.current === sessionId
+            && await startPlanningAutoRetryRef.current(sessionId, errorMessage);
           if (handled) return;
           if (cancelled || currentSessionIdRef.current !== sessionId) return;
           /*
@@ -907,10 +916,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
             setIsReconnecting(false);
             /*
-            FNXC:PlanningRetry 2026-07-13-00:00:
-            A terminal/persisted Planning Mode generation error is treated as a stuck-class turn. Try the existing /planning/:id/retry path up to MAX_PLANNING_AUTO_RETRIES before surfacing the permanent Retry/Dismiss error panel; overlapping SSE and poll signals share the same single-flight guard.
+            FNXC:PlanningRetry 2026-07-15-00:00:
+            FN-8332 limits the stuck-turn retry budget to generations started by
+            this mounted UI. A resumed stream may observe a terminal persisted
+            error, but it must surface the manual Retry/Dismiss panel instead;
+            overlapping live SSE and poll signals still share the single-flight guard.
             */
-            if (await startPlanningAutoRetryRef.current(sessionId, errorMessage)) {
+            if (
+              liveGenerationSessionIdRef.current === sessionId
+              && await startPlanningAutoRetryRef.current(sessionId, errorMessage)
+            ) {
               return;
             }
             setIsRetrying(false);
@@ -959,6 +974,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setView({ type: "loading" });
 
       currentSessionIdRef.current = retryTarget.sessionId;
+      liveGenerationSessionIdRef.current = retryTarget.sessionId;
       connectToPlanningStream(retryTarget.sessionId);
 
       try {
@@ -1142,6 +1158,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       );
       draftSessionIdRef.current = null;
       currentSessionIdRef.current = sessionId;
+      liveGenerationSessionIdRef.current = sessionId;
       setSelectedSessionId(sessionId);
 
       connectToPlanningStream(sessionId);
@@ -1171,9 +1188,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     let active = true;
     setClarificationSettingsLoading(true);
     void fetchGlobalSettings()
-      .then((settings) => { if (active) setClarificationEnabled(settings.agentClarificationEnabled === true); })
-      // Safe fallback keeps automatic/manual starts from unexpectedly pausing.
-      .catch(() => { if (active) setClarificationEnabled(false); })
+      .then((settings) => { if (active) setClarificationEnabled(settings.agentClarificationEnabled !== false); })
+      // A missing settings response keeps the default full interview; disabled only limits follow-ups.
+      .catch(() => { if (active) setClarificationEnabled(true); })
       .finally(() => { if (active) setClarificationSettingsLoading(false); });
     return () => { active = false; };
   }, [isOpen]);
@@ -1225,6 +1242,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     async (sessionId: string) => {
       streamConnectionRef.current?.close();
       streamConnectionRef.current = null;
+      // Loading a database row never makes its in-flight turn local to this mount.
+      liveGenerationSessionIdRef.current = null;
 
       setError(null);
       setStreamingOutput("");
@@ -1272,9 +1291,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
         if (session.status === "error") {
           const errorMessage = session.error || t("planning.sessionFailed2", "Session failed");
-          if (await startPlanningAutoRetryRef.current(sessionId, errorMessage)) {
-            return;
-          }
+          /*
+          FNXC:PlanningRetry 2026-07-15-00:00:
+          FN-8332 requires browser-reload/session-resume to render the durable planning state verbatim and never dispatch a new generation. Auto-retry remains exclusively for live in-session SSE and loading-poll failures; persisted errors must expose the manual Retry/Dismiss panel.
+          */
           setView({
             type: "error",
             session: { sessionId, currentQuestion: null, summary: null },
@@ -1872,6 +1892,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       resetPlanningAutoRetryBudget();
       setView({ type: "loading" });
       setStreamingOutput(""); // Clear old thinking output when entering loading state
+      liveGenerationSessionIdRef.current = sessionId;
 
       try {
         // Submit response - AI will broadcast events via the already-connected stream
@@ -1901,6 +1922,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     resetPlanningAutoRetryBudget();
     setStreamingOutput("");
     setView({ type: "loading" });
+    liveGenerationSessionIdRef.current = sessionId;
 
     connectToPlanningStream(sessionId);
 
@@ -2400,7 +2422,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     <div className="planning-advanced-section planning-depth-selector">
                       <label className="checkbox-label" htmlFor="planning-clarification-enabled">
                         <input id="planning-clarification-enabled" type="checkbox" checked={clarificationEnabled} disabled={clarificationSettingsLoading} onChange={(event) => setClarificationEnabled(event.target.checked)} />
-                        {t("planning.agentClarification", " Allow agent clarification questions")}
+                        {t("planning.agentClarification", " Allow follow-up clarification questions")}
                       </label>
                       <p className="planning-advanced-blurb">
                         {t("planning.depthBlurb", "Plan size sets default interview depth. Questions lets you override with an exact count.")}

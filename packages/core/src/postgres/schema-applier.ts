@@ -20,6 +20,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -28,10 +29,10 @@ import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type Plugin
 
 /** The latest PostgreSQL schema version known to this applier. */
 /*
-FNXC:MultiProjectIsolation 2026-07-15-23:40:
-Advances to 0012 after the owner_project_id domain/partition split and chat pin timestamp. Per-migration identities above stay fixed; only this latest-version marker moves.
+FNXC:GitHubImportTranslate 2026-07-17-23:48:
+Advances to 0019 for the import-translation legacy-partition backfill. Per-migration identities above stay fixed; only this latest-version marker moves.
 */
-export const SCHEMA_BASELINE_VERSION = "0018";
+export const SCHEMA_BASELINE_VERSION = "0022";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
 const ANALYTICS_ISOLATION_SCHEMA_VERSION = "0002";
@@ -62,6 +63,14 @@ export const IMPORT_TRANSLATION_CACHE_VERSION = "0010";
  * deliberately a new forward migration rather than a retroactive SQL edit.
  */
 export const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION = "0016";
+/*
+FNXC:GitHubImportTranslate 2026-07-17-23:48:
+0016 aligned future cache writes with the normalized legacy partition, but a
+pre-0016 cache row can still carry a historic blank project_id. Migration 0019
+backfills that durable data before a restarted store scopes cache reads to
+__legacy_unscoped__, preventing an avoidable re-translation.
+*/
+export const IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION = "0019";
 /*
 FNXC:MultiProjectIsolation 2026-07-15-23:40:
 Version 0011 splits the domain "project" field from the RLS partition on the tables
@@ -94,94 +103,121 @@ export const TASK_MERGER_MODEL_LANE_VERSION = "0017";
  * TaskStore SELECT. Keep this identity fixed when SCHEMA_BASELINE_VERSION advances.
  */
 export const BULK_COMPLETION_REFUSAL_AT_VERSION = "0018";
+/** FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00: durable project-scoped proposal key/index protects task creation across crash and reclaim races. */
+export const TASK_PROPOSAL_CLAIM_VERSION = "0020";
+/** FNXC:ConfigVersioning 2026-07-18-00:00: existing clusters need immutable configuration history before write paths use it. */
+export const CONFIGURATION_REVISIONS_VERSION = "0021";
+/** FNXC:Ideation 2026-07-30-15:30: Persisted ideation needs its own forward migration because configuration revisions already own 0021. */
+export const IDEATION_SCHEMA_VERSION = "0022";
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BASELINE_MIGRATION_PATH = join(__dirname, "migrations", "0000_initial.sql");
+
+/*
+FNXC:StandaloneExeMigrations 2026-07-17-13:30:
+The bun-compiled standalone `fn` binary runs its bundled code from the virtual
+/$bunfs/root filesystem, so the historical `join(__dirname, "migrations")`
+resolution points at a path that does not exist on disk (bun --compile does not
+embed readFile assets) and every DATABASE_URL boot died with
+ENOENT /$bunfs/root/migrations/0000_initial.sql. Resolution order:
+  1. FUSION_MIGRATIONS_DIR env override — always wins when set (operator escape hatch).
+  2. join(__dirname, "migrations") — the npm/tsup and desktop layout; kept first
+     among the probes so nothing changes for existing installs.
+  3. join(dirname(process.execPath), "migrations") — the standalone-exe layout,
+     where build.ts / the release tarball stage migrations/ next to the binary.
+The existsSync probe (not a runtime-detection heuristic) picks between (2) and
+(3): inside the compiled binary the module-relative dir simply does not exist,
+while for node-based installs it always does, so npm/desktop behavior is untouched.
+*/
+function resolveMigrationsDir(): string {
+  const envDir = process.env.FUSION_MIGRATIONS_DIR;
+  if (envDir) return envDir;
+  const moduleDir = join(__dirname, "migrations");
+  if (existsSync(join(moduleDir, "0000_initial.sql"))) return moduleDir;
+  const execDir = join(dirname(process.execPath), "migrations");
+  if (existsSync(join(execDir, "0000_initial.sql"))) return execDir;
+  // Preserve the historical default (and its historical error message) when
+  // neither location exists — the readFile ENOENT remains the diagnostic.
+  return moduleDir;
+}
+
+const MIGRATIONS_DIR = resolveMigrationsDir();
+const BASELINE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0000_initial.sql");
 const AUTOMATION_ISOLATION_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0001_automation_project_isolation.sql",
 );
 const ANALYTICS_ISOLATION_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0002_analytics_project_isolation.sql",
 );
 const MONITOR_APPROVAL_ISOLATION_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0003_monitor_approval_project_isolation.sql",
 );
 const LEGACY_CUTOVER_PRESERVATION_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0004_legacy_cutover_preservation.sql",
 );
 const MULTI_PROJECT_CUTOVER_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0005_multi_project_cutover.sql",
 );
 const PROJECT_OWNERSHIP_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0006_project_ownership.sql",
 );
 const SQLITE_SCHEMA_PARITY_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0007_sqlite_schema_parity.sql",
 );
 const SESSION_ADVISOR_ENABLED_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0008_session_advisor_enabled.sql",
 );
 const MISSION_FIX_IDEMPOTENCY_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0009_mission_fix_idempotency.sql",
 );
 const IMPORT_TRANSLATION_CACHE_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0010_import_translation_cache.sql",
 );
 const IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0016_import_translation_cache_scope_fix.sql",
 );
+const IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_MIGRATION_PATH = join(
+  MIGRATIONS_DIR,
+  "0019_import_translation_cache_legacy_partition_backfill.sql",
+);
 const OWNER_PROJECT_ID_SPLIT_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0011_owner_project_id.sql",
 );
 const CHAT_SESSION_PINS_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0012_chat_session_pins.sql",
 );
 const EXECUTOR_TOOL_FAILURE_RETRY_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0013_executor_tool_failure_retry.sql",
 );
 const EXECUTOR_ESCALATION_ATTEMPT_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0014_executor_escalation_attempt.sql",
 );
 const GLOBAL_ROUTINES_MIGRATION_PATH = join(
-  __dirname,
-  "migrations",
+  MIGRATIONS_DIR,
   "0015_global_routines.sql",
 );
-const TASK_MERGER_MODEL_LANE_MIGRATION_PATH = join(__dirname, "migrations", "0017_task_merger_model_lane.sql");
-const BULK_COMPLETION_REFUSAL_AT_MIGRATION_PATH = join(__dirname, "migrations", "0018_bulk_completion_refusal_at.sql");
+const TASK_MERGER_MODEL_LANE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0017_task_merger_model_lane.sql");
+const BULK_COMPLETION_REFUSAL_AT_MIGRATION_PATH = join(MIGRATIONS_DIR, "0018_bulk_completion_refusal_at.sql");
+const TASK_PROPOSAL_CLAIM_MIGRATION_PATH = join(MIGRATIONS_DIR, "0020_task_proposal_claim.sql");
+const CONFIGURATION_REVISIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0021_configuration_revisions.sql");
+const IDEATION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0022_ideation.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -262,6 +298,7 @@ export async function applySchemaBaseline(
     const missionFixIdempotencyAlreadyApplied = applied.includes(MISSION_FIX_IDEMPOTENCY_VERSION);
     const importTranslationCacheAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_VERSION);
     const importTranslationCacheScopeFixAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION);
+    const importTranslationCacheLegacyPartitionBackfillAlreadyApplied = applied.includes(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION);
     const ownerProjectIdSplitAlreadyApplied = applied.includes(OWNER_PROJECT_ID_SPLIT_VERSION);
     const chatSessionPinsAlreadyApplied = applied.includes(CHAT_SESSION_PINS_VERSION);
     const executorToolFailureRetryAlreadyApplied = applied.includes(EXECUTOR_TOOL_FAILURE_RETRY_VERSION);
@@ -269,6 +306,9 @@ export async function applySchemaBaseline(
     const globalRoutinesAlreadyApplied = applied.includes(GLOBAL_ROUTINES_SCHEMA_VERSION);
     const taskMergerModelLaneAlreadyApplied = applied.includes(TASK_MERGER_MODEL_LANE_VERSION);
     const bulkCompletionRefusalAtAlreadyApplied = applied.includes(BULK_COMPLETION_REFUSAL_AT_VERSION);
+    const taskProposalClaimAlreadyApplied = applied.includes(TASK_PROPOSAL_CLAIM_VERSION);
+    const configurationRevisionsAlreadyApplied = applied.includes(CONFIGURATION_REVISIONS_VERSION);
+    const ideationAlreadyApplied = applied.includes(IDEATION_SCHEMA_VERSION);
     let schemaChanged = false;
 
     if (!baselineAlreadyApplied) {
@@ -585,17 +625,58 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
+    if (!taskProposalClaimAlreadyApplied) {
+      const migrationSql = await readFile(TASK_PROPOSAL_CLAIM_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_PROPOSAL_CLAIM_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     /*
     FNXC:GitHubImportTranslate 2026-07-16-23:30:
     0010's marker prevents its corrected fresh-install definition from running
     on upgrades. Apply 0016 separately before runtime cache reads so existing
     rows, RLS, and unbound compatibility stores share one partition contract.
     */
+    /*
+    FNXC:ConfigVersioning 2026-07-18-00:00:
+    Migrations are explicitly registered rather than discovered. Keep 0021's
+    bookkeeping check adjacent to its apply block so upgrades cannot silently
+    omit configuration history while fresh installs appear healthy.
+    */
+    if (!configurationRevisionsAlreadyApplied) {
+      const migrationSql = await readFile(CONFIGURATION_REVISIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CONFIGURATION_REVISIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:Ideation 2026-07-30-15:30:
+    Register the ideation migration explicitly. New SQL files are never auto-discovered,
+    and upgrades must receive project-scoped session/candidate tables before the store opens.
+    */
+    if (!ideationAlreadyApplied) {
+      const migrationSql = await readFile(IDEATION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDEATION_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
     if (!importTranslationCacheScopeFixAlreadyApplied) {
       const migrationSql = await readFile(IMPORT_TRANSLATION_CACHE_SCOPE_FIX_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(
         sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_SCOPE_FIX_VERSION}) ON CONFLICT (version) DO NOTHING`,
+      );
+      schemaChanged = true;
+    }
+
+    if (!importTranslationCacheLegacyPartitionBackfillAlreadyApplied) {
+      const migrationSql = await readFile(IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(
+        sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION}) ON CONFLICT (version) DO NOTHING`,
       );
       schemaChanged = true;
     }

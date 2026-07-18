@@ -16,6 +16,7 @@ import { CustomProvidersSection } from "../../CustomProvidersSection";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import { copyTextToClipboard } from "../../../utils/copyToClipboard";
 import { appendTokenQuery } from "../../../auth";
+import { openExternalUrl } from "../../../utils/open-external";
 import { refreshModelsCache } from "../../../hooks/useModelsCache";
 export interface AuthenticationSectionData {
     projectId?: string;
@@ -194,7 +195,7 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
         }}>
               {t("settings.auth.copyCode", "Copy code")}
             </button>
-            <button className="btn btn-sm" onClick={() => window.open(appendTokenQuery(deviceCodes[provider.id].verificationUri), "_blank")}>
+            <button className="btn btn-sm" onClick={() => openExternalUrl(appendTokenQuery(deviceCodes[provider.id].verificationUri))}>
               {t("settings.auth.openGitHub", "Open GitHub")}
             </button>
           </div>

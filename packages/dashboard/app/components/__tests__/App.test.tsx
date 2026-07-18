@@ -616,6 +616,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
+  isFullScreenSheetViewport: () => mockUseViewportMode() === "mobile",
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom
@@ -3119,7 +3120,7 @@ describe("App Planning Mode", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
-  it("opens a footer planning session in the embedded Planning view with its resume session", async () => {
+  it("opens a planning session from the retained Planning navigation surface", async () => {
     const session: AiSessionSummary = {
       id: "planning-session-needs-input",
       type: "planning",
@@ -3138,13 +3139,12 @@ describe("App Planning Mode", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /AI 1/i }));
-    fireEvent.click(document.querySelector(".background-tasks-indicator__session-title")!);
+    fireEvent.click(await screen.findByTestId("sidebar-nav-planning"));
 
     await waitFor(() => {
       const planningView = screen.getByTestId("planning-view");
       expect(planningView).toBeInTheDocument();
-      expect(planningView).toHaveAttribute("data-resume-session-id", session.id);
+      expect(screen.getByTestId("sidebar-nav-planning")).toHaveAttribute("aria-current", "page");
     });
   });
 
@@ -3172,8 +3172,7 @@ describe("App Planning Mode", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /AI 1/i }));
-    fireEvent.click(document.querySelector(".background-tasks-indicator__session-title")!);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
 
     await waitFor(() => {
       expect(screen.getByTestId(`sidebar-nav-${expectedView}`)).toHaveAttribute("aria-current", "page");

@@ -113,6 +113,8 @@ describe("permanent-agent-gating", () => {
     expect(classifyPermanentAgentToolCall("fn_task_assign").category).toBe("task_agent_mutation");
     expect(classifyPermanentAgentToolCall("fn_task_show").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_research_get").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_ideation_list")).toEqual({ category: "none", recognized: true });
+    expect(classifyPermanentAgentToolCall("fn_ideation_converge")).toEqual({ category: "task_agent_mutation", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_heartbeat_done")).toEqual({ category: "none", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_ask_question")).toEqual({ category: "none", recognized: true });
     expect(classifyPermanentAgentToolCall("fn_send_message")).toEqual({ category: "none", recognized: true });

@@ -2669,9 +2669,13 @@ export function ListView({
                           const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
                           const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
-                          // FNXC:TaskStatusBadge 2026-07-16-12:00: FN-8170 keeps mobile and table list status rendering aligned with TaskCard through the shared Todo/In Progress planning suppression predicate.
-                          const hasStatus = typeof visualStatus === "string"
-                            && visualStatus.trim().length > 0
+                          // FNXC:TaskStatusBadge 2026-07-28-12:00: FN-8300 renders the same transient Planning badge as TaskCard so fresh planner logs never make grouped-list cards appear idle.
+                          const isTransientPlannerActive = task.column === "triage"
+                            && !visualStatus
+                            && Boolean(task.recentAgentActivityAt)
+                            && isAgentActive;
+                          const hasStatus = (typeof visualStatus === "string" && visualStatus.trim().length > 0
+                            || isTransientPlannerActive)
                             && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           const planReviewRunning = isPlanReviewRunning(task);
@@ -2732,11 +2736,14 @@ export function ListView({
                                   <span
                                     className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
                                     title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                    aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                     data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                   >
                                     {isReviewBudgetExhausted
                                       ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                                      : getTaskStatusLabel(visualStatus ?? "", t)}
+                                      : isTransientPlannerActive
+                                        ? t("tasks.statusPlanning", "Planning")
+                                        : getTaskStatusLabel(visualStatus ?? "", t)}
                                   </span>
                                 ) : null}
                                 {planReviewRunning && isAgentActive && (
@@ -2886,7 +2893,11 @@ export function ListView({
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
                             const isAgentActive = isTaskAgentActive(task, { globalPaused, isStuck: isStuckState });
                             const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
-                            const showStatusBadge = Boolean(visualStatus)
+                            const isTransientPlannerActive = task.column === "triage"
+                              && !visualStatus
+                              && Boolean(task.recentAgentActivityAt)
+                              && isAgentActive;
+                            const showStatusBadge = (Boolean(visualStatus) || isTransientPlannerActive)
                               && !shouldSuppressPlanningStatusBadge({ status: visualStatus, column: task.column });
                             const planReviewRunning = isPlanReviewRunning(task);
                             const isDragging = draggingTaskId === task.id;
@@ -2958,11 +2969,14 @@ export function ListView({
                                           isAgentActive ? " pulsing" : ""
                                         }`}
                                         title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                        aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                         data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                       >
                                         {isReviewBudgetExhausted
                                           ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                                          : getTaskStatusLabel(visualStatus ?? "", t)}
+                                          : isTransientPlannerActive
+                                            ? t("tasks.statusPlanning", "Planning")
+                                            : getTaskStatusLabel(visualStatus ?? "", t)}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>

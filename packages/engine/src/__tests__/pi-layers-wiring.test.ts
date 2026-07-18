@@ -117,6 +117,14 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
   discoverAndLoadExtensions: discoverAndLoadExtensionsMock,
   getAgentDir: () => "/mock-agent-dir",
+  /*
+  FNXC:EngineTests 2026-07-17-11:45:
+  createFusionModelRegistry awaits ModelRuntime.create before ModelRegistry (FN-8142 / pi 0.80.8+).
+  Without this export the layers wiring suite fails every createFnAgent path.
+  */
+  ModelRuntime: {
+    create: async () => ({ getAuth: async () => ({ auth: { headers: {} as Record<string, string> } }) }),
+  },
   ModelRegistry: class {
     static create(..._args: unknown[]) {
       return new (this as unknown as new () => unknown)();

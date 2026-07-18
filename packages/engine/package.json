@@ -1,6 +1,6 @@
 {
   "name": "@fusion/engine",
-  "version": "0.60.0",
+  "version": "0.72.0",
   "license": "MIT",
   "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -47,7 +47,8 @@
     "esbuild": "^0.25.12",
     "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
     "proper-lockfile": "^4.1.2",
-    "typebox": "^1.0.0"
+    "typebox": "^1.0.0",
+    "playwright-core": "^1.60.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

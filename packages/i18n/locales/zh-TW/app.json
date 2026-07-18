@@ -1134,7 +1134,8 @@
     "backendError": {
       "failedFetch": "取得項目失敗"
     },
-    "testMode": "測試模式 — 無實際 AI 呼叫"
+    "testMode": "測試模式 — 無實際 AI 呼叫",
+    "migrationInProgress": "資料庫遷移進行中 — 完成後儀表板將自動重新連線。"
   },
   "appName": "",
   "approval": {
@@ -1165,29 +1166,6 @@
     "manageConnection": "管理連接",
     "retryConnection": "重新連接",
     "retrying": "重試中…"
-  },
-  "backgroundTasks": {
-    "dismissButton": "關閉",
-    "pillLabel_one": "",
-    "pillLabel_other": "",
-    "pillTitle_one": "",
-    "pillTitle_other": "",
-    "pillTitleWithInput_one": "",
-    "pillTitleWithInput_other": "",
-    "popoverHeader": "背景任務",
-    "status": {
-      "failed": "失敗",
-      "generating": "生成中...",
-      "needsInput": "需要輸入"
-    },
-    "typeLabel": {
-      "cliAgent": "",
-      "milestoneInterview": "里程碑訪談",
-      "missionInterview": "任務訪談",
-      "planning": "規劃",
-      "sliceInterview": "切片訪談",
-      "subtask": "子任務分解"
-    }
   },
   "board": {
     "archived": "已歸檔",
@@ -1602,6 +1580,43 @@
       },
       "title": ""
     },
+    "portability": {
+      "title": "組織匯出 / 匯入",
+      "description": "下載或預覽已清除機密的組織設定包。",
+      "export": {
+        "action": "匯出組織包",
+        "working": "正在匯出…",
+        "success": "匯出就緒",
+        "error": "匯出失敗"
+      },
+      "import": {
+        "label": "組織包 JSON",
+        "placeholder": "貼上已清除機密的組織包",
+        "preview": "預覽匯入",
+        "previewing": "正在預覽…",
+        "previewReady": "預覽就緒。確認後套用此包。",
+        "apply": "套用匯入",
+        "importing": "正在匯入…",
+        "invalid": "請貼上有效的組織包 JSON 文件",
+        "error": "無法預覽或匯入包",
+        "confirmTitle": "匯入組織包？",
+        "confirmMessage": "這會將預覽的設定套用到此專案。",
+        "confirmApply": "匯入包"
+      },
+      "versions": {
+        "title": "設定版本",
+        "description": "還原任意已記錄的專案設定版本。",
+        "loading": "正在載入版本…",
+        "empty": "尚無設定版本。",
+        "loadError": "無法載入設定版本",
+        "rollback": "回滾",
+        "rollingBack": "正在回滾…",
+        "rollbackError": "無法回滾設定",
+        "confirmTitle": "回滾設定？",
+        "confirmMessage": "還原此版本？回滾會記錄為新版本。",
+        "confirmRollback": "回滾"
+      }
+    },
     "ecosystem": {
       "breadthTitle": "",
       "empty": "",
@@ -1792,7 +1807,8 @@
       "team": "",
       "workflows": "Workflows",
       "tokens": "",
-      "tools": ""
+      "tools": "",
+      "reviewArtifacts": "審查產物"
     },
     "team": {
       "agent": "",
@@ -1870,6 +1886,10 @@
       "sessions": "",
       "summaryTitle": "",
       "toolCalls": ""
+    },
+    "reviewArtifacts": {
+      "title": "審查產物",
+      "empty": "尚無審查產物。"
     }
   },
   "comments": {
@@ -2007,6 +2027,7 @@
     "connectRemoteButton": "連接到遠端 Fusion",
     "couldNotStart": "無法啟動本機 Fusion",
     "loading": "正在載入 Fusion…",
+    "migrationInProgress": "資料庫遷移進行中 — 可能需要幾分鐘。",
     "opening": "正在開啟…",
     "retry": "重試",
     "runLocalButton": "本機執行 Fusion",
@@ -3322,7 +3343,8 @@
     "unpauseUnavailable": "恢復操作無法使用",
     "useProjectDefault": "使用專案預設",
     "viewOptions": "檢視選項",
-    "workflowLabel": ""
+    "workflowLabel": "",
+    "statusReplan": "重新規劃"
   },
   "mailbox": {
     "agent": "代理",
@@ -5656,7 +5678,11 @@
     "headerErrorSingular_other": "",
     "regionLabel": "需要輸入或已失敗的 AI 工作階段",
     "resume": "繼續",
-    "retry": "重試"
+    "retry": "重試",
+    "headerGeneratingSingular": "",
+    "headerGeneratingPlural": "",
+    "headerMixed": "",
+    "inProgress": ""
   },
   "settings": {
     "actions": {
@@ -5906,7 +5932,25 @@
       "restartFailed": "",
       "restartNow": "",
       "restartUnavailable": "",
-      "restarting": ""
+      "restarting": "",
+      "mobileNavPrimaryItems": "行動版底部快捷操作",
+      "mobileNavPrimaryItemsHint": "預設：儀表板、任務、代理、任務組、聊天、信箱。可新增符合條件的目的地；未選取的目的地仍在「更多」中。",
+      "addNavItem": "新增快捷操作",
+      "selectNavItem": "選擇目的地",
+      "removeNavItem": "移除 {{item}}",
+      "moveNavItemEarlier": "將 {{item}} 前移",
+      "moveNavItemLater": "將 {{item}} 後移",
+      "ephemeralAgentTaskCreationPolicy": "臨時代理後續任務",
+      "ephemeralAgentTaskCreationPolicyHint": "無預設值 — 未設定時回退為允許。需驗證會將提案傳送到信箱供一鍵核准；拒絕則禁止建立後續任務。",
+      "ephemeralAgentTaskCreationPolicyAllow": "允許",
+      "ephemeralAgentTaskCreationPolicyUponValidation": "需驗證",
+      "ephemeralAgentTaskCreationPolicyDeny": "拒絕",
+      "reportModeHelp": "應用內缺陷/回饋/想法/說明報告的提交方式。預設：draft-review（提交前由操作者審閱草稿）。",
+      "reportModeByActionHelp": "可選的依操作覆寫專案報告模式（缺陷、回饋、想法或說明）。無預設值 — 未設定的操作繼承 reportMode。",
+      "reviewArtifacts": "審查產物",
+      "reviewArtifactsHint": "控制符合條件的未來任務是否產生審查交付物。面向使用者的報告與活動擷取保持獨立。預設：關閉。",
+      "reportRoadmapDedup": "提交報告前檢查路線圖",
+      "reportRoadmapDedupHelp": "啟用後，符合的路線圖功能會內嵌顯示，而不會建立另一個 GitHub Issue 或討論。預設：關閉。"
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5944,7 +5988,9 @@
       "gitLabAuthTokenHint": "",
       "dismissModalsByClickingOutsideHint": "",
       "skipConfirmationDialogs": "",
-      "skipConfirmationDialogsHint": ""
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6770,6 +6816,12 @@
       "resetAllProjectAction": "",
       "menuResetSuccess": "",
       "allProjectResetSuccess": ""
+    },
+    "database": {
+      "embeddedConnectionCapHelp": "Fusion 內嵌 PostgreSQL 的最大伺服器連線數。重新啟動 Fusion 後生效。範圍：32–2,000。預設：500。外部 PostgreSQL 使用其提供者的連線限制。",
+      "embeddedConnectionCap": "內嵌 PostgreSQL 連線上限",
+      "embeddedConnectionCapError": "請輸入 32 到 2,000 之間的值。",
+      "advanced": "進階資料庫設定"
     }
   },
   "setup": {
@@ -8381,7 +8433,8 @@
     "costBadgeAriaLabel": "",
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
-    "awaitingApprovalTitle": ""
+    "awaitingApprovalTitle": "",
+    "statusReplan": "重新規劃"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9084,5 +9137,11 @@
     "startCta": "Start engine",
     "starting": "Starting…",
     "title": "Project engine is not connected"
+  },
+  "report": {
+    "roadmapMatch": {
+      "title": "已在路線圖中",
+      "message": "此報告與已規劃的功能相符。"
+    }
   }
 }

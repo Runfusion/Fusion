@@ -84,6 +84,19 @@ export function killAllProcesses(): void {
   activeProcesses.clear();
 }
 
+/*
+FNXC:ProcessLifecycle 2026-07-18-08:10:
+Install the process.exit reaper here (not only from index.ts) so lifecycle
+ownership lives with the registry module — same fix class as grok-runtime
+after full-suite shard timeouts on repeated full-plugin imports.
+*/
+const PROCESS_EXIT_HOOK_KEY = Symbol.for("fusion.plugin.omp-runtime.exitCleanup");
+const processWithExitHook = process as typeof process & { [key: symbol]: boolean | undefined };
+if (!processWithExitHook[PROCESS_EXIT_HOOK_KEY]) {
+  process.on("exit", killAllProcesses);
+  processWithExitHook[PROCESS_EXIT_HOOK_KEY] = true;
+}
+
 export class MissingAcpEnvError extends Error {
   readonly code = "ACP_MISSING_ENV";
   constructor(readonly missingKeys: string[]) {

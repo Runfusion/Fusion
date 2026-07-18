@@ -84,6 +84,7 @@ export interface MainContentProps {
   setShadcnCustomColors: (colors: Record<string, string>) => void;
   resolvedThemeMode: "dark" | "light";
   setQuickChatButtonModeImmediate: (mode: QuickChatButtonMode) => void;
+  setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   reopenOnboardingWithNav: () => void;
   viewMode: ViewMode;
   projects: ProjectInfoWithSource[];
@@ -123,6 +124,9 @@ export interface MainContentProps {
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;
   setQuickChatOpen: Dispatch<SetStateAction<boolean>>;
+  /** Optional so existing MainContent callers preserve their unseeded Chat behavior. */
+  chatComposerPrefill?: { text: string; nonce: number } | null;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   setMailboxUnreadCount: (count: number) => void;
   setMissionTargetId: Dispatch<SetStateAction<string | undefined>>;
   setMissionResumeSessionId: Dispatch<SetStateAction<string | undefined>>;

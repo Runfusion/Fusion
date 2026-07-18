@@ -27,7 +27,24 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async-persistence.js";
 
-export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+function ensureSqliteProposalClaimUniqueness(store: TaskStore): void {
+  /*
+  FNXC:EphemeralAgentTaskCreation 2026-07-30-19:10:
+  The legacy SQLite store remains a supported MessageStore/task-materialization
+  backend. Its durable partial unique index is the same at-most-once anchor as
+  PostgreSQL: release/reclaim reuses one stable key, so concurrent creators can
+  only insert one task and the loser returns that persisted task.
+  */
+  const columns = store.db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "proposalClaimId")) {
+    store.db.exec("ALTER TABLE tasks ADD COLUMN proposalClaimId TEXT");
+  }
+  store.db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_proposal_claim_id ON tasks(proposalClaimId) WHERE proposalClaimId IS NOT NULL",
+  );
+}
+
+export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
     }
@@ -188,7 +205,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
         title,
         resolvedWorkflowSteps,
         reservation.taskId,
-        { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn },
+        { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn, onProposalClaimConflict: options?.onProposalClaimConflict },
       );
       await allocator.commitDistributedTaskIdReservation({
         reservationId: reservation.reservationId,
@@ -272,13 +289,14 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     return task;
   }
 
-export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; },): Promise<Task> {
+export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
     const normalizedTitle = normalizeTitleForTaskId(title, id);
     const task: Task = {
       id,
       lineageId: input.lineageId ?? generateTaskLineageId(),
+      proposalClaimId: input.proposalClaimId,
       title: normalizedTitle.title ?? undefined,
       description: input.description,
       priority: normalizeTaskPriority(input.priority),
@@ -359,6 +377,22 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
         await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
       });
     } catch (error) {
+      /*
+      FNXC:EphemeralAgentTaskCreation 2026-07-30-18:30:
+      Proposal creation retries can race after a creation lease is released while
+      the original creator is still inserting. Both attempts deliberately use the
+      same stable proposalClaimId, so the partial unique index is the at-most-once
+      authority. A 23505 for that key returns the committed winner instead of
+      treating it as an ID collision; no loser may continue into task-file or
+      workflow materialization. Other unique violations remain task-ID errors.
+      */
+      if (input.proposalClaimId && isTaskIdConflictError(error)) {
+        const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
+        if (existing) {
+          options?.onProposalClaimConflict?.(existing);
+          return existing;
+        }
+      }
       if (isTaskIdConflictError(error)) {
         throw new Error(`Task ID already exists: ${task.id}`);
       }
@@ -414,7 +448,7 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     return task;
   }
 
-export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; }): Promise<Task> {
+export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; }): Promise<Task> {
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:10:
     // Backend-mode createTask: delegates to createTaskBackend which uses the
     // async DistributedTaskIdAllocator (now wired for backend mode) and the
@@ -427,6 +461,14 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
     }
     if (!input.description?.trim()) {
       throw new Error("Description is required and cannot be empty");
+    }
+    if (input.proposalClaimId) {
+      ensureSqliteProposalClaimUniqueness(store);
+      const existing = (await store.listTasks()).find((task) => task.proposalClaimId === input.proposalClaimId);
+      if (existing) {
+        options?.onProposalClaimConflict?.(existing);
+        return existing;
+      }
     }
 
     const selfDefeatingDep = detectSelfDefeatingDependency(input.title, input.dependencies ?? []);
@@ -590,7 +632,7 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
             title,
             resolvedWorkflowSteps,
             taskId,
-            { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn },
+            { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn, onProposalClaimConflict: options?.onProposalClaimConflict },
           );
         },
       });
@@ -598,6 +640,13 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
       // The task row was never created, so any default-workflow steps we
       // materialized above would orphan with no task/selection pointing at them.
       await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      if (input.proposalClaimId && isTaskIdConflictError(err)) {
+        const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
+        if (existing) {
+          options?.onProposalClaimConflict?.(existing);
+          return existing;
+        }
+      }
       throw err;
     }
 
@@ -692,6 +741,12 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
         selfDefeatingDep.matchedVerb,
         selfDefeatingDep.operandTaskId,
       );
+    }
+
+    if (input.proposalClaimId) {
+      ensureSqliteProposalClaimUniqueness(store);
+      const existing = (await store.listTasks()).find((task) => task.proposalClaimId === input.proposalClaimId);
+      if (existing) return existing;
     }
 
     const id = options.taskId.trim();
@@ -801,6 +856,10 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
       // The task row was never created, so any default-workflow steps we
       // materialized above would orphan with no task/selection pointing at them.
       await store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      if (input.proposalClaimId && isTaskIdConflictError(err)) {
+        const existing = (await store.listTasks()).find((candidate) => candidate.proposalClaimId === input.proposalClaimId);
+        if (existing) return existing;
+      }
       throw err;
     }
 
@@ -819,13 +878,14 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     return createdTask;
   }
 
-export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; },): Promise<Task> {
+export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
     const now = options?.createdAt ?? new Date().toISOString();
     // FN-5077: null normalized titles are treated as "no title" and allow standard fallback/summarization behavior.
     const normalizedTitle = normalizeTitleForTaskId(title, id);
     const task: Task = {
       id,
       lineageId: input.lineageId ?? generateTaskLineageId(),
+      proposalClaimId: input.proposalClaimId,
       title: normalizedTitle.title ?? undefined,
       description: input.description,
       priority: normalizeTaskPriority(input.priority),
@@ -1077,4 +1137,3 @@ export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, 
       storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
     }
   }
-

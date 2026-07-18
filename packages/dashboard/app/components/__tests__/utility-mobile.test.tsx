@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAllAppCss } from "../../test/cssFixture";
-import { fireEvent, render, screen } from "@testing-library/react";
-import type { Agent, AiSessionSummary } from "../../api";
+import { render, screen } from "@testing-library/react";
+import type { Agent } from "../../api";
 import type { Toast } from "../../hooks/useToast";
 
 vi.mock("../../hooks/useExecutorStats", () => ({
@@ -30,7 +30,6 @@ vi.mock("../../hooks/useToast", () => ({
 }));
 
 import { useExecutorStats } from "../../hooks/useExecutorStats";
-import { BackgroundTasksIndicator } from "../BackgroundTasksIndicator";
 import { ExecutorStatusBar } from "../ExecutorStatusBar";
 import { ActiveAgentsPanel } from "../ActiveAgentsPanel";
 import { ToastContainer } from "../ToastContainer";
@@ -65,191 +64,6 @@ describe("Utility component mobile adaptations", () => {
       error: null,
       refresh: vi.fn(),
     });
-  });
-
-  it("renders BackgroundTasksIndicator pill when sessions exist", () => {
-    const sessions: AiSessionSummary[] = [
-      {
-        id: "sess-1",
-        type: "planning",
-        status: "generating",
-        title: "Refine onboarding flow",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    render(
-      <BackgroundTasksIndicator
-        sessions={sessions}
-        generating={1}
-        needsInput={0}
-        onOpenSession={vi.fn()}
-        onDismissSession={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: /AI 1/i })).toBeTruthy();
-  });
-
-  it("renders BackgroundTasksIndicator popover on pill click", () => {
-    const sessions: AiSessionSummary[] = [
-      {
-        id: "sess-2",
-        type: "subtask",
-        status: "awaiting_input",
-        title: "Break down API tasks",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    render(
-      <BackgroundTasksIndicator
-        sessions={sessions}
-        generating={0}
-        needsInput={1}
-        onOpenSession={vi.fn()}
-        onDismissSession={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /AI 1/i }));
-
-    expect(screen.getByText("Background Tasks")).toBeTruthy();
-    expect(screen.getByText("Break down API tasks")).toBeTruthy();
-  });
-
-  /*
-  FNXC:PlanningMultiTab 2026-07-16-17:35:
-  Background task rows open directly on mobile for every session state, even when a legacy
-  session payload reports another tab as its prior lock holder. No confirm gate or lock banner
-  may be reintroduced because interviews are intentionally multi-tab.
-  */
-  it("opens legacy other-tab-owned sessions directly without a lock affordance", () => {
-    const onOpenSession = vi.fn();
-    const sessions = [
-      {
-        id: "sess-generating-other-tab",
-        type: "planning",
-        status: "generating",
-        title: "Generating plan",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-        lockedByTab: "tab-other",
-      },
-      {
-        id: "sess-awaiting-other-tab",
-        type: "mission_interview",
-        status: "awaiting_input",
-        title: "Awaiting mission input",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-        lockedByTab: "tab-other",
-      },
-      {
-        id: "sess-failed-other-tab",
-        type: "slice_interview",
-        status: "error",
-        title: "Failed slice interview",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-        lockedByTab: "tab-other",
-      },
-    ] as unknown as AiSessionSummary[];
-
-    render(
-      <BackgroundTasksIndicator
-        sessions={sessions}
-        generating={1}
-        needsInput={1}
-        onOpenSession={onOpenSession}
-        onDismissSession={vi.fn()}
-      />,
-    );
-
-    for (const session of sessions) {
-      fireEvent.click(screen.getByRole("button", { name: /AI 3/i }));
-      fireEvent.click(screen.getByText(session.title));
-    }
-
-    expect(onOpenSession).toHaveBeenNthCalledWith(1, sessions[0]);
-    expect(onOpenSession).toHaveBeenNthCalledWith(2, sessions[1]);
-    expect(onOpenSession).toHaveBeenNthCalledWith(3, sessions[2]);
-    expect(screen.queryByRole("button", { name: /take control/i })).toBeNull();
-    expect(screen.queryByText(/active in another tab|live heartbeat/i)).toBeNull();
-  });
-
-  it("returns null for BackgroundTasksIndicator with no sessions", () => {
-    const { container } = render(
-      <BackgroundTasksIndicator
-        sessions={[]}
-        generating={0}
-        needsInput={0}
-        onOpenSession={vi.fn()}
-        onDismissSession={vi.fn()}
-      />,
-    );
-
-    expect(container.firstChild).toBeNull();
-  });
-
-  it("calls onOpenSession when clicking on a milestone_interview session item", () => {
-    const onOpenSession = vi.fn();
-    const sessions: AiSessionSummary[] = [
-      {
-        id: "sess-milestone-1",
-        type: "milestone_interview",
-        status: "awaiting_input",
-        title: "Plan milestone scope",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    render(
-      <BackgroundTasksIndicator
-        sessions={sessions}
-        generating={0}
-        needsInput={1}
-        onOpenSession={onOpenSession}
-        onDismissSession={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /AI 1/i }));
-    fireEvent.click(screen.getByText("Plan milestone scope"));
-
-    expect(onOpenSession).toHaveBeenCalledWith(sessions[0]);
-  });
-
-  it("calls onOpenSession when clicking on a slice_interview session item", () => {
-    const onOpenSession = vi.fn();
-    const sessions: AiSessionSummary[] = [
-      {
-        id: "sess-slice-1",
-        type: "slice_interview",
-        status: "error",
-        title: "Plan slice scope",
-        projectId: "proj-1",
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    render(
-      <BackgroundTasksIndicator
-        sessions={sessions}
-        generating={0}
-        needsInput={0}
-        onOpenSession={onOpenSession}
-        onDismissSession={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /AI 1/i }));
-    fireEvent.click(screen.getByText("Plan slice scope"));
-
-    expect(onOpenSession).toHaveBeenCalledWith(sessions[0]);
   });
 
   it("renders ExecutorStatusBar segments", () => {
@@ -311,6 +125,5 @@ describe("Utility component mobile adaptations", () => {
     expectMobileRule(css, ".toast-container", "bottom: auto;");
     expectMobileRule(css, ".toast-container", "right: var(--space-sm);");
     expectMobileRule(css, ".toast-container", "left: var(--space-sm);");
-    expectMobileRule(css, ".background-tasks-indicator__popover", "position: fixed;");
   });
 });

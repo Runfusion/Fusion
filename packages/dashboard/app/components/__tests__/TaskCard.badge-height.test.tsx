@@ -13,13 +13,14 @@ vi.mock("lucide-react", () => ({
   Layers: () => null,
   ChevronDown: () => null,
   Folder: () => null,
-  GitPullRequest: () => null,
+  GitPullRequest: () => <svg />,
   CircleDot: () => null,
-  Target: () => null,
+  Target: () => <svg />,
   Bot: () => null,
   Trash2: () => null,
   RotateCw: () => null,
-  Zap: () => null,
+  Zap: () => <svg />,
+  Eye: () => <svg />,
   AlertTriangle: () => null,
   ArrowDown: ({ style }: { style?: React.CSSProperties }) => <svg className="lucide-arrow-down" style={style} />,
   Flag: ({ style }: { style?: React.CSSProperties }) => <svg className="lucide-flag" style={style} />,
@@ -66,11 +67,11 @@ function mountCss() {
 }
 
 describe("TaskCard badge heights (FN-4369)", () => {
-  it("keeps planning, merging, and priority pills at identical dimensions", () => {
+  it("keeps triage planning, merging, and priority pills at identical dimensions", () => {
     const cleanupCss = mountCss();
 
     const planning = render(
-      <TaskCard task={makeTask({ id: "FN-100", column: "in-progress", status: "planning" as Task["status"] })} onOpenDetail={noop} addToast={noop} />,
+      <TaskCard task={makeTask({ id: "FN-100", column: "triage", status: "planning" as Task["status"] })} onOpenDetail={noop} addToast={noop} />,
     ).container.querySelector(".card-status-badge");
 
     const merging = render(
@@ -106,6 +107,64 @@ describe("TaskCard badge heights (FN-4369)", () => {
       expect(styles.borderBottomWidth).toBe(baseline.borderBottomWidth);
       expect(styles.fontSize).toBe(baseline.fontSize);
       expect(styles.lineHeight).toBe(baseline.lineHeight);
+    }
+
+    cleanupCss();
+  });
+
+  it("keeps every populated header chip on the shared text-badge geometry", () => {
+    const cleanupCss = mountCss();
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          id: "FN-8254",
+          status: "running" as Task["status"],
+          size: "M",
+          priority: "urgent" as Task["priority"],
+          executionMode: "fast",
+          missionId: "M-8254",
+          plannerOversightLevel: "autonomous",
+          plannerOverseerState: {
+            state: "watching",
+            oversightLevel: "autonomous",
+            watchedStage: "executor",
+            signal: "progressing",
+            attemptCount: 0,
+            attemptLimit: 3,
+            pendingConfirmation: false,
+            observedAt: 1700000000000,
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenPullRequest={noop}
+        prNode={{ id: "pr-8254", state: "open", prNumber: 8254 }}
+      />,
+    );
+
+    const baseline = container.querySelector(".card-status-badge");
+    const chips = [
+      ".card-planner-overseer-state",
+      ".card-execution-mode-badge",
+      ".card-pr-node-badge",
+      ".card-mission-badge",
+      ".card-size-badge",
+      ".card-oversight-badge",
+    ].map((selector) => container.querySelector(selector));
+
+    expect(baseline).toBeTruthy();
+    chips.forEach((chip) => expect(chip).toBeTruthy());
+
+    const baselineStyles = getComputedStyle(baseline!);
+    for (const chip of chips) {
+      const styles = getComputedStyle(chip!);
+      expect(styles.height).toBe(baselineStyles.height);
+      expect(styles.paddingTop).toBe(baselineStyles.paddingTop);
+      expect(styles.paddingBottom).toBe(baselineStyles.paddingBottom);
+      expect(styles.borderTopWidth).toBe(baselineStyles.borderTopWidth);
+      expect(styles.borderBottomWidth).toBe(baselineStyles.borderBottomWidth);
+      expect(styles.lineHeight).toBe(baselineStyles.lineHeight);
+      expect(styles.minHeight).toBe(baselineStyles.minHeight);
     }
 
     cleanupCss();

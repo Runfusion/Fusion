@@ -51,6 +51,7 @@ interface AppModalsProps {
   projectActions: Pick<UseProjectActionsResult, "handleAddProject" | "handleSetupComplete" | "handleModelOnboardingComplete">;
   taskHandlers: Pick<UseTaskHandlersResult, "handleModalCreate" | "handlePlanningTaskCreated" | "handlePlanningTasksCreated" | "handleSubtaskTasksCreated" | "handleGitHubImport">;
   onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+  onOpenChatWithPrefill?: (prefillText: string) => void;
   onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
   taskOperations: {
     moveTask: (taskId: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
@@ -87,6 +88,7 @@ interface AppModalsProps {
     setDashboardFontScalePct: (scalePct: number) => void;
     setShadcnCustomColors: (colors: Record<string, string>) => void;
     setQuickChatButtonModeImmediate: (mode: "floating" | "footer" | "off") => void;
+    setMobileNavPrimaryItemsImmediate: (items: string[]) => void;
   };
   /** Optional override for the settings modal close handler. When provided, this is called instead of modalManager.closeSettings. */
   onSettingsClose?: () => void;
@@ -110,6 +112,7 @@ export function AppModals({
   projectActions,
   taskHandlers,
   onPlanningMode,
+  onOpenChatWithPrefill,
   onSubtaskBreakdown,
   taskOperations,
   deepLink,
@@ -376,6 +379,7 @@ export function AppModals({
               onDashboardFontScaleChange={settings.setDashboardFontScalePct}
               onShadcnCustomColorsChange={settings.setShadcnCustomColors}
               onQuickChatButtonModeChange={settings.setQuickChatButtonModeImmediate}
+              onMobileNavPrimaryItemsChange={settings.setMobileNavPrimaryItemsImmediate}
               onReopenOnboarding={onReopenOnboarding}
               onOpenApprovals={onOpenApprovals}
               onOpenWorkflowSettings={() => {
@@ -391,6 +395,8 @@ export function AppModals({
         isOpen={modalManager.githubImportOpen}
         onClose={closeGitHubImportWithNav}
         onImport={taskHandlers.handleGitHubImport}
+        onPlanningMode={onPlanningMode}
+        onOpenChatWithPrefill={onOpenChatWithPrefill}
         tasks={tasks}
         projectId={projectId}
       />

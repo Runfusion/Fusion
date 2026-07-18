@@ -25,7 +25,7 @@
  */
 import { eq, sql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 
 /**
  * FNXC:TaskStoreSettings 2026-06-24-15:05:
@@ -67,8 +67,9 @@ function configScope(layer: Pick<AsyncDataLayer, "projectId">): SQL {
  */
 export async function readProjectConfig(
   layer: AsyncDataLayer,
+  handle: AsyncDataLayer["db"] | DbTransaction = layer.db,
 ): Promise<ProjectConfigRow> {
-  const rows = await layer.db
+  const rows = await handle
     .select({
       nextId: schema.project.config.nextId,
       nextWorkflowStepId: schema.project.config.nextWorkflowStepId,
@@ -95,8 +96,9 @@ export async function readProjectConfig(
  */
 export async function readProjectSettings(
   layer: AsyncDataLayer,
+  handle: AsyncDataLayer["db"] | DbTransaction = layer.db,
 ): Promise<Record<string, unknown> | null> {
-  const rows = await layer.db
+  const rows = await handle
     .select({ settings: schema.project.config.settings })
     .from(schema.project.config)
     .where(configScope(layer));
@@ -125,6 +127,7 @@ export async function writeProjectConfig(
   layer: AsyncDataLayer,
   settings: Record<string, unknown>,
   options?: { nextWorkflowStepId?: number; nextWorkflowDefinitionId?: number },
+  handle: AsyncDataLayer["db"] | DbTransaction = layer.db,
 ): Promise<void> {
   const nowIso = new Date().toISOString();
 
@@ -133,12 +136,13 @@ export async function writeProjectConfig(
   let nextWorkflowStepId = options?.nextWorkflowStepId;
   let nextWorkflowDefinitionId = options?.nextWorkflowDefinitionId;
   if (nextWorkflowStepId === undefined || nextWorkflowDefinitionId === undefined) {
-    const existing = await readProjectConfig(layer);
+    // FNXC:ConfigVersioning 2026-07-18-02:00: counter preservation must read through the caller transaction so a versioned settings write snapshots one consistent row.
+    const existing = await readProjectConfig(layer, handle);
     if (nextWorkflowStepId === undefined) nextWorkflowStepId = existing.nextWorkflowStepId ?? 1;
     if (nextWorkflowDefinitionId === undefined) nextWorkflowDefinitionId = existing.nextWorkflowDefinitionId ?? 1;
   }
 
-  await layer.db
+  await handle
     .insert(schema.project.config)
     .values({
       id: CONFIG_ROW_ID,

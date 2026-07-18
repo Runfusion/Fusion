@@ -455,9 +455,12 @@ describe("HeartbeatMonitor error-state recovery", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
+      let resolveFirstPrompt!: () => void;
+      const firstPromptStarted = new Promise<void>((resolve) => { resolveFirstPrompt = resolve; });
       const session = createSession(async () => {
         calls += 1;
         if (calls === 1) {
+          resolveFirstPrompt();
           throw new Error('Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}');
         }
       });
@@ -466,12 +469,13 @@ describe("HeartbeatMonitor error-state recovery", () => {
       const taskStore = createNoTaskStore();
       const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
 
-      let settled = false;
-      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" }).finally(() => { settled = true; });
-      // Flat transient-auth retry delay is ~5s ±10% jitter; advance fake time until the run settles.
-      for (let i = 0; i < 30 && !settled; i++) {
-        await vi.advanceTimersByTimeAsync(1_000);
-      }
+      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
+      await firstPromptStarted;
+      /*
+      FNXC:EngineTests 2026-07-18-07:25:
+      FN-8271 replaces thirty one-second fake-timer polls with an explicit first-prompt synchronization followed by one deterministic timer drain. Waiting for the initial mocked prompt guarantees the transient-auth retry timer exists before `runAllTimersAsync`, avoiding thirty real async yields under shard load.
+      */
+      await vi.runAllTimersAsync();
       await heartbeat;
 
       expect(session.prompt).toHaveBeenCalledTimes(2);
@@ -489,17 +493,20 @@ describe("HeartbeatMonitor error-state recovery", () => {
     vi.useFakeTimers();
     try {
       const rotation401 = 'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcxRi9mwx1NrZmX9qN7p2"}';
-      mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => { throw new Error(rotation401); }) as never);
+      let resolveFirstPrompt!: () => void;
+      const firstPromptStarted = new Promise<void>((resolve) => { resolveFirstPrompt = resolve; });
+      mockedCreateFnAgent.mockResolvedValueOnce(createSession(async () => {
+        resolveFirstPrompt();
+        throw new Error(rotation401);
+      }) as never);
       const store = createAgentStore(baseAgent({ state: "active", lastError: undefined }));
       const taskStore = createNoTaskStore();
       const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: process.cwd() });
 
-      let settled = false;
-      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" }).finally(() => { settled = true; });
-      // Exhaust the in-run transient-auth retry budget (2 retries × ~5s) on fake time.
-      for (let i = 0; i < 30 && !settled; i++) {
-        await vi.advanceTimersByTimeAsync(1_000);
-      }
+      const heartbeat = monitor.executeHeartbeat({ agentId: store.agent.id, source: "timer" });
+      await firstPromptStarted;
+      // Exhaust the known two-retry transient-auth budget in one deterministic fake-time drain.
+      await vi.runAllTimersAsync();
       await heartbeat;
 
       expect(store.agent.state).toBe("error");
