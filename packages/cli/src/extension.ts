@@ -1263,6 +1263,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           ],
           details: {
             taskId: task.id,
+            wasDuplicate,
             column: task.column,
             dependencies: task.dependencies,
             assignedAgentId: task.assignedAgentId,

@@ -373,6 +373,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         description: "Capture optional report screenshots with privacy context",
       }, undefined, undefined, { cwd: tmpDir, taskId: "FN-PARENT", agentId: "agent-worker" } as ToolExecuteContext);
       expect(replay.details.taskId).toBe(result.details.taskId);
+      expect(replay.details.wasDuplicate).toBe(true);
       expect(replay.content[0].text).toContain("Linked existing");
     });
 

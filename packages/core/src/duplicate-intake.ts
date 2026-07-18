@@ -145,7 +145,7 @@ export function findSameAgentDuplicates(
   const sourceAnchor = stableIntentAnchor(input.title, input.description);
   if (sourceBigrams.size === 0) return [];
   return recent.flatMap((candidate) => {
-    if (candidate.column === "done" || candidate.column === "archived") return [];
+    if (candidate.tombstoned || candidate.column === "done" || candidate.column === "archived") return [];
     const candidateTokens = intentTokens(candidate.title, candidate.description);
     if (sourceAnchor !== stableIntentAnchor(candidate.title, candidate.description)
       || hasSingleTokenReplacement(sourceTokens, candidateTokens)) return [];

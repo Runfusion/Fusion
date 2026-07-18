@@ -3719,7 +3719,8 @@ export class HeartbeatMonitor {
         const result = await baseCreateTool.execute(id, params, signal, onUpdate, ctx);
 
         const resultDetails = result.details as { taskId?: string; wasDuplicate?: boolean };
-        const createdTaskId = resultDetails.taskId ?? "unknown";
+        if (!resultDetails.taskId) return result;
+        const createdTaskId = resultDetails.taskId;
         const wasDuplicate = resultDetails.wasDuplicate === true;
 
         // Log agent link on the created task with run context for correlation

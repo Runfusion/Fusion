@@ -3054,6 +3054,31 @@ describe("HeartbeatTriggerScheduler", () => {
       );
     });
 
+    it("does not log or audit a failed heartbeat task creation without a task id", async () => {
+      const createError = Object.assign(new Error("self-defeating dependency"), {
+        code: "SELF_DEFEATING_DEPENDENCY",
+      });
+      const mockTaskStore = {
+        getSettings: vi.fn().mockResolvedValue({}),
+        findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
+        findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
+        createTask: vi.fn().mockRejectedValue(createError),
+        logEntry: vi.fn(),
+      } as unknown as import("@fusion/core").TaskStore;
+      const audit = { database: vi.fn() } as any;
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const tool = monitor.createHeartbeatTools("agent-abc", mockTaskStore, "FN-001", undefined, audit)
+        .find((candidate) => candidate.name === "fn_task_create")!;
+
+      const result = await tool.execute("call-error", {
+        description: "Create an invalid follow-up",
+      }, undefined as any, undefined as any, undefined as any);
+
+      expect(result.isError).toBe(true);
+      expect(mockTaskStore.logEntry).not.toHaveBeenCalled();
+      expect(audit.database).not.toHaveBeenCalled();
+    });
+
     it("createHeartbeatTools works without runContext (backward compat)", async () => {
       // Create a minimal mock TaskStore
       const mockTaskStore = {

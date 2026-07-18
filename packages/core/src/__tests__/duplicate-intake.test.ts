@@ -80,14 +80,17 @@ describe("findSameAgentDuplicates", () => {
   });
 
   it("recognizes parent-scoped paraphrases through stable intent phrases", () => {
-    const matches = findSameAgentDuplicates({
+    const input = {
       description: "Add screenshot and activity-trace context capture with privacy scrub coverage before GitHub egress.",
       sourceParentTaskId: "FN-8277",
-    }, [{
+    };
+    const candidate = {
       id: "FN-8309", title: "", description: "Add optional screenshot and short activity-trace context capture, preserving scrub-before-egress.",
       column: "triage", createdAt: nowMs - 60_000, sourceAgentId: null, sourceParentTaskId: "FN-8277",
-    }], { nowMs });
+    } as const;
+    const matches = findSameAgentDuplicates(input, [candidate], { nowMs });
     expect(matches.map((match) => match.id)).toEqual(["FN-8309"]);
+    expect(findSameAgentDuplicates(input, [{ ...candidate, tombstoned: true }], { nowMs })).toEqual([]);
   });
 
   it("keeps distinct actions and sibling integrations separate", () => {
