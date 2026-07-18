@@ -3,7 +3,9 @@ import { lazy, Suspense, useState, useCallback, useMemo, useRef, useEffect, type
 import { X, Loader2, CheckCircle, ChevronRight, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AgentOnboardingSummary, ProjectInfo, ProjectCreateInput } from "../api";
-import { createAgent, registerProject, detectWorkspace } from "../api";
+import { createAgent, registerProject, detectWorkspace, fetchAuthStatus } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
+import { openExternalUrl } from "../utils/open-external";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { suggestProjectName } from "../utils/projectDetection";
 
@@ -85,6 +87,7 @@ export function SetupWizardModal({
   includeAgentStep = true,
 }: SetupWizardModalProps) {
   const { t } = useTranslation("app");
+  const { confirmWithChoice } = useConfirm();
   const helpUrl = "https://discord.gg/ksrfuy7WYR";
   /*
   FNXC:Onboarding 2026-06-22-03:11:
@@ -211,6 +214,52 @@ export function SetupWizardModal({
     if (!trimmedPath || !trimmedName) return;
     if (state.manualMode === "clone" && !trimmedCloneUrl) return;
 
+    /*
+    FNXC:ProjectSetup 2026-07-18-04:30:
+    Registering a project on a host without git previously failed AFTER submission with a raw
+    spawn error. Probe git up front and warn with an explicit choice: open the git downloads,
+    or create the project anyway without a git repo (skipGitInit). Clone mode cannot proceed
+    without git, so its dialog only offers the install link. The probe is best-effort — if the
+    status call itself fails, registration proceeds and server-side errors still surface.
+    */
+    let skipGitInit = false;
+    try {
+      const { gitCli } = await fetchAuthStatus();
+      if (gitCli && !gitCli.available) {
+        if (state.manualMode === "clone") {
+          const choice = await confirmWithChoice({
+            title: t("setup.gitMissingTitle", "Git is not installed"),
+            message: t(
+              "setup.gitMissingCloneMessage",
+              "Cloning a repository requires Git on the Fusion host, and Git was not found. Install Git, then try again — Fusion picks it up without a restart.",
+            ),
+            confirmLabel: t("setup.gitMissingOpenDownloads", "Open Git downloads"),
+            cancelLabel: t("setup.cancel", "Cancel"),
+          });
+          if (choice === "primary") openExternalUrl(gitCli.installUrl ?? "https://git-scm.com/downloads");
+          return;
+        }
+        const choice = await confirmWithChoice({
+          title: t("setup.gitMissingTitle", "Git is not installed"),
+          message: t(
+            "setup.gitMissingMessage",
+            "Git was not found on the Fusion host. Fusion projects normally live in a git repository so agents can branch, commit, and merge work. You can install Git first (Fusion picks it up without a restart), or create the project anyway without a git repository.",
+          ),
+          confirmLabel: t("setup.gitMissingCreateAnyway", "Create anyway without Git"),
+          tertiaryLabel: t("setup.gitMissingOpenDownloads", "Open Git downloads"),
+          cancelLabel: t("setup.cancel", "Cancel"),
+        });
+        if (choice === "tertiary") {
+          openExternalUrl(gitCli.installUrl ?? "https://git-scm.com/downloads");
+          return;
+        }
+        if (choice !== "primary") return;
+        skipGitInit = true;
+      }
+    } catch {
+      // Probe failure must not block registration.
+    }
+
     setState((prev) => ({ ...prev, isRegistering: true, error: null }));
 
     try {
@@ -223,6 +272,7 @@ export function SetupWizardModal({
         cloneUrl: state.manualMode === "clone" ? trimmedCloneUrl : undefined,
         workspaceMode: state.manualMode === "existing" ? state.workspaceMode : false,
         taskPrefix: state.manualTaskPrefix.trim() || undefined,
+        skipGitInit: skipGitInit || undefined,
       };
 
       const result = await registerProject(input);
@@ -249,7 +299,7 @@ export function SetupWizardModal({
         error: err instanceof Error ? err.message : "Failed to register project",
       }));
     }
-  }, [includeAgentStep, onProjectRegistered, state.manualPath, state.manualName, state.manualCloneUrl, state.manualMode, state.manualIsolationMode, state.manualNodeId, state.workspaceMode, state.manualTaskPrefix]);
+  }, [includeAgentStep, onProjectRegistered, state.manualPath, state.manualName, state.manualCloneUrl, state.manualMode, state.manualIsolationMode, state.manualNodeId, state.workspaceMode, state.manualTaskPrefix, confirmWithChoice, t]);
 
   const handlePresetSelect = useCallback((presetId: string) => {
     const preset = getPresetById(presetId);

@@ -175,6 +175,14 @@ export interface EnsureProjectForPathInput {
   isolationMode?: IsolationMode;
   nodeId?: string;
   settings?: ProjectSettings;
+  /*
+  FNXC:ProjectSetup 2026-07-18-04:30:
+  Operator-confirmed "create anyway without a git repo" when git is not
+  installed on the host. Skips ensureGitRepositoryForProjectPath entirely so
+  registration succeeds on a plain directory; the repo can be initialized
+  later once git exists.
+  */
+  skipGitInit?: boolean;
 }
 
 export interface EnsureProjectForPathResult {
@@ -579,7 +587,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     if (input.identity?.id) {
       const byId = await this.getProject(input.identity.id);
       if (!byId) {
-        const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+        const gitRepository = input.skipGitInit
+          ? undefined
+          : await this.ensureGitRepositoryForProjectPath(input.path);
         const reattached = await this.registerProject({
           id: input.identity.id,
           name: input.name ?? basename(input.path),
@@ -597,7 +607,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       return { project: byId, reattached: false, outcome: "existing" };
     }
 
-    const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
+    const gitRepository = input.skipGitInit
+      ? undefined
+      : await this.ensureGitRepositoryForProjectPath(input.path);
     const registered = await this.registerProject({
       name: input.name ?? basename(input.path),
       path: input.path,

@@ -313,6 +313,17 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       if (normalizedCloneUrl !== undefined && normalizedGitSetupMode !== undefined && normalizedGitSetupMode !== "clone") {
         throw badRequest("cloneUrl can only be provided when gitSetupMode is 'clone'");
       }
+
+      /*
+      FNXC:ProjectSetup 2026-07-18-04:30:
+      skipGitInit is the dashboard's confirmed "create anyway without a git
+      repo" choice when git is missing on the host. Never valid for clone mode
+      (cloning requires git by definition).
+      */
+      const skipGitInit = req.body?.skipGitInit === true;
+      if (skipGitInit && normalizedGitSetupMode === "clone") {
+        throw badRequest("skipGitInit cannot be combined with clone mode");
+      }
       if (normalizedGitSetupMode === "clone" && normalizedCloneUrl === undefined) {
         throw badRequest("cloneUrl must be a non-empty string when gitSetupMode is 'clone'");
       }
@@ -411,6 +422,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           name: normalizedName,
           isolationMode,
           nodeId,
+          skipGitInit,
         });
         const project = ensured.project;
 
