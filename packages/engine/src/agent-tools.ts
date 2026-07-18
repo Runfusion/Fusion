@@ -991,6 +991,7 @@ export async function createAgentTask(
     bypass: options?.bypassDuplicateCheck === true,
     acknowledgedDuplicates: options?.acknowledgedDuplicates,
     serializationKey: sourceParentTaskId ? `parent:${sourceParentTaskId}` : undefined,
+    sourceParentTaskId,
     logger: log,
   });
 
@@ -1083,6 +1084,7 @@ export async function createAgentTask(
     const reconcile = await reconcileDeterministicDuplicate(store, {
       createdTask,
       fingerprint: guard.fingerprint,
+      sourceParentTaskId,
       logger: log,
     });
 

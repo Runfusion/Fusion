@@ -332,6 +332,42 @@ describe("createDelegateTaskTool", () => {
     expect(tasks).toHaveLength(3);
   });
 
+  it("keeps identical follow-ups from different parent tasks separate", async () => {
+    const foreign = {
+      id: "FN-A",
+      title: "",
+      description: "Write the regression test",
+      dependencies: [],
+      column: "triage" as const,
+      sourceParentTaskId: "FN-PARENT-A",
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    } as Task;
+    const created = {
+      ...foreign,
+      id: "FN-B",
+      sourceParentTaskId: "FN-PARENT-B",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    } as Task;
+    vi.mocked(taskStore.findRecentTasksByContentFingerprint)
+      .mockResolvedValueOnce([foreign])
+      .mockResolvedValueOnce([foreign, created]);
+    vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockResolvedValue([]);
+    vi.mocked(taskStore.createTask).mockResolvedValue(created);
+
+    const result = await createAgentTask(taskStore, {
+      description: "Write the regression test",
+    }, { sourceTaskId: "FN-PARENT-B" });
+
+    expect(result).toEqual({ task: created, wasDuplicate: false });
+    expect(taskStore.createTask).toHaveBeenCalled();
+    expect(taskStore.moveTask).not.toHaveBeenCalled();
+  });
+
   it("persists option-based parent provenance on the step-session fn_task_create surface", async () => {
     const tool = createTaskCreateTool(taskStore, undefined, { sourceTaskId: "FN-PARENT", sourceAgentId: "agent-worker" });
     await tool.execute("call-1", { description: "Capture optional report screenshots" }, undefined as any, undefined as any, undefined as any);

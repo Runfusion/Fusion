@@ -100,6 +100,38 @@ describe("runDeterministicDuplicateGuard", () => {
     result.releaseLock();
   });
 
+  it("scopes exact duplicates to the creating parent task", async () => {
+    const foreignSibling = mkTask({
+      id: "FN-1",
+      title: INPUT.title,
+      description: INPUT.description,
+      column: "todo",
+      sourceParentTaskId: "FN-PARENT-A",
+      source: {
+        sourceType: "api",
+        sourceParentTaskId: "FN-PARENT-A",
+        sourceMetadata: { contentFingerprint: "fp" },
+      },
+    });
+    const { store } = makeStore([foreignSibling]);
+    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValue([foreignSibling]);
+
+    const otherParent = await runDeterministicDuplicateGuard(store, INPUT, {
+      lockScope: "p-1",
+      sourceParentTaskId: "FN-PARENT-B",
+    });
+    expect(otherParent.action).toBe("proceed");
+    otherParent.releaseLock();
+
+    const sameParent = await runDeterministicDuplicateGuard(store, INPUT, {
+      lockScope: "p-1",
+      sourceParentTaskId: "FN-PARENT-A",
+    });
+    expect(sameParent.action).toBe("duplicate");
+    expect(sameParent.existing?.id).toBe("FN-1");
+    sameParent.releaseLock();
+  });
+
   it("serializes concurrent calls with same lock scope", async () => {
     const { store, tasks } = makeStore();
     const first = runDeterministicDuplicateGuard(store, INPUT, { lockScope: "p-1" });
@@ -188,6 +220,42 @@ describe("runDeterministicDuplicateGuard", () => {
 });
 
 describe("reconcileDeterministicDuplicate", () => {
+  it("does not archive an identical task created by a different parent", async () => {
+    const canonicalTs = new Date(Date.now() - 2_000).toISOString();
+    const createdTs = new Date().toISOString();
+    const foreignSibling = mkTask({
+      id: "FN-1",
+      title: INPUT.title,
+      description: INPUT.description,
+      column: "todo",
+      createdAt: canonicalTs,
+      updatedAt: canonicalTs,
+      sourceParentTaskId: "FN-PARENT-A",
+      source: { sourceType: "api", sourceParentTaskId: "FN-PARENT-A", sourceMetadata: { contentFingerprint: "fp" } },
+    });
+    const created = mkTask({
+      id: "FN-2",
+      title: INPUT.title,
+      description: INPUT.description,
+      column: "todo",
+      createdAt: createdTs,
+      updatedAt: createdTs,
+      sourceParentTaskId: "FN-PARENT-B",
+      source: { sourceType: "api", sourceParentTaskId: "FN-PARENT-B", sourceMetadata: { contentFingerprint: "fp" } },
+    });
+    const { store } = makeStore([foreignSibling, created]);
+    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([foreignSibling, created]);
+
+    const result = await reconcileDeterministicDuplicate(store, {
+      createdTask: created,
+      fingerprint: "fp",
+      sourceParentTaskId: "FN-PARENT-B",
+    });
+
+    expect(result).toEqual({ outcome: "kept", canonical: created });
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("archives late-race loser and records activity metadata", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const createdTs = new Date().toISOString();

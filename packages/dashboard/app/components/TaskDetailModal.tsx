@@ -619,7 +619,10 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
     case "cli":
       return { label: tr ? tr("taskDetail.provenance.cli", "CLI") : "CLI" };
     case "api":
-      return { label: tr ? tr("taskDetail.provenance.api", "API") : "API" };
+      return {
+        label: tr ? tr("taskDetail.provenance.api", "API") : "API",
+        parentTaskId: task.sourceParentTaskId,
+      };
     case "recovery":
       return { label: tr ? tr("taskDetail.provenance.recovery", "Recovery") : "Recovery" };
     case "unknown":

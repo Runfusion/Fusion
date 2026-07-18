@@ -9,6 +9,7 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
+import { createAgentTask } from "@fusion/engine";
 import { normalizePlanningSummaryPayload } from "../planning.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
@@ -296,7 +297,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         inheritedBaseBranch: resolvedBaseBranch,
       };
 
+      const normalizedParentId = typeof parentTaskId === "string" ? parentTaskId.trim().toUpperCase() : "";
       const createdTasks = [] as Awaited<ReturnType<TaskStore["createTask"]>>[];
+      const wasDuplicateByIndex: boolean[] = [];
       const tempIdToTaskId = new Map<string, string>();
 
       for (const item of subtasks) {
@@ -317,7 +320,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         column resolution. Omitting `column` lets the store resolve intake for the
         selected-or-default workflow (byte-identical "triage" for builtin:coding).
         */
-        const task = await scopedStore.createTask({
+        const { task, wasDuplicate } = await createAgentTask(scopedStore, {
           title: item.title.trim(),
           description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
           dependencies: undefined,
@@ -326,7 +329,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           modelId: parentTask?.modelId,
           validatorModelProvider: parentTask?.validatorModelProvider,
           validatorModelId: parentTask?.validatorModelId,
-          source: { sourceType: "api", sourceParentTaskId: typeof parentTaskId === "string" ? parentTaskId : undefined },
+          source: { sourceType: "api", sourceParentTaskId: normalizedParentId || undefined },
           branch: taskBranch,
           baseBranch: resolvedBaseBranch,
           branchContext: planningBranchContext,
@@ -335,12 +338,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           Tasks created from a workflow lane via subtask breakdown must stay on that active workflow instead of falling back to the project default board.
           */
           ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
+        }, {
+          rootDir: scopedStore.getRootDir(),
+          sourceTaskId: normalizedParentId || undefined,
         });
 
         tempIdToTaskId.set(item.tempId, task.id);
         createdTasks.push(task);
+        wasDuplicateByIndex.push(wasDuplicate);
 
-        if (item.size === "S" || item.size === "M" || item.size === "L") {
+        if (!wasDuplicate && (item.size === "S" || item.size === "M" || item.size === "L")) {
           await scopedStore.updateTask(task.id, { size: item.size });
         }
       }
@@ -350,18 +357,17 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       //   - drop any reference to the parent being split (would be a dangling id after delete)
       //   - record dropped ids so the caller can surface them instead of silently losing them
       const droppedDependencies: Array<{ taskId: string; dropped: string[] }> = [];
-      const normalizedParentId = typeof parentTaskId === "string" ? parentTaskId.trim() : "";
-
       for (let index = 0; index < subtasks.length; index++) {
         const item = subtasks[index]!;
         const created = createdTasks[index]!;
+        if (wasDuplicateByIndex[index]) continue;
         const rawDeps = Array.isArray(item.dependsOn) ? item.dependsOn : [];
         const resolvedDependencies: string[] = [];
         const dropped: string[] = [];
 
         for (const dep of rawDeps) {
           if (typeof dep !== "string" || !dep) continue;
-          if (normalizedParentId && dep === normalizedParentId) {
+          if (normalizedParentId && dep.trim().toUpperCase() === normalizedParentId) {
             // Parent is about to be deleted — depending on it would permanently
             // block the dependent.
             dropped.push(dep);
@@ -369,7 +375,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           }
           const siblingId = tempIdToTaskId.get(dep);
           if (siblingId) {
-            resolvedDependencies.push(siblingId);
+            if (siblingId !== created.id) resolvedDependencies.push(siblingId);
             continue;
           }
           // Not a sibling tempId and not the parent — it could be an existing

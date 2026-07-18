@@ -343,6 +343,26 @@ describe("TaskDetailModal", () => {
       });
     });
 
+    it("renders parent task link for API-created planning tasks", async () => {
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ sourceType: "api", sourceParentTaskId: "FN-PLANNER" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText(/Created via API/)).toBeInTheDocument();
+      const link = screen.getByRole("button", { name: "FN-PLANNER" });
+      await userEvent.click(link);
+      await waitFor(() => expect(noopOpenDetail).toHaveBeenCalled());
+    });
+
     it("renders compact github issue link for github import provenance", () => {
       render(
         <TaskDetailModal
