@@ -120,7 +120,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { isTaskStillInPlanningStage } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -730,19 +730,27 @@ export class TriageProcessor {
     return evicted;
   }
 
+  /** True when Plan Review already recorded a passed verdict on this task. */
+  private hasPassedPlanReview(task: Pick<Task, "workflowStepResults">): boolean {
+    return task.workflowStepResults?.some(
+      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
+    ) === true;
+  }
+
   /**
    * Recover a triage task whose PROMPT.md was already written but the final
    * handoff out of planning never completed.
    *
    * FNXC:TriageStuckKill 2026-07-18-21:05:
-   * Eligible when `status` is `planning` (classic stuck handoff) OR `null` after
-   * finalize's early status clear while still in triage — stuck-kill mid-Plan-Review
-   * used to leave status null and skip recovery, then force needs-replan and strand
-   * an already-approved plan. Do not recover `needs-replan` / `plan-review-unavailable`
-   * (those need a real replan or review-only retry).
+   * Classic path: status is `planning`. Extended path: status is null after finalize's
+   * early clear ONLY when Plan Review already passed — null alone must not promote an
+   * unapproved draft (a lightly-edited seed can fail the exact seed equality check).
+   * Do not recover `needs-replan` / `plan-review-unavailable`.
    */
   async recoverApprovedTask(task: Task): Promise<boolean> {
-    const recoverableStatus = task.status === "planning" || task.status == null;
+    const recoverableStatus =
+      task.status === "planning"
+      || (task.status == null && this.hasPassedPlanReview(task));
     if (task.column !== "triage" || !recoverableStatus) {
       return false;
     }
@@ -867,6 +875,27 @@ export class TriageProcessor {
       }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         planLog.warn(`${task.id}: failed to increment stuckKillCount during deferred stuck-detector ${context} cleanup: ${msg}`);
+      });
+      return;
+    }
+
+    /*
+    FNXC:TriageStuckKill 2026-07-18-22:30:
+    Finalize can succeed (move to todo + clear status) and clear `finalizing` before the
+    outer stuckAborted catch runs — e.g. dispose of an already-killed main session throws
+    after handoff. Recovery then fails (column is no longer triage) and the draft path
+    would write needs-replan, re-stranding an approved plan (Greptile P1 on PR #2326).
+    If the card already left the planner lane, only record the kill count.
+    */
+    if (hasAdvancedPastPlanning(freshTask) || freshTask.column === "todo" || freshTask.column === "in-progress"
+      || freshTask.column === "in-review" || freshTask.column === "done" || freshTask.column === "archived") {
+      const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
+      planLog.log(
+        `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}) — preserving released state (${context})`,
+      );
+      await this.store.updateTask(task.id, { stuckKillCount: nextStuckKillCount }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        planLog.warn(`${task.id}: failed to increment stuckKillCount after post-handoff stuck-detector ${context} cleanup: ${msg}`);
       });
       return;
     }
@@ -3321,11 +3350,40 @@ export class TriageProcessor {
     FNXC:TriageStuckKill 2026-07-18-21:05:
     Re-assert status:null after the release move. finalize clears status early (before Plan
     Review); triage→todo does not clear planning statuses; a concurrent stuck-kill requeue
-    or rediscovered planner can stamp status:"planning"/"needs-replan" between those points.
-    Without this terminal clear the scheduler holds the card as unplanned after Plan Review
-    APPROVE (FN-1312). Title apply below may also write; status null stays first-class.
+    or rediscovered planner can stamp status:"planning" between those points. Without this
+    terminal clear the scheduler holds the card as unplanned after Plan Review APPROVE
+    (FN-1312).
+
+    FNXC:TriageStuckKill 2026-07-18-22:30:
+    Only clear planning-stage statuses under the task lock. Do not wipe a concurrent
+    operator/engine write of failed, awaiting-approval, or a genuine later needs-replan
+    that is not the mid-handoff planner race (Greptile P2 on PR #2326). Concurrent
+    `status:"planning"` from a rediscovered second planner is still cleared.
     */
-    await this.store.updateTask(task.id, { status: null, error: null });
+    if (typeof this.store.updateTaskAtomic === "function") {
+      await this.store.updateTaskAtomic(task.id, (live) => {
+        if (
+          live.status === "planning"
+          || live.status === "plan-review-unavailable"
+          || live.status == null
+        ) {
+          return { status: null, error: null };
+        }
+        // Leave needs-replan/failed/awaiting-approval and other durable statuses alone.
+        return null;
+      });
+    } else {
+      const live = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
+      if (
+        live
+        && (live.status === "planning" || live.status === "plan-review-unavailable" || live.status == null)
+      ) {
+        await this.store.updateTask(task.id, { status: null, error: null });
+      } else if (!live) {
+        // Minimal test stores often omit getTask; still clear the mid-handoff planning stamp.
+        await this.store.updateTask(task.id, { status: null, error: null });
+      }
+    }
 
     if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
       await this.store.updateTask(task.id, { title: promptDeclaredTitle });

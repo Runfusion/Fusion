@@ -3685,11 +3685,11 @@ describe("specified triage recovery", () => {
   });
 
   /*
-  FNXC:TriageStuckKill 2026-07-18-21:05:
-  finalize clears status to null before Plan Review. A stuck-kill mid-review must still
-  recover that handoff instead of forcing needs-replan and stranding the card unplanned.
+  FNXC:TriageStuckKill 2026-07-18-22:30:
+  Null status alone is not proof of an approved plan (Greptile P1). Only recover null-status
+  triage cards when Plan Review already recorded a passed verdict.
   */
-  it("recovers a triage task whose status was already cleared before Plan Review handoff", async () => {
+  it("recovers a null-status triage task only when Plan Review already passed", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -3711,13 +3711,51 @@ describe("specified triage recovery", () => {
       steps: [],
       currentStep: 0,
       log: [],
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "passed",
+          verdict: "APPROVE",
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as any);
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
+  it("does not recover a null-status triage draft that never passed Plan Review", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        requirePlanApproval: false,
+      } as Settings),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001",
+      description: "Unapproved draft after early status clear",
+      column: "triage",
+      status: null,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:02:00.000Z",
     });
 
-    expect(recovered).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(recovered).toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("does not recover needs-replan cards (those require a real replan, not handoff recovery)", async () => {
@@ -3802,6 +3840,62 @@ describe("specified triage recovery", () => {
       expect.objectContaining({ status: "needs-replan" }),
     );
     expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:TriageStuckKill 2026-07-18-22:30:
+  After a successful release, outer stuckAborted cleanup must not re-apply needs-replan
+  (Greptile P1 post-handoff race on PR #2326).
+  */
+  it("does not write needs-replan when stuck-abort cleanup runs after handoff to todo", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 10000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        maxStuckKills: 6,
+      } as Settings),
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-001",
+        description: "already released",
+        column: "todo",
+        status: null,
+        stuckKillCount: 0,
+        dependencies: [],
+        steps: [{ name: "step-1", status: "pending" }],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      }),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+
+    await (processor as any).handleStuckAbortRequeue(
+      {
+        id: "FN-001",
+        description: "already released",
+        column: "todo",
+        status: null,
+        stuckKillCount: 0,
+        dependencies: [],
+        steps: [{ name: "step-1", status: "pending" }],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      },
+      "catch",
+    );
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 1 });
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "needs-replan" }),
+    );
   });
 
   it("stamps source metadata from sanitized effective write scope during recovery", async () => {
