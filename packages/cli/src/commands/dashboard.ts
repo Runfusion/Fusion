@@ -2177,6 +2177,36 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
     }
 
+    // FNXC:ExtensionHostStoreWarmup 2026-07-18-19:20:
+    // Pre-populate setHostTaskStore for all registered projects from already-
+    // running ProjectEngine TaskStores, so extension API tools (fn_task_archive,
+    // fn_task_update, etc.) find a cached store and never fall through to
+    // createTaskStoreForBackend (which times out creating a second pool).
+    // Reuses each engine's existing TaskStore directly — no new PG boot needed.
+    void (async () => {
+      try {
+        const projects = await centralCoreForEngine.listProjects();
+        // Skip cwd — its store is already injected at line 928.
+        const nonCwd = projects.filter((p) => p.path !== cwd);
+        for (const p of nonCwd) {
+          try {
+            const engine = engineManager.getEngine(p.id);
+            if (!engine) continue;
+            setHostTaskStore(p.path, engine.getTaskStore());
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logSink.warn(`Failed to warm extension store for ${p.name} (${p.path}): ${msg}`, "extension");
+          }
+        }
+        if (nonCwd.length > 0) {
+          logSink.log(`Warmed extension host stores for ${nonCwd.length} project(s)`, "extension");
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logSink.warn(`Failed to list projects for store warmup: ${msg}`, "extension");
+      }
+    })();
+
     disposeCallbacks.push(async () => {
       if (hybridExecutor) {
         await hybridExecutor.shutdown();
