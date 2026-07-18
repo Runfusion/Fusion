@@ -630,8 +630,21 @@ export const DEFAULT_EMBEDDED_DATABASE = "fusion";
  * so the zero-config cluster has been boot-smoke tested with a 64MB /dev/shm
  * lower bound. Defaults precede caller flags because PostgreSQL applies repeated
  * `-c key=value` settings last-wins, preserving an operator's explicit override.
+ *
+ * FNXC:PostgresEmbedded 2026-07-17-19:20:
+ * `mmap` is only valid on POSIX platforms. On Windows PostgreSQL accepts a single
+ * value, `windows`, and rejects `mmap` with FATAL `invalid value for parameter
+ * "shared_memory_type"` before opening the port — this broke every Windows
+ * embedded start (and the v0.70.0/v0.70.1 Windows release smoke) the day the
+ * mmap default landed. Windows needs no override at all, so the default flag set
+ * is empty there; the SysV exhaustion the mmap default fixes cannot occur on
+ * Windows anyway.
  */
-export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = ["-c", "shared_memory_type=mmap"] as const;
+export function defaultEmbeddedPostgresFlagsFor(platform: NodeJS.Platform): readonly string[] {
+  return platform === "win32" ? [] : ["-c", "shared_memory_type=mmap"];
+}
+
+export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = defaultEmbeddedPostgresFlagsFor(process.platform);
 
 /**
  * FNXC:PostgresEmbedded 2026-06-24-09:05:

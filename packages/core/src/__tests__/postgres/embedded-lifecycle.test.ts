@@ -34,6 +34,7 @@ import {
   EmbeddedStartTimeoutError,
   DEFAULT_START_TIMEOUT_MS,
   DEFAULT_EMBEDDED_POSTGRES_FLAGS,
+  defaultEmbeddedPostgresFlagsFor,
   isDataDirInitialized,
   isWindowsElevatedAdmin,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
@@ -1123,6 +1124,24 @@ describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
     }
     __setEmbeddedPostgresCtorForTests(RecordingEmbeddedPostgres as never);
   }
+
+  /*
+   * FNXC:PostgresEmbedded 2026-07-17-19:20:
+   * `shared_memory_type=mmap` is rejected by PostgreSQL on Windows (only value:
+   * `windows`) with a FATAL before the port opens — the mmap default broke every
+   * Windows embedded start and the v0.70.0/v0.70.1 Windows release smoke. The
+   * default flag set must stay platform-aware: no shared_memory_type override on
+   * win32, mmap everywhere else.
+   */
+  it.each(["win32", "darwin", "linux"] as const)("default flags are valid for %s", (platform) => {
+    const flags = defaultEmbeddedPostgresFlagsFor(platform);
+    if (platform === "win32") {
+      expect(flags).toEqual([]);
+    } else {
+      expect(flags).toEqual(["-c", "shared_memory_type=mmap"]);
+    }
+    expect(flags.join(" ")).not.toMatch(platform === "win32" ? /shared_memory_type/ : /shared_memory_type=(windows|sysv)/);
+  });
 
   it.each([
     ["omitted", undefined, [...DEFAULT_EMBEDDED_POSTGRES_FLAGS]],
