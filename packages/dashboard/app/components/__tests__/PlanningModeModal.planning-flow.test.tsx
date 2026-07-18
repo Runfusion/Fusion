@@ -766,9 +766,20 @@ describe("PlanningModeModal", () => {
       });
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
-      fireEvent.click(screen.getByText("Speed"));
+      /*
+      FNXC:PlanningModeOptions 2026-07-18-10:35:
+      Full-suite shard load observed getByText("Speed") not committing the multi-select
+      checkbox state before Other was toggled (payload lost q-priorities and only sent
+      _other). Click the option checkbox by accessible name and wait for checked before
+      combining Other — same FN-8245 settle discipline as Other-only.
+      */
+      const speedCheckbox = screen.getByRole("checkbox", { name: /Speed/i });
+      fireEvent.click(speedCheckbox);
+      await waitFor(() => {
+        expect(speedCheckbox).toBeChecked();
+      });
       fireEvent.click(within(screen.getByTestId("planning-option-other")).getByRole("checkbox"));
-      const otherInput = screen.getByTestId("planning-other-input");
+      const otherInput = await screen.findByTestId("planning-other-input");
       fireEvent.change(otherInput, { target: { value: "  Preserve operator control  " } });
       expect(continueButton).toBeEnabled();
       fireEvent.click(continueButton);
