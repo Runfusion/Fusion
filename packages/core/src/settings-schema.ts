@@ -271,6 +271,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Verbose tool arguments and results are default-off to reduce persisted log volume and payload exposure. Operators who need saved tool details can explicitly opt in with persistAgentToolOutput: true; tool timeline rows remain logged either way.
   */
   persistAgentToolOutput: false,
+  // Task chat remains an operator-directed conversation by default. Enable this
+  // explicitly to add engine-authored lifecycle narration to the transcript.
+  proactiveTaskChatEnabled: false,
   persistAgentThinkingLogPermanent: false,
   persistAgentThinkingLogEphemeral: false,
   persistAgentThinkingLog: false,

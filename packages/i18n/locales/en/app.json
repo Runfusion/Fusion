@@ -5988,6 +5988,8 @@
       "saveAIThinkingForPermanentAgents": " Save AI thinking for permanent agents ",
       "saveAIThinkingLogs": "Save AI thinking logs",
       "saveToolOutputInAgentLogs": " Save tool output in agent logs ",
+      "enableProactiveTaskChat": " Enable proactive task-chat updates ",
+      "enableProactiveTaskChatHint": " When enabled, Task chat reports step progress, failures, reviews, and rollbacks in real time. Default: disabled. ",
       "updates": "Updates",
       "weekly": "Weekly",
       "whenDisabledToolRowsAreStillLoggedBut": " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. Default: disabled. ",

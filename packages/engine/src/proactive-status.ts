@@ -102,7 +102,7 @@ export function buildReviewRollbackFailureMessage(safeReason: string): string {
 }
 
 export async function emitProactiveStatus(
-  store: Pick<TaskStore, "appendAgentLog">,
+  store: Pick<TaskStore, "appendAgentLog" | "getSettingsFast">,
   taskId: string,
   message: string | null | undefined,
   role: AgentRole,
@@ -110,6 +110,7 @@ export async function emitProactiveStatus(
 ): Promise<void> {
   if (!message) return;
   try {
+    if ((await store.getSettingsFast()).proactiveTaskChatEnabled !== true) return;
     await store.appendAgentLog(taskId, message, "status", detail, role);
   } catch {
     // Proactive narration is strictly observational and must not affect execution.

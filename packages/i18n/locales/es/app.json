@@ -5940,7 +5940,9 @@
       "gitLabAuthTokenHint": "",
       "dismissModalsByClickingOutsideHint": "",
       "skipConfirmationDialogs": "",
-      "skipConfirmationDialogsHint": ""
+      "skipConfirmationDialogsHint": "",
+      "enableProactiveTaskChat": "",
+      "enableProactiveTaskChatHint": ""
     },
     "globalModels": {
       "allow": "",

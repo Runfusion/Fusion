@@ -45,11 +45,12 @@ function proactiveStepStatusMessage(
   }
 }
 
-function appendProactiveStepStatus(store: TaskStore, taskId: string, message: string | null): void {
+async function appendProactiveStepStatus(store: TaskStore, taskId: string, message: string | null): Promise<void> {
   if (!message) return;
+  if ((await store.getSettingsFast()).proactiveTaskChatEnabled !== true) return;
   // The task mutation is authoritative. Chat narration is an observational,
   // best-effort companion and must never make a lifecycle transition fail.
-  void store.appendAgentLog(taskId, message, "status", undefined, "executor").catch(() => undefined);
+  await store.appendAgentLog(taskId, message, "status", undefined, "executor");
 }
 
 export async function updateStepImpl(store: TaskStore, id: string, stepIndex: number, status: import("../types.js").StepStatus, options?: { source?: "graph" },): Promise<Task> {
@@ -234,11 +235,11 @@ export async function updateStepImpl(store: TaskStore, id: string, stepIndex: nu
       if (store.isWatching) store.taskCache.set(id, { ...task });
 
       store.emit("task:updated", task);
-      appendProactiveStepStatus(
+      void appendProactiveStepStatus(
         store,
         id,
         proactiveStepStatusMessage(stepIndex, task.steps[stepIndex].name, currentStatus, status),
-      );
+      ).catch(() => undefined);
       return task;
     });
   }

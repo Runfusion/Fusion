@@ -2893,6 +2893,8 @@ export interface GlobalSettings {
    *  verbose `detail` payload is omitted to reduce log size/noise. Distinct
    *  from `persistAgentThinkingLog`, which controls `thinking` rows. */
   persistAgentToolOutput?: boolean;
+  /** When true, task chat receives engine-authored progress, failure, and rollback updates. Default: false. */
+  proactiveTaskChatEnabled?: boolean;
   /** When true, persist `thinking` log entries from agent reasoning deltas for
    *  permanent (non-ephemeral) agents. Default: false (suppressed). */
   persistAgentThinkingLogPermanent?: boolean;

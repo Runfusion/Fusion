@@ -70,6 +70,8 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("remoteAccess")).toBe(true);
     expect(isGlobalSettingsKey("persistAgentToolOutput")).toBe(true);
     expect(isProjectSettingsKey("persistAgentToolOutput")).toBe(false);
+    expect(isGlobalSettingsKey("proactiveTaskChatEnabled")).toBe(true);
+    expect(isProjectSettingsKey("proactiveTaskChatEnabled")).toBe(false);
     expect(isGlobalSettingsKey("persistAgentThinkingLog")).toBe(true);
     expect(isProjectSettingsKey("persistAgentThinkingLog")).toBe(false);
     expect(isGlobalOnlySettingsKey("persistAgentThinkingLog")).toBe(true);

@@ -143,6 +143,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "dismissModalsOnOutsideClick",
     "skipConfirmationDialogs",
     "persistAgentToolOutput",
+    "proactiveTaskChatEnabled",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",
     "fnBinaryCheckEnabled",

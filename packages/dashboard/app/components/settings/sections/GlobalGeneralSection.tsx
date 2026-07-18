@@ -56,6 +56,16 @@ export function GlobalGeneralSection({ form, setForm }: GlobalGeneralSectionProp
         value={form.persistAgentToolOutput === true}
         onChange={(v) => setForm((f) => ({ ...f, persistAgentToolOutput: v === true }))}
       />
+      <SettingsToggleRow
+        descriptor={{
+          key: "proactiveTaskChatEnabled",
+          label: t("settings.globalGeneral.enableProactiveTaskChat", " Enable proactive task-chat updates "),
+          help: t("settings.globalGeneral.enableProactiveTaskChatHint", " When enabled, Task chat reports step progress, failures, reviews, and rollbacks in real time. Default: disabled. "),
+          scope: "global",
+        }}
+        value={form.proactiveTaskChatEnabled === true}
+        onChange={(v) => setForm((f) => ({ ...f, proactiveTaskChatEnabled: v === true }))}
+      />
       <div className="form-group">
         {/* FNXC:SettingsHelp 2026-07-16-12:45: The pair's ONE shared help paragraph moved behind a single "?" beside the group heading — operator requirement: no inline description paragraphs in Settings. */}
         <div className="settings-field-label-row">

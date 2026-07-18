@@ -15,7 +15,7 @@ pgTest("proactive step-status chat entries (PostgreSQL)", () => {
     harness = undefined;
   });
 
-  it("narrates every accepted lifecycle transition once, including recovery to pending", async () => {
+  it("defaults off and narrates every accepted lifecycle transition once when enabled", async () => {
     harness = await createTaskStoreForTest({ prefix: "fusion_proactive_step_status" });
     const task = await harness.store.createTask({
       title: "Narrate step lifecycle",
@@ -26,6 +26,9 @@ pgTest("proactive step-status chat entries (PostgreSQL)", () => {
     });
 
     await harness.store.updateStep(task.id, 0, "in-progress");
+    expect(await harness.store.getAgentLogs(task.id, { type: "status" })).toEqual([]);
+
+    await harness.store.updateGlobalSettings({ proactiveTaskChatEnabled: true });
     await harness.store.updateStep(task.id, 0, "done");
     await harness.store.updateStep(task.id, 0, "pending");
     // An identical write is not a new lifecycle event and must not duplicate chat rows.
@@ -33,7 +36,6 @@ pgTest("proactive step-status chat entries (PostgreSQL)", () => {
 
     const statuses = (await harness.store.getAgentLogs(task.id, { type: "status" })).map((entry) => entry.text);
     expect(statuses).toEqual([
-      "Starting Step 0: Implement the change",
       "Step 0 finished — Implement the change.",
       "Step 0 was returned to pending — Implement the change.",
     ]);

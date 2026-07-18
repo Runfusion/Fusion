@@ -47,8 +47,20 @@ describe("proactive status narration", () => {
 
   it("persists status narration best-effort", async () => {
     const appendAgentLog = vi.fn().mockResolvedValue(undefined);
-    await emitProactiveStatus({ appendAgentLog } as never, "FN-1", "Finished", "executor", "safe detail");
+    const getSettingsFast = vi.fn().mockResolvedValue({ proactiveTaskChatEnabled: true });
+    await emitProactiveStatus({ appendAgentLog, getSettingsFast } as never, "FN-1", "Finished", "executor", "safe detail");
     expect(appendAgentLog).toHaveBeenCalledWith("FN-1", "Finished", "status", "safe detail", "executor");
-    await expect(emitProactiveStatus({ appendAgentLog: vi.fn().mockRejectedValue(new Error("down")) } as never, "FN-1", "Finished", "reviewer")).resolves.toBeUndefined();
+    await expect(emitProactiveStatus({ appendAgentLog: vi.fn().mockRejectedValue(new Error("down")), getSettingsFast } as never, "FN-1", "Finished", "reviewer")).resolves.toBeUndefined();
+  });
+
+  it("does not write status narration unless the operator enabled it", async () => {
+    const appendAgentLog = vi.fn();
+    await emitProactiveStatus(
+      { appendAgentLog, getSettingsFast: vi.fn().mockResolvedValue({ proactiveTaskChatEnabled: false }) } as never,
+      "FN-1",
+      "Finished",
+      "executor",
+    );
+    expect(appendAgentLog).not.toHaveBeenCalled();
   });
 });

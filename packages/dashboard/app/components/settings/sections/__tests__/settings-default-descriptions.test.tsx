@@ -77,6 +77,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
   skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
+  proactiveTaskChatEnabled: "globalGeneral.enableProactiveTaskChatHint",
   persistAgentThinkingLogPermanent: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   persistAgentThinkingLogEphemeral: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   fnBinaryCheckEnabled: "globalGeneral.disableThisIfYourLocalDevProcessIs",
