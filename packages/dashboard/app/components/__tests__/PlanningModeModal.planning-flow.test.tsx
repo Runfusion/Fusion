@@ -356,7 +356,7 @@ describe("PlanningModeModal", () => {
 
       fireEvent.click(screen.getByText("UX and interaction details"));
       fireEvent.click(screen.getByTestId("planning-option-other"));
-      fireEvent.change(screen.getByTestId("planning-other-input"), { target: { value: "  Explore rollout risk  " } });
+      fireEvent.change(await screen.findByTestId("planning-other-input"), { target: { value: "  Explore rollout risk  " } });
       fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
       await waitFor(() => {
@@ -604,9 +604,8 @@ describe("PlanningModeModal", () => {
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
       fireEvent.click(screen.getByTestId("planning-option-other"));
+      const otherInput = await screen.findByTestId("planning-other-input");
       expect(continueButton).toBeDisabled();
-
-      const otherInput = screen.getByTestId("planning-other-input");
       fireEvent.change(otherInput, { target: { value: "  Make this a design spike  " } });
       expect(continueButton).toBeEnabled();
       fireEvent.click(continueButton);
@@ -644,9 +643,10 @@ describe("PlanningModeModal", () => {
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
       fireEvent.click(screen.getByTestId("planning-option-other"));
-      fireEvent.change(screen.getByTestId("planning-other-input"), { target: { value: "   " } });
+      const otherInput = await screen.findByTestId("planning-other-input");
+      fireEvent.change(otherInput, { target: { value: "   " } });
       expect(continueButton).toBeDisabled();
-      fireEvent.change(screen.getByTestId("planning-other-input"), { target: { value: "Ignore suggested scope" } });
+      fireEvent.change(otherInput, { target: { value: "Ignore suggested scope" } });
       expect(continueButton).toBeEnabled();
 
       fireEvent.click(screen.getByText("Small"));
@@ -702,15 +702,16 @@ describe("PlanningModeModal", () => {
       });
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
-      fireEvent.click(within(screen.getByTestId("planning-option-other")).getByRole("checkbox"));
-      expect(continueButton).toBeDisabled();
-
       /*
-      FNXC:PlanningModeOptions 2026-07-17-15:55:
-      FN-8245 waits for the Other input after its toggle commits React state.
-      This preserves the user-visible invariant that Other opens an editable
-      input without assuming a same-tick DOM update under loaded jsdom workers.
+      FNXC:PlanningModeOptions 2026-07-18-14:00:
+      Full Suite shard 3 (29646721723) timed out finding planning-other-input after a bare
+      checkbox click under CI load. Wait for the multi-select Other checkbox to be checked,
+      then findByTestId the input (extends FN-8245 settle discipline).
       */
+      const otherCheckbox = within(screen.getByTestId("planning-option-other")).getByRole("checkbox");
+      fireEvent.click(otherCheckbox);
+      await waitFor(() => expect(otherCheckbox).toBeChecked());
+      expect(continueButton).toBeDisabled();
       const otherInput = await screen.findByTestId("planning-other-input");
       fireEvent.change(otherInput, { target: { value: "  Challenge the premise  " } });
       expect(continueButton).toBeEnabled();
@@ -902,7 +903,8 @@ describe("PlanningModeModal", () => {
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
       fireEvent.click(screen.getByTestId("planning-option-other"));
-      fireEvent.change(screen.getByTestId("planning-other-input"), {
+      const otherInput = await screen.findByTestId("planning-other-input");
+      fireEvent.change(otherInput, {
         target: { value: "Ask a different scoping question" },
       });
       fireEvent.change(screen.getByLabelText("Additional comments (optional)"), {
