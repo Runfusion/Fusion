@@ -87,6 +87,29 @@ type EmbeddedLifecycleLike = {
 
 const log = createLogger("startup-factory");
 
+/*
+FNXC:PostgresSchema 2026-07-17-23:55:
+Schema-backend failures were reported via err.message alone. Drizzle wraps
+query failures in DrizzleQueryError, whose message is "Failed query: <full
+SQL> params: ..." — for the schema baseline that is thousands of SQL lines
+— while the REAL PostgresError lives in err.cause and was dropped. Field
+reports (Windows desktop boot failures) were undiagnosable because every
+surfaced log was query text with no error message. Walk the cause chain and
+truncate giant messages so the actual failure always survives into the log.
+*/
+function describeErrorChain(err: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  for (let depth = 0; current !== undefined && current !== null && depth < 5; depth += 1) {
+    const message = current instanceof Error ? current.message : String(current);
+    parts.push(
+      message.length > 1200 ? `${message.slice(0, 600)} … [truncated] … ${message.slice(-300)}` : message,
+    );
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return parts.join(" ⇐ caused by: ");
+}
+
 /**
  * FNXC:ProjectDataIsolation 2026-07-14-12:10:
  * An unregistered project still needs a stable, non-shared PostgreSQL partition. Derive a deterministic identity from its canonical root path so first-boot migration and every later runtime session select the same isolated rows without inventing cross-project ownership.
@@ -523,8 +546,19 @@ export async function createTaskStoreForBackend(
     boot = await bootSchemaBackend(options);
     log.log(`startup phase backend.schemaBackend: ${Date.now() - schemaT0}ms`);
   } catch (err) {
+    const chain = describeErrorChain(err);
+    /*
+    FNXC:PostgresEmbedded 2026-07-18-00:20:
+    Issue #2286: a cluster initdb'd by an earlier version on a non-UTF-8 OS
+    locale cannot store the UTF-8 schema SQL and cannot be converted in place.
+    Newly created clusters are forced to UTF-8 (DEFAULT_EMBEDDED_INITDB_FLAGS);
+    existing ones need a manual re-init, so say exactly that.
+    */
+    const encodingHint = /has no equivalent in encoding/i.test(chain)
+      ? " HINT: this embedded PostgreSQL cluster was created with a non-UTF-8 encoding inherited from the OS locale by an earlier Fusion version. It cannot be converted in place — stop Fusion, delete the embedded data directory (default: ~/.fusion/embedded-postgres/default), and start again so the cluster is recreated as UTF-8."
+      : "";
     throw new Error(
-      `startup-factory: failed to initialize PostgreSQL schema backend: ${err instanceof Error ? err.message : String(err)}`,
+      `startup-factory: failed to initialize PostgreSQL schema backend: ${chain}${encodingHint}`,
     );
   }
   let { connections } = boot;
@@ -765,9 +799,7 @@ export async function createTaskStoreForBackend(
         embeddedOwnsProcess,
       ).catch(() => undefined);
       throw new Error(
-        `startup-factory: SQLite → PostgreSQL first-boot auto-migration failed (refusing to boot an empty database over existing SQLite data; restore the retained backup and run 'fn db migrate' manually): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `startup-factory: SQLite → PostgreSQL first-boot auto-migration failed (refusing to boot an empty database over existing SQLite data; restore the retained backup and run 'fn db migrate' manually): ${describeErrorChain(err)}`,
       );
     }
   }
@@ -858,9 +890,7 @@ export async function createTaskStoreForBackend(
       embeddedOwnsProcess,
     ).catch(() => undefined);
     throw new Error(
-      `startup-factory: failed to construct PostgreSQL-backed TaskStore: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `startup-factory: failed to construct PostgreSQL-backed TaskStore: ${describeErrorChain(err)}`,
     );
   }
   /*

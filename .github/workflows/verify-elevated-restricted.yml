@@ -1,0 +1,86 @@
+# FNXC:WindowsDesktopPackaging 2026-07-17-22:30:
+# Branch verification for the restricted-token elevated postgres launch.
+# Proves on the elevated runner that (1) postgres boots via pg_ctl's
+# restricted-token re-exec with NO helper account, (2) a pre-created legacy
+# 'fusion-pg' account is deleted by the launch path, and (3) a stop + restart
+# cycle on the same data dir works (EBUSY log regression).
+name: Verify Elevated Restricted-Token Postgres
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/win-elevated-no-user]
+
+jobs:
+  verify-elevated-restricted:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build @fusion/core
+        run: pnpm --filter @fusion/core build
+
+      # Simulate a machine polluted by the previous release: the launch path
+      # must delete this account (verified inside the script).
+      - name: Pre-create legacy fusion-pg account
+        shell: pwsh
+        run: |
+          $pass = "Fx9!" + ([guid]::NewGuid().ToString("N")) + "#kP"
+          net user fusion-pg $pass /add /y
+          if ($LASTEXITCODE -ne 0) { throw "could not pre-create legacy account" }
+          Write-Host "legacy fusion-pg account pre-created"
+
+      - name: "Verify: elevated boot via restricted token, no account"
+        run: node scripts/verify-windows-elevated-restricted.mjs
+
+  # Full-app proof: the real CLI boot smoke (fn --help + fn serve with a live
+  # /api/health) on the ELEVATED runner, driving startup-factory through the
+  # restricted-token embedded-PG path end to end — the desktop scenario.
+  boot-smoke-elevated:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Boot smoke (fn --help + serve /api/health, elevated)
+        run: pnpm smoke:boot
+
+      - name: Assert no fusion-pg account was created
+        shell: pwsh
+        run: |
+          net user fusion-pg 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { Write-Error "boot smoke created a fusion-pg account"; exit 1 }
+          Write-Host "no fusion-pg account exists after full app boot"
+          # pwsh propagates the last external command's exit code (net.exe = 2
+          # when the account is absent, which is the PASS condition) — force 0.
+          exit 0

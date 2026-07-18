@@ -1167,6 +1167,37 @@ describe("embedded-lifecycle: shared-memory-safe postgres flags", () => {
     }
   });
 
+  /*
+   * FNXC:PostgresEmbedded 2026-07-18-00:20:
+   * Issue #2286: initdb without --encoding inherits the OS locale encoding; on
+   * non-UTF-8 Windows locales (WIN1254/WIN1252) the cluster cannot store the
+   * UTF-8 schema SQL and the dashboard crash-loops. The lifecycle must force a
+   * UTF-8 cluster on EVERY platform, with caller flags appended after (initdb
+   * takes the last occurrence of a repeated option, so callers can override).
+   */
+  it("forces a UTF-8 initdb (issue #2286) and appends caller initdb flags after the defaults", async () => {
+    const dataDir = makeDataDir();
+    const records: Record<string, unknown>[] = [];
+    installCtorRecorder(records);
+    try {
+      const lifecycle = new EmbeddedPostgresLifecycle({
+        ...baseOptions(dataDir),
+        initdbFlags: ["--data-checksums"],
+      });
+
+      await expect(lifecycle.start()).rejects.toBe(sentinel);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.initdbFlags).toEqual([
+        "--encoding=UTF8",
+        "--locale=C",
+        "--data-checksums",
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+
   it("passes the ordered defaults and caller override through the elevated Windows launcher", async () => {
     const dataDir = makeDataDir();
     const records: Record<string, unknown>[] = [];

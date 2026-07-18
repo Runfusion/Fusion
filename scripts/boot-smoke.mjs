@@ -114,7 +114,7 @@ function fail(message, stderr = "") {
   console.error(`boot-smoke: FAIL — ${message}`);
   if (stderr.trim()) {
     console.error("--- child stderr (tail) ---");
-    console.error(stderr.split("\n").slice(-40).join("\n"));
+    console.error(stderr.split("\n").slice(-200).join("\n"));
   }
   process.exit(1);
 }

@@ -69,10 +69,10 @@ import { redactConnectionString } from "./credential-redact.js";
 import type { ResolvedBackend } from "./backend-resolver.js";
 import {
   isWindowsElevatedAdmin,
-  startServerAsNonAdminUser,
-  type NonAdminServerHandle,
-  type NonAdminStartOptions,
-} from "./embedded-windows-admin.js";
+  startServerElevatedRestricted,
+  type ElevatedServerHandle,
+  type ElevatedStartOptions,
+} from "./embedded-windows-elevated.js";
 // FNXC:WindowsDesktopPackaging 2026-07-14-22:53:
 // Static import so tsup/esbuild bundles postgres.js into packages/cli/dist/bin.js.
 // A runtime require("postgres") resolved via the CLI createRequire banner against
@@ -80,7 +80,7 @@ import {
 // because @runfusion/fusion does not list postgres as a direct dependency.
 import postgres from "postgres";
 
-export { isWindowsElevatedAdmin } from "./embedded-windows-admin.js";
+export { isWindowsElevatedAdmin } from "./embedded-windows-elevated.js";
 
 const require = createRequire(import.meta.url);
 
@@ -581,7 +581,7 @@ export function __setEmbeddedPostgresCtorForTests(ctor: EmbeddedPostgresCtor | n
 let windowsElevatedAdminForTests: boolean | null = null;
 let windowsNativeRootForTests: string | null = null;
 let windowsLauncherForTests:
-  | ((opts: NonAdminStartOptions) => Promise<NonAdminServerHandle>)
+  | ((opts: ElevatedStartOptions) => Promise<ElevatedServerHandle>)
   | null = null;
 
 export function __setWindowsElevatedAdminForTests(value: boolean | null): void {
@@ -593,7 +593,7 @@ export function __setWindowsEmbeddedPostgresNativeRootForTests(value: string | n
 }
 
 export function __setWindowsLauncherForTests(
-  launcher: ((opts: NonAdminStartOptions) => Promise<NonAdminServerHandle>) | null,
+  launcher: ((opts: ElevatedStartOptions) => Promise<ElevatedServerHandle>) | null,
 ): void {
   windowsLauncherForTests = launcher;
 }
@@ -645,6 +645,29 @@ export function defaultEmbeddedPostgresFlagsFor(platform: NodeJS.Platform): read
 }
 
 export const DEFAULT_EMBEDDED_POSTGRES_FLAGS = defaultEmbeddedPostgresFlagsFor(process.platform);
+
+/*
+FNXC:PostgresEmbedded 2026-07-18-00:20:
+GitHub issue #2286: initdb without --encoding inherits the OS locale's
+encoding. On non-UTF-8 Windows locales (Turkish WIN1254 in the report; the
+elevated CI runner's own English WIN1252 reproduces it) the cluster is
+created non-UTF-8 while Fusion always connects with client_encoding=UTF8 and
+ships UTF-8 characters (→, U+2192) in the schema SQL — schema apply then
+fails with `character ... has no equivalent in encoding "WIN12xx"` and the
+dashboard crash-loops. Force a UTF-8 cluster at creation, unconditionally on
+every platform (client_encoding is UTF8 everywhere; on already-UTF-8 systems
+this is a no-op). --locale=C keeps initdb from deriving the encoding from a
+non-UTF-8 inherited locale and gives deterministic collation. Caller-supplied
+--encoding/--locale flags win: initdb takes the LAST occurrence of a
+repeated option, and callers' flags are appended after these defaults.
+NOT retroactive: an existing non-UTF-8 cluster cannot be converted in place;
+affected installs must delete the embedded data dir and let Fusion recreate
+it (see the actionable schema-apply error hint in startup-factory).
+*/
+export const DEFAULT_EMBEDDED_INITDB_FLAGS: readonly string[] = [
+  "--encoding=UTF8",
+  "--locale=C",
+];
 
 /**
  * FNXC:PostgresEmbedded 2026-06-24-09:05:
@@ -1052,12 +1075,13 @@ export class EmbeddedPostgresLifecycle {
   private ownsProcess = true;
   private shutdownHookInstalled = false;
   /**
-   * FNXC:WindowsDesktopPackaging 2026-07-14-21:40:
-   * When the process is an elevated Windows admin, the server is booted under a
-   * dedicated non-admin user (see embedded-windows-admin.ts) and this holds the
-   * stop handle. Null for normal (non-elevated / non-Windows) launches.
+   * FNXC:WindowsDesktopPackaging 2026-07-17-22:30:
+   * When the process is an elevated Windows admin, the server is booted via
+   * pg_ctl's restricted-token re-exec (see embedded-windows-elevated.ts — no
+   * helper account is created) and this holds the stop handle. Null for normal
+   * (non-elevated / non-Windows) launches.
    */
-  private nonAdminHandle: NonAdminServerHandle | null = null;
+  private nonAdminHandle: ElevatedServerHandle | null = null;
   /**
    * FNXC:PostgresEmbedded 2026-06-26-16:20 (fix migration-review P1 #24):
    * Active start() timeout timer, retained so it can be cleared on success or
@@ -1072,7 +1096,7 @@ export class EmbeddedPostgresLifecycle {
       port: opts.port,
       user: opts.user ?? DEFAULT_EMBEDDED_USER,
       password: opts.password ?? DEFAULT_EMBEDDED_PASSWORD,
-      initdbFlags: opts.initdbFlags ?? [],
+      initdbFlags: [...DEFAULT_EMBEDDED_INITDB_FLAGS, ...(opts.initdbFlags ?? [])],
       postgresFlags: [...DEFAULT_EMBEDDED_POSTGRES_FLAGS, ...(opts.postgresFlags ?? [])],
       startTimeoutMs: opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS,
       onLog: opts.onLog ?? ((msg: string) => log.log(msg)),
@@ -1306,7 +1330,7 @@ export class EmbeddedPostgresLifecycle {
               "non-elevated, or ensure the embedded-postgres platform package is installed.",
           );
         }
-        this.nonAdminHandle = await (windowsLauncherForTests ?? startServerAsNonAdminUser)({
+        this.nonAdminHandle = await (windowsLauncherForTests ?? startServerElevatedRestricted)({
           nativeRoot,
           dataDir: this.options.dataDir,
           port,
@@ -1330,7 +1354,7 @@ export class EmbeddedPostgresLifecycle {
       // this process starts Postgres. Re-read that lock and join its instance
       // rather than surfacing the expected lock-file collision to the TUI.
       // FNXC:PostgresStartupRace 2026-07-15-20:06: A cancelled start must never
-      // be rescued into a success. `startServerAsNonAdminUser` rejects on abort
+      // be rescued into a success. `startServerElevatedRestricted` rejects on abort
       // from inside this try, so without this guard a timeout-cancelled launch
       // that happens to see a postmaster.pid would publish a joined instance
       // instead of the EmbeddedStartCancelledError the post-start phases raise.
