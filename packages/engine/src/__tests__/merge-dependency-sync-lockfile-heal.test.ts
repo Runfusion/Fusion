@@ -135,3 +135,127 @@ describe("installWorktreeDependencies lockfile auto-heal", () => {
     expect(readLog(logPath)).toEqual([["install", "--frozen-lockfile"]]);
   });
 });
+
+/*
+FNXC:MergeDeps 2026-07-17-12:00:
+Env passthrough coverage for installWorktreeDependencies. The explicit forwarding of corepack/pnpm
+env vars mirrors mission-verification.ts VERIFICATION_ENV_ALLOWLIST so pnpm is resolvable even when
+the engine process starts without full shell initialization.
+*/
+describe("installWorktreeDependencies env passthrough", () => {
+  /**
+   * Install a fake `pnpm` that logs selected env vars to a file so we can assert
+   * the child process receives the expected environment. Writes a JSON object with
+   * the requested env var values.
+   */
+  function installEnvLoggingPnpm(envVars: string[], logPath: string): string {
+    const binDir = tmp("fusion-env-fake-bin-");
+    const script = join(binDir, "pnpm");
+    const varsJson = JSON.stringify(envVars);
+    writeFileSync(
+      script,
+      `#!/usr/bin/env node
+const fs = require('fs');
+const vars = ${varsJson};
+const env = {};
+for (let v of vars) env[v] = process.env[v];
+fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
+`,
+    );
+    chmodSync(script, 0o755);
+    const previousPath = process.env.PATH ?? "";
+    process.env.PATH = `${binDir}${delimiter}${previousPath}`;
+    return previousPath;
+  }
+
+  it("passes COREPACK_HOME, PNPM_HOME, and npm_config_registry through to exec", async () => {
+    // Set the env vars so the passthrough has values to forward
+    const origCorepackHome = process.env.COREPACK_HOME;
+    const origPnpmHome = process.env.PNPM_HOME;
+    const origNpmRegistry = process.env.npm_config_registry;
+    process.env.COREPACK_HOME = "/tmp/fake-corepack";
+    process.env.PNPM_HOME = "/tmp/fake-pnpm";
+    process.env.npm_config_registry = "https://fake.registry/";
+
+    const dir = tmp("fusion-env-repo-");
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfile: {}\n");
+
+    const logPath = join(tmp("fusion-env-log-"), "env.json");
+    const previousPath = installEnvLoggingPnpm(
+      ["COREPACK_HOME", "PNPM_HOME", "npm_config_registry"],
+      logPath,
+    );
+    try {
+      await installWorktreeDependencies({ cwd: dir, taskId: "FN-1" });
+
+      const captured = JSON.parse(readFileSync(logPath, "utf-8"));
+      expect(captured.COREPACK_HOME).toBe("/tmp/fake-corepack");
+      expect(captured.PNPM_HOME).toBe("/tmp/fake-pnpm");
+      expect(captured.npm_config_registry).toBe("https://fake.registry/");
+    } finally {
+      process.env.PATH = previousPath;
+      process.env.COREPACK_HOME = origCorepackHome;
+      process.env.PNPM_HOME = origPnpmHome;
+      process.env.npm_config_registry = origNpmRegistry;
+    }
+  });
+
+  it("does NOT override or strip existing env vars like PATH", async () => {
+    const dir = tmp("fusion-env-repo2-");
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfile: {}\n");
+
+    const logPath = join(tmp("fusion-env-log2-"), "env.json");
+    const previousPath = installEnvLoggingPnpm(
+      ["PATH", "HOME", "SHELL"],
+      logPath,
+    );
+    try {
+      await installWorktreeDependencies({ cwd: dir, taskId: "FN-1" });
+
+      const captured = JSON.parse(readFileSync(logPath, "utf-8"));
+      // PATH should still contain the fake bin dir AND the real PATH
+      expect(captured.PATH).toContain("fusion-env-fake-bin-");
+      // HOME and SHELL should be preserved from process.env
+      expect(captured.HOME).toBe(process.env.HOME);
+      expect(captured.SHELL).toBe(process.env.SHELL);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
+  it("handles undefined corepack/pnpm env vars gracefully", async () => {
+    // Clear the env vars
+    const origCorepackHome = process.env.COREPACK_HOME;
+    const origPnpmHome = process.env.PNPM_HOME;
+    const origNpmRegistry = process.env.npm_config_registry;
+    delete process.env.COREPACK_HOME;
+    delete process.env.PNPM_HOME;
+    delete process.env.npm_config_registry;
+
+    const dir = tmp("fusion-env-repo3-");
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfile: {}\n");
+
+    const logPath = join(tmp("fusion-env-log3-"), "env.json");
+    const previousPath = installEnvLoggingPnpm(
+      ["COREPACK_HOME", "PNPM_HOME", "npm_config_registry", "PATH"],
+      logPath,
+    );
+    try {
+      await installWorktreeDependencies({ cwd: dir, taskId: "FN-1" });
+
+      const captured = JSON.parse(readFileSync(logPath, "utf-8"));
+      // When the env vars are undefined, they should be undefined in the child too
+      // (not set to empty string or some sentinel)
+      expect(captured.COREPACK_HOME).toBeUndefined();
+      expect(captured.PNPM_HOME).toBeUndefined();
+      expect(captured.npm_config_registry).toBeUndefined();
+      // PATH should still be present
+      expect(captured.PATH).toBeDefined();
+    } finally {
+      process.env.PATH = previousPath;
+      process.env.COREPACK_HOME = origCorepackHome;
+      process.env.PNPM_HOME = origPnpmHome;
+      process.env.npm_config_registry = origNpmRegistry;
+    }
+  });
+});
