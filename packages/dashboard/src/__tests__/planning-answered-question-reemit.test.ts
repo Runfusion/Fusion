@@ -156,11 +156,22 @@ function setupAgent(behaviors: TurnBehavior[]) {
 async function startSessionAtFirstQuestion(
   agent: ReturnType<typeof setupAgent>,
 ): Promise<string> {
+  /*
+  FNXC:PlanningRetry 2026-07-18-12:20:
+  createSessionWithAgent defaults clarificationEnabled=false, which suppresses the first
+  question into continueToSummaryAfterSuppressedQuestion and consumes the next mock prompt
+  turn (often the hung turn these re-emit tests need). Opt into clarification so the
+  multi-question interview invariants under test still run.
+  */
   const sessionId = await createSessionWithAgent(
     "10.0.2.20",
     "Plan a feature",
     "/tmp/project",
     MOCK_TASK_STORE,
+    undefined,
+    undefined,
+    undefined,
+    { clarificationEnabled: true },
   );
   planningStreamManager.consumeInitialTurn(sessionId)?.();
   await agent.firstQuestionEmitted;

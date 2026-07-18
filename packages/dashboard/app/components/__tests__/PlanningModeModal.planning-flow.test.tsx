@@ -835,15 +835,22 @@ describe("PlanningModeModal", () => {
       expect(screen.getByTestId("planning-option-other")).toBeInTheDocument();
       expect(screen.queryByTestId("planning-other-input")).toBeNull();
 
+      /*
+      FNXC:PlanningModeOptions 2026-07-18-12:15:
+      Full Suite shard 3 (29643371961) failed when fireEvent.click(Other) did not flush
+      isOtherSelected before the synchronous getByTestId(planning-other-input) under CI
+      load. Await findByTestId after the confirm Other button click (same settle discipline
+      as multi-select Other) before asserting Continue enablement and the _other payload.
+      */
       const continueButton = screen.getByRole("button", { name: "Continue" });
       fireEvent.click(screen.getByTestId("planning-option-other"));
-      expect(screen.getByTestId("planning-other-input")).toBeInTheDocument();
+      const otherInput = await screen.findByTestId("planning-other-input");
       expect(continueButton).toBeDisabled();
 
-      fireEvent.change(screen.getByTestId("planning-other-input"), { target: { value: "   " } });
+      fireEvent.change(otherInput, { target: { value: "   " } });
       expect(continueButton).toBeDisabled();
 
-      fireEvent.change(screen.getByTestId("planning-other-input"), {
+      fireEvent.change(otherInput, {
         target: { value: "  Ask a different scoping question  " },
       });
       expect(continueButton).toBeEnabled();
