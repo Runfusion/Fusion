@@ -33,6 +33,7 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
+    "dist/migrations/**",
     "dist/client/**",
     "dist/desktop/**",
     "dist/pi-claude-cli/**",
