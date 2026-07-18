@@ -452,6 +452,14 @@ async function bootSchemaBackendOnce(
     const dataDir = resolve(options.embeddedDataDir ?? defaultEmbeddedDataDir());
     embeddedDataDir = dataDir;
     log.log(`startup-factory: starting embedded PostgreSQL (data dir ${dataDir})`);
+    /*
+    FNXC:PostgresMaxConnections 2026-07-18-14:20:
+    Embedded PG default max_connections is 100 (compiled-in default for PG15).
+    With 9+ project engines each maintaining connection pools, we exhaust the
+    limit and block new engine starts with "sorry, too many clients already".
+    Raise the ceiling to 250 so that all project engines + API + agent sessions
+    can coexist without hitting the connection limit during normal operation.
+    */
     embeddedLifecycle = new EmbeddedPostgresLifecycle({
       dataDir,
       database: DEFAULT_EMBEDDED_DATABASE,
