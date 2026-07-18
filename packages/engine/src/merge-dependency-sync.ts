@@ -166,9 +166,25 @@ export async function installWorktreeDependencies(options: InstallWorktreeDepend
   logger?.log?.(`${taskId}: syncing dependencies ${context}`);
   await log?.(`Syncing dependencies ${context}: ${installCommand}`);
 
+  /*
+  FNXC:MergeDeps 2026-07-17-12:00:
+  Pass corepack/pnpm env vars (PNPM_HOME, COREPACK_HOME, npm_config_registry) to the exec
+  child process — mirrors mission-verification.ts VERIFICATION_ENV_ALLOWLIST so pnpm is
+  resolvable even when the engine process starts without full shell initialization. Without
+  these vars, corepack cannot locate its pnpm shim and "pnpm: command not found" occurs.
+  */
+  const resolvedEnv: NodeJS.ProcessEnv = { ...process.env };
+  const PNPM_ENV_VARS = ["COREPACK_HOME", "PNPM_HOME", "npm_config_registry"] as const;
+  for (const key of PNPM_ENV_VARS) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      resolvedEnv[key] = value;
+    }
+  }
   const runInstall = (command: string): Promise<unknown> =>
     execAsync(command, {
       cwd,
+      env: resolvedEnv,
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
       timeout: INSTALL_TIMEOUT_MS,
