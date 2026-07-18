@@ -4955,13 +4955,19 @@ describe("QuickEntryBox", () => {
       const outsideElement = document.createElement("div");
       document.body.appendChild(outsideElement);
       try {
-        fireEvent.mouseDown(outsideElement);
+        /*
+        FNXC:DashboardTests 2026-07-18-08:45:
+        Dispatch a bubbling native MouseEvent so the document mousedown listener
+        in QuickEntryBox sees the outside target (RTL fireEvent alone was flaky
+        under full-suite and failed locally for this agent portal).
+        */
+        outsideElement.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        await waitFor(() => {
+          expect(screen.queryByText("Select agent")).toBeNull();
+        });
       } finally {
-        document.body.removeChild(outsideElement);
+        if (outsideElement.parentNode) document.body.removeChild(outsideElement);
       }
-
-      // Picker should be closed
-      expect(screen.queryByText("Select agent")).toBeNull();
     });
 
     it("repositions portaled picker on window resize while open", async () => {

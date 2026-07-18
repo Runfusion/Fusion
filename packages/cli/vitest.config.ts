@@ -98,6 +98,27 @@ const quarantinedCliTests: string[] = [
   FNXC:CliTests 2026-07-16-09:00:
   FN-8077 removed project-context.test.ts from this list and the ledger in lockstep. Its CentralCore coverage now uses the external PostgreSQL test harness under pgDescribe rather than launching an embedded postmaster for each test in forked loaded lanes; pure formatting coverage remains ungated.
   */
+  /*
+  FNXC:CliTests 2026-07-18-08:50:
+  Full-suite shard 4 (runs 29637256028, 29637376023) re-exposed package-lane cascade:
+  extension-dist-barrel beforeAll hookTimeout under PG load, plus lock-retry timeouts,
+  cascading 87 failures. Quarantine the observed integration-heavy files on sight in
+  lockstep with scripts/lib/test-quarantine.json — do not raise hookTimeout/testTimeout.
+  */
+  "src/__tests__/bin.test.ts",
+  "src/__tests__/extension-agent-update.test.ts",
+  "src/__tests__/extension-dist-barrel.test.ts",
+  "src/__tests__/extension-goal-tools.test.ts",
+  "src/__tests__/extension-mission-goal-tools.test.ts",
+  "src/__tests__/extension-tool-timeout.test.ts",
+  "src/__tests__/extension-workflow-tools.test.ts",
+  "src/__tests__/extension.test.ts",
+  "src/__tests__/task-plan.test.ts",
+  "src/commands/__tests__/mcp-lock-retry.test.ts",
+  "src/commands/__tests__/plugin.test.ts",
+  "src/commands/__tests__/task-lock-retry.test.ts",
+  "src/commands/dashboard-tui/__tests__/app.test.tsx",
+  "src/commands/dashboard-tui/__tests__/terminal-attach.test.ts",
 ];
 
 export default defineConfig({

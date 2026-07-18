@@ -191,6 +191,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
   const agentPickerPortalRef = useRef<HTMLDivElement>(null);
+  /** Bumps on open/close so a late fetchAgents resolution cannot re-open a dismissed picker. */
+  const agentPickerOpenTokenRef = useRef(0);
   const nodePickerRef = useRef<HTMLDivElement>(null);
   const nodePickerPortalRef = useRef<HTMLDivElement>(null);
   const priorityPickerRef = useRef<HTMLDivElement>(null);
@@ -554,17 +556,25 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   useEffect(() => {
     if (!showAgentPicker) return;
 
+    /*
+    FNXC:QuickEntry 2026-07-18-08:45:
+    Listen in the capture phase so outside mousedown closes the agent portal even
+    when a nested control calls preventDefault/stopPropagation on bubble. Full-
+    suite + local tests observed the bubble-only listener leaving "Select agent"
+    mounted after a true outside click.
+    */
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
       // Check both the trigger button and the portaled dropdown
       if (agentPickerRef.current?.contains(target)) return;
       if (agentPickerPortalRef.current?.contains(target)) return;
+      agentPickerOpenTokenRef.current += 1;
       setShowAgentPicker(false);
       setAgentPickerPosition(null);
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside, true);
+    return () => document.removeEventListener("mousedown", handleClickOutside, true);
   }, [showAgentPicker]);
 
   useEffect(() => {
@@ -1637,24 +1647,38 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
   const loadAgents = useCallback(async () => {
     if (agents.length > 0 && agentsProjectId === projectId) {
+      agentPickerOpenTokenRef.current += 1;
       setShowAgentPicker(true);
       updateAgentPickerPosition();
       return;
     }
 
+    /*
+    FNXC:QuickEntry 2026-07-18-08:45:
+    Open the picker immediately (with loading) so outside-click listeners arm
+    before fetchAgents resolves. Bump a token on open/close so a late fetch
+    does not re-open the portal after the operator dismissed it.
+    */
+    const openToken = ++agentPickerOpenTokenRef.current;
     setAgentsLoading(true);
+    setShowAgentPicker(true);
+    updateAgentPickerPosition();
     try {
       const result = await fetchAgents(undefined, projectId);
+      if (openToken !== agentPickerOpenTokenRef.current) return;
       setAgents(result);
       setAgentsProjectId(projectId);
       setShowAgentPicker(true);
       updateAgentPickerPosition();
     } catch (err) {
+      if (openToken !== agentPickerOpenTokenRef.current) return;
       const msg = getErrorMessage(err);
       addToast(msg ? t("tasks.loadAgentsFailed", "Failed to load agents: {{msg}}", { msg }) : t("tasks.loadAgentsFailedGeneric", "Failed to load agents"), "error");
       setShowAgentPicker(false);
     } finally {
-      setAgentsLoading(false);
+      if (openToken === agentPickerOpenTokenRef.current) {
+        setAgentsLoading(false);
+      }
     }
   }, [agents.length, agentsProjectId, projectId, addToast, updateAgentPickerPosition]);
 
