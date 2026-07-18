@@ -47,6 +47,7 @@ import {
   IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
   TASK_PROPOSAL_CLAIM_VERSION,
   CONFIGURATION_REVISIONS_VERSION,
+  IDEATION_SCHEMA_VERSION,
   OWNER_PROJECT_ID_SPLIT_VERSION,
   /*
   FNXC:PostgresSchema 2026-07-16-08:00:
@@ -519,7 +520,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 91 project tables, 18 central tables, 1 archive table", async () => {
+  it("creates all 93 project tables, 18 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -536,9 +537,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     const bySchema = Object.fromEntries(rows.map((r) => [r.table_schema, r.n]));
     // Project: 87 typed core tables + 2 lossless legacy preservation tables
     // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30)
-    // + 1 configuration_revisions (FNXC:ConfigVersioning 2026-07-18-14:00).
+    // + 1 configuration_revisions (FNXC:ConfigVersioning 2026-07-18-14:00)
+    // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295).
     // Plugin tables are added separately by the hook.
-    expect(bySchema.project).toBe(91);
+    expect(bySchema.project).toBe(93);
     expect(bySchema.central).toBe(18);
     expect(bySchema.archive).toBe(1);
   });
@@ -1073,6 +1075,15 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       );
       /* FNXC:GitHubImportTranslate 2026-07-16-23:30: Later durable-task migrations run after this historical 0000 fixture, so retain their required task table surface. */
       CREATE TABLE project.tasks (id text PRIMARY KEY);
+      /*
+      FNXC:Ideation 2026-07-18-13:25:
+      FN-8295 migration 0022 FKs ideation rows to missions/mission_features on (project_id, id).
+      A historical 0000 fixture must retain those parent tables so 0006 can rewrite their PKs to
+      composite ownership before 0022 attaches FKs; otherwise upgrade-from-0000 tests fail with
+      missing relation project.missions.
+      */
+      CREATE TABLE project.missions (id text PRIMARY KEY);
+      CREATE TABLE project.mission_features (id text PRIMARY KEY);
       CREATE TABLE project.automations (
         id text PRIMARY KEY,
         name text NOT NULL,
@@ -1154,6 +1165,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1201,6 +1213,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 
@@ -1337,6 +1350,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 
@@ -1398,6 +1412,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 
@@ -1459,6 +1474,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       IMPORT_TRANSLATION_CACHE_LEGACY_PARTITION_BACKFILL_VERSION,
       TASK_PROPOSAL_CLAIM_VERSION,
       CONFIGURATION_REVISIONS_VERSION,
+      IDEATION_SCHEMA_VERSION,
     ]);
   });
 });
