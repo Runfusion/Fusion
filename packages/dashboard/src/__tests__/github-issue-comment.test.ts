@@ -26,11 +26,20 @@ vi.mock("../github-auth.js", () => ({
 class MockStore extends EventEmitter {
   private settings: Record<string, unknown>;
   logEntry: Mock;
+  /*
+  FNXC:DashboardTests 2026-07-18-12:55:
+  GitHubTrackingCommentService re-reads the authoritative task via store.getTask on done moves
+  so Done comments can include a landing commit that was not yet on the task:moved snapshot.
+  MockStore must implement getTask; returning null keeps the product's snapshot fallback so
+  comment-posting assertions stay deterministic.
+  */
+  getTask: Mock;
 
   constructor(settings: Record<string, unknown>) {
     super();
     this.settings = settings;
     this.logEntry = vi.fn().mockResolvedValue(undefined);
+    this.getTask = vi.fn().mockResolvedValue(null);
   }
 
   async getSettings(): Promise<Record<string, unknown>> {
