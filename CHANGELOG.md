@@ -2,19 +2,101 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
-## 0.71.0
+## 0.72.0
 
 ### Highlights
-- See live progress instead of a blank screen during database migrations on boot
-- Desktop launch screen now shows migration status and won't time out mid-migration
-- Fixed a first-boot crash migrating legacy SQLite data containing NUL characters
+- OpenAI Codex sign-in now front-and-center in onboarding quick start
+- OAuth logins reliably open the system browser on desktop instead of silently failing
+- Embedded PostgreSQL always inits UTF-8, and Fusion auto-repairs older broken clusters
+- Project setup warns when Git is missing, with install-or-continue options
+- Windows close dialog adds Minimize to tray, plus safer elevated Postgres boot
 
 ### New
-- Dashboard now shows a holding page and banner with live progress while a database migration runs in the background
-- Desktop launch screen displays migration progress and pauses its timeout until migration finishes
+- OpenAI Codex subscription sign-in moved into onboarding quick start, right after Anthropic
+- Project creation now warns when Git is missing, offering install or create-anyway options
+- Windows desktop close dialog adds a Minimize to tray option that keeps Fusion and embedded PostgreSQL running in the background
+- Windows desktop close dialog can prompt to shut down embedded PostgreSQL when the app closes
 
 ### Fixed
-- Fixed first-boot SQLite-to-PostgreSQL migration failing on legacy data containing NUL (\u0000) characters
+- OAuth sign-ins (OpenAI Codex and others) now reliably open the system browser from the desktop app instead of getting silently popup-blocked
+- Creating a new folder during project setup now selects it correctly so Select confirms the right folder
+- Embedded PostgreSQL clusters are now always created UTF-8, fixing dashboard crash-loops on non-UTF-8 Windows locales
+- Fusion now auto-repairs embedded PostgreSQL clusters left in a broken non-UTF-8 state by earlier versions
+- Floating windows now keep a stable stacking order based on last-opened and last-interacted
+- Git installed while Fusion is running is now detected without needing a restart during project setup
+- Onboarding GitHub setup links now follow the dashboard's theme instead of default browser blue
+- Elevated Windows boots now start embedded PostgreSQL without creating a local system account, and clean up old ones
+- Fixed elevated Windows desktop boot failing with a "directory name is invalid" error when starting embedded PostgreSQL
+- Hardening pass across onboarding, Git preflight, and Windows PostgreSQL lifecycle based on review feedback
+
+### Breaking
+- Existing non-UTF-8 embedded PostgreSQL clusters are not retroactively fixed; affected installs must delete their local embedded-postgres data directory to complete the repair
+
+## 0.71.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.71.0
+- @fusion/engine@0.71.0
+- @fusion/i18n@0.39.29
+- @fusion-plugin-examples/claude-runtime@0.1.4
+- @fusion-plugin-examples/cli-printing-press@0.1.46
+- @fusion-plugin-examples/compound-engineering@0.1.29
+- @fusion-plugin-examples/dependency-graph@0.1.60
+- @fusion-plugin-examples/grok-runtime@0.2.7
+- @fusion-plugin-examples/omp-runtime@0.1.4
+- @fusion-plugin-examples/quality@0.1.4
+- @fusion-plugin-examples/roadmap@0.1.48
+- @fusion-plugin-examples/cursor-runtime@0.1.48
+- @fusion-plugin-examples/droid-runtime@0.1.55
+- @fusion-plugin-examples/hermes-runtime@0.2.79
+- @fusion-plugin-examples/openclaw-runtime@0.2.79
+- @fusion-plugin-examples/paperclip-runtime@0.2.79
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- @fusion/core@0.71.0
+- @fusion/dashboard@0.71.0
+- @fusion/engine@0.71.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.71.0
+- @fusion/pi-claude-cli@0.71.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.71.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 0b6c4cd: summary: Show live database-migration progress during boot — dashboard holding page/banner and desktop launch screen.
+  category: feature
+  dev: CLI binds a temporary holding server on the dashboard port during `createTaskStoreForBackend` (new `onMigrationProgress` option) serving an auto-reloading page + `/api/health` `status:"migrating"`; open tabs render `MigrationInProgressBanner` from the health poll. Desktop publishes progress via `DesktopRuntimeStatus.migration` → IPC → `DesktopLaunchGate`, which shows the label and suspends its 30s timeout while progress advances.
+
+#### Patch Changes
+
+- 48b0d04: summary: Fix first-boot SQLite→PostgreSQL migration failing on legacy data containing NUL (\u0000) characters.
+  category: fix
+  dev: The migrator now strips U+0000 from plain text cells, JSON string values/keys, malformed-JSON scalars, and opaque legacy-preservation cells before insert; content-checksum verification compares sanitized source against sanitized target.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [0b6c4cd]
+- Updated dependencies [48b0d04]
+  - @runfusion/fusion@0.71.0
 
 ## 0.70.2
 
