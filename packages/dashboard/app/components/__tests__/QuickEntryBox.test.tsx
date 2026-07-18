@@ -1596,7 +1596,7 @@ describe("QuickEntryBox", () => {
 
   it("clears input after successful creation", async () => {
     const { props } = renderQuickEntryBox({});
-    const textarea = screen.getByTestId("quick-entry-input");
+    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
     fireEvent.change(textarea, { target: { value: "Task to create" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -1604,8 +1604,12 @@ describe("QuickEntryBox", () => {
     await waitFor(() => {
       expect(props.onCreate).toHaveBeenCalled();
     });
-
-    expect((textarea as HTMLTextAreaElement).value).toBe("");
+    /*
+    FNXC:DashboardTests 2026-07-18-07:25:
+    Full-suite shard load can observe onCreate before the optimistic setDescription("")
+    commit flushes into the DOM. Wait for the cleared value, not only the mock call.
+    */
+    await waitForSubmitSuccessToClear(textarea);
   });
 
   it("shows error toast on failure and keeps input content", async () => {
@@ -2759,9 +2763,12 @@ describe("QuickEntryBox", () => {
     it("resets priority to normal after successful task creation", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
       fireEvent.change(textarea, { target: { value: "Priority reset after save" } });
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-priority-button")).toBeTruthy();
+      });
       openPriorityMenu();
       fireEvent.click(screen.getByTestId("quick-entry-priority-option-high"));
       fireEvent.keyDown(textarea, { key: "Enter" });
@@ -2769,9 +2776,12 @@ describe("QuickEntryBox", () => {
       await waitFor(() => {
         expect(props.onCreate).toHaveBeenCalledTimes(1);
       });
+      await waitForSubmitSuccessToClear(textarea);
 
       expandQuickEntry();
-      expectQuickEntryPriorityButton("normal");
+      await waitFor(() => {
+        expectQuickEntryPriorityButton("normal");
+      });
     });
 
     it("resets priority to normal after Subtask flow", async () => {

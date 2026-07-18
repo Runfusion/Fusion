@@ -15,10 +15,11 @@ describe("Grok plugin process lifecycle", () => {
   });
 
   /*
-  FNXC:GrokRuntimeTests 2026-07-18-07:15:
-  Bound is proven by a few re-evaluations (Symbol.for exit-hook guard). Full-suite
-  shard load made 15 dynamic imports hit the default 5s testTimeout (transform-heavy
-  plugin graph), not a product hang — keep the assertion, reduce iterations.
+  FNXC:GrokRuntimeTests 2026-07-18-07:25:
+  Symbol.for exit-hook guard is proven by two re-evaluations after the baseline
+  import. Full-suite shard transform load made 5–15 dynamic imports of the full
+  plugin graph hit the default 5s testTimeout; keep the bound assertion, not the
+  iteration marathon.
   */
   it("keeps its process cleanup owner bounded across repeated module evaluation", async () => {
     const baseline = listenerCounts();
@@ -27,7 +28,7 @@ describe("Grok plugin process lifecycle", () => {
     process.on("warning", onWarning);
 
     try {
-      for (let iteration = 0; iteration < 5; iteration += 1) {
+      for (let iteration = 0; iteration < 2; iteration += 1) {
         vi.resetModules();
         await import("../index.js");
       }
