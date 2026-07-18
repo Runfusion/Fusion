@@ -191,6 +191,21 @@ export default defineConfig({
         replacement: resolve(__dirname, "../../plugins/fusion-plugin-omp-runtime/src/index.ts"),
       },
       /*
+      FNXC:CliTests 2026-07-18-09:15:
+      runtime-provider-probes imports @fusion-plugin-examples/claude-runtime for probe/model
+      discovery only. Alias the package root to probes-entry (not full index) so CLI tests do
+      not load ACP/runtime-adapter or require @agentclientprotocol/sdk on the CLI resolver path.
+      Full-suite shard 4 failed with dist/ entry resolution + missing ACP deps under package lane.
+      */
+      {
+        find: /^@fusion-plugin-examples\/claude-runtime\/probe$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-claude-runtime/src/probe.ts"),
+      },
+      {
+        find: /^@fusion-plugin-examples\/claude-runtime$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-claude-runtime/src/probes-entry.ts"),
+      },
+      /*
       FNXC:PluginTests 2026-07-04-09:30:
       The roadmap plugin (@fusion-plugin-examples/roadmap) is imported by the CLI extension. Without source aliases, Vite resolves to the dist/ exports which don't exist in a source checkout.
       */
