@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, screen, shell, Tray } from "electron";
+import { dialog, app, BrowserWindow, nativeImage, screen, shell, Tray } from "electron";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
@@ -130,6 +130,13 @@ function isInternalDesktopNavigation(url: URL, rendererOrigin: string | null): b
   return false;
 }
 
+/*
+FNXC:DesktopClosePolicy 2026-07-18-05:00:
+Answer from the Windows close prompt, consumed once by before-quit teardown.
+false (default) = full stop including the embedded PostgreSQL cluster.
+*/
+let keepEmbeddedPostgresOnQuit = false;
+
 async function resetLaunchModeAndReload(window: BrowserWindow): Promise<void> {
   try {
     const settings = await readShellSettings();
@@ -237,6 +244,30 @@ export function createMainWindow(state?: WindowState, launchTargetUrl?: string):
     Windows Desktop close is a shutdown request, not a tray-minimize request. Let the BrowserWindow close so Electron emits window-all-closed and before-quit, which stops the embedded local Fusion runtime; keep macOS/non-Windows close-to-tray semantics for dock/tray restoration.
     */
     if (process.platform === "win32") {
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-05:00:
+      Operator request: shutting down Fusion on Windows must ASK whether to also
+      shut down the embedded PostgreSQL server (it can serve other Fusion
+      processes such as the CLI). Asked only on a USER-initiated window close —
+      programmatic quits (dashboard-requested restart via app.relaunch/app.quit)
+      never pass through this handler, so automation stays prompt-free and
+      defaults to a full stop. The synchronous dialog is required: the close
+      event cannot await, and the answer must exist before before-quit tears the
+      runtime down.
+      */
+      if (localRuntimeManager?.getStatus().state === "running") {
+        const choice = dialog.showMessageBoxSync(window, {
+          type: "question",
+          title: "Fusion",
+          message: "Also shut down the embedded PostgreSQL server?",
+          detail: "Other Fusion processes (like the fn CLI) can keep using it if you leave it running. It will be reused on the next start either way.",
+          buttons: ["Shut down PostgreSQL", "Leave it running"],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        keepEmbeddedPostgresOnQuit = choice === 1;
+      }
       return;
     }
 
@@ -482,7 +513,7 @@ export function run(): void {
     }
 
     if (localRuntimeManager) {
-      void localRuntimeManager.stopLocal();
+      void localRuntimeManager.stopLocal({ keepEmbeddedPostgres: keepEmbeddedPostgresOnQuit });
     }
   });
 

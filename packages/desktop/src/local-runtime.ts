@@ -567,12 +567,12 @@ export class LocalRuntimeManager {
     }
   }
 
-  async stopLocal(): Promise<DesktopRuntimeStatus> {
+  async stopLocal(options: { keepEmbeddedPostgres?: boolean } = {}): Promise<DesktopRuntimeStatus> {
     if (this.stopPromise) {
       return this.stopPromise;
     }
 
-    this.stopPromise = this.stopInternal();
+    this.stopPromise = this.stopInternal(options);
     try {
       return await this.stopPromise;
     } finally {
@@ -580,7 +580,7 @@ export class LocalRuntimeManager {
     }
   }
 
-  private async stopInternal(): Promise<DesktopRuntimeStatus> {
+  private async stopInternal(options: { keepEmbeddedPostgres?: boolean } = {}): Promise<DesktopRuntimeStatus> {
     if (this.runtime) {
       const runtime = this.runtime;
       this.runtime = null;
@@ -595,8 +595,15 @@ export class LocalRuntimeManager {
       // Release the backend connection pool / embedded PG cluster if the store
       // was booted via the startup factory. store.close() already closes the
       // AsyncDataLayer pool; this adds embedded-cluster teardown. Best-effort.
+      /*
+      FNXC:DesktopClosePolicy 2026-07-18-05:00:
+      keepEmbeddedPostgres is the operator's Windows quit-prompt answer: close
+      the pools and the Fusion runtime but leave the embedded postmaster
+      running for other Fusion processes. Default (false) preserves the full
+      teardown for programmatic restarts and every non-prompted path.
+      */
       const backendShutdown = (runtime.store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
-      if (backendShutdown) {
+      if (backendShutdown && !options.keepEmbeddedPostgres) {
         await backendShutdown().catch(() => undefined);
       } else {
         runtime.store.close();
